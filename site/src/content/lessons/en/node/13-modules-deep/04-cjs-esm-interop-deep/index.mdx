@@ -1,0 +1,193 @@
+---
+concepts:
+- require-of-esm
+- err-require-async-module
+- cjs-module-lexer-named-exports
+- esmoduleinterop
+- createrequire-import-meta
+- top-level-await-interop
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: 04-cjs-esm-interop-deep
+sources:
+- https://nodejs.org/api/modules.html#loading-ecmascript-modules-using-require
+- https://nodejs.org/api/esm.html#interoperability-with-commonjs
+- https://nodejs.org/api/module.html#modulecreaterequirefilename
+spiral: []
+status: ready
+summary: 'require() can now load an ESM module synchronously — but only if its graph has no top-level await, else ERR_REQUIRE_ASYNC_MODULE. The CJS<->ESM seam has traps: a static lexer misses dynamic named exports, esModuleInterop reshapes defaults, one package can load twice.'
+title: 'CJS/ESM interop, deeply: require(esm), named exports, and TLA'
+track: node
+unit: 13-modules-deep
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Your CJS entrypoint has happily done `const { parse } = require("./config.mjs")` since you upgraded to Node 22 — `require()` of an ES module finally works, no more `ERR_REQUIRE_ESM`, and the team quietly deleted the dynamic-`import()` shim. Then a contributor adds one line to `config.mjs`: `const flags = await loadFlags()` at the top level, to read a feature-flag file before exporting. The next deploy crashes on boot: `Error [ERR_REQUIRE_ASYNC_MODULE]: require() cannot be used on an ESM graph with top-level await`. Nothing about the require changed. What changed is that the module being required can no longer finish synchronously — and `require`, by definition, cannot wait.
+</Hook>
+
+<Crux>require() can load an ESM module synchronously only if its graph has no top-level await; TLA makes it throw ERR_REQUIRE_ASYNC_MODULE.</Crux>
+
+<Explanation>
+
+## require() of ESM — and the top-level-await wall
+
+For years `require()` of an `.mjs` (or any ESM) threw `ERR_REQUIRE_ESM`, and the only bridge from CommonJS to ESM was async dynamic `import()`. Modern Node (22+, unflagged and stable in 23/24) lifts that: `require()` can now load an ES module **synchronously** — but only under one hard condition. The whole ESM graph reachable from the required module must be **fully synchronous**, i.e. contain no top-level `await` anywhere. If it does, the loader cannot complete evaluation without yielding to the event loop, and a synchronous `require` cannot yield — so it throws `ERR_REQUIRE_ASYNC_MODULE`.
+
+The mechanism: when you `require()` an ESM module, Node parses and links the graph, and if evaluation is provably synchronous it runs it to completion in the same call and hands you the result. That result is the **module namespace object**, not a CommonJS `module.exports`. So `default` and named exports come back as namespace members:
+
+```js
+// config.mjs  — no top-level await: require() succeeds
+export const port = 8080;
+export default { name: "svc" };
+
+// server.cjs
+const ns = require("./config.mjs");
+ns.port;        // 8080      ← named export
+ns.default;     // { name: "svc" }  ← default lives under .default, NOT ns itself
+const { port } = require("./config.mjs"); // also fine
+```
+
+Add one top-level `await` and the same `require` throws:
+
+```js
+// config.mjs  — top-level await: now an async module
+const flags = await loadFlags();   // ← TLA: graph is no longer synchronous
+export const port = flags.port;
+
+// server.cjs
+const ns = require("./config.mjs");
+// ⇒ throws ERR_REQUIRE_ASYNC_MODULE
+```
+
+The tradeoff is sharp and load-bearing: TLA is the feature that makes a module *un-require-able*. If a library is meant to be consumed by CJS callers via `require`, top-level await anywhere in its graph is a breaking change — the failure surfaces at the consumer's boot, not in the library's tests. The escape hatch when you genuinely need the async module from CJS is to go back to `await import("./config.mjs")` inside an async function, which *can* wait for the event loop.
+
+## import of CJS — the static lexer that guesses named exports
+
+The reverse direction has its own seam. When ESM does `import` of a CommonJS module, Node wraps it: the module's `module.exports` object becomes the **`default`** export. So `import pkg from "cjs-dep"` always works and `pkg` is exactly what `module.exports` was. The subtlety is **named** imports — `import { foo } from "cjs-dep"`. CommonJS has no static export list, so to support this Node runs **`cjs-module-lexer`**, a fast static analyzer, over the source *before executing it* to guess the names it assigns to `exports`/`module.exports`.
+
+Because it is **static** analysis, it only sees exports it can read syntactically — `exports.foo = …`, `module.exports = { foo }`, and a few recognised patterns. Anything assigned **dynamically** is invisible: a computed key like `module.exports[name] = …` inside a loop, or `Object.assign(exports, computedObject)`. Those exports exist at runtime, but the lexer never saw their names, so the named import binds to `undefined` even though the property is right there on the default export.
+
+```js
+// plugins.cjs  — exports built dynamically
+const names = ["alpha", "beta"];
+for (const n of names) module.exports[n] = () => `run ${n}`;
+
+// app.mjs
+import { alpha } from "./plugins.cjs"; // alpha is undefined — lexer never saw it
+import pkg from "./plugins.cjs";
+pkg.alpha;          // ✅ the function — it WAS exported, just not statically visible
+const { beta } = pkg; // ✅ robust fallback: default-import, then destructure
+```
+
+The robust rule for consuming any CJS dependency from ESM when named imports misbehave: **default-import the whole thing, then destructure** (`import pkg from "x"; const { foo } = pkg;`). That reaches `module.exports` directly and bypasses the lexer's static guess entirely.
+
+<Inset kind="why" lang="en">
+Why a static lexer at all, instead of just running the module and reading its keys? Because `import` bindings are decided at **link time**, before any module in the graph executes — the engine must know the full set of named exports for every module up front to wire the live bindings. CommonJS, by contrast, only knows its exports *after* it runs. `cjs-module-lexer` squares that circle: it scans the source at link time and reports the names it can prove are assigned, so the ESM importer has a binding list before execution. It is deliberately conservative — it would rather miss a dynamic export (false negative → `undefined`) than invent one — which is exactly why anything computed slips through.
+</Inset>
+
+## Transpiler interop: why `import express from "express"` lies
+
+Most teams never wrote native ESM importing native CJS — they wrote TypeScript or Babel. There, `import express from "express"` works flawlessly, and that lulls people into thinking native ESM behaves the same. It often does not. Transpiled "ESM" is really **CommonJS with an `__esModule` marker**: Babel/TS emit `Object.defineProperty(exports, "__esModule", { value: true })` and, under `esModuleInterop`, wrap each default import in a `_interopRequireDefault` shim that does `module.__esModule ? module : { default: module }`. That shim papers over the default-export shape mismatch — a CJS module whose `module.exports` is a function gets re-homed under `.default` so `import x from` finds it.
+
+Native Node ESM has **no such shim**. It applies the wrapping rule once (`module.exports` → `default`) and stops. So code that relied on the transpiler's interop can break the day you switch `"type": "module"` and run it natively: a default import that the transpiler reshaped now lands on a differently-shaped object. The lesson: TypeScript's import ergonomics are a *compatibility layer*, not Node's runtime behaviour — verify dependencies under native ESM before assuming parity.
+
+The deeper, API-level cost ties back to the module cache (node unit 01): a package shipped as **both** CJS and ESM can be loaded as **two distinct instances** — one through `require`, one through `import` — each with its own copy of every variable and class. `instanceof` fails across the boundary; a singleton initialises twice; a registry populated through one half is empty in the other. Two instances of one package also doubles its memory footprint and bundle weight — a non-trivial RSS cost for a large dependency loaded twice.
+
+<TradeoffMatrix
+  id="13-modules-deep-interop-tradeoff"
+  lessonSlug="04-cjs-esm-interop-deep"
+  lang="en"
+  prompt="From an ESM module you must consume a CJS dependency whose named exports are built dynamically (module.exports[name] = … in a loop), so import { handler } from 'dep' is undefined. What is the robust fix?"
+  options={[
+    { name: "Default-import the package, then destructure: import dep from 'dep'; const { handler } = dep;", summary: "Default-import, destructure.", correct: true, justification: "The default import is always module.exports itself — the real object with every dynamically-added property present at runtime. Destructuring off it reads the property directly and never relies on cjs-module-lexer's static guess, which is exactly the guess that failed for the dynamic export. This is the canonical, version-proof way to pull a name out of a CJS dep from ESM." },
+    { name: "Add the missing name to the import list: import { handler, default as dep } from 'dep'", summary: "More named imports.", justification: "Named imports are precisely what the lexer drives, and the lexer never saw the dynamically-assigned handler — so import { handler } stays undefined no matter how you spell the import list. You cannot import a name the static analyzer could not prove exists; this does not address the root cause." },
+    { name: "Switch the import to a top-level await import(): const { handler } = await import('dep')", summary: "Dynamic import().", justification: "Dynamic import() of a CJS module is subject to the same wrapping and the same lexer for its named-export view, so the named binding is still unreliable for dynamic exports — and you've added top-level await, which makes your own module un-require-able by CJS callers. It trades one interop trap for two." },
+    { name: "Ask the maintainer to rewrite the dep as ESM", summary: "Upstream rewrite.", justification: "Maybe correct long-term, but it is not a fix you control: it blocks your code on someone else's release, and meanwhile the default-import-then-destructure pattern already works against the dep exactly as shipped. Don't gate a one-line local fix on an upstream rewrite." },
+  ]}
+/>
+
+## ESM has no `__dirname`, `__filename`, or `require`
+
+The last seam is the CommonJS-only globals. In an ESM module `__dirname`, `__filename`, and `require` simply do not exist — they were CJS module-wrapper locals. The replacements are `import.meta.url` (the module's own `file://` URL) and, when you need to pull in a CJS-only dependency that has no ESM build, `module.createRequire(import.meta.url)` to mint a working `require` scoped to the current file:
+
+```js
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
+import { createRequire } from "node:module";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);          // ESM equivalent of __dirname
+const require = createRequire(import.meta.url);  // a real require, scoped here
+const legacy = require("some-cjs-only-addon");   // pull a CJS dep into ESM, synchronously
+```
+
+Two failure modes round out the picture. First, **top-level await serializes startup**: a module that `await`s at the top blocks every importer until it resolves, and a cycle of TLA modules can deadlock — module A waiting on B's evaluation while B awaits A's. TLA is convenient but it makes a module's *evaluation* asynchronous, which is precisely what `require` (above) cannot tolerate and what stretches boot time. Second, **conditional `require()` does not translate to `import`**: a pattern like `if (DEBUG) require("./devtools")` is impossible with static `import`, which is hoisted and unconditional — you must use dynamic `await import("./devtools")` inside the branch, which again introduces async into a place that may have been synchronous.
+
+<Quiz
+  id="13-modules-deep-interop-quiz"
+  lessonSlug="04-cjs-esm-interop-deep"
+  lang="en"
+  question="A CJS file does require('./mod.mjs'). It works in CI but throws ERR_REQUIRE_ASYNC_MODULE in production after a small change to mod.mjs. What change most likely caused it?"
+  choices={[
+    { label: "A top-level await was added somewhere in mod.mjs's graph, so the module can no longer evaluate synchronously — and require(), being synchronous, cannot await it", correct: true },
+    { label: "mod.mjs added a named export, which require() cannot read", misconception: "require() of ESM returns the full namespace object with all named exports as members — adding a named export is fine. The async-module error is specifically about top-level await, not about export shape." },
+    { label: "The file extension changed from .mjs to .js so Node now treats it as CJS", misconception: "ERR_REQUIRE_ASYNC_MODULE only fires when requiring an ESM module that is async; if it were now treated as CJS you'd get no such error. The error name itself tells you it's an async ESM graph." },
+    { label: "Production runs an older Node that lacks require(esm) entirely", misconception: "An older Node without require(esm) throws ERR_REQUIRE_ESM, a different error. ERR_REQUIRE_ASYNC_MODULE means require(esm) IS supported but the target graph uses top-level await." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="How require() of an ES module resolves: Node links the ESM graph, checks whether it contains top-level await; if it is fully synchronous it evaluates it inline and returns the namespace object, otherwise it throws ERR_REQUIRE_ASYNC_MODULE"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "req", label: "require('x.mjs')", sub: "from CJS" },
+    { id: "link", label: "link ESM graph", sub: "parse + resolve" },
+    { id: "tla", label: "top-level await?", sub: "anywhere in graph" },
+    { id: "ns", label: "namespace object", sub: "default + named" },
+    { id: "err", label: "ERR_REQUIRE_ASYNC_MODULE", sub: "use await import()" },
+  ]}
+  edges={[
+    { from: "req", to: "link" },
+    { from: "link", to: "tla" },
+    { from: "tla", to: "ns", label: "no — sync" },
+    { from: "tla", to: "err", label: "yes — async" },
+  ]}
+  caption="require() can evaluate a fully-synchronous ESM graph inline and return its namespace object (default under .default, names as members). Any top-level await in the graph makes evaluation asynchronous, which a synchronous require cannot complete — so it throws ERR_REQUIRE_ASYNC_MODULE, and you must reach for await import() instead."
+/>
+
+<KeyTakeaway>require() loads ESM synchronously, returning the namespace object — but throws ERR_REQUIRE_ASYNC_MODULE on top-level await. Importing CJS, a static lexer misses dynamic exports, so default-import then destructure.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="13-modules-deep-interop-retrieval"
+  lang="en"
+  questions={[
+    { q: "Under what condition can require() load an ES module, what does it hand back, and what is the exact failure when that condition is violated?", a: "require() can load an ES module synchronously only if the entire ESM graph reachable from it is fully synchronous — that is, contains no top-level await anywhere. Under that condition Node parses and links the graph, evaluates it to completion within the same require call, and returns the module namespace object: named exports are members of it (ns.port), and the default export lives under ns.default (NOT ns itself, unlike CommonJS where the default-ish value is module.exports). The instant any module in the graph uses top-level await, evaluation can no longer finish without yielding to the event loop, and a synchronous require cannot yield — so it throws ERR_REQUIRE_ASYNC_MODULE. The practical consequence: adding top-level await to a library makes it un-require-able by CJS consumers, a breaking change that surfaces at the consumer's boot rather than in the library's own tests. The escape hatch is to load it with await import() inside an async function, which can wait for the loop." },
+    { q: "Why does import { foo } from a CommonJS dependency sometimes come back undefined even though module.exports.foo exists, and what is the robust fix?", a: "When ESM imports a CommonJS module, Node makes module.exports the default export and, to support named imports, runs cjs-module-lexer — a fast STATIC analyzer — over the source before it executes, to guess which names are assigned to exports. Because the analysis is static, it only sees syntactically recognisable assignments (exports.foo = …, module.exports = { foo }). Anything assigned dynamically — a computed key like module.exports[name] = … in a loop, or Object.assign(exports, computed) — is invisible to it, so the named import binds to undefined even though the property is genuinely present at runtime on the default export. The lexer is deliberately conservative: it prefers a false negative (undefined) over inventing an export, because import bindings must be wired at link time before any code runs. The robust, version-proof fix is to default-import the whole module and then destructure: import pkg from 'dep'; const { foo } = pkg; — the default import is module.exports itself, so reading foo off it reaches the real object directly and bypasses the lexer's static guess entirely." },
+  ]}
+/>
+
+<Recap lang="en">
+Modern Node finally lets CommonJS `require()` an ES module synchronously, but only when the whole ESM graph is free of top-level await; the returned value is the module namespace object (named exports as members, the default under `.default`), and any top-level await anywhere makes the module async and throws `ERR_REQUIRE_ASYNC_MODULE` — which means adding TLA to a library is a breaking change for its `require` consumers. In the other direction, ESM importing CommonJS turns `module.exports` into the `default` export and leans on the static `cjs-module-lexer` to discover named exports; because that analysis runs before execution it cannot see dynamically-assigned exports (computed keys, `Object.assign`), so the named import is `undefined` and the robust fix is to default-import then destructure. Transpiled ESM is really CJS with an `__esModule` marker and `_interopRequireDefault` shims, which is why `import express from "express"` works under TypeScript yet native ESM — with no such shim — can behave differently; and a package published as both CJS and ESM can be loaded as two divergent instances that break `instanceof`, double singletons, and inflate RSS. Finally, ESM lacks `__dirname`/`__filename`/`require`, so use `import.meta.url` plus `createRequire(import.meta.url)` to pull a CJS-only dependency in, while remembering that top-level await serializes startup and can deadlock cycles, and that conditional `require()` has no static `import` equivalent.
+</Recap>
