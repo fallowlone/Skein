@@ -1,0 +1,207 @@
+---
+concepts:
+- metric-types
+- red-method
+- percentiles
+- cardinality
+- slo-error-budget
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-metrics-and-slos"
+sources:
+- https://prometheus.io/docs/concepts/metric_types/
+- https://sre.google/sre-book/service-level-objectives/
+spiral: []
+status: ready
+summary: 'Metrics are not logs or traces: they are cheap aggregates you alert on. Pick the right type (counter/gauge/histogram), measure the tail with p99 not the lying average, keep labels low-cardinality or Prometheus OOMs, and alert on SLO budget burn.'
+title: 'Metrics, percentiles and SLOs'
+track: nest
+unit: 07-errors-and-observability
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The dashboard was green. Average request latency on the checkout route sat at a flat 90ms, the same line it had drawn for months, and the on-call engineer glanced at it and went back to lunch. Meanwhile support tickets piled up: "the page hangs", "I clicked pay twice and got charged once", "it spins forever". The average never moved because it could not — a mean is anchored by the dense middle of the distribution, and only the slowest one request in a hundred had blown out to four seconds. That one-in-a-hundred was real users hitting the 3-second client timeout, retrying, and doubling the load that was causing the slowness in the first place. The fix was not a code change first; it was a *measurement* change: stop watching the average, start watching p99, and put an SLO on it. This lesson is about getting metrics right — the types, the percentiles, the label that takes Prometheus down, and the budget you actually alert on.
+</Hook>
+
+<Crux>Metrics are cheap aggregates you alert on: right type, the tail (p99) not the average, bounded labels, alert on SLO budget burn.</Crux>
+
+<Explanation>
+
+## The four metric types: pick the one that answers your question
+
+A metric is not a log line and not a span. It is a number sampled over time and aggregated server-side — cheap to store, cheap to query, and the thing you build alerts on. Prometheus gives you four types, and choosing wrong is the first mistake.
+
+```ts
+import { Counter, Gauge, Histogram } from 'prom-client';
+
+// COUNTER: monotonic, only ever goes up (or resets to 0 on restart).
+// You never read its raw value — you query rate() over it.
+const httpRequests = new Counter({
+  name: 'http_requests_total',
+  help: 'Total HTTP requests',
+  labelNames: ['method', 'route', 'status'] as const, // LOW cardinality — see below
+});
+
+// GAUGE: a value that goes up AND down — a snapshot of "right now".
+const inFlight = new Gauge({
+  name: 'http_requests_in_flight',
+  help: 'Requests currently being served',
+});
+
+// HISTOGRAM: samples a value (here, duration) into pre-defined buckets,
+// so you can compute quantiles SERVER-SIDE across all instances.
+const httpDuration = new Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Request duration in seconds',
+  labelNames: ['method', 'route', 'status'] as const,
+  buckets: [0.01, 0.05, 0.1, 0.3, 0.5, 1, 2, 5], // boundaries decide p99 accuracy
+});
+```
+
+A **counter** is monotonic — request totals, error totals. You never graph the raw number; you graph `rate(http_requests_total[5m])` to get requests-per-second. A **gauge** moves both ways — in-flight requests, memory usage, queue depth, connection-pool size: a snapshot you read directly. A **histogram** drops each observation into a bucket; because the buckets live on the server you can compute `histogram_quantile(0.99, …)` and, crucially, *add the buckets across all your instances first* and then take the quantile. The fourth type, **summary**, computes quantiles client-side in each process — which means you cannot aggregate them: the p99 of three instances is not the average of their three p99s. In any multi-instance service, prefer histograms.
+
+In Nest you wire this with `@willsoto/nestjs-prometheus` (or raw `prom-client`), expose a `/metrics` endpoint for Prometheus to scrape, and record durations in an interceptor that wraps every request — start a timer in `intercept`, stop it in the `tap`/`finalize` of the observable, labelling by method, route template, and status.
+
+## RED and the golden signals: what to actually measure
+
+You do not measure everything; you measure the handful of signals that tell you whether the service is healthy. For a request-driven service the **RED method** is the spine: **R**ate (requests per second, from the counter), **E**rrors (failed requests per second, the same counter filtered to 5xx), **D**uration (the latency distribution, from the histogram). Google's **four golden signals** add **saturation** (how full the busiest resource is) to latency, traffic, and errors. **USE** (Utilization, Saturation, Errors) is the resource-side mirror — apply it to CPU, memory, disk, the connection pool. RED for the request path, USE for the resources it leans on.
+
+## Percentiles: the average lies, measure the tail
+
+Here is the core insight the opening incident turns on. **The average latency hides the outage that p99 exposes.** A mean of 80ms can sit on top of a p99 of two seconds, because the mean is dominated by the bulk of fast requests and a small slow tail barely nudges it. But that tail is not noise — it is real users, and it is exactly the cohort that hits timeouts, fires retries, and amplifies load. An SLO on the average is an SLO on the wrong number.
+
+```text
+# PromQL: p99 latency per route, aggregated across ALL instances.
+# Note the sum by (...) BEFORE histogram_quantile — this is why you use
+# a histogram and not a summary: you add the buckets first, then quantile.
+histogram_quantile(
+  0.99,
+  sum by (le, route) (rate(http_request_duration_seconds_bucket[5m]))
+)
+```
+
+So you track p50 (the typical user), p95 and p99 (the tail that hurts), and p999 once your traffic is large enough for one-in-a-thousand to be a meaningful number of people. One caveat: a Prometheus histogram quantile is only as good as your bucket boundaries. `histogram_quantile` linearly interpolates *within* the bucket the quantile falls in, so if your p99 lands between a `1s` and a `5s` bucket, the reported value is a guess somewhere in that gap — possibly very wrong. Put bucket boundaries where you actually care (around your SLO threshold), not on round numbers.
+
+<Inset kind="why" lang="en">
+Why does the average hide an outage that the p99 exposes? Because the mean is a center-of-mass: it is pulled by the dense middle of the distribution, where most requests sit. If 99 requests take 50ms and one takes 4 seconds, the average is about 90ms — the one slow request barely moves it. But that one slow request is not a rounding error: at a thousand requests a second it is ten users a second hitting a hard wall, and at a client timeout of 3s they retry, which adds load and makes the tail worse. The pain of a system lives in its tail, so you must measure the tail directly — p99, p999 — not a number that is mathematically designed to erase it. An SLA or SLO defined on the average is an SLO on the wrong number, and it will read green through a real, user-visible outage.
+</Inset>
+
+## Cardinality: the label that takes Prometheus down
+
+This is the failure mode that kills the monitoring system itself. In Prometheus, **every distinct combination of label values is its own time series**, stored and indexed separately. `http_requests_total{method="GET", route="/users/:id", status="200"}` is one series; change any label value and you get another. That is fine when labels are *bounded* — there are a handful of methods, a few dozen routes, a few status classes, so the product is maybe a few hundred series.
+
+It becomes catastrophic the instant you put a **high-cardinality** label on a metric: `userId`, `requestId`, `email`, or a raw `path` that embeds ids. A `userId` label means one series *per user* — a million users is a million series per metric, each with its own memory and index entry. Prometheus holds its head series in RAM; cardinality explosion OOMs the server, balloons scrape time and storage, and takes monitoring down exactly when you need it.
+
+```ts
+// CARDINALITY BOMB — raw path with embedded ids becomes one series PER id.
+// /users/1, /users/2, … /users/9999999 → millions of distinct label values.
+httpRequests.inc({ method: 'GET', route: req.path, status: '200' });
+// e.g. route="/users/8f3a-...-91/orders/4412"  ← unbounded, unique per request
+
+// SAFE — collapse to the route TEMPLATE; the id lives in the value, not the label.
+httpRequests.inc({ method: 'GET', route: '/users/:id/orders/:orderId', status: '200' });
+```
+
+The rule: labels must be **low-cardinality and bounded** — method, route *template* (not the raw path), status class. The thing you were tempted to put in a label (the user id, the request id) belongs in a *trace* or a *log line*, not a metric dimension. The war-story is mundane and common: someone labelled `http_requests` by full URL including literal `/users/{id}` ids, the series count exploded, Prometheus ate all its RAM and fell over — and the dashboard went dark mid-incident.
+
+## SLOs and the error budget: what you alert on
+
+An **SLO** is a target: "99.9% of checkout requests complete in under 300ms, measured over 30 days." Its mirror image is the **error budget** — the 0.1% you are *allowed* to miss. That budget is not a failure to avoid; it is a resource to spend. Burn it slowly and you have room to ship features and take risks; burn it fast and you freeze deploys and fix reliability. And you do not alert on the raw error count — a handful of errors at 3am is noise. You alert on the **burn rate**: how fast you are consuming the budget. A burn rate that would exhaust a 30-day budget in an hour is a page; one that would take a week is a ticket. That is the difference between waking someone up and not.
+
+<TradeoffMatrix
+  id="nest-07-errors-and-observability-04-metrics-and-slos-tradeoff-1"
+  lessonSlug="04-metrics-and-slos"
+  lang="en"
+  prompt="You need to track HTTP request latency for an SLO (99.9% under 300ms) across a service running on many instances, and compute p99 on dashboards. Which metric and labels?"
+  options={[
+    { name: "Histogram with bounded labels (method, route template, status), p99 via histogram_quantile over summed buckets", summary: "Histogram, bounded labels.", correct: true, justification: "A histogram buckets each duration server-side, so you can sum the buckets across all instances FIRST and then take histogram_quantile(0.99, …) — a correct fleet-wide p99, which is exactly what an SLO needs. Labelling by method, route template, and status keeps cardinality bounded (a few hundred series), so Prometheus stays healthy. Put bucket boundaries near the 300ms SLO threshold so the quantile isn't interpolated across a coarse gap. This is the senior default for latency SLOs in a multi-instance service." },
+    { name: "Summary with per-instance quantiles", summary: "Can't aggregate.", justification: "A summary computes quantiles client-side inside each process, which means you cannot combine them: the fleet p99 is NOT the average of each instance's p99. With many instances you get one p99 per process and no correct way to roll them up to a service-level number — useless for an SLO that is defined across the whole service. Summaries are only acceptable for a single-instance process or a quantile you never aggregate." },
+    { name: "Gauge holding the last request's latency", summary: "Loses the distribution.", justification: "A gauge is a single instantaneous value, so it only ever holds the most recent request's duration — it throws away the entire distribution. You cannot recover p50, p95, or p99 from 'the last value'; you'd see a noisy line that misses every tail spike between scrapes. A gauge is right for in-flight count or queue depth, never for a latency distribution you need percentiles from." },
+    { name: "Histogram labelled by full path and userId", summary: "Cardinality bomb.", justification: "The histogram type is right, but labelling by full path (with embedded ids) and userId makes every request a near-unique label combination — millions of series, one per user per path. That is the classic cardinality explosion: Prometheus OOMs, scrapes slow, storage balloons, and monitoring dies in the middle of the incident you needed it for. Same type, fatal labels — collapse to the route template and drop the userId." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-04-metrics-and-slos-quiz-1"
+  lessonSlug="04-metrics-and-slos"
+  lang="en"
+  question="You want to track HTTP request latency and report a correct p99 across a service running on 12 instances. Which metric type, and why?"
+  choices={[
+    { label: "Histogram — buckets live server-side, so you sum buckets across all instances and then compute histogram_quantile; aggregatable into a fleet-wide p99", correct: true },
+    { label: "Summary — it computes the p99 for you inside each process, which is exactly what you want", misconception: "A summary computes quantiles client-side per process, and those CANNOT be aggregated: the service p99 is not the average of 12 per-instance p99s. You'd have no correct fleet-wide number. Histograms expose raw buckets you sum first, then quantile — that's why they're the choice for a multi-instance SLO." },
+    { label: "Gauge — set it to the latest request duration and read the p99 off the graph", misconception: "A gauge holds a single instantaneous value, so it only remembers the last request's latency and discards the distribution entirely. There is no p99 to read — you can't recover percentiles from one number. Latency distributions need a histogram." },
+    { label: "Counter — increment it by the duration and divide by the request count", misconception: "Dividing a duration-sum counter by a request-count counter gives you the AVERAGE latency — the exact number the lesson warns is a liar. It cannot produce a p99; the tail is invisible to it. You need a histogram to get percentiles." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-04-metrics-and-slos-quiz-2"
+  lessonSlug="04-metrics-and-slos"
+  lang="en"
+  question="An engineer adds a `userId` label to the http_requests_total counter so they can break traffic down per user. The service has ~2 million users. What happens to Prometheus?"
+  choices={[
+    { label: "Cardinality explosion — one series per label combination, so userId creates ~2M series per metric; Prometheus OOMs and falls over", correct: true },
+    { label: "Nothing bad — Prometheus stores labels efficiently and a few million values is fine", misconception: "Every distinct label-value combination is a separate time series with its own RAM and index cost. userId is unbounded — millions of values means millions of series PER metric. Prometheus keeps head series in memory, so this OOMs the server. High-cardinality identifiers must never be metric labels." },
+    { label: "Prometheus rejects the metric at scrape time because userId is not a valid label name", misconception: "userId is a perfectly valid label NAME; the problem is the cardinality of its VALUES, not the name. Prometheus accepts it happily and then drowns as the series count explodes. There's no guardrail — that's why it's dangerous. The id belongs in a trace or log, not a label." },
+    { label: "It's fine as long as you use a histogram instead of a counter", misconception: "The metric type is irrelevant to cardinality — a histogram labelled by userId is even worse, since each series also carries a full set of buckets. Cardinality is about label-value combinations, and userId is unbounded regardless of type. Drop the userId label entirely." },
+  ]}
+/>
+
+<FlowDiagram
+  label="How a request becomes an SLO alert. A request enters and an interceptor records two metrics: it increments a counter (whose rate gives requests-per-second and error-rate) and observes the request duration into a histogram's buckets. Prometheus scrapes the /metrics endpoint, summing each instance's buckets. A dashboard query runs histogram_quantile(0.99, …) over the summed buckets to get a fleet-wide p99 latency, which feeds an SLO comparison against the 300ms target; when the error budget burn rate is too high, it fires an alert."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "req", label: "request", sub: "interceptor" },
+    { id: "counter", label: "counter.inc", sub: "rate() = req/s, errors" },
+    { id: "hist", label: "histogram.observe", sub: "duration buckets" },
+    { id: "scrape", label: "/metrics scrape", sub: "sum buckets" },
+    { id: "p99", label: "histogram_quantile", sub: "fleet p99" },
+    { id: "slo", label: "SLO / budget", sub: "burn-rate alert" },
+  ]}
+  edges={[
+    { from: "req", to: "counter", label: "record" },
+    { from: "req", to: "hist", label: "time" },
+    { from: "counter", to: "scrape", label: "scrape" },
+    { from: "hist", to: "scrape", label: "scrape" },
+    { from: "scrape", to: "p99", label: "quantile" },
+    { from: "p99", to: "slo", label: "compare" },
+  ]}
+  caption="The interceptor feeds a counter (rate, errors) and a histogram (duration); Prometheus sums buckets across instances; histogram_quantile yields a fleet p99 that the SLO checks, alerting on budget burn — not raw error count."
+/>
+
+</Explanation>
+
+<KeyTakeaway>Counter (rate), gauge (snapshot), histogram (aggregatable quantiles); summary can't aggregate. Track p99, not the lying average. Bounded labels (route template, not userId) or Prometheus OOMs. Alert on budget burn.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-07-errors-and-observability-04-metrics-and-slos-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the four Prometheus metric types, what each is for, and why you prefer a histogram over a summary for request latency in a multi-instance service.", a: "A COUNTER is monotonic — it only goes up (or resets to 0 on restart) and you never read its raw value; you query rate() over it for request totals and error rates. A GAUGE goes up and down — an instantaneous snapshot for in-flight requests, memory, queue depth, pool size. A HISTOGRAM drops each observation into pre-defined buckets so quantiles can be computed server-side; for latency this is the one you want. A SUMMARY computes quantiles client-side inside each process. The reason to prefer a histogram over a summary in a multi-instance service is aggregation: histogram buckets can be summed across all instances FIRST and then you take histogram_quantile, giving a correct fleet-wide p99. Summary quantiles are pre-computed per process and cannot be combined — the service p99 is not the average of each instance's p99 — so they give you no correct service-level number. One caveat with histograms: histogram_quantile interpolates within the bucket the quantile falls in, so the p99 is only as accurate as your bucket boundaries; put boundaries near your SLO threshold." },
+    { q: "Explain why the average latency hides outages, what a cardinality explosion is and how to avoid it, and what an SLO error budget is and what you alert on.", a: "The average latency hides outages because the mean is a center-of-mass dominated by the dense middle of the distribution: 99 requests at 50ms and one at 4s average to about 90ms, so the slow request barely moves the line — yet at high traffic that 1% is many real users hitting timeouts, retrying, and amplifying load. The pain lives in the tail, so you measure the tail directly with p50/p95/p99/p999, never the average; an SLO on the average is an SLO on the wrong number. A cardinality explosion happens because every distinct combination of label values is its own time series: putting a high-cardinality label like userId, requestId, email, or a raw path with embedded ids on a metric creates millions of series (one per user), which OOMs Prometheus, blows up scrape time and storage, and takes monitoring down mid-incident. Avoid it by keeping labels low-cardinality and bounded — method, route TEMPLATE not raw path, status class — and putting the id in a trace or log instead. An SLO is a target (e.g. 99.9% of requests under 300ms over 30 days); the error budget is the allowed 0.1% — roughly 43 minutes a month for 99.9% — which you spend on shipping when it's healthy and freeze on when it's burning. You alert on the budget BURN RATE, not the raw error count: a rate that would exhaust the budget in an hour pages, one that would take a week is a ticket." },
+  ]}
+/>
+
+<Recap lang="en">
+Metrics are cheap server-side aggregates you build alerts on, distinct from logs and traces. Prometheus has four types: a counter is monotonic (request and error totals — you query rate() over it), a gauge moves both ways (in-flight, memory, queue depth), a histogram buckets observations so you can compute quantiles server-side, and a summary computes quantiles client-side and so cannot be aggregated — prefer histograms in any multi-instance service. Measure the RED signals for the request path (Rate, Errors, Duration) and USE for resources. The core insight: the average latency lies — a mean is pulled by the dense middle, so a p99 of seconds can hide under a flat 90ms average while real users hit timeouts and retry; track p50/p95/p99/p999 and put the SLO on the tail, remembering that histogram_quantile only interpolates as well as your bucket boundaries allow. The killer failure mode is cardinality: every label-value combination is a separate series, so a userId, requestId, or raw-path label creates millions of series and OOMs Prometheus — labels must be bounded (method, route template, status), and the id goes in a trace, not a label. Finally, an SLO is a target (99.9% under 300ms over 30 days &rarr; a 0.1% error budget &asymp; 43 min/month) and you alert on budget burn rate, not raw error count, so a fast burn pages and a slow burn is a ticket.
+</Recap>
