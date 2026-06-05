@@ -1,0 +1,192 @@
+---
+concepts:
+- merge-queue
+- speculative-build
+- logical-conflict
+- batching-and-bisection
+- branch-protection
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-merge-queues-and-build-stability"
+sources:
+- https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue
+- https://bors.tech/
+spiral: []
+status: ready
+summary: 'Required PR checks test stale main, so two independently green PRs can break main via a logical conflict git never sees. A merge queue speculatively builds main + queued PRs before landing, batches for throughput, and bisects to eject the culprit — main green by construction.'
+title: 'Merge queues and keeping main green'
+track: ci-cd
+unit: 06-scaling-ci
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The team had done everything right. Branch protection on, required checks green, every PR reviewed. And `main` still broke roughly three times a day. The pattern was always the same: two PRs, each individually green, merged twenty minutes apart, and the second one turned the build red on a line neither author had touched. One Friday it was a rename — someone shortened `computeShippingCost` to `shippingCost` and updated all eleven call sites, green. Forty minutes earlier a colleague had opened a PR that added a *new* caller of `computeShippingCost`, also green, branched before the rename existed. Git merged both cleanly — no overlapping lines — and `main` failed to compile. Every push after that was blocked behind a red build until someone bisected, found the orphaned call, and reverted. The checks weren't lying. They were answering a question nobody had asked: "is this PR green against `main` as it was when I tested it?" — not "against `main` as it will be once everything ahead of me lands."
+</Hook>
+
+<Crux>PR checks test stale main; a merge queue speculatively builds main + queued PRs before landing, so main stays green by construction.</Crux>
+
+<Explanation>
+
+## Why green PRs still break main
+
+A required check on a pull request does not test `main`. It tests your *PR head merged with `main` as it was at the moment CI ran* — a snapshot. By the time your PR actually merges, other PRs may have landed ahead of it, so the `main` your code was validated against no longer exists.
+
+Git's merge only blocks **textual** conflicts: two changes to overlapping lines. It is completely blind to **logical** (semantic) conflicts, where two changes don't share a single line yet are incompatible in meaning:
+
+```text
+PR A (green):  rename computeShippingCost -> shippingCost, update its 11 callers
+PR B (green):  add a NEW call to computeShippingCost(...) in a file PR A never touched
+               (branched before PR A existed)
+
+git merge A then B:  zero overlapping lines  ->  merges clean
+result on main:      a call to a function that no longer exists  ->  build red
+```
+
+Each PR was green against the `main` it was tested on. Neither test run could have caught the break, because the combination — A *and* B together — is a state that existed nowhere until the merge created it. This is why "just re-run the checks on every PR" doesn't save you: re-running still tests each PR against a `main` that is stale the instant another PR lands. The higher your merge rate, the more often "tested against a `main` that no longer exists" ships a broken `main`.
+
+## The merge queue: test main-as-it-will-be
+
+A merge queue (GitHub merge queue, Bors, Mergify) fixes this by **serializing integration**. Instead of merging a PR directly, it constructs a **speculative branch** = current `main` + this PR (plus everything ahead of it in the queue) and runs the full required checks on *that combined result*. The PR only lands if the queue build — `main` exactly as it will be after this batch merges — is green.
+
+```yaml
+# GitHub merge queue: the required check runs on the merge_group event,
+# i.e. against the speculative branch the queue builds (main + queued PRs),
+# NOT just against the PR head. main is protected; nothing pushes directly.
+on:
+  merge_group:        # <- the queue's speculative build
+  pull_request:       # <- still runs per-PR for fast author feedback
+jobs:
+  required-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./ci/affected-build-and-test.sh   # keep this FAST — it gates the queue
+```
+
+Nothing reaches `main` untested against the exact other changes landing with it. The rename PR and the new-caller PR, queued together, would be built on one speculative branch — and that build fails *before* either merges, so the culprit is held out instead of poisoning everyone. `main` stays green not by luck or vigilance but **by construction**: the only thing that ever lands is a combination that was already proven green as a combination.
+
+<FlowDiagram
+  label="The merge-queue lifecycle that keeps main green. A pull request that is green on its own branch enters the merge queue rather than merging directly. The queue builds a speculative branch equal to current main plus this PR plus everything ahead of it in the queue, then runs the full required checks on that combined result. If the speculative build is green the whole batch merges at once. If it is red the queue bisects the batch, ejects the PR that broke it, and re-runs the remaining PRs. Either way, only a combination already proven green lands on main, so main stays green structurally."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "pr", label: "PR green", sub: "own branch" },
+    { id: "queue", label: "merge queue", sub: "serialized" },
+    { id: "spec", label: "speculative", sub: "main + PRs" },
+    { id: "merge", label: "merge batch", sub: "if green" },
+    { id: "bisect", label: "bisect + eject", sub: "if red" },
+    { id: "green", label: "main green", sub: "structural" },
+  ]}
+  edges={[
+    { from: "pr", to: "queue", label: "enter" },
+    { from: "queue", to: "spec", label: "build" },
+    { from: "spec", to: "merge", label: "green" },
+    { from: "spec", to: "bisect", label: "red" },
+    { from: "merge", to: "green", label: "lands" },
+    { from: "bisect", to: "green", label: "re-run rest" },
+  ]}
+  caption="A PR enters the queue, the queue speculatively builds main + queued PRs, and only a green combination merges. A red build is bisected to eject the culprit — so one bad PR ejects itself instead of jamming the queue."
+/>
+
+## Batching and bisection: throughput at high merge volume
+
+Testing one PR at a time against current `main` is correct but slow: at high volume the queue becomes a single-file line, and each CI run only clears one PR. So queues **batch** — they speculatively build `main` + PR1 + PR2 + ... + PRn together. If the batch is green, *all n PRs merge from a single CI run*. That is the throughput win: one expensive build clears the whole batch instead of n builds clearing n PRs.
+
+The risk is that one bad PR in a batch turns the whole batch red. The queue handles that by **bisecting**: it splits the failing batch to find which PR is responsible, **ejects** the culprit (kicks it back to its author), and re-runs the remaining PRs as a smaller batch. So a single broken PR removes itself instead of blocking the four good PRs queued around it.
+
+```bash
+# Batch of 4 speculatively built together; the batch build fails.
+# The queue bisects to localize the breakage, ejects the culprit, re-runs the rest.
+queue batch: [PR1, PR2, PR3, PR4]   -> speculative build RED
+  bisect [PR1, PR2] -> green        # breakage is in the second half
+  bisect [PR3, PR4] -> red          # narrowed
+  bisect [PR3]      -> green
+  bisect [PR4]      -> red          # PR4 is the culprit
+eject PR4 (back to its author); re-run [PR1, PR2, PR3] -> green -> merge the 3
+```
+
+The trade is direct: **bigger batches = higher throughput but more wasted work when one fails** (a red batch of 8 throws away a build of 8 and triggers bisection). Smaller batches re-work less but clear fewer PRs per run. You tune batch size to your **failure rate** — a flaky or break-prone repo wants smaller batches; a disciplined one with rare failures can run large batches and rarely pay the bisection tax.
+
+<Inset kind="why" lang="en">
+Why doesn't "require PR checks to pass before merge" keep main green at high merge volume? Because each PR's checks run against `main` as it was when that PR was tested, not `main` as it will be after the PRs ahead of it merge. Git only blocks textual conflicts — overlapping lines — so a logical conflict (PR A renames X, PR B adds a call to the old X in a file A never touched) has no overlap, merges clean, and breaks `main`. The combination A-and-B is a state that existed nowhere until the merge created it, so neither PR's CI run could have tested it. The only thing that actually keeps `main` green is testing the real post-merge combination *before* landing it — which is exactly what a merge queue's speculative build does.
+</Inset>
+
+## Why the queue needs branch protection and a fast gate
+
+A merge queue only works if `main` is **protected** — no direct pushes — and the queue's combined check is the **required gate**. If anyone can push to `main` directly, they sidestep the speculative build and the whole guarantee evaporates: the queue can only promise "everything that lands was proven green as a combination" if *everything* lands through the queue.
+
+And the gate must be **fast**. Queue throughput is bounded by the duration of the gating check: the queue can't clear PR2 until the build that includes PR1 finishes, so a 40-minute required check caps your merge rate no matter how many PRs are waiting. This is the through-line of this whole unit — affected-only builds, caching, test sharding, right-sized runners all exist so the required check stays short, because here that check is what throttles every merge in the org. A slow gate doesn't just annoy one author; it serializes the entire team behind itself.
+
+<TradeoffMatrix
+  id="ci-cd-06-scaling-ci-05-merge-queues-and-build-stability-tradeoff-1"
+  lessonSlug="05-merge-queues-and-build-stability"
+  lang="en"
+  prompt="main breaks several times a day from PRs that were each green on their own branch — logical conflicts like a rename plus a stale caller. You merge a high volume of PRs. What actually keeps main green without throttling throughput?"
+  options={[
+    { name: "A merge queue that speculatively builds main + queued PRs before landing, with batching + bisection, on a protected main", summary: "Test main-as-it-will-be.", correct: true, justification: "This is the only option that tests the real post-merge combination before it lands. The queue builds a speculative branch (current main + the queued PRs) and merges only if that combined build is green, so a rename-plus-stale-caller pair fails the speculative build and is held out instead of breaking main — green by construction. Batching keeps throughput up (n PRs clear from one CI run), and bisection ejects a single bad PR instead of jamming the queue. Protected main guarantees everything lands through the queue, which is what makes the guarantee hold." },
+    { name: "Require PR checks and just re-run them on the PR branch before merge", summary: "Still tests stale main.", justification: "Re-running on the PR branch still tests the PR against main as it was when CI ran, not main as it will be after the PRs ahead of it land. The instant another PR merges, your re-run is stale again. It cannot catch a logical conflict because the broken combination is a state that exists nowhere until the merge creates it — and a per-PR check never builds that combination. This is the exact policy that was already failing." },
+    { name: "Ask developers to rebase onto latest main before merging", summary: "Manual, racy, unenforced.", justification: "A manual rebase narrows the window but doesn't close it: between the rebase, the re-run, and the click to merge, another PR can land and re-stale your branch. It depends on discipline, doesn't scale with merge volume, and the rebase itself only resolves textual conflicts — the logical conflict still slips through clean. It is a slower, racier, human-enforced approximation of what the queue does mechanically." },
+    { name: "Keep direct merges and revert-and-reland manually whenever main breaks", summary: "Reactive, blocks everyone.", justification: "Revert-and-reland is cleanup, not prevention: main has already broken, and every push is blocked behind the red build until someone bisects and reverts. At several breaks a day that is constant firefighting and lost team time, and it treats a structural problem (untested combinations landing) as an operational one. The queue makes the break impossible up front instead of cheaper to recover from." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-06-scaling-ci-05-merge-queues-and-build-stability-quiz-1"
+  lessonSlug="05-merge-queues-and-build-stability"
+  lang="en"
+  question="Two PRs each pass all their required checks on their own branch, merge a few minutes apart, and the second merge turns main red — on a line neither author edited. What happened?"
+  choices={[
+    { label: "A logical (semantic) conflict git can't detect: each PR was tested against main-at-its-own-PR-time, and the combination of both — e.g. a rename plus a stale caller — only existed once both merged", correct: true },
+    { label: "One of the PRs must have skipped its required checks — green PRs cannot break main", misconception: "Both PRs genuinely passed. The trap is WHAT they passed against: each was tested against main as it was when its CI ran, not against the combination of both PRs. Git merges them cleanly because there's no textual overlap, but the merged result is a state neither CI run ever built. Green PRs absolutely can break main this way — that's the entire motivation for a merge queue." },
+    { label: "A flaky test that passed on the PR branch and failed on main", misconception: "Flakiness is intermittent and unrelated to the line nobody edited. The described pattern — two independently green PRs, a break on an untouched line, only after both land — is the signature of a logical conflict (e.g. rename + stale caller), not a flaky test. The combination is genuinely broken, deterministically, not flapping." },
+    { label: "Git failed to detect a merge conflict and silently dropped one side's changes", misconception: "Git didn't fail or drop anything — it merged correctly. The two PRs touch non-overlapping lines, so there is no textual conflict to detect. The break is semantic: the code merges fine and is logically inconsistent (a call to a renamed function). Git only resolves textual conflicts; logical ones are exactly what it cannot see." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-06-scaling-ci-05-merge-queues-and-build-stability-quiz-2"
+  lessonSlug="05-merge-queues-and-build-stability"
+  lang="en"
+  question="How does a merge queue keep main green AND maintain throughput when many PRs are landing per hour?"
+  choices={[
+    { label: "It speculatively builds main + the queued PRs together and merges only if that combined build is green; it batches N PRs into one run for throughput and bisects on failure to eject the culprit", correct: true },
+    { label: "It runs each PR's checks one more time against the latest main right before merging", misconception: "Re-running against 'latest main' still tests each PR against a snapshot that goes stale the moment the next PR merges, and it never builds the combination of the queued PRs together — so it can't catch a logical conflict between them. The queue's power is the SPECULATIVE build of main + the queued PRs as one unit, which is precisely the post-merge state, before anything lands." },
+    { label: "It locks main and forces PRs to merge strictly one at a time, fully serially", misconception: "Strict one-at-a-time merging is correct but slow — at high volume it becomes a single-file bottleneck, one CI run per PR. Real queues batch: they speculatively test main + PR1 + PR2 + ... together, merge all of them from one green run, and bisect to eject the culprit if the batch fails. Batching is exactly how throughput is preserved." },
+    { label: "It widens the runners and shards the tests so every PR merges instantly", misconception: "Faster runners and sharding shorten the gating check (and they matter, because the gate's duration bounds queue throughput), but speed alone never prevents a logical conflict — a fast build of a stale combination is still wrong. Keeping main green requires building the actual post-merge combination (the speculative build), not just building the wrong thing faster." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>PR checks test stale main, so two green PRs break it via a logical conflict git can't see. A merge queue speculatively builds main + queued PRs before landing — green by construction. Batch, bisect, keep the gate fast.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="ci-cd-06-scaling-ci-05-merge-queues-and-build-stability-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why can two PRs that each pass all required checks still break main when they merge, and why doesn't re-running the checks fix it?", a: "A required check on a PR doesn't test main — it tests the PR head merged with main as it was at the instant CI ran, a snapshot. By merge time, other PRs may have landed ahead, so the main the code was validated against no longer exists. Git's merge only blocks textual conflicts (overlapping lines); it's blind to logical/semantic conflicts where two changes share no line yet are incompatible — the canonical case is PR A renaming computeShippingCost and updating its callers (green) while PR B, branched earlier, adds a NEW call to the old name in a file A never touched (green). Git merges both cleanly with zero overlap, and main now calls a function that doesn't exist — red. Neither CI run could have caught it because the combination A-and-B is a state that existed nowhere until the merge created it. Re-running per-PR checks doesn't help: each re-run still tests one PR against a main that is stale the instant another PR lands, and never builds the combination. The faster the merge rate, the more often 'tested against a main that no longer exists' ships a broken main." },
+    { q: "How does a merge queue keep main green, and how do batching and bisection preserve throughput at high merge volume?", a: "A merge queue (GitHub merge queue, Bors, Mergify) serializes integration: instead of merging a PR directly it builds a speculative branch = current main + this PR + everything ahead of it in the queue, runs the full required checks on that combined result, and merges only if that build — main exactly as it will be after the batch lands — is green. So nothing reaches main untested against the exact other changes landing with it; main stays green by construction, because the only thing that ever lands is a combination already proven green as a combination. Testing one PR at a time is correct but slow at volume, so queues BATCH: speculatively build main + PR1 + ... + PRn together, and if green all n merge from a single CI run (one expensive build clears the whole batch). If the batch is RED the queue BISECTS — splits the failing batch to localize which PR broke it, ejects that culprit back to its author, and re-runs the remaining PRs — so one bad PR removes itself instead of jamming the good PRs around it. The trade: bigger batches = higher throughput but more wasted work on failure, so you tune batch size to your failure rate. Two preconditions: main must be protected (no direct pushes, or PRs bypass the speculative build) and the gating check must be FAST, because queue throughput is bounded by the gating check's duration — which is why affected builds, caching, sharding, and right-sized runners matter here." },
+  ]}
+/>
+
+<Recap lang="en">
+Required PR checks don't test main — they test the PR head merged with main as it was when CI ran, a snapshot that's stale the moment another PR lands ahead of it. Git's merge only blocks textual conflicts (overlapping lines); it can't see logical/semantic conflicts, where two non-overlapping changes are incompatible in meaning — the classic case being PR A renaming a function and updating its callers while PR B, branched earlier, adds a new call to the old name in a file A never touched. Both are green, git merges them cleanly, and main breaks on a line neither author edited, because the combination of both PRs is a state that existed nowhere until the merge created it; re-running per-PR checks can't catch it. A merge queue fixes this by serializing integration: it builds a speculative branch of current main plus the queued PRs, runs the full required checks on that combined result, and merges only if main-as-it-will-be is green — so main stays green by construction. To keep throughput high at volume the queue batches N PRs into one speculative run, merging all of them if green; if the batch is red it bisects to localize and eject the culprit, then re-runs the rest, so one bad PR removes itself instead of jamming the queue. Bigger batches mean more throughput but more wasted work on failure, so batch size is tuned to the failure rate. The guarantee holds only if main is protected (everything lands through the queue) and the gating check is fast, because queue throughput is bounded by that check's duration — which is exactly why affected builds, caching, sharding, and right-sized runners matter.
+</Recap>

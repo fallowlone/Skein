@@ -1,0 +1,181 @@
+---
+concepts:
+- test-sharding
+- timing-balanced-splits
+- flaky-tests
+- flake-detection
+- quarantine-lane
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-test-sharding-and-flaky-quarantine"
+sources:
+- https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs
+- https://playwright.dev/docs/test-sharding
+spiral: []
+status: ready
+summary: 'Scaling the test suite has two failure modes: a serial suite that gates every merge, and flaky tests that compound to keep CI red most of the time. Shard by timing data, not file count; detect flakes on retry and quarantine them off the gate — never make global retry the policy.'
+title: 'Test sharding and flaky-test quarantine'
+track: ci-cd
+unit: 06-scaling-ci
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The 600-test suite ran for 40 minutes, serially, on every merge — annoying but tolerable. Then it started failing. Not because of anyone's code: a handful of integration tests had drifted to passing about 95% of the time, and across 600 tests that compounded into red builds roughly a third of the time. The team did the obvious thing and added `retries: 2` to the runner config. CI got slower — re-running failures isn't free — and the red dropped, so everyone moved on. Three weeks later a payments bug shipped. The "flaky" test that kept going red and green had been catching a real race the whole time; the retry policy had been quietly turning its true negative into a green check on the second attempt. This lesson is about the two things that break a test suite at scale: it's too slow because it runs serially, and it's untrustworthy because flakiness compounds. Sharding fixes the first. Detection and quarantine — not retries — fix the second.
+</Hook>
+
+<Crux>Shard by per-test timing across N runners; detect flakes on retry and quarantine them off the gate — never make global retry the policy.</Crux>
+
+<Explanation>
+
+## Sharding: turn 40 serial minutes into total/N
+
+A suite that runs serially has a wall-clock equal to its total CPU time. **Sharding** splits the tests across N parallel runners — a CI matrix — so each runner executes only a subset and wall-clock drops to roughly `total / N + overhead`. The runner gives you a slice flag; CI gives you the matrix that launches N copies of the job, each with a different slice index.
+
+```yaml
+# GitHub Actions: a matrix fans the same job out into N parallel shards
+jobs:
+  test:
+    strategy:
+      fail-fast: false           # one shard failing must not cancel the others
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npx playwright test --shard=${{ matrix.shard }}/8
+```
+
+Each shard runs `--shard=i/8`, executing roughly one eighth of the tests. Then a final job **merges the per-shard reports** into one result — you do not have eight separate pass/fail verdicts, you have one. The mechanics are: fan out by slice index, run the subset, collect the partial reports, merge.
+
+The trap is *how* the runner picks each shard's subset. The naive split is by file count or alphabetical order — divide 600 files into 8 groups of 75. That looks balanced and isn't, because tests are not equal in duration: the slow integration tests cluster, one shard inherits most of them, and that shard becomes the **straggler**. Wall-clock is bounded by the *slowest* shard, not the average, so if shard 3 takes 18 minutes while the other seven finish in 6, your suite takes 18 minutes and seven runners sat idle. You bought parallelism and got one fast lane plus seven empty ones.
+
+```bash
+# The fix: balance by TIMING, not file count.
+# Record per-test durations from past runs, then partition so each
+# shard carries ~equal total time (the slow tests get spread out).
+npx playwright test --shard=3/8   # runner reads timing data to balance slices
+# Jest: --shard plus a timing-aware sequencer; many CI tools (Knapsack,
+# CI's own split) do the same — feed them last run's durations.
+```
+
+## Diminishing returns: overhead sets the floor
+
+Sharding is not free per runner. Each shard pays a **fixed startup cost** — checkout, dependency install, warming the cache — before it runs a single test. Call that overhead `c`. Wall-clock is `total / N + c`. As you raise N, `total / N` shrinks toward zero but `c` does not move, so past a point you are adding runners that each spend more time starting up than testing. Eight runners on a 40-minute suite with two-minute overhead gives `5 + 2 = 7` minutes; thirty-two runners gives `1.25 + 2 = 3.25` minutes for four times the machines — and the bill scales with N. The rule of thumb: pick N where `total / N` is still a few multiples of `c`. Past that, you are paying for overhead, not speed.
+
+<FlowDiagram
+  label="The sharded test pipeline with a flake-handling gate. A single test suite fans out across N parallel runners, each running a timing-balanced subset chosen so every shard carries roughly equal total duration; the slowest shard sets wall-clock. The per-shard reports are merged into one verdict. On a failure, the runner retries that test once on the same commit purely to classify it: if it passes on retry it is flaky, so it is moved to a non-gating quarantine lane and a fix-it ticket is filed, keeping the merge gate green; if it fails again it is a real failure and blocks the merge. The quarantine lane records results without gating, so flakes stop holding up merges while the determinism bug is repaired."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "suite", label: "test suite", sub: "600 tests" },
+    { id: "shard", label: "shard by timing", sub: "N runners, merge reports" },
+    { id: "fail", label: "on failure", sub: "retry once to detect" },
+    { id: "flaky", label: "flaky?", sub: "passed on retry" },
+    { id: "quar", label: "quarantine", sub: "non-gating + ticket" },
+    { id: "real", label: "real fail", sub: "block merge" },
+  ]}
+  edges={[
+    { from: "suite", to: "shard", label: "split + merge" },
+    { from: "shard", to: "fail", label: "a test red" },
+    { from: "fail", to: "flaky", label: "classify" },
+    { from: "flaky", to: "quar", label: "yes" },
+    { from: "flaky", to: "real", label: "no" },
+  ]}
+  caption="Sharding (left) cuts wall-clock to total/N by running timing-balanced subsets in parallel and merging reports. The flake gate (right) uses a single retry to classify a red test: passed-on-retry goes to a non-gating quarantine lane with a ticket; failed-again blocks the merge. Retry is a detection signal, not a fix."
+/>
+
+## Flaky tests: the math that keeps the suite red
+
+A flaky test passes some of the time and fails some of the time on the *same* commit — say it's green 99% of runs. One such test is a nuisance. Now scale it. Test outcomes are roughly independent, so the probability the whole suite is green is the product of each test's pass probability: `P(green) = (1 - flake)^N`. Plug in a 1% flake rate across 300 tests: `0.99^300 ≈ 0.05`. The suite is green about **5% of the time** — it is red on **95% of runs** for reasons that have nothing to do with the change under review.
+
+That is the scaling killer, and the damage is social before it's technical. When the suite is red most of the time on a green codebase, developers learn that red means nothing. They stop reading failures, blind-retry until it's green, or merge on a hunch. And the moment red stops being a signal, a *real* failure sails through in the noise — nobody looks twice at one more red build. The suite has become a slot machine.
+
+## Detect, quarantine, fix — not blind retry
+
+The senior playbook has three steps, in order:
+
+1. **Detect automatically.** Re-run a failure once on the *same commit*. A test that fails then passes with no code change is flaky by definition — flag it and record a flake rate per test over time. The retry here is a *classifier*, not a remedy: its only job is to tell flaky from real.
+2. **Quarantine.** Move known-flaky tests out of the **blocking path** — run them in a separate non-gating lane that still records results, so they stop failing the merge while you keep watching them. The gate goes back to meaning something immediately.
+3. **Fix the root cause.** A flaky test has a determinism bug — a timing assumption, a shared fixture, an unawaited promise, an ordering dependency. Fix that, prove it's stable, return the test to the gate.
+
+The anti-pattern is making **global auto-retry** (`retries: 3` for the whole suite) the standing policy. It looks like a fix because the red goes away, but it does three bad things: it hides flakiness instead of surfacing it for repair, it slows every build by re-running failures, and — the one that bites — it masks tests that are flaky *because they catch a real intermittent bug*. A retry that turns a genuine race's red into green on the second attempt is throwing away exactly the signal you needed. Retry is fine as a *detection* mechanism; it is poison as a permanent *gate* policy.
+
+<Inset kind="why" lang="en">
+Why does a tiny per-test flake rate make a big suite red most of the time, and why is global retry the wrong fix? Because independent flake probabilities compound multiplicatively across the suite: `P(all pass) = (1 - p)^N`, so even `p = 1%` over `N = 300` tests gives about a 5% chance the whole suite is green — it's red roughly 95% of runs with no code change at all. Global auto-retry papers over the symptom but slows every build by re-running, and worse, it masks tests that are flaky precisely because they catch a REAL intermittent bug; a retry that flips that test red-to-green discards the one signal you needed. The fix is to detect-and-quarantine the flaky tests off the gate and repair their determinism, so the gate stays trustworthy and a real failure can't hide in routine red.
+</Inset>
+
+<TradeoffMatrix
+  id="ci-cd-06-scaling-ci-03-test-sharding-and-flaky-quarantine-tradeoff-1"
+  lessonSlug="03-test-sharding-and-flaky-quarantine"
+  lang="en"
+  prompt="A 600-test suite is red about 30% of the time from a handful of flaky integration tests, and slow because it runs serially. How do you make it both fast and trustworthy?"
+  options={[
+    { name: "Shard by per-test timing across N runners (merge reports), auto-detect flakes by retrying a failure once, quarantine known-flaky tests to a non-gating lane, and fix their determinism", summary: "Sharding + detect + quarantine + fix.", correct: true, justification: "This treats both failure modes at their source. Timing-balanced sharding cuts wall-clock to ~total/N by spreading slow tests evenly so no shard is a straggler. Auto-detection uses a single same-commit retry purely to classify red as flaky-or-real. Quarantine pulls the flaky tests off the blocking path so the gate is trustworthy again while results are still recorded, and the fix-it tickets repair the determinism bug so tests return to the gate. The gate keeps meaning something, and a real failure can't hide in routine red. This is the senior default." },
+    { name: "Add global retries: 3 to the whole suite", summary: "Hides flakiness, masks real bugs.", justification: "Global retry makes red disappear, which is why it's tempting, but it does three bad things: it hides flakiness instead of surfacing it for repair, it slows every build by re-running failures, and — the one that ships incidents — it masks a test that is flaky because it catches a real intermittent bug, flipping its true red to green on the second attempt. Retry is a fine detection signal; as a permanent gate policy it throws away the signal you needed. This is the exact anti-pattern from the incident." },
+    { name: "Split the tests alphabetically across 20 runners", summary: "Unbalanced shards + ignores flakiness.", justification: "Alphabetical (or file-count) splitting ignores that tests differ in duration: the slow integration tests cluster into one shard that becomes the straggler, and since wall-clock is bounded by the slowest shard, the other 19 sit idle while one runs long. You paid for 20 runners and got one fast lane. And it does nothing for the flakiness — the suite is still red a third of the time. Wrong on both axes." },
+    { name: "Delete the flaky tests", summary: "Throws away coverage and signal.", justification: "Deleting flaky tests removes the red, but a flaky test is often flaky because it exercises real concurrency or integration — exactly the code most worth testing. Deleting it throws away the coverage and, as the incident showed, can delete a test that was catching a genuine intermittent bug. The flakiness is a determinism bug to fix, not a test to discard; quarantine keeps the test recording results while you repair it." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-06-scaling-ci-03-test-sharding-and-flaky-quarantine-quiz-1"
+  lessonSlug="03-test-sharding-and-flaky-quarantine"
+  lang="en"
+  question="You shard a suite across 8 runners by splitting test files alphabetically into 8 equal groups. Wall-clock barely improves over serial. Why, and what fixes it?"
+  choices={[
+    { label: "Tests differ in duration, so the slow ones clustered into one shard that became the straggler; wall-clock is bounded by the slowest shard, not the average. Balance by per-test timing data instead.", correct: true },
+    { label: "8 runners is too few — add more until wall-clock drops", misconception: "Adding runners to an unbalanced split doesn't help: the straggler shard still holds the slow cluster and still gates wall-clock. And past a point each runner's fixed startup overhead dominates, so more runners costs more without going faster. The problem isn't N, it's that the split ignores duration — fix the balance, not the count." },
+    { label: "Alphabetical order is deterministic, which prevents parallelism", misconception: "Determinism of the ordering has nothing to do with parallelism — the shards still run concurrently. The issue is balance: equal file COUNTS are not equal TIME, so one shard inherits the slow integration tests and runs long while the others idle. Split by recorded per-test timing so each shard carries equal total duration." },
+    { label: "Merging the per-shard reports serializes the runners", misconception: "Report merging is a cheap final step and doesn't serialize the test execution — the shards ran in parallel and only their results are combined at the end. The wall-clock is high because the shards were unbalanced by time, leaving one straggler; timing-based splitting is the fix." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-06-scaling-ci-03-test-sharding-and-flaky-quarantine-quiz-2"
+  lessonSlug="03-test-sharding-and-flaky-quarantine"
+  lang="en"
+  question="Your big suite has a test that's flaky about 1% of the time. The team adds a global retries: 3 policy and the red goes away. What's wrong with this as a standing fix?"
+  choices={[
+    { label: "It hides flakiness instead of fixing it, slows every build by re-running, and can mask a test that's flaky because it catches a REAL intermittent bug — flipping a true red to green. Detect, quarantine, and fix the determinism instead.", correct: true },
+    { label: "Nothing — retries are the standard way to handle flakiness at scale", misconception: "Global retry is the anti-pattern, not the standard. It papers over the symptom while leaving the determinism bug in place, taxes every build with re-runs, and — the dangerous part — turns a genuine intermittent failure green on retry, shipping the bug. Retry belongs as a one-shot detection signal that classifies red as flaky-or-real, not as a permanent gate policy." },
+    { label: "Three retries is too few; raise it to retries: 10 to fully eliminate the red", misconception: "Raising the retry count makes the masking worse, not better: the more times you re-run, the more likely a real intermittent bug eventually 'passes' and slips through, and the slower CI gets. The fix isn't more retries — it's detecting the flake, quarantining it off the gate, and repairing the determinism bug that causes it." },
+    { label: "Retries only help if you also delete the flaky test afterward", misconception: "Deleting the test throws away coverage of exactly the concurrency/integration code most worth testing, and can delete a test that was catching a real bug. The flaky test should be quarantined (non-gating, still recording) and its determinism bug fixed, then returned to the gate — not retried-then-deleted." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Shard by per-test timing (wall-clock ≈ total/N; slowest shard gates, balance beats count). Flakiness compounds: 1% × 300 ≈ 5% green. Detect flakes on retry, quarantine off the gate, fix determinism — not retry-as-policy.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="ci-cd-06-scaling-ci-03-test-sharding-and-flaky-quarantine-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain test sharding: the mechanics, why naive splitting fails, and where diminishing returns set in.", a: "Sharding splits a test suite across N parallel runners — a CI matrix — so each runner executes only a subset (--shard=i/N) and wall-clock drops from the serial total to roughly total/N + overhead. The mechanics are: fan out by slice index (each shard gets a different index), run the subset, collect the per-shard reports, and merge them into one pass/fail verdict — you end with one result, not N. Naive splitting (by file count or alphabetically) fails because tests are not equal in duration: the slow integration tests cluster, one shard inherits most of them and becomes the straggler, and wall-clock is bounded by the slowest shard, not the average — so seven runners can finish in 6 minutes while one runs 18 and the suite takes 18. The fix is to balance by TIMING: record per-test durations from past runs and partition so each shard carries roughly equal total time. Diminishing returns set in because each shard pays a fixed startup cost c (checkout, install, warm cache): wall-clock is total/N + c, so as N grows total/N shrinks toward zero but c doesn't move. Past the point where total/N is only a small multiple of c, you're adding runners that mostly start up rather than test, and the bill scales with N — pick N where total/N is still a few times c." },
+    { q: "Why does a tiny flake rate make a large suite red most of the time, and what's the detect-quarantine-fix playbook versus blind retry?", a: "Test outcomes are roughly independent, so the probability the whole suite passes is the product of each test's pass probability: P(green) = (1 - flake)^N. A 1% flake rate across 300 tests gives 0.99^300 ≈ 0.05 — the suite is green only about 5% of runs and red ~95% of the time for reasons unrelated to the change. The damage is social before technical: when red means nothing, developers stop reading failures and blind-retry or merge on a hunch, so a real failure sails through in the noise. The senior playbook is three steps: (1) DETECT automatically — re-run a failure once on the same commit; a test that then passes with no code change is flaky by definition, so flag it and track a per-test flake rate (the retry here is a classifier, not a remedy). (2) QUARANTINE — move known-flaky tests to a non-gating lane that still records results, so they stop failing the merge and the gate is trustworthy again. (3) FIX the determinism bug (timing assumption, shared fixture, unawaited promise, ordering dependency), prove stability, and return the test to the gate. The anti-pattern is making global auto-retry (retries: 3) the standing policy: it hides flakiness instead of repairing it, slows every build by re-running, and masks a test that's flaky because it catches a real intermittent bug — flipping its true red to green and shipping the bug. Retry is a fine detection signal; it's poison as a permanent gate policy." },
+  ]}
+/>
+
+<Recap lang="en">
+A test suite breaks at scale in two ways, and each has its own fix. It gets too slow because it runs serially: sharding splits the tests across N parallel runners (a CI matrix), each running a subset with --shard=i/N, after which a final job merges the per-shard reports into one verdict, so wall-clock drops from the serial total to roughly total/N + overhead. The trap is naive splitting by file count or alphabetically — tests differ in duration, the slow ones cluster into one straggler shard, and since wall-clock is bounded by the slowest shard you balance by recorded per-test timing instead. Returns diminish because each shard pays a fixed startup cost c, so past the point where total/N is a small multiple of c you pay for overhead, not speed. The second failure is trust: flakiness compounds because P(green) = (1 - flake)^N, so a 1% flake across 300 tests leaves the suite green only ~5% of runs — red most of the time, which trains developers to ignore red and lets a real failure slip through. The senior playbook is detect (retry once on the same commit to classify flaky-vs-real), quarantine (move flaky tests to a non-gating lane that still records results so the gate stays trustworthy), and fix the determinism bug, then return the test to the gate. Global auto-retry as a standing policy is the anti-pattern — it hides flakiness, slows every build, and masks a flaky test that's actually catching a real intermittent bug; retry is a detection signal, not a gate policy.
+</Recap>
