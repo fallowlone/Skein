@@ -2,7 +2,7 @@
 import type { Track, Tier } from "~/types";
 import type { Band } from "~/components/atlas/track-band";
 
-export type { Band };
+export type { Band, Track, Tier };
 
 export interface Concept {
   id: string;

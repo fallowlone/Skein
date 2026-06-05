@@ -1,7 +1,7 @@
 // site/src/scripts/path/planner.ts
 import type { Concept, Goal, KnowledgeState, PathConfig, UnitConcepts, Path, PathStep, Band, Track } from "./types";
 import type { ConceptGraph } from "./graph";
-import { topoSort, ancestors, buildConceptGraph } from "./graph";
+import { topoSort, ancestors, buildConceptGraph, induceUnitGraph, validateAcyclic } from "./graph";
 import { isKnown } from "./knowledge";
 
 const BAND_RANK: Record<Band, number> = { foundations: 0, surface: 1, middle: 2, advanced: 3 };
@@ -38,6 +38,9 @@ export function targetFrontier(goals: Goal[], config: PathConfig, concepts: Conc
 }
 
 // Topo-ordered closure of every target concept the learner does not yet know.
+// Note: a target already KNOWN is dropped outright — its own prereqs are NOT pulled in (only
+// unknown targets expand ancestors). applyDiagnostic propagates mastery down to prereqs, but
+// applySelfDeclare/applyActivity do not, so declaring a deep concept known implies its chain.
 export function missingConcepts(frontier: string[], state: KnowledgeState, g: ConceptGraph, threshold: number): string[] {
   const needed = new Set<string>();
   for (const f of frontier) {
@@ -70,31 +73,47 @@ function goalTrackWeight(track: Track, goals: Goal[], config: PathConfig): numbe
 
 export function orderUnits(units: UnitConcepts[], ctx: OrderCtx): UnitConcepts[] {
   const byId = new Map(ctx.concepts.map((c) => [c.id, c]));
-  const threshold = ctx.config.weights.masteryThreshold;
-  const ready = (u: UnitConcepts) => u.requires.every((c) => isKnown(ctx.state, c, threshold));
   // Fallback "foundations" (lowest weight) so a unit teaching an unregistered concept id is
   // de-prioritised rather than silently boosted to the top.
   const bandOf = (u: UnitConcepts): Band => byId.get(u.teaches[0])?.band ?? "foundations";
   const value = (u: UnitConcepts) => goalTrackWeight(u.track, ctx.goals, ctx.config) * SENIOR_WEIGHT[bandOf(u)];
-
+  const to = (u: UnitConcepts) => ctx.trackOrder.get(u.track) ?? 99;
   const depthMode = ctx.config.breadthVsDepth < 0.5;
-  const withMeta = units.map((u) => ({ u, ready: ready(u) ? 1 : 0, value: value(u), to: ctx.trackOrder.get(u.track) ?? 99 }));
 
-  if (depthMode) {
-    return withMeta
-      .sort((a, b) => a.to - b.to || b.ready - a.ready || a.u.unit.localeCompare(b.u.unit) || b.value - a.value)
-      .map((m) => m.u);
-  }
-  // breadth: ready-first, then round-robin tracks (each round one unit per track, by value).
-  const sorted = withMeta.sort((a, b) => b.ready - a.ready || b.value - a.value || a.u.unit.localeCompare(b.u.unit));
-  const byTrack = new Map<string, UnitConcepts[]>();
-  for (const m of sorted) { const arr = byTrack.get(m.u.track) ?? []; arr.push(m.u); byTrack.set(m.u.track, arr); }
-  const tracks = [...byTrack.keys()].sort((x, y) => (ctx.trackOrder.get(x) ?? 99) - (ctx.trackOrder.get(y) ?? 99));
+  // Unit-level prerequisites within the candidate set: U depends on V iff V teaches a concept U
+  // directly requires. Prereqs whose concepts are already known are taught by non-candidate units
+  // (absent here) and impose no constraint. This is what makes the emitted path dependency-ordered.
+  const prereqUnits = induceUnitGraph(units, ctx.graph);
+  const deps = new Map<string, string[]>(units.map((u) => [u.unit, prereqUnits.get(u.unit) ?? []]));
+
+  // Priority-constrained topological emission: repeatedly emit the best READY unit (all candidate
+  // prereqs already emitted); "best" follows the breadth/depth knob. A cycle (which buildPath
+  // rejects up front) would degrade to emitting the best remaining unit to guarantee progress.
+  const emitted = new Set<string>();
+  const remaining = [...units];
   const out: UnitConcepts[] = [];
-  let added = true;
-  while (added) {
-    added = false;
-    for (const t of tracks) { const arr = byTrack.get(t)!; if (arr.length) { out.push(arr.shift()!); added = true; } }
+  while (remaining.length) {
+    const readyPool = remaining.filter((u) => deps.get(u.unit)!.every((p) => emitted.has(p)));
+    const pool = readyPool.length ? readyPool : remaining;
+    let chosen: UnitConcepts;
+    if (depthMode) {
+      // depth: finish lower-order tracks first, then by unit slug (authoring/prereq order).
+      chosen = pool.slice().sort((a, b) => to(a) - to(b) || a.unit.localeCompare(b.unit))[0];
+    } else {
+      // breadth: spread across tracks — prefer the track with the fewest units emitted so far,
+      // then track order, then higher value, then unit slug.
+      const counts = new Map<string, number>();
+      for (const u of out) counts.set(u.track, (counts.get(u.track) ?? 0) + 1);
+      chosen = pool.slice().sort((a, b) =>
+        (counts.get(a.track) ?? 0) - (counts.get(b.track) ?? 0) ||
+        to(a) - to(b) ||
+        value(b) - value(a) ||
+        a.unit.localeCompare(b.unit),
+      )[0];
+    }
+    out.push(chosen);
+    emitted.add(chosen.unit);
+    remaining.splice(remaining.indexOf(chosen), 1);
   }
   return out;
 }
@@ -122,6 +141,8 @@ export interface BuildInput {
 export function buildPath(input: BuildInput): Path {
   const { state, goals, config, content, srsDue, trackOrder } = input;
   const graph = buildConceptGraph(content.concepts);
+  const acyclic = validateAcyclic(graph);
+  if (!acyclic.ok) throw new Error(`path: concept graph has a cycle (${acyclic.cycle?.join(", ")})`);
   const byId = new Map(content.concepts.map((c) => [c.id, c]));
 
   const frontier = targetFrontier(goals, config, content.concepts);

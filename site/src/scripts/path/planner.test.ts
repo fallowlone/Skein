@@ -59,6 +59,18 @@ describe("planner", () => {
     expect(resolveGoalTargets(bad, CONCEPTS)).toEqual([]);
   });
 
+  it("buildPath throws if the concept graph has a cycle", () => {
+    const cyclic = [
+      { id: "a", label: { en: "a", ru: "a" }, track: "networking", band: "middle", requires: ["b"] },
+      { id: "b", label: { en: "b", ru: "b" }, track: "networking", band: "middle", requires: ["a"] },
+    ] as any;
+    const goal = { id: "g", label: { en: "g", ru: "g" }, target: { concepts: ["a"] }, trackWeights: {} } as any;
+    expect(() => buildPath({
+      state: emptyState(), goals: [goal], config: DEFAULT_CONFIG,
+      content: { concepts: cyclic, units: [], goalById: new Map() }, srsDue: [], now: 0, trackOrder: TRACK_ORDER,
+    })).toThrow();
+  });
+
   it("buildPath returns at most pace.stepsAhead learn steps, each unlocking a target concept", () => {
     const path = buildPath({
       state: emptyState(), goals: [GOALS[0]], config: cfg({ pace: { stepsAhead: 3, srsAggressiveness: 0 } }),
