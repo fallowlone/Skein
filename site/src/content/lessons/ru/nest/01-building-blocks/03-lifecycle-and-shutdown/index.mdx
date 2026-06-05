@@ -1,0 +1,202 @@
+---
+concepts:
+- onModuleInit
+- onApplicationBootstrap
+- onModuleDestroy
+- enableShutdownHooks
+- graceful-shutdown
+deepensInto: []
+estMin: 17
+lang: ru
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-lifecycle-and-shutdown"
+sources:
+- https://docs.nestjs.com/fundamentals/lifecycle-events
+- https://docs.nestjs.com/fundamentals/lifecycle-events#application-shutdown
+spiral: []
+status: ready
+summary: 'Nest зовёт хуки снизу вверх на старте и в обратном порядке на остановке — но shutdown-хуки ВЫКЛЮЧЕНЫ, пока ты не вызвал enableShutdownHooks(). Пропусти его — и SIGTERM убьёт процесс мгновенно: пул оборван на запросе, консьюмер не закоммитил. Дренируй под 30с.'
+title: 'Хуки жизненного цикла и graceful shutdown'
+track: nest
+unit: 01-building-blocks
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Деплой выглядел чисто. Kubernetes поднял новый ReplicaSet, послал старым подам SIGTERM, и дашборд позеленел. Потом пошли тикеты в поддержку: тонкая струйка `Connection terminated unexpectedly` и `ECONNRESET` на оформлении заказа плюс очередь Kafka-сообщений, которые ни с того ни с сего переобрабатывались. В новых подах ошибок не было — урон был в *старых*, в той полусекунде между SIGTERM и выходом процесса. Node получил сигнал и вышел немедленно, потому что никто не вызвал `app.enableShutdownHooks()`. Открытые соединения пула pg были оборваны посреди запроса, HTTP-запросы в полёте просто уронили на пол, а Kafka-консьюмер так и не закоммитил свои оффсеты, так что на следующем опросе эти сообщения выглядели необработанными. Каждая чистка, которую наш код аккуратно прописал в `onModuleDestroy`, не выполнилась ни разу. Этот урок — про жизненный цикл, который даёт тебе Nest, и про ту одну строку, что решает, будет ли остановка graceful или гильотиной.
+</Hook>
+
+<Crux>Старт зовёт хуки снизу вверх, остановка обращает порядок — но shutdown-хукам нужен enableShutdownHooks(), иначе SIGTERM убьёт процесс.</Crux>
+
+<Explanation>
+
+## Старт: снизу вверх, дочерние модули раньше родителей
+
+Nest стартует в два прохода. Сначала он конструирует весь DI-граф — каждый провайдер, про который тебе рассказал L02. *Потом* он обходит модули и зовёт init-хуки. Здесь важны два хука, и порядок между ними — то, что путают чаще всего.
+
+`onModuleInit()` срабатывает **на каждый модуль**, как только собственные провайдеры этого модуля зарезолвлены, — и дочерние (импортируемые) модули срабатывают раньше своих родителей. Так что импортированный тобой `DatabaseModule` отработает свой `onModuleInit` раньше, чем `UsersModule`, который его импортирует. `onApplicationBootstrap()` срабатывает один раз, после того как **каждый** модуль в приложении закончил инициализацию.
+
+```ts
+import { Injectable, OnModuleInit, OnApplicationBootstrap } from '@nestjs/common';
+
+@Injectable()
+export class IndexerService implements OnModuleInit, OnApplicationBootstrap {
+  // runs when THIS module's providers are ready — children before parents.
+  // Hooks may be async; Nest awaits them before moving on.
+  async onModuleInit() {
+    await this.warmLocalCache(); // only needs THIS module's deps
+  }
+
+  // runs after the ENTIRE app graph is live — safe to touch other modules.
+  async onApplicationBootstrap() {
+    this.startPoller(); // depends on a sibling module being initialized too
+  }
+}
+```
+
+Различие не косметическое. В `onModuleInit` модуля A гарантированно готовы только сам A и модули, которые A импортирует. *Соседний* модуль B, к которому ты тянешься поперёк, — скажем, шина сообщений, в которую ты публикуешь, — может ещё не отработать свой `onModuleInit`. Запусти поллер там — и он может стрельнуть в полу-инициализированный граф.
+
+<Inset kind="why" lang="ru">
+Почему запускать поллер в `onApplicationBootstrap`, а не в `onModuleInit`? Потому что `onModuleInit` гарантирует готовность только *этого* модуля и его прямых импортов — Nest зовёт его в тот же миг, как собственные провайдеры модуля зарезолвились, что может быть задолго до того, как соседние модули, на которые ты завязан поперёк графа, инициализировались. Поллеру, крону, «опубликовать стартовое событие» — всему, что тянется через граф модулей, — нужно, чтобы было живо *всё* приложение. `onApplicationBootstrap` — единственная точка, где Nest гарантирует, что каждый модуль закончил `onModuleInit`. Используй `onModuleInit` для самодостаточного прогрева (кэш этого модуля, проверка подключения этого модуля); используй `onApplicationBootstrap` в тот момент, когда работа касается другой части графа.
+</Inset>
+
+## Остановка: обратный порядок и ВЫКЛ по умолчанию
+
+Остановка прогоняет жизненный цикл задом наперёд. Порядок такой: `onModuleDestroy()` → `beforeApplicationShutdown(signal?)` → `onApplicationShutdown(signal?)`, а модули разрушаются в **обратном** порядке к старту: зависящие раньше зависимостей. Этот порядок намеренный — модуль успевает прибраться *до* того, как исчезнут модули, от которых он зависит, так что твой `UsersModule` может сбросить буферы прежде, чем `DatabaseModule`, на котором он стоит, закроет свой пул. Последние два хука получают строку сигнала (`'SIGTERM'`, `'SIGINT'`), так что ты можешь ветвиться по причине остановки.
+
+```ts
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Pool } from 'pg';
+
+@Injectable()
+export class Database implements OnModuleDestroy {
+  private pool = new Pool(/* ... */);
+
+  // Nest AWAITS this on shutdown — drain in-flight, then close cleanly.
+  async onModuleDestroy() {
+    await this.pool.end(); // waits for active queries, then releases sockets
+    // for a broker: await this.consumer.disconnect() — commit offsets, unsubscribe
+  }
+}
+```
+
+Вот та ловушка, что породила инцидент. **Ни один из этих хуков не выполняется по умолчанию.** Nest не слушает сигналы завершения ОС, пока ты явно не подпишешься, — потому что регистрация слушателей сигналов на уровне процесса имеет небольшую цену на каждый слушатель, и фреймворк отказывается навязывать её каждому приложению молча. Включаешь это одной строкой в `main.ts`:
+
+```ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // WITHOUT this line, SIGTERM exits the process immediately and NO
+  // onModuleDestroy / onApplicationShutdown ever runs — pools severed,
+  // requests dropped, broker offsets uncommitted.
+  app.enableShutdownHooks();
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+Забудь эту строку — и SIGTERM в части твоей чистки ведёт себя как `kill -9`: цикл событий так и не получает шанса выполнить твой `pool.end()`, консьюмер не отключается, а Kubernetes радостно рапортует об успешном раскате, пока старые поды текут недоделанной работой.
+
+<FlowDiagram
+  label="Последовательность graceful-остановки Nest-сервиса при rolling-деплое в Kubernetes. Kubernetes посылает SIGTERM старому поду. Параллельно и по порядку должны произойти две вещи: readiness-проба переключается в unready, чтобы балансировщик перестал направлять новый трафик на этот под (часто в паре с preStop sleep около 5 секунд, чтобы дерегистрация эндпоинта успела распространиться), и приложение перестаёт принимать новые соединения и дренирует запросы в полёте. Как только работа в полёте завершена, Nest зовёт onModuleDestroy, где ты await pool.end и consumer.disconnect, чтобы закрыть пулы и закоммитить оффсеты, затем процесс выходит чисто с кодом 0. Если что-то из этого занимает дольше, чем terminationGracePeriodSeconds — по умолчанию 30 секунд, — Kubernetes посылает SIGKILL и обрубает любую ещё бежавшую чистку."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "sigterm", label: "SIGTERM", sub: "old pod" },
+    { id: "unready", label: "readiness unready", sub: "+ preStop ~5s" },
+    { id: "stop", label: "stop accepting", sub: "drain in-flight" },
+    { id: "destroy", label: "onModuleDestroy", sub: "pool.end / disconnect" },
+    { id: "exit", label: "exit 0", sub: "clean" },
+    { id: "kill", label: "SIGKILL @ 30s", sub: "truncated" },
+  ]}
+  edges={[
+    { from: "sigterm", to: "unready", label: "deregister" },
+    { from: "unready", to: "stop", label: "no new traffic" },
+    { from: "stop", to: "destroy", label: "drained" },
+    { from: "destroy", to: "exit", label: "cleaned up" },
+    { from: "sigterm", to: "kill", label: "if > 30s" },
+  ]}
+  caption="Graceful-путь (сверху): readiness переключается в unready, трафик встаёт, полёт дренируется, onModuleDestroy закрывает пулы и коммитит оффсеты, exit 0. Дедлайн (снизу): превысь terminationGracePeriodSeconds (по умолчанию 30с) — и Kubernetes делает SIGKILL, обрубая чистку, так что дренаж должен закончиться сильно раньше 30с."
+/>
+
+## Два режима отказа: нет дренажа и дренаж, который не кончается
+
+Первый режим отказа — это инцидент выше: нет `enableShutdownHooks()`, так что SIGTERM обрубает всё. Фикс — та самая одна строка плюс настоящая чистка в `onModuleDestroy` — `await pool.end()`, `await consumer.disconnect()`, — чтобы пулы дренировались, а брокер закоммитил до того, как процесс уйдёт.
+
+Но есть симметричный второй режим отказа, и сеньоры попадают в него *после* того, как включили хуки: shutdown-хук, который **зависает**. Если `onModuleDestroy` ждёт промис, который никогда не резолвится, или ты написал 60-секундный дренаж, Kubernetes не ждёт вечно. Он ждёт `terminationGracePeriodSeconds` — **по умолчанию 30 секунд**, — затем посылает SIGKILL и всё равно обрубает твою чистку. Хук, который блокируется дольше grace-периода, не безопаснее, чем отсутствие хука; он просто падает позже и запутаннее. Так что дренаж обязан укладываться с запасом под 30 секунд: вменяемый бюджет — **5–15 секунд**. И дренажа запросов самого по себе мало — нужно ещё, чтобы балансировщик *перестал слать* новые, прежде чем ты перестанешь принимать. Переключи readiness-пробу в unready на SIGTERM и добавь `preStop` sleep около **5 секунд**, чтобы дерегистрация эндпоинта успела распространиться через kube-proxy до того, как приложение реально ляжет. Иначе ты идеально сдренируешь старые запросы и потом уронишь новые, которые пришли в это окно.
+
+<TradeoffMatrix
+  id="nest-01-building-blocks-03-lifecycle-and-shutdown-tradeoff-1"
+  lessonSlug="03-lifecycle-and-shutdown"
+  lang="ru"
+  prompt="У тебя Nest-сервис в Kubernetes с пулом pg и Kafka-консьюмером. Rolling-деплой шлёт старым подам SIGTERM. Как сделать так, чтобы сервис дренировался чисто, не роняя запросы и не теряя оффсеты брокера?"
+  options={[
+    { name: "Вызвать app.enableShutdownHooks() и сделать настоящую чистку в onModuleDestroy (await pool.end / consumer.disconnect), плюс переключить readiness в unready и preStop sleep, чтобы трафик дерегистрировался первым", summary: "Включить + дренаж.", correct: true, justification: "Это единственный вариант, в котором чистка реально выполняется на SIGTERM. enableShutdownHooks() регистрирует слушатели сигналов, так что Nest зовёт onModuleDestroy / onApplicationShutdown; внутри них ты await pool.end() и consumer.disconnect(), чтобы запросы в полёте завершились, а оффсеты Kafka закоммитились. Переключение readiness-пробы в unready плюс preStop sleep около 5с заставляет балансировщик перестать слать новые запросы прежде, чем ты перестанешь принимать, так что ты дренируешь старый трафик, не роняя новый. Держи весь дренаж под terminationGracePeriodSeconds (по умолчанию 30с, бюджет 5–15с), чтобы Kubernetes никогда не пришлось делать тебе SIGKILL. Механизм, порядок и дедлайн — всё закрыто." },
+    { name: "Положиться на дефолтное поведение Nest — хуки и так выполнятся на остановке автоматически", summary: "Они не выполняются.", justification: "Это ровно тот инцидент. Shutdown-хуки ВЫКЛючены по умолчанию: Nest не регистрирует слушатели сигналов ОС, пока ты не вызовешь enableShutdownHooks(), потому что каждый слушатель имеет небольшую цену, которую он не навяжет молча. Без этой строки SIGTERM выходит из процесса немедленно, onModuleDestroy не выполняется ни разу, пул pg оборван посреди запроса (Connection terminated unexpectedly / ECONNRESET), а Kafka-консьюмер никогда не коммитит, так что сообщения переобрабатываются. Положиться на дефолт — значит положиться на ничто." },
+    { name: "Пропустить хуки Nest; сделать process.on('SIGTERM', ...) вручную вне Nest, чтобы закрыть пул", summary: "Борьба с фреймворком.", justification: "Технически ты можешь поймать сигнал сам, но теперь ты гасишь ресурсы приложения за спиной у Nest: нет чистого способа достучаться до провайдеров в порядке зависимостей, собственные слушатели фреймворка (если включены где-то ещё) и твои могут гонкой конкурировать, а onModuleDestroy в твоих провайдерах всё равно не сработает. enableShutdownHooks() — это ровно тот поддерживаемый хук, который вплетает обработку сигнала в граф модулей и разрушение в обратном порядке. Ручная реализация отбрасывает гарантии порядка, которые тебе как раз и нужны." },
+    { name: "Просто поднять terminationGracePeriodSeconds до нескольких минут, чтобы у пода была уйма времени", summary: "Время без чистки — впустую.", justification: "Длинный grace-период помогает, только если чистка реально выполняется, — а без enableShutdownHooks() она не выполняется никогда, так что ты просто сказал Kubernetes ждать минуты перед SIGKILL процесса, который и так уронил бы всё в первую полусекунду. Хуже того, длинный grace-период маскирует зависший хук: деплои молча застревают на минуты на под. Фикс — сделать дренаж корректным и быстрым (под 30с), а не растягивать дедлайн." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-03-lifecycle-and-shutdown-quiz-1"
+  lessonSlug="03-lifecycle-and-shutdown"
+  lang="ru"
+  question="Твои провайдеры реализуют onModuleDestroy, чтобы закрыть пул pg, но main.ts ни разу не вызывает app.enableShutdownHooks(). Под получает SIGTERM. Что выполнится?"
+  choices={[
+    { label: "Ничего — без enableShutdownHooks() Nest никогда не регистрирует слушатели сигналов, так что SIGTERM выходит из процесса немедленно, и onModuleDestroy не срабатывает", correct: true },
+    { label: "onModuleDestroy всё равно выполнится — реализации интерфейса достаточно, чтобы зарегистрировать хук", misconception: "Реализация OnModuleDestroy лишь объявляет, ЧТО выполнить на разрушении; она не устраивает так, чтобы разрушение запускалось сигналом. Nest слушает SIGTERM/SIGINT только после того, как ты вызвал enableShutdownHooks(). Без этой строки процесс выходит на сигнале раньше, чем цикл событий вообще доберётся до твоего хука. Интерфейс необходим, но недостаточен." },
+    { label: "beforeApplicationShutdown выполнится, а onModuleDestroy — нет", misconception: "Со слушателями сигналов это «всё или ничего», а не частичный набор. enableShutdownHooks() — это то, что регистрирует слушатели, ведущие всю последовательность остановки (onModuleDestroy → beforeApplicationShutdown → onApplicationShutdown). Без него ни один из них не выполняется на SIGTERM — нет механизма, который зовёт один хук, но пропускает другой." },
+    { label: "Nest ловит SIGTERM по умолчанию, но выполняет только onApplicationShutdown", misconception: "Nest вообще не ловит сигналы завершения по умолчанию — ради этого и существует enableShutdownHooks(). Нет дефолта, который выполняет onApplicationShutdown (или любой другой хук) на SIGTERM, пока ты не подпишешься. Сигнал уходит прямо в Node, который выходит." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-03-lifecycle-and-shutdown-quiz-2"
+  lessonSlug="03-lifecycle-and-shutdown"
+  lang="ru"
+  question="Тебе нужно запустить фоновый поллер, который публикует в шину сообщений, принадлежащую СОСЕДНЕМУ модулю. Какой хук жизненного цикла верный и почему?"
+  choices={[
+    { label: "onApplicationBootstrap — он срабатывает только после того, как КАЖДЫЙ модуль закончил инициализацию, так что соседний модуль, от которого зависит поллер, гарантированно жив", correct: true },
+    { label: "onModuleInit — он запускается рано, так что поллер стартует как можно скорее", misconception: "onModuleInit срабатывает, как только резолвятся собственные провайдеры ЭТОГО модуля, что может быть раньше, чем соседний модуль, к которому ты тянешься поперёк, отработает свой onModuleInit. Запуск поллера там может публиковать в полу-инициализированный граф. «Как можно раньше» — это баг, а не цель: тебе нужно «как только готов весь граф», то есть onApplicationBootstrap." },
+    { label: "beforeApplicationShutdown — у него самый полный обзор приложения", misconception: "beforeApplicationShutdown — это хук ОСТАНОВКИ; он срабатывает, когда приложение разрушается, а не стартует. Запускать поллер там бессмысленно — приложение на пути к выходу. Init-хук, который видит всё приложение готовым, — это onApplicationBootstrap." },
+    { label: "Конструктор модуля — зависимости инжектятся там, так что всё доступно", misconception: "Конструктор выполняется во время конструирования DI-графа, ДО любого хука жизненного цикла и задолго до инициализации соседних модулей. Инжектированные ссылки существуют, но провайдеры за ними могут быть не готовы, и асинхронной работе не место в конструкторе. Межмодульной стартовой работе место в onApplicationBootstrap." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Старт зовёт снизу вверх, остановка обращает порядок. Хуки ВЫКЛ, пока нет enableShutdownHooks() — без него SIGTERM убивает процесс: нет pool.end(), нет коммита оффсета. Дренируй под 30с; сначала readiness.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-01-building-blocks-03-lifecycle-and-shutdown-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Пройди весь жизненный цикл Nest: какие init-хуки срабатывают и в каком порядке, какие shutdown-хуки срабатывают и в каком порядке, и что вообще пускает сторону остановки в ход.", a: "На старте Nest сначала строит весь DI-граф, затем зовёт init-хуки. onModuleInit() выполняется на каждый модуль, как только собственные провайдеры этого модуля зарезолвились, и дочерние (импортируемые) модули срабатывают раньше родителей — так что onModuleInit у DatabaseModule выполняется раньше, чем у UsersModule, который его импортирует. onApplicationBootstrap() затем срабатывает один раз, после того как КАЖДЫЙ модуль закончил инициализацию, так что это единственная точка, где весь граф гарантированно жив; вот почему межмодульная работа (поллер, стартовая публикация) идёт туда, а самодостаточный прогрев — в onModuleInit. Оба могут быть async, и Nest их awaits. На остановке порядок такой: onModuleDestroy() → beforeApplicationShutdown(signal?) → onApplicationShutdown(signal?), причём модули разрушаются в обратном к старту порядке (зависящие раньше зависимостей), чтобы модуль успел прибраться до исчезновения своих зависимостей; последние два получают строку сигнала. Критически, вся сторона остановки ЗАВязана на app.enableShutdownHooks() в main.ts — Nest не регистрирует слушатели сигналов ОС по умолчанию (цена на каждый слушатель, которую он не навяжет молча), так что без этого вызова SIGTERM выходит из процесса немедленно, и ни один из destroy/shutdown-хуков не выполняется." },
+    { q: "Rolling-деплой Kubernetes шлёт SIGTERM твоему Nest-поду. Опиши оба способа, которыми остановка идёт не так, и полный фикс с реальными числами.", a: "Режим отказа 1 — нет дренажа: приложение не вызвало enableShutdownHooks(), так что SIGTERM выходит из Node мгновенно. Соединения пула pg/TypeORM оборваны посреди запроса (клиенты видят Connection terminated unexpectedly / ECONNRESET), HTTP-запросы в полёте уронены, а Kafka-консьюмер не коммитит оффсеты, так что его сообщения переобрабатываются на следующем опросе. Фикс: вызвать enableShutdownHooks() И сделать настоящую чистку в onModuleDestroy — await pool.end() (дренирует активные запросы, затем освобождает сокеты) и await consumer.disconnect() (коммитит оффсеты, отписывается). Режим отказа 2 — хук, который зависает: когда хуки включены, onModuleDestroy, который ждёт никогда-не-резолвящийся промис или гонит 60с-дренаж, не даёт безопасности, потому что Kubernetes ждёт только terminationGracePeriodSeconds (по умолчанию 30с), затем шлёт SIGKILL и всё равно обрубает чистку. Так что дренаж обязан закончиться сильно раньше 30с — вменяемый бюджет 5–15с. Полный фикс также сначала останавливает новый трафик: переключи readiness-пробу в unready на SIGTERM и добавь preStop sleep ~5с, чтобы дерегистрация эндпоинта успела распространиться через kube-proxy до того, как приложение перестанет принимать; иначе ты сдренируешь старые запросы, но уронишь те, что пришли в окне дерегистрации." },
+  ]}
+/>
+
+<Recap lang="ru">
+Nest прогоняет твои провайдеры через жизненный цикл в два прохода. На старте он строит весь DI-граф, затем зовёт onModuleInit() на каждый модуль — дочерние раньше родителей, как только резолвятся собственные провайдеры модуля — и onApplicationBootstrap() один раз, после того как каждый модуль инициализировался; используй onModuleInit для самодостаточного прогрева, а onApplicationBootstrap для всего, что тянется к соседнему модулю, вроде запуска поллера, потому что onModuleInit гарантирует готовность только этого модуля и его импортов. На остановке порядок обращается: onModuleDestroy() → beforeApplicationShutdown(signal?) → onApplicationShutdown(signal?), разрушая зависящих раньше зависимостей, чтобы модуль прибрался до исчезновения своих зависимостей, со строкой сигнала, передаваемой в последние два. Решающая ловушка в том, что shutdown-хуки ВЫКЛючены, пока ты не вызовешь app.enableShutdownHooks() в main.ts — Nest не регистрирует слушатели сигналов ОС по умолчанию, потому что у каждого небольшая цена, — так что без этой одной строки SIGTERM выходит из процесса немедленно, и никакая чистка не выполняется: пул pg оборван посреди запроса (Connection terminated unexpectedly / ECONNRESET), запросы в полёте уронены, а Kafka-консьюмер не коммитит оффсеты. Фикс — эта строка плюс настоящая чистка в onModuleDestroy (await pool.end(), await consumer.disconnect()). Симметричная ловушка — зависший хук: Kubernetes ждёт лишь terminationGracePeriodSeconds (по умолчанию 30с), затем делает SIGKILL, так что дренаж обязан закончиться сильно раньше (бюджет 5–15с), и тебе нужно ещё переключить readiness-пробу в unready и добавить preStop sleep ~5с, чтобы балансировщик перестал направлять трафик прежде, чем ты перестанешь принимать, — иначе ты сдренируешь старые запросы и уронишь новые, пришедшие в это окно.
+</Recap>

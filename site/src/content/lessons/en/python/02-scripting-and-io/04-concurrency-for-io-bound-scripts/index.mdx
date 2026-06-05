@@ -1,0 +1,248 @@
+---
+concepts:
+- gil
+- threadpoolexecutor
+- asyncio
+- processpoolexecutor
+- io-bound-vs-cpu-bound
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-concurrency-for-io-bound-scripts"
+sources:
+- https://docs.python.org/3/library/asyncio.html
+- https://docs.python.org/3/library/concurrent.futures.html
+spiral: []
+status: ready
+summary: 'The GIL lets one thread run Python bytecode at a time but releases on blocking I/O, so threads and asyncio make I/O-bound scripts fast while CPU-bound work needs separate processes. Match the tool to the bottleneck: waiting vs burning CPU.'
+title: 'Concurrency for I/O-bound scripts: threads, async, processes'
+track: python
+unit: 02-scripting-and-io
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The nightly report script fetched 500 API pages, one after another, and took roughly eight minutes — most of it spent with the CPU idle, waiting on the network. A well-meaning engineer "parallelized" it the way they'd parallelize anything heavy: `multiprocessing`. The runtime barely moved — still minutes — and now the box was eating gigabytes of RAM as it spun up a fleet of interpreters to do nothing but wait on sockets. They reached for the heaviest tool Python has for a problem that needed the lightest. A `ThreadPoolExecutor` later dropped that same script to about twenty seconds, because the 500 network waits finally overlapped instead of queuing. Same machine, same network, two orders of magnitude — entirely down to picking the concurrency model that matches the bottleneck.
+</Hook>
+
+<Crux>I/O-bound scripts get fast with threads or asyncio (the GIL releases on I/O); CPU-bound work needs processes to use multiple cores.</Crux>
+
+<Explanation>
+
+## The GIL: one thread runs Python at a time
+
+Every confusing thing about Python concurrency traces back to one rule. CPython has a **Global Interpreter Lock** — the GIL — and it permits exactly *one* thread to execute Python bytecode at any instant. Spin up ten threads doing pure Python math and they don't run on ten cores; they take turns on one, time-sliced. That is why threads do **not** speed up CPU-bound Python.
+
+The twist that makes threads useful anyway: the GIL is **released** whenever a thread blocks on I/O — a socket read, a disk read, `time.sleep`, a database round trip, most C-extension calls. While one thread sits parked waiting for bytes, the GIL is free and another thread runs. So for I/O-heavy work — which is most scripting: HTTP, files, databases — threads genuinely overlap the *waiting*, and the waiting is where all the time goes.
+
+```python
+# This is the whole mental model:
+#   CPU-bound Python  -> GIL HELD     -> threads just time-slice one core (no speedup)
+#   blocking I/O      -> GIL RELEASED -> threads overlap their waits     (big speedup)
+#
+# So the only question that picks your tool is:
+#   "Is this script WAITING on I/O, or BURNING CPU?"
+```
+
+(Python 3.13 ships an experimental free-threaded build that can disable the GIL, but it is opt-in and not yet the default — assume the GIL holds.)
+
+## Threads: the easy I/O win
+
+For an I/O-bound job, `concurrent.futures.ThreadPoolExecutor` is the lowest-effort win in the language. You submit work; the pool runs it across a handful of threads; each one releases the GIL the moment it blocks on the network, so the waits stack up in parallel.
+
+```python
+import concurrent.futures
+import requests
+
+def fetch(url: str) -> int:
+    return len(requests.get(url, timeout=10).content)
+
+def fetch_all(urls: list[str]) -> list[int]:
+    # 100 URLs overlap their network waits across ~16 threads.
+    # The GIL releases during each requests.get(), so they truly overlap.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        return list(pool.map(fetch, urls))
+```
+
+The catch is overhead per thread: each carries a real OS thread with its own stack and a context-switch cost. A pool of tens to low hundreds is fine; tens of thousands of threads is not — you'll drown in memory and scheduler churn. When you need that many in-flight connections, you've outgrown threads and want asyncio.
+
+## Asyncio: thousands of connections on one thread
+
+`asyncio` is **single-threaded cooperative concurrency**. One event loop interleaves thousands of in-flight I/O operations, and each `await` is a point where a coroutine voluntarily yields the loop while it waits, so the loop runs someone else. No OS thread per task, far less memory, so it scales to thousands of concurrent connections where threads would choke.
+
+```python
+import asyncio
+import httpx  # an ASYNC http client — requests is sync and would block the loop
+
+async def fetch(client: httpx.AsyncClient, url: str) -> int:
+    resp = await client.get(url, timeout=10)  # yields the loop while waiting
+    return len(resp.content)
+
+async def fetch_all(urls: list[str]) -> list[int]:
+    async with httpx.AsyncClient() as client:
+        # gather schedules all coroutines on one loop; thousands overlap cheaply
+        return await asyncio.gather(*(fetch(client, u) for u in urls))
+```
+
+The cost is that asyncio is **all-or-nothing**. Cooperative means one coroutine that *doesn't* yield starves every other. A blocking sync call (`requests.get`, a plain `time.sleep`, a heavy `json.loads` over a huge payload) inside a coroutine stalls the **entire loop** — every other connection freezes until it returns. So either you go async all the way down (async HTTP client, async DB driver), or you push the blocking/CPU work off the loop with `loop.run_in_executor(...)` so the loop stays responsive.
+
+<Inset kind="why" lang="en">
+Why do threads speed up 500 HTTP fetches but do nothing for resizing 500 images, in the same CPython? Because the GIL only allows one thread to run Python bytecode at a time, but it is **released** while a thread blocks on I/O — the socket read. During an HTTP fetch the thread is just waiting for bytes; the CPU is idle anyway, so 500 threads overlap their idle waits and the wall-clock collapses to roughly one wait. Image resizing is the opposite: it's pure Python/native compute that **holds** the GIL the whole time, so 500 threads just time-slice one core and finish no faster than one. Only separate **processes** — each its own interpreter with its own GIL — run that compute on multiple cores at once. The workload, not the syntax, decides whether concurrency buys you anything.
+</Inset>
+
+## Processes: true parallelism for CPU-bound work
+
+When the bottleneck is the CPU — resizing images, parsing big files, hashing, number-crunching — no amount of threading helps, because the GIL serializes the compute. You need real parallelism, which in CPython means real OS processes via `ProcessPoolExecutor` (or `multiprocessing`). Each worker is a **separate interpreter with its own GIL**, so they run on separate cores simultaneously.
+
+```python
+import concurrent.futures
+from PIL import Image
+
+def resize(path: str) -> str:
+    img = Image.open(path)            # CPU-bound work that HOLDS the GIL
+    img.thumbnail((256, 256))
+    out = path.replace(".jpg", "_thumb.jpg")
+    img.save(out)
+    return out
+
+def resize_all(paths: list[str]) -> list[str]:
+    # ProcessPoolExecutor -> N interpreters on N cores; the GIL no longer serializes.
+    with concurrent.futures.ProcessPoolExecutor() as pool:
+        return list(pool.map(resize, paths))
+```
+
+Processes aren't free. Each one pays **start-up cost**, and arguments and return values cross the process boundary by being **pickled** (serialized) and shipped over IPC. That overhead only pays off for chunky CPU work; firing a process pool at thousands of tiny tasks, or at I/O work, just buys you the overhead with none of the benefit.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Tool</th>
+        <th class="border border-border px-3 py-2 text-left">Best for</th>
+        <th class="border border-border px-3 py-2 text-left">Scales to</th>
+        <th class="border border-border px-3 py-2 text-left">The catch</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>ThreadPoolExecutor</strong></td>
+        <td class="border border-border px-3 py-2">I/O-bound (HTTP, disk, DB)</td>
+        <td class="border border-border px-3 py-2">Tens to low hundreds</td>
+        <td class="border border-border px-3 py-2">Per-thread memory + context-switch cost</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><strong>asyncio</strong></td>
+        <td class="border border-border px-3 py-2">High-concurrency I/O</td>
+        <td class="border border-border px-3 py-2">Thousands of connections</td>
+        <td class="border border-border px-3 py-2">One blocking/CPU call stalls the whole loop</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><strong>ProcessPoolExecutor</strong></td>
+        <td class="border border-border px-3 py-2">CPU-bound (resize, parse, crypto)</td>
+        <td class="border border-border px-3 py-2">~N cores</td>
+        <td class="border border-border px-3 py-2">Start-up + pickle/IPC per task</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The two classic mistakes
+
+Both real, both common, both the same diagnosis run in reverse. **Mistake one:** using `multiprocessing` for an I/O-bound job — the eight-minute fetch script from the hook. You pay heavy process start-up and pickle overhead and eat RAM, for no win over threads, because the bottleneck was never the CPU; it was the network, and processes don't make sockets return faster. **Mistake two:** using threads (or asyncio) for a CPU-bound job — resizing 1000 images, or a CSV-crunching script — and seeing *zero* speedup, then staring at it baffled. The GIL serialized your Python compute the whole time; threads only ever overlap *waiting*, and there was no waiting to overlap. That CSV script stayed exactly as slow with threads as without, until someone switched it to `ProcessPoolExecutor` and it finally spread across the cores.
+
+The diagnosis is always the same single question: **is the script waiting on I/O, or burning CPU?** Waiting → threads or asyncio. Burning → processes. Get that one classification right and the tool is obvious; get it wrong and you add complexity for no speedup.
+
+<TradeoffMatrix
+  id="python-02-scripting-and-io-04-concurrency-for-io-bound-scripts-tradeoff-1"
+  lessonSlug="04-concurrency-for-io-bound-scripts"
+  lang="en"
+  prompt="A reporting script fetches 500 API pages and currently runs them serially in ~8 minutes. The bottleneck is the network round trips, not local computation. How should you make it fast?"
+  options={[
+    { name: "ThreadPoolExecutor (or asyncio + httpx) to overlap the network waits", summary: "Matches the I/O bottleneck.", correct: true, justification: "The job is I/O-bound: nearly all eight minutes is the CPU sitting idle while sockets wait for bytes. The GIL releases on each network read, so threads genuinely overlap those waits — 500 round trips collapse toward the duration of one, dropping the script to ~20s with trivial code. asyncio + an async client (httpx) is the same idea at higher concurrency on one loop. Either is the right model: cheap, and aimed at the actual bottleneck." },
+    { name: "multiprocessing / ProcessPoolExecutor across all cores", summary: "Heavy tool, wrong bottleneck.", justification: "This is exactly the hook's failed fix. Processes give true parallel CPU, but the CPU was never the constraint — the network was, and a separate interpreter doesn't make a socket return sooner. You pay process start-up plus pickling args/results over IPC and balloon RAM spinning up interpreters that only wait on I/O. Same minutes as before, now with a memory bill. Processes are for CPU-bound work, not fetches." },
+    { name: "Leave it serial — concurrency adds bugs", summary: "Leaves the 8 minutes on the table.", justification: "Serial is the safe default and fine for a handful of requests, but here it's the bug: 500 independent waits are run one at a time, so total time is the SUM of every round trip instead of roughly the longest. The waits are independent and overlappable; refusing to overlap them throws away a ~24x win that a ThreadPoolExecutor gets in a few lines. Simplicity isn't worth two orders of magnitude here." },
+    { name: "Threads, but expecting a core-count speedup on a heavy CPU parse step in the same loop", summary: "GIL serializes the parse.", justification: "Threads are right for the fetches but the reasoning is wrong for the CPU step: if each page triggers heavy Python parsing, the GIL serializes that compute, so threads overlap the network waits but NOT the parsing. Expecting an N-core speedup from threads on CPU work is the second classic mistake. Overlap the I/O with threads/async, and offload the CPU-heavy parse to a process pool (or run_in_executor) — don't expect threads to parallelize compute." },
+  ]}
+/>
+
+<Quiz
+  id="python-02-scripting-and-io-04-concurrency-for-io-bound-scripts-quiz-1"
+  lessonSlug="04-concurrency-for-io-bound-scripts"
+  lang="en"
+  question="In CPython, which kind of workload do threads actually speed up, and why?"
+  choices={[
+    { label: "I/O-bound work — the GIL is released while a thread blocks on I/O, so the waits overlap; CPU-bound work gets no speedup because the GIL serializes the compute", correct: true },
+    { label: "CPU-bound work — threads run Python bytecode on multiple cores in parallel", misconception: "The GIL allows only one thread to execute Python bytecode at a time, so threads can't run CPU-bound Python on multiple cores — they time-slice one core and finish no faster. Threads only help I/O-bound work, where the GIL is released during the blocking wait. For CPU parallelism you need processes." },
+    { label: "Both equally — threads always add parallelism regardless of the workload", misconception: "Threads are not a blanket speedup. They overlap I/O waits (GIL released on blocking I/O) but do nothing for CPU-bound Python, where the GIL serializes the bytecode. The whole skill is classifying the workload first; 'threads always help' is the assumption that produces the no-speedup CPU mistake." },
+    { label: "Neither — the GIL makes threads useless, so you must always use processes", misconception: "The GIL doesn't make threads useless; it releases on blocking I/O, which is exactly when threads shine — overlapping network/disk/DB waits. Always reaching for processes is the other classic mistake: heavy start-up and pickle overhead for I/O work that threads handle far more cheaply." },
+  ]}
+/>
+
+<Quiz
+  id="python-02-scripting-and-io-04-concurrency-for-io-bound-scripts-quiz-2"
+  lessonSlug="04-concurrency-for-io-bound-scripts"
+  lang="en"
+  question="You must fetch 5000 URLs from a script with minimal overhead. Which model fits, and what is the one caveat?"
+  choices={[
+    { label: "asyncio — one event loop scales to thousands of connections cheaply; the caveat is that any blocking/CPU call inside the loop stalls everything, so use async libraries (or run_in_executor) throughout", correct: true },
+    { label: "ProcessPoolExecutor — spin up 5000 processes so every fetch runs in parallel", misconception: "5000 processes is catastrophic: each pays start-up and pickles its args/results, and you'd exhaust memory long before they help. Fetching is I/O-bound, so processes add overhead with no benefit. asyncio handles thousands of connections on a single thread at a fraction of the cost." },
+    { label: "A ThreadPoolExecutor with max_workers=5000 — one thread per URL", misconception: "5000 OS threads is far past where threads scale well — each has its own stack and context-switch cost, so you drown in memory and scheduler churn. Threads are great in the tens-to-low-hundreds; at thousands of connections asyncio's single-loop model is the right tool." },
+    { label: "asyncio, and you can freely call requests.get() inside the coroutines", misconception: "requests.get() is a SYNCHRONOUS blocking call; inside a coroutine it stalls the entire event loop, freezing every other in-flight fetch until it returns — exactly the asyncio caveat. You must use an async client like httpx/aiohttp, or offload blocking calls via loop.run_in_executor." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A decision tree for picking a Python concurrency model from the workload. Start at the script's bottleneck and ask the single classifying question: is this work I/O-bound (waiting on the network, disk, or database) or CPU-bound (burning the CPU on Python compute)? On the I/O-bound branch there are two tools: a ThreadPoolExecutor for moderate concurrency in the tens to low hundreds, or asyncio on one event loop for thousands of concurrent connections — both win because the GIL is released during the blocking wait, so the waits overlap. On the CPU-bound branch the only real-parallelism option is processes via ProcessPoolExecutor, which run on N cores because each worker is a separate interpreter with its own GIL; threads would not help here because the GIL serializes Python compute."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "work", label: "Workload", sub: "what is it doing?" },
+    { id: "io", label: "I/O-bound", sub: "waiting on network/disk" },
+    { id: "cpu", label: "CPU-bound", sub: "burning CPU" },
+    { id: "threads", label: "Threads", sub: "tens to hundreds" },
+    { id: "async", label: "asyncio", sub: "thousands of conns" },
+    { id: "proc", label: "Processes", sub: "N cores" },
+  ]}
+  edges={[
+    { from: "work", to: "io", label: "waiting?" },
+    { from: "work", to: "cpu", label: "burning?" },
+    { from: "io", to: "threads", label: "moderate" },
+    { from: "io", to: "async", label: "high concurrency" },
+    { from: "cpu", to: "proc", label: "need cores" },
+  ]}
+  caption="One classifying question picks the tool: I/O-bound work goes to threads (moderate) or asyncio (thousands) because the GIL releases on the wait; CPU-bound work goes to processes because the GIL serializes compute and only separate interpreters use multiple cores."
+/>
+
+<KeyTakeaway>The GIL runs one bytecode thread at a time but releases on blocking I/O. So I/O-bound → threads or asyncio; CPU-bound → processes (N cores), paying start-up + pickle. Ask: waiting on I/O, or burning CPU?</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="python-02-scripting-and-io-04-concurrency-for-io-bound-scripts-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the GIL, why do threads NOT speed up CPU-bound Python, and why DO they speed up I/O-bound work?", a: "The GIL — Global Interpreter Lock — is CPython's rule that only one thread may execute Python bytecode at any instant. For CPU-bound Python (resizing images, parsing, number-crunching), the threads hold the GIL while they compute, so ten threads don't run on ten cores — they time-slice one core and finish no faster than one; the GIL serializes the compute. The reason threads help I/O-bound work is that the GIL is RELEASED whenever a thread blocks on I/O — a socket read, disk read, time.sleep, a DB round trip, most C-extension calls. While one thread sits parked waiting for bytes, the GIL is free and another thread runs, so the waits overlap. Since I/O-bound work spends almost all its time idle-waiting (and the CPU is idle anyway), overlapping those waits collapses the wall-clock toward the duration of a single wait. The one classifying question that picks your tool is therefore: is the script WAITING on I/O, or BURNING CPU? Waiting -> threads/asyncio; burning -> processes." },
+    { q: "Compare ThreadPoolExecutor, asyncio, and ProcessPoolExecutor: what each is for, how far it scales, and its main cost — and name the two classic mistakes.", a: "ThreadPoolExecutor is the easy win for I/O-bound work (HTTP, disk, DB): it overlaps network waits across a handful of threads since the GIL releases on each blocking call. It scales to tens-to-low-hundreds of threads; the cost is per-thread memory and context-switch overhead, so thousands of threads drown the machine. asyncio is single-threaded cooperative concurrency: one event loop interleaves thousands of in-flight I/O operations, each await yielding the loop while it waits — so it scales to thousands of connections far more cheaply than threads. Its cost is that it's all-or-nothing: a blocking sync call or a CPU-heavy step inside a coroutine stalls the WHOLE loop, so you must use async libraries throughout (httpx/aiohttp, async DB drivers) or offload blocking work via loop.run_in_executor. ProcessPoolExecutor gives true parallelism for CPU-bound work (image processing, parsing, crypto): each worker is a separate interpreter with its own GIL, so they run on ~N cores at once. Its cost is process start-up plus pickling args/results over IPC, so it only pays for chunky CPU work, not tiny tasks or I/O. The two classic mistakes: (1) using multiprocessing for an I/O-bound fetch job — heavy process + pickle overhead and RAM for no win, because the bottleneck is the network not the CPU; (2) using threads or asyncio for a CPU-bound job and seeing NO speedup — the GIL serialized the compute and you needed processes. Diagnose both by asking whether the script is waiting on I/O or burning CPU." },
+  ]}
+/>
+
+<Recap lang="en">
+Every Python concurrency decision reduces to the GIL: CPython lets exactly one thread execute Python bytecode at a time, but it RELEASES the GIL whenever a thread blocks on I/O — a socket read, disk read, time.sleep, a DB round trip. So threads time-slice one core for CPU-bound Python (no speedup) but genuinely overlap the WAITING for I/O-bound work, which is where most scripting time goes. That gives three tools matched to the workload. ThreadPoolExecutor is the easy I/O-bound win — overlap HTTP/disk/DB waits across a handful of threads — good in the tens to low hundreds before per-thread memory and context-switch cost bite. asyncio is single-threaded cooperative concurrency: one event loop interleaves thousands of in-flight connections cheaply, but it is all-or-nothing, so a blocking sync call or CPU-heavy step inside a coroutine stalls the entire loop — use async libraries throughout or offload via loop.run_in_executor. ProcessPoolExecutor gives true parallelism for CPU-bound work (resize, parse, crypto) because each worker is a separate interpreter with its own GIL running on N cores, at the cost of process start-up and pickling args and results over IPC. The two classic mistakes are mirror images: multiprocessing for an I/O-bound fetch (heavy overhead and RAM, no win — the bottleneck is the network) and threads or asyncio for CPU-bound work (no speedup — the GIL serializes compute, you needed processes). One question diagnoses both: is the script waiting on I/O, or burning CPU? Waiting picks threads or asyncio; burning picks processes.
+</Recap>

@@ -1,0 +1,245 @@
+---
+concepts:
+- custom-constraints
+- registerDecorator
+- async-validators
+- useContainer
+- toctou-uniqueness
+deepensInto: []
+estMin: 18
+lang: ru
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-custom-async-validators"
+sources:
+- https://github.com/typestack/class-validator#custom-validation-classes
+- https://docs.nestjs.com/techniques/validation#using-the-built-in-validationpipe
+spiral: []
+status: ready
+summary: 'Кастомные constraint: класс @ValidatorConstraint или фабрика registerDecorator. Асинхронные валидаторы в БД прячут ловушки: забыл useContainer — инжектированный repo undefined; а гонка read-then-write значит, что уникальность гарантирует только UNIQUE-индекс БД, а не валидатор.'
+title: 'Кастомные и асинхронные валидаторы (и их ловушки)'
+track: nest
+unit: 02-validation-and-pipes
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Форма регистрации выглядела герметичной. Кто-то написал чистый декоратор `@IsEmailUnique()`: он запрашивал таблицу пользователей внутри валидатора, возвращал дружелюбный `400 "email already taken"`, и демо было безупречным. Поехало в прод. Через две недели поддержка вытащила два аккаунта с ровно одинаковым email, а третий запрос упал с Postgres-`500`. Ничто в коде не выглядело неправильным — валидатор был *прямо вот тут*. Но валидатор лгал о том, что он гарантирует: он прочитал таблицу, нашёл email отсутствующим и пропустил запрос дальше — а соседний запрос, на полмиллисекунды позже, сделал ровно то же чтение и получил то же «отсутствует». Оба прошли. Оба вставили. Этот урок — про кастомные и асинхронные валидаторы: как их строить, почему инжектированный repository иногда `undefined` и почему валидатор никогда не может быть тем, что держит две строки порознь.
+</Hook>
+
+<Crux>Кастомные валидаторы — это UX, а не constraint. Асинхронной проверке уникальности нужен useContainer для DI и UNIQUE-индекс БД для истины.</Crux>
+
+<Explanation>
+
+## Два способа написать кастомный constraint
+
+class-validator даёт две формы для кастомного правила. Первая — **класс constraint**: класс, помеченный `@ValidatorConstraint`, реализующий `ValidatorConstraintInterface`. Ты пишешь `validate()` (возвращает `boolean` или `Promise<boolean>`) и `defaultMessage()`, затем прикрепляешь его к свойству через `@Validate(MyConstraint)`.
+
+```ts
+import {
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+  ValidationArguments,
+  Validate,
+} from 'class-validator';
+
+// A synchronous rule — no I/O, just logic over the value
+@ValidatorConstraint({ name: 'isStrongPassword', async: false })
+export class IsStrongPasswordConstraint implements ValidatorConstraintInterface {
+  validate(value: string): boolean {
+    return typeof value === 'string'
+      && value.length >= 12
+      && /[a-z]/.test(value)
+      && /[A-Z]/.test(value)
+      && /[0-9]/.test(value);
+  }
+  defaultMessage(args: ValidationArguments): string {
+    return `${args.property} must be ≥12 chars with upper, lower, and a digit`;
+  }
+}
+
+export class SignupDto {
+  @Validate(IsStrongPasswordConstraint)
+  password: string;
+}
+```
+
+Вторая форма — **фабрика декоратора** на базе `registerDecorator`. За ней тянешься, когда хочешь переиспользуемый `@IsEmailUnique()`, который можно ронять на любое свойство — она оборачивает тот же интерфейс constraint в функцию, регистрирующую его против target и property:
+
+```ts
+import { registerDecorator, ValidationOptions } from 'class-validator';
+
+// Reusable decorator: @IsEmailUnique() — wraps a constraint via registerDecorator
+export function IsEmailUnique(options?: ValidationOptions) {
+  return function (target: object, propertyName: string) {
+    registerDecorator({
+      name: 'isEmailUnique',
+      target: target.constructor,
+      propertyName,
+      options,
+      validator: IsEmailUniqueConstraint, // the @Injectable() class below
+    });
+  };
+}
+```
+
+В любом случае *правило* живёт в классе constraint. Фабрика декоратора — лишь эргономичная упаковка, чтобы место вызова читалось как `@IsEmailUnique()`, а не `@Validate(IsEmailUniqueConstraint)`.
+
+## Асинхронные валидаторы и ловушка DI
+
+Проверка уникальности обязана говорить с базой, так что её `validate()` возвращает `Promise<boolean>`, а constraint помечен `async: true`. Чтобы запросить, ему нужен repository пользователей — поэтому ты инжектишь его, как любой другой сервис Nest:
+
+```ts
+@ValidatorConstraint({ name: 'isEmailUnique', async: true })
+@Injectable()
+export class IsEmailUniqueConstraint implements ValidatorConstraintInterface {
+  constructor(private readonly users: UsersRepository) {} // injected dep
+
+  async validate(email: string): Promise<boolean> {
+    // true = valid = email is NOT taken
+    return !(await this.users.exists({ email }));
+  }
+  defaultMessage(): string {
+    return 'email already taken';
+  }
+}
+```
+
+Это компилируется, а затем падает в рантайме: `Cannot read properties of undefined (reading 'exists')`. Причина — та самая ловушка. **class-validator инстанцирует классы constraint сам, вне DI-контейнера Nest** — он просто делает `new IsEmailUniqueConstraint()`, не имея понятия, что твой конструктор хотел repository. Так что `this.users` — `undefined`. В зависимости от того, как ты написал защиту, это либо краш, либо — хуже — валидатор, который молча всегда проходит, потому что `await` на `undefined` выбрасывает, а исключение проглатывается.
+
+Фикс в одну строку живёт в `main.ts`. `useContainer` (экспортируется из class-validator) говорит ему резолвить constraint **через контейнер Nest** вместо того, чтобы `new`-ить их самому:
+
+```ts
+import { useContainer } from 'class-validator';
+import { AppModule } from './app.module';
+
+const app = await NestFactory.create(AppModule);
+// Route constraint instantiation through Nest's DI so @Injectable() deps resolve
+useContainer(app.select(AppModule), { fallbackOnErrors: true });
+```
+
+Теперь `IsEmailUniqueConstraint` строится Nest, получает свой `UsersRepository`, и `this.users` реален. `fallbackOnErrors: true` важен: *встроенные* constraint class-validator (`@IsEmail`, `@IsString`, …) — не провайдеры Nest, так что Nest не может их зарезолвить — `fallbackOnErrors` позволяет class-validator откатиться на свой собственный `new` для них вместо того, чтобы выбросить. Без него каждый встроенный валидатор станет ошибкой «provider not found».
+
+<Inset kind="why" lang="ru">
+Почему проходящий асинхронный валидатор уникальности недостаточен, чтобы *гарантировать* уникальность? Потому что это проверка **read-then-write** с зазором посередине. Валидатор выполняет `SELECT … WHERE email = ?` и не видит строки. Но «нет строки прямо сейчас» — не «нет строки, когда я вставлю». Две конкурентные регистрации с одинаковым email обе выполняют свой `SELECT` до того, как любая сделала `INSERT` — так что обе видят «отсутствует», обе проходят валидацию и обе идут вставлять. Ни один валидатор не неправ насчёт того, что увидел; они просто оба увидели мир, который перестал быть истинным мгновением позже. Только база может закрыть этот зазор, потому что только база может сериализовать две вставки против общего `UNIQUE`-индекса — она пропускает первый commit и отвергает второй. Валидатор снижает трение (чистый 400 для общего случая); индекс обеспечивает истину.
+</Inset>
+
+## Три ловушки, и почему индекс — настоящий фикс
+
+Размещение чтения из БД в слое валидации покупает тебе три проблемы, по возрастанию серьёзности.
+
+**(1) DI** — та, что выше: забыл `useContainer` — и инжектированный repository `undefined`. Краш в день деплоя, легко найти, как только знаешь, что он существует.
+
+**(2) Производительность и enumeration** — валидация теперь выполняет запрос на **каждый запрос к этому эндпоинту, до хендлера**, включая некорректные и злонамеренные. Это DB round trip на запрос, и хуже того, отличимое сообщение `"email already taken"` превращает эндпоинт в **оракул user-enumeration**: атакующий скриптует его, чтобы узнать, у каких email есть аккаунты. Митигируй rate limiting и сообщением, которое не подтверждает существование.
+
+**(3) Гонка TOCTOU — настоящий урок.** Это и есть прод-инцидент. Проверка уникальности — это read-then-write, так что при конкуренции две регистрации обе проходят валидатор и обе вставляют. Исход — либо две строки с одинаковым email (нет constraint), либо сырое нарушение уникальности Postgres, всплывающее как `500` (constraint есть, не обработан). Фикс — перестать притворяться, что валидация — это constraint:
+
+```ts
+// 1) The DATABASE is the source of truth — a UNIQUE index serializes inserts
+//    e.g. CREATE UNIQUE INDEX users_email_key ON users (lower(email));
+
+// 2) Catch the unique-violation and map it to a clean 409 — Postgres code 23505
+try {
+  return await this.users.insert(dto);
+} catch (e) {
+  if (e.code === '23505') {           // unique_violation
+    throw new ConflictException('email already taken'); // 409, not 500
+  }
+  throw e;
+}
+```
+
+**Валидация — это не constraint.** Оставь асинхронный `@IsEmailUnique()` — он даёт общему случаю дружелюбный `400` без stack trace. Но `UNIQUE`-индекс — источник истины: он единственное, что *сериализует* две конкурентные вставки, и отлов `23505` превращает проигравшего в этой гонке в чистый `409` вместо утёкшего `500`. Валидатор — это UX; индекс — это гарантия.
+
+<FlowDiagram
+  label="Two concurrent signup requests race for the same email under an async uniqueness validator. Request A and Request B each run the @IsEmailUnique async validator, which issues a SELECT WHERE email = ? — and because neither has inserted yet, both SELECTs return 'absent', so both validators pass. Both requests then proceed to INSERT. The database UNIQUE index is the serialization point: it admits the first INSERT and rejects the second with Postgres error code 23505 (unique_violation). The application catches 23505 and maps it to a clean 409 Conflict, instead of leaking a 500. The diagram shows that the validator never closes the race — only the index does."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "a", label: "Request A", sub: "validate" },
+    { id: "b", label: "Request B", sub: "validate" },
+    { id: "sel", label: "SELECT email", sub: "both see absent" },
+    { id: "ins", label: "both INSERT", sub: "race" },
+    { id: "idx", label: "UNIQUE index", sub: "serializes" },
+    { id: "conf", label: "23505 → 409", sub: "loser gets Conflict" },
+  ]}
+  edges={[
+    { from: "a", to: "sel", label: "async validate" },
+    { from: "b", to: "sel", label: "async validate" },
+    { from: "sel", to: "ins", label: "both pass" },
+    { from: "ins", to: "idx", label: "write" },
+    { from: "idx", to: "conf", label: "2nd rejected" },
+  ]}
+  caption="Оба асинхронных валидатора проходят, потому что оба SELECT выполнились до любого INSERT — валидатор не может закрыть гонку. UNIQUE-индекс сериализует вставки; вторая падает с 23505, что приложение мапит в 409. Валидация — это UX; индекс — это гарантия."
+/>
+
+<TradeoffMatrix
+  id="nest-02-validation-and-pipes-05-custom-async-validators-tradeoff-1"
+  lessonSlug="05-custom-async-validators"
+  lang="ru"
+  prompt="Ты должен гарантировать, что никакие два пользователя никогда не делят email, даже при конкурентных регистрациях. Какой подход реально даёт гарантию?"
+  options={[
+    { name: "UNIQUE-индекс БД (отлови 23505 → 409) как источник истины, плюс асинхронный валидатор @IsEmailUnique ради дружелюбного сообщения 400", summary: "Индекс = истина, валидатор = UX.", correct: true, justification: "Только UNIQUE-индекс сериализует две конкурентные вставки: база пропускает первую и отвергает вторую нарушением уникальности (23505), которое ты ловишь и мапишь в чистый 409 Conflict вместо утёкшего 500. Асинхронный валидатор оставлен чисто ради эргономики — он возвращает дружелюбный 400 для общего, негоночного случая без stack trace — но он явно НЕ то, что обеспечивает уникальность. Это сеньорская позиция: валидация — это UX, constraint базы — это гарантия, а гонку ты обрабатываешь детерминированно на индексе." },
+    { name: "Только асинхронный валидатор @IsEmailUnique — он запрашивает таблицу пользователей и отвергает дубликаты", summary: "Read-then-write, проигрывает гонку.", justification: "Это ровно тот инцидент. Валидатор — проверка read-then-write: он выполняет SELECT … WHERE email = ?, и при конкуренции две регистрации обе выполняют этот SELECT до того, как любая сделала INSERT, так что обе видят «отсутствует», обе проходят и обе вставляют. Без UNIQUE-индекса у тебя теперь две строки с одинаковым email. Валидатор никогда не неправ насчёт того, что прочитал — он просто не может сериализовать вставки, потому что это может только база. Валидатор — это UX, а не constraint." },
+    { name: "Check-then-insert внутри сервиса (SELECT, затем INSERT, если отсутствует), без UNIQUE-индекса", summary: "Тот же зазор TOCTOU, перенесён.", justification: "Перенос read-then-write из валидатора в сервис ничего не меняет в гонке: между SELECT и INSERT всё ещё есть окно, в которое конкурентный запрос проскальзывает. Два запроса оба читают «отсутствует», оба вставляют, оба коммитят. Зазор присущ read-then-write на уровне приложения; закрыть его требует, чтобы база сериализовала записи через UNIQUE-индекс, который этот вариант специально опускает." },
+    { name: "Mutex / блокировка уровня приложения вокруг хендлера регистрации", summary: "Не масштабируется, не тот слой.", justification: "Внутрипроцессный mutex сериализует запросы только внутри одного Node-процесса; в момент, когда ты запускаешь два инстанса (что делает любой реальный деплой), блокировка теряет смысл, и гонка возвращается. Распределённая блокировка добавляет сетевой round trip, новый режим отказа и всё равно гоняется на истечении блокировки. Ты бы переизобретал — плохо — сериализацию, которую база уже даёт бесплатно через UNIQUE-индекс. Не тот слой для инварианта целостности данных." },
+  ]}
+/>
+
+<Quiz
+  id="nest-02-validation-and-pipes-05-custom-async-validators-quiz-1"
+  lessonSlug="05-custom-async-validators"
+  lang="ru"
+  question="Твой асинхронный IsEmailUniqueConstraint инжектит UsersRepository, но в рантайме this.users — undefined, и валидация падает. Чего не хватает?"
+  choices={[
+    { label: "useContainer(app.select(AppModule), { fallbackOnErrors: true }) в main.ts — без него class-validator инстанцирует constraint сам, вне DI Nest, так что инжектированный repo из конструктора никогда не предоставляется", correct: true },
+    { label: "Constraint не хватает @Injectable(), поэтому Nest его пропускает", misconception: "Добавить @Injectable() необходимо, но недостаточно: даже идеально @Injectable() constraint всё равно инстанцируется собственным `new` у class-validator, пока ты не вызовешь useContainer. Декоратор помечает его как injectable; useContainer — это то, что реально направляет инстанцирование class-validator через контейнер Nest, чтобы зависимость зарезолвилась." },
+    { label: "Асинхронные валидаторы вообще не могут инжектить зависимости; нужно доставать repo через статический service locator", misconception: "Асинхронные валидаторы абсолютно могут использовать инжектированные зависимости — в этом весь смысл подключения useContainer. Нет нужды в статическом service locator; как только class-validator резолвит constraint через контейнер Nest, обычная инъекция через конструктор работает ровно как в любом провайдере." },
+    { label: "Ты забыл добавить constraint в массив providers модуля, и это всё, что нужно DI", misconception: "Регистрация constraint как провайдера помогает Nest знать о нём, но сама по себе он всё равно не будет использован путём инстанцирования class-validator. Недостающий кусок — useContainer в main.ts — именно это заставляет class-validator просить инстанс у Nest вместо того, чтобы new-ить свой." },
+  ]}
+/>
+
+<Quiz
+  id="nest-02-validation-and-pipes-05-custom-async-validators-quiz-2"
+  lessonSlug="05-custom-async-validators"
+  lang="ru"
+  question="Две конкурентные регистрации с одинаковым email обе проходят асинхронный валидатор @IsEmailUnique. Что реально гарантирует, что только одна из них преуспеет?"
+  choices={[
+    { label: "UNIQUE-индекс БД по email: он сериализует две вставки, пропускает первую и отвергает вторую с Postgres 23505, что приложение мапит в 409", correct: true },
+    { label: "Асинхронный валидатор уже это предотвращает — если обе прошли, значит email был свободен для обеих", misconception: "То, что обе прошли — это ровно баг, а не доказательство безопасности. Валидатор — проверка read-then-write: оба запроса выполнили SELECT до того, как любой сделал INSERT, так что оба законно увидели «отсутствует» и прошли. «Обе прошли» означает, что валидатор не смог сериализовать вставки — это может только UNIQUE-индекс БД." },
+    { label: "Обёртка SELECT валидатора в транзакцию делает проверку атомарной со вставкой", misconception: "Простая транзакция вокруг SELECT не помогает, потому что две транзакции всё равно читают снимок, где строка отсутствует, и конфликтуют только на commit — что и есть ровно то, что детектит UNIQUE-индекс. Без индекса (или явной блокировки / SERIALIZABLE) одна граница транзакции не сериализует вставки." },
+    { label: "Установка валидатора в async: true заставляет class-validator выполнять проверки последовательно, так что вторая видит строку первой", misconception: "async: true лишь говорит class-validator, что validate() возвращает Promise; он не сериализует отдельные HTTP-запросы друг против друга. Две регистрации — независимые запросы на независимых соединениях — ничто в слое валидатора их не упорядочивает. Сериализация происходит в базе, через UNIQUE-индекс." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Асинхронным валидаторам в БД нужен useContainer, иначе инжектированный repo — undefined. Валидация — это read-then-write: только UNIQUE-индекс БД сериализует вставки — мапь 23505 в 409. Валидатор = UX, индекс = гарантия.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-02-validation-and-pipes-05-custom-async-validators-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Опиши два способа написать кастомный constraint class-validator и объясни ловушку DI, из-за которой инжектированный repository undefined в асинхронном валидаторе, плюс её фикс.", a: "Две формы: (1) класс constraint, помеченный @ValidatorConstraint({ name, async }), реализующий ValidatorConstraintInterface — ты пишешь validate(value, args), возвращающий boolean или Promise<boolean>, и defaultMessage(args), и прикрепляешь через @Validate(MyConstraint); (2) переиспользуемая фабрика декоратора на базе registerDecorator({ name, target, propertyName, options, validator }), которая упаковывает тот же constraint, чтобы место вызова читалось как @IsEmailUnique() вместо @Validate(...). Для асинхронной проверки в БД ты помечаешь constraint async: true, делаешь validate возвращающим Promise<boolean> и инжектишь repository в конструктор. Ловушка: class-validator инстанцирует классы constraint сам обычным new, вне DI-контейнера Nest, так что инжектированная зависимость из конструктора никогда не предоставляется — this.users undefined, и валидация падает (или молча всегда проходит). Фикс — одна строка в main.ts: useContainer(app.select(AppModule), { fallbackOnErrors: true }) из class-validator, которая направляет инстанцирование constraint через контейнер Nest, чтобы @Injectable()-зависимости зарезолвились. fallbackOnErrors: true позволяет class-validator откатиться на собственное инстанцирование для встроенных constraint (@IsEmail, @IsString), которые Nest не может зарезолвить, вместо того чтобы выбросить «provider not found»." },
+    { q: "Почему асинхронный валидатор уникальности никогда не может гарантировать уникальность и какова правильная стратегия уникальности в Nest + Postgres?", a: "Асинхронный валидатор уникальности — это проверка read-then-write (TOCTOU): он выполняет SELECT … WHERE email = ? и не видит строки, но «нет строки сейчас» — не «нет строки в момент вставки». Две конкурентные регистрации с одинаковым email обе выполняют свой SELECT до того, как любая сделала INSERT, так что обе видят «отсутствует», обе проходят валидацию и обе вставляют — порождая либо две дублирующие строки (нет constraint), либо сырое нарушение уникальности Postgres, всплывающее как 500 (constraint есть, не обработан). Валидатор никогда не неправ насчёт того, что прочитал; он просто не может сериализовать две вставки, потому что это может только база. Правильная стратегия: (1) UNIQUE-индекс БД — источник истины: он сериализует вставки, пропуская первую и отвергая вторую; (2) лови нарушение уникальности (Postgres SQLSTATE 23505) в сервисе и мапь в чистый 409 Conflict вместо утёкшего 500; (3) оставь асинхронный валидатор @IsEmailUnique чисто ради дружелюбного 400 в общем негоночном случае; (4) добавь rate limiting и сообщение, не подтверждающее существование, чтобы чтение из БД на запрос не стало оракулом user-enumeration. Валидация — это UX; индекс — это гарантия." },
+  ]}
+/>
+
+<Recap lang="ru">
+Кастомные constraint class-validator бывают двух форм: класс, помеченный @ValidatorConstraint, реализующий ValidatorConstraintInterface (validate + defaultMessage, прикрепляется через @Validate), либо переиспользуемая фабрика декоратора на базе registerDecorator, упаковывающая тот же constraint как @IsEmailUnique(). Асинхронная проверка в БД помечает constraint async: true и возвращает Promise&lt;boolean>, и обязана инжектить свой repository — но class-validator инстанцирует constraint сам обычным new, вне DI Nest, так что инжектированный repo undefined, и валидация падает. Фикс в одну строку — useContainer(app.select(AppModule), &#123; fallbackOnErrors: true &#125;) в main.ts, которая направляет инстанцирование через контейнер Nest, чтобы @Injectable()-зависимости зарезолвились; fallbackOnErrors позволяет встроенным валидаторам откатиться на собственный new class-validator вместо ошибки. Асинхронная валидация в БД затем несёт три ловушки: забытый useContainer (undefined repo), DB round trip на каждый запрос плюс оракул user-enumeration из отличимого сообщения «email taken» (митигируй rate limiting и расплывчатым сообщением) и настоящую — TOCTOU. Поскольку проверка — это read-then-write, две конкурентные регистрации обе делают SELECT «отсутствует» до любого INSERT, обе проходят и обе вставляют, давая дубликаты или необработанный 500. Валидация — это не constraint: UNIQUE-индекс БД — источник истины, который сериализует вставки, и ты ловишь нарушение уникальности (Postgres 23505) и мапишь в чистый 409. Оставь валидатор ради дружелюбного сообщения, но индекс — это гарантия.
+</Recap>

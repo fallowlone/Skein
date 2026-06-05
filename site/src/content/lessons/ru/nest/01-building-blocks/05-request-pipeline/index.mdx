@@ -1,0 +1,218 @@
+---
+concepts:
+- middleware
+- guards
+- interceptors
+- pipes
+- exception-filters
+- enhancer-binding
+deepensInto: []
+estMin: 18
+lang: ru
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-request-pipeline"
+sources:
+- https://docs.nestjs.com/guards
+- https://docs.nestjs.com/interceptors
+- https://docs.nestjs.com/pipes
+- https://docs.nestjs.com/exception-filters
+- https://docs.nestjs.com/middleware
+spiral: []
+status: ready
+summary: 'Запрос проходит middleware → guard → interceptor(pre) → pipe → handler → interceptor(post) → filter. Две ловушки: guard видит сырое тело (pipes идут после него), а enhancer, созданный через new, вне DI — биндь через APP_GUARD, чтобы инжектить.'
+title: 'Конвейер запроса: middleware, guards, interceptors, pipes, filters'
+track: nest
+unit: 01-building-blocks
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+`RolesGuard` выглядел идеально на ревью. Он читал `@Roles('admin')` с хендлера через `Reflector`, сверял роли пользователя с базой через `UsersService` и возвращал `false` для всех остальных. Автор подключил его в `main.ts` так, как документация показывает для «применить везде»: `app.useGlobalGuards(new RolesGuard(reflector, usersService))`. Вот только `reflector` и `usersService` не были в области видимости в `main.ts`, поэтому кто-то передал `new RolesGuard(new Reflector(), null)`, чтобы оно скомпилировалось. Это уехало в прод. Три недели каждый аутентифицированный пользователь был админом, потому что `usersService` у guard был `null`, проверка роли выбрасывала, а окружающая обработка ошибок по умолчанию открывала доступ. Ничто в тестах это не поймало — тесты тоже конструировали guard руками, со стабом сервиса, который всегда говорил «да». Этот урок — про семистадийный конвейер, через который проходит каждый запрос, и про два места, где сеньоры обжигаются: что видит каждый enhancer и как он получает свои зависимости.
+</Hook>
+
+<Crux>Порядок: middleware → guard → interceptor(pre) → pipe → handler → interceptor(post) → filter. Глобальные enhancer'ы биндь через APP_GUARD.</Crux>
+
+<Explanation>
+
+## Семь стадий, по порядку
+
+Каждый HTTP-запрос, доходящий до хендлера Nest, проходит фиксированную полосу препятствий из enhancer'ов. Порядок не настраивается, и спутать его в голове — это как раз способ положить логику авторизации не туда. Слева направо:
+
+**middleware → guard → interceptor (pre) → pipe → handler → interceptor (post) → filter (при throw)**
+
+1. **Middleware** идёт первым, на уровне Express/Fastify, биндится в `configure(consumer)` модуля. У него есть сырые `req`, `res`, `next` — но он работает *до* того, как Nest определил, какой хендлер обслужит маршрут, поэтому у него **нет `ExecutionContext`**, нет ссылки на хендлер, нет метаданных маршрута.
+2. **Guards** идут следующими. `canActivate(ctx)` возвращает булево (или Promise/Observable от него); `false` коротит запрос с `403`. Здесь живёт авторизация. Guard *получает* `ExecutionContext`, поэтому может читать метаданные хендлера через `Reflector` — но тело запроса ещё **не валидировано и не трансформировано**.
+3. **Interceptors (pre-половина)** оборачивают хендлер. Код до `next.handle()` выполняется здесь.
+4. **Pipes** работают над *аргументами* хендлера — `@Body()`, `@Param()`, `@Query()` — валидируя и трансформируя их (`ValidationPipe`, `ParseIntPipe`). Они выполняются **после** guards и после pre-половины interceptor'а, прямо перед хендлером.
+5. **Хендлер маршрута** выполняется.
+6. **Interceptors (post-половина)** — RxJS-pipe после `next.handle()` (`map`, `timeout`, кеширование, формирование ответа) выполняется на выходе. Один interceptor поэтому даёт тебе **две** точки выполнения вокруг хендлера.
+7. **Exception filters** ловят всё, что выброшено на любой из стадий выше, и маппят ошибку в HTTP-ответ. Filter — последний рубеж.
+
+```ts
+// A guard runs at stage 2 — BEFORE pipes. It sees handler metadata, not a validated DTO.
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(
+    private readonly reflector: Reflector,    // injected — reads @Roles() metadata
+    private readonly users: UsersService,     // injected — checks roles in the DB
+  ) {}
+
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
+    const required = this.reflector.get<string[]>('roles', ctx.getHandler());
+    if (!required) return true;                // no @Roles() → public
+    const { user } = ctx.switchToHttp().getRequest();
+    return this.users.hasAnyRole(user.id, required);
+  }
+}
+```
+
+```ts
+// An interceptor is two execution points: before next.handle() and after, via RxJS.
+@Injectable()
+export class TimingInterceptor implements NestInterceptor {
+  intercept(ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
+    const start = Date.now();                  // PRE-handler half
+    return next.handle().pipe(                 // ← handler runs here
+      map((data) => ({ data, ms: Date.now() - start })), // POST-handler half
+    );
+  }
+}
+```
+
+## Область биндинга: где применяется enhancer
+
+Каждый из четырёх видов enhancer'ов (guards, interceptors, pipes, filters) биндится на одной из четырёх областей: **global**, **controller** (`@UseGuards()` на уровне класса), **method** (`@UseGuards()` на хендлере), а для pipes ещё и **parameter** (`@Body(new ValidationPipe())`). Внутри вида выполнение идёт global → controller → method, самый внешний первым. Область отвечает на вопрос «где это применяется»; она *не* меняет порядок стадий выше.
+
+## DI-ловушка: `new` против `APP_GUARD`
+
+Вот ловушка, которая укусила `RolesGuard`. Есть два способа зарегистрировать *глобальный* enhancer, и они **не** эквивалентны:
+
+```ts
+// ANTI-PATTERN: you `new` it yourself, so it lives OUTSIDE the DI container.
+// It cannot inject Reflector or UsersService — you'd have to hand-build them.
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  app.useGlobalGuards(new RolesGuard(/* what do I pass here? */));
+  await app.listen(3000);
+}
+
+// CORRECT: register via the APP_GUARD token in a module. Nest instantiates it
+// through DI, so Reflector and UsersService are injected normally.
+@Module({
+  providers: [
+    UsersService,
+    { provide: APP_GUARD, useClass: RolesGuard },  // global AND DI-aware
+  ],
+})
+export class AppModule {}
+```
+
+`app.useGlobalGuards(new X())` нормален для enhancer'а *без зависимостей*. В тот момент, когда enhancer'у нужно что-то инжектить — `Reflector`, `ConfigService`, репозиторий — ты обязан регистрировать его через провайдер-токен: `APP_GUARD`, `APP_INTERCEPTOR`, `APP_PIPE` или `APP_FILTER`. Они делают enhancer настоящим провайдером, который конструирует Nest, так что зависимости конструктора резолвятся из контейнера, а не оказываются `null`.
+
+<Inset kind="why" lang="ru">
+Почему guard просто не может прочитать валидированный DTO? Потому что pipes выполняются на стадии 4, а guards — на стадии 2: guard работает *до* того, как хоть один pipe тронул аргументы. В момент guard `request.body` — это то, что выдал парсер тела: простой объект, а не экземпляр твоего DTO-класса, числа всё ещё строки, и ни одна проверка class-validator не применена. `class-transformer` не отработал, поэтому `body instanceof CreatePostDto` равно `false`. Любая авторизация, зависящая от валидированного или приведённого ввода (например, «поле owner должно совпадать с subject из JWT»), не может доверять телу внутри guard — она должна валидировать нужное поле в guard вручную, либо перенести это решение в хендлер или в interceptor, который выполняется после pipe. Смешивание этих двух стадий — это как authZ-проверка молча читает `undefined`.
+</Inset>
+
+<FlowDiagram
+  label="Фиксированный семистадийный конвейер запроса в Nest, слева направо. Входящий HTTP-запрос сначала проходит через middleware (уровень Express/Fastify, ещё нет ExecutionContext, потому что хендлер маршрута не разрешён). Затем guards выполняют canActivate для авторизации, видя метаданные хендлера через Reflector, но сырое невалидированное тело. Затем pre-половина любого interceptor'а выполняется до next.handle(). Затем pipes валидируют и трансформируют аргументы хендлера. Затем выполняется хендлер маршрута. Затем post-половина interceptor'а прогоняет RxJS-pipe на выходе. Наконец, если что-то в цепочке выбрасывает, exception filter ловит это и маппит ошибку в HTTP-ответ."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "mw", label: "middleware", sub: "нет контекста" },
+    { id: "guard", label: "guard", sub: "authZ, сырое тело" },
+    { id: "ipre", label: "interceptor pre", sub: "до handle()" },
+    { id: "pipe", label: "pipe", sub: "валидация args" },
+    { id: "handler", label: "handler", sub: "твой код" },
+    { id: "ipost", label: "interceptor post", sub: "RxJS, на выходе" },
+    { id: "filter", label: "filter", sub: "при throw" },
+  ]}
+  edges={[
+    { from: "mw", to: "guard", label: "разрешить маршрут" },
+    { from: "guard", to: "ipre", label: "разрешено" },
+    { from: "ipre", to: "pipe", label: "next.handle()" },
+    { from: "pipe", to: "handler", label: "args готовы" },
+    { from: "handler", to: "ipost", label: "возврат" },
+    { from: "ipost", to: "filter", label: "если throw" },
+  ]}
+  caption="Порядок фиксирован: middleware (нет контекста) → guard (authZ, сырое тело) → interceptor pre → pipe (валидация) → handler → interceptor post → filter (при любом throw). Guard выполняется до pipes, поэтому никогда не видит валидированный DTO."
+/>
+
+## Режимы отказа, на которые натыкаются сеньоры
+
+**AuthZ в pipe или guard, ждущий валидированное тело.** Поскольку guards выполняются до pipes, guard видит сырое тело — DTO-класс не инстанцирован, числа всё ещё строки. Авторизация, зависящая от валидированного ввода, принадлежит хендлеру или interceptor'у после pipe, а не guard, и *никогда* не pipe (pipe трансформирует данные, он не граница авторизации).
+
+**Ожидание, что interceptor смаппит ошибки.** Interceptor *может* ловить через `catchError` в своём RxJS-pipe, но каноничный маппинг ошибки в ответ — это exception **filter** (`@Catch`, `catch(exception, host)`). Делать и то, и другое ведёт к двойной обработке. И область важна для того, что filter ловит: guard выбрасывает на стадии 2, до того как в игру вступает method-scoped filter, поэтому исключение, выброшенное внутри guard, ловит только filter более высокой области (глобальный).
+
+**Middleware, тянущийся к метаданным хендлера.** Middleware выполняется до разрешения маршрута, поэтому нет `ExecutionContext` и нет способа прочитать `@Roles()` или любой декоратор хендлера. Если тебе нужны метаданные хендлера — нужен guard; именно поэтому guards существуют как отдельная стадия.
+
+<TradeoffMatrix
+  id="nest-01-building-blocks-05-request-pipeline-tradeoff-1"
+  lessonSlug="05-request-pipeline"
+  lang="ru"
+  prompt="Твоему RolesGuard нужно инжектить Reflector (чтобы читать метаданные @Roles()) и UsersService (чтобы проверять роли в базе), и ты хочешь применить его к каждому маршруту. Как зарегистрировать его глобально?"
+  options={[
+    { name: "Зарегистрировать в модуле как { provide: APP_GUARD, useClass: RolesGuard }", summary: "Глобально И DI-aware.", correct: true, justification: "Токен APP_GUARD делает guard настоящим провайдером, который Nest инстанцирует через DI-контейнер, так что зависимости его конструктора — Reflector и UsersService — резолвятся и инжектятся нормально, при этом он применяется к каждому маршруту. Это единственный вариант, который одновременно глобален и инжектирует зависимости. APP_INTERCEPTOR / APP_PIPE / APP_FILTER — эквиваленты для остальных видов enhancer'ов. Это каноничный способ забиндить любой глобальный enhancer с зависимостями." },
+    { name: "app.useGlobalGuards(new RolesGuard()) в main.ts", summary: "Вне DI — зависимости отсутствуют.", justification: "Когда ты сам делаешь `new` для guard, он живёт вне DI-контейнера, поэтому Nest ничего не инжектит: Reflector и UsersService — это то, что ты передал в конструктор. Без реальных аргументов для передачи в main.ts ты получаешь undefined/null-зависимости — ровно тот инцидент, где проверка роли выбросила и по умолчанию открыла доступ. useGlobalGuards безопасен только для enhancer'а без зависимостей." },
+    { name: "Собрать Reflector и UsersService руками и передать их в конструктор в main.ts", summary: "Хрупко, обходит DI.", justification: "Иногда можно сделать `new Reflector()`, но у UsersService, скорее всего, есть свои зависимости (репозиторий, DataSource), которые сами приходят из контейнера — реконструировать этот граф руками в main.ts плохо дублирует DI-контейнер и дрейфует в момент, когда зависимости сервиса меняются. Это «работает», пока UsersService не понадобится ещё один провайдер, потом молча ломается. APP_GUARD позволяет контейнеру построить весь граф правильно." },
+    { name: "Переписать его как middleware, чтобы он выполнялся на каждом запросе", summary: "Не та стадия — нет метаданных.", justification: "Middleware выполняется до разрешения маршрута, поэтому у него нет ExecutionContext и он вообще не может прочитать @Roles() с хендлера — главная работа guard там невозможна. Middleware также не может чисто закоротить с семантикой 403 guard. Авторизация, читающая метаданные хендлера, должна быть guard; вопрос лишь в том, как забиндить его глобально, и ответ — APP_GUARD." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-05-request-pipeline-quiz-1"
+  lessonSlug="05-request-pipeline"
+  lang="ru"
+  question="canActivate у guard читает request.body и проверяет `body.ownerId === user.id`. @Body() хендлера типизирован как CreatePostDto с class-validator. Что guard на самом деле видит в request.body?"
+  choices={[
+    { label: "Сырой распарсенный объект — НЕ экземпляр CreatePostDto, числа всё ещё строки, валидация не применена, потому что pipes выполняются после guard", correct: true },
+    { label: "Полностью валидированный экземпляр CreatePostDto, потому что валидация @Body() выполняется до guards", misconception: "Порядок обратный: guards выполняются на стадии 2, pipes — на стадии 4. В момент guard ни один pipe не тронул аргументы, поэтому request.body — это простой объект, который выдал парсер тела, а не экземпляр CreatePostDto, без проверок class-validator и без приведения class-transformer. body instanceof CreatePostDto внутри guard равно false." },
+    { label: "Ничего — guards вообще не могут получить доступ к request.body", misconception: "Guard МОЖЕТ прочитать request.body через ctx.switchToHttp().getRequest() — он просто видит невалидированную сырую версию. Ограничение не в доступе, а в том, что тело ещё не прошло через ValidationPipe, потому что pipes выполняются после guards." },
+    { label: "Валидированное тело, но только если добавить @UsePipes() на контроллер", misconception: "Pipes уровня контроллера или метода всё равно выполняются на стадии 4, после guard на стадии 2 — добавление @UsePipes() не переносит выполнение pipe перед guard. Guard всегда видит сырое тело, независимо от того, где забиндлен pipe." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-05-request-pipeline-quiz-2"
+  lessonSlug="05-request-pipeline"
+  lang="ru"
+  question="Почему `app.useGlobalGuards(new RolesGuard())` не может инжектить Reflector, а `{ provide: APP_GUARD, useClass: RolesGuard }` инжектит его правильно?"
+  choices={[
+    { label: "Ручной new у guard кладёт его ВНЕ DI-контейнера, поэтому Nest никогда не резолвит зависимости конструктора; APP_GUARD делает его провайдером, который Nest инстанцирует через DI, так что Reflector и сервисы инжектятся", correct: true },
+    { label: "useGlobalGuards устарел; APP_GUARD — это новое имя того же механизма", misconception: "Это не один и тот же механизм, и useGlobalGuards не устарел. Разница в том, кто конструирует экземпляр: с `new` это делаешь ты (вне DI, без инъекции); с APP_GUARD это делает контейнер (внутри DI, полная инъекция). useGlobalGuards остаётся валидным для guard без зависимостей." },
+    { label: "Reflector — request-scoped провайдер, который резолвится только внутри HTTP-контекста", misconception: "Reflector — обычный синглтон, не request-scoped, и доступен по всему приложению. Причина, по которой у `new RolesGuard()` его нет, чисто в том, что ты сконструировал guard вне контейнера, поэтому ничего не инжектилось — дело не в области видимости Reflector." },
+    { label: "APP_GUARD жадно импортирует Reflector, а useGlobalGuards импортирует его лениво", misconception: "Здесь нет различия eager-vs-lazy импорта. Механизм — это членство в DI: APP_GUARD регистрирует guard как провайдер, так что Nest строит его через контейнер и инжектит аргументы конструктора; созданный руками guard контейнер вообще не видит, поэтому ничего не инжектится." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Порядок: middleware → guard → interceptor → pipe → handler → interceptor → filter. Guard идёт до pipes, поэтому видит сырое тело. Enhancer с зависимостями биндь через APP_GUARD (или APP_*), никогда `new` (вне DI).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-01-building-blocks-05-request-pipeline-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Перечисли семь стадий конвейера запроса Nest по порядку и для каждой скажи, что она может и не может видеть.", a: "Порядок фиксирован: (1) middleware — уровень Express/Fastify, биндится в configure(consumer) модуля; имеет сырые req/res/next, но НЕТ ExecutionContext, ссылки на хендлер, метаданных маршрута, потому что выполняется до того, как Nest разрешит, какой хендлер обслужит маршрут. (2) guards — canActivate(ctx) возвращает boolean/Promise/Observable, false коротит с 403; здесь живёт авторизация; guard получает ExecutionContext, поэтому может читать метаданные хендлера через Reflector, но тело ещё НЕ валидировано и не трансформировано. (3) pre-половина interceptor'а — код до next.handle(). (4) pipes — работают над аргументами хендлера (@Body/@Param/@Query), валидируя и трансформируя (ValidationPipe, ParseIntPipe), после guards и pre-половины interceptor'а, прямо перед хендлером. (5) хендлер маршрута. (6) post-половина interceptor'а — RxJS-pipe после next.handle() (map, timeout, кеширование, формирование ответа) на выходе; так что один interceptor — это две точки выполнения вокруг хендлера. (7) exception filters — ловят всё выброшенное где угодно выше и маппят в HTTP-ответ; последний рубеж. Итак: middleware → guard → interceptor(pre) → pipe → handler → interceptor(post) → filter." },
+    { q: "Объясни две сеньорские ловушки: почему guard не может доверять телу и почему созданный руками глобальный enhancer не может инжектить свои зависимости.", a: "Ловушка первая — тело: pipes выполняются на стадии 4, а guards на стадии 2, поэтому guard работает до того, как хоть один pipe тронул аргументы. request.body — это сырой вывод парсера: простой объект, а не экземпляр твоего DTO-класса, числа всё ещё строки, проверок class-validator нет, class-transformer не отработал — поэтому body instanceof CreatePostDto равно false. Авторизация, зависящая от валидированного ввода, должна валидировать поле в guard вручную или переехать в хендлер или в interceptor после pipe; она никогда не должна жить в pipe (pipes трансформируют данные, они не граница authZ). Ловушка вторая — DI: есть два способа забиндить глобальный enhancer, и они различаются. app.useGlobalGuards(new RolesGuard()) конструирует экземпляр сам, ВНЕ DI-контейнера, поэтому Nest ничего не инжектит — Reflector и UsersService это то, что ты передал, обычно null, и так guard молча авторизует всех или падает. Регистрация { provide: APP_GUARD, useClass: RolesGuard } (или APP_INTERCEPTOR/APP_PIPE/APP_FILTER) делает enhancer настоящим провайдером, который Nest инстанцирует через контейнер, так что зависимости конструктора резолвятся нормально, при этом он по-прежнему применяется глобально. useGlobalGuards безопасен только для enhancer'а без зависимостей." },
+  ]}
+/>
+
+<Recap lang="ru">
+Каждый HTTP-запрос, доходящий до хендлера Nest, проходит фиксированную полосу из семи стадий, и порядок не настраивается: middleware → guard → interceptor(pre) → pipe → handler → interceptor(post) → filter(при throw). Middleware идёт первым на уровне Express/Fastify с сырыми req/res/next, но без ExecutionContext, потому что хендлер маршрута ещё не разрешён. Guards идут следующими — canActivate решает авторизацию и может читать метаданные хендлера через Reflector, но тело ещё сырое. Pre-половина interceptor'а выполняется до next.handle(); затем pipes валидируют и трансформируют аргументы хендлера; затем выполняется хендлер; затем post-половина interceptor'а прогоняет свой RxJS-pipe на выходе (так что один interceptor — это две точки выполнения); а exception filter ловит всё выброшенное где угодно и маппит в ответ. Каждый enhancer биндится на области global, controller или method (pipes ещё и parameter), выполняясь global → controller → method, но область никогда не меняет порядок стадий. Две ловушки жгут сеньоров. Первая: поскольку guards выполняются до pipes, guard видит сырое невалидированное тело — не экземпляр DTO, числа всё ещё строки — поэтому authZ, зависящая от валидированного ввода, принадлежит хендлеру или interceptor'у после pipe, никогда guard'у, читающему «валидированное» тело, и никогда pipe. Вторая: забиндить глобальный enhancer двумя способами не эквивалентно: app.useGlobalGuards(new RolesGuard()) живёт вне DI-контейнера и ничего не инжектит (Reflector и сервисы — null, тот самый инцидент, где каждый пользователь стал админом), тогда как &#123; provide: APP_GUARD, useClass: RolesGuard &#125; (или APP_INTERCEPTOR/APP_PIPE/APP_FILTER) делает его DI-aware провайдером, чьи Reflector и UsersService резолвятся из контейнера. useGlobalGuards безопасен только для enhancer'а без зависимостей; всё, что с зависимостями, обязано биндиться через токен APP_*.
+</Recap>
