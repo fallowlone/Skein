@@ -1,0 +1,202 @@
+---
+concepts:
+- lambda-execution-model
+- cold-start
+- provisioned-concurrency-snapstart
+- reserved-concurrency-throttling
+- event-source-retries
+- memory-cpu-coupling
+- "SAA-C03:Design High-Performing Architectures"
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-lambda-execution-and-concurrency"
+sources:
+- https://docs.aws.amazon.com/lambda/latest/dg/lambda-runtime-environment.html
+- https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html
+- https://docs.aws.amazon.com/lambda/latest/dg/invocation-async.html
+spiral: []
+status: ready
+summary: 'A Lambda invocation has an INIT phase (cold start) then INVOKE, and reused environments mean clients belong at module scope. Account concurrency caps at a default 1000; reserved concurrency guarantees and limits, and a runaway function throttles everyone. Source sets retries.'
+title: 'Lambda in depth: cold starts, concurrency, and event sources'
+track: "aws"
+unit: "02-compute-and-deploy"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Your checkout API runs on Lambda and looks perfect in the demo. Then a flash sale hits: traffic 20×'s in ninety seconds, and your dashboard lights up with `429 TooManyRequestsException` and p99 latency spikes that don't match any slow query. While you're staring at it, the on-call for the *reporting* service pings you — their nightly export is throttling too, and they touched nothing. It turns out a third team shipped a runaway function at 4pm that quietly ate most of the account's 1000 concurrent-execution pool, and your checkout path had no reserved capacity, so it was first in line to starve. The bug isn't your code. It's that nobody on the account understood Lambda's execution and concurrency model — where cold starts come from, how the 1000-slot pool is shared, and which event sources retry versus drop. Get those three wrong and Lambda fails you exactly when traffic proves you right.
+</Hook>
+
+<Crux>An invocation is INIT (the cold start) then INVOKE; environments are reused, account concurrency caps at 1000, the source dictates retries.</Crux>
+
+<Explanation>
+
+## The execution model: INIT, INVOKE, and why your DB client belongs at module scope
+
+A Lambda invocation does not start from nothing each time. Lambda runs your code inside an **execution environment** — a micro-VM isolated by **Firecracker** — and that environment has two phases. The **INIT phase** runs once when an environment is created: it downloads your deployment package, bootstraps the language runtime, and executes everything at *module scope* — your imports, your SDK client construction, your DB connection pool. The **INVOKE phase** then runs your handler function against the actual event. The first request to land on a fresh environment pays the full INIT cost end to end; that is a **cold start**. Every subsequent request reuses the *same warm environment*, skipping INIT entirely and running only the handler.
+
+This is the single most important runtime fact, because it dictates where you put expensive setup. Code at module scope runs **once per environment**; code inside the handler runs **once per request**. So you construct your database client, SDK clients, and connection pools at module scope — they survive across invocations and get reused for free. Put that construction inside the handler and you pay to open a new connection on *every* request, which both burns latency and exhausts the database's connection limit under load.
+
+```js
+// ✅ module scope — runs ONCE per environment during INIT, reused on every warm invoke
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
+
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const TABLE = process.env.TABLE_NAME;
+
+export const handler = async (event) => {
+  // ❌ do NOT build the client here — that would re-run per request
+  const { Item } = await ddb.send(
+    new GetCommand({ TableName: TABLE, Key: { id: event.id } })
+  );
+  return Item ?? null;
+};
+```
+
+The numbers set expectations. A warm invoke adds only **single-digit-millisecond** overhead — effectively just function dispatch. A cold start is the INIT cost, typically **tens to a few hundred milliseconds** for a lean Node/Python function, and substantially worse for heavy dependency trees or JVM/.NET runtimes that must JIT and load large frameworks (hundreds of ms to a couple of seconds). The **failure mode** is misreading a latency graph: if your p50 is great but p99 is ugly, you are almost certainly looking at cold starts on the long tail — the requests unlucky enough to hit a freshly-spun environment — not a slow downstream. You tune that by attacking INIT, not the handler.
+
+## Killing (or hiding) the cold start: provisioned concurrency, SnapStart, package size, and the VPC penalty
+
+There is no free way to make INIT instant; every mitigation trades money, build complexity, or runtime support. **Provisioned concurrency** pre-initializes a fixed number of environments and keeps them warm and ready — INIT has already run, so requests routed to them have *no* cold start. The tradeoff is blunt: you pay an hourly rate for those environments whether or not they serve traffic, so it is worth it for latency-sensitive paths with predictable baseline load (a checkout API at known business hours), and wasteful for spiky, unpredictable, or low-traffic functions. **SnapStart** takes a different route: Lambda runs INIT once, snapshots the entire initialized memory state (a Firecracker microVM snapshot), and *restores* that snapshot for each new environment instead of re-running INIT — dramatically cutting cold starts on supported runtimes (Java, and now Python and .NET) at no extra hourly charge, though you must make init idempotent because snapshots are reused.
+
+The cheaper levers attack INIT directly. **Trimming the deployment package** and **lazy-loading** rarely-used modules shrink download and bootstrap time — a 5 MB function cold-starts faster than a 250 MB one carrying the whole AWS SDK and a headless browser. And the classic trap: a **VPC-attached Lambda**. To reach private resources (an RDS instance, an internal service), Lambda attaches a **Hyperplane ENI** to your VPC. Historically this attachment added **seconds** to the first cold start; AWS re-architected it (shared Hyperplane ENIs created at function-config time) so the per-invocation penalty is now small, but VPC functions still carry more init weight than non-VPC ones, and you should reach for a VPC only when you actually need private connectivity.
+
+<Inset kind="why" lang="en">
+**Memory and CPU are coupled, and that flips the obvious cost intuition.** You configure a Lambda's memory from 128 MB up to **10,240 MB**, but that slider does not just buy RAM — CPU scales *linearly* with it. Lambda allocates proportional vCPU, crossing roughly one full vCPU near **1,769 MB** and reaching multiple vCPUs at the top. You pay per GB-millisecond, so doubling memory doubles the per-millisecond price — yet for a **CPU-bound** function (image resize, compression, parsing), more CPU finishes the work *faster*, and a job that takes half as long at double the price can cost the **same or less** while halving latency. The failure mode is the reflex to set memory low "to save money" on a CPU-heavy function: you starve it of CPU, it runs slow, and you pay for more milliseconds at the low rate than you would have at the high one. Always profile cost across memory sizes — the cheapest setting is rarely the smallest.
+</Inset>
+
+## Concurrency: the shared 1000 pool, reserved vs provisioned, and the noisy-neighbor throttle
+
+**Concurrency** is the number of executions running *at the same instant* — not requests per second. If each request takes 100 ms and you get 100 requests/second, you need ~10 concurrent executions; the same RPS with 1-second requests needs ~100. Every region in your account starts with a **default concurrency limit of 1000** simultaneous executions — a *soft* limit you can raise via a support request, but a real ceiling until you do. There is also a **burst limit** governing how fast concurrency can ramp (a few thousand instantly, then a steady scaling rate), so a vertical traffic wall can outrun provisioning even below 1000.
+
+That 1000 is a **shared pool across every function in the account**, which is where the war-story lives. **Reserved concurrency** does two things at once: it *guarantees* a function a carved-out slice of the pool (so it can always scale up to that number) and it *caps* that function at that number (it can never exceed it). A function with **no** reserved concurrency draws from the leftover *unreserved* pool — and competes with every other unreserved function for it. So when one runaway function (a retry storm, an accidental recursion, a fan-out gone wrong) consumes the unreserved pool, every other unreserved function in the account starts getting **throttled** with `429 / TooManyRequestsException` — exactly the cross-team blast radius from the Hook. The fix is twofold: put a **reserved-concurrency cap** on the misbehaving/untrusted function so it can't eat more than its share, and reserve a guaranteed floor for critical paths like checkout so they're never starved by a neighbor.
+
+```yaml
+# SAM/CloudFormation: reserve a guaranteed AND capped slice for checkout,
+# and pre-warm part of it with provisioned concurrency to kill cold starts.
+CheckoutFunction:
+  Type: AWS::Serverless::Function
+  Properties:
+    Handler: index.handler
+    MemorySize: 1769          # ~1 vCPU; profile cost across sizes
+    Timeout: 10
+    ReservedConcurrentExecutions: 200   # guarantees 200 AND caps at 200
+    ProvisionedConcurrencyConfig:
+      ProvisionedConcurrentExecutions: 50   # 50 always-warm, no cold start
+```
+
+Note the distinction this snippet encodes. **Reserved** concurrency is about *how much of the 1000 pool this function owns* — it costs nothing extra, it just partitions the shared limit. **Provisioned** concurrency is about *keeping environments warm* — it costs money and removes cold starts. They're orthogonal: you can reserve without provisioning (guarantee capacity, accept cold starts) or provision a subset of your reserved capacity (the common production shape above). The failure mode is reserving 100% of the pool to one function and leaving everything else with **zero** unreserved capacity — now every other function throttles instantly. Always leave headroom (AWS even enforces a minimum unreserved buffer).
+
+## Event sources and their retry contracts: sync, async, and poll-based
+
+How a function is invoked decides what happens when it **fails** — and teams routinely lose events by assuming the wrong contract.
+
+**Synchronous** sources (API Gateway, ALB, direct `Invoke`) block on the response: the caller waits, gets the result or the error, and Lambda does **no built-in retry**. Retry and timeout are the *caller's* problem — your client, or API Gateway's integration timeout (29 s). A throttle here surfaces immediately as a `429` to the user, which is why latency-sensitive sync paths are the ones you protect with reserved + provisioned concurrency.
+
+**Asynchronous** sources (S3 events, SNS, EventBridge) hand the event to Lambda's internal queue and return immediately; the caller never sees your result. Lambda then retries a failed invocation — by default **two more times** (three attempts total) with backoff — and if all attempts fail, the event goes to your configured **on-failure destination** or **dead-letter queue (DLQ)**. No DLQ and no destination means a permanently-failing async event is **silently dropped after the retries** — the classic "where did my S3-triggered job go?" incident.
+
+**Poll-based** sources (SQS, Kinesis, DynamoDB Streams) work differently again: the **Lambda service itself polls** the source, assembles records into a **batch**, and invokes your function with that batch. This is where `BatchSize`, `MaximumBatchingWindow`, **partial-batch-response** (return `batchItemFailures` so only the failed records are retried, not the whole batch), and **ordering** matter — Kinesis and DynamoDB Streams process records per shard *in order*, and a poison-pill record can stall a shard until it ages out or you handle it. SQS standard has no ordering and redrives failures via the queue's own redrive policy to an SQS DLQ.
+
+```js
+// SQS poll-based handler with partial-batch-response: report only the
+// records that failed so SQS retries just those, not the whole batch.
+export const handler = async (event) => {
+  const batchItemFailures = [];
+  for (const record of event.Records) {
+    try {
+      await process(JSON.parse(record.body));
+    } catch (err) {
+      // surface this one record for redrive; others are acknowledged
+      batchItemFailures.push({ itemIdentifier: record.messageId });
+    }
+  }
+  return { batchItemFailures }; // requires ReportBatchItemFailures on the mapping
+};
+```
+
+Two final hard limits bound every design here: a function's **timeout maxes at 15 minutes** (900 s), and **memory goes up to 10,240 MB** with CPU scaling alongside it. A job that needs more than 15 minutes does not belong on Lambda — that's the wall that pushes long-running work to Fargate.
+
+<TradeoffMatrix
+  id="03-lambda-execution-and-concurrency-tradeoff-1"
+  lessonSlug="03-lambda-execution-and-concurrency"
+  lang="en"
+  prompt="A user-facing checkout API on Lambda has a steady, predictable baseline of traffic during business hours and a strict p99 latency SLA. Cold starts on the long tail are blowing the SLA. Which mitigation fits best?"
+  options={[
+    { name: "Provisioned concurrency sized to the business-hours baseline", summary: "Pre-warmed environments for predictable load.", correct: true, justification: "Right fit. The traffic is latency-sensitive AND predictable, which is exactly the profile provisioned concurrency is for: it pre-initializes a fixed number of environments so requests routed to them skip INIT entirely and incur no cold start, directly fixing the p99 long tail. You pay an hourly rate for those warm environments, but a predictable business-hours baseline means they stay utilized, so the spend is justified — and you can scale the provisioned count on a schedule to match the daily curve." },
+    { name: "Raise the function's memory to 10 GB", summary: "More CPU per invoke.", justification: "Wrong lever. More memory raises CPU and speeds up the handler's compute, but a cold start is dominated by the INIT phase — downloading the package and bootstrapping the runtime — which extra CPU barely helps. You'd pay far more per millisecond for a tiny dent in the cold-start tail. Memory tuning fixes CPU-bound handler time, not INIT latency." },
+    { name: "Add a DLQ to catch the slow requests", summary: "Dead-letter queue for failures.", justification: "Category error. A DLQ captures async events that fail after all retries; it has nothing to do with cold-start latency on a synchronous API path, where the caller waits and there's no built-in retry or DLQ at all. This neither warms environments nor reduces p99 — it addresses a failure mode this scenario doesn't have." },
+    { name: "Move to reserved concurrency only", summary: "Carve out a guaranteed slice.", justification: "Necessary but insufficient. Reserved concurrency guarantees the checkout function a slice of the 1000 pool so a noisy neighbor can't starve it — important for availability — but reserved capacity is still cold until used. It partitions the pool; it does not pre-warm environments, so the p99 cold-start tail remains. You'd pair it with provisioned concurrency, but reserved alone doesn't fix the stated problem." },
+  ]}
+/>
+
+<Quiz
+  id="03-lambda-execution-and-concurrency-quiz-1"
+  lessonSlug="03-lambda-execution-and-concurrency"
+  lang="en"
+  question="An S3-triggered Lambda that resizes images starts failing on every invocation after a bad deploy, and the team notices the resized files just... stop appearing, with no errors surfaced to any caller. Why are the events vanishing?"
+  choices={[
+    { label: "S3 is an asynchronous source: Lambda retries the failed invocation twice more, then — with no DLQ or on-failure destination configured — silently drops the event after the retries are exhausted", correct: true },
+    { label: "S3 invocations are synchronous, so the caller swallowed the error", misconception: "S3 event notifications are asynchronous, not synchronous — S3 hands the event to Lambda's internal queue and returns immediately, so there is no caller waiting to see (or swallow) an error. The events are lost because async failures with no DLQ are dropped after retries, not because a caller hid them." },
+    { label: "Lambda retries an async failure forever, so they're still queued and will eventually succeed", misconception: "Async invocations are retried a bounded number of times (two more attempts after the first by default), not forever. After the retries are exhausted the event goes to a DLQ/destination if configured, or is discarded — it is not held in an infinite queue." },
+    { label: "The 15-minute timeout was hit, so the events rolled back to S3", misconception: "There is no rollback-to-S3 mechanism, and a resize failing instantly after a bad deploy isn't a timeout. The cause is the async retry-then-drop contract with no DLQ, independent of the 15-minute execution limit." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A Lambda invocation choosing between a cold start and a warm reuse, then routing failures by event source"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "ev", label: "event arrives", sub: "sync / async / poll" },
+    { id: "init", label: "INIT (cold)", sub: "runtime + module scope" },
+    { id: "warm", label: "reuse (warm)", sub: "skip INIT" },
+    { id: "run", label: "INVOKE handler", sub: "per request" },
+    { id: "ok", label: "response", sub: "sync returns" },
+    { id: "dlq", label: "retry → DLQ", sub: "async / poll" },
+  ]}
+  edges={[
+    { from: "ev", to: "init", label: "no warm env" },
+    { from: "ev", to: "warm", label: "env exists" },
+    { from: "init", to: "run" },
+    { from: "warm", to: "run" },
+    { from: "run", to: "ok", label: "success" },
+    { from: "run", to: "dlq", label: "failure" },
+  ]}
+  caption="The first request to a fresh environment pays INIT (the cold start); later requests reuse the warm environment and skip it. On failure, a synchronous caller sees the error directly, while async and poll sources retry and then route to a DLQ or on-failure destination — or drop the event if none is configured."
+/>
+
+<KeyTakeaway>INIT (cold start) then INVOKE; reuse puts clients at module scope. The shared 1000 pool: reserved concurrency guarantees and caps, a runaway one throttles all. Source sets retries: sync none, async DLQ, poll batches.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-lambda-execution-and-concurrency-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through the two phases of a Lambda invocation and explain exactly where a database client should be constructed and why.", a: "Lambda runs your code in an execution environment (a Firecracker micro-VM) that has two phases. The INIT phase runs once when an environment is created: it downloads the deployment package, bootstraps the language runtime, and executes all module-scope code — imports, SDK client construction, connection pools. The INVOKE phase then runs your handler against the event. The first request on a fresh environment pays the full INIT cost — that's the cold start (typically tens to a few hundred ms, worse for big deps or JVM/.NET). Every later request reuses the same warm environment, skips INIT, and adds only single-digit-ms overhead. So you construct DB and SDK clients at module scope: that code runs once per environment and the client is reused across all invocations on that environment, for free. Building the client inside the handler re-runs it per request, opening a new connection every time — burning latency and exhausting the database's connection limit under load." },
+    { q: "Explain how the account concurrency pool, reserved concurrency, and provisioned concurrency interact, and how one function can throttle the entire account.", a: "Concurrency is the number of executions running simultaneously. Each region defaults to a soft limit of 1000 concurrent executions, shared across every function in the account. Reserved concurrency does two things: it guarantees a function a carved-out slice of that 1000 (it can always scale to that number) and it caps the function at that number. A function with no reserved concurrency draws from the leftover unreserved pool and competes with every other unreserved function. So if one runaway function — a retry storm, accidental recursion, runaway fan-out — consumes the unreserved pool, every other unreserved function gets throttled with 429 TooManyRequestsException; that's the cross-team blast radius. Provisioned concurrency is orthogonal: it pre-initializes and keeps a set number of environments warm so requests skip INIT (no cold start), and it costs an hourly rate. Reserved partitions the shared limit and costs nothing extra; provisioned warms environments and costs money. The defense: cap untrusted/spiky functions with reserved concurrency so they can't eat more than their share, and reserve a floor for critical paths so a neighbor can never starve them — while leaving unreserved headroom for everything else." },
+  ]}
+/>
+
+<Recap lang="en">
+A Lambda invocation runs inside a reusable Firecracker execution environment with two phases: the INIT phase runs once per environment — downloading the package, starting the runtime, and executing module-scope code — and the INVOKE phase runs the handler per request. The first request on a fresh environment pays the full INIT cost (a cold start, tens to a few hundred ms, worse for heavy deps or JVM/.NET), while warm reuses skip INIT and add only single-digit-ms overhead, which is why DB and SDK clients belong at module scope, not inside the handler. You hide or shrink cold starts with provisioned concurrency (pre-warmed environments, paid hourly, for predictable latency-sensitive load), SnapStart (snapshot-and-restore the initialized state on supported runtimes, no hourly charge), trimming the package and lazy-loading, and by avoiding a VPC unless you genuinely need private connectivity (the Hyperplane ENI penalty, now small but non-zero). Concurrency is simultaneous executions, capped per region at a default soft 1000 shared across the account: reserved concurrency both guarantees and caps a function's slice and costs nothing, provisioned concurrency keeps environments warm and costs money, and a single runaway function with no caps can drain the unreserved pool and throttle every other function in the account with 429s. Finally, the event source sets the failure contract — synchronous (API Gateway/ALB) has no built-in retry and surfaces errors to the caller, asynchronous (S3/SNS/EventBridge) retries twice then routes to a DLQ or drops the event if none is set, and poll-based (SQS/Kinesis/DynamoDB Streams) has the Lambda service batch records with partial-batch-response and per-shard ordering implications — all under the hard ceilings of a 15-minute timeout, 10 GB of memory, and CPU that scales linearly with memory so a CPU-bound function can get cheaper by getting bigger.
+</Recap>
