@@ -1,0 +1,188 @@
+---
+concepts:
+- hosted-vs-self-hosted
+- ephemeral-runners
+- autoscaling-arc
+- spot-instances
+- queue-time
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-runner-infrastructure-and-cost"
+sources:
+- https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners
+- https://github.com/actions/actions-runner-controller
+spiral: []
+status: ready
+summary: 'The CI bill is only half the cost: queue time multiplied by engineer-hours is the other half. Run ephemeral runners (clean room per job), autoscale to the queue, put them on spot to cut the bill 60-90%, right-size, and watch p95 queue time, not just job duration.'
+title: 'Runner infrastructure and CI cost at scale'
+track: ci-cd
+unit: 06-scaling-ci
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The mandate came down after a flaky third-party runner leaked a token: "move everything to large hosted runners, to be safe." It worked. It also did two things nobody modeled. The monthly CI bill went up 10x — the biggest machine on every job, even the ones that lint a README. And because finance then capped concurrency to claw that bill back, PRs started queueing 20+ minutes at peak. The dashboard everyone watched showed job *duration* holding steady, so it looked fine. What it didn't show was queue time: forty engineers each waiting twenty minutes for a free runner, several times a day. The runner bill they were fighting over was a rounding error next to the engineer-hours they were burning in the queue. This lesson is about the runner fleet underneath your pipelines — hosted vs self-hosted, ephemeral vs persistent, autoscaling, spot, and the cost curve that has two axes, not one.
+</Hook>
+
+<Crux>CI cost is the runner bill plus engineer-wait. Run ephemeral runners, autoscale to the queue, use spot, and watch p95 queue time.</Crux>
+
+<Explanation>
+
+## Hosted vs self-hosted: who owns the machine
+
+GitHub-hosted runners give you a clean, ephemeral VM per job with zero operations on your side — you pay per minute and never patch anything. That is the right default until one of three things bites: the bill at high volume, the spec ceiling (you need big machines, GPUs, or specific hardware the hosted catalog doesn't offer), or network reach (the job must touch services inside your VPC). Self-hosted runners answer all three — your machines, cheaper at high volume, any spec, VPC access — but you inherit patching, scaling, and **security**.
+
+That security clause is not a footnote. A self-hosted runner attached to a **public** repository is dangerous: a pull request from a stranger runs *their* code on *your* infrastructure. Keep self-hosted runners off public repos, or gate them behind required approval for first-time contributors.
+
+```yaml
+# A job pinned to your self-hosted fleet by label.
+jobs:
+  build:
+    runs-on: [self-hosted, linux, x64, ephemeral]  # labels select the fleet
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./ci/build.sh
+```
+
+## Ephemeral runners: a clean room per job
+
+This is the practice that makes self-hosted safe. An **ephemeral** runner executes exactly **one** job and is then destroyed and recreated fresh. A **persistent** runner stays up and takes job after job — and accumulates state between them: leftover files in the workspace, a poisoned dependency cache, a background process spawned by a previous (possibly malicious) job. That residue is a contamination channel. A later job can read secrets left behind, hit a tampered binary, or inherit a corrupted cache — and nothing is reproducible because every job starts from wherever the last one left the box.
+
+Ephemeral runners close all of that. Each job gets a clean room: deterministic starting state, no cross-job leakage, and a compromised job dies with its runner instead of lying in wait for the next one. The cost is spin-up time per job — you pay a fresh boot every time — which you mitigate with **warm pools** (a few idle runners pre-provisioned) and fast base images. The isolation is not obtainable any other way; the spin-up cost is.
+
+```bash
+# Register a self-hosted runner that exits after one job and is not re-used.
+./config.sh --url https://github.com/acme/payments \
+  --token "$REG_TOKEN" \
+  --labels linux,x64 \
+  --ephemeral            # <- destroy after a single job; no state survives
+./run.sh
+```
+
+<Inset kind="why" lang="en">
+Why are ephemeral runners worth the per-job spin-up cost when a fast persistent runner skips it? Because a persistent runner carries state across jobs — a cached file, a leftover process, a poisoned dependency from a previous and possibly untrusted job — so jobs are neither reproducible nor isolated, and one compromised job can tamper with every job that lands on that box afterward. Ephemeral gives a clean room per job: deterministic state, no cross-job leakage, and a compromised job dies with its runner instead of persisting. The spin-up cost is mitigated with warm pools and fast images; the isolation simply is not available from a persistent fleet at any price. You are buying a security and reproducibility property, not a performance one.
+</Inset>
+
+## Autoscaling: track the queue, not a guess
+
+A fixed fleet of N runners has two failure modes, and you can't tune your way out of both with a constant. Too few runners and jobs **queue** — developers wait, and the real cost is engineer idle time, not an idle machine. Too many and you **pay for idle** runners sitting warm with nothing to do. Whatever N you pick is wrong at some point in the day, because demand is spiky: quiet at 3am, a thundering herd when everyone pushes before standup.
+
+Autoscaling makes N follow demand. **Actions Runner Controller (ARC)** runs ephemeral runners as Kubernetes pods that scale with the job queue: when the queue grows, it spins up more runner pods; when it drains, it scales **to zero** so idle hours cost nothing. You get the best of both — capacity when there's a herd, no bill when there isn't — and crucially the runners are still ephemeral, so autoscaling and clean-room isolation compose instead of fighting.
+
+```yaml
+# ARC: an autoscaling set of ephemeral runners (scales with queue, down to zero).
+apiVersion: actions.github.com/v1alpha1
+kind: AutoscalingRunnerSet
+spec:
+  githubConfigUrl: https://github.com/acme/payments
+  minRunners: 0          # scale to zero when the queue is empty
+  maxRunners: 200        # ceiling so a herd can't bankrupt you
+  template:
+    spec:
+      containers:
+        - name: runner
+          image: ghcr.io/actions/actions-runner:latest
+```
+
+## The cost curve has two axes
+
+Here is the senior reframe the war-story team missed. CI cost is not one number. It is the **runner $** plus the **engineer-time $** of everyone waiting on CI. Optimize only the bill — fewer runners, smaller machines, capped concurrency — and you inflate queue time and wall-clock, which multiplies across every engineer waiting. An organization's engineer-hours dwarf its CI bill, so the true optimum is usually **more** parallelism, not less: add runners until wall-clock stops improving, because past that point you're paying for machines that don't shorten the wait, but up to that point every minute shaved is multiplied by the team.
+
+Two levers make "more parallelism" cheap. First, **spot / preemptible** instances: CI is fungible and retry-safe — a preempted job just re-runs — so it's the ideal workload to put on spot, cutting the runner bill **60-90%**. Second, **right-sizing**: most jobs need a small runner; reserve the big machines for the few jobs that actually get faster on them. A README lint on a 64-core runner is pure waste.
+
+<TradeoffMatrix
+  id="ci-cd-06-scaling-ci-04-runner-infrastructure-and-cost-tradeoff-1"
+  lessonSlug="04-runner-infrastructure-and-cost"
+  lang="en"
+  prompt="Your CI bill is high AND PRs queue 20 minutes at peak. Engineers are idle in the queue several times a day. What fleet design fixes both at once?"
+  options={[
+    { name: "Autoscaling ephemeral runners (ARC) on spot instances, right-sized per job, with p95 queue time as the watched metric", summary: "Scale to the queue, on spot.", correct: true, justification: "This attacks both axes at once. Autoscaling adds capacity exactly when the queue grows and scales to zero when idle, so the 20-minute peak queue drains without paying for idle machines off-peak. Ephemeral keeps each job a clean room, so self-hosting is safe. Spot cuts the runner bill 60-90% on a retry-safe workload, and right-sizing stops paying big-machine rates for small jobs. Watching p95 queue time means you see the real pain (engineer wait), not just job duration. Bill and queue both fall." },
+    { name: "One big persistent hosted runner with concurrency capped to control the bill", summary: "Caps spend, inflates the queue.", justification: "This is exactly the war-story mistake. Capping concurrency is how you GET a 20-minute queue: you've throttled throughput to protect a bill that is small next to the engineer-hours now burning in the queue. A persistent runner also accumulates cross-job state — a leak and reproducibility hazard. It optimizes the cheap axis and inflates the expensive one." },
+    { name: "Many always-on large runners so there's always free capacity", summary: "Kills the queue, pays for idle.", justification: "This does drain the queue — by brute force — but at the cost you were trying to cut: a fleet sized for peak sits mostly idle off-peak, and they're all large, so you pay big-machine rates around the clock for capacity used a few hours a day. Autoscaling gets the same peak headroom while scaling to zero when idle; this is the un-tuned version that fixes one axis by abandoning the other." },
+    { name: "Reduce test parallelism to cut the bill", summary: "Backwards on both axes.", justification: "This moves both numbers the wrong way. Less parallelism means longer wall-clock per run AND a longer queue as jobs back up, multiplying engineer wait — the expensive axis — to shave the cheap one. Since engineer-hours dwarf the CI bill, the optimum is usually MORE parallelism up to where wall-clock stops improving, not less." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-06-scaling-ci-04-runner-infrastructure-and-cost-quiz-1"
+  lessonSlug="04-runner-infrastructure-and-cost"
+  lang="en"
+  question="You're choosing between GitHub-hosted and self-hosted runners. Which statement captures the core trade you're actually making?"
+  choices={[
+    { label: "Hosted = zero ops, ephemeral VM per job, pay-per-minute; self-hosted = cheaper at volume plus custom specs and VPC access, but you own patching, scaling, and security (and must keep them off public repos)", correct: true },
+    { label: "Self-hosted runners are always cheaper and more secure, so prefer them once you have any volume", misconception: "Cheaper at high volume, yes — but not 'more secure' for free. Self-hosted means YOU own patching, scaling, and isolation, and a self-hosted runner on a public repo runs untrusted PR code on your infrastructure, which is a serious supply-chain exposure. The trade is ops and security ownership in exchange for cost and spec control, not a free win on both." },
+    { label: "Hosted runners can't access big machines or GPUs, but otherwise the two are interchangeable", misconception: "The spec ceiling is one reason to go self-hosted, but it's not the only axis. Volume cost and VPC reach also push toward self-hosted, and in return you take on patching, scaling, and security ownership. Calling them 'otherwise interchangeable' hides exactly the operational and security cost that decides real fleets." },
+    { label: "The only difference is who sends the invoice; both give you the same ephemeral isolation automatically", misconception: "Hosted gives ephemeral isolation by default; self-hosted does NOT unless you deliberately run ephemeral runners. A naive self-hosted fleet is persistent and accumulates cross-job state. Isolation is something you must engineer on self-hosted, not a given." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-06-scaling-ci-04-runner-infrastructure-and-cost-quiz-2"
+  lessonSlug="04-runner-infrastructure-and-cost"
+  lang="en"
+  question="Why does an autoscaling fleet of ephemeral runners beat a fixed fleet of persistent runners for a busy org with spiky demand?"
+  choices={[
+    { label: "Ephemeral gives a clean room per job (no cross-job state leak), and autoscaling tracks the queue — adding capacity on a herd, scaling to zero when idle — so you avoid both queue-wait and paying for idle machines", correct: true },
+    { label: "A fixed persistent fleet is fine as long as you size N for peak demand", misconception: "Sizing N for peak means that capacity sits idle every off-peak hour — you pay for the herd's worth of machines all night. And persistent runners still accumulate cross-job state. Autoscaling gives the same peak headroom but scales to zero when idle, and ephemeral removes the state-leak problem the fixed fleet still has." },
+    { label: "Persistent runners are faster because they skip spin-up, and speed always beats isolation", misconception: "Persistent runners do skip spin-up, but that speed buys cross-job state contamination and non-reproducibility, and it does nothing about the queue problem — a fixed fleet still queues under a herd and pays for idle off-peak. Warm pools recover most of the spin-up cost without giving up the clean room." },
+    { label: "Autoscaling removes the need to monitor queue time, since it always has enough runners instantly", misconception: "Autoscaling reacts to the queue, it doesn't make queueing impossible — there's a scale-up latency, and your maxRunners ceiling can bind under a big herd. p95 queue time is still the metric you watch; if it climbs, you raise the ceiling or speed up provisioning." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The autoscaling-ephemeral loop that replaces a fixed runner fleet. A job is queued. The autoscaler observes the queue depth growing. It spins up an ephemeral runner on a spot instance, right-sized to the job. That runner executes exactly one job, then is destroyed. When the queue is empty the fleet scales to zero, so idle hours cost nothing. Throughout, p95 queue time is the monitored signal: if it rises, raise the ceiling or speed provisioning."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "queued", label: "Job queued", sub: "waiting for a runner" },
+    { id: "observe", label: "Autoscaler sees depth", sub: "queue grows" },
+    { id: "spin", label: "Spin up ephemeral runner", sub: "spot, right-sized" },
+    { id: "run", label: "Run one job", sub: "clean room" },
+    { id: "destroy", label: "Destroy runner", sub: "no state survives" },
+    { id: "zero", label: "Scale to zero", sub: "idle costs nothing" },
+  ]}
+  edges={[
+    { from: "queued", to: "observe", label: "depth signal" },
+    { from: "observe", to: "spin", label: "scale up" },
+    { from: "spin", to: "run", label: "one job" },
+    { from: "run", to: "destroy", label: "ephemeral" },
+    { from: "destroy", to: "zero", label: "queue empty" },
+    { from: "zero", to: "queued", label: "next push" },
+  ]}
+  caption="The loop closes on the queue: depth drives scale-up, each runner is ephemeral and dies after one job, and an empty queue scales the fleet to zero. p95 queue time is the dial you watch to decide whether the ceiling and provisioning speed are high enough."
+/>
+
+<KeyTakeaway>CI cost = runner bill + engineer-wait, and engineer-hours dwarf the bill — favor parallelism. Run ephemeral runners, autoscale to the queue (scale to zero), use spot (cut 60-90%), right-size, watch p95 queue time.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="ci-cd-06-scaling-ci-04-runner-infrastructure-and-cost-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why ephemeral runners are worth the per-job spin-up cost over a fast persistent fleet, and how autoscaling (ARC) composes with them.", a: "A persistent runner takes job after job and accumulates state between them: leftover workspace files, a poisoned dependency cache, a background process from a previous and possibly untrusted job. That residue is a contamination channel — a later job can inherit secrets, a tampered binary, or a corrupted cache, and nothing is reproducible because every job starts from wherever the last one left the box. An ephemeral runner executes exactly one job and is then destroyed and recreated fresh, giving a clean room per job: deterministic starting state, no cross-job leakage, and a compromised job dies with its runner. The cost is a fresh boot per job, mitigated with warm pools (a few pre-provisioned idle runners) and fast base images — but the isolation is a security and reproducibility property you cannot get from a persistent fleet at any price. Autoscaling via Actions Runner Controller runs these ephemeral runners as Kubernetes pods that scale with the job queue: more pods when the queue grows, scale to zero when it drains. Because the runners are ephemeral, autoscaling and clean-room isolation compose — you get on-demand capacity AND a fresh box per job, instead of choosing one." },
+    { q: "Lay out the two-axis CI cost model and the fleet decisions that follow: hosted vs self-hosted, spot, right-sizing, and the metric to watch.", a: "CI cost is two numbers, not one: the runner bill plus the engineer-time cost of everyone waiting on CI. An org's engineer-hours dwarf its CI bill, so optimizing only the bill (fewer/smaller runners, capped concurrency) is a trap — it inflates queue and wall-clock time, multiplying engineer wait. The true optimum is usually MORE parallelism: add runners until wall-clock stops improving, since up to that point every minute shaved is multiplied across the team. Hosted runners are the zero-ops default (clean ephemeral VM per job, pay-per-minute) until the bill at volume, the spec ceiling (big machines/GPUs), or VPC reach pushes you to self-hosted — which is cheaper at volume and any spec, but you own patching, scaling, and security, and must keep self-hosted runners off public repos (untrusted PR code on your infra). Two levers make more parallelism cheap: spot/preemptible instances, ideal because CI is retry-safe (a preempted job just re-runs), cutting the runner bill 60-90%; and right-sizing — most jobs need a small runner, so reserve big machines for the few that get faster on them. The metric to watch is p95 QUEUE time (a job waiting for a free runner), which is invisible in the run log and directly multiplies developer wait — not just job duration. If p95 queue time rises, add capacity or raise the autoscaler ceiling." },
+  ]}
+/>
+
+<Recap lang="en">
+The runner fleet under your pipelines decides both the CI bill and the hidden cost of engineer-wait. GitHub-hosted runners are the zero-ops default — a clean ephemeral VM per job, pay-per-minute — until the bill at high volume, the spec ceiling (big machines, GPUs), or VPC reach forces you to self-hosted, where you gain cost and spec control but own patching, scaling, and security, and must never attach self-hosted runners to public repos because a stranger's PR would run on your infrastructure. The practice that makes self-hosting safe is ephemeral runners: each runner executes exactly one job then is destroyed, giving a clean room per job, while a persistent runner accumulates cross-job state (leftover files, a poisoned cache, a stray process) that leaks between jobs and is non-reproducible; the per-job spin-up cost is mitigated with warm pools and fast images, but the isolation is not obtainable otherwise. A fixed fleet fails both ways — too few runners queue and waste engineer time, too many pay for idle — so autoscaling via Actions Runner Controller runs ephemeral runners as Kubernetes pods that scale with the queue and to zero when idle. Finally, CI cost has two axes: the runner bill plus engineer-wait, and because engineer-hours dwarf the bill the optimum is usually more parallelism, not less — put the retry-safe CI workload on spot/preemptible instances to cut the bill 60-90%, right-size so big machines serve only the jobs that benefit, and watch p95 queue time rather than job duration, since queue time is invisible in the run log yet directly multiplies developer wait.
+</Recap>
