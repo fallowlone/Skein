@@ -143,8 +143,22 @@ const ReviewTask = TaskBase.extend({
   decoys: z.array(Decoy).optional(),
 });
 
+// debug: the learner edits a broken runnable artifact until a HIDDEN verify
+// assertion passes in the QuickJS sandbox. MVP: synchronous logic only — QuickJS
+// does not drain the Promise job queue, so async/timer bugs are out of scope.
+const DebugTask = TaskBase.extend({
+  type: z.literal("debug"),
+  starter: z.string().min(1),
+  setup: z.string().optional(),
+  verify: z.string().min(1),
+  check: ExecCheck,
+  evidence: BiText,
+  hints: z.array(BiText).min(1).max(4),
+  reveal: BiText,
+});
+
 const PracticeTask = z.discriminatedUnion("type", [
-  DiagnoseTask, FixTask, SandboxTask, IncidentTask, DesignTask, PredictTask, ReviewTask,
+  DiagnoseTask, FixTask, SandboxTask, IncidentTask, DesignTask, PredictTask, ReviewTask, DebugTask,
 ]);
 
 const practice = defineCollection({

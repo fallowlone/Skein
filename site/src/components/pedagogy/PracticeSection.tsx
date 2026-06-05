@@ -4,6 +4,8 @@ import type { Locale } from "~/i18n";
 import type { PracticeTaskData } from "~/content.config";
 import { checkBlank } from "~/scripts/practice-grade";
 import { setTaskStatus, readProgress } from "~/scripts/practice-state";
+import { runDebug, type DebugRunResult } from "~/scripts/debug-runner";
+import type { ExecCheck } from "~/scripts/practice-grade";
 import { cardsFromPractice } from "~/scripts/review-harvest";
 import { addCard } from "~/scripts/review-state";
 
@@ -47,6 +49,7 @@ const TYPE_HINT: Record<string, { en: string; ru: string }> = {
   incident: { en: "Work it step by step; reveal each step only after you answer.", ru: "Иди по шагам; открывай шаг только после своего ответа." },
   sandbox: { en: "Write code in the runnable sandbox until the check passes.", ru: "Пиши код в песочнице, пока проверка не пройдёт." },
   review: { en: "Review the diff. Spot the bug, the missing test, the unstated tradeoff, the simpler design — then reveal the planted findings.", ru: "Отревьюй дифф. Найди баг, недостающий тест, неназванный компромисс, более простой дизайн — затем открой заложенные находки." },
+  debug: { en: "Read the evidence, form a hypothesis, edit the broken code, and re-run until the check passes.", ru: "Прочитай улики, выдвини гипотезу, правь сломанный код и перезапускай, пока проверка не пройдёт." },
 };
 const SEVERITY_LABEL: Record<string, { en: string; ru: string }> = {
   bug: { en: "Bug", ru: "Баг" },
@@ -199,9 +202,81 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
     }
     case "review":
       return <ReviewBody lang={lang} lessonKey={lessonKey} taskId={task.id} diff={task.diff} findings={task.findings} decoys={task.decoys} onChange={onChange} />;
+    case "debug":
+      return <DebugBody lang={lang} lessonKey={lessonKey} taskId={task.id} starter={task.starter} setup={task.setup} verify={task.verify} check={task.check} evidence={task.evidence} hints={task.hints} reveal={task.reveal} onChange={onChange} />;
     default:
       return null;
   }
+}
+
+function DebugBody({ lang, lessonKey, taskId, starter, setup, verify, check, evidence, hints, reveal, onChange }: {
+  lang: Locale; lessonKey: string; taskId: string;
+  starter: string; setup?: string; verify: string; check: ExecCheck;
+  evidence: { en: string; ru: string };
+  hints: { en: string; ru: string }[];
+  reveal: { en: string; ru: string };
+  onChange?: () => void;
+}) {
+  const [code, setCode] = useState(starter);
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<DebugRunResult | null>(null);
+  const [hintIdx, setHintIdx] = useState(0);
+  const [showSolution, setShowSolution] = useState(false);
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const r = await runDebug({ setup, learnerCode: code, verify, check });
+      setResult(r);
+      if (r.status === "pass") { setTaskStatus(lessonKey, taskId, "done"); onChange?.(); }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div>
+      <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">{tt(lang, "Evidence", "Что наблюдаем")}</div>
+      <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{tt(lang, evidence.en, evidence.ru)}</pre>
+      <textarea
+        class="font-mono w-full text-xs p-2 rounded-[var(--r-sm)] border border-hairline-2 bg-[var(--code-bg)] text-[var(--code-ink)] min-h-[120px]"
+        value={code}
+        onInput={(e) => setCode((e.target as HTMLTextAreaElement).value)}
+      />
+      <div class="flex items-center gap-2 mt-2">
+        <button type="button" disabled={busy} class="oa-btn oa-btn-primary oa-btn-sm disabled:opacity-50" onClick={run}>
+          {busy ? tt(lang, "Running…", "Выполняю…") : tt(lang, "Run", "Запустить")}
+        </button>
+        {hintIdx < hints.length && (
+          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm"
+            onClick={() => { if (hintIdx === 0) { setTaskStatus(lessonKey, taskId, "attempted"); onChange?.(); } setHintIdx((i) => i + 1); }}>
+            {tt(lang, "Hint", "Подсказка")}
+          </button>
+        )}
+        {!showSolution && (
+          <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-xs text-muted" onClick={() => setShowSolution(true)}>
+            {tt(lang, "Show solution", "Показать решение")}
+          </button>
+        )}
+      </div>
+
+      {result?.status === "pass" && <div class="text-sm mt-2 font-semibold text-ok">{tt(lang, "✓ fixed", "✓ починено")}</div>}
+      {result?.status === "fail" && (
+        <>
+          <div class="text-sm mt-2 font-semibold text-danger">{tt(lang, "✗ not yet", "✗ пока нет")}</div>
+          {result.stdout && <pre class="text-xs mt-1 bg-card p-2 rounded-[var(--r-sm)] overflow-x-auto">{result.stdout}</pre>}
+        </>
+      )}
+      {result?.status === "error" && <pre class="text-xs text-danger mt-2 whitespace-pre-wrap">{result.message}</pre>}
+
+      {hintIdx > 0 && (
+        <ul class="mt-3 space-y-1">
+          {hints.slice(0, hintIdx).map((h, i) => <li key={i} class="text-sm text-muted">💡 {tt(lang, h.en, h.ru)}</li>)}
+        </ul>
+      )}
+      {showSolution && <div class="mt-3 prose max-w-none text-sm" dangerouslySetInnerHTML={{ __html: tt(lang, reveal.en, reveal.ru) }} />}
+    </div>
+  );
 }
 
 function ReviewBody({ lang, lessonKey, taskId, diff, findings, decoys, onChange }: {
