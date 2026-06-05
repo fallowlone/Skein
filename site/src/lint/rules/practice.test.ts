@@ -7,6 +7,7 @@ import {
   checkPracticeLessonKey,
   checkPracticeCount,
   checkPracticeSandboxBudget,
+  checkPracticeReview,
 } from "./practice";
 
 async function withRoot(fn: (root: string) => Promise<void>) {
@@ -117,6 +118,36 @@ describe("checkPracticeCount", () => {
       const { errors, warnings } = await checkPracticeCount(root);
       expect(errors).toEqual([]);
       expect(warnings.some((w) => /01-generic-functions/.test(w))).toBe(true);
+    });
+  });
+});
+
+const goodReview = {
+  id: "rev1", type: "review", difficulty: "apply", estMin: 7,
+  title: { en: "R", ru: "Р" }, prompt: { en: "P", ru: "П" },
+  diff: { lang: "js", code: "function f(cb){ if (e) cb(e); cb(null, d); }" },
+  findings: [{ id: "f1", label: { en: "Bug", ru: "Баг" }, severity: "bug", explanation: { en: "no return", ru: "нет return" }, planted: true }],
+};
+
+describe("checkPracticeReview", () => {
+  test("flags a review task with zero findings", async () => {
+    await withRoot(async (root) => {
+      const t = { ...goodReview, findings: [] };
+      await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "node", tasks: [t] });
+      const errs = await checkPracticeReview(root);
+      expect(errs.length).toBeGreaterThan(0);
+    });
+  });
+  test("passes a review task with at least one finding", async () => {
+    await withRoot(async (root) => {
+      await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "node", tasks: [goodReview] });
+      expect(await checkPracticeReview(root)).toEqual([]);
+    });
+  });
+  test("ignores non-review tasks", async () => {
+    await withRoot(async (root) => {
+      await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "node", tasks: [goodTask] });
+      expect(await checkPracticeReview(root)).toEqual([]);
     });
   });
 });

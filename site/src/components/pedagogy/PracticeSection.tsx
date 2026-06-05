@@ -46,6 +46,13 @@ const TYPE_HINT: Record<string, { en: string; ru: string }> = {
   design: { en: "Design under the constraints, then self-grade with the checklist.", ru: "Спроектируй под ограничения, затем оцени себя по чек-листу." },
   incident: { en: "Work it step by step; reveal each step only after you answer.", ru: "Иди по шагам; открывай шаг только после своего ответа." },
   sandbox: { en: "Write code in the runnable sandbox until the check passes.", ru: "Пиши код в песочнице, пока проверка не пройдёт." },
+  review: { en: "Review the diff. Spot the bug, the missing test, the unstated tradeoff, the simpler design — then reveal the planted findings.", ru: "Отревьюй дифф. Найди баг, недостающий тест, неназванный компромисс, более простой дизайн — затем открой заложенные находки." },
+};
+const SEVERITY_LABEL: Record<string, { en: string; ru: string }> = {
+  bug: { en: "Bug", ru: "Баг" },
+  "missing-test": { en: "Missing test", ru: "Нет теста" },
+  tradeoff: { en: "Unstated tradeoff", ru: "Неназванный компромисс" },
+  simplification: { en: "Simpler design", ru: "Проще можно" },
 };
 
 export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
@@ -190,9 +197,70 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
         <JsSandbox lang={lang} setup={task.setup} initialCode="" check={task.expected} onResult={(ok) => ok && done()} />
       </Suspense>;
     }
+    case "review":
+      return <ReviewBody lang={lang} lessonKey={lessonKey} taskId={task.id} diff={task.diff} findings={task.findings} decoys={task.decoys} onChange={onChange} />;
     default:
       return null;
   }
+}
+
+function ReviewBody({ lang, lessonKey, taskId, diff, findings, decoys, onChange }: {
+  lang: Locale; lessonKey: string; taskId: string;
+  diff: { lang: string; code: string };
+  findings: { id: string; label: { en: string; ru: string }; severity: string; explanation: { en: string; ru: string }; planted: true }[];
+  decoys?: { id: string; label: { en: string; ru: string }; explanation: { en: string; ru: string } }[];
+  onChange?: () => void;
+}) {
+  const [shown, setShown] = useState(false);
+  const dims: { key: string; en: string; ru: string }[] = [
+    { key: "bug", en: "a bug", ru: "баг" },
+    { key: "missing-test", en: "a missing test", ru: "нет теста" },
+    { key: "tradeoff", en: "an unstated tradeoff", ru: "неназванный компромисс" },
+    { key: "simplification", en: "a simpler design", ru: "проще можно" },
+  ];
+  return (
+    <div>
+      <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">{diff.lang}</div>
+      <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-4 overflow-x-auto">{diff.code}</pre>
+      <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">{tt(lang, "What did you find?", "Что ты нашёл?")}</div>
+      <ul class="space-y-1 mb-4">
+        {dims.map((d) => (
+          <li key={d.key} class="flex items-start gap-2 text-sm">
+            <input type="checkbox" class="mt-1" /> <span>{tt(lang, d.en, d.ru)}</span>
+          </li>
+        ))}
+      </ul>
+      {!shown ? (
+        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm"
+          onClick={() => { setShown(true); setTaskStatus(lessonKey, taskId, "done"); onChange?.(); }}>
+          {tt(lang, "Reveal findings", "Показать находки")}
+        </button>
+      ) : (
+        <div class="mt-2 flex flex-col gap-3">
+          {findings.map((f) => (
+            <div key={f.id} class="border-l-2 border-hairline-strong pl-3">
+              <span class={`text-[10px] font-mono uppercase tracking-wide mr-2 ${f.severity === "bug" ? "text-danger" : "text-muted"}`}>
+                {tt(lang, SEVERITY_LABEL[f.severity]?.en ?? f.severity, SEVERITY_LABEL[f.severity]?.ru ?? f.severity)}
+              </span>
+              <span class="text-ink font-medium text-sm">{tt(lang, f.label.en, f.label.ru)}</span>
+              <div class="prose max-w-none text-sm text-ink-2 mt-1" dangerouslySetInnerHTML={{ __html: tt(lang, f.explanation.en, f.explanation.ru) }} />
+            </div>
+          ))}
+          {decoys && decoys.length > 0 && (
+            <div class="mt-2">
+              <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">{tt(lang, "Not issues — a senior wouldn't block on these", "Не дефекты — senior на этом не блокирует")}</div>
+              {decoys.map((d) => (
+                <div key={d.id} class="border-l-2 border-hairline pl-3 mb-2">
+                  <span class="text-muted font-medium text-sm">{tt(lang, d.label.en, d.label.ru)}</span>
+                  <div class="prose max-w-none text-sm text-muted mt-1" dangerouslySetInnerHTML={{ __html: tt(lang, d.explanation.en, d.explanation.ru) }} />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function Reveal({ lang, lessonKey, taskId, body, pre, onChange }: { lang: Locale; lessonKey: string; taskId: string; body: string; pre?: string; onChange?: () => void }) {

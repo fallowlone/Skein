@@ -12,7 +12,7 @@ import { checkPersonas } from "./rules/personas";
 import { checkLessonRules, checkMathPrereqs } from "./rules/lessons";
 import { checkConnectionIntegrity } from "./rules/connection-integrity";
 import { checkCjkLeak } from "./rules/cjk-leak";
-import { checkPracticeParity, checkPracticeLessonKey, checkPracticeCount, checkPracticeSandboxBudget } from "./rules/practice";
+import { checkPracticeParity, checkPracticeLessonKey, checkPracticeCount, checkPracticeReview, checkPracticeSandboxBudget } from "./rules/practice";
 import { checkBlockStubs } from "./rules/block-stubs";
 import { checkDrill } from "./rules/drill";
 import { checkLab } from "./rules/lab";
@@ -81,6 +81,7 @@ export function lintCurriculum(): AstroIntegration {
         errors.push(...(await checkReducedMotion(root)));
         errors.push(...(await checkPracticeParity(siteSrc)));
         errors.push(...(await checkPracticeLessonKey(siteSrc)));
+        errors.push(...(await checkPracticeReview(siteSrc)));
         errors.push(...(await checkBlockStubs(siteSrc)));
         const pc = await checkPracticeCount(siteSrc);
         errors.push(...pc.errors);
