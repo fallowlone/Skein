@@ -1,0 +1,205 @@
+---
+concepts:
+- block-public-access
+- bucket-policy-vs-acl
+- sse-kms-vs-sse-s3
+- encryption-in-transit-enforcement
+- presigned-url-scoping
+- access-analyzer
+- "SAA-C03:Design Secure Architectures"
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-data-protection-and-s3-security"
+sources:
+- https://docs.aws.amazon.com/AmazonS3/latest/userguide/access-control-block-public-access.html
+- https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingKMSEncryption.html
+- https://docs.aws.amazon.com/AmazonS3/latest/userguide/security-best-practices.html
+spiral: []
+status: ready
+summary: 'The canonical cloud breach is a misconfigured public S3 bucket, not broken crypto. Block Public Access is the account-wide override; bucket policies beat ACLs; SSE-KMS adds an audit trail and revocation; deny non-TLS and unencrypted uploads; keep presigned URLs short and scoped.'
+title: 'Data protection: S3 public-access, encryption, and the breach class'
+track: "aws"
+unit: "07-cost-and-security"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A junior engineer needs to let the marketing site read a few product images, so they paste a bucket policy with `"Principal": "*"` and `"Action": "s3:GetObject"` on the whole bucket — the fastest thing that worked. The bucket also holds, in a different prefix, every customer's uploaded ID document and a nightly export of the users table. Nobody noticed for four months. Then a security researcher runs a routine scan of open buckets, finds yours, and emails a sample of 3.2 million records before going public. Your name is in the news by Friday. The encryption was fine — the objects were even encrypted at rest. Nothing was decrypted, brute-forced, or stolen by a sophisticated actor; the door was simply left open by a single wildcard principal, and no guardrail stood in front of it. This is the most common cloud data breach there is, and almost none of it is about cryptography.
+</Hook>
+
+<Crux>The classic cloud breach is a public S3 bucket, not broken crypto. Block Public Access overrides any policy or ACL; encryption is line two.</Crux>
+
+<Explanation>
+
+## The public-bucket breach and how access is actually decided
+
+You already know buckets, keys, and storage classes from the storage lesson. The senior question is narrower and sharper: for a single `GetObject`, *who* is allowed, and what can override a mistake? The breach in the Hook is the canonical one — millions of objects exposed because one policy said `Principal: "*"`. To never ship it, you have to know the order in which S3 decides access, and which control is the last word.
+
+Several mechanisms can grant access to an object, and they combine: an **IAM identity policy** (what a principal in your account may do), a **bucket policy** (a resource-based policy on the bucket — the only one that can grant *anonymous* or cross-account access), and legacy **ACLs** (per-object/per-bucket grants that predate policies). An anonymous, internet-wide read happens only through a bucket policy with `Principal: "*"` or a public-read ACL — an IAM policy can never make an object public, because anonymous callers have no IAM identity. ACLs are the older, grant-scattered model; AWS now disables them by default (Object Ownership set to *bucket-owner-enforced*), so a modern bucket should express all access through one readable bucket policy, not dozens of object ACLs.
+
+Above all of that sits the override that wins regardless: **S3 Block Public Access (BPA).** BPA is four settings that *reject* public grants — it can ignore existing public ACLs, block new public ACLs, ignore public bucket policies, and restrict cross-account public access. It applies at **both the account level and the bucket level**, and when enabled it overrides any policy or ACL that would otherwise make the bucket public. Turn BPA on at the **account** level and even a future engineer who pastes `Principal: "*"` cannot expose data — the public grant is simply not honored. This is one switch, account-wide, that defeats the entire breach class:
+
+```bash
+# Account-wide guardrail: one call that neutralizes every public grant,
+# present and future, across every bucket in the account.
+aws s3control put-public-access-block \
+  --account-id 111122223333 \
+  --public-access-block-configuration \
+    BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+
+# Same four flags can also be set per bucket as defense in depth.
+aws s3api put-public-access-block \
+  --bucket acme-customer-data \
+  --public-access-block-configuration \
+    BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+```
+
+To grant only the access you actually intend, scope the principal with conditions instead of opening to the world: `aws:PrincipalOrgID` limits a bucket policy to principals inside your AWS Organization, and `aws:SourceArn` / `aws:SourceAccount` pin cross-service access to the one resource that should be calling. The failure mode of the *fix* is over-broad cross-account access: you grant another account `s3:GetObject` to integrate with a partner, that account's admin attaches a wildcard to one of its own roles, and now an over-privileged principal in someone else's account can read your bucket — your policy was the weak link, not theirs. Audit reality, not intent, with **IAM Access Analyzer**, which continuously flags any bucket whose policy grants access to an external account or anonymous principal — turn its findings into a zero-tolerance signal.
+
+<Inset kind="why" lang="en">
+Why does Block Public Access override a perfectly valid bucket policy that says "allow everyone"? Because BPA is not part of the normal allow/deny evaluation — it's a guardrail layered *on top of* it that strips the request's ability to be served anonymously before the policy is even consulted. AWS deliberately made it un-overridable by a local bucket policy so that the most expensive, most common mistake — a careless `Principal: "*"` — fails closed instead of open. With account-level BPA on, the policy can say whatever it wants; the public read is rejected. That is exactly the property you want from a guardrail: it must win against the very mistake it exists to prevent, or it isn't a guardrail.
+</Inset>
+
+## Encryption at rest: SSE-S3, SSE-KMS, and SSE-C
+
+Every object should be encrypted at rest, and S3 now does this by default — but the *choice of key* is a real tradeoff. **SSE-S3** uses keys AWS owns and manages: it is free, fully transparent, AES-256, and you do nothing. **SSE-KMS** encrypts each object's data key under a KMS customer-managed key (CMK) — the envelope mechanics live in the IAM/KMS lesson; what matters here is what the CMK *buys* you: a CloudTrail audit trail of every encrypt/decrypt, IAM/key-policy control over who may decrypt, and the ability to **revoke access to the data instantly by disabling the key** — no object rewrite, every read just starts failing. **SSE-C** means *you* supply and hold the key on every request; AWS encrypts with it and immediately forgets it, so you own key management entirely (and lose the data if you lose the key).
+
+The SSE-KMS tradeoff is cost and throttling. Every `GetObject`/`PutObject` against an SSE-KMS object makes a KMS API call, and KMS has a per-account request-rate quota (commonly 5,500–50,000 requests/second by region and operation). A high-throughput bucket can throttle on KMS, not S3, and KMS requests are billed per call (~$0.03 per 10,000). **S3 Bucket Keys** fix this: S3 generates a short-lived bucket-level key from your CMK and uses it to protect many objects, cutting direct KMS calls by up to ~99% — which slashes both cost and throttling risk. Enable a Bucket Key whenever you use SSE-KMS at scale. Set default encryption on the bucket so nothing lands unencrypted:
+
+```json
+{
+  "Rules": [
+    {
+      "ApplyServerSideEncryptionByDefault": {
+        "SSEAlgorithm": "aws:kms",
+        "KMSMasterKeyID": "arn:aws:kms:us-east-1:111122223333:key/abcd-1234"
+      },
+      "BucketKeyEnabled": true
+    }
+  ]
+}
+```
+
+<TradeoffMatrix
+  id="03-data-protection-and-s3-security-tradeoff-1"
+  lessonSlug="03-data-protection-and-s3-security"
+  lang="en"
+  prompt="A regulated bucket holds customer PII. Auditors require a per-access audit trail of every decrypt and the ability to revoke access to the data instantly during an incident, without rewriting objects. Throughput is moderate. Pick the encryption."
+  options={[
+    { name: "SSE-KMS with a customer-managed key and a Bucket Key", summary: "KMS-encrypted, CloudTrail audit, revocable by disabling the key.", correct: true, justification: "Right fit. Only a customer-managed KMS key gives you the two things the auditors demand: every decrypt is logged in CloudTrail, and you can revoke access to the entire dataset instantly by disabling the key — no object rewrite, every read just fails. The Bucket Key keeps KMS request cost and throttling in check at moderate-to-high throughput. This is the standard answer for regulated PII." },
+    { name: "SSE-S3 (AWS-managed keys)", summary: "Free, transparent AES-256, no extra setup.", justification: "Encrypts at rest for free, but the keys are AWS-owned: there's no per-request audit trail of decrypts and no key you can disable to revoke access. It satisfies 'encrypt at rest' but fails both auditor requirements — audit visibility and instant revocation — so it's the wrong tool for regulated data under those controls." },
+    { name: "SSE-C (customer-supplied keys)", summary: "You hold and pass the key on every request.", justification: "Maximum control, but you now own all key storage, rotation, and distribution, and S3 keeps no audit trail of your key use the way KMS does. Lose the key and the data is unrecoverable. It's for niche cases where keys must never reach AWS — overkill and operationally heavier than SSE-KMS for this requirement." },
+    { name: "No encryption — rely on the bucket being private", summary: "Private bucket, plaintext objects.", justification: "Fails the requirement outright: regulated PII must be encrypted at rest, and a private bucket gives no encryption, no audit trail, and no revocation. Privacy and encryption are separate controls — you need both, and 'it's private' is exactly the assumption that the breach class punishes." },
+  ]}
+/>
+
+## Encryption in transit and policy enforcement
+
+Encryption at rest does nothing for bytes on the wire; you also need TLS in transit, and the senior move is to *enforce* it rather than hope clients use HTTPS. A bucket policy can **deny any request where `aws:SecureTransport` is false**, so a plain-HTTP `GetObject` is rejected outright. The same policy can deny uploads that don't carry the encryption header you require, so nothing ever lands unencrypted even if a client forgets. The failure mode of forgetting this: a client library defaults to HTTP, credentials and object bytes cross the network in cleartext, and a network-position attacker reads them — encryption at rest never saw the data. Enforce both with one policy:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyInsecureTransport",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::acme-customer-data",
+        "arn:aws:s3:::acme-customer-data/*"
+      ],
+      "Condition": { "Bool": { "aws:SecureTransport": "false" } }
+    },
+    {
+      "Sid": "DenyUnEncryptedUploads",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::acme-customer-data/*",
+      "Condition": {
+        "StringNotEquals": { "s3:x-amz-server-side-encryption": "aws:kms" }
+      }
+    }
+  ]
+}
+```
+
+To keep S3 traffic off the public internet entirely, route it through a **gateway VPC endpoint** for S3 and attach an endpoint policy; a bucket policy condition on `aws:SourceVpce` can then require that reads come *only* through your endpoint, so even leaked credentials are useless from outside the VPC. Defense in depth: BPA closes public access, the deny-insecure-transport statement closes the wire, and the endpoint closes the path.
+
+## Lifecycle, exposure reduction, and the misconfiguration truth
+
+The cheapest data to protect is data you never stored — collect the minimum, and delete it on a schedule with lifecycle expiration so a future breach has less to leak. For controlled sharing, **presigned URLs** beat making anything public, but their security *is* their expiry: the URL carries the signer's permissions for one operation until it expires, and a presigned URL with a 7-day life that ends up in a log, a referrer header, or a Slack message is an open door to that object for a week. Sign for minutes, scope to one key and one operation, and never reuse a long-lived signer identity for public-facing URLs.
+
+Against deletion and ransomware, three features stack: **versioning** keeps every prior version so an overwrite or delete is recoverable; **MFA-delete** requires a hardware/virtual MFA token to permanently delete a version, so a stolen credential alone can't erase history; and **Object Lock** (WORM — write once, read many) makes objects immutable for a retention period so even an admin or attacker can't alter or delete them until it expires. The thread through all of it: the overwhelming majority of S3 breaches are *misconfiguration* — a public grant, an over-broad cross-account policy, a leaked long-lived URL — not broken cryptography. AES-256 is not your weak point; the access configuration in front of it is.
+
+<FlowDiagram
+  label="How S3 decides one object request: Block Public Access runs first as the guardrail, then the bucket and IAM policies grant or deny, then encryption is applied on the way to allow"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "req", label: "Request", sub: "GetObject" },
+    { id: "bpa", label: "Block Public Access", sub: "guardrail, wins first" },
+    { id: "pol", label: "Bucket policy", sub: "resource-based grant" },
+    { id: "iam", label: "IAM policy", sub: "identity grant" },
+    { id: "enc", label: "Encryption", sub: "SSE-KMS / SSE-S3" },
+    { id: "out", label: "Allow or Deny", sub: "deny wins" },
+  ]}
+  edges={[
+    { from: "req", to: "bpa", label: "arrives" },
+    { from: "bpa", to: "pol", label: "if not public-blocked" },
+    { from: "pol", to: "iam", label: "combine grants" },
+    { from: "iam", to: "enc", label: "if allowed" },
+    { from: "enc", to: "out", label: "serve" },
+  ]}
+  caption="Block Public Access is the override that runs before the policies and rejects any public grant; only then do the bucket policy and IAM policy combine to allow or deny, with an explicit deny (e.g. non-TLS) winning, and encryption applied to the served bytes."
+/>
+
+<Quiz
+  id="03-data-protection-and-s3-security-quiz-1"
+  lessonSlug="03-data-protection-and-s3-security"
+  lang="en"
+  question={'Account-level Block Public Access is enabled. An engineer attaches a bucket policy with Principal set to "*" allowing s3:GetObject on the whole bucket. What happens to anonymous internet reads?'}
+  choices={[
+    { label: "They are rejected — account-level Block Public Access overrides the bucket policy, so the public grant is not honored and the data stays private", correct: true },
+    { label: "They are allowed — an explicit allow in a bucket policy always grants access, and Block Public Access only affects ACLs", misconception: "Block Public Access blocks public bucket policies too, not just ACLs (BlockPublicPolicy and RestrictPublicBuckets). With account-level BPA on, the public grant in the bucket policy is overridden and anonymous reads fail closed." },
+    { label: "They are allowed for 24 hours until Block Public Access re-evaluates the policy", misconception: "BPA is not an eventual or scheduled check; it is enforced on every request. There is no grace window during which the public grant is honored — the read is rejected immediately." },
+    { label: "It depends on whether the object also has a public ACL", misconception: "With account-level BPA on, neither a public bucket policy nor a public ACL is honored — BPA's four settings neutralize both. The ACL state doesn't reopen access that BPA has blocked." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The canonical cloud breach is a public S3 bucket, not crypto. Account-wide Block Public Access overrides any policy or ACL and kills the class. SSE-KMS adds audit and revocation; enforce TLS, sign URLs short.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-data-protection-and-s3-security-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through how S3 decides an object request and explain why Block Public Access defeats the public-bucket breach class.", a: "Several mechanisms can grant access and they combine: an IAM identity policy (what a principal in your account may do), a bucket policy (the resource-based policy that uniquely grants anonymous or cross-account access), and legacy ACLs (now disabled by default via bucket-owner-enforced ownership). An anonymous internet read can only come from a bucket policy with Principal '*' or a public-read ACL, because anonymous callers have no IAM identity. Above all of that sits Block Public Access — four settings that reject public grants (ignore/block public ACLs, ignore public policies, restrict cross-account public access), enforced at both account and bucket level. BPA is not part of the normal allow/deny evaluation; it's a guardrail layered on top that strips a request's ability to be served anonymously before the policy is consulted, and it cannot be overridden by a local bucket policy. So account-level BPA defeats the whole breach class: even if a future engineer pastes Principal '*', the public grant is simply not honored and the read fails closed. Scope intended access with aws:PrincipalOrgID and aws:SourceArn, and audit continuously with IAM Access Analyzer, which flags any bucket granting external-account or anonymous access." },
+    { q: "Compare SSE-S3, SSE-KMS, and SSE-C, and explain the SSE-KMS cost/throttle tradeoff and how Bucket Keys fix it.", a: "SSE-S3 uses AWS-owned keys: free, transparent AES-256, zero setup, but no per-request audit trail and no key you can disable to revoke access. SSE-KMS encrypts each object's data key under a customer-managed KMS key, which buys you a CloudTrail audit trail of every encrypt/decrypt, IAM/key-policy control over who may decrypt, and instant revocation — disable the key and every read fails with no object rewrite. SSE-C means you supply and hold the key on every request; AWS encrypts and forgets it, so you own all key management and lose the data if you lose the key. The SSE-KMS tradeoff is that every GetObject/PutObject makes a KMS API call, which is billed per call (~$0.03 per 10,000) and subject to a per-account KMS request-rate quota (often 5,500-50,000/sec by region/operation) — a high-throughput bucket can throttle on KMS rather than S3. S3 Bucket Keys fix this: S3 derives a short-lived bucket-level key from your CMK and protects many objects with it, cutting direct KMS calls by up to ~99% and slashing both cost and throttling risk. Always enable a Bucket Key for SSE-KMS at scale, and set default encryption on the bucket so nothing lands unencrypted." },
+  ]}
+/>
+
+<Recap lang="en">
+The most common cloud data breach is not broken cryptography — it is a misconfigured S3 bucket made public by a permissive bucket policy (`Principal: "*"`) or a public ACL, leaking millions of objects. Access to an object combines an IAM identity policy, a bucket policy (the only one that can grant anonymous or cross-account access), and legacy ACLs (now disabled by default), but above all of them sits Block Public Access — four settings, enforced at both account and bucket level, that reject any public grant and cannot be overridden by a local policy, so account-level BPA fails the whole breach class closed even against a future careless wildcard. Scope intended access with `aws:PrincipalOrgID` and `aws:SourceArn`, watch for over-broad cross-account grants, and audit continuously with IAM Access Analyzer. Encryption is the second line: every object encrypted at rest by default, with SSE-S3 (free, AWS-managed, no audit trail) versus SSE-KMS (a customer key that adds a CloudTrail audit trail and instant revocation by disabling the key, at the cost of per-request KMS calls and throttling that S3 Bucket Keys cut by ~99%) versus SSE-C (you hold the key). Enforce TLS by denying requests where `aws:SecureTransport` is false, deny unencrypted uploads with a policy condition, and route traffic through a VPC endpoint to keep it off the public internet. Reduce exposure by storing the minimum and expiring it on a lifecycle, keeping presigned URLs short-lived and scoped to one operation, and defending against deletion and ransomware with versioning, MFA-delete, and Object Lock. The thread: AES-256 is not your weak point — the access configuration in front of it is.
+</Recap>

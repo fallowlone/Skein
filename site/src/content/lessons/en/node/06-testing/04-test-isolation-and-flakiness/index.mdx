@@ -1,0 +1,202 @@
+---
+concepts:
+- test-isolation
+- flaky-tests
+- determinism
+- shared-state-leak
+- parallel-db-isolation
+- retry-masking
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: 04-test-isolation-and-flakiness
+sources:
+- https://vitest.dev/guide/improving-performance.html
+- https://nodejs.org/api/test.html#test-runner-execution-model
+- https://martinfowler.com/articles/nonDeterminism.html
+spiral: []
+status: ready
+summary: 'A flaky test is a hidden race, not bad luck. Kill non-determinism at the
+  source — pin the clock, seed randomness, freeze TZ — isolate state cheaply with
+  beforeEach resets or transaction rollback, and quarantine flakes instead of letting
+  retries mask a real failure rate.'
+title: 'Test isolation and flakiness: making tests deterministic'
+track: node
+unit: 06-testing
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The suite is green on your laptop, every run, twenty times. CI is red — but only sometimes. The same commit passes, retries, fails, passes. You read the failing test: it asserts a discount expires "tomorrow", and the line `expiresAt: new Date(Date.now() + 86_400_000)` is compared against a fixture written when the test file was authored. It fails roughly one run in seven — the seven where CI happens to straddle a daylight-saving boundary or a UTC midnight your machine never sees because it runs in a single timezone. The code is fine. The test asked the wall clock a question that has more than one answer.
+</Hook>
+
+<Crux>A flaky test is a hidden race, not luck. Pin the clock, seed randomness, isolate state cheaply, quarantine flakes — never retry them away.</Crux>
+
+<Explanation>
+
+## Why tests flake: shared state and uncontrolled non-determinism
+
+A deterministic test gives the same verdict every run, in any order, on any machine. Flakiness is the absence of that property, and it has exactly two roots. The first is **shared mutable state** — two tests touch the same thing and one leaves it dirty. The classic offenders: a module-level singleton (a cache, a connection pool, a config object loaded once at `import`), a shared database row both tests read and write, or a global clock everyone reads. The second is **uncontrolled non-determinism**: `Date.now()`, `Math.random()`, freshly generated UUIDs, the host timezone and locale, and timing — sleeping a fixed number of milliseconds and hoping the work finished.
+
+Shared state produces **order-dependence**: test B passes only because test A ran first and happened to seed the singleton. Reorder them — or run B alone — and B fails. This is why a suite that is green when run whole can be red when you run one file with `.only`.
+
+```js
+// shared-state leak: a module-level counter both tests mutate
+import { test, expect } from "vitest";
+import { idCounter } from "../src/ids.js"; // module-level singleton: let n = 0
+
+test("A: first id is 1", () => {
+  expect(idCounter.next()).toBe(1); // passes only if it ran first
+});
+test("B: ids are sequential", () => {
+  const a = idCounter.next();        // 2 if A ran, 1 if B ran alone
+  expect(idCounter.next()).toBe(a + 1);
+});
+// Run B with --testNamePattern="B" and "A: first id is 1" silently breaks
+// the *next* time someone runs the whole suite — the failure has moved.
+```
+
+Runners fight this with **isolation**. The unit of isolation in Vitest's default pool and `node:test` is the **file**: each test file gets a fresh worker (a separate process or worker thread), so module-level state is born clean per file. That is **process isolation** — hermetic, because a leaked singleton in file X cannot reach file Y. But *within* one file, tests share the module graph and the same global object: that is **shared-context isolation**, and it is where leaks live. Knowing which boundary you are inside tells you whether `beforeEach` is enough or whether the leak crosses files.
+
+## Determinism: control time, randomness, and the environment
+
+You make a test deterministic by removing every input the test does not explicitly own. **Pin the clock** with fake timers (`vi.useFakeTimers()` / `vi.setSystemTime(...)`) or, better for production code, **inject a clock** so the unit under test calls `clock.now()` and the test supplies a frozen one — dependency injection beats global patching because it has no teardown to forget. **Seed randomness** the same way: inject an id generator or a seeded PRNG rather than reaching for `Math.random()` or `crypto.randomUUID()` inside business logic. **Freeze the timezone** by running CI with `TZ=UTC` — a single env var that eliminates an entire class of date flakes, because date math that crosses a DST boundary behaves differently in `America/New_York` than in `UTC`. And **never sleep on wall time** to wait for async work — await the actual promise or advance fake timers; a `setTimeout(50)` that works on your laptop loses the race on a loaded CI box.
+
+```js
+// flaky: reads the real clock and a real random source
+test("token expires in one hour", () => {
+  const t = issueToken();
+  expect(t.expiresAt).toBe(Date.now() + 3_600_000); // both sides drift
+});
+
+// deterministic: freeze time, inject the id
+import { vi, test, expect, afterEach } from "vitest";
+afterEach(() => vi.useRealTimers());
+
+test("token expires one hour after issue", () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date("2026-06-05T00:00:00Z"));
+  const t = issueToken({ now: () => Date.now(), id: () => "fixed-id" });
+  expect(t.expiresAt).toBe(Date.parse("2026-06-05T01:00:00Z")); // exact, always
+});
+```
+
+The tradeoff sits between the two isolation modes. **Full process isolation per file** is hermetic but slow: spawning a worker costs roughly tens of milliseconds, so a thousand-file suite pays seconds to tens of seconds in pure process startup before a single assertion runs. **Shared context** (a single thread, `--no-isolate` / `pool: 'threads'` with isolation off) is fast but leaks state between tests in the same file. The senior balance is to **isolate state cheaply, not expensively**: reset the singleton in `beforeEach`, roll back the database in `afterEach`, and reserve costly process isolation for the few suites that genuinely mutate global module state and cannot be cleaned up in place.
+
+<Inset kind="why" lang="en">
+Why is `beforeEach` reset usually enough, when process isolation is "safer"? Because almost all shared state is *reachable and resettable*: you can re-`new` the cache, clear the map, restore the clock. Process isolation is a sledgehammer that also resets state you can't name — but you pay the spawn cost on every file, forever. The exception is state you genuinely cannot reset from inside the process: a native addon holding a global, a module that ran irreversible side effects at import, or a third-party singleton with no clear method. There, paying for process isolation buys correctness you can't get otherwise. Everywhere else, a cheap reset is both faster and a better diagnostic — if `beforeEach` doesn't fix the flake, you've *found* the leak instead of hiding it.
+</Inset>
+
+## Parallel database isolation: rollback, schema-per-worker, or containers
+
+Tests that hit a real database in parallel are the hardest isolation problem, because the database is shared mutable state by definition. There are three strategies, trading speed for fidelity. **A transaction per test, rolled back at the end**: each test opens a transaction, does its writes, and the fixture rolls back in teardown so nothing persists — this is the fastest, costing roughly **1–3 ms** of DB setup per test, and tests never see each other's rows. Its limit: you cannot test anything that depends on a real commit — `COMMIT`-triggered triggers, deferred constraints, multi-connection visibility, or code that opens its own transaction. **A schema or database per worker**: each parallel worker gets its own namespace and truncates tables between tests; truncate-all runs in **tens of milliseconds**, slower than rollback but able to test real commits, with workers fully isolated from each other. **Ephemeral containers (testcontainers)**: spin up a fresh database per worker or per suite — maximum fidelity (exact engine version, real extensions), but startup is measured in **seconds**, so you run far fewer of them and amortize across many tests.
+
+```js
+// transaction-per-test fixture (Postgres + a pool): fast, auto-clean, no leaks
+import { test as base } from "vitest";
+import { pool } from "../src/db.js";
+
+export const test = base.extend({
+  db: async ({}, use) => {
+    const client = await pool.connect();
+    await client.query("BEGIN");
+    await use(client);          // the test runs inside this open transaction
+    await client.query("ROLLBACK"); // every write vanishes — next test sees a clean DB
+    client.release();
+  },
+});
+
+// usage: each test is hermetic without truncating or restarting anything
+test("inserts a user", async ({ db }) => {
+  await db.query("INSERT INTO users(email) VALUES('a@x.io')");
+  const { rows } = await db.query("SELECT count(*) FROM users");
+  expect(rows[0].count).toBe("1"); // 1, regardless of parallel tests
+});
+```
+
+<TradeoffMatrix
+  id="04-test-isolation-tradeoff-1"
+  lessonSlug="04-test-isolation-and-flakiness"
+  lang="en"
+  prompt="A CI suite runs 800 DB-backed tests in parallel across 4 workers. Most assert query results; a handful assert commit-triggered audit-log triggers. You need it fast AND correct. What isolation do you choose?"
+  options={[
+    { name: "Transaction-per-test rollback as the default, with the few commit-dependent tests opted into a schema-per-worker (truncate) tier", summary: "Cheap default, fidelity where needed.", correct: true, justification: "This is the senior split. The 95% of tests that only read back their own writes run inside a rolled-back transaction at ~1–3 ms of setup each, so the bulk of the suite is fast and perfectly isolated. The handful that need a real COMMIT (the audit triggers) opt into a schema-per-worker tier that truncates between tests at tens of ms — slower, but it actually exercises the commit path the rollback strategy can never reach. You pay the high cost only where it buys correctness." },
+    { name: "Transaction-per-test rollback for every test", summary: "Fast but can't test commits.", justification: "Fastest possible and leak-free for query tests, but it silently cannot test the audit-log triggers: they fire on COMMIT, and a rolled-back transaction never commits, so those assertions either never run the trigger or pass vacuously. You'd ship a green suite that has zero coverage of the commit path — speed bought by deleting fidelity exactly where you needed it." },
+    { name: "A fresh testcontainer database per test", summary: "Hermetic but seconds each.", justification: "Maximum fidelity and total isolation, but container startup is measured in seconds; at 800 tests that's startup time alone in the tens of minutes, dwarfing the actual assertions. Containers are the right tool per-worker or per-suite to pin the engine version, not per-test — using them per-test trades a tractable flakiness budget for an intractable time budget." },
+    { name: "One shared database, tests run serially to avoid collisions", summary: "Correct but throws away parallelism.", justification: "Serial execution does prevent cross-test row collisions, but it discards the 4-way parallelism that makes the suite tolerable and still leaves order-dependence (a test that forgets to clean up poisons the next). You've solved isolation by making the suite slow enough that nothing overlaps — the opposite of the goal, and fragile the moment someone re-enables parallelism." },
+  ]}
+/>
+
+## The failure mode: retries that mask a real flake
+
+Here is how a flaky test kills a deploy. A test passes 80% of the time — a real 1-in-5 race, say an un-awaited promise whose write lands *after* the assertion, or a leaked timer keeping the event loop alive into the next test. Someone, tired of red CI, sets `retries: 3`. Now the test is green: the chance all four attempts fail is 0.2⁴ ≈ 0.16%, so CI is "fixed". It is not — the **4% effective failure rate** (one run in ~625 still red) is now invisible, and worse, the underlying race is invisible too. For months the suite is green. Then the race condition that the flake was a symptom of — the un-awaited write, the order dependency — manifests in *production* on a deploy, at the worst possible time, with no test ever having pointed at it. Retries did not fix the flake; they **hid the bug the flake was reporting**.
+
+The async-leak variant is sharper: a test resolves and reports green before its background work finishes — a fire-and-forget `void doStuff()`, a timer it never cleared. That work then runs *during the next test*, mutating shared state and corrupting an unrelated assertion. The failure shows up in the wrong test, which is why these are maddening to chase. Detection is mechanical, not heroic: run with **`--detectOpenHandles`** (Jest) or watch for **`node --test` open-handle / "did not finish" warnings**, which point at the timer or socket still alive at exit; **run tests in randomized order** (`--sequence.shuffle` / `--randomize`) so order-dependence surfaces as a failure instead of a lucky pass; and treat a flake as a bug — **quarantine it** (mark it skipped/known-flaky, off the critical path) and **fix the root cause**, rather than papering over it with a retry budget that launders a real failure rate into a green check.
+
+<Quiz
+  id="04-test-isolation-quiz-1"
+  lessonSlug="04-test-isolation-and-flakiness"
+  lang="en"
+  question="A test passes ~80% of the time. The team adds retries: 3 and CI goes green. What did this actually accomplish?"
+  choices={[
+    { label: "It hid the real failure — four attempts make the test pass ~99.8% of the time, so the underlying race (e.g. an un-awaited write or leaked timer) is now invisible and can fail in production later", correct: true },
+    { label: "It fixed the flakiness, since the test now reliably passes", misconception: "Retries change the verdict, not the test. The race is still there at its original ~1-in-5 rate; you've only lowered the probability that CI shows it. The first time that race matters outside the retry harness — in production — it bites with no warning." },
+    { label: "It made the test deterministic", misconception: "Determinism means the same verdict every run from the same inputs. Retrying a non-deterministic test just rolls the dice more times; the inputs (uncontrolled clock, shared state, async ordering) are unchanged, so it is exactly as non-deterministic as before." },
+    { label: "Nothing — retries have no effect on a flaky test", misconception: "They have a real and harmful effect: they convert a visible 20% failure rate into an invisible ~0.2% one, which is worse than leaving it red, because now no one is looking at the bug the flake was reporting." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A shared-state leak across ordered tests versus per-test isolation"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "a", label: "Test A runs", sub: "seeds singleton" },
+    { id: "s", label: "shared state", sub: "dirty" },
+    { id: "b", label: "Test B passes", sub: "only after A" },
+    { id: "r", label: "beforeEach reset", sub: "or rollback" },
+    { id: "c", label: "clean state", sub: "per test" },
+    { id: "d", label: "B passes alone", sub: "order-free" },
+  ]}
+  edges={[
+    { from: "a", to: "s", label: "mutates" },
+    { from: "s", to: "b", label: "leaks" },
+    { from: "r", to: "c", label: "isolates" },
+    { from: "c", to: "d", label: "deterministic" },
+  ]}
+  caption="Top row: a leak. Test A dirties shared state, B passes only because A ran first — reorder or run B alone and it breaks. Bottom row: cheap per-test isolation (beforeEach reset or transaction rollback) gives every test clean state, so the verdict is order-free and deterministic without paying for full process isolation."
+/>
+
+<KeyTakeaway>Flakiness is a hidden race, not luck. Kill uncontrolled inputs: pin the clock, seed randomness, set `TZ=UTC`, and await instead of sleeping. Isolate state cheaply via a reset or rollback. Never let retries mask a flake.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-test-isolation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does transaction-per-test rollback make tests fast and isolated, and what can it NOT test?", a: "Each test opens a transaction, does all its writes inside it, and the fixture issues ROLLBACK in teardown, so every row the test created vanishes and the next test sees a pristine database — no truncation, no restart. The setup cost is just a BEGIN, on the order of 1–3 ms per test, and because uncommitted writes are invisible to other connections, parallel tests can't see each other's data. The hard limit is fidelity: the writes never actually commit, so anything that depends on a real COMMIT is untestable this way — commit-triggered triggers, deferred constraints that fire at commit time, multi-connection visibility, or application code that opens and commits its own transaction (which a wrapping rollback can't span). For those, you step up to a schema/database-per-worker strategy that truncates between tests at tens of ms, or ephemeral containers at seconds — slower, but they exercise the real commit path the rollback approach can never reach." },
+    { q: "How does `retries: 3` turn a flaky test into a production incident, and what should you do instead?", a: "A retry budget changes the verdict without touching the cause. A test that genuinely passes only 80% of the time has a real defect behind it — typically an un-awaited promise whose write lands after the assertion, a leaked timer or open handle that keeps work running into the next test, or an order dependency on shared state. With retries: 3 the chance all four attempts fail is about 0.2⁴ ≈ 0.16%, so CI reads green and everyone stops looking. The 4% effective failure rate is now invisible, and so is the race itself — until the same condition (the un-awaited write, the timing assumption) happens for real in production on a deploy, with no test ever having pointed at it. The fix is to treat the flake as the bug report it is: run tests in randomized order to surface order-dependence, use --detectOpenHandles or node --test open-handle warnings to find the leaked timer/socket, quarantine the test off the critical path so it doesn't block others, and fix the root cause — never launder a real failure rate into a green check with retries." },
+  ]}
+/>
+
+<Recap lang="en">
+A test is deterministic when it returns the same verdict every run, in any order, on any machine — and flakiness is the loss of that property, with exactly two roots: shared mutable state (a module-level singleton, a shared DB row, a global clock) and uncontrolled non-determinism (`Date.now`, `Math.random`, UUIDs, timezone, locale, wall-time sleeps). Shared state breeds order-dependence — test B passes only because A ran first — which is why a whole-suite green can turn red when you run one file alone. Runners isolate at the file boundary with per-file workers (process isolation, hermetic but tens of ms to spawn each), while tests inside one file share context, where leaks live. The senior move is to remove uncontrolled inputs at the source — pin the clock with fake timers or an injected `now()`, seed randomness or inject the id generator, freeze CI with `TZ=UTC`, and await real work instead of sleeping — then isolate state cheaply with a `beforeEach` reset or a transaction-rollback fixture (~1–3 ms) rather than paying for process isolation everywhere. For parallel DB tests, pick the strategy by fidelity: rollback per test (~1–3 ms, but can't test commits), schema-per-worker truncate (~tens of ms, real commits), or ephemeral containers (~seconds, exact engine). And refuse the deadliest anti-pattern: `retries: 3` turns a 1-in-5 race green and buries a real ~4% failure rate plus the un-awaited promise or leaked handle behind it, until it detonates on a production deploy — instead, randomize order, use `--detectOpenHandles`, quarantine, and fix the root cause.
+</Recap>

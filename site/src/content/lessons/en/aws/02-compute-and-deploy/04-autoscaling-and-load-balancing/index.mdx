@@ -1,0 +1,206 @@
+---
+concepts:
+- alb-vs-nlb
+- target-groups-health-checks
+- deregistration-delay
+- target-tracking-scaling
+- scale-out-lag
+- predictive-scaling
+- "SAA-C03:Design Resilient Architectures"
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-autoscaling-and-load-balancing"
+sources:
+- https://docs.aws.amazon.com/elasticloadbalancing/latest/application/introduction.html
+- https://docs.aws.amazon.com/autoscaling/application/userguide/application-auto-scaling-target-tracking.html
+- https://docs.aws.amazon.com/elasticloadbalancing/latest/application/edit-target-group-attributes.html
+spiral: []
+status: ready
+summary: 'ALB routes layer 7; NLB is layer 4 for raw TCP and static IP. Health checks pick who gets traffic; deregistration delay drains in-flight on scale-in. Autoscaling is reactive — headroom, request-count signals, and warm capacity beat the scale-out lag that returns 5xx in a spike.'
+title: 'Autoscaling and load balancing: ALB, NLB, and target tracking'
+track: "aws"
+unit: "02-compute-and-deploy"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A flash sale opens at noon. At 11:59 your fleet is four tasks, idle, CPU around 12%. At 12:00:01 the front page hits ten times normal traffic and your four tasks are instantly pinned. The autoscaler is doing exactly what you configured: target tracking on CPU at 50%. So it waits. CloudWatch needs about a minute to aggregate the metric, then the alarm needs a few datapoints over its evaluation window to declare a breach, *then* it asks ECS for more tasks, *then* each new task has to pull its image, start, warm up, and pass three consecutive health checks before the load balancer will route a single request to it. For roughly three minutes your four overloaded tasks absorb a 10× spike alone, shedding 5xx and timing out, while the dashboard cheerfully shows scaling "in progress." By the time capacity arrives the sale's first wave is over and the conversion you optimized all quarter for is gone — not because autoscaling failed, but because autoscaling is *reactive*, and a spike does not wait for an alarm.
+</Hook>
+
+<Crux>Load balancers route by health; autoscaling reacts on a delay. The spike beats new capacity, so buy headroom and scale on a faster signal.</Crux>
+
+<Explanation>
+
+## ALB vs NLB: layer 7 routing or layer 4 throughput
+
+Elastic Load Balancing gives you two production load balancers, and the choice is structural, not cosmetic. An **Application Load Balancer (ALB)** operates at **layer 7** — it terminates HTTP/HTTPS, parses each request, and routes on host, path, header, method, or query string to different **target groups**. That is what lets one ALB fan a single domain across many microservices: `/api/*` to one service, `/static/*` to another, `host: admin.example.com` to a third. Targets can be EC2 instances, IP addresses, **Lambda functions**, or — the common case here — ECS tasks registered automatically by the service. Because it understands HTTP, ALB also does TLS termination, sticky sessions via cookies, and per-request routing decisions.
+
+A **Network Load Balancer (NLB)** operates at **layer 4** — it forwards TCP and UDP flows without reading the payload. It does not parse HTTP, cannot route on path, and cannot speak to Lambda targets. What it gives you in return is **ultra-low latency** (no request parsing), the ability to handle **millions of flows per second**, a **static IP per Availability Zone** (and an Elastic IP option), native **PrivateLink** endpoints, and — critically for some backends — it **preserves the client source IP** all the way to the target. The tradeoff is plain: ALB is the default for HTTP microservices that need routing, TLS, and rich health checks; NLB is for raw TCP/UDP, extreme throughput, a fixed IP that firewalls and allowlists can pin, or anything that must see the real client IP.
+
+```hcl
+# ALB: layer 7, routes by path to two ECS target groups.
+resource "aws_lb_listener_rule" "api" {
+  listener_arn = aws_lb_listener.https.arn
+  priority     = 10
+  action { type = "forward"; target_group_arn = aws_lb_target_group.api.arn }
+  condition { path_pattern { values = ["/api/*"] } }
+}
+
+# NLB: layer 4, raw TCP passthrough on 5432 to a Postgres proxy fleet.
+resource "aws_lb_listener" "pg" {
+  load_balancer_arn = aws_lb.nlb.arn
+  port              = 5432
+  protocol          = "TCP"
+  default_action { type = "forward"; target_group_arn = aws_lb_target_group.pgproxy.arn }
+}
+```
+
+The thing that actually decides whether a target receives traffic is the **target group health check**: a path (for ALB, e.g. `GET /healthz`), an interval, a timeout, and **healthy/unhealthy thresholds** (how many consecutive successes mark a target healthy, how many failures mark it unhealthy). This is a live filter — a target stays out of rotation until it passes, and is pulled the instant it fails the threshold. Tune it wrong both ways: a **too-aggressive** check (short interval, low unhealthy threshold, tight timeout) **flaps** healthy targets out of rotation on a single slow GC pause or a brief dependency blip, shrinking your fleet exactly when load is high; a **too-lax** check (long interval, high threshold) keeps routing to a dead or hung target for tens of seconds, so users hit 5xx until the check finally notices.
+
+## Target groups and the deregistration delay
+
+When a target leaves — scale-in removed a task, or a deploy is replacing one — the load balancer does not just yank it. It runs **connection draining**, governed by the target group's **deregistration delay** (attribute `deregistration_delay.timeout_seconds`, **default 300 seconds**). On deregistration the LB immediately stops sending the target *new* requests but lets *in-flight* requests finish, for up to the delay; only then does the target fully detach. This is the difference between a clean rolling deploy and a wall of errors.
+
+```hcl
+resource "aws_lb_target_group" "api" {
+  name        = "api-tg"
+  port        = 8080
+  protocol    = "HTTP"
+  target_type = "ip"            # ECS awsvpc tasks register by IP
+
+  health_check {
+    path                = "/healthz"
+    interval            = 15     # probe every 15s
+    timeout             = 5
+    healthy_threshold   = 2      # 2 in a row → in rotation
+    unhealthy_threshold = 3      # 3 in a row → pulled
+    matcher             = "200"
+  }
+
+  # Drain in-flight requests on scale-in / deploy. Match this to your
+  # real p99 request duration plus margin — NOT the 300s default blindly.
+  deregistration_delay = 30
+
+  stickiness { type = "lb_cookie"; enabled = false }
+}
+```
+
+The failure mode is a two-sided trap. Set the deregistration delay **too short** and every scale-in or deploy **severs in-flight requests** mid-flight: a 12-second report export or a long-poll gets killed at second 5, and you ship a 5xx to a real user on *every* deployment — a self-inflicted error spike that correlates suspiciously with your release times. Set it **too long** (the 300s default for an app whose requests finish in 200ms) and every rolling deploy crawls, because each task you remove sits draining for five idle minutes before the deploy can declare it gone — slow rollouts, slow rollbacks, and a much larger window where old and new code run side by side. The right value is your real p99 request duration plus a margin, not the default.
+
+The other target-group lever is **cross-zone load balancing**. With it **on** (the default for ALB; **off** by default for NLB), each LB node can send to targets in *any* AZ, so traffic spreads evenly even when AZs hold uneven target counts — but cross-AZ traffic on NLB is **billed** as inter-AZ data transfer. With it **off**, each LB node only hits same-AZ targets, which is free but **skews load** if one AZ has 2 targets and another has 8: the 2 absorb the same share of that zone's traffic as the 8 do of theirs, so the small zone runs hot.
+
+<Inset kind="why" lang="en">
+**Why request-count target tracking reacts faster than CPU.** CPU is a *lagging, smoothed* signal: a request arrives, gets queued, gets processed, and only *then* does CPU rise — and CloudWatch reports CPU as a one-minute average, so a spike that lands at 12:00:01 barely moves the 12:00–12:01 datapoint and only fully shows up in the *next* minute's average. You react a minute or more after the load is already hurting. **ALBRequestCountPerTarget** counts requests as the load balancer *accepts* them — before they queue, before CPU climbs, before latency rises. The spike is visible in the request count essentially the moment it hits the LB, so an alarm on requests-per-target breaches earlier and triggers scale-out while CPU is still climbing. It is also a more honest capacity proxy for I/O-bound services, where CPU stays low while the fleet drowns in concurrent connections. Request-count is the senior default signal precisely because it leads instead of lags.
+</Inset>
+
+## Autoscaling: the control loop and its built-in lag
+
+Both **ECS service autoscaling** (via Application Auto Scaling) and **EC2 Auto Scaling Groups** drive capacity from CloudWatch metrics, and the policy types are the same three. **Target tracking** is the senior default: you name a metric and a target value — CPU at 50%, or `ALBRequestCountPerTarget` at 1000 — and AWS manages the alarms and adds/removes capacity to hold the metric near that target, like a thermostat. **Step scaling** adds a tiered response (breach by a little → +1, breach by a lot → +4) when you need explicit control. **Scheduled scaling** sets capacity by clock for *known* patterns — scale to 20 tasks at 08:55 because the workday starts at 09:00.
+
+```json
+{
+  "PolicyName": "track-requests-per-target",
+  "PolicyType": "TargetTrackingScaling",
+  "TargetTrackingScalingPolicyConfiguration": {
+    "TargetValue": 1000.0,
+    "PredefinedMetricSpecification": {
+      "PredefinedMetricType": "ALBRequestCountPerTarget",
+      "ResourceLabel": "app/prod-alb/abc123/targetgroup/api-tg/def456"
+    },
+    "ScaleInCooldown": 120,
+    "ScaleOutCooldown": 30
+  }
+}
+```
+
+The control loop is the whole story, and every stage costs wall-clock time: **metric emitted → CloudWatch aggregates it (~1 minute) → alarm needs N datapoints over M minutes to breach → scaling action requested → new task/instance must launch, warm up, and pass the health-check thresholds before the LB routes to it.** Nothing serves traffic until that last step. Cooldowns gate the loop further: too-short cooldowns make it **flap** — scale out, the metric drops, scale in, the metric rises, scale out again — thrashing capacity and paying launch costs on every cycle; too-long cooldowns leave you stuck under-provisioned through a sustained climb. Note the asymmetry in the policy above: scale *out* fast (short cooldown — being late costs users) and scale *in* slow (long cooldown — being hasty costs a re-spin).
+
+## The scale-out lag: why a spike still returns 5xx
+
+Here is the war story made general. Autoscaling is **reactive** — it can only respond *after* a metric has moved, been aggregated, and breached an alarm — and a sudden 10× spike does not grant that grace period. Add the stages: metric aggregation **~1 minute**, alarm evaluation across its datapoints **~1–3 minutes**, then launch and warmup. A **Fargate** task starts in **tens of seconds**; an **EC2** instance launch *plus* OS boot, agent registration, image pull, and app warmup is **minutes**. Sum it and your *new* capacity is often **3–5 minutes** behind the spike — an eternity at 10× load, during which the current fleet alone eats the surge and returns 5xx and timeouts. The fleet was sized for steady state; the spike was not.
+
+The senior mitigations all attack a different stage of that loop. **Target tracking with headroom** — set the target to CPU 50%, not 80% — so steady-state already runs with spare capacity to absorb the first wave while scale-out catches up. **Scale on request count, not CPU**, because it is the leading signal (see the Inset). **Scheduled scaling** for *known* peaks (the flash sale, the 09:00 login storm): pre-warm capacity by the clock so you never enter the spike cold. **Predictive scaling** (EC2 ASG) learns the daily/weekly cycle from history and provisions *ahead* of the forecast curve. **Warm pools** (EC2) keep pre-initialized, stopped instances that resume in seconds instead of booting from scratch. **Provisioned capacity / provisioned concurrency** keeps a baseline always hot. And when capacity genuinely cannot arrive in time, **shed or queue**: return 503 with `Retry-After` or push work to SQS so the spike is buffered instead of dropped. None of these make autoscaling instant — they shrink or hide the lag so the spike meets capacity instead of a wall of errors.
+
+<TradeoffMatrix
+  id="04-autoscaling-and-load-balancing-tradeoff-1"
+  lessonSlug="04-autoscaling-and-load-balancing"
+  lang="en"
+  prompt="An HTTP microservice on ECS has predictable 10× spikes at known times (a daily 09:00 login storm and a scheduled flash sale). It currently target-tracks CPU at 70% and returns 5xx for 2–3 minutes at the start of every spike. Pick the primary fix."
+  options={[
+    { name: "Scheduled scaling to pre-warm before the known peaks, plus request-count target tracking with headroom", summary: "Pre-provision for known spikes; lead on a faster signal.", correct: true, justification: "Right fit. The spikes are at KNOWN times, so the cleanest fix is to stop being reactive for them: scheduled scaling raises capacity by the clock a few minutes before 09:00 and before the sale, so you never enter the spike cold and the scale-out lag never gets a chance to hurt. Pairing that with target tracking on ALBRequestCountPerTarget (a leading signal) and headroom (target ~50%) handles any unscheduled surprises faster than CPU at 70% would. This attacks the lag directly for the predictable case and shortens it for the rest." },
+    { name: "Lower the CPU target tracking value from 70% to 50%", summary: "Keep more idle headroom so the fleet absorbs the first wave.", justification: "Helps but insufficient alone. Dropping the target to 50% buys real headroom so the current fleet absorbs more of the first wave, which is a genuine senior mitigation. But CPU is still a lagging, one-minute-averaged signal, and for a 10× spike even 50% headroom can be eaten in seconds. For KNOWN peaks, leaving them to reactive scaling at all is the miss — pre-warming on a schedule is strictly better. A reasonable partial measure, not the primary fix." },
+    { name: "Switch from an ALB to an NLB for lower latency", summary: "Layer 4 forwarding shaves per-request overhead.", justification: "Wrong problem. The 5xx are from insufficient COMPUTE capacity during the lag, not load-balancer latency. NLB is layer 4 and cannot route by path or speak HTTP health semantics, so you would lose ALB's routing and richer checks while doing nothing about the scale-out delay. Latency at the LB is microseconds; the gap here is minutes of missing capacity. This changes the wrong layer." },
+    { name: "Shorten the deregistration delay so scale-in is faster", summary: "Drain in-flight requests more quickly on scale-in.", justification: "Backwards, and dangerous. The deregistration delay governs scale-IN draining; the incident is about scale-OUT being too slow. Shortening it does nothing for the spike and actively risks severing in-flight requests during the scale-in that follows the spike, ADDING 5xx. This tunes the opposite side of the lifecycle from the failure." },
+  ]}
+/>
+
+<Quiz
+  id="04-autoscaling-and-load-balancing-quiz-1"
+  lessonSlug="04-autoscaling-and-load-balancing"
+  lang="en"
+  question="Your error dashboard shows a clean 5xx spike that lands at the exact start of every deployment and lasts a few seconds, then clears. Health checks are passing on the new tasks. What's the most likely cause?"
+  choices={[
+    { label: "The deregistration delay is too short, so in-flight requests on tasks being replaced are severed mid-flight instead of being allowed to drain", correct: true },
+    { label: "The CPU target tracking value is set too high", misconception: "Target tracking governs how the fleet scales to load over minutes; it does not produce a clean, seconds-long 5xx burst aligned exactly to deploy start. The deploy-correlated timing points at connection draining on task replacement, not at the steady-state scaling target." },
+    { label: "Cross-zone load balancing is disabled", misconception: "Cross-zone off causes uneven load distribution (a hot AZ) under skewed target counts — a steady-state skew, not a sharp 5xx burst synchronized to every deployment. The deploy correlation is the tell that in-flight requests are being cut during deregistration." },
+    { label: "The ALB is layer 7 and should be an NLB", misconception: "Layer 7 vs layer 4 is a routing/throughput choice and has nothing to do with errors that appear precisely at deploy time. Swapping to NLB would not drain connections; the deregistration delay is what lets in-flight requests finish during replacement." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The autoscaling control loop and its built-in lag: a traffic spike must travel through metric aggregation, alarm evaluation, the scaling action, and launch plus warmup before new capacity finally serves a request."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "spike", label: "10× spike", sub: "12:00:01" },
+    { id: "metric", label: "CloudWatch", sub: "aggregate ~1 min" },
+    { id: "alarm", label: "Alarm breach", sub: "N pts / ~1–3 min" },
+    { id: "action", label: "Scale action", sub: "ask ECS/ASG" },
+    { id: "warmup", label: "Launch + warmup", sub: "Fargate 10s / EC2 min" },
+    { id: "serve", label: "Passes health", sub: "now serves" },
+  ]}
+  edges={[
+    { from: "spike", to: "metric", label: "raises" },
+    { from: "metric", to: "alarm", label: "after lag" },
+    { from: "alarm", to: "action", label: "triggers" },
+    { from: "action", to: "warmup", label: "launches" },
+    { from: "warmup", to: "serve", label: "3 checks" },
+  ]}
+  caption="Every arrow is wall-clock time. From spike to serving is often 3–5 minutes — and the current fleet eats the surge alone the whole way. Headroom, request-count signals, scheduled/predictive scaling, and warm pools shrink or hide this gap."
+/>
+
+<KeyTakeaway>ALB is layer 7; NLB is layer 4. Deregistration delay drains in-flight on scale-in: too short cuts requests, too long stalls deploys. Autoscaling is reactive — beat its 3–5 minute lag with headroom and request counts.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-autoscaling-and-load-balancing-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast ALB and NLB by layer, capabilities, and when to choose each.", a: "ALB is a layer-7 load balancer: it terminates HTTP/HTTPS, parses each request, and routes on host, path, header, method, or query string to different target groups, so one ALB can fan a single domain across many microservices. Its targets can be EC2 instances, IPs, Lambda functions, or ECS tasks, and it does TLS termination, cookie-based stickiness, and rich HTTP health checks. NLB is layer 4: it forwards TCP/UDP flows without reading the payload, so it cannot route by path or talk to Lambda, but it gives ultra-low latency, millions of flows per second, a static IP per AZ (and Elastic IP / PrivateLink), and it preserves the client source IP to the target. Choose ALB for HTTP microservices that need routing, TLS, and request-level health checks; choose NLB for raw TCP/UDP, extreme throughput, a fixed IP firewalls can pin, or any backend that must see the real client IP." },
+    { q: "Explain the deregistration delay, its default, and the failure mode at each extreme.", a: "The deregistration delay (target-group attribute deregistration_delay.timeout_seconds, default 300 seconds) governs connection draining when a target leaves on scale-in or deploy. On deregistration the load balancer immediately stops sending the target new requests but lets in-flight requests finish for up to the delay, then fully detaches it. Too short: scale-ins and deploys sever in-flight requests mid-flight — a long export or long-poll gets killed and a real user gets a 5xx on every deployment, an error spike correlated with release times. Too long: leaving the 300s default for requests that finish in 200ms makes every rolling deploy crawl, because each removed task drains for five idle minutes before the deploy proceeds — slow rollouts, slow rollbacks, and a long window of old and new code running together. The right value is real p99 request duration plus a margin, not the default." },
+    { q: "Walk the autoscaling control loop and explain why a 10× spike still returns 5xx, with mitigations.", a: "The loop: a metric is emitted, CloudWatch aggregates it (~1 minute), an alarm needs N datapoints over M minutes to breach (~1–3 minutes), a scaling action is requested, then a new task/instance must launch, warm up, and pass the health-check thresholds before the LB routes to it. Nothing serves until that last step. Because it is reactive — it can only respond after the metric moves — and a Fargate task starts in tens of seconds while an EC2 launch plus boot, image pull, and warmup is minutes, new capacity is often 3–5 minutes behind a sudden 10× spike, so the current fleet alone eats the surge and returns 5xx/timeouts. Mitigations attack different stages: target tracking with headroom (target CPU 50% not 80%) so steady state has spare; scale on ALBRequestCountPerTarget (a leading signal) instead of lagging CPU; scheduled scaling to pre-warm known peaks; predictive scaling (EC2) to provision ahead of a learned forecast; warm pools that resume stopped instances in seconds; provisioned capacity for an always-hot baseline; and shedding/queueing (503 + Retry-After, or SQS) when capacity truly cannot arrive in time. Keep scale-out cooldowns short and scale-in cooldowns long to avoid flapping." },
+  ]}
+/>
+
+<Recap lang="en">
+Elastic Load Balancing offers two structurally different load balancers. The ALB is layer 7: it parses HTTP/HTTPS and routes by host, path, header, method, or query string to target groups, supports EC2/IP/Lambda/ECS targets, and does TLS and cookie stickiness — the default for HTTP microservices. The NLB is layer 4: it forwards raw TCP/UDP at ultra-low latency, handles millions of flows, offers a static IP per AZ and PrivateLink, and preserves the client source IP — for raw throughput, fixed IPs, or source-IP needs. The target-group health check (path, interval, healthy/unhealthy thresholds) is the live filter that decides who receives traffic: too aggressive and it flaps healthy targets out on a single GC pause; too lax and it keeps routing to dead targets for tens of seconds. When a target leaves on scale-in or deploy, the deregistration delay (default 300s) drains in-flight requests — set it too short and you sever requests and ship 5xx on every deploy; too long and rolling deploys crawl; the right value is real p99 plus margin. Cross-zone load balancing spreads load evenly but bills inter-AZ on NLB; off, it is free but skews load under uneven target counts. Autoscaling — ECS service or EC2 ASG — runs on CloudWatch policies, with target tracking the senior default (hold CPU 50% or ALBRequestCountPerTarget 1000), step scaling for tiered control, and scheduled scaling for known patterns. But the control loop is reactive and slow: metric aggregation ~1 min, alarm ~1–3 min, then launch and warmup (Fargate tens of seconds, EC2 minutes), so new capacity lands 3–5 minutes behind a sudden 10× spike and the current fleet alone returns 5xx until it arrives. Beat the lag with headroom, request-count scaling (a leading signal), scheduled and predictive scaling for known peaks, warm pools and provisioned capacity, and shedding or queueing — and keep scale-out cooldowns short, scale-in long, to avoid flapping. Autoscaling is never instant; the senior job is to make sure the spike meets capacity instead of a wall of errors.
+</Recap>

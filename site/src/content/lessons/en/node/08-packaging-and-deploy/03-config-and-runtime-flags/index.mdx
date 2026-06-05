@@ -1,0 +1,191 @@
+---
+concepts:
+- twelve-factor-config
+- fail-fast-validation
+- env-vs-secrets
+- node-env
+- v8-heap-flags
+- container-memory-oom
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-config-and-runtime-flags
+sources:
+- https://12factor.net/config
+- https://nodejs.org/api/cli.html#--max-old-space-sizesize-in-mib
+- https://nodejs.org/api/cli.html#node_optionsoptions
+spiral: []
+status: ready
+summary: 'Read config once at boot into a frozen, schema-validated object and crash on a bad var before serving — and size the V8 old-space heap to ~75% of the container limit, because a non-cgroup-aware Node grows past the cap and gets OOMKilled at 137 with no JS stack.'
+title: 'Configuration and runtime flags: env, fail-fast, and heap limits'
+track: node
+unit: 08-packaging-and-deploy
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A staging deploy went green, the canary took traffic, and ninety seconds later every pod on the node flapped into `CrashLoopBackOff`. `kubectl describe` said `Last State: Terminated, Reason: OOMKilled, Exit Code: 137`. There was no heap-out-of-memory error in the logs, no JS stack, nothing — the process just vanished mid-request. The service hadn't changed; the memory limit had, dropped from 1Gi to 512Mi in a cost-cutting pass. The Node inside still thought it owned the 32 GB host, let its heap drift past 512 MB, and the kernel's OOM killer reaped it with a signal V8 never saw coming. The fix was one environment variable. The three days of blame aimed at "a memory leak" were aimed at the wrong layer entirely.
+</Hook>
+
+<Crux>Read config once at boot into a frozen, validated object, crash on a bad var, and size the V8 heap to ~75% of the container limit.</Crux>
+
+<Explanation>
+
+## Config lives in the environment, not the code or the image
+
+The 12-factor rule is blunt: configuration — anything that varies between deploys — belongs in the **environment**, not in code and not baked into the image. The payoff is operational. You build *one* artifact, and the *same* image SHA promotes dev → staging → prod; only the env vars change. The moment a `config.prod.json` ships inside the image, you have lost that property: prod and staging are now different builds, "works in staging" stops meaning anything, and a config typo forces a full rebuild instead of a redeploy.
+
+The mechanism that makes this safe is reading the environment **once, at boot, into a typed and frozen object** — never scattering `process.env.X` reads through the codebase. `process.env` values are *always strings* (or `undefined`); `process.env.PORT` is `"3000"`, not `3000`, and `process.env.DEBUG` is the string `"false"` — which is truthy. Centralizing the read is where you do the coercion exactly once, so the rest of the app consumes real numbers and booleans.
+
+```js
+// config.js — read + coerce ONCE, then freeze
+function num(v, name) {
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`env ${name} must be a number, got ${v}`);
+  return n;
+}
+
+export const config = Object.freeze({
+  nodeEnv: process.env.NODE_ENV ?? "development",
+  port: num(process.env.PORT ?? "3000", "PORT"),
+  databaseUrl: process.env.DATABASE_URL,           // validated below
+  logLevel: process.env.LOG_LEVEL ?? "info",
+  requestTimeoutMs: num(process.env.REQ_TIMEOUT_MS ?? "5000", "REQ_TIMEOUT_MS"),
+});
+```
+
+The **tradeoff** is small and worth it: one boot-time read can't pick up a var changed at runtime, so a config change needs a restart. In a 12-factor world that is exactly right — deploys are how config changes, and a frozen object means no code path can mutate `config.port` halfway through a request. The **failure mode** of the opposite habit is subtle: scattered `process.env.RETRY_LIMIT` reads, some defaulting to `3` and one to `"3"`, drift apart over time and produce a config the team can no longer reason about from a single file.
+
+## Fail fast: validate the whole config at boot, crash on a bad var
+
+Reading config isn't enough; you have to **validate the whole shape at startup and exit non-zero if anything is missing or malformed** — *before* the server binds a port. The anti-pattern is lazy: `DATABASE_URL` is undefined, nobody notices at boot, and the first request that touches the DB throws at 3am — a 500 to a user, a page to you, hours after the deploy that caused it. Boot validation converts that whole class of runtime 500s into a single, loud, immediate boot failure that the deploy pipeline catches while the canary is still ramping.
+
+```js
+// config.js (top) — schema + fail-fast gate
+import { z } from "zod";
+
+const Schema = z.object({
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  PORT: z.coerce.number().int().positive().default(3000),
+  DATABASE_URL: z.string().url(),               // required, no default → must be present
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
+  MAX_OLD_SPACE_MB: z.coerce.number().int().positive().optional(),
+});
+
+const parsed = Schema.safeParse(process.env);
+if (!parsed.success) {
+  console.error("✗ invalid configuration:\n" + z.prettifyError(parsed.error));
+  process.exit(1);                              // die at boot, not at first request
+}
+
+export const config = Object.freeze(parsed.data);
+```
+
+`z.coerce.number()` solves the string problem at the schema layer, and a required `z.string().url()` with no default means a missing `DATABASE_URL` makes `safeParse` fail and the process `exit(1)` — the deploy goes red, traffic never shifts. The **tradeoff**: strict validation adds a few milliseconds to startup and forces you to *declare every variable the app reads*, which feels like bureaucracy until the day it saves you. The **failure mode** it kills is the worst kind — a deploy that *looks* healthy (the container started, the readiness probe hasn't fired yet) but is one DB call away from a cascade of 500s. With fail-fast, an unhealthy config can't reach the "serving" state at all.
+
+## Secrets are not config, and NODE_ENV is load-bearing
+
+Two distinctions inside the environment matter for security and correctness. First, **secrets are injected at runtime, never baked in**. A `DATABASE_URL` with a password, an API key, a signing secret — these come from the orchestrator's secret store (Kubernetes `Secret`, AWS Secrets Manager, Vault) mounted as env or a file at start. They are never committed and never written into an image layer, because image layers are cacheable, pullable, and effectively permanent: a secret baked into a layer is a secret leaked to anyone who can pull the image, and you cannot un-bake it without rebuilding and re-publishing. Non-secret config (timeouts, feature flags, log level) can sit in plain env or a ConfigMap; secrets get the encrypted, access-controlled path.
+
+Second, **`NODE_ENV` must be exactly `"production"` in prod**, because a surprising amount of the ecosystem branches on it. Express disables verbose error pages and stack traces, caches compiled view templates, and skips work it does in development; many libraries flip dev-only checks off. The footgun is that the check is a plain string compare — `NODE_ENV=Production`, `prod`, or a stray space silently lands you in the *non-production* branch, so you ship with dev-mode error pages leaking stacks and view caching off, paying a real latency tax with no error to point at. This is why validating `NODE_ENV` against an enum (above) is not pedantry: a typo here degrades prod silently.
+
+<Inset kind="why" lang="en">
+Here's the layer the OOMKill hides in. V8 caps the **old-space heap** — long-lived objects — and historically that cap was *auto-sized from the physical machine's memory* (roughly 1.5–2 GB on older 64-bit defaults, larger when V8 sees a big host). The trap: older Node builds were **not cgroup-aware**. Inside a container limited to 512 MB, Node would read the *host's* 32 GB via `os.totalmem()`-style probes, set a multi-gigabyte heap ceiling, and happily let the heap grow toward it. Long before V8 hits its own limit and throws a clean `JavaScript heap out of memory`, the process crosses the **cgroup's 512 MB**, and the *kernel's* OOM killer sends `SIGKILL`. The exit code is **137** (128 + 9, signal 9). Crucially there is **no V8 error, no JS stack** — V8 was never asked, the kernel just took the process. That asymmetry is the whole debugging trap: you look for a heap error that can't exist, because the heap limit was never the one that fired.
+</Inset>
+
+## Size the heap to the container, via NODE_OPTIONS
+
+The fix is to tell V8 the truth about its budget: set `--max-old-space-size` to roughly **75–80% of the container memory limit**, leaving headroom for everything that *isn't* old-space heap — Buffers (off-heap), the C++ stacks, native addons, code, and V8's own young generation. For a 512 MB limit, that's `--max-old-space-size=384`: V8 now starts GCing hard and, if it truly can't fit, throws a *clean* `JavaScript heap out of memory` with a stack you can act on — a loud, attributable failure instead of a silent kernel kill.
+
+```bash
+# Pass V8 flags via NODE_OPTIONS so they also reach child processes (workers, spawns).
+# 512 MB cgroup limit → ~75% for old-space heap, headroom for buffers/stacks/native.
+NODE_OPTIONS="--max-old-space-size=384 --max-semi-space-size=64"
+```
+
+```dockerfile
+# In the image/manifest, not in code — same artifact, env supplies the budget.
+ENV NODE_OPTIONS="--max-old-space-size=384"
+```
+
+Put flags in **`NODE_OPTIONS`**, not the `CMD` line: that environment variable is inherited by every `node` you spawn — worker threads, `child_process.fork`, a clustered master's workers — so the limit is consistent across the whole process tree, whereas a flag on the entrypoint applies only to PID 1's process. The second flag, **`--max-semi-space-size`**, sizes the **young generation** (new, short-lived objects), which V8 scavenges with a fast copying collector; the default is small (~16 MB). Raising it (e.g. to 64 MB) means fewer, larger young-gen GCs — higher throughput for allocation-heavy services at the cost of more resident memory, so it comes *out* of the same budget you just sized. The **numbers to carry**: 512 MB limit → 384 MB heap; default semi-space ≈ 16 MB; OOMKill exit code = **137** with no JS stack; a clean V8 OOM exits **134** (abort) with a `heap out of memory` message.
+
+<TradeoffMatrix
+  id="03-config-and-runtime-flags-tradeoff-1"
+  lessonSlug="03-config-and-runtime-flags"
+  lang="en"
+  prompt="A containerized Node service has a 512 MB memory limit and keeps getting OOMKilled at exit 137 with no heap error. How should you size the heap?"
+  options={[
+    { name: "Set NODE_OPTIONS=\"--max-old-space-size=384\" — ~75% of the 512 MB limit", summary: "Heap below the cgroup, with headroom.", correct: true, justification: "This makes V8's old-space ceiling sit safely under the cgroup limit, leaving ~128 MB for Buffers, native, stacks, and young-gen. Now V8 GCs hard as it approaches 384 MB and, if it genuinely can't fit, throws a clean 'JavaScript heap out of memory' with a stack you can act on — a loud, attributable failure instead of a silent kernel SIGKILL at 137. NODE_OPTIONS also propagates the flag to worker threads and forked children." },
+    { name: "Set --max-old-space-size=512 to match the limit exactly", summary: "No headroom for non-heap.", justification: "The 512 MB limit covers the WHOLE process — old-space heap plus Buffers (off-heap), C++ stacks, native addons, code, and the young generation. If V8 is allowed to fill 512 MB of old-space alone, total RSS exceeds the cgroup and the kernel OOMKills you again at 137. The heap cap must leave headroom; ~75–80% of the limit is the rule." },
+    { name: "Leave it at the default and add more replicas", summary: "Treats a sizing bug as a capacity bug.", justification: "On a non-cgroup-aware Node the default heap is sized from the HOST's memory (e.g. 32 GB), so each replica still lets its heap grow past 512 MB and still gets OOMKilled at 137 — you've just multiplied the crashing pods. More replicas spread load but do nothing about a single process that ignores its own memory limit." },
+    { name: "Raise the container limit to 2Gi and keep defaults", summary: "Hides the cost, doesn't fix the trap.", justification: "It may stop the immediate kills, but the process still has no idea what its real budget is — under load it drifts up to whatever the new limit allows, you pay 4x the memory cost per pod, and the next limit change re-arms the exact same trap. Sizing the heap to the limit fixes the mismatch; raising the limit just buys silence at a price." },
+  ]}
+/>
+
+<Quiz
+  id="03-config-and-runtime-flags-quiz-1"
+  lessonSlug="03-config-and-runtime-flags"
+  lang="en"
+  question="A container has a 512 MB limit. Node was started with no --max-old-space-size on an older, non-cgroup-aware build. The pod dies with exit code 137 and no heap error in the logs. Why?"
+  choices={[
+    { label: "Node sized its heap from the host's physical memory (e.g. 32 GB), let the heap grow past 512 MB, and the kernel's OOM killer sent SIGKILL — exit 137 (128+9) — before V8 ever hit its own limit, so there's no V8 error or JS stack", correct: true },
+    { label: "V8 threw 'JavaScript heap out of memory' but the logger dropped it", misconception: "A V8 heap OOM is an abort with a clear message and exits 134, not 137. Exit 137 is 128+9 = SIGKILL from the kernel's OOM killer, which acts outside V8 entirely — V8 was never asked, so there is genuinely no V8 error to drop." },
+    { label: "Exit 137 means a failed health check; Kubernetes restarted the pod", misconception: "A failed liveness probe restarts via SIGTERM (graceful) → exit 143 (128+15) if unhandled, not 137. Exit 137 specifically is SIGKILL, and OOMKilled is the reason shown in kubectl describe — a memory event, not a probe event." },
+    { label: "The container CPU limit was exceeded, so the scheduler killed it", misconception: "CPU limits are throttled, never fatal — exceeding CPU just slows the process down. Memory is the hard wall: cross the cgroup memory limit and the kernel OOM-kills with SIGKILL (137). The fix is sizing --max-old-space-size under the memory limit." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Config read once at boot, validated, frozen, then served — with a fail-fast exit branch"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "env", label: "environment", sub: "vars + secrets" },
+    { id: "val", label: "validate@boot", sub: "zod schema" },
+    { id: "cfg", label: "frozen config", sub: "typed, once" },
+    { id: "app", label: "serve traffic", sub: "sized heap" },
+    { id: "die", label: "exit(1)", sub: "deploy red" },
+  ]}
+  edges={[
+    { from: "env", to: "val", label: "read" },
+    { from: "val", to: "cfg", label: "ok" },
+    { from: "cfg", to: "app", label: "freeze" },
+    { from: "val", to: "die", label: "bad var" },
+  ]}
+  caption="The same image promotes across envs; only the environment changes. Config is read once, schema-validated, and frozen before the server binds — a missing or malformed var exits non-zero at boot so the deploy fails loud, never at the first 3am request. NODE_OPTIONS sizes the V8 heap under the container limit so 'serve traffic' can't drift into an OOMKill."
+/>
+
+<KeyTakeaway>Validate config at boot into a frozen object so a bad var crashes, not 500s at 3am. Size the V8 heap to ~75% of the container limit, or a non-cgroup-aware Node overruns it and gets OOMKilled at 137 with no JS stack.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-config-and-runtime-flags-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does a container with a 512 MB limit get OOMKilled at exit 137 with no V8 heap error, and what's the fix?", a: "Two memory ceilings are in play and the wrong one fires. V8 has its own old-space heap cap, and on an older, non-cgroup-aware Node that cap is auto-sized from the PHYSICAL host memory — inside a 512 MB container, Node still reads the host's (say) 32 GB and sets a multi-gigabyte heap ceiling. So V8 happily lets the heap grow toward gigabytes, and long before it hits its own limit and would throw a clean 'JavaScript heap out of memory', the process crosses the cgroup's 512 MB. At that point the KERNEL's OOM killer — not V8 — sends SIGKILL, exit code 137 (128+9). Because the kernel acted outside V8, there is no V8 error and no JS stack: you go looking for a heap error that can't exist. The fix is to tell V8 the truth: set --max-old-space-size to ~75–80% of the limit (512 → 384) via NODE_OPTIONS, leaving headroom for Buffers, native, stacks, and the young generation. Now V8's ceiling sits under the cgroup, so it GCs hard and, if it truly can't fit, throws a clean, attributable OOM (exit 134) instead of being silently reaped." },
+    { q: "Why validate the whole config at boot and crash, instead of reading process.env lazily where each value is needed?", a: "Because lazy reads turn a config bug into a delayed, scattered runtime failure. If DATABASE_URL is missing and you only touch it on the first DB call, the deploy goes green, the readiness probe passes, traffic shifts — and then at 3am the first request that hits the DB throws a 500, hours after the deploy that caused it, with the blast radius spread across whichever endpoints happen to read which vars. Boot validation with a schema (zod/envalid) collapses that whole class of runtime 500s into ONE loud, immediate, attributable boot failure: safeParse fails, you log the bad fields and process.exit(1), the container never reaches 'serving', and the deploy pipeline catches it while the canary is still ramping — the bad version never takes real traffic. The tradeoff is a few ms of startup cost and the discipline of declaring every variable the app reads, which also doubles as living documentation of the service's config surface. You also coerce strings to real types once (z.coerce.number()), and freeze the result so no code path mutates config mid-request." },
+  ]}
+/>
+
+<Recap lang="en">
+Configuration is everything that varies between deploys, and it belongs in the environment — not in code, not baked into the image — so a single artifact promotes dev → staging → prod with only env vars changing. Read that environment exactly once at boot into a typed, frozen object, coercing the always-string `process.env` values to real numbers and booleans in one place rather than scattering `process.env.X` reads everywhere. Validate the whole shape with a schema and `process.exit(1)` on any missing or malformed var *before* the server binds, converting a class of 3am runtime 500s into a single loud boot failure the deploy pipeline catches — at the small cost of declaring every variable. Keep secrets out of the image (inject them at runtime from a secret store, never commit or bake them) and pin `NODE_ENV` to exactly `production`, since a typo silently drops you into dev branches that leak stacks and skip caching. Finally, size the runtime to the container: an older, non-cgroup-aware Node auto-sizes its V8 old-space heap from the host's physical memory, so inside a 512 MB limit it lets the heap grow past the cap and the kernel OOM-kills it at exit 137 with no JS stack — set `--max-old-space-size` to ~75% of the limit (384) via `NODE_OPTIONS` so the flag also reaches child processes, optionally tune `--max-semi-space-size` for young-gen throughput, and turn a silent kernel kill into a clean, attributable failure.
+</Recap>

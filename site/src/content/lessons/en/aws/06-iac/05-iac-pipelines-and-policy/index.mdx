@@ -1,0 +1,256 @@
+---
+concepts:
+- plan-on-pr-apply-on-merge
+- oidc-ci-federation
+- policy-as-code
+- drift-detection
+- apply-concurrency-locking
+- approval-gates
+- "SAA-C03:Design Resilient Architectures"
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-iac-pipelines-and-policy"
+sources:
+- https://developer.hashicorp.com/terraform/tutorials/automation/automate-terraform
+- https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services
+- https://docs.aws.amazon.com/cfn-guard/latest/ug/what-is-guard.html
+spiral: []
+status: ready
+summary: 'Running IaC safely is a pipeline, not a command: plan on PR (the diff is the review), env-gated apply, keyless OIDC auth, policy-as-code to block bad infra pre-apply, plus scheduled drift detection and state locking.'
+title: 'IaC pipelines: plan-on-PR, policy-as-code, and drift'
+track: "aws"
+unit: "06-iac"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+At 02:00 an on-call engineer mitigates an incident the fastest way they know: they open the EC2 console and widen a security group to let a partner's new IP reach the API. The alert clears, everyone sleeps. Three days later an unrelated PR merges, the deploy pipeline runs `terraform apply`, and Terraform — comparing your committed config against reality — sees a security-group rule it never authored. It "corrects" the drift by deleting the 02:00 hotfix. The partner integration breaks in the middle of the business day, and the rollback that caused it was, from the pipeline's point of view, a perfectly correct apply doing exactly its job: making the world match the code. The console change was never in the code, so it was never real to the pipeline. This is what running IaC by hand, or running it through a pipeline with no guardrails, eventually costs you. The fix is not "stop touching the console" — it's making the pipeline the only writer, and giving it eyes.
+</Hook>
+
+<Crux>Running IaC is a pipeline: plan on PR (the diff is the review), env-gated apply, keyless OIDC, policy-as-code, drift scans, locking.</Crux>
+
+<Explanation>
+
+## The plan/apply pipeline: the diff is the review artifact
+
+The previous lessons taught you to *write* IaC — CloudFormation and CDK, Terraform with a locked remote backend, state operations, modules across accounts. This one is about *running* it safely, and the shape that makes it safe is GitOps for infrastructure: every change flows through a pull request, and the pipeline — not a laptop — is the thing that talks to AWS.
+
+The mechanism splits the workflow across two pipeline triggers. **On a PR**, CI runs the read-only half: `terraform plan` (or `cdk diff`, or a CloudFormation change set), then posts the resulting diff as a PR comment. **On merge to the default branch**, CI runs the write half: `terraform apply`. The crucial idea is that the plan *is* the review artifact. A reviewer approving the PR is not approving the HCL in the abstract — they are approving the **exact change set** the plan printed: these three resources update in place, this one is replaced (destroyed and recreated), nothing else. Code review of `.tf` files alone is necessary but not sufficient, because the same code produces a different plan depending on current state. The plan closes that gap by showing the literal delta that will hit the account.
+
+```yaml
+# .github/workflows/infra.yml — plan on PR, apply on merge
+name: infra
+on:
+  pull_request:        # PR: plan only, post the diff for review
+  push:
+    branches: [main]   # merge: apply
+
+jobs:
+  plan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform init
+      - run: terraform plan -no-color -out=tfplan
+      - run: terraform show -no-color tfplan > plan.txt
+      # …then a step posts plan.txt as a PR comment (the review artifact)
+
+  apply:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: prod   # gate: requires a human approval before this job runs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform init
+      - run: terraform apply -auto-approve
+```
+
+The **tradeoff** lives in that `environment: prod` line. A required manual approval on apply is safe — a human re-reads the plan and clicks before prod mutates — but slow, and it puts a person in the loop for every change. Auto-applying on merge is fast and fully GitOps-pure, but a bad merge ships straight to production with nobody re-reading the plan. The **failure mode** of pure auto-apply is the 3am merge that destroys a database because the plan showed a `-/+` replace nobody scrutinized. The senior default is asymmetric: **plan-on-PR always**, and **apply gated by environment** — auto-apply for `dev` (cheap to break, fast feedback), human approval for `prod`. You buy speed where mistakes are cheap and a gate where they are expensive.
+
+<Inset kind="why" lang="en">
+Why insist the plan is the review artifact rather than trusting code review of the `.tf`/template files? Because IaC is not a pure function of its source — it is a function of source *and current state*. The identical commit produces "update one tag" against one state and "replace the production database" against another, because someone changed reality out of band, or a data source now resolves differently, or a provider upgrade reinterprets an attribute. Reviewing only the code means approving an intention; reviewing the plan means approving the concrete operation. That is why mature setups block merge until a fresh plan is attached and re-run the plan at apply time, refusing to apply if the just-computed plan differs from the approved one — the approval is bound to a specific delta, not to a hope about what the code will do.
+</Inset>
+
+## CI to AWS without long-lived keys: OIDC federation
+
+The pipeline now talks to AWS on every merge, which means it needs credentials — and the wrong way to give them is the way most teams start: paste a long-lived IAM user's `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` into CI secrets. That key is **valid until someone rotates it, which is often never**, and it sits in your CI provider waiting to leak: into a build log via an `env` dump, through a compromised third-party action with access to the secret, or out of a misconfigured fork PR. When a static admin key leaks, the blast radius is the entire account, immediately and indefinitely.
+
+The mechanism that removes the standing secret is **OIDC federation**. GitHub Actions (and GitLab CI) can mint a short-lived **OIDC token** — a signed JWT describing the workflow run — and exchange it with AWS STS via `AssumeRoleWithWebIdentity` for **temporary credentials**. You register GitHub's OIDC provider once in IAM, then attach a **trust policy** to a role that says "only mint credentials for a token whose claims match *this* repo on *this* branch." No secret is stored anywhere; the credentials AWS hands back expire in **about an hour** (the role's max session, tunable), so a token captured from a log is worthless minutes later.
+
+```yaml
+  apply:
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      id-token: write     # let the job request an OIDC token
+      contents: read
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/ci-terraform-prod
+          aws-region: eu-central-1
+          # no AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY anywhere
+```
+
+The whole security boundary is the trust policy's condition. Scope the `sub` claim to a specific repo *and* ref, so a fork, a feature branch, or another org's workflow cannot assume your prod role:
+
+```json
+{
+  "Effect": "Allow",
+  "Principal": { "Federated": "arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com" },
+  "Action": "sts:AssumeRoleWithWebIdentity",
+  "Condition": {
+    "StringEquals": {
+      "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+      "token.actions.githubusercontent.com:sub": "repo:acme/infra:ref:refs/heads/main"
+    }
+  }
+}
+```
+
+The **tradeoff** is mild — OIDC needs a one-time IAM setup (register the provider, write the trust policy) and disciplined `sub` conditions — against an enormous payoff: no rotation, no standing secret, and a credential that is scoped, short-lived, and auditable. The classic **failure mode** is a trust policy with a `sub` like `repo:acme/infra:*` (any branch, any ref): now any branch a contributor can push, including an attacker who lands a PR branch, can assume the prod role. Pin the branch, and for stronger isolation tie the role to a GitHub **environment** (`...:environment:prod`) so the environment's own protection rules gate the assume.
+
+## Policy-as-code: block bad infra before apply
+
+A reviewed plan still depends on a human catching every dangerous line, and humans miss "this S3 bucket is public" at 6pm on a Friday. **Policy-as-code** moves that judgment into the pipeline: automated rules run against the plan (or the template) and **fail the build** before apply if infrastructure violates a rule. The plan you already generate for review becomes the input to a policy engine.
+
+The tools cluster by ecosystem: **OPA/Conftest** and **Checkov** and **tfsec/Trivy** evaluate a Terraform plan in JSON; **HashiCorp Sentinel** is the paid Terraform-native option; **AWS CloudFormation Guard (`cfn-guard`)** checks CloudFormation templates and any JSON/YAML with a compact rule DSL. The rules encode the things you never want to ship — no public S3 bucket, encryption required, no `0.0.0.0/0` to port 22, mandatory cost-allocation tags — and they catch the *whole class* of bug, not the one instance a reviewer happened to notice.
+
+```ruby
+# cfn-guard rule: no S3 bucket may be public, and encryption is required
+rule s3_must_be_private when Resources.*.Type == "AWS::S3::Bucket" {
+  Resources.*[ Type == "AWS::S3::Bucket" ] {
+    Properties.PublicAccessBlockConfiguration exists
+    Properties.PublicAccessBlockConfiguration.BlockPublicAcls == true
+    Properties.PublicAccessBlockConfiguration.IgnorePublicAcls == true
+    Properties.BucketEncryption exists
+  }
+}
+```
+
+```rego
+# Conftest/OPA equivalent over a `terraform show -json` plan
+package main
+deny[msg] {
+  r := input.resource_changes[_]
+  r.type == "aws_security_group_rule"
+  r.change.after.cidr_blocks[_] == "0.0.0.0/0"
+  r.change.after.to_port == 22
+  msg := sprintf("SSH open to the world on %s", [r.address])
+}
+```
+
+The **tradeoff** is friction versus coverage. Policy gates catch bug classes pre-prod and encode tribal knowledge as enforceable rules, but they add a step that fails builds, and a noisy rule with false positives trains the team to ignore or bypass it — the worst outcome, because a routinely-overridden gate is theater. The **failure mode** is rolling out twenty strict rules on day one: the pipeline goes red on legitimate changes, people start adding skip annotations, and the policy layer is dead within a sprint. Roll out high-value rules first (public S3, open SSH, unencrypted volumes) in **warn mode**, measure the false-positive rate, then flip them to **enforce** once they're clean. A few enforced rules people trust beat fifty they route around.
+
+## Drift and concurrency: the two ways the apply itself bites
+
+The Hook is the canonical IaC incident, and it has a name: **drift** — reality diverging from state because something changed AWS outside the pipeline (a console hotfix, a script, another team). The next plan sees the divergence and wants to *revert* it to match the code, silently undoing the manual change; or, if the manual change conflicts with the config, the apply errors. Either way the out-of-band fix is lost or causes a surprise. The mechanism to stay ahead of it is **scheduled drift detection**: run `terraform plan` (or CloudFormation's native drift detection) on a **nightly schedule**, and if the plan is non-empty when no PR is open, alert the team — drift caught at 03:00 by a cron is a ticket; drift caught by a surprise revert mid-deploy is an incident. Catch it early and you decide deliberately whether to codify the change (write it into the config) or roll it back, instead of the pipeline deciding for you.
+
+```yaml
+  drift:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform init
+      # detailed-exitcode: 0 = no drift, 2 = drift present, 1 = error
+      - run: terraform plan -detailed-exitcode -no-color || echo "DRIFT" >> alert
+      # …a non-empty plan with no open PR pages on-call
+on:
+  schedule:
+    - cron: "0 3 * * *"   # nightly drift scan
+```
+
+The second hazard is **concurrency**. Two pipelines applying the *same state* at once race: both read the same starting state, both write, the second clobbers the first, and the state file is now inconsistent with reality — orphaned resources Terraform no longer tracks, a serial counter that no longer matches. The defense is the **state locking** from the Terraform lesson — the DynamoDB lock (or `use_lockfile`) for the S3 backend, and CloudFormation's own server-side stack locking — plus **serializing applies per state** in CI (a concurrency group so two apply jobs for the same state can't overlap). The **failure mode** that locking itself introduces: a CI job dies mid-apply (the runner is killed, the network drops) and **leaves the lock held**, so every subsequent apply blocks — `Error acquiring the state lock` — until someone investigates. The dangerous reflex is `terraform force-unlock` to "just unblock the team." If that lock actually belongs to an apply still mutating AWS, force-unlocking lets a second apply run concurrently and **corrupts the state for real**. Force-unlock only after you have *confirmed* the holding job is truly dead; the stuck lock is annoying, the wrongful force-unlock is a corrupted prod state file.
+
+<TradeoffMatrix
+  id="05-iac-pipelines-and-policy-tradeoff-1"
+  lessonSlug="05-iac-pipelines-and-policy"
+  lang="en"
+  prompt="A 30-engineer platform team runs Terraform for dev and prod through GitHub Actions. They want fast iteration in dev but no accidental prod change, and they're deciding on the apply strategy across environments. Pick the policy."
+  options={[
+    { name: "Plan on every PR; auto-apply on merge to dev; require manual environment approval to apply prod", summary: "Asymmetric gating: fast where cheap, gated where expensive.", correct: true, justification: "Right fit. Plan-on-PR makes the diff the review artifact for every change regardless of environment, so reviewers approve a concrete delta. Auto-applying dev gives the fast feedback loop they asked for where a mistake is cheap and quickly fixed. Gating prod behind a GitHub environment approval puts a human re-read of the plan in front of the only changes that can cause real damage. This is the canonical senior default: symmetric review (plan everywhere), asymmetric apply (gate by blast radius)." },
+    { name: "Auto-apply on merge to both dev and prod", summary: "Fully GitOps-pure, maximum speed.", justification: "Fast and clean in theory, but it removes the last human checkpoint exactly where it matters most. A merge that produces a `-/+` replace of the prod database, or a plan that drifted since review, ships to prod with nobody re-reading it. Auto-apply is appropriate for low-blast-radius environments like dev; applying it uniformly to prod trades a real safety gate for speed the team didn't need on prod." },
+    { name: "Manual approval gate on every apply, dev and prod alike", summary: "Maximum safety, uniform gate.", justification: "Safe but needlessly slow. Putting a human approval in front of every dev apply throttles the fast iteration the team explicitly wants, for an environment where mistakes are cheap and reversible. Gates have a cost — reviewer attention and latency — and spending it on dev trains people to rubber-stamp, which erodes the value of the gate on prod. Gate by blast radius, not uniformly." },
+    { name: "No PR pipeline; engineers run terraform apply from laptops, prod by senior engineers only", summary: "Convention-based, no CI.", justification: "Wrong on every axis this lesson covers. Laptop applies mean no plan-as-review-artifact, long-lived credentials on developer machines instead of OIDC, no policy-as-code gate, no serialized applies (two laptops can race the same state), and no scheduled drift detection. 'Only seniors touch prod' is a convention, not a control — it is exactly the pre-pipeline state whose drift and corruption failures this lesson exists to prevent." },
+  ]}
+/>
+
+<Quiz
+  id="05-iac-pipelines-and-policy-quiz-1"
+  lessonSlug="05-iac-pipelines-and-policy"
+  lang="en"
+  question="Why prefer OIDC federation over a long-lived IAM access key stored in CI secrets for the apply job?"
+  choices={[
+    { label: "OIDC exchanges a short-lived, per-run token for temporary credentials that expire in about an hour and are scoped by a trust policy to a specific repo and branch — so there is no standing secret to leak and a captured token is useless minutes later", correct: true },
+    { label: "OIDC is faster at runtime because it skips the STS call that access keys require", misconception: "OIDC adds an STS AssumeRoleWithWebIdentity call; it is not chosen for speed. The point is security: no long-lived secret stored in CI, and short-lived scoped credentials. Static keys actually skip the assume-role round trip but pay for it with a permanent, leak-prone secret." },
+    { label: "A long-lived access key cannot be scoped by IAM policy, while OIDC can", misconception: "Both can be scoped by IAM policy on the identity or role. The difference is lifetime and storage: the static key is a permanent secret sitting in CI valid until manually rotated (often never), while OIDC stores no secret and issues credentials that expire in roughly an hour." },
+    { label: "OIDC tokens never expire, so the pipeline never has to re-authenticate", misconception: "Backwards — the security benefit is precisely that the resulting credentials are short-lived (about an hour) and re-minted per run. A non-expiring credential is the static-key failure mode OIDC exists to eliminate." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="IaC pipeline from PR through gated apply to scheduled drift scan"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "pr", label: "Open PR", sub: "infra change" },
+    { id: "plan", label: "Plan", sub: "diff = review" },
+    { id: "policy", label: "Policy check", sub: "OPA / cfn-guard" },
+    { id: "review", label: "Human review", sub: "approve the delta" },
+    { id: "merge", label: "Merge to main", sub: "source of truth" },
+    { id: "apply", label: "Apply", sub: "OIDC, env-gated, locked" },
+    { id: "aws", label: "AWS", sub: "real resources" },
+    { id: "drift", label: "Drift scan", sub: "nightly cron" },
+  ]}
+  edges={[
+    { from: "pr", to: "plan", label: "on PR" },
+    { from: "plan", to: "policy", label: "feed plan" },
+    { from: "policy", to: "review", label: "pass" },
+    { from: "review", to: "merge", label: "approve" },
+    { from: "merge", to: "apply", label: "on merge" },
+    { from: "apply", to: "aws", label: "mutate (locked)" },
+    { from: "drift", to: "aws", label: "compare" },
+    { from: "drift", to: "plan", label: "alert if drift" },
+  ]}
+  caption="Plan-on-PR makes the diff the review artifact; policy-as-code fails the build on bad infra; merge triggers an env-gated, OIDC-authenticated, lock-serialized apply; a nightly drift scan compares reality to state and alerts before a surprise revert."
+/>
+
+<KeyTakeaway>IaC is a pipeline: plan on the PR so the diff, not the code, is approved; gate apply by env (auto dev, approval prod); use OIDC not a static key; gate on policy-as-code; scan drift nightly; serialize applies with a lock.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-iac-pipelines-and-policy-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe the plan-on-PR / apply-on-merge pipeline and explain why the plan, not the code, is the review artifact.", a: "Every infra change flows through a PR, and the pipeline — not a laptop — talks to AWS. On a PR, CI runs the read-only half (terraform plan / cdk diff / CFN change set) and posts the diff as a PR comment. On merge to the default branch, CI runs the write half (terraform apply). The plan is the review artifact because IaC is a function of source AND current state, not source alone: the identical commit can mean 'update one tag' against one state and 'replace the production database' against another, because reality changed out of band, a data source resolved differently, or a provider upgrade reinterpreted an attribute. Reviewing only the .tf approves an intention; reviewing the plan approves the concrete delta that will hit the account. The tradeoff is the apply gate: a required manual approval is safe but slow, auto-apply is fast but a bad merge ships straight to prod. Senior default is asymmetric — plan on PR always, apply auto for dev and human-gated for prod." },
+    { q: "How does OIDC federation replace long-lived CI keys, and what are the drift and concurrency failure modes of an IaC pipeline?", a: "OIDC: instead of pasting a long-lived IAM access key (valid until rotated, often never, leakable via logs or a compromised action — leak = full account takeover) into CI, the runner mints a short-lived OIDC token (a signed JWT for the run) and exchanges it with AWS STS via AssumeRoleWithWebIdentity for temporary credentials that expire in about an hour. You register GitHub's OIDC provider once and attach a trust policy scoping the sub claim to a specific repo AND branch (repo:org/repo:ref:refs/heads/main), so a fork or feature branch cannot assume the prod role; a sub like repo:org/repo:* is the failure mode. Drift: reality diverges from state via an out-of-band console change; the next apply silently reverts it (or errors). Defense: a nightly scheduled plan / CFN drift detection that alerts when the plan is non-empty with no open PR — drift becomes a ticket, not a mid-deploy surprise revert. Concurrency: two applies on the same state race and corrupt it (orphaned resources, bad serial). Defense: state locking (DynamoDB / use_lockfile) plus serializing applies per state. But a dead CI job can leave the lock held, blocking everyone; never terraform force-unlock until you've confirmed the holder is truly dead, or you let a second apply run concurrently and corrupt state for real." },
+  ]}
+/>
+
+<Recap lang="en">
+Authoring IaC is the previous lessons; this one is running it safely, and the safe shape is GitOps for infrastructure where the pipeline, not a laptop, is the only writer to AWS. The workflow splits across triggers: on a PR, CI runs the read-only half — terraform plan, cdk diff, or a CloudFormation change set — and posts the diff, because the plan is the review artifact; reviewers approve a concrete delta, not the code in the abstract, since the same commit produces a different plan against a different state. On merge, CI runs apply, and the apply is gated by environment — auto-apply for dev where mistakes are cheap, a human approval for prod where they are not. The pipeline authenticates to AWS with OIDC federation rather than a long-lived access key: it mints a per-run token and exchanges it with STS for credentials that expire in about an hour, scoped by a trust policy to a specific repo and branch, so a leak shrinks from indefinite full-account access to a minutes-valid token, and the failure mode is a loose sub claim that lets any branch assume the role. Policy-as-code — OPA/Conftest, Checkov, tfsec, Sentinel, cfn-guard — runs against the plan and fails the build on whole classes of bad infra (public S3, open SSH, unencrypted volumes, missing tags), rolled out warn-first then enforced so a noisy rule isn't routed around. Finally the apply itself has two failure modes: drift, where an out-of-band console change is silently reverted by the next apply — caught by a nightly scheduled plan that alerts so you can deliberately codify or roll back — and concurrency, where two applies race and corrupt the state, defended by locking and serialized applies, with the caveat that a dead job can leave the lock held and force-unlocking it during a real apply corrupts state for good. Plan everywhere, gate by blast radius, go keyless, gate on policy, and watch for drift.
+</Recap>
