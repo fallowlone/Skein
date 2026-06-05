@@ -7,7 +7,7 @@ import { emptyState, applyDiagnostic } from "./knowledge";
 import {
   resolveGoalTargets, targetFrontier, missingConcepts, conceptsToUnits, orderUnits, buildPath,
 } from "./planner";
-import type { PathConfig, Goal } from "./types";
+import type { PathConfig } from "./types";
 
 const g = buildConceptGraph(CONCEPTS);
 const byId = new Map(CONCEPTS.map((c) => [c.id, c]));
