@@ -78,6 +78,8 @@ export function schedulePlan(path: Path, cfg: DeadlineConfig, nowMs: number): Sc
     used += step.estMin;
     placed.add(step.unit);
   }
+  // roi here is a cost-only placeholder (1/estMin): with no per-step value field yet, longer
+  // steps are dropped first. Replace with value/cost once steps carry a learning-value weight.
   const dropUnits = path.steps.filter((s) => !placed.has(s.unit))
     .map((s) => ({ id: s.unit, estMin: s.estMin, roi: 1 / Math.max(1, s.estMin) }));
   const feas = feasibility(required, available, dropUnits);
