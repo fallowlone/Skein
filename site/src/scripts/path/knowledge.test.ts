@@ -52,4 +52,23 @@ describe("knowledge", () => {
     const stale = decay(s, g, NOW + 200 * 86_400_000, 0.85);
     expect(masteryOf(stale, "indexing")).toBeCloseTo(0.85, 5);    // >= 120d: floor
   });
+
+  it("an ambiguous diagnostic score in [FAIL_LOW, PASS_HIGH) propagates nothing", () => {
+    const s = applyDiagnostic(emptyState(), g, "replication", 0.5, NOW);
+    expect(masteryOf(s, "replication")).toBeCloseTo(0.5, 5);
+    expect(masteryOf(s, "mvcc")).toBe(0);       // no ancestor lift
+    expect(masteryOf(s, "consensus")).toBe(0);  // no descendant change
+  });
+
+  it("a passing diagnostic never lowers an ancestor already above the lift", () => {
+    let s = applyDiagnostic(emptyState(), g, "mvcc", 1, NOW);   // mvcc = 1
+    s = applyDiagnostic(s, g, "replication", 0.8, NOW);          // lift = 0.8*0.8 = 0.64 < 1
+    expect(masteryOf(s, "mvcc")).toBe(1);                        // untouched, not lowered
+  });
+
+  it("declared knowledge also decays with age (uniform decay model)", () => {
+    const s = applySelfDeclare(emptyState(), "mvcc", true, NOW); // confidence 1, source declared
+    const stale = decay(s, g, NOW + 200 * 86_400_000, 0.85);
+    expect(masteryOf(stale, "mvcc")).toBeCloseTo(0.85, 5);       // declared=1 fades to floor
+  });
 });
