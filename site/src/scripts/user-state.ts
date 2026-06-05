@@ -27,6 +27,9 @@ export type UserState = {
   // Optional: lets the roadmap avoid re-nagging a just-dismissed recommendation.
   // Optional so old persisted payloads stay valid under the load() merge.
   roadmap?: { lastRecommendedTrack?: string; dismissedAt?: number };
+  // Per-capstone milestone completion (sync-forward mirror of capstone-state.ts,
+  // which owns the live UI source of truth). projectSlug → milestoneId → done.
+  capstones?: Record<string, Record<string, boolean>>;
 };
 
 const defaults: UserState = {
