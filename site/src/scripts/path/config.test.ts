@@ -21,5 +21,20 @@ describe("config", () => {
   it("normalizes a too-old version by re-merging onto current defaults", () => {
     const c = mergeConfig({ version: 0 } as any);
     expect(c.version).toBe(DEFAULT_CONFIG.version);
+    expect(c.breadthVsDepth).toBe(DEFAULT_CONFIG.breadthVsDepth);
+  });
+  it("clamps goal priority to >= 1", () => {
+    const c = clampConfig({ ...DEFAULT_CONFIG, goals: [{ id: "x", priority: -3 }, { id: "y", priority: 0 }] });
+    expect(c.goals.map((g) => g.priority)).toEqual([1, 1]);
+  });
+  it("clamps srsAggressiveness lower bound to 0", () => {
+    const c = clampConfig({ ...DEFAULT_CONFIG, pace: { stepsAhead: 5, srsAggressiveness: -0.5 } });
+    expect(c.pace.srsAggressiveness).toBe(0);
+  });
+  it("coerces non-finite numeric config to safe values", () => {
+    const c = clampConfig({ ...DEFAULT_CONFIG, breadthVsDepth: NaN, pace: { stepsAhead: NaN, srsAggressiveness: NaN } });
+    expect(c.breadthVsDepth).toBe(0);
+    expect(c.pace.stepsAhead).toBe(1);
+    expect(c.pace.srsAggressiveness).toBe(0);
   });
 });
