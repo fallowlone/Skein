@@ -43,7 +43,17 @@ const ReviewTask = TaskBase.extend({
   findings: z.array(Finding).min(1),
   decoys: z.array(Decoy).optional(),
 });
-const PracticeTask = z.discriminatedUnion("type", [PredictTask, IncidentTask, DiagnoseTask, ReviewTask]);
+const DebugTask = TaskBase.extend({
+  type: z.literal("debug"),
+  starter: z.string().min(1),
+  setup: z.string().optional(),
+  verify: z.string().min(1),
+  check: ExecCheck,
+  evidence: BiText,
+  hints: z.array(BiText).min(1).max(4),
+  reveal: BiText,
+});
+const PracticeTask = z.discriminatedUnion("type", [PredictTask, IncidentTask, DiagnoseTask, ReviewTask, DebugTask]);
 const fileSchema = z.object({
   lessonKey: z.string(),
   track: z.string(),
@@ -113,5 +123,37 @@ describe("review task schema", () => {
   test("accepts an optional decoy", () => {
     const withDecoy = { ...validReview, decoys: [{ id: "style", label: { en: "rename d?", ru: "переименовать d?" }, explanation: { en: "style only", ru: "только стиль" } }] };
     expect(() => fileSchema.parse({ lessonKey: "node/06-testing/01-unit-testing", track: "node", tasks: [withDecoy] })).not.toThrow();
+  });
+});
+
+const validDebug = {
+  id: "debug-closure", type: "debug", difficulty: "apply", estMin: 8,
+  title: { en: "Fix the closure", ru: "Почини замыкание" },
+  prompt: { en: "Make the loop capture per-iteration values", ru: "Заставь цикл захватывать значения по итерации" },
+  starter: "const arr = []; for (var i = 0; i < 3; i++) { arr.push(() => i); }",
+  verify: "if (JSON.stringify(arr.map(f=>f())) !== '[0,1,2]') throw new Error('x'); console.log('__PASS__');",
+  check: { kind: "stdout-contains", value: "__PASS__" },
+  evidence: { en: "[3,3,3]", ru: "[3,3,3]" },
+  hints: [{ en: "var is function-scoped", ru: "var имеет функциональную область" }],
+  reveal: { en: "Use let for block scope", ru: "Используй let для блочной области" },
+};
+
+describe("debug task schema", () => {
+  test("accepts a valid debug task", () => {
+    expect(() => fileSchema.parse({ lessonKey: "node/06-testing/01-unit-testing", track: "node", tasks: [validDebug] })).not.toThrow();
+  });
+  test("rejects a debug task missing verify", () => {
+    const { verify, ...bad } = validDebug;
+    expect(() => fileSchema.parse({ lessonKey: "a/b/c", track: "node", tasks: [bad] })).toThrow();
+  });
+  test("rejects a debug task with an empty starter", () => {
+    expect(() => fileSchema.parse({ lessonKey: "a/b/c", track: "node", tasks: [{ ...validDebug, starter: "" }] })).toThrow();
+  });
+  test("rejects a debug task with zero hints", () => {
+    expect(() => fileSchema.parse({ lessonKey: "a/b/c", track: "node", tasks: [{ ...validDebug, hints: [] }] })).toThrow();
+  });
+  test("rejects a debug task with more than four hints", () => {
+    const five = Array.from({ length: 5 }, (_, i) => ({ en: `h${i}`, ru: `п${i}` }));
+    expect(() => fileSchema.parse({ lessonKey: "a/b/c", track: "node", tasks: [{ ...validDebug, hints: five }] })).toThrow();
   });
 });
