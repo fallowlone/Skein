@@ -1,0 +1,213 @@
+---
+concepts:
+- poisoned-pipeline-execution
+- pull-request-target
+- github-token-permissions
+- oidc-vs-secrets
+- untrusted-build-isolation
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-pipeline-security-and-poisoned-builds"
+sources:
+- https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
+- https://slsa.dev/spec/v1.0/threats
+spiral: []
+status: ready
+summary: 'The CI runner holds every secret and can tamper with the artifact, so threat-model it. Poisoned Pipeline Execution runs attacker code with your privileges — classically via pull_request_target running a fork PR. Isolate untrusted builds, default-deny the token, use OIDC.'
+title: 'Pipeline security and poisoned builds'
+track: ci-cd
+unit: 05-supply-chain
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The PR came from an account nobody recognized — a first-time "contributor" fixing a typo in the README, plus one unrelated change to the test setup. The maintainer skimmed it, saw it was tiny, and left it for CI to run. Forty seconds later the workflow had checked out the fork's branch, run the build, and a `prepare` script in the changed setup file had read the environment, base64-encoded the cloud deploy key out of `secrets`, and POSTed it to an attacker's endpoint. No merge ever happened. The maintainer didn't approve a deploy; they didn't approve anything. The workflow used `pull_request_target` — which runs in the base repo's context, with the repo's secrets and a write token — and then it checked out and ran the attacker's code. The runner did exactly what it was told. This lesson is about treating the pipeline itself as an attack surface: the runner holds every secret you give it and can tamper with the artifact you ship, so compromising the build is often easier — and worse — than attacking prod directly.
+</Hook>
+
+<Crux>The runner holds every secret and ships the artifact. Never run untrusted PR code where secrets live — isolate it, default-deny, use OIDC.</Crux>
+
+<Explanation>
+
+## Why the runner is a high-value target
+
+A CI runner is not "just a build box." For the duration of a job it holds every secret you handed the pipeline — deploy keys, registry credentials, cloud tokens, signing keys — and it has two things an attacker wants: outbound network access (to exfiltrate) and write access to the artifacts you're about to ship (to tamper). That second capability is the SolarWinds-class threat: an attacker who controls the build doesn't need to break into production at all. They modify the artifact *as it's built*, your own pipeline signs and ships it, and every customer pulls a backdoored binary that passed all your checks. SLSA models exactly this — threats against the build process and the provenance of what it emits, not just the source.
+
+So the pipeline is a system that must be threat-modeled like any other. The governing question for every job is: *if the code running in this job were hostile, what could it reach?* The answer is "every secret and credential in scope, plus the artifact." That framing is what makes the rest of the lesson's defenses obvious.
+
+## Poisoned Pipeline Execution: the core failure mode
+
+**Poisoned Pipeline Execution (PPE)** is the umbrella name for the central attack: an adversary gets your CI to run *their* code with the *pipeline's* privileges. They don't need to compromise a runner or steal credentials up front — they convince the pipeline to execute attacker-controlled code in a privileged context, and the secrets fall out for free.
+
+On GitHub, the canonical PPE vector is a trigger choice. Compare the two pull-request triggers:
+
+```yaml
+# SAFE DEFAULT for fork PRs: low-privilege, no secrets, read-only token.
+on: pull_request
+
+# DANGEROUS when it runs PR code: base-repo context, secrets + write token.
+on: pull_request_target
+```
+
+`pull_request` runs in a deliberately restricted context for fork PRs: no secrets, a read-only `GITHUB_TOKEN`. That is the *correct* place to build and test untrusted code, because even if the PR ships a malicious `postinstall` or a poisoned test, there's nothing valuable in scope to steal. `pull_request_target` is the opposite: it exists for workflows that need to comment, label, or triage, so it runs in the **base repo's** context — with your secrets and a write-scoped token. The trigger itself is not the bug. The bug is the *combination*: a `pull_request_target` workflow that then checks out the PR's head and executes it.
+
+```yaml
+# ANTI-PATTERN — do not do this. pull_request_target + checkout of untrusted head.
+on: pull_request_target
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}   # attacker-controlled code
+      - run: npm ci && npm test                             # runs it with secrets in scope
+```
+
+The moment that build step runs, attacker-controlled code is executing in a context that has your secrets. A fork PR from anyone on the internet can read `secrets.*` and exfiltrate it. No merge, no approval, no review of the code that actually ran — `npm ci` alone executes the PR's lifecycle scripts. The defense is structural: **never check out and run untrusted PR code in a job that has secrets.** Keep secret-bearing steps physically separate from untrusted-code steps, require manual approval before a first-time contributor's workflow runs at all, and treat the PR head as hostile input the way you'd treat a request body.
+
+<Inset kind="why" lang="en">
+Why is `pull_request_target` running the PR's code uniquely dangerous, when `pull_request` running the exact same code is fine? Because the two triggers run in different *contexts*, by design. `pull_request` deliberately runs fork PRs in a restricted sandbox: no secrets exposed, a read-only token — the safe default precisely because the code is untrusted input. `pull_request_target` exists for a different need: workflows that must comment on or label a PR need write access and sometimes secrets, so it runs in the BASE repo's context with both. That's fine *as long as it never executes the PR's code* — it's meant to act on metadata. The vulnerability is born the instant such a workflow checks out the head ref and runs it: now attacker-controlled code is executing inside a context that holds your secrets and a write token. The trigger isn't the flaw; combining a privileged context with execution of untrusted code is. Same code, two triggers, opposite blast radius.
+</Inset>
+
+## Least-privilege GITHUB_TOKEN
+
+Even when a job legitimately runs your own code, the automatically-provided `GITHUB_TOKEN` is a credential worth scoping down. By default a workflow's token can be broad; an attacker who achieves code execution in a job with a **write-scoped** token can do more than read — they can push commits, cut releases, or move tags, turning a build compromise into a source compromise. The fix is default-deny: set top-level `permissions` to the minimum, then grant only what each job needs, per job.
+
+```yaml
+# Default-deny at the top; grant the minimum, per job.
+permissions: {}                 # nothing by default
+jobs:
+  build:
+    permissions:
+      contents: read            # this job only reads the repo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm run build
+```
+
+Scope tokens per job, not per workflow: the job that runs untrusted code should have `permissions: {}` and no secrets, while a separate publish job gets exactly the write scope it needs and nothing more. A write token in a job that runs untrusted code is a self-inflicted PPE.
+
+## OIDC instead of long-lived secrets
+
+The deeper fix for "the runner holds stealable secrets" is to stop storing the stealable secret at all. A long-lived cloud key sitting in CI secrets is broad, rarely rotated, and a single exfiltration hands it over for as long as it lives. **OIDC** removes the standing secret: the runner requests a short-lived, signed identity token that encodes *which repo, branch, and environment* it's running as; the cloud provider verifies that token against a trust policy and exchanges it for **temporary** credentials scoped to that workload.
+
+```yaml
+# OIDC: no standing cloud key in secrets. The runner mints a short-lived identity,
+# the cloud provider exchanges it for temporary credentials.
+permissions:
+  id-token: write              # allow the runner to request the OIDC token
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::111122223333:role/deploy-prod
+          aws-region: us-east-1
+```
+
+There's a real trade: OIDC needs trust-policy setup on the cloud side (which role trusts which repo and branch), versus pasting one key into a secret. But the blast radius of a stolen credential goes from "a broad, long-lived key" to "a token that expires in minutes and only works for one workload" — often near zero. The standing secret an attacker would exfiltrate simply doesn't exist anymore.
+
+## Untrusted dependency execution at build time
+
+PPE has a quieter cousin that doesn't need a malicious maintainer or a misconfigured trigger: a malicious *dependency*. When the build installs packages, their install and build lifecycle scripts (`preinstall`, `postinstall`, build hooks) run on the runner with the job's privileges — the same blast radius as any other code in the job. A compromised transitive dependency can read whatever secrets the job holds and exfiltrate them, all during a routine `npm ci`.
+
+The mitigations stack: run installs with `--ignore-scripts` where you can so lifecycle hooks don't fire automatically; use ephemeral, isolated runners so a compromised build can't persist or pivot; apply egress filtering so a build that has no business calling an unknown host simply can't; and — the cheapest, most effective control — **don't give the build job secrets it doesn't need.** A build that compiles code does not need your deploy key in scope. Move the deploy key to the deploy job, which doesn't run untrusted dependency code.
+
+<TradeoffMatrix
+  id="ci-cd-05-supply-chain-04-pipeline-security-and-poisoned-builds-tradeoff-1"
+  lessonSlug="04-pipeline-security-and-poisoned-builds"
+  lang="en"
+  prompt="You must build and test untrusted fork PRs in CI — including running their dependencies and test suite — without handing an attacker your secrets. How do you structure it?"
+  options={[
+    { name: "Run the untrusted PR code under pull_request (no secrets, read-only token, least privilege), keep any privileged steps in a separate job, and use OIDC for deploys so there's no standing key to steal", summary: "Isolate untrusted code from secrets.", correct: true, justification: "This matches the threat model exactly: the job that executes attacker-controlled code (build, test, lifecycle scripts) runs in pull_request's restricted context — no secrets exposed, a read-only token — so even a malicious postinstall has nothing valuable in scope to exfiltrate. Anything privileged (commenting, publishing, deploying) lives in a separate job that never runs PR code, with a per-job least-privilege token. OIDC means deploys mint short-lived, workload-scoped credentials instead of a stealable standing key. Untrusted code and secrets are never in the same context — the structural property that makes PPE impossible here." },
+    { name: "Use pull_request_target and check out the PR head to run its tests", summary: "Textbook PPE.", justification: "This is exactly the attack. pull_request_target runs in the base repo's context WITH secrets and a write token; checking out and running the PR's head executes attacker-controlled code inside that privileged context, so a fork PR from anyone can read secrets.* and exfiltrate the deploy key — no merge needed. npm ci alone runs the PR's lifecycle scripts. The trigger is for acting on metadata, never for executing untrusted code." },
+    { name: "Give the job all secrets but only trust contributors you recognize", summary: "Trust-based, not isolation-based.", justification: "'Recognize the contributor' is not a security boundary: accounts get compromised, first-time contributors are by definition unrecognized, and a previously-trusted contributor can open a malicious PR. The moment any untrusted code runs with secrets in scope, you're one bad judgment call from exfiltration. Isolation (no secrets in the untrusted job) holds regardless of who opened the PR; trust does not." },
+    { name: "Disable CI for forks entirely", summary: "Safe but defeats the point.", justification: "Refusing to build fork PRs does close the hole, but it also breaks the contribution workflow: you can't test community PRs before merging, so review quality drops and the project stalls. It's throwing out a core capability to avoid a misconfiguration that proper isolation (pull_request, no secrets) already prevents. Secure the pipeline; don't amputate it." },
+  ]}
+/>
+
+<FlowDiagram
+  label="How a fork pull request flows through two trigger choices, and the structural defense. A fork PR from an untrusted internet contributor can be handled two ways. The pull_request path runs the PR's build and tests in a restricted context: no secrets are exposed and the GITHUB_TOKEN is read-only, so even malicious PR code or a poisoned postinstall has nothing valuable in scope to steal — this is the safe place to run untrusted code. The pull_request_target path runs in the base repo's context with secrets and a write token; if that workflow then checks out and runs the PR's head code, the attacker's code executes with your secrets and exfiltrates them. The defense is structural: split the work into a secret-less untrusted-build job plus a separate privileged job, and adopt OIDC so there is no standing key to steal."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "pr", label: "Fork PR", sub: "untrusted code" },
+    { id: "safe", label: "pull_request", sub: "no secrets, read-only" },
+    { id: "ran", label: "runs untrusted build", sub: "nothing to steal" },
+    { id: "danger", label: "pull_request_target", sub: "secrets + write" },
+    { id: "exfil", label: "checkout + run PR", sub: "exfiltration" },
+    { id: "fix", label: "split jobs + OIDC", sub: "structural defense" },
+  ]}
+  edges={[
+    { from: "pr", to: "safe", label: "safe path" },
+    { from: "safe", to: "ran", label: "isolated" },
+    { from: "pr", to: "danger", label: "danger path" },
+    { from: "danger", to: "exfil", label: "PPE" },
+    { from: "exfil", to: "fix", label: "remediate" },
+  ]}
+  caption="Same fork PR, two triggers, opposite blast radius. pull_request isolates untrusted code from secrets; pull_request_target running PR code hands them over. Fix: secret-less untrusted-build job + separate privileged job + OIDC, so there's no standing key to leak."
+/>
+
+<Quiz
+  id="ci-cd-05-supply-chain-04-pipeline-security-and-poisoned-builds-quiz-1"
+  lessonSlug="04-pipeline-security-and-poisoned-builds"
+  lang="en"
+  question="Why is the CI runner a prime attack target even though it isn't a production server?"
+  choices={[
+    { label: "It holds every secret you give the pipeline AND can tamper with the artifact you're about to ship — compromise the build and you can steal credentials or ship malware your own pipeline signs", correct: true },
+    { label: "It runs on a public IP, so it's directly reachable from the internet like prod is", misconception: "Reachability isn't the point — runners are typically not exposed inbound. The value is what the runner HOLDS and DOES during a job: all of the pipeline's secrets are in scope, and it has write access to the artifact. An attacker who runs code there steals credentials or backdoors the build, regardless of network exposure." },
+    { label: "It has more CPU than prod, so it's useful for cryptomining", misconception: "Cryptomining is a real abuse of stolen CI minutes, but it's not why the runner is a high-value target for a supply-chain attacker. The serious threat is that the runner holds every secret and can tamper with the shipped artifact — stealing credentials and poisoning the build (the SolarWinds class), which is far more damaging than burning compute." },
+    { label: "It's the only machine with the production database password", misconception: "It may or may not have a DB password, but framing it as 'the one machine with prod creds' misses the structural reason. The runner holds ALL secrets handed to the pipeline and can modify the artifact in flight — so compromising the build lets an attacker tamper with what ships or steal any credential in scope, not just one password." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-05-supply-chain-04-pipeline-security-and-poisoned-builds-quiz-2"
+  lessonSlug="04-pipeline-security-and-poisoned-builds"
+  lang="en"
+  question="A fork PR from an unknown account exfiltrated the repo's cloud deploy key with no merge and no approval. Which pattern caused it, and what's the structural fix?"
+  choices={[
+    { label: "A pull_request_target workflow checked out and ran the PR's code, so attacker code executed in the base-repo context with secrets; fix by running untrusted builds under pull_request (no secrets, least-priv token) and keeping privileged steps in a separate job", correct: true },
+    { label: "The deploy key was committed to the repo and the attacker read it from git history", misconception: "That's a different (also real) failure — a hardcoded secret. Here the key lived in CI secrets and was exfiltrated at runtime because pull_request_target ran the PR's code in a context that exposes secrets.* . The fix isn't 'remove the committed key'; it's to never execute untrusted code where secrets are in scope." },
+    { label: "Branch protection was off, so the attacker pushed directly to main and read the secret", misconception: "No push to main happened — the secret leaked during PR CI, before any merge. The cause is pull_request_target executing the fork's code with secrets present, and the fix is isolation: run untrusted code under pull_request with no secrets, and confine privileged steps to a separate job. Branch protection doesn't address runtime secret exposure." },
+    { label: "The GITHUB_TOKEN had admin scope, which let the PR read the deploy key", misconception: "An over-scoped GITHUB_TOKEN is a real problem to fix with default-deny permissions, but it's not how a deploy key in secrets gets read — that token doesn't grant access to secrets.* . The deploy key leaked because pull_request_target ran the PR's code in a context where secrets are exposed; the structural fix is isolating untrusted execution from secrets." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The runner holds every secret and ships the artifact. PPE runs attacker code with your privileges — never run untrusted PR code where secrets live. Isolate it (pull_request, no secrets), default-deny the token, use OIDC.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="ci-cd-05-supply-chain-04-pipeline-security-and-poisoned-builds-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why must the CI pipeline itself be threat-modeled, and what is Poisoned Pipeline Execution? Use the pull_request vs pull_request_target distinction.", a: "The runner is a high-value target because for the duration of a job it holds every secret handed to the pipeline (deploy keys, registry creds, cloud tokens, signing keys) and has both outbound network access and write access to the artifact about to ship. So compromising the build lets an attacker steal credentials OR tamper with the shipped artifact — the SolarWinds class, where your own pipeline signs and distributes a backdoored binary that passed every check, without the attacker ever touching prod. SLSA models exactly these build-and-provenance threats. The governing question for any job is: if this code were hostile, what could it reach? Answer: every secret in scope plus the artifact. Poisoned Pipeline Execution (PPE) is the core attack — getting CI to run the attacker's code with the pipeline's privileges. On GitHub the canonical vector is the trigger: pull_request runs fork PRs in a restricted context with NO secrets and a read-only token (the safe place to run untrusted code), while pull_request_target runs in the base repo's context WITH secrets and a write token because it's meant to act on PR metadata (comment, label). The bug is the combination: a pull_request_target workflow that checks out the PR head and runs it executes attacker-controlled code where secrets live, so a fork PR from anyone can read secrets.* and exfiltrate — even npm ci runs the PR's lifecycle scripts. Same code, two triggers, opposite blast radius." },
+    { q: "Walk through the defenses: untrusted-build isolation, least-privilege GITHUB_TOKEN, OIDC, and untrusted-dependency mitigations.", a: "Isolation is structural: never check out and run untrusted PR code in a job that has secrets. Run the untrusted build/test under pull_request (no secrets, read-only token) so a malicious postinstall has nothing valuable in scope; keep any privileged step (comment, publish, deploy) in a separate job that never runs PR code; require approval before a first-time contributor's workflow runs; treat the PR head as hostile input. Least-privilege token: the auto-provided GITHUB_TOKEN can be broad, and code execution in a job with a write-scoped token can push commits, cut releases, or move tags — turning a build compromise into a source compromise. Default-deny with top-level permissions: {} and grant the minimum per job (contents: read for build), scoping per job not per workflow; the untrusted job gets permissions: {} and no secrets. OIDC removes the standing secret entirely: instead of a long-lived cloud key in CI secrets (broad, rarely rotated, stolen-once-stolen-for-its-lifetime), the runner requests a short-lived signed identity token encoding which repo/branch/environment it runs as, and the cloud provider exchanges it for temporary, workload-scoped credentials — trade is trust-policy setup vs a near-zero blast radius. Untrusted-dependency execution: a malicious dependency's install/build scripts run with the job's privileges during npm ci, so mitigate with --ignore-scripts, ephemeral isolated runners, egress filtering, and above all not granting the build job secrets it doesn't need — move the deploy key to the deploy job." },
+  ]}
+/>
+
+<Recap lang="en">
+The CI runner must be threat-modeled because, for the length of a job, it holds every secret you give the pipeline and has write access to the artifact you ship — so compromising the build lets an attacker steal credentials or tamper with what ships (the SolarWinds class, modeled by SLSA) without ever touching production. The core failure mode is Poisoned Pipeline Execution: getting CI to run the attacker's code with the pipeline's privileges. On GitHub the canonical vector is the trigger — pull_request runs fork PRs in a restricted context with no secrets and a read-only token (the safe place for untrusted code), while pull_request_target runs in the base-repo context with secrets and a write token for acting on metadata; the bug is a pull_request_target workflow that checks out and runs the PR's head, executing attacker code where secrets live, so any fork PR can read secrets.* and exfiltrate — even npm ci runs the PR's lifecycle scripts. The defenses are structural: isolate the untrusted build under pull_request with no secrets and keep privileged steps in a separate job; default-deny the GITHUB_TOKEN with permissions: &#123;&#125; and grant the minimum per job so a compromised job can't push commits or cut releases; replace long-lived cloud keys with OIDC, where the runner mints a short-lived workload-scoped identity exchanged for temporary credentials, dropping the stolen-secret blast radius to near zero; and contain untrusted dependency execution at build time with --ignore-scripts, ephemeral isolated runners, egress filtering, and not granting the build job secrets it doesn't need.
+</Recap>
