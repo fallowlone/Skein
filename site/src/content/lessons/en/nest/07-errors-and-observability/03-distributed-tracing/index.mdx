@@ -1,0 +1,207 @@
+---
+concepts:
+- distributed-tracing
+- context-propagation
+- async-local-storage
+- sampling
+- trace-log-correlation
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-distributed-tracing"
+sources:
+- https://opentelemetry.io/docs/languages/js/
+- https://docs.nestjs.com/
+spiral: []
+status: ready
+summary: 'One request fans out across N services; per-service logs cannot tell you which hop is slow or where it broke. A trace stitches the request into one tree of spans via a shared traceId — if you propagate context across HTTP and async boundaries, and sample sanely.'
+title: 'Distributed tracing with OpenTelemetry'
+track: nest
+unit: 07-errors-and-observability
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Checkout got slow. Not broken — slow: p99 crept to 3 seconds and the support queue filled with "the spinner just sits there." The flow crossed four services: `api` took the request, called `orders`, which called `payments`, which called `inventory`. We opened every dashboard we had. `api` p99: fine. `orders` p99: fine. `payments` p99: fine. `inventory` p99: fine. Every service swore it was healthy, and the request was still taking three seconds. The logs were no help either — four separate log streams, each with its own request id, none of them aware of the others. Nobody could answer the only question that mattered: *which hop ate the time?* That question is unanswerable with per-service logs alone. It needs a single object that follows the request through all four services and records where every millisecond went. That object is a trace, and this lesson is about how OpenTelemetry builds one, how the context that holds it together gets lost, and how to pay for it without going bankrupt.
+</Hook>
+
+<Crux>A trace stitches one request across N services into a span tree via a shared traceId — if context propagates across each HTTP and async hop.</Crux>
+
+<Explanation>
+
+## What a trace is: spans, a traceId, and a parent chain
+
+A **trace** is the whole journey of one request, represented as a tree. Each node is a **span**: one timed operation with a start, an end, and a bag of attributes (HTTP route, DB statement, status). Spans are tied together by two ids. The `traceId` is shared by every span in the request — it is the join key for the entire tree. The `spanId` identifies one span, and each span records its **parent** `spanId`, which is what gives the tree its shape: `api`'s span is the root, the `orders` span is its child, the `payments` span is a child of that, and so on.
+
+```ts
+// One span = one operation. The tracer creates it; you set attributes and end it.
+const tracer = trace.getTracer('orders');
+
+await tracer.startActiveSpan('chargeCustomer', async (span) => {
+  span.setAttribute('order.id', orderId);
+  span.setAttribute('payment.amount', amount);
+  try {
+    return await this.payments.charge(orderId, amount);
+  } catch (err) {
+    span.recordException(err);
+    span.setStatus({ code: SpanStatusCode.ERROR });
+    throw err;
+  } finally {
+    span.end(); // start→end is THIS span's duration on the trace
+  }
+});
+```
+
+With that tree, the checkout incident answers itself in one screen: open the trace, see four spans laid out on a timeline, and the `payments` span is visibly 2.6s wide while the other three are slivers. Drill into it and you find `payments` calling `inventory` **synchronously in a loop**, one round trip per line item. No dashboard could show that, because each individual `inventory` call was fast — it was the *serial fan-out*, the sum, that was slow, and the sum only exists in the trace.
+
+## Context propagation: the mechanism that makes one trace out of four services
+
+The hard part is not creating spans — auto-instrumentation does that. The hard part is keeping every span in the *same* trace as the request crosses boundaries. That requires the **trace context** — the `traceId`, the current `spanId`, and the sampling flag — to travel two different kinds of boundary.
+
+**Across a service**, over the network, the context rides in the W3C `traceparent` HTTP header. The caller **injects** it into outgoing request headers; the callee **extracts** it and continues the trace instead of starting a new one.
+
+```ts
+// traceparent: version-traceId-parentSpanId-flags
+// 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+//    └─ 32 hex traceId ──────────────┘ └─ 16 hex spanId ┘ └ sampled
+// The caller injects this header; the callee extracts it and the orders span
+// becomes a CHILD of the api span — same traceId, new spanId, api's as parent.
+```
+
+**Within a process**, across `await`s and callbacks, there is no header to carry the context — so OTel's Node context manager stores the "currently active span" in `AsyncLocalStorage`. ALS is the V8 mechanism that keeps a value attached to one logical async call chain: a span started in a guard is still the current span inside the handler, and inside the `pg` call the handler makes, because all of them run inside the same ALS-tracked chain. That is why a DB query auto-nests under the request span without you passing anything by hand.
+
+The failure mode is symmetric: **lose the context on either kind of boundary and the trace fragments.** Skip `traceparent` on an outbound call and the callee starts a fresh root trace. Break out of the ALS chain — a fire-and-forget unawaited promise, a bare `setTimeout`, a queue hop with no propagation — and the continuation runs with no active span, so OTel sees no parent and opens a new root. Either way the request that should be one tree becomes several disconnected fragments, and you are back to staring at unrelated traces, unable to follow the request end to end.
+
+<Inset kind="why" lang="en">
+Why does a fire-and-forget or unawaited async call break the trace? Because the "current span" does not live in a variable you pass around — it lives in `AsyncLocalStorage`, bound to the awaited call chain that started the span. When you `await`, V8 keeps you inside that store, so the continuation still sees the span as current. When you *don't* await — you call a function and drop the promise, or you schedule work with a bare `setTimeout`, or you push a job onto a queue and a different process picks it up — that continuation runs **outside** the original store. OTel looks for the current span, finds nothing, and starts a fresh root span with a brand-new `traceId`. The child work is now its own trace. The original tree never learns the work happened, and the new root has no parent, so on the trace view the one request looks like several unrelated traces that you cannot stitch back together.
+</Inset>
+
+## Wiring OTel into Nest: bootstrap before the app
+
+The one rule that bites everyone: instrumentation works by monkey-patching the modules it traces (`http`, `express`, `pg`, the Nest core), so the SDK must start **before** those modules are imported by your app. In practice you put the `NodeSDK` in its own file and load it first — `node --require ./tracing.js dist/main.js`, or an `import './tracing'` as the very first line of `main.ts`.
+
+```ts
+// tracing.ts — MUST be loaded before the Nest app so it patches http/pg/nest first
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { getNodeAutoInstrumentations } from '@opentelemetry/auto-instrumentations-node';
+import { TraceIdRatioBasedSampler } from '@opentelemetry/sdk-trace-base';
+
+const sdk = new NodeSDK({
+  // auto-instruments http, express, @nestjs/core, pg — spans appear with no app code
+  instrumentations: [getNodeAutoInstrumentations()],
+  // head sampling: keep 10% of traces (see the sampling section)
+  sampler: new TraceIdRatioBasedSampler(0.1),
+});
+sdk.start();
+```
+
+Once that is loaded, every HTTP request and every `pg` query produces a span automatically. You add **manual** spans (`tracer.startActiveSpan`) only around business operations the auto-instrumentation cannot name — "reserve inventory", "score risk". And you close the loop with L01's structured logging: inject the active `traceId` into every log line. That single field is the **correlation key** — find a slow trace, copy its `traceId`, and pull every log from every service for that exact request. Logs answer *what happened*; the trace answers *where the time went*; the `traceId` is the join between them.
+
+```ts
+// L01's logger, now trace-aware: every line carries the active traceId
+const span = trace.getActiveSpan();
+const ctx = span?.spanContext();
+this.logger.log({ msg: 'charge failed', orderId, traceId: ctx?.traceId, spanId: ctx?.spanId });
+// now one traceId pulls every log from every service for this exact request
+```
+
+## Sampling: you cannot afford to keep every trace
+
+Tracing every request is expensive — span storage and export bandwidth dominate, and unbounded spans or attributes per request add real cost. So you **sample**: keep some traces, drop the rest. There are two strategies, and the trade between them is the senior decision.
+
+**Head sampling** decides at the root, before the request runs, usually by a ratio: `TraceIdRatioBasedSampler(0.1)` keeps 10%. It is cheap and needs no extra infrastructure — but the decision is blind. It cannot know the request you dropped was the one that took 3 seconds or threw a 500, so at a low rate you systematically miss the rare slow and failing requests, which are exactly the ones you wanted.
+
+**Tail sampling** decides *after* the request finishes, when the outcome is known: keep **all** errors and all slow traces, sample a small fraction of the boring fast ones. It catches the rare bad request head sampling drops. The cost is that it cannot be decided in-process — every span of a trace must be buffered somewhere until the trace completes and the keep/drop verdict is made, which means you must run the **OpenTelemetry Collector** as a buffering tier between your services and your backend.
+
+<TradeoffMatrix
+  id="nest-07-errors-and-observability-03-distributed-tracing-tradeoff-1"
+  lessonSlug="03-distributed-tracing"
+  lang="en"
+  prompt="You must trace a high-traffic checkout flow across four services. Volume makes 100% tracing far too expensive, but the whole reason you're adding tracing is to catch the rare slow and failing checkouts. Which sampling approach fits?"
+  options={[
+    { name: "Tail sampling: keep ALL errors and slow traces, sample a small fraction of fast successes, buffered through an OTel Collector", summary: "Outcome-aware keep.", correct: true, justification: "Tail sampling decides after the request completes, when you know the outcome, so it keeps exactly the traces you added tracing to find — every error and every slow checkout — while dropping most of the boring fast ones to control cost. The price is real and acknowledged: the verdict can't be made in-process, so you must run the OpenTelemetry Collector as a buffering tier that holds a trace's spans until it finishes and then decides. For a high-traffic flow whose value is catching the rare bad request, paying for the Collector is the right trade." },
+    { name: "Low-rate head sampling (e.g. 10%) via TraceIdRatioBasedSampler — no collector", summary: "Cheap but blind.", justification: "Head sampling is cheap and infrastructure-free, and a 10% ratio is a fine default for general visibility. But it decides at the root before the outcome is known, so it's blind: a 10% rate keeps 1-in-10 requests at random and will systematically miss most of the rare slow and failing checkouts — the exact requests this flow exists to catch. Acceptable as a baseline; wrong when the stated goal is catching the rare bad request." },
+    { name: "Trace 100% of requests — keep everything, sample nothing", summary: "Exactly the cost you can't pay.", justification: "Keeping every trace removes the blind spot but reintroduces the cost the prompt rules out: at high traffic, span storage and export bandwidth explode, and per-request span/attribute volume compounds it. Tracing every request is precisely what sampling exists to avoid; this fails the cost constraint." },
+    { name: "Trace nothing — rely on the per-service logs you already have", summary: "Back to the original blind spot.", justification: "This is the state the lesson opens in: four healthy-looking services and a 3s request nobody can explain, because per-service logs can't show the serial fan-out across hops. Dropping tracing returns you to the exact incident that motivated it." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-03-distributed-tracing-quiz-1"
+  lessonSlug="03-distributed-tracing"
+  lang="en"
+  question="Service api calls service orders over HTTP, and you want the orders span to be a child of the api span in the same trace. What carries the trace context across that service boundary?"
+  choices={[
+    { label: "The W3C traceparent HTTP header — api injects it into the outbound request, orders extracts it and continues the same trace", correct: true },
+    { label: "AsyncLocalStorage — it carries the current span from api into orders automatically", misconception: "AsyncLocalStorage only propagates context WITHIN a single process, across awaits and callbacks on one async call chain. It cannot cross a network boundary — a different process has its own ALS store. Across services the context must be serialized into the W3C traceparent header by the caller and extracted by the callee." },
+    { label: "A shared traceId column written to the database both services read", misconception: "There's no shared store the callee reads from. The context travels in-band with the request itself, in the traceparent header the caller injects; the callee extracts it from the incoming headers. Nothing is written to or read from a database to propagate a trace." },
+    { label: "Nothing — orders auto-detects it's part of api's trace because the calls are close in time", misconception: "Spans are never correlated by timing. Without the traceparent header, orders has no idea it's downstream of api and starts a brand-new root trace with its own traceId. Propagation is explicit: inject on the way out, extract on the way in." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-03-distributed-tracing-quiz-2"
+  lessonSlug="03-distributed-tracing"
+  lang="en"
+  question="A request enqueues a BullMQ job. In your tracing UI the job's spans show up as separate root traces, disconnected from the request that enqueued them. Why, and what's the fix?"
+  choices={[
+    { label: "The trace context wasn't propagated across the queue, so the processor runs outside the original ALS chain and starts a new root — fix: inject traceparent into the job payload on enqueue, extract and restore the context in the processor", correct: true },
+    { label: "BullMQ jobs always create new traces by design; they cannot be linked to the enqueuing request", misconception: "Nothing forces a job to be a new trace — it's new only because the context wasn't carried. A queue is a propagation boundary just like an HTTP call: serialize the traceparent into the job data when you add the job, then extract and restore it in the processor so the job spans nest under the original trace." },
+    { label: "The sampling rate is too low, so the request's spans were dropped and only the job's survived", misconception: "Sampling drops whole traces, it doesn't split one trace into two. Orphan job traces are a context-propagation failure, not a sampling artifact: the processor ran outside the enqueuer's AsyncLocalStorage chain, found no active span, and opened a fresh root." },
+    { label: "The processor runs in a worker thread, and AsyncLocalStorage can't cross threads — there's no fix in Node", misconception: "Whether it's a worker, a separate process, or a later tick, the cause is the same: the context wasn't carried across the hop. And there absolutely is a fix — inject traceparent into the job payload on enqueue and restore it in the processor. ALS not crossing the boundary is the reason you must propagate manually, not a dead end." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="How one checkout request becomes a single trace tree across four services through context propagation. The api service receives the request and opens the root span, which mints the traceId for the whole request. Calling orders over HTTP injects the W3C traceparent header carrying that traceId and the current spanId; orders extracts it and opens a child span under the same traceId. The orders handler runs a pg query, which auto-nests as a child span because the database call runs inside the same in-process AsyncLocalStorage chain. orders then calls payments over HTTP, again propagating traceparent, so the payments span joins the same tree. The result is one trace: a single traceId, four linked spans, parent-to-child edges following the call path."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "api", label: "api root span", sub: "mints traceId" },
+    { id: "orders", label: "orders span", sub: "child via traceparent" },
+    { id: "pg", label: "pg query span", sub: "child via ALS" },
+    { id: "payments", label: "payments span", sub: "child via traceparent" },
+    { id: "tree", label: "one trace tree", sub: "shared traceId" },
+  ]}
+  edges={[
+    { from: "api", to: "orders", label: "traceparent header" },
+    { from: "orders", to: "pg", label: "AsyncLocalStorage" },
+    { from: "orders", to: "payments", label: "traceparent header" },
+    { from: "payments", to: "tree", label: "same traceId" },
+  ]}
+  caption="Propagation is the set of edges: a traceparent header carries context across each HTTP hop, AsyncLocalStorage carries it across the in-process DB call. Drop any one edge and that subtree breaks off into its own root trace."
+/>
+
+<KeyTakeaway>A trace = one request as a span tree sharing a traceId. Propagate context via traceparent across services and AsyncLocalStorage in-process; lose it and it fragments. Sample head 1-10% or tail errors+slow; log traceId.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-07-errors-and-observability-03-distributed-tracing-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is a trace made of, and how does context propagation keep one request in one trace as it crosses service and async boundaries?", a: "A trace is the whole journey of one request, modelled as a tree of spans. A span is one timed operation (start, end, attributes like HTTP route or DB statement). Spans are tied together by ids: every span in the request shares one traceId (the join key for the tree), each span has its own spanId, and each records its parent spanId — which gives the tree its shape (api span is the root, orders is its child, payments a child of that). The thing that must travel for all those spans to share a traceId is the trace context: the traceId, the current spanId, and the sampling flag. It crosses two kinds of boundary. ACROSS services over the network it rides in the W3C traceparent HTTP header — the caller injects it into outbound headers, the callee extracts it and continues the same trace as a child instead of starting a new root. WITHIN a process across awaits and callbacks there's no header, so OTel's Node context manager stores the currently-active span in AsyncLocalStorage, which keeps the value bound to one logical async call chain — so a span started in a guard is still current inside the handler and inside the pg call it makes. Lose the context on either boundary — skip traceparent on an outbound call, or break the ALS chain with a fire-and-forget/unawaited promise, a bare setTimeout, or a queue hop with no propagation — and the continuation runs with no active span, OTel sees no parent, and it opens a fresh root trace, so the one request fragments into several disconnected traces." },
+    { q: "How do you wire OTel into a Nest app, and how do you choose between head and tail sampling?", a: "Auto-instrumentation works by monkey-patching the modules it traces (http, express, pg, @nestjs/core), so the NodeSDK must start BEFORE the app imports those modules — put it in its own tracing file loaded first via node --require ./tracing.js or import './tracing' as the first line of main.ts. With getNodeAutoInstrumentations() running, every HTTP request and pg query gets a span automatically; you add manual spans with tracer.startActiveSpan only around business operations the auto-instrumentation can't name. Then close the loop with structured logging by injecting the active traceId (from trace.getActiveSpan()?.spanContext()) into every log line — that traceId is the correlation key joining logs (what happened) to traces (where the time went). On sampling: you can't afford every trace because span storage and export bandwidth dominate. Head sampling decides at the root before the request runs, usually by ratio (TraceIdRatioBasedSampler(0.1) keeps 10%) — cheap and infrastructure-free, but blind: at a low rate it systematically misses the rare slow/failing requests you actually care about. Tail sampling decides after the request finishes when the outcome is known — keep all errors and slow traces, sample a fraction of fast successes — so it catches the rare bad request, but the verdict can't be made in-process, so you must run the OpenTelemetry Collector to buffer a trace's spans until it completes. Head 1-10% is a fine default for general visibility; tail sampling is the trade when the whole point is catching rare errors and slow traces at high volume." },
+  ]}
+/>
+
+<Recap lang="en">
+A distributed trace turns one request that fans out across N services into a single tree, which is the only artifact that can answer "which hop ate the time" — per-service logs and dashboards each see one slice and miss the serial fan-out that made the whole request slow. A trace is a tree of spans (each a timed operation with attributes); every span shares one traceId (the join key), each has a spanId, and each records its parent spanId to give the tree its shape. The mechanism that keeps all those spans in one trace is context propagation of the trace context (traceId + current spanId + sampling flag): ACROSS services it rides the W3C `traceparent` HTTP header — caller injects, callee extracts — and WITHIN a process it lives in `AsyncLocalStorage`, OTel's context manager, so a span started in a guard is still current inside the handler and its DB call. Lose the context — an unawaited fire-and-forget, a bare `setTimeout`, or a queue hop with no propagation — and the continuation runs with no active span, so OTel opens a fresh root and the request fragments into disconnected traces; the BullMQ fix is to inject `traceparent` into the job payload and restore it in the processor. Wire OTel by loading the `NodeSDK` before the app so auto-instrumentation can patch http/pg/nest first, add manual spans for business operations, and inject the active `traceId` into every log line as the correlation key tying logs to traces. Because keeping every trace is too expensive, you sample: head sampling (e.g. `TraceIdRatioBasedSampler(0.1)`, 1-10%) is cheap but blind to the rare slow/failing request; tail sampling keeps all errors and slow traces but needs the OpenTelemetry Collector to buffer spans until the outcome is known.
+</Recap>
