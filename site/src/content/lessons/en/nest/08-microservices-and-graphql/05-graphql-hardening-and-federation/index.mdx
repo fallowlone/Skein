@@ -1,0 +1,204 @@
+---
+concepts:
+- query-depth-limit
+- query-complexity
+- persisted-queries
+- apollo-federation
+- subgraph-key
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-graphql-hardening-and-federation"
+sources:
+- https://docs.nestjs.com/graphql/complexity
+- https://www.apollographql.com/docs/federation/
+spiral: []
+status: ready
+summary: 'A public GraphQL endpoint lets the client compose the query, so one request can fan out to millions of resolver and DB calls — a DoS vector REST does not have. Harden with depth limits, query-cost analysis, and persisted queries; scale ownership with Apollo Federation.'
+title: 'GraphQL hardening: query cost, depth and federation'
+track: nest
+unit: 08-microservices-and-graphql
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The GraphQL endpoint had been public for eight months. No auth needed for the read graph — it was meant to power a partner integration, and the team was proud of how flexible it was. At 02:14 the on-call phone went off: API p99 had gone vertical, Postgres connections were pinned at max, and the box was swapping. There was no spike in request count. There was *one* request. Someone — a scraper, a curious bot, it never mattered — had sent a single query: `user { friends { friends { friends { posts { author { friends } } } } } }`. The schema happily resolved it, and each level multiplied the fan-out: a hundred friends, each with a hundred friends, each with posts, each post re-resolving an author. One HTTP request became several million resolver invocations and a comparable pile of database reads. The server didn't reject it — there was nothing configured to. This lesson is about the controls that should have been there: depth limiting, query-cost analysis, persisted queries, and then federation when the single graph itself becomes the bottleneck.
+</Hook>
+
+<Crux>The client composes the query, so one request can fan out unbounded. Reject by depth and cost before execution; persist queries; federate.</Crux>
+
+<Explanation>
+
+## Why GraphQL needs hardening that REST does not
+
+In REST, the server owns the shape of every response. `GET /users/42/friends` returns a bounded page; the cost of that endpoint is fixed and known when you write it. The client cannot ask `/users/42/friends/friends/friends` — there is no such route, and to get nested data the client must make more, separately rate-limitable, requests.
+
+GraphQL inverts this. The **client composes the query**, choosing the fields, the depth, and the width in a single request. That expressiveness is the selling point, and it is also the attack surface: a client can ask for arbitrarily deep, arbitrarily wide, recursive data in one HTTP call, and the server will dutifully resolve it. A self-referential type like `User.friends: [User]` lets a query nest into itself until the response is a combinatorial explosion. One request, no auth required, becomes millions of resolver calls and DB hits. That is a denial-of-service vector unique to exposing a GraphQL endpoint, and it is why a public GraphQL API needs execution guards that a REST API gets for free from its fixed routes.
+
+The defense is layered, and the layers run **before execution** — you reject the malicious query during validation, not by surviving it.
+
+## Control 1 — depth limiting
+
+The first guard caps how deeply a query may nest. A validation rule walks the query AST and rejects any operation whose selection set is nested past a maximum — typically **7 to 10** levels for a real application. This is what stops the recursive-friends bomb: `friends { friends { friends { ... } } }` exceeds the depth limit and is rejected during validation, before a single resolver runs.
+
+```ts
+// main.ts — wire a depth-limit validation rule into Apollo's validationRules
+import depthLimit from 'graphql-depth-limit';
+
+GraphQLModule.forRoot<ApolloDriverConfig>({
+  driver: ApolloDriver,
+  // any operation nested deeper than 7 selection sets is rejected at validation
+  validationRules: [depthLimit(7)],
+});
+```
+
+Depth limiting is cheap, static, and catches the most obvious recursion. But it has a blind spot, and that blind spot is the next control.
+
+## Control 2 — query complexity / cost analysis
+
+A query can be shallow and still ruinous. `users(first: 10000) { posts(first: 1000) { comments(first: 1000) } }` is only **three levels deep** — it sails past any depth limit — yet it multiplies to roughly ten billion nodes. Depth limiting counts nesting; it is blind to **width** and to **pagination multipliers**.
+
+Cost analysis fixes this. You assign a numeric **complexity** to each field — scalar fields are cheap, list fields are expensive, and a list field's cost is multiplied by its pagination argument — then sum the cost of the whole query *before execution* and reject anything over a budget (commonly **1000**). NestJS supports this through a complexity plugin that computes a score against per-field estimators or a `complexity` value on the field.
+
+```ts
+// Annotate the expensive field, and multiply by the pagination arg
+@Field(() => [Post], { complexity: 5 })
+posts: Post[];
+
+// A plugin sums the query's complexity at validation time and rejects over budget
+import { ComplexityPlugin } from './complexity.plugin'; // computes score, throws over maxComplexity (e.g. 1000)
+```
+
+The estimator for a paginated list multiplies the field's base cost by `first`/`limit`, so `users(first: 10000)` scores 10000× the per-user cost and blows the budget on its own. This is the control that catches the **wide-but-shallow** bomb a depth limit waves through. You need both: depth for recursion, cost for fan-out.
+
+<Inset kind="why" lang="en">
+Why is a depth limit alone insufficient, and what does complexity analysis add? A shallow query can still be ruinously expensive. `users(first: 10000) { posts(first: 1000) { comments(first: 1000) } }` is only three levels deep, so a depth limit of 7 lets it straight through — yet the pagination arguments multiply to roughly ten billion nodes and melt the database. Depth limiting counts how *deep* you nest; it is completely blind to how *wide* each level is and to the multiplier effect of `first`/`limit`. Complexity analysis assigns a score that multiplies list sizes by their pagination arguments, so the same wide-but-shallow query scores far over budget and is rejected at validation. The two controls cover orthogonal axes — depth stops recursion, cost stops fan-out — and a hardened endpoint runs both, plus hard caps on pagination arguments themselves, request timeouts, and rate limiting.
+</Inset>
+
+## Control 3 — persisted queries (the strongest lever)
+
+The previous two controls bound an *arbitrary* query. Persisted queries change the game by removing arbitrariness. Instead of accepting any query string, the client sends a **hash** of a query that was registered ahead of time; the server looks up the hash and runs only the operation it already knows. Automatic Persisted Queries (APQ) do this primarily to shrink request payloads — the client sends a short hash instead of a long query string.
+
+The security win comes from running persisted queries in **allow-list mode**: the server executes *only* operations from a vetted, pre-registered set, and rejects any hash it has not seen. In that mode arbitrary-query DoS is eliminated outright — an attacker cannot send the recursive-friends bomb because the server will not run a query it was not given at build time. The tradeoff is flexibility: a public or third-party API whose clients legitimately compose novel queries cannot allow-list them. For a **first-party** app — your own web and mobile clients shipping a fixed, known set of operations — allow-listed persisted queries are the single strongest hardening lever, and they compose with depth and cost limits as defense in depth.
+
+## The runtime cousin: N+1 and DataLoader
+
+Cost analysis bounds what the client can **ask for**; it says nothing about what your resolvers actually **do** while answering. A resolver fan-out re-introduces the N+1 problem — resolving a list of N parents and then firing one child query per parent — which (as covered earlier in this unit) DataLoader solves by batching the N reads into one and caching per request. Think of them as a pair: cost limiting is the static budget on the request shape, DataLoader is the runtime budget on resolver work. A hardened API needs both, because a query that passes the cost gate can still issue N+1 queries if its resolvers are naive.
+
+## Federation — when the single graph is the bottleneck
+
+The controls above protect one graph. Federation answers a different problem: as the graph grows, a single monolithic schema and resolver set becomes a deploy bottleneck and an ownership mess — every team editing one file, every change a full redeploy. **Apollo Federation** (in NestJS, the `ApolloFederationDriver`) splits the graph across services. Each **subgraph** owns its own types, marks the entities it owns with `@key(fields: "id")`, and provides a `__resolveReference` resolver so other subgraphs can extend its entities by reference. A **gateway** composes the subgraphs into one **supergraph** and plans cross-service queries, fetching each entity's fields from the subgraph that owns them.
+
+```graphql
+# users subgraph — owns the User entity, identified by id
+type User @key(fields: "id") {
+  id: ID!
+  name: String!
+}
+```
+
+```graphql
+# reviews subgraph — extends User by reference, adds the fields it owns
+type User @key(fields: "id") {
+  id: ID! @external
+  reviews: [Review!]!   # resolved here via __resolveReference(id)
+}
+```
+
+This is the modern, declarative successor to older **schema stitching**, where a gateway manually merged schemas and you wrote the cross-service wiring by hand. Federation makes the relationships declarative — `@key` and `__resolveReference` — and lets the gateway plan the query. Crucially, hardening does not move to the gateway and stop there: depth limits, cost analysis, and persisted queries still belong at the edge, because the supergraph is exactly as composable — and therefore exactly as abusable — as the single graph it replaced.
+
+<FlowDiagram
+  label="The two halves of a hardened, federated GraphQL setup. Hardening pipeline: an incoming client query is validated first — the depth-limit rule rejects queries nested past the maximum, then complexity scoring sums field costs against the budget; if either gate fails the query is rejected before any resolver runs, and only a passing query proceeds to execution where resolvers run and DataLoader batches the relation reads. Federation topology: a gateway composes subgraphs into one supergraph — subgraph A owns the User entity marked with @key, and subgraph B extends that entity and resolves it by reference via __resolveReference. The validation gate sits in front of execution, and the same gate guards the federated supergraph."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "query", label: "client query", sub: "client-composed" },
+    { id: "depth", label: "depth limit", sub: "reject > max" },
+    { id: "cost", label: "cost vs budget", sub: "reject > 1000" },
+    { id: "exec", label: "execute", sub: "resolvers + DataLoader" },
+    { id: "gateway", label: "gateway", sub: "supergraph" },
+    { id: "subA", label: "subgraph A", sub: "@key(id)" },
+    { id: "subB", label: "subgraph B", sub: "__resolveReference" },
+  ]}
+  edges={[
+    { from: "query", to: "depth", label: "validate" },
+    { from: "depth", to: "cost", label: "pass" },
+    { from: "cost", to: "exec", label: "under budget" },
+    { from: "gateway", to: "subA", label: "owns entity" },
+    { from: "gateway", to: "subB", label: "extends by ref" },
+  ]}
+  caption="The validation gate (depth then cost) sits before execution: a query is rejected during validation, not by surviving it. The same gate guards the federated supergraph, which a gateway composes from subgraphs that own entities via @key and resolve references."
+/>
+
+<TradeoffMatrix
+  id="nest-08-microservices-and-graphql-05-graphql-hardening-and-federation-tradeoff-1"
+  lessonSlug="05-graphql-hardening-and-federation"
+  lang="en"
+  prompt="You must protect a public GraphQL API from a query-cost DoS, where a single client-composed query can fan out to millions of resolver and DB calls. What is the best layered defense?"
+  options={[
+    { name: "Layer depth limiting + complexity/cost budget + pagination caps, and add allow-listed persisted queries for first-party clients", summary: "Defense in depth.", correct: true, justification: "These controls cover orthogonal axes of the attack. Depth limiting (max ~7-10) rejects the recursive bomb that nests into a self-referential type. Complexity/cost analysis sums per-field cost multiplied by pagination args and rejects over a budget (~1000), catching the wide-but-shallow query a depth limit misses. Pagination caps bound first/limit so a single list can't request 10000 rows. And for first-party clients, allow-listed persisted queries eliminate arbitrary-query DoS entirely by running only vetted, pre-registered operations. All of them validate BEFORE execution. That layering is the senior answer — no single control covers depth, width, and arbitrariness at once." },
+    { name: "Add a depth limit (max 7) and call it done", summary: "Misses width.", justification: "Depth limiting is necessary but not sufficient. It rejects the recursive-friends bomb, but it is blind to width and pagination multipliers: users(first: 10000) { posts(first: 1000) { comments(first: 1000) } } is only three levels deep and sails straight through a depth limit while multiplying to ~10 billion nodes. You also need complexity/cost analysis to bound fan-out. Depth alone is a partial defense that leaves the wide-but-shallow vector wide open." },
+    { name: "Rely on a rate limiter at the edge", summary: "One request already kills you.", justification: "Rate limiting bounds the NUMBER of requests, but the GraphQL DoS is a SINGLE request that fans out to millions of resolver calls. A per-IP rate limit of even one request per second does nothing against one query that pins Postgres for minutes. Rate limiting is a useful outer layer, but it does not bound the cost of an individual query — which is exactly what depth and complexity analysis do. It cannot be the primary defense." },
+    { name: "Trust clients and just disable introspection in production", summary: "Security theater.", justification: "Disabling introspection hides the schema from casual discovery, but it does not stop anyone who already knows or guesses the field names — and the recursive-friends bomb needs no introspection to write. Trusting clients is the original mistake that caused the incident. Neither measure bounds query cost at all; they leave the actual DoS vector fully open. This is the weakest option." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-05-graphql-hardening-and-federation-quiz-1"
+  lessonSlug="05-graphql-hardening-and-federation"
+  lang="en"
+  question="Why can a single GraphQL request be a denial-of-service vector when a single REST endpoint generally is not?"
+  choices={[
+    { label: "The client composes the GraphQL query — choosing arbitrary depth and width — so one request can fan out to unbounded resolver and DB work, whereas a REST endpoint has a fixed, server-owned, bounded response shape", correct: true },
+    { label: "GraphQL is always slower than REST because it parses a query string", misconception: "Parsing overhead is negligible and not the issue. The DoS comes from the query's EXECUTION cost, not its parse cost: because the client composes the query, a single request can demand arbitrarily deep, wide, recursive data that fans out to millions of resolver calls. A REST endpoint can't be asked to do that because its response shape is fixed by the server." },
+    { label: "GraphQL runs every resolver on the main thread, blocking the event loop", misconception: "The vector isn't about threading — Node handles I/O asynchronously either way. The problem is the VOLUME of work a single client-composed query can request: unbounded depth and width turn one request into millions of resolver/DB calls. The same async model under REST is safe because each endpoint's cost is bounded by the server." },
+    { label: "REST endpoints can't be attacked, so all DoS risk moves to GraphQL", misconception: "REST can absolutely be attacked (e.g. by request volume), which is why rate limiting exists. The point is narrower: a SINGLE GraphQL request can be a DoS because the client controls the query's depth and width, while a single REST request hits one fixed, bounded, server-defined response shape." },
+  ]}
+/>
+
+<Quiz
+  id="nest-08-microservices-and-graphql-05-graphql-hardening-and-federation-quiz-2"
+  lessonSlug="05-graphql-hardening-and-federation"
+  lang="en"
+  question="A query only three levels deep still melts the database. Why does a depth limit miss it, and which control catches it?"
+  choices={[
+    { label: "Depth limiting counts only nesting, so it is blind to width and pagination multipliers; complexity/cost analysis catches it by scoring field cost multiplied by list/pagination size and rejecting over a budget", correct: true },
+    { label: "The depth limit was simply set too high; lowering it to 2 would have caught the query", misconception: "Lowering the depth limit to 2 would break legitimate queries and still misses the real issue: this query is genuinely only ~3 levels deep but ruinous because of WIDTH — users(first: 10000) { posts(first: 1000) ... }. Depth limiting can't see pagination multipliers at all. Complexity/cost analysis multiplies list sizes and rejects the over-budget query regardless of how shallow it is." },
+    { label: "Depth limits only apply to mutations, so this read query bypassed it", misconception: "Depth limiting applies to any operation, reads included — that's not the gap. The gap is that depth counts nesting only and ignores width and pagination args, so a shallow-but-wide query passes. The control that bounds fan-out is complexity/cost analysis, which scores list size times pagination multiplier against a budget." },
+    { label: "DataLoader should have prevented it by batching the reads", misconception: "DataLoader bounds what your RESOLVERS do (batching N+1 reads), not what the client may ASK for. It can't reject a query for being too expensive — it would dutifully batch a request for billions of nodes. The control that rejects the wide-but-shallow query before execution is complexity/cost analysis." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>One query can fan out to millions of calls. Reject before execution: depth limit for recursion, cost budget for fan-out, allow-listed persisted queries to kill arbitrary-query DoS. Federate with @key; gate at the edge.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-08-microservices-and-graphql-05-graphql-hardening-and-federation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why a public GraphQL endpoint is a DoS vector REST is not, and the three controls that harden it — being precise about what each one catches and misses.", a: "In REST the server owns each response shape, so an endpoint's cost is fixed and bounded when you write it; the client can't ask for deeper nested data without making more, separately-limitable requests. GraphQL inverts this: the client composes the query, choosing fields, depth, and width in one HTTP call, so a self-referential type like User.friends lets a single request nest into itself — user { friends { friends { ... } } } — and fan out to millions of resolver calls and DB hits with no auth required. The controls, all running BEFORE execution: (1) Depth limiting caps nesting (max ~7-10) and rejects the recursive bomb during validation, but it counts only depth and is blind to width and pagination multipliers. (2) Complexity/cost analysis assigns a numeric cost per field, multiplies list fields by their pagination argument (first/limit), sums the query, and rejects over a budget (~1000) — this catches the wide-but-shallow query like users(first: 10000) { posts(first: 1000) { comments(first: 1000) } } that is only three levels deep yet multiplies to ~10 billion nodes. You need both: depth for recursion, cost for fan-out. (3) Persisted queries in allow-list mode send a hash of a pre-registered query and run only vetted operations, eliminating arbitrary-query DoS outright — the strongest lever for first-party clients, though too rigid for public/third-party APIs that compose novel queries. Plus pagination caps, timeouts, and rate limiting as outer layers, and DataLoader to bound the resolver-side N+1 that cost analysis doesn't address." },
+    { q: "Explain Apollo Federation: the problem it solves, how subgraphs and the gateway compose a graph, the role of @key and __resolveReference, how it differs from schema stitching, and where hardening lives.", a: "As a graph grows, one monolithic schema and resolver set becomes a deploy bottleneck and an ownership mess — every team edits one file and every change is a full redeploy. Apollo Federation (the ApolloFederationDriver in NestJS) splits the graph across services. Each subgraph owns its own types and marks the entities it owns with @key(fields: \"id\"), which gives the entity a stable identity across the graph, and provides a __resolveReference resolver so other subgraphs can extend that entity by reference (a reviews subgraph adds reviews to a User it does not own, resolving the reference by id). A gateway composes the subgraphs into one supergraph and plans cross-service queries, fetching each field from the subgraph that owns it. This is the modern declarative successor to schema stitching, where a gateway manually merged schemas and you hand-wrote the cross-service wiring; federation makes the relationships declarative via @key and __resolveReference and lets the gateway plan the query. Critically, hardening does not move to the gateway and disappear: depth limits, complexity/cost analysis, and persisted queries still belong at the edge, because the supergraph is exactly as client-composable — and therefore exactly as abusable — as the single graph it replaced." },
+  ]}
+/>
+
+<Recap lang="en">
+A public GraphQL endpoint is a denial-of-service vector that REST is not, because the client composes the query and can demand arbitrarily deep, wide, recursive data in one request — a self-referential type lets `user &#123; friends &#123; friends &#123; ... &#125; &#125; &#125;` fan out to millions of resolver and DB calls with no auth. The defense is layered and runs before execution. Depth limiting caps nesting at ~7-10 and rejects the recursive bomb, but is blind to width and pagination multipliers. Query complexity/cost analysis assigns a cost per field, multiplies list fields by their pagination argument, sums the query, and rejects over a budget (~1000) — catching the wide-but-shallow query like `users(first: 10000)` that is only three levels deep yet multiplies to billions of nodes; you need both controls because they cover orthogonal axes. Persisted queries in allow-list mode send a hash of a pre-registered query and run only vetted operations, eliminating arbitrary-query DoS outright — the strongest lever for first-party clients, too rigid for public ones. Pagination caps, timeouts, and rate limiting are outer layers, and DataLoader bounds the runtime N+1 that cost analysis doesn't address. When the single graph itself becomes a deploy and ownership bottleneck, Apollo Federation splits it across subgraphs that own entities via @key and resolve references via __resolveReference, while a gateway composes them into one supergraph — the modern successor to manual schema stitching. The hardening gate stays at the edge, because the supergraph is exactly as abusable as the single graph it replaced.
+</Recap>

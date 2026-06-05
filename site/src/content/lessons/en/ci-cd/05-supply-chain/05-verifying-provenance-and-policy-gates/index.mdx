@@ -1,0 +1,222 @@
+---
+concepts:
+- cosign-verify
+- slsa-provenance
+- admission-control
+- policy-as-code
+- fail-closed
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-verifying-provenance-and-policy-gates"
+sources:
+- https://slsa.dev/spec/v1.0/levels
+- https://docs.sigstore.dev/cosign/verifying/verify/
+spiral: []
+status: ready
+summary: 'L01 signed images and produced SLSA provenance — but a signature nobody checks protects nothing. The enforcement half: verify signature + provenance + builder/source identity at the deploy boundary via an admission controller, fail closed, as policy-as-code.'
+title: 'Verifying provenance and policy gates'
+track: ci-cd
+unit: 05-supply-chain
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The team had done everything right in CI. Every image was signed with cosign, every build emitted a SLSA provenance attestation, the green checkmarks were beautiful. Leadership got a slide that said "supply chain: secured." Then, during a Friday firefight, an engineer needed a hotfix out fast, built an image on their laptop, and ran `kubectl set image` straight at the prod cluster. It ran. No signature. No provenance. Nothing said a word — because nothing in the cluster ever *checked*. The signatures were decoration. The whole pipeline that produced cryptographic proof of origin was hanging proof on the wall while the door stood open. This lesson is the half that was missing: not how to sign, but how to make the cluster *refuse* anything that isn't signed and provenanced by a builder you trust — and to refuse it even when verification itself goes wrong.
+</Hook>
+
+<Crux>Signing without verifying is theater. An admission controller verifies signature + provenance + identity at deploy, and fails closed.</Crux>
+
+<Explanation>
+
+## Signing is a claim; verification is the protection
+
+L01 gave you the *produce* half: `cosign sign` attached a signature to an image digest, and the build platform emitted a SLSA provenance attestation describing what built it. That is real cryptography. It is also, on its own, completely inert. A signature is just a claim bolted onto an artifact — it changes nothing about what runs. The security only exists at the moment something **refuses to run an artifact that isn't signed and attested by a trusted builder**. If nothing refuses, the signatures are wall art.
+
+So the question this lesson answers is not "how do I sign" — you did that — but "what, exactly, do I verify, and where does the refusal live."
+
+## What you verify: signature, provenance, and identity — by digest
+
+Verification is three checks, and skipping any one of them leaves a hole:
+
+```bash
+# 1. SIGNATURE — is this exact image digest signed by an identity I trust?
+#    Keyless: the signer's OIDC identity is recorded in Rekor (the transparency log)
+#    and the cert chains to Fulcio. You pin WHO, not a long-lived key.
+cosign verify \
+  --certificate-identity "https://github.com/acme/app/.github/workflows/release.yml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/acme/app@sha256:abc123...
+
+# 2. PROVENANCE — does a SLSA attestation say MY builder built it from MY source commit?
+cosign verify-attestation \
+  --type slsaprovenance \
+  --certificate-identity "https://github.com/acme/app/.github/workflows/release.yml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  ghcr.io/acme/app@sha256:abc123...
+```
+
+The first check answers *"is this signed by someone I trust?"* The second answers a stronger question: *"was this image built by my CI, from my repository, at a commit I can name?"* — which is why provenance matters even for a "signed" image. An attacker who steals a signing key can sign a malicious image; they cannot easily forge a provenance attestation claiming your build platform produced it from your source. And every check is pinned to the **image digest** (`@sha256:...`), never a mutable tag — a tag can be repointed at a different image after you verified it; a digest is the content.
+
+## The third check: a policy on the attestation
+
+Verifying the signature is valid is not enough — you must assert the *contents* match your expectations. Policy-as-code expresses this so it is version-controlled, testable, and applied uniformly:
+
+```rego
+# OPA/Rego sketch: only admit if builder == our CI AND source repo == ours
+package supplychain
+
+default allow = false
+
+allow {
+  input.provenance.builder.id == "https://github.com/acme/app/.github/workflows/release.yml@refs/heads/main"
+  input.provenance.invocation.configSource.uri == "git+https://github.com/acme/app@refs/heads/main"
+  input.image.digest == input.requested.digest
+}
+```
+
+This is the difference between "a valid signature exists" and "a valid signature from *my builder* for *my source* on *this exact digest*." A leaked key, a fork, a rebuild from a tampered branch — all produce signatures that are cryptographically valid and policy-rejected.
+
+## Where the refusal lives: admission control
+
+You could run `cosign verify` in your CD deploy job. It is better than nothing, and it is a weak gate: anyone who deploys *around* CI — an operator with `kubectl`, a compromised CD step, a break-glass script — bypasses it entirely. That is exactly the Friday-hotfix incident. The CI-side check protects the path that goes through CI, which is not the path attackers and panicking engineers use.
+
+The enforcement that *nothing bypasses* lives at the runtime boundary: a Kubernetes **admission controller**. On every Pod create, the controller (Sigstore's policy-controller, Kyverno, or OPA Gatekeeper) intercepts the request, resolves the image to its digest, verifies signature + provenance against your policy, and **denies admission if it fails**. There is no "deploy around it" — the only way to run a Pod is through the API server, and the API server calls the webhook.
+
+```yaml
+# Sigstore policy-controller: only signed + provenanced images from our CI may run
+apiVersion: policy.sigstore.dev/v1beta1
+kind: ClusterImagePolicy
+metadata:
+  name: require-acme-provenance
+spec:
+  images:
+    - glob: "ghcr.io/acme/**"
+  authorities:
+    - keyless:
+        identities:
+          - issuer: "https://token.actions.githubusercontent.com"
+            subject: "https://github.com/acme/app/.github/workflows/release.yml@refs/heads/main"
+      attestations:
+        - name: must-have-slsa-provenance
+          predicateType: "https://slsa.dev/provenance/v1"
+  # CRITICAL: deny when verification cannot complete, do not admit on error
+  policy:
+    fetchConfigFile: true
+```
+
+## SLSA levels: the bar you verify against
+
+SLSA is the framework that defines *how strong* the provenance guarantee is. Higher levels mean the provenance was generated by the build platform itself (not the build script), builds are isolated and non-falsifiable, and the path from source to artifact is tamper-resistant. You pick a target level — say, "all prod images must meet SLSA Build L3" — and your policy *verifies* that incoming artifacts carry provenance meeting that bar before they deploy. The level is the contract; admission control is what enforces it.
+
+## Fail-closed vs fail-open: the tradeoff that decides everything
+
+Here is the subtlety that turned the second half of the war story. A verification check can *fail to complete*: the registry is down, the transparency log is briefly unreachable, the attestation is missing. The policy must decide what to do then, and there are only two answers:
+
+- **Fail closed** — if verification can't complete, **deny**. The artifact does not run.
+- **Fail open** — if verification can't complete, **admit anyway**. The artifact runs unverified.
+
+A fail-open policy is *silently no protection*: every transient outage of the signing or log infrastructure becomes a window where anything ships. The team in the war story shipped a fail-open policy first; when Rekor was briefly unreachable, unverified images sailed straight through, and nobody noticed because there was no denial to alert on. Fail closed is the only correct default.
+
+The cost is real and you design for it, not around it: fail-closed means a registry or log outage can *block deploys*. You buy availability back by caching trust roots, monitoring the verification path as a first-class dependency, and treating signing infrastructure as production-critical — **not** by weakening the policy to fail-open, which trades a deploy-availability problem for a security non-feature.
+
+<Inset kind="why" lang="en">
+Why is signing in CI worthless without an admission policy that verifies at deploy? Because a signature is only a claim attached to an artifact; it changes nothing about what runs unless a verifier actively refuses unsigned or untrusted artifacts. If the only check is optional, or lives CI-side, then anyone who deploys around CI — an operator with kubectl, a compromised CD job, a break-glass hotfix — ships unverified code, and the signatures never get looked at. Enforcement has to live at the runtime admission boundary, where the *act of running* an artifact is gated, not the act of building it. And it must fail closed: if it admits on verification error, every outage of the signing infra silently reopens the door it was supposed to lock.
+</Inset>
+
+<TradeoffMatrix
+  id="ci-cd-05-supply-chain-05-verifying-provenance-and-policy-gates-tradeoff-1"
+  lessonSlug="05-verifying-provenance-and-policy-gates"
+  lang="en"
+  prompt="You must guarantee that only trusted, provenanced images can run in your cluster — even against an operator deploying around CI or a compromised CD step. Which control delivers that?"
+  options={[
+    { name: "A Kubernetes admission controller that verifies signature + SLSA provenance + builder/source identity by digest on every Pod create, and fails closed", summary: "Cluster-level gate, fails closed.", correct: true, justification: "The admission controller sits at the runtime boundary every Pod must pass through — the API server calls the webhook, so there is no 'deploy around it.' It verifies the three things that matter: a signature from a trusted identity, a SLSA provenance attestation tying the image to your builder and source commit, and that the policy's expectations match — all pinned to the immutable digest. Crucially it fails closed: if verification can't complete (registry or log down, attestation missing), it denies rather than admitting unverified. This is the only option that no path bypasses and that has no silent-failure mode." },
+    { name: "Sign every image in CI and trust operators not to bypass the pipeline", summary: "Signatures nobody verifies.", justification: "This is exactly the war-story failure: signing produces a claim, but nothing refuses an unsigned artifact, so the security is decoration. An operator running kubectl set image, or a compromised CD step, ships an unsigned image and the cluster runs it without a word. 'Trust people not to bypass' is not a control; it is the absence of one. Protection only exists where something refuses to run unverified artifacts." },
+    { name: "Run cosign verify only in the CI deploy job", summary: "Weak: bypassable.", justification: "Verifying in the deploy job is strictly better than not verifying, but it only guards the path that goes through CI. Anyone who deploys around CI — a break-glass hotfix, a manual kubectl, a compromised CD runner — never hits the check. It is the right verification in the wrong place: it gates building/deploying-via-CI, not running. The cluster-level admission controller is the backstop nothing bypasses." },
+    { name: "Scan every image for CVEs at deploy time", summary: "Different axis entirely.", justification: "CVE scanning answers 'does this image contain known-vulnerable packages?' — a useful but orthogonal question. It says nothing about whether the image is the one your CI built from your source, or whether it was signed at all. A perfectly clean-scanning image can be an attacker's unsigned build. Provenance verification and vulnerability scanning are complementary; scanning does not deliver the trusted-origin guarantee this requires." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-05-supply-chain-05-verifying-provenance-and-policy-gates-quiz-1"
+  lessonSlug="05-verifying-provenance-and-policy-gates"
+  lang="en"
+  question="Your CI signs every image and emits SLSA provenance, and all builds are green. Why does this, on its own, not protect production?"
+  choices={[
+    { label: "A signature nobody verifies is inert — protection only exists if something refuses to run an artifact that isn't signed and provenanced by a trusted builder", correct: true },
+    { label: "Signing in CI fully protects prod; the green builds are the guarantee", misconception: "Signing produces a claim attached to the artifact; it does not gate what runs. The green builds prove the signature was created, not that anything checks it. Without a verifier that refuses unsigned/untrusted artifacts at the deploy boundary, an unsigned image deployed around CI runs unchallenged — which is the canonical incident." },
+    { label: "It protects prod as long as the signatures use a long-lived key instead of keyless OIDC", misconception: "Key type does not create enforcement. Whether you sign with a long-lived key or keyless via Fulcio/Rekor, a signature still does nothing unless something verifies it at deploy and denies on failure. The gap is the missing verification, not the signing method." },
+    { label: "It protects prod because the SLSA provenance is automatically enforced by Kubernetes", misconception: "Kubernetes does not verify provenance on its own. Provenance is just an attestation sitting in the registry until an admission controller (policy-controller, Kyverno, Gatekeeper) you install and configure actually reads and enforces it. Out of the box, the cluster admits any image it can pull." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-05-supply-chain-05-verifying-provenance-and-policy-gates-quiz-2"
+  lessonSlug="05-verifying-provenance-and-policy-gates"
+  lang="en"
+  question="An unsigned image reached prod even though CI signed everything. What enforcement was missing, and what failure mode must that enforcement specifically avoid?"
+  choices={[
+    { label: "A deploy-time admission policy that verifies signature + provenance and DENIES on failure — and it must fail CLOSED, never fail-open on verification errors", correct: true },
+    { label: "A stricter signing key rotation policy in CI", misconception: "Key rotation is hygiene for the signing side, but the incident was on the verification side: nothing refused the unsigned image at deploy. No rotation policy helps if nothing checks the signature. The missing control is admission-time verification that denies, and it must fail closed so outages don't silently reopen the gap." },
+    { label: "An admission policy is right, but it should fail OPEN so deploys never block during a registry or log outage", misconception: "Fail-open is the trap, not the fix. A policy that admits on verification error is silently no protection: every transient outage of the registry or transparency log becomes a window where unverified images ship. You fail closed and buy availability back with cached trust roots and monitoring — never by admitting on error." },
+    { label: "A CVE scan gate at deploy would have blocked the unsigned image", misconception: "A CVE scan checks for known-vulnerable packages, not whether the image is signed or provenanced. An unsigned image can scan perfectly clean. The missing control is signature/provenance verification at admission that fails closed; scanning is a separate, complementary axis." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The supply-chain verification loop, closing the gap L01 opened. The build platform builds the artifact, then signs it and attests SLSA provenance (the produce half, covered in L01), and pushes the image to the registry. At deploy time a deploy request to run a Pod reaches the Kubernetes admission controller, which is the enforcement point: it resolves the image to its digest and verifies the signature, the SLSA provenance, and the builder/source identity against the version-controlled policy. If everything matches a trusted builder and source, the Pod is admitted and runs. If any check fails — wrong identity, missing provenance, or verification that cannot complete because the registry or transparency log is unreachable — the controller DENIES the Pod, failing closed rather than admitting unverified."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "build", label: "build", sub: "CI build platform" },
+    { id: "sign", label: "sign + attest", sub: "provenance (L01)" },
+    { id: "registry", label: "registry", sub: "image @digest" },
+    { id: "deploy", label: "deploy request", sub: "create Pod" },
+    { id: "admit", label: "admission controller", sub: "verify vs policy" },
+    { id: "run", label: "ADMIT", sub: "trusted -> runs" },
+    { id: "deny", label: "DENY (fail closed)", sub: "untrusted / error" },
+  ]}
+  edges={[
+    { from: "build", to: "sign", label: "produce" },
+    { from: "sign", to: "registry", label: "push" },
+    { from: "registry", to: "deploy", label: "pull request" },
+    { from: "deploy", to: "admit", label: "intercept" },
+    { from: "admit", to: "run", label: "sig+prov+id OK" },
+    { from: "admit", to: "deny", label: "fail / untrusted" },
+  ]}
+  caption="The admission controller is the enforcement point nothing bypasses: every Pod create is intercepted and verified against policy, admitted only if signature + provenance + identity match a trusted builder, and denied (fail closed) on any mismatch or verification error."
+/>
+
+<KeyTakeaway>Signing without verifying is theater. An admission controller verifies signature + provenance + identity by digest on every Pod create, failing closed — the backstop a bypassable CI-side check can't be.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="ci-cd-05-supply-chain-05-verifying-provenance-and-policy-gates-retrieval"
+  lang="en"
+  questions={[
+    { q: "L01 already signs images and emits SLSA provenance. Explain precisely why that does not protect production on its own, what three things you must verify, and where the verification has to live.", a: "Signing produces a claim — a signature attached to an image digest, plus a provenance attestation describing what built it — but a claim nobody checks changes nothing about what runs. Protection only exists at the moment something refuses to run an artifact that isn't signed and provenanced by a trusted builder; if nothing refuses, the signatures are decoration. You must verify three things, all pinned to the immutable image digest (never a mutable tag): (1) the SIGNATURE — the digest is signed by an identity you trust, e.g. keyless via a Fulcio cert with the signer's OIDC identity recorded in Rekor, the transparency log; (2) the PROVENANCE — a SLSA attestation says your builder built it from your source repo at a nameable commit, which is why provenance matters even for a 'signed' image (a stolen key can sign malice but can't easily forge provenance from your build platform); (3) a POLICY on the attestation's contents — builder id == your CI, source repo == yours, digest matches — so a leaked key, a fork, or a tampered-branch rebuild is cryptographically valid yet policy-rejected. The verification must live at the runtime admission boundary, not only CI: a CI-side cosign verify only guards the path through CI, while an operator with kubectl, a compromised CD step, or a break-glass hotfix deploys around it. A Kubernetes admission controller intercepts every Pod create and is the gate nothing bypasses." },
+    { q: "Walk through admission control as the enforcement point, the role of SLSA levels, and why the policy must fail closed rather than fail open.", a: "The enforcement point is a Kubernetes admission controller (Sigstore policy-controller, Kyverno, or OPA Gatekeeper): on every Pod create the API server calls its webhook, the controller resolves the image to its digest, verifies signature + provenance + identity against a version-controlled policy-as-code rule, and denies admission on failure. Because the only way to run a Pod is through the API server, there is no deploying around it — unlike a CI-side check, which only covers CI-driven deploys. SLSA levels are the bar you verify against: higher levels mean provenance generated by the build platform itself, isolated and non-falsifiable builds, a tamper-resistant source-to-artifact path; you target a level (e.g. Build L3) and the policy verifies incoming artifacts meet it before they deploy — the level is the contract, admission control enforces it. The policy must fail CLOSED: when verification can't complete — registry down, transparency log unreachable, attestation missing — it must deny, not admit. A fail-open policy is silently no protection, because every transient outage of the signing or log infrastructure becomes a window where unverified images ship with no denial to alert on (the war story's second bug: a brief Rekor outage let unverified images through). Fail-closed has a real cost — an outage can block deploys — but you pay it by caching trust roots, monitoring the verification path as a first-class production dependency, and hardening the signing infra, never by weakening to fail-open." },
+  ]}
+/>
+
+<Recap lang="en">
+L01 produced cryptographic proof of origin — cosign signatures and SLSA provenance — but proof nobody checks protects nothing; this lesson closes the loop by verifying and enforcing at the deploy boundary. A signature is only a claim bolted onto an artifact: security exists exactly when something refuses to run an artifact that isn't signed and provenanced by a trusted builder. Verification is three checks, all pinned to the immutable image digest: the signature is from a trusted identity (keyless via Fulcio, recorded in the Rekor transparency log); a SLSA provenance attestation says your builder built it from your source commit (so a stolen signing key, which can sign malice, still fails because it can't forge your build platform's provenance); and a policy-as-code rule asserts builder id == your CI, source repo == yours, digest matches. SLSA levels are the bar — higher levels mean platform-generated, isolated, non-falsifiable builds — and you verify incoming artifacts meet your target level before deploy. The refusal must live at the runtime admission boundary: a Kubernetes admission controller (policy-controller, Kyverno, Gatekeeper) intercepts every Pod create and denies on failure, the backstop nothing bypasses — whereas a CI-side cosign verify only guards the CI path and is bypassed by an operator with kubectl, a compromised CD step, or a break-glass hotfix (the war story: an unsigned laptop build ran in prod because nothing checked, then was denied once an admission policy existed). Finally the policy must fail CLOSED: if verification can't complete because the registry or transparency log is unreachable, it denies rather than admits, because fail-open is silently no protection — every signing-infra outage becomes a window where unverified images ship (the war story's second bug, a brief Rekor outage). You buy availability back by caching trust roots and monitoring the verification path, never by weakening to fail-open.
+</Recap>

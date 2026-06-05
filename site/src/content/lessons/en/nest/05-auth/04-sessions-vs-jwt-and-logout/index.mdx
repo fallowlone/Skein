@@ -1,0 +1,200 @@
+---
+concepts:
+- stateful-sessions
+- stateless-jwt
+- revocation
+- token-denylist
+- token-version
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-sessions-vs-jwt-and-logout"
+sources:
+- https://docs.nestjs.com/recipes/passport
+- https://docs.nestjs.com/techniques/session
+spiral: []
+status: ready
+summary: 'Sessions store auth server-side and revoke by deleting a row; a JWT carries its own claims and cannot be revoked before exp. That is why logout is hard with JWT — clearing the cookie does nothing to a stolen token. Mitigate with short TTL plus a denylist or per-user tokenVersion.'
+title: 'Sessions vs JWT, and why logout is hard'
+track: nest
+unit: 05-auth
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The support ticket said: "a user is harassing people in chat — ban them, now." The on-call engineer hit the ban endpoint, watched the row flip to `banned: true`, and replied "done." Forty minutes later the abuse was still coming. The account was banned in the database, and still posting. Nobody had revoked anything, because there was nothing to revoke: the app authenticated every request from a stateless JWT, and the abuser's token had been minted twenty minutes before the ban with a one-hour expiry. The ban flag was real; the token didn't care. It kept verifying, kept passing the guard, kept letting writes through — until it expired on its own schedule, not ours. Logout, it turns out, is not a UI action. With the wrong auth model it is a thing you cannot do.
+</Hook>
+
+<Crux>Sessions store auth server-side and revoke by deleting a row; a JWT carries its own claims and stays valid until exp — you cannot recall it.</Crux>
+
+<Explanation>
+
+## Two models: where the auth state lives
+
+Every auth scheme answers one question on each request — "is this caller who they claim to be?" — and the two dominant models answer it from opposite places.
+
+**Stateful server sessions** keep the truth on the server. Login creates a session **row** in a store (Redis or a DB table); the client gets back only an opaque, meaningless session id in an `httpOnly` cookie. Every subsequent request carries that id, and the server **looks the session up** to learn who you are.
+
+```ts
+// Stateful: the cookie holds an opaque id; the server holds the truth.
+// Login writes a row; every request reads it back.
+await store.set(`sess:${sid}`, { userId, roles }, { ttlSec: 3600 });
+res.cookie('sid', sid, { httpOnly: true, secure: true, sameSite: 'lax' });
+
+// On each request, a guard resolves identity by LOOKING IT UP:
+const session = await store.get(`sess:${req.cookies.sid}`); // 1 store read
+if (!session) throw new UnauthorizedException();             // revoked → instantly out
+```
+
+**Stateless JWT** keeps the truth in the token. The token **is** the claims (`sub`, `roles`, `exp`), signed by the server. Verification is local: check the signature and `exp`, trust the payload. No store, no lookup.
+
+```ts
+// Stateless: the token carries the claims, signed. Verify is local — zero lookups.
+const token = jwt.sign({ sub: userId, roles }, SECRET, { expiresIn: '15m' });
+
+// On each request: verify signature + exp, then trust the payload. No I/O.
+const claims = jwt.verify(req.headers.authorization?.slice(7), SECRET);
+```
+
+The difference is the whole lesson. Sessions cost **one store read per request** and force you to share that store across every app instance (sticky sessions, or a central Redis — shared state is the price). JWT costs **zero lookups** and scales horizontally with nothing shared — which is exactly why it cannot be revoked: there is no row to delete.
+
+## The logout problem: trivial with sessions, hard with JWT
+
+"Log this user out everywhere" / "ban this account NOW" is the same operation, and it exposes the asymmetry brutally.
+
+With **sessions** it is one line: delete the row. The next request's lookup misses, the guard throws, and the user is out — on every device, instantly, globally. The server held the state, so the server can destroy it.
+
+```ts
+// Sessions: revocation IS deletion. Instant, global, done.
+await store.del(`sess:${sid}`);        // one device
+await store.del(`user-sessions:${userId}`); // or every device — next lookup misses
+```
+
+With **JWT** there is no such line. The token is self-validating: any holder of the bytes is authenticated until `exp`, full stop. You can clear the cookie — but that only affects a **cooperating** client. A token copied by a thief, or replayed by the abuser's script, is untouched. There is no server-side handle to pull.
+
+So you simulate revocation, and every option is a tradeoff:
+
+```ts
+// (1) SHORT access-token TTL — shrink the un-revocable window to minutes.
+//     This is why refresh tokens exist (covered separately): exp does the revoking.
+jwt.sign({ sub: userId }, SECRET, { expiresIn: '15m' }); // window ≤ 15 min
+
+// (2) DENYLIST revoked jti until their exp — but this is a per-request lookup again,
+//     reintroducing the shared state you adopted JWT to escape. A hybrid.
+if (await denylist.has(claims.jti)) throw new UnauthorizedException(); // +1 read
+
+// (3) PER-USER tokenVersion (a.k.a. minIssuedAt) — bump it on logout-all /
+//     password-change; reject any token issued before. One indexed lookup,
+//     invalidates ALL of a user's tokens at once. The pragmatic middle ground.
+const u = await users.findById(claims.sub);               // 1 indexed read
+if (claims.tokenVersion !== u.tokenVersion) throw new UnauthorizedException();
+```
+
+Option (1) caps the damage window but never closes it on demand. Option (2) gives precise per-token revocation but pays back the per-request read you went stateless to avoid. Option (3) is the one most teams land on: a single indexed column, bumped once, kills every token a user holds — the right tool for "ban now" and "log out all devices."
+
+<Inset kind="why" lang="en">
+Why doesn't "just delete the cookie on logout" actually log a JWT user out? Because a JWT is self-validating — it carries its own signature and the server trusts it without a lookup. Any party holding the raw bytes is authenticated until `exp`: the legitimate browser, sure, but also a thief who copied the token, or a script replaying it. Clearing the cookie only removes the copy in the **cooperating** browser; it cannot reach into a stolen or replayed copy, because the server keeps no record of issued tokens to invalidate. The cookie-clear is a client-side courtesy, not a revocation. True revocation needs server-side state the server can change — a denylist entry, or a bumped `tokenVersion` — so that the next verify can reject a token the signature would otherwise accept.
+</Inset>
+
+## Where each model fits — and why real systems are hybrid
+
+Reach for **sessions** when instant global revocation is a hard requirement and a shared store is acceptable: classic server-rendered web apps, banking, admin consoles — anywhere "kill this access right now" must be true the next millisecond. Reach for **JWT** when a central session store is the bottleneck: stateless microservices, mobile/API clients, and cross-service auth where every hop revalidating against one Redis would serialize your fan-out.
+
+Most mature systems refuse the binary and go **hybrid**: a short-lived **stateless access JWT** (zero lookups on the hot path) paired with a **stateful refresh token stored in the DB** (revocable). You already hold server-side state at the refresh boundary, so revoking the refresh token stops new access tokens from being minted — and the short access TTL drains the ones already out. That is the architecture that gets you JWT's scale and sessions' revocability, with the un-revocable window bounded to the access TTL.
+
+A few JWT footguns ride along regardless. **Token size**: a JWT in a header or cookie is far larger than an opaque session id and rides on *every* request — keep claims minimal, never stuff a user's whole profile in. **Clock skew**: `exp` is compared against each server's clock, so allow a small leeway (a few seconds) or a node with a fast clock will reject still-valid tokens. **Cookie flags** matter for both models: `httpOnly` keeps JS from reading the token, `Secure` keeps it off plaintext, `SameSite` blunts CSRF.
+
+<FlowDiagram
+  label="How a request is authenticated in each model, and where revocation can and cannot happen. Sessions path: the request carries an opaque session id in an httpOnly cookie; a guard does one store lookup to resolve the session row; because the server holds that row it is revocable — deleting the row makes the next lookup miss and the user is instantly out everywhere. JWT path: the request carries a signed token; the guard verifies the signature and exp locally with no lookup, which is fast and shares no state, but the token is therefore un-revocable until exp — clearing the cookie cannot recall a stolen copy; to revoke before exp you must reintroduce server state, a denylist of jti or a per-user tokenVersion checked on each request, which adds back one read."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "req", label: "request", sub: "cookie / header" },
+    { id: "look", label: "store lookup", sub: "1 read" },
+    { id: "rev", label: "revocable", sub: "delete row → out" },
+    { id: "verify", label: "verify sig + exp", sub: "0 lookups" },
+    { id: "unrev", label: "un-revocable", sub: "valid until exp" },
+    { id: "state", label: "denylist / tokenVersion", sub: "+1 read to revoke" },
+  ]}
+  edges={[
+    { from: "req", to: "look", label: "sessions" },
+    { from: "look", to: "rev", label: "server holds state" },
+    { from: "req", to: "verify", label: "JWT" },
+    { from: "verify", to: "unrev", label: "no state" },
+    { from: "unrev", to: "state", label: "to revoke" },
+  ]}
+  caption="Sessions (top): the per-request lookup is the cost, but holding the state is what makes deletion an instant global logout. JWT (bottom): no lookup is the win, but holding no state is exactly why you can't recall a token — revocation forces a denylist or tokenVersion read back into the path."
+/>
+
+<TradeoffMatrix
+  id="nest-05-auth-04-sessions-vs-jwt-and-logout-tradeoff-1"
+  lessonSlug="04-sessions-vs-jwt-and-logout"
+  lang="en"
+  prompt="An admin must instantly ban a currently logged-in user across all of their devices. The app authenticates every request with a stateless access JWT (15-minute TTL). What is the best approach?"
+  options={[
+    { name: "Add a per-user tokenVersion (minIssuedAt) checked on each request; bump it on ban so every existing token is rejected, and keep the short access TTL", summary: "Bump tokenVersion → all tokens dead.", correct: true, justification: "This is the one option that actually revokes NOW and globally without re-architecting. The token already carries the user's id; on each request you do one indexed lookup of that user's tokenVersion and reject any token whose embedded version is stale. Bumping the column once invalidates every token the user holds, on every device, at the next request — which is exactly 'ban across all devices'. The short access TTL is the complementary cap: even tokens mid-flight are gone within the TTL. Yes, it adds one read to the hot path — that is the deliberate, bounded cost of making stateless JWT revocable, and it is far cheaper than a full session store because it's a single keyed lookup you can cache." },
+    { name: "Clear the user's auth cookie on the server / tell the client to delete it", summary: "Only stops a cooperating client.", justification: "Clearing the cookie removes the token from the one cooperating browser, but the JWT is self-validating: any other holder of the bytes — the abuser's script, a copied token, a second device — keeps authenticating until exp. The cookie-clear is a client-side courtesy, not revocation; it does literally nothing to a token you don't control. This is the exact mistake in the war story: the ban flag flipped, the cookie cleared, and the abuse continued." },
+    { name: "Do nothing — wait for the 15-minute token to expire", summary: "Leaves a live abuse window.", justification: "The short TTL does eventually close the window, and it's a real mitigation for bounding damage. But 'ban NOW' means now, not in up to fifteen minutes during which the banned user keeps writing. For an active-abuse or security-incident ban, a quarter-hour of continued access is a failure, not an acceptable SLA. TTL caps the worst case; it is not an on-demand revocation." },
+    { name: "Migrate the whole application from JWT to server sessions tonight", summary: "Right capability, wrong (huge) lever.", justification: "Sessions would give instant revocation — but rewriting the auth model under an active incident is a massive, risky change that introduces a shared session store, sticky-session or central-store infrastructure, and a migration for every client, none of which you can land in the minutes a ban demands. tokenVersion buys you the same instant-global-revocation outcome with one column and one read. Reserve the sessions migration for a planned decision, not an incident response." },
+  ]}
+/>
+
+<Quiz
+  id="nest-05-auth-04-sessions-vs-jwt-and-logout-quiz-1"
+  lessonSlug="04-sessions-vs-jwt-and-logout"
+  lang="en"
+  question="Which auth model gives you instant, global revocation of a logged-in user, and why?"
+  choices={[
+    { label: "Stateful sessions — the server holds the session row, so deleting it makes the next request's lookup miss and the user is out everywhere immediately", correct: true },
+    { label: "Stateless JWT — you just clear the token and the server stops accepting it", misconception: "A stateless JWT is the opposite: the server holds NO record of it, so there is nothing to delete. Clearing the token only affects a cooperating client; any other holder keeps authenticating until exp. JWT is precisely the model where instant revocation is hard, which is the whole point of the lesson." },
+    { label: "Both equally — exp on a JWT expires it just as fast as deleting a session row", misconception: "exp is a fixed future timestamp, not an on-demand action: a 15-minute token stays valid for up to 15 more minutes no matter what you do. Deleting a session row takes effect on the very next request. They are not equivalent — one is instant and on-demand, the other is a timer you can't move." },
+    { label: "Stateless JWT — because verification is local, the server can reject it without any I/O", misconception: "Local verification is exactly why JWT CAN'T be revoked: with no I/O and no stored record, the server has no way to know you wanted this specific token gone. The local, stateless verify is the scaling win and the revocation curse simultaneously." },
+  ]}
+/>
+
+<Quiz
+  id="nest-05-auth-04-sessions-vs-jwt-and-logout-quiz-2"
+  lessonSlug="04-sessions-vs-jwt-and-logout"
+  lang="en"
+  question="Your API uses stateless access JWTs. You must force-log-out a user before their token's exp. Which approach works, and why does the naive one fail?"
+  choices={[
+    { label: "Short access TTL plus a server-side check — a denylist of revoked jti or a per-user tokenVersion — rejected on each request; clearing the cookie alone fails because the JWT is self-validating and any other holder stays authenticated until exp", correct: true },
+    { label: "Just clear the auth cookie on logout — that deletes the token and ends the session", misconception: "Clearing the cookie removes only the cooperating browser's copy. The JWT is self-validating, so a stolen or replayed copy keeps passing the guard until exp; the server kept no record to invalidate. Real force-logout needs server-side state (denylist or tokenVersion) the verify step can check." },
+    { label: "Rotate the server's signing secret so the old token's signature no longer verifies", misconception: "Rotating the secret invalidates EVERY outstanding token for EVERY user, logging your entire user base out at once and breaking valid sessions — a blunt instrument, not a per-user force-logout. tokenVersion targets exactly one user's tokens; secret rotation is for a key compromise, not a single logout." },
+    { label: "Lower the token's exp retroactively in the database", misconception: "exp is a signed claim baked into the already-issued token; there is no database copy of it to lower, and changing anything server-side can't alter bytes the client already holds. You can't reach back into an issued JWT — you can only refuse it at verify time via a denylist or tokenVersion check." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Sessions revoke by deleting the row — instant, global. A JWT is valid until exp; clearing the cookie can't recall a stolen copy. To force-logout JWT: short TTL plus a denylist or per-user tokenVersion (one read back).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-05-auth-04-sessions-vs-jwt-and-logout-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast stateful sessions and stateless JWT on where the auth state lives, the per-request cost, and revocation.", a: "Stateful sessions keep the truth on the server: login writes a session row to a store (Redis/DB), and the client holds only an opaque session id in an httpOnly cookie. Every request costs one store read to look the session up, and that store must be shared across all app instances (sticky sessions or a central Redis) — shared state is the price. The payoff is trivial revocation: delete the row and the next lookup misses, so the user is out instantly, globally, on every device. Stateless JWT keeps the truth in the token: the token IS the signed claims (sub, roles, exp), so verification is local — check signature and exp, trust the payload, zero lookups, nothing shared, scales horizontally. The cost is the mirror image: because there is no server-side record, you cannot revoke a JWT before its exp — there is no row to delete. So sessions trade a per-request lookup and shared state for instant revocability; JWT trades revocability for zero-lookup, shared-nothing scale." },
+    { q: "Why does clearing the cookie fail to log out a JWT user, and what are the three real mitigations with their tradeoffs?", a: "Clearing the cookie fails because a JWT is self-validating: the server trusts the signed bytes without a lookup, so any holder of those bytes — the cooperating browser, but also a thief who copied the token or a script replaying it — stays authenticated until exp. Clearing the cookie only removes the cooperating browser's copy; it can't reach a stolen or replayed copy because the server keeps no record of issued tokens to invalidate. Real force-logout needs server-side state the verify step can check. Three mitigations, each a tradeoff: (1) SHORT access-token TTL (~5–15 min) shrinks the un-revocable window to minutes — this is why refresh tokens exist — but it never closes the window on demand. (2) A server-side DENYLIST of revoked jti until their exp gives precise per-token revocation, but it reintroduces a per-request lookup, the exact shared state you adopted JWT to escape — a hybrid. (3) A per-user tokenVersion / minIssuedAt column, bumped on logout-all or password-change and checked each request, costs one indexed read but invalidates ALL of a user's tokens at once — the pragmatic middle ground for 'ban now' and 'log out all devices'. Many systems go hybrid: stateless access JWT plus a stateful, revocable refresh token in the DB, so you revoke at the refresh boundary and the short access TTL drains what's already out." },
+  ]}
+/>
+
+<Recap lang="en">
+Every auth model answers "is this caller who they claim to be?" from one of two places, and that choice decides whether logout is possible. Stateful sessions keep the truth on the server: login writes a session row to Redis or a DB, the client holds only an opaque id in an httpOnly cookie, and every request costs one store read to resolve identity — plus a shared store across instances. The reward is that revocation is deletion: drop the row and the next lookup misses, so the user is out instantly and globally. Stateless JWT keeps the truth in the token — the signed claims themselves — so verification is local with zero lookups and nothing shared, which scales horizontally but means there is no row to delete: a JWT is valid until its exp no matter what, and clearing the cookie only removes a cooperating client's copy, never a stolen or replayed one. That is why the banned user kept posting. To force-logout a JWT you reintroduce server state with a tradeoff: a short access TTL (~5–15 min) bounds the window, a denylist of revoked jti gives per-token precision at the cost of a per-request read, and a per-user tokenVersion bumped on logout-all kills every token a user holds with one indexed lookup. Sessions fit server-rendered apps, banking, and admin where instant revocation is non-negotiable; JWT fits stateless microservices, mobile/API, and cross-service auth where a central store is a bottleneck; and most mature systems are hybrid — a stateless access JWT paired with a stateful, revocable refresh token in the DB, revoking at the refresh boundary while the short access TTL drains the rest. Keep claims minimal (size rides every request), allow small clock-skew leeway against exp, and set httpOnly + Secure + SameSite on both models.
+</Recap>

@@ -1,0 +1,215 @@
+---
+concepts:
+- whitelist
+- mass-assignment
+- nested-validation
+- partial-updates
+- forbid-non-whitelisted
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-validation-whitelist-and-nesting"
+sources:
+- https://docs.nestjs.com/techniques/validation#stripping-properties
+- https://github.com/typestack/class-validator#validating-nested-objects
+spiral: []
+status: ready
+summary: 'Hardening ValidationPipe past the basics: whitelist strips undecorated fields to kill mass-assignment, but only as one layer; nested DTOs need @ValidateNested + @Type or validation silently no-ops; PATCH needs PartialType, not skipMissingProperties.'
+title: 'Whitelisting, nested validation and partial updates'
+track: nest
+unit: 02-validation-and-pipes
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The registration DTO was textbook: `@IsEmail()` on `email`, `@MinLength(8)` on `password`, tests green, code review approved. The validation worked perfectly — it validated exactly the two fields it was told about. Three weeks after launch, a support ticket: a user account with `role: 'admin'`. Nobody had granted it. The audit log showed a plain `POST /auth/register` with a body the frontend never sends: `{ "email": "...", "password": "...", "role": "admin", "isVerified": true }`. The service did `this.userRepo.save(dto)`. `class-validator` saw two decorated fields, validated them, and waved the whole object through — including the two fields it had never heard of. They rode straight into the saved entity. The DTO didn't have a bug. It had a *boundary* that leaked everything it wasn't explicitly told to stop. This lesson is about closing that boundary: whitelisting, nested validation, and partial updates.
+</Hook>
+
+<Crux>whitelist strips undecorated fields (kills mass-assignment); nested DTOs need @ValidateNested + @Type or they no-op; PATCH uses PartialType.</Crux>
+
+<Explanation>
+
+## whitelist: the field that was never supposed to be there
+
+By default `ValidationPipe` validates the decorated properties and *leaves everything else on the object*. A field with no decorator isn't rejected — it's ignored by the validator and passed through untouched. That is the entire mechanism behind the incident: an undecorated `role` is invisible to validation but fully present in the payload your service hands to the ORM.
+
+```ts
+// main.ts — the hardened global pipe
+app.useGlobalPipes(
+  new ValidationPipe({
+    whitelist: true,            // strip any property with NO validation decorator
+    forbidNonWhitelisted: true, // …and 400 instead of silently stripping
+    transform: true,            // instantiate the DTO class (also needed for @Type)
+  }),
+);
+```
+
+`whitelist: true` flips the default: any property that has no validation decorator on the DTO is **stripped off the object** before it reaches your handler. The undecorated `role` and `isVerified` simply cease to exist. `forbidNonWhitelisted: true` goes one step further — instead of silently dropping the unknown field, the pipe throws a `400 Bad Request` naming it (`property role should not exist`). Silent stripping is safer-by-default; the `forbid` variant is louder and catches clients (and your own frontend) sending fields they shouldn't, which is what you want in a service where an unexpected field is a bug, not noise.
+
+```ts
+// RegisterDto — only these two fields survive whitelist; role/isVerified get stripped
+export class RegisterDto {
+  @IsEmail()
+  email: string;
+
+  @MinLength(8)
+  password: string;
+  // note: NO role, NO isVerified — so whitelist removes them from the body
+}
+```
+
+This is **mass assignment** (a.k.a. over-posting) — OWASP API3:2023, *Broken Object Property Level Authorization*. The attacker doesn't break your validation; they exploit a field your validation never modeled. `whitelist` strips it at the door.
+
+<Inset kind="why" lang="en">
+Why isn't `whitelist: true` enough on its own? Because whitelist only strips fields that have *no* decorator. The day someone adds a decorator to `role` for an unrelated admin endpoint that shares the DTO — or you write `userRepo.save({ ...dto, createdAt })` and the spread re-introduces attacker-controlled keys — the boundary leaks again. whitelist protects the *shape* of the DTO, not the *use* of it. The durable fix is defense in depth: whitelist to strip, **plus** never persist the raw DTO. Map explicit fields into the entity (`new User(); user.email = dto.email; user.passwordHash = hash(dto.password)`) so the only properties that can reach the database are the ones you wrote by hand. `save(dto)` and `{ ...dto }` are the two lines that turn a validation gap into a privilege escalation.
+</Inset>
+
+## Nested validation: the decorator that does nothing
+
+`class-validator` does **not** recurse into nested objects by default. Decorate `city` inside an `AddressDto`, nest that `AddressDto` inside `RegisterDto`, and the validation on `city` is *silently skipped*. The parent sees `address` as an opaque value and never descends into it. Invalid nested data — a `city` that's a number, a missing required field — sails through.
+
+```ts
+import { Type } from 'class-transformer';
+import { ValidateNested, IsString, IsArray, ArrayMinSize } from 'class-validator';
+
+class AddressDto {
+  @IsString() city: string;   // ← validated ONLY if the parent opts in below
+  @IsString() country: string;
+}
+
+export class RegisterDto {
+  @IsEmail() email: string;
+
+  @ValidateNested()           // recurse into the nested object
+  @Type(() => AddressDto)     // class-transformer must instantiate AddressDto first
+  address: AddressDto;
+
+  @ValidateNested({ each: true }) // recurse into EACH element of the array
+  @Type(() => RoleDto)
+  @IsArray()
+  @ArrayMinSize(1)
+  roles: RoleDto[];
+}
+```
+
+Two decorators make nested validation actually run, and **both** are required. `@ValidateNested()` tells the validator to descend. `@Type(() => AddressDto)` tells `class-transformer` to instantiate a real `AddressDto` from the plain JSON — without it, `address` stays a plain object, the validator finds no class metadata to check against, and the nested rules are a no-op. Forgetting `@Type` is the classic silent failure: no error, no warning, validation just quietly doesn't happen. For arrays of objects, add `{ each: true }` so the recursion applies to every element, and pair `@IsArray()` / `@ArrayMinSize()` to constrain the array itself.
+
+## Partial updates: PUT replaces, PATCH patches
+
+A `PUT` replaces the resource — every field is expected. A `PATCH` updates *some* fields and the rest are absent by design. Reuse the create DTO for a PATCH handler and every `@IsEmail()`, `@MinLength()` now wrongly demands a field the client deliberately omitted: a partial update fails validation for being partial.
+
+```ts
+import { PartialType } from '@nestjs/mapped-types'; // or @nestjs/swagger
+
+// every field of CreateUserDto becomes optional, decorators preserved
+export class UpdateUserDto extends PartialType(CreateUserDto) {}
+
+// PATCH /users/:id  — body { "email": "new@x.com" } alone now validates
+@Patch(':id')
+update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
+  return this.users.update(id, dto);
+}
+```
+
+`PartialType(CreateUserDto)` builds a new DTO where every inherited field is wrapped as optional (it applies `@IsOptional()` semantics field-by-field) while keeping the original decorators for any field that *is* present. It's surgical: absent fields are fine, present fields still validate. The tempting shortcut — `new ValidationPipe({ skipMissingProperties: true })` — works but is a blunt instrument: it skips validation for **any** missing property across **every** DTO in the app, including required fields you never meant to make optional, so a genuinely-required-but-forgotten field now passes silently. `PartialType` scopes optionality to exactly the one update DTO. A related subtlety: `@IsOptional()` skips validation when the value is `null`/`undefined`, which is what makes "field absent" valid — but it also means you can't distinguish "client didn't send `bio`" from "client sent `bio: null` to clear it" without a separate `@IsDefined()`/`@ValidateIf` guard.
+
+<FlowDiagram
+  label="How a hardened ValidationPipe processes a registration body and where the malicious role field dies. A raw JSON body arrives carrying email, password, a nested address object, and an injected role: admin field. The ValidationPipe runs three steps in order: whitelist strips every property that has no validation decorator, so the undecorated role field is removed from the object; @ValidateNested with @Type recurses into the address object and validates its city and country; forbidNonWhitelisted acts as a gate that would 400 if any unknown property remained. The result is a clean DTO containing only email, password, and a validated address — role is already gone. That clean DTO is then mapped field by field into the User entity, never spread, so only hand-written assignments can reach the database. The role field is dropped at the whitelist step and never appears downstream."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "body", label: "raw body", sub: "+ role:admin" },
+    { id: "strip", label: "whitelist", sub: "strip undecorated" },
+    { id: "nest", label: "@ValidateNested", sub: "recurse + @Type" },
+    { id: "gate", label: "forbidNonWL", sub: "400 if unknown" },
+    { id: "clean", label: "clean DTO", sub: "role gone" },
+    { id: "map", label: "explicit map", sub: "no spread" },
+    { id: "entity", label: "User entity", sub: "to DB" },
+  ]}
+  edges={[
+    { from: "body", to: "strip", label: "role here" },
+    { from: "strip", to: "nest", label: "role stripped" },
+    { from: "nest", to: "gate", label: "address ok" },
+    { from: "gate", to: "clean", label: "pass" },
+    { from: "clean", to: "map", label: "map fields" },
+    { from: "map", to: "entity", label: "save" },
+  ]}
+  caption="The injected role:admin field is stripped at the whitelist step and never reaches the entity. Defense in depth: whitelist removes it, and explicit field mapping (never save(dto)) means even a re-introduced field can't be persisted."
+/>
+
+<Inset kind="why" lang="en">
+Why map fields explicitly when whitelist already stripped `role`? Because whitelist and explicit mapping fail in different ways, so together they cover each other. whitelist fails the moment the DTO shape changes — a decorator added for an unrelated reason, a shared DTO, a `{ ...dto }` spread that re-introduces keys downstream. Explicit mapping fails… basically never, because the entity only ever receives the literal assignments you typed. The cost of explicit mapping is a few lines of boilerplate per create/update path. The cost of relying on whitelist alone is that one refactor three modules away silently reopens the privilege-escalation hole. Defense in depth means no single change to the DTO can be a security regression.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-02-validation-and-pipes-04-validation-whitelist-and-nesting-tradeoff-1"
+  lessonSlug="04-validation-whitelist-and-nesting"
+  lang="en"
+  prompt="A public registration endpoint must never let a client set their own role (the role column exists on the User entity). Which approach is the soundest defense against mass assignment?"
+  options={[
+    { name: "Enable whitelist: true AND map explicit fields into the entity — never save the raw DTO", summary: "Defense in depth.", correct: true, justification: "This is the only option that survives a future refactor. whitelist strips the undecorated role at the door so it never reaches the service; explicit mapping (user.email = dto.email; user.passwordHash = hash(dto.password)) means the entity can only ever receive the fields you typed by hand, so even if role later gains a decorator or a { ...dto } spread sneaks in, it still cannot be persisted. The two layers fail in different ways and cover each other — that's the definition of defense in depth and the senior answer to OWASP API3:2023." },
+    { name: "whitelist: true alone, then save(dto) directly", summary: "One layer, leaks on change.", justification: "whitelist correctly strips the undecorated role today — but it only protects the DTO's shape, not its use. The day someone adds a decorator to role for an admin endpoint sharing the DTO, or writes save({ ...dto }), the field rides through again. Relying on the validator alone makes a single unrelated refactor a silent privilege-escalation regression. You need explicit mapping as the second layer." },
+    { name: "forbidNonWhitelisted: true only (no explicit mapping)", summary: "Loud, still leaks on decorator add.", justification: "forbidNonWhitelisted 400s when an unknown field arrives, which is great signal — but it's the same mechanism as whitelist (it acts on undecorated fields). The moment role has any decorator it's no longer 'non-whitelisted', the 400 stops firing, and if you still save(dto) the field persists. Good for catching unexpected input, not a substitute for never persisting the raw DTO." },
+    { name: "Trust the frontend — it never sends a role field", summary: "Not a control.", justification: "The frontend is not a security boundary; an attacker calls the endpoint directly with curl. 'Our client doesn't send it' says nothing about what an attacker sends. This is exactly the assumption that produced the incident — the body the frontend never sends is precisely the one the audit log showed. Server-side stripping plus explicit mapping is the only real control." },
+  ]}
+/>
+
+<Quiz
+  id="nest-02-validation-and-pipes-04-validation-whitelist-and-nesting-quiz-1"
+  lessonSlug="04-validation-whitelist-and-nesting"
+  lang="en"
+  question="A RegisterDto decorates only email and password. A request body includes an extra `role: 'admin'`. What does the ValidationPipe do under whitelist: true versus forbidNonWhitelisted: true?"
+  choices={[
+    { label: "whitelist: true silently strips role from the object; forbidNonWhitelisted: true rejects the request with a 400 naming the property", correct: true },
+    { label: "Both reject the request with a 400 — they are two names for the same behavior", misconception: "They differ. whitelist: true strips undecorated properties silently and lets the (now-clean) request continue — no error. forbidNonWhitelisted: true changes that strip into a hard 400 Bad Request that names the offending property. You typically enable both: whitelist to remove, forbidNonWhitelisted to also reject loudly." },
+    { label: "whitelist: true validates role as a string; forbidNonWhitelisted: true ignores it", misconception: "whitelist never validates an undecorated field — there's no decorator to validate against. It strips it. And forbidNonWhitelisted does the opposite of ignore: it turns the presence of an undecorated field into a 400. Neither option treats role as a validated property." },
+    { label: "Neither does anything; role passes through because it has no decorator", misconception: "That's the DEFAULT (no whitelist) behavior — and exactly the mass-assignment hole. With whitelist: true the undecorated role is stripped; with forbidNonWhitelisted: true the request is rejected. The whole point of these flags is to stop the undecorated field from passing through." },
+  ]}
+/>
+
+<Quiz
+  id="nest-02-validation-and-pipes-04-validation-whitelist-and-nesting-quiz-2"
+  lessonSlug="04-validation-whitelist-and-nesting"
+  lang="en"
+  question="An AddressDto has @IsString() on city. It's nested as `address: AddressDto` inside RegisterDto with no other decorators on the field. A request sends `address: { city: 12345 }`. What happens?"
+  choices={[
+    { label: "Validation is silently skipped — without @ValidateNested() and @Type(() => AddressDto) on the parent field, class-validator never descends into the nested object, so city: 12345 passes", correct: true },
+    { label: "It's rejected — @IsString() on city fails because 12345 is a number", misconception: "@IsString() on city only runs if the parent field opts into recursion. class-validator does NOT recurse into nested objects by default. Without @ValidateNested() AND @Type(() => AddressDto), the validator treats address as an opaque value, never instantiates AddressDto, and city's decorator never executes — so 12345 passes untouched." },
+    { label: "It's rejected because address isn't a real AddressDto instance", misconception: "Nest won't reject it for that — without @Type(() => AddressDto), class-transformer never tries to instantiate AddressDto, so address stays a plain object and no error is raised. The nested rules simply don't run. You need BOTH @ValidateNested() (descend) and @Type (instantiate) for the validation to fire." },
+    { label: "city is validated but country (also @IsString) is skipped because it's missing", misconception: "Neither nested field is validated here — the issue isn't a missing field, it's that the parent never opted into nesting. With no @ValidateNested()/@Type on address, the entire AddressDto is skipped. Add both decorators and then both city and country validate (a missing country would also be caught)." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>whitelist strips undecorated fields, killing mass-assignment — but as one layer: also map explicit fields, never save(dto). Nested DTOs need @ValidateNested + @Type or they no-op. PATCH uses PartialType.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-02-validation-and-pipes-04-validation-whitelist-and-nesting-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the mass-assignment vulnerability in a NestJS registration endpoint: how it happens, what whitelist does, why whitelist alone is not enough, and the full fix.", a: "Mass assignment (OWASP API3:2023, Broken Object Property Level Authorization) happens when a client posts fields the DTO never modeled and the service persists the raw DTO. A RegisterDto decorates email and password; an attacker POSTs { email, password, role: 'admin', isVerified: true }. By default ValidationPipe validates the decorated fields and leaves undecorated ones on the object untouched, so role and isVerified are invisible to validation but fully present — and userRepo.save(dto) writes them straight into the entity, escalating privilege. whitelist: true flips the default: any property with NO validation decorator is stripped off the object before it reaches the handler, so role/isVerified cease to exist. forbidNonWhitelisted: true goes further and throws a 400 naming the unknown property instead of silently stripping. But whitelist alone is not enough: it only strips fields without a decorator, so the day role gains a decorator (a shared admin DTO) or you write save({ ...dto }), the field leaks again — whitelist guards the DTO shape, not its use. The durable fix is defense in depth: whitelist to strip PLUS explicit field mapping into the entity (user.email = dto.email; user.passwordHash = hash(dto.password)), never save(dto) or { ...dto }, so only hand-written assignments can reach the database and no single DTO change can be a security regression." },
+    { q: "How do you make nested-object validation actually run, and how do you correctly support PATCH partial updates? Cover the silent failures.", a: "class-validator does NOT recurse into nested objects by default — a @IsString() on AddressDto.city is silently skipped when AddressDto is nested in a parent. Two decorators on the parent FIELD are both required: @ValidateNested() tells the validator to descend, and @Type(() => AddressDto) from class-transformer instantiates a real AddressDto from the plain JSON so there's class metadata to validate against. Forgetting @Type is the classic silent failure: no error, validation just doesn't happen and invalid nested data passes. For arrays of objects use @ValidateNested({ each: true }) + @Type(() => ItemDto), plus @IsArray()/@ArrayMinSize() to constrain the array itself. For PATCH: a PUT replaces (all fields expected) while a PATCH updates some and the rest are absent by design, so reusing the create DTO wrongly requires fields the client deliberately omitted. The surgical fix is UpdateUserDto extends PartialType(CreateUserDto) (from @nestjs/mapped-types or swagger), which makes every inherited field optional while preserving the original decorators for fields that are present. The blunt alternative, skipMissingProperties: true, skips validation for ANY missing property across EVERY DTO app-wide — including required fields you never meant to relax — so PartialType is preferred because it scopes optionality to exactly the one update DTO. Note @IsOptional() makes 'field absent' valid but can't by itself distinguish 'not sent' from 'sent as null'." },
+  ]}
+/>
+
+<Recap lang="en">
+Hardening ValidationPipe past basic DTO decorators closes three boundaries. First, mass assignment: by default the pipe validates decorated fields and leaves undecorated ones on the object, so a registration DTO that only decorates email and password lets an attacker's role: 'admin' ride into userRepo.save(dto) — OWASP API3:2023, a privilege escalation. whitelist: true strips any property with no validation decorator; forbidNonWhitelisted: true 400s instead of silently stripping. But whitelist guards the DTO's shape, not its use, so the real fix is defense in depth — whitelist PLUS explicit field mapping into the entity, never save(dto) or spread the raw DTO. Second, nested validation: class-validator does not recurse by default, so a decorator on a nested DTO's field is a silent no-op unless the parent field carries both @ValidateNested() (descend) and @Type(() => NestedDto) (instantiate); arrays of objects add `{ each: true }` plus @IsArray()/@ArrayMinSize(). Third, partial updates: a PUT replaces and a PATCH patches, so reusing the create DTO wrongly requires omitted fields; UpdateUserDto extends PartialType(CreateUserDto) makes every field optional surgically, while skipMissingProperties: true is the blunt global alternative that relaxes required fields you never meant to. Validation that only checks the fields you named is a boundary that leaks everything you didn't.
+</Recap>

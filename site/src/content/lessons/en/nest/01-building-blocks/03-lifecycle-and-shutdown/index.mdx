@@ -1,0 +1,202 @@
+---
+concepts:
+- onModuleInit
+- onApplicationBootstrap
+- onModuleDestroy
+- enableShutdownHooks
+- graceful-shutdown
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-lifecycle-and-shutdown"
+sources:
+- https://docs.nestjs.com/fundamentals/lifecycle-events
+- https://docs.nestjs.com/fundamentals/lifecycle-events#application-shutdown
+spiral: []
+status: ready
+summary: 'Nest fires lifecycle hooks bottom-up on init and reverse on shutdown — but shutdown hooks are OFF until you call enableShutdownHooks(). Skip it and SIGTERM kills the process instantly: pools severed mid-query, consumers never commit. Drain under 30s.'
+title: 'Lifecycle hooks and graceful shutdown'
+track: nest
+unit: 01-building-blocks
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The deploy looked clean. Kubernetes scaled up the new ReplicaSet, sent the old pods a SIGTERM, and the dashboard went green. Then support tickets: a trickle of `Connection terminated unexpectedly` and `ECONNRESET` on checkout, plus a queue of Kafka messages being reprocessed for no reason. We had no error in the new pods — the damage was in the *old* ones, in the half-second between SIGTERM and process exit. Node received the signal and exited immediately, because nobody had called `app.enableShutdownHooks()`. The pg pool's open connections were severed mid-query, in-flight HTTP requests were dropped on the floor, and the Kafka consumer never committed its offsets, so on the next poll those messages looked unhandled. Every clean-up our code carefully wrote in `onModuleDestroy` never ran. This lesson is about the lifecycle Nest gives you, and the one line that decides whether shutdown is graceful or a guillotine.
+</Hook>
+
+<Crux>Init fires hooks bottom-up, shutdown reverses it — but shutdown hooks need enableShutdownHooks(), or SIGTERM kills the process first.</Crux>
+
+<Explanation>
+
+## Init: bottom-up, child modules before parents
+
+Nest boots in two passes. First it constructs the whole DI graph — every provider that L02 taught you about. *Then* it walks the modules and fires the init hooks. Two hooks matter here, and the order between them is the thing people get wrong.
+
+`onModuleInit()` fires **per module**, as soon as that module's own providers are resolved — and children (imported modules) fire before their parents. So a `DatabaseModule` you import runs its `onModuleInit` before the `UsersModule` that imports it. `onApplicationBootstrap()` fires once, after **every** module in the app has finished initializing.
+
+```ts
+import { Injectable, OnModuleInit, OnApplicationBootstrap } from '@nestjs/common';
+
+@Injectable()
+export class IndexerService implements OnModuleInit, OnApplicationBootstrap {
+  // runs when THIS module's providers are ready — children before parents.
+  // Hooks may be async; Nest awaits them before moving on.
+  async onModuleInit() {
+    await this.warmLocalCache(); // only needs THIS module's deps
+  }
+
+  // runs after the ENTIRE app graph is live — safe to touch other modules.
+  async onApplicationBootstrap() {
+    this.startPoller(); // depends on a sibling module being initialized too
+  }
+}
+```
+
+The distinction is not cosmetic. In `onModuleInit` of module A, the only thing guaranteed ready is A and the modules A imports. A *sibling* module B you reach across to — say a message bus you publish to — may not have run its own `onModuleInit` yet. Start a poller there and it can fire into a half-initialized graph.
+
+<Inset kind="why" lang="en">
+Why start the poller in `onApplicationBootstrap` and not `onModuleInit`? Because `onModuleInit` only guarantees *this* module and its direct imports are ready — Nest fires it the instant a module's own providers resolve, which can be long before sibling modules you depend on cross-cuttingly have initialized. A poller, a cron, a "publish a startup event" — anything that reaches across the module graph — needs the *whole* app live. `onApplicationBootstrap` is the single point where Nest guarantees every module has finished `onModuleInit`. Use `onModuleInit` for self-contained warm-up (this module's cache, this module's connection check); use `onApplicationBootstrap` the moment the work touches another part of the graph.
+</Inset>
+
+## Shutdown: reverse order, and OFF by default
+
+Shutdown runs the lifecycle backwards. The order is `onModuleDestroy()` → `beforeApplicationShutdown(signal?)` → `onApplicationShutdown(signal?)`, and modules tear down in **reverse** of init: dependents before dependencies. That ordering is deliberate — a module gets to clean up *before* the modules it depends on disappear, so your `UsersModule` can flush before the `DatabaseModule` it builds on closes its pool. The last two hooks receive the signal string (`'SIGTERM'`, `'SIGINT'`) so you can branch on why you're shutting down.
+
+```ts
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Pool } from 'pg';
+
+@Injectable()
+export class Database implements OnModuleDestroy {
+  private pool = new Pool(/* ... */);
+
+  // Nest AWAITS this on shutdown — drain in-flight, then close cleanly.
+  async onModuleDestroy() {
+    await this.pool.end(); // waits for active queries, then releases sockets
+    // for a broker: await this.consumer.disconnect() — commit offsets, unsubscribe
+  }
+}
+```
+
+Here is the trap that produced the incident. **None of these hooks run by default.** Nest does not listen for OS termination signals unless you opt in — because registering process-level signal listeners has a small per-listener cost, and the framework refuses to impose it on every app silently. You enable it with one line in `main.ts`:
+
+```ts
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // WITHOUT this line, SIGTERM exits the process immediately and NO
+  // onModuleDestroy / onApplicationShutdown ever runs — pools severed,
+  // requests dropped, broker offsets uncommitted.
+  app.enableShutdownHooks();
+
+  await app.listen(3000);
+}
+bootstrap();
+```
+
+Forget that line and SIGTERM behaves like `kill -9` as far as your cleanup is concerned: the event loop never gets a chance to run your `pool.end()`, the consumer never disconnects, and Kubernetes happily reports a successful rollout while the old pods leak half-finished work.
+
+<FlowDiagram
+  label="The graceful-shutdown sequence for a Nest service on a Kubernetes rolling deploy. Kubernetes sends SIGTERM to the old pod. Two things must happen in parallel and in order: the readiness probe flips to unready so the load balancer stops routing new traffic to this pod (often paired with a preStop sleep of about 5 seconds so endpoint deregistration propagates), and the app stops accepting new connections and drains in-flight requests. Once in-flight work is done, Nest fires onModuleDestroy where you await pool.end and consumer.disconnect to close pools and commit offsets, then the process exits cleanly with code 0. If any of this takes longer than terminationGracePeriodSeconds — default 30 seconds — Kubernetes sends SIGKILL and truncates whatever cleanup was still running."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "sigterm", label: "SIGTERM", sub: "old pod" },
+    { id: "unready", label: "readiness unready", sub: "+ preStop ~5s" },
+    { id: "stop", label: "stop accepting", sub: "drain in-flight" },
+    { id: "destroy", label: "onModuleDestroy", sub: "pool.end / disconnect" },
+    { id: "exit", label: "exit 0", sub: "clean" },
+    { id: "kill", label: "SIGKILL @ 30s", sub: "truncated" },
+  ]}
+  edges={[
+    { from: "sigterm", to: "unready", label: "deregister" },
+    { from: "unready", to: "stop", label: "no new traffic" },
+    { from: "stop", to: "destroy", label: "drained" },
+    { from: "destroy", to: "exit", label: "cleaned up" },
+    { from: "sigterm", to: "kill", label: "if > 30s" },
+  ]}
+  caption="Graceful path (top): readiness flips unready, traffic stops, in-flight drains, onModuleDestroy closes pools and commits offsets, exit 0. The deadline (bottom): exceed terminationGracePeriodSeconds (default 30s) and Kubernetes SIGKILLs, cutting cleanup short — so the drain must finish well under 30s."
+/>
+
+## The two failure modes: no drain, and a drain that never ends
+
+The first failure mode is the incident above: no `enableShutdownHooks()`, so SIGTERM truncates everything. The fix is the one line plus real cleanup in `onModuleDestroy` — `await pool.end()`, `await consumer.disconnect()` — so pools drain and the broker commits before the process leaves.
+
+But there's a symmetric second failure mode, and seniors hit it *after* they enable hooks: a shutdown hook that **hangs**. If `onModuleDestroy` awaits a promise that never resolves, or you write a 60-second drain, Kubernetes doesn't wait forever. It waits `terminationGracePeriodSeconds` — **default 30 seconds** — then sends SIGKILL and truncates your cleanup anyway. A hook that blocks past the grace period is no safer than no hook at all; it just fails later and more confusingly. So the drain has to finish comfortably under 30 seconds: a sane budget is **5–15 seconds**. And draining requests isn't enough on its own — you also need the load balancer to *stop sending* new ones before you stop accepting. Flip the readiness probe to unready on SIGTERM and add a `preStop` sleep of about **5 seconds** so endpoint deregistration propagates through kube-proxy before the app actually goes down. Otherwise you drain the old requests perfectly and then drop the new ones that arrived during the gap.
+
+<TradeoffMatrix
+  id="nest-01-building-blocks-03-lifecycle-and-shutdown-tradeoff-1"
+  lessonSlug="03-lifecycle-and-shutdown"
+  lang="en"
+  prompt="You run a Nest service on Kubernetes with a pg pool and a Kafka consumer. A rolling deploy SIGTERMs the old pods. How do you make the service drain cleanly without dropping requests or losing broker offsets?"
+  options={[
+    { name: "Call app.enableShutdownHooks() and do real cleanup in onModuleDestroy (await pool.end / consumer.disconnect), plus flip readiness to unready and a preStop sleep so traffic deregisters first", summary: "Enable + drain.", correct: true, justification: "This is the only option that actually runs cleanup on SIGTERM. enableShutdownHooks() registers the signal listeners so Nest fires onModuleDestroy / onApplicationShutdown; inside them you await pool.end() and consumer.disconnect() so in-flight queries finish and Kafka offsets commit. Flipping the readiness probe to unready plus a ~5s preStop sleep makes the load balancer stop routing new requests before you stop accepting, so you drain the old traffic without dropping new traffic. Keep the whole drain under terminationGracePeriodSeconds (default 30s, budget 5–15s) so Kubernetes never has to SIGKILL you. Mechanism, order, and deadline all handled." },
+    { name: "Rely on Nest's default behavior — the hooks run on shutdown automatically", summary: "They don't run.", justification: "This is exactly the incident. Shutdown hooks are OFF by default: Nest does not register OS signal listeners unless you call enableShutdownHooks(), because each listener has a small cost it won't impose silently. Without that line, SIGTERM exits the process immediately, onModuleDestroy never runs, the pg pool is severed mid-query (Connection terminated unexpectedly / ECONNRESET) and the Kafka consumer never commits, so messages reprocess. Relying on the default is relying on nothing." },
+    { name: "Skip Nest's hooks; do process.on('SIGTERM', ...) manually outside Nest to close the pool", summary: "Fights the framework.", justification: "You can technically catch the signal yourself, but now you're shutting down the app's resources behind Nest's back: you have no clean way to reach providers in dependency order, the framework's own listeners (if enabled elsewhere) and yours can race, and onModuleDestroy in your providers still won't fire. enableShutdownHooks() is precisely the supported hook that wires your signal handling into the module graph and reverse-order teardown. Hand-rolling it forfeits the ordering guarantees you actually need." },
+    { name: "Just raise terminationGracePeriodSeconds to a few minutes so the pod has plenty of time", summary: "Time without cleanup is wasted.", justification: "A longer grace period only helps if cleanup actually runs — and without enableShutdownHooks() it never does, so you've just told Kubernetes to wait minutes before SIGKILLing a process that was going to drop everything in the first half-second anyway. Worse, a long grace period masks a hanging hook: deploys silently stall for minutes per pod. The fix is to make the drain correct and fast (under 30s), not to extend the deadline." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-03-lifecycle-and-shutdown-quiz-1"
+  lessonSlug="03-lifecycle-and-shutdown"
+  lang="en"
+  question="Your providers implement onModuleDestroy to close a pg pool, but main.ts never calls app.enableShutdownHooks(). The pod receives SIGTERM. What runs?"
+  choices={[
+    { label: "Nothing — without enableShutdownHooks() Nest never registers signal listeners, so SIGTERM exits the process immediately and onModuleDestroy never fires", correct: true },
+    { label: "onModuleDestroy still runs — implementing the interface is enough to register the hook", misconception: "Implementing OnModuleDestroy only declares WHAT to run on teardown; it does not arrange for teardown to be triggered by a signal. Nest only listens for SIGTERM/SIGINT after you call enableShutdownHooks(). Without that line the process exits on the signal before the event loop ever reaches your hook. The interface is necessary but not sufficient." },
+    { label: "beforeApplicationShutdown runs but onModuleDestroy does not", misconception: "It's all-or-nothing on the signal listeners, not a partial set. enableShutdownHooks() is what registers the listeners that drive the entire shutdown sequence (onModuleDestroy → beforeApplicationShutdown → onApplicationShutdown). Without it, none of them run on SIGTERM — there's no mechanism that fires one hook but skips another." },
+    { label: "Nest catches SIGTERM by default but only runs onApplicationShutdown", misconception: "Nest does not catch termination signals by default at all — that's the whole reason enableShutdownHooks() exists. There is no default that runs onApplicationShutdown (or any other hook) on SIGTERM until you opt in. The signal goes straight to Node, which exits." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-03-lifecycle-and-shutdown-quiz-2"
+  lessonSlug="03-lifecycle-and-shutdown"
+  lang="en"
+  question="You need to start a background poller that publishes to a message bus owned by a SIBLING module. Which lifecycle hook is correct, and why?"
+  choices={[
+    { label: "onApplicationBootstrap — it fires only after EVERY module has finished initializing, so the sibling module the poller depends on is guaranteed live", correct: true },
+    { label: "onModuleInit — it runs early, so the poller starts as soon as possible", misconception: "onModuleInit fires as soon as THIS module's own providers resolve, which can be before a sibling module you cross-cut to has run its own onModuleInit. Starting the poller there can publish into a half-initialized graph. 'As early as possible' is the bug, not the goal — you want 'as early as the whole graph is ready', which is onApplicationBootstrap." },
+    { label: "beforeApplicationShutdown — it has the fullest view of the application", misconception: "beforeApplicationShutdown is a SHUTDOWN hook; it fires when the app is tearing down, not starting up. Starting a poller there makes no sense — the app is on its way out. The init-side hook that sees the whole app ready is onApplicationBootstrap." },
+    { label: "The module constructor — dependencies are injected there, so everything is available", misconception: "The constructor runs during DI graph construction, before ANY lifecycle hook and long before sibling modules are initialized. Injected references exist but the providers behind them may not be ready, and async work doesn't belong in a constructor. Cross-module startup work belongs in onApplicationBootstrap." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Init fires bottom-up, shutdown reverses it. Hooks are OFF until enableShutdownHooks() — without it SIGTERM kills the process: no pool.end(), no offset commit. Drain under 30s; flip readiness first.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-01-building-blocks-03-lifecycle-and-shutdown-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the full Nest lifecycle: which init hooks fire and in what order, which shutdown hooks fire and in what order, and what gates the shutdown side from running at all.", a: "On init, Nest first builds the entire DI graph, then fires init hooks. onModuleInit() runs per module as soon as that module's own providers resolve, and children (imported modules) fire before their parents — so a DatabaseModule's onModuleInit runs before the UsersModule that imports it. onApplicationBootstrap() then fires once, after EVERY module has finished initializing, so it's the only point where the whole graph is guaranteed live; that's why cross-module work (a poller, a startup publish) goes there and self-contained warm-up goes in onModuleInit. Both may be async and Nest awaits them. On shutdown the order is onModuleDestroy() → beforeApplicationShutdown(signal?) → onApplicationShutdown(signal?), with modules tearing down in reverse of init (dependents before dependencies) so a module can clean up before its deps vanish; the last two receive the signal string. Critically, the entire shutdown side is GATED behind app.enableShutdownHooks() in main.ts — Nest doesn't register OS signal listeners by default (per-listener cost it won't impose silently), so without that call SIGTERM exits the process immediately and none of the destroy/shutdown hooks run." },
+    { q: "A Kubernetes rolling deploy SIGTERMs your Nest pod. Describe both ways shutdown goes wrong and the complete fix, with the real numbers.", a: "Failure mode 1 — no drain: the app never called enableShutdownHooks(), so SIGTERM exits Node instantly. The pg/TypeORM pool's connections are severed mid-query (clients see Connection terminated unexpectedly / ECONNRESET), in-flight HTTP requests are dropped, and the Kafka consumer never commits offsets so its messages reprocess on the next poll. Fix: call enableShutdownHooks() AND do real cleanup in onModuleDestroy — await pool.end() (drains active queries then releases sockets) and await consumer.disconnect() (commits offsets, unsubscribes). Failure mode 2 — a hook that hangs: once hooks are enabled, an onModuleDestroy that awaits a never-resolving promise or runs a 60s drain doesn't buy safety, because Kubernetes only waits terminationGracePeriodSeconds (default 30s) then sends SIGKILL and truncates cleanup anyway. So the drain must finish well under 30s — a sane budget is 5–15s. Complete fix also stops new traffic first: flip the readiness probe to unready on SIGTERM and add a preStop sleep of ~5s so endpoint deregistration propagates through kube-proxy before the app stops accepting; otherwise you drain old requests but drop the ones that arrived during the deregistration gap." },
+  ]}
+/>
+
+<Recap lang="en">
+Nest runs your providers through a lifecycle in two passes. On init it builds the whole DI graph, then fires onModuleInit() per module — children before parents, as soon as a module's own providers resolve — and onApplicationBootstrap() once, after every module has initialized; use onModuleInit for self-contained warm-up and onApplicationBootstrap for anything that reaches a sibling module, like starting a poller, because onModuleInit only guarantees this module and its imports are ready. On shutdown the order reverses: onModuleDestroy() → beforeApplicationShutdown(signal?) → onApplicationShutdown(signal?), tearing down dependents before dependencies so a module cleans up before its deps vanish, with the signal string passed to the last two. The decisive catch is that shutdown hooks are OFF until you call app.enableShutdownHooks() in main.ts — Nest won't register OS signal listeners by default because each has a small cost — so without that one line SIGTERM exits the process immediately and no cleanup runs: the pg pool is severed mid-query (Connection terminated unexpectedly / ECONNRESET), in-flight requests are dropped, and the Kafka consumer never commits offsets. The fix is the line plus real cleanup in onModuleDestroy (await pool.end(), await consumer.disconnect()). The symmetric trap is a hook that hangs: Kubernetes waits only terminationGracePeriodSeconds (default 30s) then SIGKILLs, so the drain must finish well under it (budget 5–15s), and you must also flip the readiness probe to unready and add a ~5s preStop sleep so the load balancer stops routing before you stop accepting — otherwise you drain old requests and drop the new ones that arrived during the gap.
+</Recap>

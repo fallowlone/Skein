@@ -1,0 +1,223 @@
+---
+concepts:
+- dynamic-modules
+- forroot-forfeature-register
+- async-configuration
+- configurable-module-builder
+- global-modules
+deepensInto: []
+estMin: 18
+lang: ru
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-dynamic-modules"
+sources:
+- https://docs.nestjs.com/fundamentals/dynamic-modules
+- https://docs.nestjs.com/fundamentals/async-providers
+- https://docs.nestjs.com/modules#global-modules
+spiral: []
+status: ready
+summary: 'У статического @Module набор провайдеров фиксирован; динамический модуль — класс, чей static-метод возвращает дескриптор DynamicModule в рантайме, чтобы импортёр передал конфиг. forRoot один раз, forFeature на срез, register на импорт, forRootAsync — для конфига из провайдера.'
+title: 'Динамические модули и асинхронная конфигурация'
+track: nest
+unit: 01-building-blocks
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Пейджер сработал в 2 ночи: `FATAL: sorry, too many clients already`. Postgres упёрся в свой `max_connections` равный 100, отказывал новым логинам, и каждый под в деплое уходил в краш-луп на старте. Схема не менялась, трафик ровный. Диф, выехавший накануне, добавил `DatabaseModule.forRoot({ poolSize: 10 })` в фиче-модуль, чтобы фоновая задача «переиспользовала соединение». Но `forRoot()` уже был вызван один раз в `AppModule`. Повторный вызов ничего не переиспользовал — он зарегистрировал провайдер соединения *второй* раз, поднял *второй* пул из 10, и на пяти подах это тихо удвоило простаивающие соединения кластера с 50 до 100. Тот общий синглтон, который команда думала, что у неё есть, всё это время был двумя инстансами. Этот урок — про машинерию под `forRoot`, `forFeature`, `register` и асинхронным конфигом, и про режимы отказа, которые возникают, когда ты их путаешь.
+</Hook>
+
+<Crux>Динамический модуль — класс, чей static-метод возвращает дескриптор DynamicModule в рантайме, и импортёр передаёт конфиг. forRoot один раз.</Crux>
+
+<Explanation>
+
+## Фиксированный набор против рантайм-дескриптора
+
+У статического `@Module({ providers, exports })` набор провайдеров *фиксирован*, решён в момент определения класса. Он не может принять конфигурацию — `imports: [CacheModule]` даёт тебе то, что `CacheModule` решил за себя сам.
+
+**Динамический модуль** — это класс со `static`-методом, который *возвращает* дескриптор `DynamicModule` в рантайме: `{ module, providers, imports?, exports?, global? }`. Импортёр вызывает этот метод и передаёт конфиг, а Nest вклеивает возвращённые провайдеры в граф. Именно так работают `ConfigModule.forRoot({ ... })`, `JwtModule.register({ ... })` и `TypeOrmModule.forFeature([ ... ])` — каждый вызов есть вызов метода, собирающий заточенный модуль прямо на месте.
+
+```ts
+import { DynamicModule, Module } from '@nestjs/common';
+
+export const STORAGE_OPTIONS = 'STORAGE_OPTIONS';
+export interface StorageOptions { bucket: string; region: string; }
+
+@Module({})
+export class StorageModule {
+  // hand-rolled dynamic module: the importer passes config, we turn it into a provider
+  static forRoot(options: StorageOptions): DynamicModule {
+    return {
+      module: StorageModule,
+      providers: [{ provide: STORAGE_OPTIONS, useValue: options }],
+      exports: [STORAGE_OPTIONS], // so consumers can inject the options token
+      global: true,               // exports visible app-wide without re-importing
+    };
+  }
+}
+```
+
+`StorageModule.forRoot({ bucket: 'uploads', region: 'eu-central-1' })` возвращает полностью сформированный модуль, единственный провайдер которого — объект опций, экспортированный под токеном, который инжектят нижестоящие сервисы. Оболочка `@Module({})` пуста намеренно — настоящий конструктор тут метод.
+
+## Конвенция имён: forRoot, forFeature, register
+
+Три имени метода — это *конвенция*, не навязанная Nest, — но каждый Nest-разработчик читает их как контракт, так что нарушение её есть выстрел себе в ногу.
+
+- **`forRoot()`** — настроить *один раз*, в корне приложения. Обычно возвращает общую инфраструктуру (соединение, хранилище конфига) и часто `global`. Вызов более одного раза — это и есть баг из хука.
+- **`forFeature()`** — зарегистрировать *срез*, многократно, на фиче-модуль. `TypeOrmModule.forFeature([User])` в одном модуле, `forFeature([Order])` в другом — каждый вызов скоупит репозитории в *этот* модуль, не пересоздавая соединение, которое уже сделал `forRoot`.
+- **`register()`** — конфигурация на импорт, *без* root/global-семантики. Каждый `HttpModule.register({ baseURL })` независим; два импорта означают два отдельно сконфигурированных инстанса, и это задумано.
+
+```ts
+// forRoot ONCE, at the root — stands up the shared connection (global)
+imports: [DatabaseModule.forRoot({ url: process.env.DB_URL, poolSize: 10 })]
+
+// forFeature PER module — scopes entities/repos, reuses the forRoot connection
+imports: [DatabaseModule.forFeature([User])]   // in UsersModule
+imports: [DatabaseModule.forFeature([Order])]  // in OrdersModule
+
+// register PER import — each gets its own independent config, no sharing implied
+imports: [HttpModule.register({ baseURL: 'https://api.billing.internal' })]
+```
+
+<Inset kind="why" lang="ru">
+Почему вызов `forRoot()` дважды удваивает пул вместо переиспользования соединения? Потому что `forRoot()` — это обычная функция, которая *возвращает свежий дескриптор провайдера каждый раз*. Первый вызов регистрирует `{ provide: DB_POOL, useFactory: makePool }` в `AppModule`; второй вызов возвращает *тот же* объект-дескриптор снова, и Nest регистрирует его второй раз в инжекторе фиче-модуля — `useFactory` отрабатывает заново, открывая второй физический пул. Нет никакой проверки идентичности, которая сказала бы «этот провайдер уже есть, пропусти». `@Global` тебя тоже не спасает: global меняет только *видимость* экспортов, а не *кардинальность* провайдеров. Два вызова `forRoot` = два прогона фабрики = два пула, точка. Ментальная модель общего синглтона — это ложь, которую второй `forRoot` тихо ломает; фикс — вызывать `forRoot` ровно один раз, а всем ниже по графу делать `forFeature` или инжектить экспортированный токен.
+</Inset>
+
+## Асинхронный конфиг: forRootAsync и провайдер-фабрика
+
+Самописный `forRoot` выше принимает *литеральный* объект опций. Но настоящий конфиг — URL базы, JWT-секрет — лежит в env и читается через `ConfigService`. Ты не можешь передать литерал в момент импорта; тебе нужно значение, разрезолвленное из другого провайдера. Это `forRootAsync`:
+
+```ts
+import { JwtModule } from '@nestjs/jwt';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+
+JwtModule.registerAsync({
+  imports: [ConfigModule],            // make ConfigService resolvable IN this context
+  inject: [ConfigService],            // the factory's dependencies, in order
+  useFactory: (cfg: ConfigService) => ({
+    secret: cfg.getOrThrow('JWT_SECRET'),
+    signOptions: { expiresIn: cfg.get('JWT_TTL') ?? '15m' },
+  }),
+});
+```
+
+Три части работают вместе. `useFactory` *сам является провайдером* — функцией, которую Nest вызывает, чтобы произвести опции. `inject` перечисляет зависимости этой функции, позиционно, чтобы Nest знал, что нужно разрезолвить `ConfigService` и передать его первым аргументом. `imports` делает эти зависимости *резолвимыми внутри собственного контекста инъекции динамического модуля* — у динамического модуля свой скоуп, так что, если `ConfigModule` не глобальный, фабрика не увидит `ConfigService` без импорта его здесь.
+
+Забудь `imports: [ConfigModule]` (а `ConfigModule` не глобальный) — и получишь падение на старте, а не в рантайме: **`Nest can't resolve dependencies of the <factory> (?). Please make sure that the argument ConfigService at index [0] is available in the <module> context.`** `(?)` — это неразрезолвленный `ConfigService`: фабрика объявила его через `inject`, но ничего в скоупе его не провайдит.
+
+## ConfigurableModuleBuilder: хватит писать руками
+
+Писать `forRoot` *и* `forRootAsync` руками — литеральный путь, путь через фабрику, async-варианты `useExisting`/`useClass`, токен опций — это ~40 строк бойлерплейта на модуль, повторяемых идентично в каждом конфигурируемом модуле, которым ты владеешь. `ConfigurableModuleBuilder` генерирует всё это:
+
+```ts
+import { ConfigurableModuleBuilder } from '@nestjs/common';
+import { StorageOptions } from './storage-options.interface';
+
+// generates the class + token + sync AND async entry points for you
+export const { ConfigurableModuleClass, MODULE_OPTIONS_TOKEN } =
+  new ConfigurableModuleBuilder<StorageOptions>().build();
+```
+
+```ts
+import { Module } from '@nestjs/common';
+import { ConfigurableModuleClass } from './storage.module-definition';
+
+@Module({ providers: [StorageService], exports: [StorageService] })
+export class StorageModule extends ConfigurableModuleClass {}
+// now StorageModule.register({...}) AND StorageModule.registerAsync({ useFactory, inject, imports })
+// both exist, and StorageService can inject MODULE_OPTIONS_TOKEN
+```
+
+Билдер отдаёт обратно `ConfigurableModuleClass` (наследуешь его) и `MODULE_OPTIONS_TOKEN` (инжектишь, чтобы прочитать опции). Ты получаешь и `register`, и `registerAsync` бесплатно, с уже разведённой async-обвязкой `imports`/`inject`/`useFactory`. Хочешь именование `forRoot` вместо `register`? `.setClassMethodName('forRoot')`. Хочешь глобальный? `.setExtras({ isGlobal: true }, ...)`. Те ~40 строк на модуль схлопываются до двух.
+
+<FlowDiagram
+  label="Как forRootAsync резолвит асинхронную конфигурацию на старте. Импортёр вызывает JwtModule.registerAsync с imports, inject и useFactory. Nest сначала резолвит ConfigModule внутри собственного контекста инъекции динамического модуля, чтобы ConfigService стал доступен. Затем он прогоняет useFactory, передавая инжектированный ConfigService аргументом, и фабрика возвращает объект опций. Nest привязывает этот объект к токену провайдера опций модуля, и наконец внутренние провайдеры JwtModule потребляют этот токен, чтобы сконфигурировать подписант. Забыть imports ConfigModule ломает второй шаг и выдаёт 'Nest can't resolve dependencies of the useFactory'."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "call", label: "registerAsync({...})", sub: "imports+inject+factory" },
+    { id: "resolve", label: "резолв ConfigModule", sub: "в динам. контексте" },
+    { id: "factory", label: "useFactory(cfg)", sub: "прогоняет функцию" },
+    { id: "token", label: "провайдер опций", sub: "MODULE_OPTIONS_TOKEN" },
+    { id: "consume", label: "JwtModule потребляет", sub: "конфиг подписанта" },
+  ]}
+  edges={[
+    { from: "call", to: "resolve", label: "imports" },
+    { from: "resolve", to: "factory", label: "inject" },
+    { from: "factory", to: "token", label: "возвращает опции" },
+    { from: "token", to: "consume", label: "инжектится" },
+  ]}
+  caption="forRootAsync превращает инжектированный провайдер (ConfigService) в объект конфига через провайдер-фабрику. Убери imports: [ConfigModule] — и второй шаг падает: 'can't resolve dependencies of the useFactory'."
+/>
+
+<TradeoffMatrix
+  id="nest-01-building-blocks-04-dynamic-modules-tradeoff-1"
+  lessonSlug="04-dynamic-modules"
+  lang="ru"
+  prompt="Твоему AuthModule нужен секрет подписи JWT из окружения, читаемый через ConfigService. Как сконфигурировать JwtModule?"
+  options={[
+    { name: "JwtModule.registerAsync({ imports: [ConfigModule], inject: [ConfigService], useFactory: (cfg) => ({ secret: cfg.getOrThrow('JWT_SECRET') }) })", summary: "Асинхронная фабрика.", correct: true, justification: "Секрет лежит в провайдере (ConfigService), а не в литерале, который у тебя есть в момент импорта, так что нужен асинхронный вариант. useFactory у registerAsync — это провайдер, который производит опции; inject перечисляет его зависимости (ConfigService) позиционно; imports: [ConfigModule] делает ConfigService резолвимым внутри собственного контекста инъекции динамического модуля. Все три обязательны — убери imports и получишь на старте 'can't resolve dependencies of the useFactory'. Это канонический способ скормить env-зависимый конфиг в динамический модуль." },
+    { name: "JwtModule.register({ secret: process.env.JWT_SECRET })", summary: "Читает env напрямую на импорте.", justification: "Это обходит ConfigService и читает process.env в момент вычисления модуля. Часто работает, но проходит мимо валидации, дефолтов и типизированного/централизованного слоя конфига, который у приложения уже есть, — и если конфиг загружается асинхронно (менеджер секретов, удалённое хранилище), значения ещё нет в момент импорта. Весь смысл forRootAsync — отложить резолв конфига до провайдера; register с сырым process.env выбрасывает это." },
+    { name: "Обернуть JwtModule в @Global()-модуль и вызвать forRoot дважды (раз в AuthModule, раз в AppModule)", summary: "Двойная регистрация.", justification: "Это инцидент с пулом соединений в другом костюме. forRoot — это функция, возвращающая свежий провайдер на каждый вызов, так что два вызова регистрируют конфиг подписанта дважды — а @Global меняет видимость экспортов, не кардинальность провайдеров, так что он НЕ схлопывает два в один. Ты получишь дублированные провайдеры и запутанный DI-граф, а не общий синглтон. forRoot — операция один-раз-в-корне." },
+    { name: "Захардкодить секрет строковым литералом в register({ secret: 'super-secret' })", summary: "Секрет в исходниках.", justification: "Секрет подписи, закоммиченный в исходники, — это инцидент безопасности, ждущий утечки через историю git, логи или публичный зеркало, и он не может отличаться по окружениям. Это вообще не стратегия конфигурации; это ровно то, ради предотвращения чего существуют слои конфига. Используй registerAsync с ConfigService, чтобы секрет приходил из окружения и валидировался на старте." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-04-dynamic-modules-quiz-1"
+  lessonSlug="04-dynamic-modules"
+  lang="ru"
+  question="В JwtModule.registerAsync({ imports, inject, useFactory }) что делают `inject` и `imports` каждый — и почему ты получишь 'Nest can't resolve dependencies of the useFactory (?)' на старте?"
+  choices={[
+    { label: "inject перечисляет зависимости фабрики (резолвятся и передаются позиционно); imports делает эти зависимости резолвимыми в контексте динамического модуля. Пропуск imports: [ConfigModule] (когда он не глобальный) означает, что ConfigService нерезолвим, так что провайдер-фабрика падает — это и есть (?)", correct: true },
+    { label: "inject и imports — взаимозаменяемые псевдонимы; ошибка означает, что ты использовал не тот из двух", misconception: "Они не псевдонимы. inject объявляет, ЧТО нужно фабрике (токены зависимостей, передаваемые позиционными аргументами). imports объявляет, ОТКУДА эти потребности берутся (какие модули их экспортируют, сделанные видимыми в скоупе этого динамического модуля). Нужны оба: inject без imports оставляет ConfigService нерезолвимым; это рассогласование и есть ровно ошибка (?)." },
+    { label: "Это рантайм-ошибка, выбрасываемая на первом запросе, после того как приложение успешно загрузилось", misconception: "Это ошибка времени старта, а не времени запроса. Nest резолвит граф зависимостей при инициализации приложения; нерезолвимая зависимость фабрики заставляет init выбросить до того, как обслужен любой запрос. Всё приложение не стартует — что на самом деле хороший исход, ведь это всплывает мисконфигурацию сразу." },
+    { label: "imports опционален всякий раз, когда ConfigService существует где-либо в приложении; Nest ищет по всем модулям глобально", misconception: "Nest НЕ ищет по всем модулям глобально — у динамического модуля свой контекст инъекции, и провайдеры видимы, только если их экспортирующий модуль импортирован в этот контекст (или @Global). Если ConfigModule не глобальный, ты обязан добавить imports: [ConfigModule], чтобы фабрика увидела ConfigService. Эта скоупизация и есть весь смысл существования imports у forRootAsync." },
+  ]}
+/>
+
+<Quiz
+  id="nest-01-building-blocks-04-dynamic-modules-quiz-2"
+  lessonSlug="04-dynamic-modules"
+  lang="ru"
+  question="Команда помечает DatabaseModule @Global() и вызывает DatabaseModule.forRoot() и в AppModule, и в фиче-модуле, ожидая, что @Global дедуплицирует его в одно общее соединение. Что происходит на самом деле?"
+  choices={[
+    { label: "Создаются два пула соединений — @Global меняет ВИДИМОСТЬ экспортов, не КАРДИНАЛЬНОСТЬ провайдеров; каждый вызов forRoot возвращает свежий дескриптор провайдера и прогоняет фабрику заново", correct: true },
+    { label: "Один пул — @Global гарантирует единственный инстанс по всем вызовам forRoot", misconception: "@Global лишь делает экспорты модуля видимыми везде без повторного импорта; он ничего не говорит о том, сколько раз провайдер инстанцируется. Каждый вызов forRoot() возвращает новый дескриптор провайдера, так что два вызова регистрируют фабрику соединения дважды и открывают два пула. Глобальная видимость и синглтон-кардинальность — несвязанные понятия." },
+    { label: "Nest выбрасывает ошибку дублированного провайдера и отказывается стартовать", misconception: "Nest не падает на этом — два вызова forRoot живут в разных инжекторах, так что нет коллизии токенов, останавливающей старт. Он тихо поднимает два пула, что хуже ошибки: приложение нормально стартует, а удвоенное число соединений кусается позже, под нагрузкой, как 'too many clients'." },
+    { label: "Второй forRoot игнорируется, потому что первый уже отработал", misconception: "Нет ни мемоизации, ни охранника 'уже отработал' — forRoot это просто функция, возвращающая дескриптор, и Nest регистрирует то, что ему вручили. Второй вызов полностью почитается, производя второй прогон фабрики и второй пул. Конвенция 'forRoot один раз' существует именно потому, что ничто её не навязывает." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Динамический модуль возвращает дескриптор в рантайме: forRoot один раз (дважды = два пула), forFeature на срез, register на импорт. forRootAsync = imports+inject+useFactory; ConfigurableModuleBuilder = −40 строк обвязки.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-01-building-blocks-04-dynamic-modules-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что такое динамический модуль против статического, и что сигналят имена forRoot / forFeature / register каждое? Почему вызов forRoot дважды вызывает инцидент с пулом соединений?", a: "У статического @Module набор провайдеров фиксирован, решён в момент определения класса, и он не может принять конфигурацию. Динамический модуль — это класс со статическим методом, возвращающим дескриптор DynamicModule — { module, providers, imports?, exports?, global? } — в рантайме, так что импортёр передаёт конфиг, и Nest вклеивает возвращённые провайдеры в граф; так работают ConfigModule.forRoot, JwtModule.register и TypeOrmModule.forFeature. Три имени — конвенция, не навязанная: forRoot настраивает один раз в корне и обычно возвращает общую инфру (соединение/хранилище конфига), часто global; forFeature регистрирует срез многократно на фиче-модуль (например, entities), переиспользуя соединение forRoot; register — конфиг на импорт без root/global-семантики, так что два импорта означают два независимых инстанса по задумке. Вызов forRoot дважды вызывает инцидент с пулом, потому что forRoot — обычная функция, возвращающая свежий дескриптор провайдера каждый вызов — второй вызов регистрирует фабрику соединения заново в другом инжекторе, useFactory отрабатывает второй раз, и открывается второй физический пул. @Global не помогает: он меняет видимость экспортов, не кардинальность провайдеров. Два вызова forRoot = два прогона фабрики = два пула, что на N подах удваивает простаивающие соединения и может исчерпать Postgres max_connections (по умолчанию 100). Фикс: forRoot ровно один раз в корне; ниже по графу — forFeature или инжект экспортированного токена." },
+    { q: "Как forRootAsync превращает инжектированный провайдер в конфиг, и что генерирует ConfigurableModuleBuilder? Почему 'Nest can't resolve dependencies of the useFactory' — ошибка времени старта?", a: "Когда конфиг приходит из провайдера (ConfigService читает env), ты не можешь передать литерал в момент импорта, так что используешь forRootAsync/registerAsync({ imports, inject, useFactory }). useFactory сам является провайдером — функцией, которую Nest вызывает, чтобы произвести объект опций. inject перечисляет зависимости этой функции позиционно, так что Nest резолвит ConfigService и передаёт его первым аргументом. imports делает эти зависимости резолвимыми внутри собственного контекста инъекции динамического модуля, потому что у динамического модуля свой скоуп — если ConfigModule не глобальный, фабрика не увидит ConfigService без импорта его здесь. Пропуск imports: [ConfigModule] (когда он не глобальный) выдаёт падение времени СТАРТА, потому что Nest резолвит граф зависимостей при инициализации приложения, до любого запроса: 'Nest can't resolve dependencies of the <factory> (?)', где (?) — неразрезолвленный ConfigService, который фабрика объявила через inject, но ничто в скоупе его не провайдит. ConfigurableModuleBuilder убирает ~40 строк самописной обвязки: new ConfigurableModuleBuilder<Options>().build() возвращает ConfigurableModuleClass (наследуешь его) и MODULE_OPTIONS_TOKEN (инжектишь, чтобы прочитать опции), и генерирует и синхронную (register), и асинхронную (registerAsync) точки входа с уже разведённой обвязкой imports/inject/useFactory. .setClassMethodName('forRoot') переименовывает точки входа, а .setExtras может сделать его глобальным." },
+  ]}
+/>
+
+<Recap lang="ru">
+У статического @Module набор провайдеров фиксирован, решён в момент определения, и он не может быть сконфигурирован импортёром. Динамический модуль это чинит: это класс, чей статический метод возвращает дескриптор DynamicModule — &#123; module, providers, imports?, exports?, global? &#125; — в рантайме, так что вызывающий передаёт конфиг, а Nest вклеивает провайдеры. Это машинерия за ConfigModule.forRoot, JwtModule.register и TypeOrmModule.forFeature. Имена — конвенция, не навязанная: forRoot настраивает один раз в корне и возвращает общую инфру (часто global); forFeature регистрирует срез многократно на фичу, переиспользуя соединение forRoot; register — конфиг на импорт без global-семантики, так что каждый импорт независим. Первый режим отказа: вызов forRoot дважды ничего не переиспользует — это функция, возвращающая свежий дескриптор провайдера каждый раз, так что фабрика отрабатывает заново и открывается второй пул соединений, что на нескольких подах может удвоить простаивающие соединения и исчерпать Postgres max_connections (по умолчанию 100); @Global тебя не спасёт, потому что он меняет видимость экспортов, не кардинальность провайдеров. Для env-зависимого конфига используй forRootAsync(&#123; imports, inject, useFactory &#125;): useFactory — провайдер, производящий опции, inject перечисляет его позиционные зависимости, а imports делает эти зависимости резолвимыми в собственном скоупе динамического модуля — забудь imports: [ConfigModule], и получишь на старте 'Nest can't resolve dependencies of the useFactory (?)'. ConfigurableModuleBuilder генерирует ConfigurableModuleClass и MODULE_OPTIONS_TOKEN плюс и register, и registerAsync, схлопывая ~40 строк обвязки async-провайдеров на модуль до двух. Сеньорская позиция по @Global: береги его для по-настоящему сквозной инфры (Config, Logger, DB) — злоупотребление прячет зависимости и превращает DI-граф в клубок, где модули молча используют провайдеры, которые никогда не импортируют.
+</Recap>

@@ -1,0 +1,179 @@
+---
+concepts:
+- expand-contract
+- backward-compatible-migrations
+- migrate-before-after-deploy
+- online-ddl
+- forward-fix-vs-rollback
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-safe-migrations-and-rollback"
+sources:
+- https://martinfowler.com/articles/evodb.html
+- https://docs.github.com/en/actions/deployment
+spiral: []
+status: ready
+summary: 'Code rolls back in seconds; a database does not. A destructive migration that shipped with the deploy makes rollback impossible. Split every schema change into expand/contract across releases so old and new code both work, additive before deploy, destructive after.'
+title: 'Safe schema migrations and rollback'
+track: ci-cd
+unit: 04-release-automation
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The deploy that broke production looked clean. One release shipped the code that stopped using `users.legacy_name` and, in the same migration, `ALTER TABLE users DROP COLUMN legacy_name`. It went green. Three hours later a latent bug in an unrelated part of that release forced a rollback — the on-call hit the button that had saved us a dozen times, redeploying the previous artifact. Every request 500'd instantly. The old artifact still ran `SELECT ... legacy_name FROM users`, and the column was gone. Worse, rolling forward couldn't restore it either: the data in `legacy_name` had been dropped, not archived. The rollback button — our whole safety story — did nothing, because the one thing it can't redeploy is the database. This lesson is about why that happens and the discipline that keeps rollback real: expand/contract.
+</Hook>
+
+<Crux>Code rolls back instantly; a destructive migration cannot. Split every schema change into expand/contract so old and new code both work.</Crux>
+
+<Explanation>
+
+## Why a migration breaks rollback
+
+Rollback works on code because a deploy is just swapping one immutable artifact for the previous one — the old container image still exists, you point traffic back, done in seconds. The database has no previous artifact. It is one mutable, stateful thing, and a migration mutates it in place. Once `DROP COLUMN legacy_name` has run, "go back" has no meaning: the column and its data are gone, and even if you recreate the column, the rows are empty. The deploy and the schema change are coupled in the release, but only one half of that pair is reversible. So "just roll back the deploy" silently assumes the old code can still read the schema it finds — and a destructive change you shipped with the new code breaks exactly that assumption.
+
+This is sharper than it looks because of how modern releases roll out. A rolling, canary, or blue-green deploy (covered last lesson) runs **two versions of your code at the same time** against **one** database. There is a window — sometimes minutes, sometimes the whole canary bake — where vN-1 and vN both serve live traffic. If vN's migration changed the schema in a way vN-1 can't tolerate, you've broken the still-running old version *before you ever press rollback*. The schema has to satisfy every version that is live, simultaneously.
+
+## Expand/contract: never change a column in one step
+
+The discipline that makes this safe is **parallel change**, usually called expand/contract. You never mutate a column destructively in a single migration. You split the change across releases so that at every single moment, every version of the code that is running can read and write the schema as it currently is.
+
+```sql
+-- RELEASE 1, step EXPAND: additive only, runs BEFORE the new code deploys.
+-- Old code ignores the new column; new code can start using it. Backward compatible.
+ALTER TABLE users ADD COLUMN full_name text;        -- nullable, no rewrite
+CREATE INDEX CONCURRENTLY idx_users_full_name ON users (full_name);
+```
+
+```ts
+// RELEASE 1, app code: DUAL-WRITE — write both old and new on every mutation,
+// and read from the old column still. Backfill existing rows in batches, not one UPDATE.
+async function setName(id: string, name: string) {
+  await db.query(
+    `UPDATE users SET legacy_name = $2, full_name = $2 WHERE id = $1`,
+    [id, name],
+  );
+}
+// backfill job: copy existing data in bounded batches (e.g. 1k–10k rows per loop)
+//   UPDATE users SET full_name = legacy_name
+//   WHERE full_name IS NULL AND id IN (<next batch>);   -- repeat until none left
+```
+
+```sql
+-- RELEASE 2: switch READS to full_name (code change only, no schema change).
+-- RELEASE 3, step CONTRACT: drop the old column — ONLY after R2 is fully rolled out
+-- and proven, when nothing reads legacy_name anymore. This is the one destructive step.
+ALTER TABLE users DROP COLUMN legacy_name;
+```
+
+A rename is the canonical case, and it is **not** one `RENAME COLUMN` — it is add new column + backfill + dual-write + switch reads + drop old, spread across **three or more releases**. At no point does a running version meet a schema it can't handle, so the previous artifact always still runs and rollback stays real the whole way through.
+
+## Ordering: additive before deploy, destructive after
+
+Expand/contract dictates *when* each migration runs relative to the deploy, and getting this wrong is what re-creates the original incident. The **additive** migration (the expand) must run **before** the new code deploys — the column has to exist the instant new code starts, or new code crashes on a missing column. The **destructive** migration (the contract) must run **after** the new code is fully rolled out and you are confident you will not roll back — by then nothing reads the old column. Running the destructive change together with the deploy is precisely what makes rollback impossible, because the moment you roll the deploy back, the old code meets the schema the new code left behind.
+
+<Inset kind="why" lang="en">
+Why can't you just put the migration and its `down` rollback in the same release and trust the `down` script to undo it? Because reversibility on paper is not reversibility of data, nor of a live mixed-version fleet. A `down` that "restores" a dropped column can recreate the empty column but not the data that was already deleted — that data is gone. And in a rolling or canary deploy, old and new code run simultaneously against one database, so a destructive `up` breaks the still-running old version *immediately*, before any `down` could ever fire. The `down` script protects you against a failed migration; it does nothing against a successful migration whose schema the previous code can't read. Only an additive expand/contract sequence — where every version works against the schema at every step — actually keeps rollback safe.
+</Inset>
+
+## Online DDL: the migration itself can take the table down
+
+Even an additive migration can cause an outage if the DDL locks the table. On Postgres, `ADD COLUMN` with a non-volatile default is fast and safe, but a plain `CREATE INDEX` takes a lock that blocks writes for the whole build — use `CREATE INDEX CONCURRENTLY` so writes keep flowing. Long `ALTER`s take an `ACCESS EXCLUSIVE` lock and, behind a queue of active queries, can stall the entire table under load. And the backfill must be **batched** — one giant `UPDATE users SET full_name = legacy_name` rewrites every row in a single transaction, holding locks, bloating the table, and running long enough to block autovacuum. Loop it in bounded batches of a few thousand rows instead, committing between them.
+
+## Forward-fix vs rollback
+
+Because the database often *can't* go back, the senior default for a bad release that carried a schema change is frequently **forward-fix** — ship a corrected version forward — rather than rollback. But that is only an option you keep open by making every migration backward-compatible in the first place: if every schema change is expand/contract, the previous artifact still runs against the new schema, so rollback *also* stays available as a genuine choice rather than a button that 500s production. Backward-compatible migrations don't replace rollback with forward-fix; they make both safe so you can pick per incident.
+
+<TradeoffMatrix
+  id="ci-cd-04-release-automation-04-safe-migrations-and-rollback-tradeoff-1"
+  lessonSlug="04-safe-migrations-and-rollback"
+  lang="en"
+  prompt="You must rename a heavily-used column with zero downtime and the ability to roll back the deploy at any point. Which approach?"
+  options={[
+    { name: "Expand/contract across releases: add the new column + backfill + dual-write, switch reads in a later release, drop the old column only after the new code is proven — additive migration before deploy, destructive after full rollout", summary: "Parallel change.", correct: true, justification: "This is the only approach where every running version meets a schema it can read at every step. The expand (add nullable column, index CONCURRENTLY) runs before the new code, so new code finds the column; the app dual-writes and backfills in batches; a later release switches reads; the destructive drop runs only after the new version is fully rolled out and proven. Because nothing is destroyed until the old code is gone, the previous artifact always still runs — rollback stays real the whole way. It costs 3+ releases, and that cost IS the safety." },
+    { name: "ALTER TABLE users RENAME COLUMN in the deploy migration", summary: "Couples schema to deploy.", justification: "A RENAME is atomic for the database but catastrophic for a mixed-version fleet: the instant it runs, the old version (still serving traffic in a rolling/canary window, or after a rollback) queries a column name that no longer exists and 500s. The schema change is coupled to the deploy, so rolling the deploy back doesn't roll the rename back — this is the incident, just spelled differently." },
+    { name: "Drop and recreate the column in one migration, with a down script to reverse it", summary: "down can't restore data.", justification: "The down script can recreate the column but not the data that the up already deleted — reversibility on paper, not of data. And in a live mixed-version deploy the destructive up breaks the old version immediately, before any down fires. A down protects against a failed migration, never against a successful one whose schema the previous code can't read." },
+    { name: "Take a maintenance window and rename directly while traffic is stopped", summary: "Violates zero-downtime.", justification: "Stopping traffic does sidestep the mixed-version problem, but the requirement was zero downtime — a maintenance window is downtime by definition, and for a heavily-used column it can be a long one. Expand/contract achieves the rename with no window at all, which is exactly why it's the senior default for online schema change." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-04-release-automation-04-safe-migrations-and-rollback-quiz-1"
+  lessonSlug="04-safe-migrations-and-rollback"
+  lang="en"
+  question="A release shipped `DROP COLUMN legacy_name` together with the code that stopped reading it. A bug forces a rollback to the previous artifact. Why can the code roll back but the destructive migration can't?"
+  choices={[
+    { label: "The deploy just re-points to the old immutable artifact, but the column's data is already gone and the old code still SELECTs legacy_name — the database has no previous artifact to redeploy", correct: true },
+    { label: "Rollback restores both the code and the schema atomically, so the column comes back with its data", misconception: "Rollback only re-points traffic to the previous code artifact — it does nothing to the database, which is mutable shared state with no 'previous artifact'. The DROP already destroyed the column and its data; redeploying old code just means that code now SELECTs a column that no longer exists and 500s. Schema and deploy are coupled in the release but only the deploy half is reversible." },
+    { label: "The migration tool automatically runs the down script during a deploy rollback", misconception: "A deploy rollback redeploys an old artifact; it does not invoke your migration tool's down script — those are separate systems. Even if it did, a down for a DROP can recreate an empty column but cannot bring back the deleted data. The destructive change is irreversible regardless of the down script." },
+    { label: "The old code reads from a replica, so it never noticed the dropped column", misconception: "Replicas receive the same DDL via replication — the column is dropped on replicas too. There is no version of the database where legacy_name still exists after the migration runs. The old code 500s on primary and replica alike." },
+  ]}
+/>
+
+<Quiz
+  id="ci-cd-04-release-automation-04-safe-migrations-and-rollback-quiz-2"
+  lessonSlug="04-safe-migrations-and-rollback"
+  lang="en"
+  question="You must rename a column safely across releases with expand/contract. What is the sequence, and what is the ordering of additive vs destructive migrations relative to deploys?"
+  choices={[
+    { label: "Add the new column + backfill + dual-write, switch reads in a later release, then drop the old column — additive migration runs BEFORE the new code deploys, destructive runs AFTER full rollout", correct: true },
+    { label: "Rename in one migration but run it after the deploy, so the new code is already live", misconception: "Running a RENAME after the deploy still mutates the one column destructively: the moment it runs, any old version still in the rolling/canary window — or any future rollback — meets a missing column name. Ordering a single destructive rename later doesn't make it backward compatible; only splitting it into add + backfill + dual-write + switch + drop does." },
+    { label: "Add the new column AFTER the new code deploys, so the migration and code ship together", misconception: "If the additive migration runs after the new code, the new code starts before its column exists and crashes on a missing column. The additive expand must run BEFORE the new code so the column is present the instant new code reads it. Only the destructive contract runs after rollout." },
+    { label: "Do the drop in the same release as the switch-reads change to minimize the number of releases", misconception: "Dropping the old column in the same release that switches reads removes your rollback target: if you roll that release back, reads go back to the old column that you just dropped. The contract (drop) must be a SEPARATE, later release, run only after the read-switch is fully rolled out and proven — that gap is what keeps rollback safe." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The expand/contract sequence for renaming a column with rollback-safe at every step. Release 1 expand: add the new nullable column (and index CONCURRENTLY) BEFORE the new code deploys, so the column exists when new code starts — old code ignores it, backward compatible. Release 1 code: dual-write both old and new columns on every mutation and backfill existing rows in bounded batches. Release 2: switch reads to the new column, a code-only change with no schema change. Release 3 contract: drop the old column, run only AFTER Release 2 is fully rolled out and proven, when nothing reads the old column — the single destructive step. At every transition the previous artifact still runs against the schema, so rollback stays real throughout."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "expand", label: "R1 EXPAND", sub: "add col, before deploy" },
+    { id: "dual", label: "R1 dual-write", sub: "+ backfill batches" },
+    { id: "switch", label: "R2 switch reads", sub: "code only" },
+    { id: "contract", label: "R3 CONTRACT", sub: "drop old, after proven" },
+    { id: "safe", label: "rollback-safe", sub: "at every step" },
+  ]}
+  edges={[
+    { from: "expand", to: "dual", label: "additive" },
+    { from: "dual", to: "switch", label: "data ready" },
+    { from: "switch", to: "contract", label: "reads moved" },
+    { from: "contract", to: "safe", label: "destructive last" },
+  ]}
+  caption="Rename = 3+ releases: expand (additive, before deploy) → dual-write + backfill → switch reads → contract (destructive, after full rollout). The destructive step is last and isolated, so every prior version still runs and rollback never 500s."
+/>
+
+<KeyTakeaway>Code rolls back in seconds; a dropped column doesn't. Use expand/contract: additive migration before deploy, dual-write + batched backfill, switch reads, drop old only after the new code is proven. Rename = 3+ releases.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="ci-cd-04-release-automation-04-safe-migrations-and-rollback-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why a destructive migration breaks rollback, especially under a rolling/canary/blue-green deploy, and walk through the expand/contract sequence and migration ordering that keeps rollback safe.", a: "Rollback works on code because a deploy just swaps one immutable artifact for the previous one — the old image still exists, you re-point traffic, done in seconds. The database has no previous artifact: it's one mutable stateful thing, and a migration mutates it in place. Once DROP COLUMN has run the column and its data are gone, so 'go back' is meaningless — even recreating the column leaves the rows empty. The deploy and the schema change are coupled in the release but only the deploy half is reversible, so 'just roll back the deploy' silently assumes the old code can still read the schema it finds. It's sharper under rolling/canary/blue-green because two versions of the code run simultaneously against ONE database; there's a window where vN-1 and vN both serve traffic, so a destructive vN migration breaks the still-running vN-1 BEFORE you ever press rollback. The fix is expand/contract (parallel change): never mutate a column destructively in one step; split it across releases so every running version can read/write the schema as it currently is. (1) EXPAND — add the new structure additively (nullable column, CREATE INDEX CONCURRENTLY), run BEFORE the new code deploys so the column exists when new code starts; old code ignores it, backward compatible. (2) Deploy code that DUAL-WRITES old and new, and backfill existing rows in bounded batches (1k–10k), not one giant UPDATE. (3) A later release switches READS to the new column. (4) CONTRACT — only after the new code is fully rolled out and proven, a separate later release drops the old column, when nothing reads it; this is the single destructive step. A rename is therefore 3+ releases, never one RENAME. Ordering: additive before deploy, destructive after full rollout — running the destructive change with the deploy is exactly what makes rollback impossible." },
+    { q: "Why isn't a down script enough, what online-DDL hazards bite even additive migrations, and when do you forward-fix instead of rolling back?", a: "A down script isn't enough because reversibility on paper isn't reversibility of data or of a live mixed-version fleet: a down that 'restores' a dropped column recreates an empty column but not the deleted data, and a destructive up breaks the simultaneously-running old version immediately, before any down could fire. A down protects against a FAILED migration, never against a SUCCESSFUL one whose schema the previous code can't read — only additive expand/contract keeps rollback safe. Online-DDL hazards: even additive DDL can take the table down — a plain CREATE INDEX locks writes for the whole build, so use CREATE INDEX CONCURRENTLY; long ALTERs take an ACCESS EXCLUSIVE lock and can stall the table under load behind a query queue; and a backfill must be batched, because one giant UPDATE rewrites every row in a single transaction, holds locks, bloats the table, and blocks autovacuum — loop bounded batches of a few thousand rows, committing between them. Forward-fix vs rollback: because the database often can't go back, the senior default for a bad release carrying a schema change is frequently to forward-fix (ship a corrected version forward) rather than roll back. But you only keep that option open by making every migration backward-compatible: if every schema change is expand/contract, the previous artifact still runs against the new schema, so rollback ALSO stays a genuine choice instead of a button that 500s production. Backward-compatible migrations don't replace rollback with forward-fix; they make both safe so you pick per incident." },
+  ]}
+/>
+
+<Recap lang="en">
+Code rolls back in seconds because a deploy just swaps one immutable artifact for the previous one; a database has no previous artifact, so a migration that already ran cannot be auto-undone. A destructive change — DROP COLUMN, RENAME, a type change — shipped together with the deploy is what makes rollback impossible: once the column is gone the old artifact still SELECTs it and 500s, and the data can't be restored. It is sharper under rolling, canary, or blue-green deploys, where two code versions run at once against one database, so a destructive change breaks the still-running old version before you ever press rollback. The discipline is expand/contract (parallel change): never mutate a column in one step. EXPAND adds the new structure additively (a nullable column, CREATE INDEX CONCURRENTLY) and runs BEFORE the new code deploys; the app then dual-writes old and new and backfills existing rows in bounded batches, not one giant UPDATE; a later release switches reads; and CONTRACT drops the old column only AFTER the new code is fully rolled out and proven. So a rename is 3+ releases, never one RENAME, and ordering is additive-before-deploy, destructive-after-rollout. A down script is not enough — it can recreate an empty column but not the deleted data, and a destructive up breaks the live old version immediately. Online-DDL hazards bite even additive migrations: CREATE INDEX CONCURRENTLY to avoid write locks, watch ACCESS EXCLUSIVE locks on long ALTERs, batch backfills. And because the database often can't go back, the senior default for a schema-carrying bad release is often forward-fix — but you only keep both rollback and forward-fix safe by making every migration backward-compatible in the first place.
+</Recap>

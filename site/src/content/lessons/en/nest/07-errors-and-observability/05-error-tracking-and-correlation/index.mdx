@@ -1,0 +1,221 @@
+---
+concepts:
+- error-tracking
+- correlation
+- alert-fatigue
+- pii-scrubbing
+- unhandled-rejection
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-error-tracking-and-correlation"
+sources:
+- https://docs.sentry.io/platforms/javascript/guides/nestjs/
+- https://docs.nestjs.com/
+spiral: []
+status: ready
+summary: 'Logs, metrics, and traces are three haystacks until a shared traceId joins them. An error tracker groups by fingerprint and dedupes; scrub PII before egress; alert on error RATE not count, or the channel gets muted and the real outage hides in the noise.'
+title: 'Error tracking, correlation and alert fatigue'
+track: nest
+unit: 07-errors-and-observability
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The payment outage lasted an hour before anyone looked. Not because no alert fired — alerts fired constantly. That `#alerts` channel had been screaming for weeks: a flaky third-party timeout that retried and succeeded, a handled 404 from a scanner hitting dead routes, a count threshold someone set during an incident and never tuned. Hundreds of messages a day, every one technically a real error, every one safe to ignore. So the team did the rational thing: they muted the channel. Then checkout started failing for real, the alert landed in the same muted channel, and it looked exactly like the noise everyone had already trained themselves not to see. You had three observability systems running — logs, metrics, traces, all from the previous four lessons — and an error tracker on top. None of it helped, because the signal was buried in count-based noise and nothing tied the pieces together. This lesson is the join: how to correlate the three pillars by id, track errors so they group instead of drown, and alert on a rate that wakes someone only when it's worth waking them.
+</Hook>
+
+<Crux>Correlate logs/traces/errors by a shared traceId; group errors by fingerprint; alert on rate/burn, not count, or the channel gets muted.</Crux>
+
+<Explanation>
+
+## Three pillars, one incident: correlate by id
+
+Logs tell you *what happened* (a line per event), metrics tell you *how much / how fast* (the rates and percentiles from L04), traces tell you *where in the call tree* time and failures live (the spans from L03). Each is necessary; none is sufficient alone. The thing that turns three disconnected haystacks into one searchable incident is a **shared join key** stamped on all of them: a `traceId` propagated through the request, plus a `requestId` written onto every log line, attached to every error report, and carried on the trace.
+
+```ts
+// A correlation middleware/interceptor stamps the join key once, early.
+// (Logging envelope is L01; trace propagation is L03 — here we only thread the IDS.)
+@Injectable()
+export class CorrelationInterceptor implements NestInterceptor {
+  intercept(ctx: ExecutionContext, next: CallHandler) {
+    const req = ctx.switchToHttp().getRequest();
+    // reuse the inbound trace if a tracer set one, else mint a requestId
+    const traceId = trace.getActiveSpan()?.spanContext().traceId;
+    const requestId = req.headers['x-request-id'] ?? randomUUID();
+    // make both available to the logger, the error reporter, and downstream calls
+    return runWithContext({ traceId, requestId }, () => next.handle());
+  }
+}
+```
+
+With the key in place, an alert becomes a **pivot**, not an investigation: error in the tracker → read its `traceId` → open that exact trace → filter logs to that one `requestId`. You move from "something is wrong" to "*this* request, *this* span, *these* log lines" in three clicks. Without the join key you have a log search, a trace search, and an error list that share no vocabulary — three tools, three time-correlation guesses, and a much longer hour.
+
+## Error tracking: group by fingerprint, don't drown
+
+A log line per error drowns. The hundredth occurrence of the same `NullPointerException` is the hundredth identical line you scroll past. An **error tracker** (Sentry-style) inverts that: it computes a **fingerprint** from the error's type and stack frames, then *groups* every occurrence with the same fingerprint into one **issue**, counts occurrences, and captures context — release, user, request, breadcrumbs — once per group. Ten thousand identical failures become one issue with a count of 10,000, not 10,000 lines.
+
+In Nest, the global exception filter you built in L01 is the natural reporting point: it already catches every throw inside the request pipeline, so it's where you hand the error to the tracker with the correlation context attached.
+
+```ts
+@Catch()
+export class SentryExceptionFilter implements ExceptionFilter {
+  catch(exception: unknown, host: ArgumentsHost) {
+    const { traceId, requestId } = getContext();
+    Sentry.withScope((scope) => {
+      scope.setTag('traceId', traceId);       // <- links this issue to its trace
+      scope.setTag('requestId', requestId);   // <- and to its exact log lines
+      scope.setUser({ id: getUserId() });     // who hit it (id only, not PII)
+      Sentry.captureException(exception);      // fingerprinted + grouped by Sentry
+    });
+    // ... still translate to the HTTP response as in L01
+  }
+}
+```
+
+Two attachments earn their keep. **`release`** — the deploy SHA, set once at boot (`Sentry.init({ release })`) — makes a spike map to a specific deploy: a new issue that appears the minute `a3f9c1` shipped is a regression you can revert. **`traceId`/`requestId`** make every issue a one-click jump into the trace and the logs, which is the correlation from the previous section made concrete.
+
+## The unhandled-rejection trap
+
+The global filter has a hard boundary: **it only catches throws inside the request pipeline.** An error thrown out-of-band — an unhandled promise rejection in a `setInterval` job, a throw inside an EventEmitter handler, a rejected promise nobody `await`ed — never enters Nest's exception-handling path, so it never reaches the filter and never reaches the tracker. It vanishes. On modern Node an `unhandledRejection` can also terminate the process outright.
+
+War-story: a nightly reconciliation job did `void doReconcile()` — fire-and-forget — and one night `doReconcile` rejected on a malformed row. The global filter never saw it (no request), Sentry never saw it (no filter), and on Node 18 the unhandled rejection took down the worker pod. The pod restarted, retried the same bad row, rejected again, crashed again — a silent crash-loop that ran for hours with zero error reports, because the one place errors were collected was a place this error could never reach.
+
+```ts
+// Out-of-band errors need PROCESS-level handlers — the filter cannot see them.
+process.on('unhandledRejection', (reason) => {
+  Sentry.captureException(reason);           // report it instead of losing it
+});
+process.on('uncaughtException', (err) => {
+  Sentry.captureException(err);
+  Sentry.flush(2000).finally(() => process.exit(1)); // report, drain, then exit
+});
+```
+
+The rule: the global filter covers the request pipeline; process handlers cover everything else. You need *both*, or whole classes of failure are invisible.
+
+<Inset kind="why" lang="en">
+Why does alerting on a raw error **count** cause people to miss real outages? Because a count conflates expected, handled noise with genuine failure, and it has no baseline. A steady trickle of retried timeouts and scanner 404s pages constantly — the channel fills with errors that are all "real" and all safe. People do the only thing they can with a firehose of safe alerts: they mute it. Then the real outage arrives in the same muted channel, looking identical to the noise everyone has already trained themselves to ignore. Alerting on a **rate relative to an SLO/error budget** (from L04) fixes the framing: it separates "normal background trickle" from "we are burning the budget faster than the SLO allows," which is the only thing actually worth waking someone for. The count was always high; the *rate crossing the budget* is the new information.
+</Inset>
+
+## Alert fatigue: alert on the signal, not the noise
+
+The failure mode is alerting on *every* error, or on a raw error *count*. Both generate noise: a transient blip, a handled 404, a retried-then-succeeded timeout each page someone. When everything pages, people mute, and the mute is permanent. The discipline has four moves:
+
+- **Alert on rate / SLO burn, not count** (L04). A burn-rate alert fires when you're consuming the error budget faster than the SLO tolerates — it ignores a steady safe trickle and catches a real cliff.
+- **Separate "log it" from "page someone."** Handled, expected conditions (a validation 400, a known retryable timeout) get logged and counted, never paged. Only unexpected, user-impacting failures page.
+- **Set severities.** Page on SEV1/SEV2; route everything else to a dashboard or a digest, not a human's phone at 3am.
+- **Use the tracker's grouping.** One *new* fingerprint is one notification, not 10,000. "A new issue appeared" is signal; "an existing issue ticked up by one" usually isn't.
+
+## PII and secrets: scrub before egress
+
+Error context is a leak waiting to happen. Breadcrumbs and request snapshots can capture request bodies, headers (including `Authorization`!), emails, and tokens — and an error tracker is a **third party**. Shipping a raw request to it can mean shipping a live bearer token or a customer's PII to your error vendor. That's a breach, logged by you, on purpose. You must scrub before anything leaves the process: a `beforeSend` hook that redacts known-sensitive fields, a deny-list for headers, and token/secret pattern stripping.
+
+```ts
+Sentry.init({
+  release: process.env.GIT_SHA,
+  beforeSend(event) {
+    // deny-list sensitive headers BEFORE the event leaves the process
+    const headers = event.request?.headers;
+    if (headers) { delete headers['authorization']; delete headers['cookie']; }
+    // redact obvious PII / secrets from the body
+    if (event.request?.data) event.request.data = redactSecrets(event.request.data);
+    return event;
+  },
+});
+```
+
+<TradeoffMatrix
+  id="nest-07-errors-and-observability-05-error-tracking-and-correlation-tradeoff-1"
+  lessonSlug="05-error-tracking-and-correlation"
+  lang="en"
+  prompt="Your #alerts channel is so noisy the team mutes it, and a real outage was missed. You must reduce noise WITHOUT missing the next real incident. What do you change?"
+  options={[
+    { name: "Alert on SLO error-budget burn rate, group by fingerprint, and split log-vs-page by severity", summary: "Alert on the signal.", correct: true, justification: "This attacks all three causes of the mute. Burn-rate alerting (L04) ignores the steady safe trickle and fires only when you're consuming the error budget faster than the SLO allows — the actual cliff. Fingerprint grouping means one new issue is one notification, not 10,000 pages for the same failure. The severity split keeps handled/expected conditions on a dashboard or digest and pages only on user-impacting SEV1/SEV2. The channel goes quiet on noise and loud on the thing worth waking for, so the next real outage stands out instead of blending in." },
+    { name: "Alert on every captured exception so nothing is ever missed", summary: "This IS the disease.", justification: "Paging on every exception is exactly what got the channel muted. Most exceptions are handled, expected, or transient — a validation 400, a scanner 404, a retried-then-succeeded timeout. Paging on all of them trains people to ignore the channel, and a muted channel misses everything, including the real outage. 'Never missed' on paper becomes 'always ignored' in practice." },
+    { name: "Raise the raw error-count threshold higher so it fires less often", summary: "Wrong axis.", justification: "A higher count threshold is still a count: it has no baseline and conflates safe noise with real failure. You either set it low and stay noisy, or set it high and a slow-burn outage that never spikes the absolute count sails under it. The problem isn't the threshold value, it's alerting on count at all instead of on rate/burn relative to the SLO." },
+    { name: "Turn alerts off and have someone watch the dashboard manually", summary: "Abandons the signal.", justification: "Disabling alerts and relying on a human to stare at a dashboard means nothing pages at 3am when the outage actually happens, and coverage depends on someone looking. The goal is fewer, higher-quality pages, not zero pages — you want the burn-rate alert to wake someone precisely when the budget is burning, which manual watching cannot guarantee." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-05-error-tracking-and-correlation-quiz-1"
+  lessonSlug="05-error-tracking-and-correlation"
+  lang="en"
+  question="A nightly job does `void doReconcile()` and one night the promise rejects. The app has a global exception filter that reports to Sentry. Why does this rejection never reach Sentry?"
+  choices={[
+    { label: "The global filter only wraps the request pipeline; an out-of-band rejection needs a process-level handler (process.on('unhandledRejection')) to be reported", correct: true },
+    { label: "Sentry dedupes it away because the same fingerprint already exists", misconception: "Deduping groups occurrences into one issue with a count — it never makes an error disappear entirely. The rejection isn't suppressed by grouping; it never reaches Sentry at all, because the global exception filter only catches throws inside the request pipeline and a fire-and-forget job runs outside it. You need process.on('unhandledRejection')." },
+    { label: "The filter catches it, but beforeSend drops it as PII", misconception: "beforeSend scrubs fields out of an event; it doesn't silently delete whole errors, and it only runs on events that actually reach Sentry. This error never reaches the filter or beforeSend at all — it's thrown out-of-band, outside the request pipeline the filter wraps, so process-level handlers are the only thing that can capture it." },
+    { label: "Nest automatically retries the job, so the first rejection is swallowed", misconception: "Nest doesn't auto-retry a fire-and-forget `void doReconcile()` — there's no request lifecycle around it to retry. The rejection is simply unhandled: the global filter never sees it (no request), and without a process.on('unhandledRejection') handler it's lost (and on modern Node can crash the process)." },
+  ]}
+/>
+
+<Quiz
+  id="nest-07-errors-and-observability-05-error-tracking-and-correlation-quiz-2"
+  lessonSlug="05-error-tracking-and-correlation"
+  lang="en"
+  question="The #alerts channel was muted by weeks of safe-but-real errors, and a payment outage went unnoticed for an hour. Which alerting change most directly fixes this?"
+  choices={[
+    { label: "Alert on error RATE / SLO burn rate, dedupe by fingerprint, and split severities so only user-impacting failures page", correct: true },
+    { label: "Lower the error-count threshold so the outage would have crossed it sooner", misconception: "Lowering a count threshold makes the channel MORE noisy, which is what caused the mute in the first place. The problem is alerting on count at all: it conflates safe retried timeouts with real failure. A burn-rate alert relative to the SLO, plus fingerprint dedupe and a severity split, is what separates the outage from the trickle." },
+    { label: "Move the alerts to a second channel so the noisy one can stay muted", misconception: "Relocating the same count-based noise just creates a second channel that will also get muted. The fix isn't where the alerts land, it's WHAT triggers them: rate/burn instead of count, grouped by fingerprint, with severities so only user-impacting failures page a human." },
+    { label: "Page on every new exception so the outage can't slip through", misconception: "Paging on every exception is the original sin that muted the channel — most exceptions are handled or transient. You'd be back to a firehose of safe alerts that people ignore. The goal is fewer, higher-signal pages: burn-rate alerting plus fingerprint grouping plus a severity split." },
+  ]}
+/>
+
+<FlowDiagram
+  label="The error-tracking and correlation pipeline, end to end. An error is thrown; it is caught either by the Nest global exception filter (if it happened inside the request pipeline) or by a process-level handler (process.on unhandledRejection / uncaughtException, for out-of-band throws a job or timer). Either path runs the error through PII scrubbing (beforeSend deny-lists Authorization and Cookie headers and redacts secrets) before anything leaves the process. The scrubbed event goes to the error tracker, which groups it by fingerprint and attaches the traceId and release SHA. That traceId lets you correlate the issue to its exact trace and log lines. Finally, alerting watches error RATE and SLO burn, not raw count, so only a real budget burn pages a human."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "throw", label: "error thrown", sub: "in-request or out-of-band" },
+    { id: "catch", label: "filter + process handlers", sub: "cover both paths" },
+    { id: "scrub", label: "scrub PII", sub: "beforeSend, deny-list" },
+    { id: "track", label: "error tracker", sub: "fingerprint + traceId + release" },
+    { id: "correlate", label: "correlate", sub: "trace + logs by traceId" },
+    { id: "alert", label: "alert on rate/burn", sub: "not raw count" },
+  ]}
+  edges={[
+    { from: "throw", to: "catch", label: "capture both" },
+    { from: "catch", to: "scrub", label: "before egress" },
+    { from: "scrub", to: "track", label: "group + tag" },
+    { from: "track", to: "correlate", label: "join key" },
+    { from: "correlate", to: "alert", label: "signal" },
+  ]}
+  caption="Capture both in-request and out-of-band errors, scrub PII before they leave the process, group by fingerprint with a traceId join key, correlate to trace and logs, then alert on rate/burn rather than count so the channel stays trustworthy."
+/>
+
+</Explanation>
+
+<KeyTakeaway>A shared traceId joins logs/traces/errors. Group by fingerprint (1 issue, not 10k lines); scrub Authorization/PII before egress; cover out-of-band throws with process handlers; alert on rate/burn, not count.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-07-errors-and-observability-05-error-tracking-and-correlation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain how to correlate the three observability pillars during an incident, and why an error tracker's fingerprint grouping beats a log line per error.", a: "Logs say what happened, metrics say how much/how fast, traces say where in the call tree — three necessary but individually insufficient views. They become one searchable incident only when joined by a shared key: a traceId propagated through the request plus a requestId stamped on every log line, attached to every error report, and carried on the trace. With the key, an alert is a pivot not an investigation: error in the tracker → read its traceId → open that exact trace → filter logs to that one requestId, moving from 'something is wrong' to 'this request, this span, these log lines' in a few clicks. Without it you have a log search, a trace search, and an error list that share no vocabulary. An error tracker beats a log-line-per-error because a line per error drowns: the 10,000th identical NullPointerException is one more line you scroll past. The tracker computes a fingerprint from the error type and stack frames, groups every occurrence with that fingerprint into one issue with a count, and captures context (release, user, request, breadcrumbs) once per group — so 10,000 failures are one issue with count 10,000, not 10,000 lines, and one NEW fingerprint is one notification." },
+    { q: "Why do out-of-band errors bypass the Nest global filter, and why does alerting on a raw count make teams miss real outages? Give the fix for each.", a: "The global exception filter only catches throws INSIDE the request pipeline. An unhandled promise rejection in a setInterval job, a throw in an EventEmitter handler, or a fire-and-forget rejected promise is thrown out-of-band, never enters Nest's exception path, never reaches the filter, and never reaches the tracker — it vanishes (and on modern Node an unhandledRejection can crash the process, e.g. a fire-and-forget reconcile job crash-looping a worker pod for hours with zero error reports). Fix: add process-level handlers — process.on('unhandledRejection') and process.on('uncaughtException') — that captureException (and on uncaughtException, flush then exit). You need BOTH the filter (request pipeline) and process handlers (everything else). Alerting on a raw count makes teams miss outages because a count conflates expected handled noise (retried timeouts, scanner 404s) with real failure and has no baseline: the channel fills with safe-but-real errors, people mute it, and the real outage arrives in the same muted channel looking identical to the noise. Fix: alert on error RATE / SLO burn rate (L04) so you separate the normal trickle from burning the budget, dedupe by fingerprint so one new issue is one page, split log-vs-page by severity, and always scrub PII/secrets (Authorization, cookies, tokens) via beforeSend before egress since the tracker is a third party." },
+  ]}
+/>
+
+<Recap lang="en">
+Logs (what happened), metrics (how much/how fast, L04) and traces (where in the call tree, L03) are three disconnected haystacks until a shared join key — a traceId plus a requestId stamped on every log line, every error report and the trace — turns an alert into a pivot: error → its traceId → that trace → those exact log lines. An error tracker beats a log line per error by computing a fingerprint from the error type and stack and grouping every occurrence into one issue with a count, capturing release/user/request/breadcrumbs once; attach the release SHA so a spike maps to a deploy and the traceId so each issue links to its trace and logs. The global exception filter from L01 only catches throws inside the request pipeline, so out-of-band errors — an unhandled rejection in a timer or event handler, a fire-and-forget rejected promise — bypass it entirely and vanish (and on modern Node can crash-loop a worker), which is why you also need process.on(&#123; unhandledRejection, uncaughtException &#125;) handlers that report. Because the tracker is a third party, you must scrub PII and secrets — deny-list the Authorization and Cookie headers, redact tokens — in a beforeSend hook before anything leaves the process, or you log a breach yourself. Finally, alert on the signal, not the noise: alerting on every error or a raw count pages on safe trickle until the team mutes the channel and the real outage hides in it, so alert on error rate / SLO burn rate, group by fingerprint so one new issue is one page, and split log-it from page-someone by severity.
+</Recap>
