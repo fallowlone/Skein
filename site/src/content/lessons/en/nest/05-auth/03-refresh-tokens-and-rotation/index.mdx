@@ -1,0 +1,233 @@
+---
+concepts:
+- access-vs-refresh
+- rotation
+- reuse-detection
+- token-family
+- hashed-storage
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-refresh-tokens-and-rotation"
+sources:
+- https://docs.nestjs.com/security/authentication
+- https://auth0.com/docs/secure/tokens/refresh-tokens/refresh-token-rotation
+spiral: []
+status: ready
+summary: 'A JWT access token cannot be revoked before exp, so keep it short (~15 min) and pair it with a long-lived refresh token that rotates single-use. Reusing a consumed refresh token means two parties hold it — revoke the whole family and force re-auth.'
+title: 'Refresh tokens, rotation and reuse detection'
+track: nest
+unit: 05-auth
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The incident postmortem had one line that stopped the room: "the attacker had a valid session for 26 days." Nobody had been phished after the first hour. What happened was simpler and worse — a refresh token leaked through a logging sink that captured request bodies, and the token's lifetime was 30 days. Every time the attacker's access token expired, they quietly POSTed the same refresh token to `/auth/refresh` and got a fresh 15-minute access token back. No alarm fired, because nothing about that request looked wrong: it was a valid token being exchanged exactly as designed. The refresh token was a 30-day skeleton key, and the system had no way to notice it was being used by two people at once. This lesson is about the token lifecycle that closes that hole: why you carry two tokens, why the long-lived one must rotate on every use, and how rotation turns a stolen token into a tripwire instead of a skeleton key.
+</Hook>
+
+<Crux>A JWT can't be revoked before exp — keep access tokens short. Pair a single-use rotating refresh token; reusing a consumed one means theft.</Crux>
+
+<Explanation>
+
+## Why two tokens: the revocation problem
+
+A JWT access token is **self-contained**: the server verifies its signature and trusts the claims inside without a database lookup. That statelessness is the whole point — it scales, and any service with the public key can validate it. But it has a hard consequence: you **cannot revoke a JWT before its `exp`**. There is no server-side record to delete; the token is valid until it expires, period. So if one leaks, your only lever is how short you made `exp`.
+
+That forces the design. Keep the access token **short-lived — ~15 minutes** — so a stolen one is a 15-minute problem, not a forever problem. But you can't make users log in every 15 minutes, so you pair it with a **refresh token** — long-lived (~7–30 days) — whose only job is to be exchanged at `/auth/refresh` for a new access token.
+
+```ts
+import { Injectable } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+
+@Injectable()
+export class TokenService {
+  constructor(private readonly jwt: JwtService) {}
+
+  // two tokens, two secrets, two very different TTLs
+  async issuePair(userId: string, familyId: string) {
+    const accessToken = await this.jwt.signAsync(
+      { sub: userId },
+      { secret: process.env.ACCESS_SECRET, expiresIn: '15m' },   // short: caps theft blast radius
+    );
+    const refreshToken = await this.jwt.signAsync(
+      { sub: userId, familyId },
+      { secret: process.env.REFRESH_SECRET, expiresIn: '30d' },  // long: avoids constant re-login
+    );
+    return { accessToken, refreshToken };
+  }
+}
+```
+
+The refresh token is now the sensitive credential — it lives for weeks and mints access tokens on demand. So it must be **server-side trackable** (unlike the stateless access token), and it must never touch JS-readable storage. It travels as an **httpOnly, Secure, SameSite cookie**: httpOnly keeps it out of `document.cookie` so XSS can't read it, Secure pins it to HTTPS, SameSite blunts CSRF. The access token can sit in memory; the refresh token sits in a hardened cookie.
+
+## Rotation: make every refresh single-use
+
+The naive design hands back the **same** refresh token for its whole 30-day life. That is exactly the skeleton key from the incident: one leak buys 30 days of silent access. **Rotation** fixes the lifetime problem: on every call to `/auth/refresh`, you **issue a brand-new refresh token and invalidate the old one**. Each refresh token is single-use.
+
+```ts
+async refresh(presentedToken: string) {
+  const record = await this.findFamilyRecord(presentedToken); // looks up by hash (below)
+  if (!record || record.revoked) throw new UnauthorizedException();
+
+  // ROTATION: the old token is now spent; mint a fresh pair on the same family
+  await this.markConsumed(record.id);
+  return this.issuePair(record.userId, record.familyId);
+}
+```
+
+Rotation does two things. It **shrinks the validity window** — a leaked refresh token is only good until the legitimate client next refreshes, often minutes, not weeks. And, crucially, it gives you a **detection signal**: once a token is rotated, presenting it again is anomalous, and anomalies are something you can act on.
+
+## Reuse detection: the consumed token is a tripwire
+
+Here is the core mechanism. A rotated refresh token is single-use, so it should never be seen again. If a **consumed** refresh token *is* presented a second time, there is only one explanation: **two parties hold that token** — the legitimate client and a thief. The leak already happened; the duplicate presentation is the system telling you.
+
+The hard part is that you **cannot tell which party is which**. The request from the attacker and the request from the victim look identical — both carry a once-valid token. So you make the only safe assumption: **compromise**. You **revoke the entire token family** — every refresh token descended from the original login — which forces a full re-authentication.
+
+Model it as a family. Each login starts a **family** (a `familyId`); every rotation chains the next token onto that same family. The family record tracks which token is currently live and whether the family is revoked.
+
+```ts
+// On refresh: if the presented token was ALREADY consumed, that's reuse → kill the family
+async refresh(presentedToken: string) {
+  const record = await this.findByHash(this.hash(presentedToken));
+  if (!record) throw new UnauthorizedException();
+
+  if (record.consumed) {
+    // REUSE DETECTED: a single-use token came back. Two holders exist.
+    await this.revokeFamily(record.familyId);  // nuke every descendant of this login
+    throw new UnauthorizedException('token reuse detected');
+  }
+
+  await this.markConsumed(record.id);
+  const familyId = record.familyId;
+  return this.issuePairAndStore(record.userId, familyId);
+}
+```
+
+Now replay the incident with rotation in place. The attacker steals a refresh token and uses it to mint an access token — fine, they rotated it, they now hold token *v2*. Later, the **real user's** client refreshes with the token *it* still holds (the one the attacker already consumed, *v1*). The server sees a consumed token presented again → **reuse detected** → it **revokes the whole family**. Both the attacker's *v2* and any future refresh die. The user is bounced to the login screen, re-authenticates, and starts a fresh family; the attacker is locked out. The 26-day window collapses to "until the user's next refresh."
+
+<FlowDiagram
+  label="The refresh-token family lifecycle with reuse detection. A login creates a token family and issues an access token (15 minutes) plus a single-use refresh token. Each call to slash auth slash refresh consumes the current refresh token and rotates a new one onto the same family. If a token that was already consumed is presented again — meaning two parties hold a single-use token — the server detects reuse and revokes the entire family, forcing every holder to re-authenticate from a fresh login."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "login", label: "login", sub: "create family" },
+    { id: "issue", label: "access 15m + refresh", sub: "single-use" },
+    { id: "refresh", label: "/auth/refresh", sub: "rotate" },
+    { id: "consume", label: "old token consumed", sub: "new minted" },
+    { id: "reuse", label: "consumed token reused", sub: "two holders" },
+    { id: "revoke", label: "revoke family", sub: "force re-auth" },
+  ]}
+  edges={[
+    { from: "login", to: "issue", label: "issue pair" },
+    { from: "issue", to: "refresh", label: "exp ~15m" },
+    { from: "refresh", to: "consume", label: "rotate" },
+    { from: "consume", to: "refresh", label: "loop" },
+    { from: "consume", to: "reuse", label: "leak" },
+    { from: "reuse", to: "revoke", label: "detected" },
+  ]}
+  caption="Login opens a family; each refresh rotates a single-use token onto it. A consumed token reappearing means two parties hold it — the server revokes the whole family and forces re-auth, turning a leaked token into a tripwire."
+/>
+
+<Inset kind="why" lang="en">
+Why revoke the WHOLE family on reuse instead of just the token that was replayed? Because once a single-use token reappears, you have proof a leak occurred but no way to tell the attacker's request from the victim's — both present a once-valid token, and there is no signal that distinguishes them. If you revoke only the presented token, you might revoke the victim's copy and leave the attacker holding the freshly rotated one — you'd lock out the legitimate user and keep the thief logged in, the exact inverse of what you want. The only safe assumption is that the whole chain descended from that login is compromised, so you revoke every token in the family and force a clean re-authentication. It's a deliberate trade: one leaked token costs the user a single re-login, and in exchange the attacker is guaranteed out.
+</Inset>
+
+## Storage: hash the refresh token, never store it raw
+
+The family record lives in your database — but you must **not** store the raw refresh token in it. If you did, a database leak (a dump, a backup left in a bucket, a read-only SQLi) would hand an attacker every live refresh token in plaintext: instant account takeover at scale, no signature forgery needed. Instead, **store only a hash** of the refresh token — argon2/bcrypt, or a plain SHA-256 since the token is already high-entropy — exactly as you'd store a password. On refresh, hash the presented token and compare against the stored value.
+
+```ts
+import { createHash } from 'node:crypto';
+
+// the token is high-entropy random already, so a fast SHA-256 is fine here
+private hash(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+private async issuePairAndStore(userId: string, familyId: string) {
+  const { accessToken, refreshToken } = await this.tokens.issuePair(userId, familyId);
+  await this.familyRepo.save({
+    familyId,
+    userId,
+    tokenHash: this.hash(refreshToken), // store the HASH, never the raw token
+    consumed: false,
+    revoked: false,
+  });
+  return { accessToken, refreshToken };
+}
+```
+
+The wiring in Nest mirrors the access path but stays separate: a **`JwtRefreshStrategy`** (distinct from the access `JwtStrategy`) reads the refresh token from the cookie and validates its signature with the refresh secret; the `/auth/refresh` endpoint is guarded by it; and the service does the stateful part — look up the family by hash, check `consumed`/`revoked`, rotate, store the new hash, return the new pair. `@nestjs/jwt` signs both tokens, but with **different secrets and different TTLs**, so an access token can never be replayed as a refresh token or vice versa.
+
+<TradeoffMatrix
+  id="nest-05-auth-03-refresh-tokens-and-rotation-tradeoff-1"
+  lessonSlug="03-refresh-tokens-and-rotation"
+  lang="en"
+  prompt="A refresh token will inevitably leak someday — through a log sink, an XSS bug, or a stolen device. How do you limit the damage from a stolen refresh token?"
+  options={[
+    { name: "Rotate single-use on every refresh, detect reuse of a consumed token and revoke the whole family; carry the refresh token in an httpOnly Secure SameSite cookie; store only its hash in the DB", summary: "Rotation + reuse detection.", correct: true, justification: "This is the layered answer. Rotation shrinks the leaked token's validity to 'until the next legitimate refresh' instead of the full 7–30 days. Reuse detection turns the leak into a tripwire: when the consumed token reappears (two holders), revoking the entire family logs the attacker out and forces the user to re-auth. The httpOnly/Secure/SameSite cookie keeps the token out of JS-readable storage (XSS) and off non-HTTPS. Storing only the hash means a DB leak yields no usable tokens. Each layer covers a different leak path, and together they convert a stolen refresh token from a skeleton key into a self-revoking incident." },
+    { name: "Use a single long-lived non-rotating JWT as the refresh token", summary: "Skeleton key.", justification: "This is the incident. A non-rotating refresh token is valid for its entire 7–30 day life, and because a JWT can't be revoked before exp, a leak buys the attacker weeks of silent access — they just keep exchanging the same token for fresh access tokens, and nothing looks anomalous because the token is genuinely valid. With no rotation there is no reuse signal, so the system can never notice two parties hold it. This is precisely the skeleton key the lesson exists to eliminate." },
+    { name: "Skip refresh tokens entirely; issue only an access token with a 24h TTL", summary: "Long blast radius, no UX win.", justification: "This is the worst of both worlds. A 24h access token can't be revoked before exp either, so a stolen one is a full-day skeleton key — far worse than the 15-minute blast radius the two-token design buys you. And you gain nothing in exchange: users still get logged out after 24h, so you haven't even bought the seamless long session that refresh tokens exist to provide. Short access + rotating refresh dominates this on both security and UX." },
+    { name: "Store the refresh token in localStorage so the SPA can attach it to requests", summary: "XSS-readable.", justification: "localStorage is readable by any JavaScript on the page, so a single XSS bug — or a malicious dependency — exfiltrates the long-lived refresh token directly, which is the highest-value credential you have. The httpOnly cookie exists precisely to keep the refresh token out of JS reach. This choice maximizes the leak surface for the one token you most need to protect; it's the opposite of the hardened storage the correct answer uses." },
+  ]}
+/>
+
+<Quiz
+  id="nest-05-auth-03-refresh-tokens-and-rotation-quiz-1"
+  lessonSlug="03-refresh-tokens-and-rotation"
+  lang="en"
+  question="Why is the access token kept short-lived (~15 min) instead of just issuing one long-lived JWT?"
+  choices={[
+    { label: "Because a JWT can't be revoked before its exp, so a short TTL is the only lever that caps the blast radius of a stolen access token", correct: true },
+    { label: "Because short tokens are smaller on the wire and reduce request size", misconception: "TTL has nothing to do with token size — expiresIn is a claim, not payload bulk. The reason for a short TTL is revocation: a self-contained JWT is valid until exp with no server-side record to delete, so you cannot revoke a stolen one early. Making exp short (~15 min) is the only way to bound how long a leaked access token works." },
+    { label: "Because the server re-validates a short token against the database on every request", misconception: "The whole point of a JWT access token is that it is self-contained and verified by signature WITHOUT a DB lookup — that statelessness is why it scales. There is no per-request DB check to revoke against; that's exactly why you can't revoke it before exp and must instead keep the TTL short." },
+    { label: "Because a short access token can be revoked instantly when the user logs out", misconception: "A JWT access token specifically CANNOT be revoked before its exp — there's no server-side record to invalidate. Logout revokes the refresh token (which is server-side trackable), but any already-issued access token stays valid until it expires. The short TTL is what bounds that residual validity." },
+  ]}
+/>
+
+<Quiz
+  id="nest-05-auth-03-refresh-tokens-and-rotation-quiz-2"
+  lessonSlug="03-refresh-tokens-and-rotation"
+  lang="en"
+  question="A refresh token that was already rotated (consumed) is presented to /auth/refresh a second time. What should the server do?"
+  choices={[
+    { label: "Treat it as reuse: revoke the entire token family descended from that login and force re-authentication", correct: true },
+    { label: "Issue a fresh pair anyway — the token was valid once, so honor it", misconception: "A rotated token is single-use; seeing it again means TWO parties hold it (the legitimate client and a thief), which is proof of a leak. Honoring it would mint tokens for the attacker. The correct response is to assume compromise and revoke the whole family, forcing re-auth — that's the entire purpose of reuse detection." },
+    { label: "Revoke only the replayed token and let the other tokens in the family keep working", misconception: "You can't tell the attacker's request from the victim's — both present a once-valid token. Revoking only the presented token risks killing the victim's copy while leaving the attacker holding the freshly rotated one. The only safe move is to revoke the entire family so neither holder can continue, then force a clean re-login." },
+    { label: "Silently ignore the request and return the previously issued access token", misconception: "There's no 'previously issued access token' to return, and silently ignoring a reuse event throws away the one signal that a leak occurred. A consumed token reappearing is an active-compromise indicator; the server must act on it by revoking the family, not swallow it." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Keep access tokens ~15 min (a JWT can't be revoked before exp); pair a 7–30 day refresh token that rotates single-use, lives in an httpOnly cookie, stored hashed. A reused consumed token = two holders = kill the family.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-05-auth-03-refresh-tokens-and-rotation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why do you carry two tokens, and what are the right lifetime, storage, and properties of each?", a: "You carry two tokens because a JWT access token is self-contained and verified by signature without a DB lookup, which means it CANNOT be revoked before its exp — there's no server-side record to delete. The only lever against a stolen access token is a short TTL, so you keep it short-lived (~15 min) to cap the blast radius, and it can live in memory. But you can't force users to log in every 15 minutes, so you pair it with a long-lived refresh token (~7–30 days) whose only job is to be exchanged at /auth/refresh for a new access token. The refresh token is now the sensitive long-lived credential, so it must be server-side trackable (unlike the stateless access token) and must never touch JS-readable storage: it travels as an httpOnly (XSS can't read it), Secure (HTTPS only), SameSite (CSRF defense) cookie. In the DB you store only a HASH of the refresh token (argon2/bcrypt or SHA-256), never the raw token, so a database leak yields no usable tokens. @nestjs/jwt signs both with different secrets and TTLs so neither can be replayed as the other." },
+    { q: "Walk through rotation and reuse detection: what rotation does, what a reused consumed token means, and why you revoke the whole family.", a: "Rotation means every call to /auth/refresh issues a brand-new refresh token and invalidates the old one, so each refresh token is single-use. This shrinks the window a leaked refresh token is valid — only until the legitimate client next refreshes, often minutes instead of weeks — and gives you a detection signal, because a rotated token should never be seen again. Reuse detection is the mechanism: if a CONSUMED refresh token is presented a second time, two parties hold it (the legitimate client and a thief), which is proof of a leak. You can't tell which request is the attacker's and which is the victim's — both carry a once-valid token — so you make the only safe assumption, compromise, and revoke the ENTIRE token family (every refresh token descended from the original login, chained by familyId), forcing re-authentication. Revoking only the replayed token risks killing the victim's copy and leaving the attacker the freshly rotated one. War-story replay: an attacker steals a refresh token and rotates it; the real user later refreshes with the now-consumed token → reuse detected → family revoked → both logged out, attacker locked out, user re-auths. Without rotation + reuse detection, a stolen refresh token is a multi-week skeleton key." },
+  ]}
+/>
+
+<Recap lang="en">
+The token lifecycle exists to solve one hard fact: a self-contained JWT access token cannot be revoked before its exp, because there is no server-side record to delete. So you keep the access token short-lived (~15 min) to cap the blast radius of theft, and pair it with a long-lived refresh token (~7–30 days) that is exchanged at /auth/refresh for new access tokens — the refresh token being the sensitive credential, carried in an httpOnly, Secure, SameSite cookie and stored in the DB only as a hash so a leak yields nothing usable. Rotation makes every refresh single-use: each call issues a new refresh token and invalidates the old one, shrinking a leaked token's validity to minutes and creating a detection signal. Reuse detection is the core mechanism: a consumed single-use token presented again means two parties hold it, and since you cannot tell attacker from victim, you assume compromise and revoke the entire token family (all descendants of that login, chained by familyId), forcing re-auth. In NestJS this is a separate JwtRefreshStrategy reading the cookie, a guarded /auth/refresh endpoint, and a service that validates the presented token's hash against the family record, rotates, and returns a new pair — with @nestjs/jwt signing both tokens under different secrets and TTLs. The net effect: rotation plus reuse detection turns a stolen refresh token from a multi-week skeleton key into a self-revoking tripwire.
+</Recap>
