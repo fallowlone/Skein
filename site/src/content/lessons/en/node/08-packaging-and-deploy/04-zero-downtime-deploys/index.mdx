@@ -1,0 +1,205 @@
+---
+concepts:
+- zero-downtime-deploy
+- liveness-vs-readiness
+- connection-draining
+- keep-alive-drain
+- rollout-strategies
+- expand-contract-migration
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: 04-zero-downtime-deploys
+sources:
+- https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination
+- https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+- https://nodejs.org/api/http.html#serverclosecallback
+spiral: []
+status: ready
+summary: 'A deploy 502 is a race: SIGTERM closes the server before the load balancer
+  de-registers it, so new requests hit a dying pod. Fix the order — fail readiness
+  first, then close and exit — and pick a rollout (rolling, blue-green, canary) with
+  backward-compatible migrations.'
+title: 'Zero-downtime deploys: health probes, draining, and rollouts'
+track: node
+unit: 08-packaging-and-deploy
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Every deploy, the dashboard lit up the same way: a clean green line, then a 4-second spike of 502s and `ECONNRESET`, then green again. Nobody had broken anything — the new image was fine, the old image was fine. The service shipped twelve times a day, so twelve times a day a slice of users got a hard error for no reason. The on-call engineer added a `process.on("SIGTERM")` handler that called `server.close()` and felt done. The next deploy spiked anyway. The bug wasn't *whether* the old pod shut down — it shut down beautifully. The bug was that it shut down while the load balancer was still sending it traffic.
+</Hook>
+
+<Crux>A deploy 502 is a race: the server starts closing on SIGTERM before the LB de-registers it. Fail readiness first, drain, then close.</Crux>
+
+<Explanation>
+
+## The deploy-time 502 is a race, not a crash
+
+You already know (from containerizing Node) that on a rollout the orchestrator sends `SIGTERM`, you handle it, call `server.close()`, and exit before `terminationGracePeriodSeconds` runs out. That makes *your pod* shut down cleanly. It does not make the *deploy* clean, because shutting down cleanly and being removed from the load balancer are two independent events that race.
+
+Here is the exact sequence on a naive rolling deploy. The orchestrator decides to replace pod A. It does two things, and crucially they are **not synchronized**: it sends `SIGTERM` to pod A's container, and—separately, through the endpoints/service controller and then the load balancer or kube-proxy on every node—it begins removing pod A from the set of endpoints traffic is routed to. The first is near-instant. The second propagates through a control plane: the endpoint update has to be observed, then the LB or every node's iptables/IPVS rules have to be rewritten. That propagation takes **hundreds of milliseconds to several seconds**.
+
+So for that window, pod A is in the worst possible state: it received `SIGTERM`, your handler called `server.close()` (which **stops accepting new connections**), but the LB still has pod A in rotation and keeps opening new connections to it. New connections to a socket that's no longer `accept()`ing get refused — the client sees `ECONNREFUSED`/`ECONNRESET`, or the LB returns a synthetic **502/503**. Multiply by every deploy: a burst of **502s for ~2–10 seconds** per rollout, every single rollout, scaling with your request rate. The failure mode is invisible in any single request log and obvious only in the aggregate error-rate graph — which is exactly why it survives for months.
+
+The fix is to **reverse the order** so the LB stops routing *before* you stop accepting. You don't get to synchronize the two events, but you can insert a delay that makes de-registration win the race.
+
+## Liveness vs readiness: two probes, two completely different jobs
+
+Kubernetes gives you two health probes that beginners conflate and seniors keep rigidly separate, because they answer different questions and have opposite consequences.
+
+- **Liveness probe** — "is this process wedged? restart it if so." A failing liveness probe **kills the pod** (it gets `SIGTERM`, then `SIGKILL`, then a fresh container starts). It is a self-heal for a hung event loop or a deadlock.
+- **Readiness probe** — "should traffic go here right now?" A failing readiness probe **removes the pod from the Service endpoints** so the LB stops routing to it — but it does **not** kill the pod. It's a routing switch, not a kill switch.
+
+That distinction is the lever that fixes the deploy 502. On `SIGTERM`, **fail readiness first**: flip an in-memory flag so the readiness endpoint returns `503`. The endpoint controller observes the failure and pulls you from rotation. *Then* wait long enough for that de-registration to actually propagate, and only *then* call `server.close()` and drain in-flight work. You've manually ordered the race in your favor.
+
+```js
+import http from "node:http";
+
+let ready = true;             // readiness flag, flipped on shutdown
+const inflight = new Set();   // optional: track sockets for diagnostics
+
+const server = http.createServer((req, res) => {
+  if (req.url === "/healthz") {          // LIVENESS: process responds → alive
+    res.writeHead(200).end("ok");        //   no DB call here — see the inset
+    return;
+  }
+  if (req.url === "/ready") {             // READINESS: route to me?
+    res.writeHead(ready ? 200 : 503).end(ready ? "ready" : "draining");
+    return;
+  }
+  // ... real request handling ...
+  res.writeHead(200).end("hello");
+});
+
+server.listen(3000);
+
+process.on("SIGTERM", async () => {
+  ready = false;                          // 1. fail readiness → LB drains us
+  await sleep(LB_DEREGISTER_MS);          // 2. wait for de-registration to propagate
+  server.close(() => process.exit(0));    // 3. stop accepting, finish in-flight, exit
+  server.closeIdleConnections?.();        //    evict idle keep-alive sockets now
+  setTimeout(() => process.exit(1), DRAIN_DEADLINE_MS).unref(); // 4. hard cap
+});
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+```
+
+The tradeoff lives in **what each probe is allowed to depend on**. Readiness *should* reflect real dependencies — if the DB pool is exhausted, returning `503` and shedding traffic is correct backpressure. Liveness *must not* — and that asymmetry is the single most expensive probe mistake in production.
+
+<Inset kind="why" lang="en">
+Why must liveness never check an external dependency? Because a liveness failure *kills the pod*, and external dependencies fail for all pods at once. Picture a 30-pod fleet whose `/healthz` runs `SELECT 1` against Postgres. Postgres has a 5-second hiccup (failover, a lock storm, a network blip). Every pod's liveness probe fails simultaneously → Kubernetes `SIGKILL`s **all 30 pods at the same time** → 30 cold starts hammer the already-struggling DB with reconnects → the fleet enters a `CrashLoopBackOff` restart storm and your brief DB blip becomes a full outage. The process was perfectly healthy; it just couldn't reach a sick dependency. Liveness answers "is *my* event loop alive?" and nothing more. Dependency health belongs in readiness, which sheds traffic without killing anything.
+</Inset>
+
+## Draining in-flight requests, and the keep-alive trap
+
+`server.close()` does exactly two things: it stops accepting **new** connections, and it fires its callback once all **existing** connections have finished and closed. That sounds like clean draining — and for short request/response traffic it is. The trap is **HTTP keep-alive**: a persistent connection that's idle (no request in flight) is still an *open* connection, so `server.close()` will wait for it indefinitely. A client holding a keep-alive socket open for connection reuse can pin your shutdown until the grace period expires.
+
+That's why a correct drain has a deadline and actively evicts idle sockets. Node 18.2+ added `server.closeIdleConnections()` (evict sockets with no in-flight request) and `server.closeAllConnections()` (the hammer — kill everything). The shape: on `SIGTERM`, after failing readiness, call `server.close(cb)` to begin draining, immediately `closeIdleConnections()` to release idle keep-alive sockets, and arm a **hard-deadline timer** that force-exits if in-flight work runs long. Set `server.headersTimeout`/`keepAliveTimeout` so sockets don't outlive requests in the first place.
+
+The numbers have to nest correctly or you get cut off mid-request:
+
+```yaml
+# Deployment — the timing budget that prevents both 502s and SIGKILL-mid-request
+spec:
+  template:
+    spec:
+      terminationGracePeriodSeconds: 40   # MUST exceed preStop + drain, or you get SIGKILL (137)
+      containers:
+        - name: api
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]    # bridge the LB-deregistration race
+          readinessProbe:
+            httpGet: { path: /ready, port: 3000 }
+            periodSeconds: 2                # detect "draining" within ~2s
+            failureThreshold: 1
+          livenessProbe:
+            httpGet: { path: /healthz, port: 3000 }  # NO dependency check
+            periodSeconds: 10
+            failureThreshold: 3             # ~30s before a restart — tolerant, not trigger-happy
+```
+
+`terminationGracePeriodSeconds` (k8s default **30s**) is the total budget from `SIGTERM` to `SIGKILL`. Your `preStop` sleep (~**5s**) plus your in-app drain (~**15–25s**) must fit inside it with margin — if drain overruns the grace period, the kubelet sends `SIGKILL` (exit **137**) straight through your still-running requests, dropping them. That's the failure mode of setting the grace period too low: you traded one source of 502s (the LB race) for another (the kill saw). The `preStop` `sleep 5` is a belt-and-suspenders bridge for the de-registration window even if your app's readiness flip is slow to propagate.
+
+## Rollout strategies: who eats a bad deploy
+
+Probes and draining make a *single* pod swap clean. The rollout **strategy** decides how many pods swap at once, how fast you can undo it, and—critically—**who is exposed when the new version is broken in a way no probe catches** (a logic bug, a bad config, an incompatible migration).
+
+<TradeoffMatrix
+  id="04-zero-downtime-deploys-tradeoff-1"
+  lessonSlug="04-zero-downtime-deploys"
+  lang="en"
+  prompt="A high-traffic service ships ~12x/day. A recent deploy had a subtle logic bug that passed all health probes (the pod was 'ready' and 'live') but returned wrong data and raised the 5xx rate. Which rollout strategy best limits blast radius and lets you abort fastest, accepting reasonable cost?"
+  options={[
+    { name: "Canary: route 1–5% of traffic to the new version, watch error rate and latency for a few minutes, auto-rollback on a regression, then ramp to 100%", summary: "Small blast radius, fast abort.", correct: true, justification: "A probe-passing logic bug is exactly the failure canary is built for. Only 1–5% of users hit the bad version, and you gate promotion on real signals (5xx rate, p99 latency, business metrics) that a liveness/readiness probe can't see. If the metrics regress, automated analysis rolls back before most users ever touch it. You pay some pipeline complexity and a slower full rollout, but you cap the blast radius and get the fastest evidence-based abort — the right trade for a service that ships 12x/day." },
+    { name: "Rolling update with maxSurge/maxUnavailable: replace pods gradually in place", summary: "Gradual, but 100% eventually.", justification: "Rolling is the sane default for routine deploys and gives you zero-downtime pod swaps with probes + draining. But it has no traffic gate: a probe-passing bug ships to 100% of users as the rollout completes, just more slowly than a big-bang. Rollback means rolling forward again to the old image, which is not instant. It limits the swap, not the exposure — wrong tool for catching a bad version in production." },
+    { name: "Blue-green: stand up a full new environment, flip 100% of traffic at once, keep blue for instant rollback", summary: "Instant switch + rollback, 2x cost.", justification: "Blue-green gives the fastest rollback (flip the router back to blue) and a clean cutover, which is excellent for risky releases — but the flip sends 100% of traffic to green instantly, so a probe-passing logic bug hits everyone the moment you cut over. Rollback is fast, but every user already ate the bad response. Great for atomic switchovers; it does not limit who's exposed during validation the way a canary does, and it costs ~2x infra during cutover." },
+    { name: "Recreate: kill all old pods, then start all new pods", summary: "Full downtime — not zero-downtime.", justification: "Recreate tears down the old version entirely before the new one is up, so there's a window with no serving pods at all — guaranteed downtime, the opposite of the goal. It's only acceptable for systems that can't run two versions side by side (e.g. an exclusive lock). For a high-traffic always-on API it's disqualified before you even discuss blast radius." },
+  ]}
+/>
+
+The failure mode that ties everything together is the **non-backward-compatible migration**. During *any* rolling or canary deploy, the old and new versions run **simultaneously** against **one shared database**. If the new version's migration renames or drops a column the old version still reads, the old (still-serving) pods start throwing — your "zero-downtime" deploy just broke the version you didn't even change. The discipline is **expand/contract**: first deploy a migration that only *adds* (a new nullable column, a new table) and code that writes both old and new shapes; let it bake; then, in a *later* deploy, *contract* by removing the old column once no running version reads it. Every intermediate schema must be readable by both the version you're rolling out *and* the one you're rolling away from. Skip expand/contract and your perfectly drained, probe-gated, canaried rollout still takes an outage — just from the database side.
+
+<Quiz
+  id="04-zero-downtime-deploys-quiz-1"
+  lessonSlug="04-zero-downtime-deploys"
+  lang="en"
+  question="On SIGTERM your handler immediately calls server.close() and exits, with a correct in-app graceful shutdown but no readiness flip and no preStop delay. Why do deploys still emit a burst of 502/ECONNRESET?"
+  choices={[
+    { label: "Removing the pod from the load balancer's endpoints is a separate, slower control-plane event than SIGTERM, so for a few seconds the LB still routes new connections to a server that has already stopped accepting them — those connections are refused/reset. Failing readiness first (plus a preStop sleep) drains the LB before you close.", correct: true },
+    { label: "server.close() is too slow and SIGKILL arrives mid-request", misconception: "That's a different failure (grace period < drain budget → exit 137). Here the handler exits promptly; the 502s come from new connections arriving at an already-closed listener during the LB de-registration window, not from in-flight requests being killed." },
+    { label: "The liveness probe restarts the pod during shutdown", misconception: "Liveness doesn't fire during normal termination, and it wouldn't cause client-visible 502s from the LB. The burst is the routing race: the LB keeps sending traffic until the endpoint removal propagates, which SIGTERM does not wait for." },
+    { label: "Node can't handle keep-alive during shutdown without closeAllConnections()", misconception: "Idle keep-alive sockets affect how long server.close() takes to finish draining your existing connections, not why brand-new connections get 502s. The 502 burst is the de-registration race; keep-alive eviction is a separate drain concern." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="Ordering the shutdown race so the load balancer de-registers the pod before the server stops accepting connections"
+  hue="var(--d-systems)"
+  actors={["Orchestrator", "App", "Load Balancer"]}
+  messages={[
+    { from: "Orchestrator", to: "App", label: "SIGTERM (rollout)" },
+    { from: "App", to: "App", label: "ready = false -> /ready returns 503" },
+    { from: "Load Balancer", to: "App", label: "readiness fails: remove from endpoints" },
+    { from: "App", to: "App", label: "wait LB_DEREGISTER + preStop sleep" },
+    { from: "App", to: "App", label: "server.close() + closeIdleConnections()" },
+    { from: "App", to: "Orchestrator", label: "in-flight drained -> exit 0 (before SIGKILL)" },
+  ]}
+  caption="The race: SIGTERM and LB de-registration are independent events. Failing readiness FIRST, then sleeping long enough for the endpoint removal to propagate, makes de-registration win — so no new traffic arrives after server.close(). The drain must finish inside terminationGracePeriodSeconds or the kubelet SIGKILLs (137) mid-request."
+/>
+
+<KeyTakeaway>Deploy 502s are a race: SIGTERM closes the server before the LB de-registers it. Fail readiness first, then `server.close()` and exit in the grace period. Liveness kills, readiness routes — never check a DB in liveness.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-zero-downtime-deploys-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does a perfectly correct graceful-shutdown handler (SIGTERM → server.close() → exit) still produce a 502 burst on every deploy, and what is the precise fix?", a: "Because graceful shutdown and load-balancer de-registration are two independent events that race, and server.close() loses. SIGTERM reaches your container almost instantly; removing the pod from the Service endpoints has to travel through the endpoint controller and then rewrite the LB or every node's kube-proxy rules, which takes hundreds of milliseconds to several seconds. During that window server.close() has already stopped the listener from accepting, yet the LB still opens new connections to you — those get refused/reset and surface as a 502/503 burst lasting ~2–10s, every rollout. The fix is to reverse the order so de-registration happens first: on SIGTERM, flip an in-memory readiness flag so /ready returns 503; the endpoint controller pulls you from rotation; sleep long enough for that to propagate (plus a preStop sleep ~5s as a bridge); only THEN call server.close() and drain. You can't synchronize the two events, but you can insert a delay that makes the LB win the race." },
+    { q: "What's the difference between liveness and readiness, and why must liveness never check an external dependency like the database?", a: "Liveness answers 'is this process wedged?' — a failing liveness probe KILLS the pod (SIGTERM → SIGKILL → fresh container). Readiness answers 'should traffic route here right now?' — a failing readiness probe REMOVES the pod from the Service endpoints so the LB stops routing, but does NOT kill it. The consequence asymmetry is everything. If liveness runs SELECT 1 against the DB and the DB has even a 5-second blip, every pod's liveness fails at the same moment, so Kubernetes SIGKILLs the entire fleet simultaneously; all pods cold-start and slam the struggling DB with reconnects, turning a brief blip into a CrashLoopBackOff outage. The process was healthy — it just couldn't reach a sick dependency. So liveness checks only 'is my event loop alive?' (a cheap in-process endpoint, no I/O to dependencies), while dependency health belongs in readiness, which sheds traffic gracefully without killing anything." },
+  ]}
+/>
+
+<Recap lang="en">
+A deploy-time 502 burst is almost never a crash — it's a race between two independent events: the orchestrator sends `SIGTERM` (near-instant) while it separately de-registers the pod from the load balancer (a control-plane propagation that takes hundreds of ms to seconds). A textbook-correct `SIGTERM → server.close() → exit` handler loses that race: it stops accepting new connections while the LB is still routing to it, so new requests get refused and surface as ~2–10s of 502/`ECONNRESET` per rollout. The fix is ordering, using the two probes that mean opposite things: readiness is a routing switch (fail it to drain the LB without dying), liveness is a kill switch (fail it and the pod restarts). On `SIGTERM` you fail readiness first, wait for de-registration to propagate (with a `preStop sleep ~5s` bridge), then `server.close()` and `closeIdleConnections()` to evict idle keep-alive sockets, then exit — all inside `terminationGracePeriodSeconds` (default 30s; budget ~15–25s of drain) or the kubelet `SIGKILL`s you (exit 137) mid-request. Crucially, liveness must never depend on the DB, or one blip kills the whole fleet into a restart storm. Finally, the rollout strategy decides who eats a probe-passing bad version — rolling ships to 100% gradually, blue-green flips 100% instantly with fast rollback at ~2x cost, canary exposes only 1–5% and auto-rolls-back on metrics — and none of them survive a non-backward-compatible migration, because old and new versions run together against one database, so you ship expand/contract schema changes that both versions can read.
+</Recap>
