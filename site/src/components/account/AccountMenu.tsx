@@ -8,6 +8,7 @@ type Me = { login: string; nickname: string; avatarUrl: string | null };
 export default function AccountMenu({ lang }: { lang: Locale }) {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined=loading
   const [open, setOpen] = useState(false);
+  const [avatarBroken, setAvatarBroken] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -52,8 +53,19 @@ export default function AccountMenu({ lang }: { lang: Locale }) {
   return (
     <div class="relative shrink-0" ref={rootRef}>
       <button class="icon-btn" onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open}>
-        {me.avatarUrl
-          ? <img src={me.avatarUrl} alt="" width={18} height={18} class="rounded-full" />
+        {me.avatarUrl && !avatarBroken
+          ? <img
+              src={me.avatarUrl}
+              alt=""
+              width={18}
+              height={18}
+              class="rounded-full"
+              style="width:18px;height:18px;object-fit:cover"
+              loading="eager"
+              decoding="async"
+              referrerPolicy="no-referrer"
+              onError={() => setAvatarBroken(true)}
+            />
           : <span class="w-[18px] h-[18px] rounded-full bg-hairline-2 inline-block" />}
         <span class="hidden sm:inline text-[12px] font-medium">{me.nickname}</span>
       </button>
