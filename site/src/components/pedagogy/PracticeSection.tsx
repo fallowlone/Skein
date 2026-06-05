@@ -7,6 +7,9 @@ import { setTaskStatus, readProgress } from "~/scripts/practice-state";
 
 const SqlSandbox = lazy(() => import("./SqlSandbox"));
 const JsSandbox = lazy(() => import("./JsSandbox"));
+// Opt-in LLM critique; lazy so the BYOK keystore loads only when a gradable
+// (design / incident / diagnose-self) task is opened.
+const GradeWithAi = lazy(() => import("./GradeWithAi"));
 
 // name → lazy parametric component (must match PARAMETRIC_COMPONENT_NAMES)
 const PARAMETRIC: Record<string, ReturnType<typeof lazy>> = {
@@ -114,10 +117,16 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
           <Constraints lang={lang} text={tt(lang, task.constraints.en, task.constraints.ru)} />
           <Rubric lang={lang} items={task.rubric.map((r) => tt(lang, r.en, r.ru))} />
           <Reveal lang={lang} lessonKey={lessonKey} taskId={task.id} body={tt(lang, task.model.en, task.model.ru)} onChange={onChange} />
+          <Suspense fallback={null}><GradeWithAi lang={lang} task={task} /></Suspense>
         </div>
       );
     case "incident":
-      return <Incident lang={lang} lessonKey={lessonKey} taskId={task.id} steps={task.steps.map((s) => ({ label: tt(lang, s.label.en, s.label.ru), prompt: tt(lang, s.prompt.en, s.prompt.ru), reveal: tt(lang, s.reveal.en, s.reveal.ru) }))} onChange={onChange} />;
+      return (
+        <div>
+          <Incident lang={lang} lessonKey={lessonKey} taskId={task.id} steps={task.steps.map((s) => ({ label: tt(lang, s.label.en, s.label.ru), prompt: tt(lang, s.prompt.en, s.prompt.ru), reveal: tt(lang, s.reveal.en, s.reveal.ru) }))} onChange={onChange} />
+          <Suspense fallback={null}><GradeWithAi lang={lang} task={task} /></Suspense>
+        </div>
+      );
     case "diagnose":
       if (task.grading.mode === "blanks") {
         return <Blanks lang={lang} lessonKey={lessonKey} taskId={task.id}
@@ -130,6 +139,7 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
           {task.evidence && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{tt(lang, task.evidence.en, task.evidence.ru)}</pre>}
           <Rubric lang={lang} items={task.grading.rubric.map((r) => tt(lang, r.en, r.ru))} />
           <Reveal lang={lang} lessonKey={lessonKey} taskId={task.id} body={tt(lang, task.grading.model.en, task.grading.model.ru)} onChange={onChange} />
+          <Suspense fallback={null}><GradeWithAi lang={lang} task={task} /></Suspense>
         </div>
       );
     case "fix":
