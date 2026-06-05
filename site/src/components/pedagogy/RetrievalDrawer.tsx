@@ -1,6 +1,8 @@
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { recordRetrieval, dismissRevisit } from "~/scripts/user-state";
+import { cardsFromRetrieval } from "~/scripts/review-harvest";
+import { addCard } from "~/scripts/review-state";
 import { t, type Locale } from "~/i18n";
 
 type Q = {
@@ -42,6 +44,12 @@ export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
   const [confidence, setConfidence] = useState<Record<string, number>>({});
   const [completed, setCompleted] = useState(false);
   const l = labels[lang];
+
+  // Lazy-seed spaced-repetition cards on first visit (string-valued Q/A only).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    cardsFromRetrieval(pieceSlug, lang, questions).forEach(addCard);
+  }, []);
 
   return (
     <section class="my-10 hr-top hr-bot py-6">
