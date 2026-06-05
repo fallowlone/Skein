@@ -53,7 +53,7 @@ describe("schedule", () => {
       { id: "mid-roi-unit", estMin: 120, roi: 0.5 },
     ]);
     expect(f.verdict).toBe("over");
-    expect(f.dropped).toContain("low-roi-unit");      // lowest ROI dropped first
+    expect(f.dropped).toEqual(["low-roi-unit", "mid-roi-unit"]); // both dropped, lowest ROI first
     expect(f.deltaMin).toBe(200);
   });
 
