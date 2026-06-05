@@ -1,0 +1,194 @@
+---
+concepts:
+- process-lifecycle
+- exit-codes
+- posix-signals
+- graceful-shutdown
+- process-exit-trap
+- pid1-in-docker
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: 05-process-lifecycle-and-graceful-shutdown
+sources:
+- https://nodejs.org/api/process.html#signal-events
+- https://nodejs.org/api/process.html#processexitcode
+- https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-termination
+spiral: []
+status: ready
+summary: 'A process exits when the event loop drains or you force it; the senior skill is dying cleanly — catch SIGTERM, flip readiness off, stop accepting connections, drain in-flight work under a hard timeout, then exit, so deploys cost zero 502s.'
+title: 'Process lifecycle and graceful shutdown'
+track: node
+unit: 01-modules-and-runtime
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Every deploy, your dashboards light up with a tidy burst of 502s and `ECONNRESET` for about three seconds, then go green again. The error budget shrugs it off, so nobody fixes it — until a payments rollout drops an in-flight `POST /charge` mid-write and a customer gets double-billed because the retry landed on a fresh pod. The service was healthy. The deploy was clean. What killed those requests was the old pod being told to stop and not knowing how to die politely: Kubernetes sent `SIGTERM`, your Node process had no handler, the orchestrator waited out the grace period, and then `SIGKILL` (137) tore the process apart with sockets still open. Graceful shutdown is the difference between a deploy nobody notices and a deploy that loses money.
+</Hook>
+
+<Crux>A process exits when the loop drains. On SIGTERM: flip readiness off, stop accepting, drain in-flight under a hard timeout, then exit.</Crux>
+
+<Explanation>
+
+## The lifecycle: start, run the loop, exit
+
+A Node process has three phases. It **starts** (parse, load modules, run top-level code), it **runs** — the event loop processes timers, I/O, and microtasks for as long as there is *ref'd* work to do — and it **exits**. The clean path is the one most people never think about: when the event loop has no more referenced work — no open server, no pending timer, no in-flight socket — it simply returns and the process exits `0` on its own. You don't call anything. An idle HTTP server keeps the loop alive precisely because the listening socket is a ref'd handle; `server.close()` unrefs it, and once the last connection finishes, the loop empties and the process leaves naturally. This *drain-to-exit* behavior is the foundation of graceful shutdown: you don't kill the process, you let it run out of work.
+
+The exit code is the contract with whatever supervises you. `0` means success; any non-zero is failure. Signal-terminated processes report `128 + N`: a `SIGKILL` (signal 9) shows `137`, a `SIGTERM` (15) that you didn't handle shows `143`, and `Ctrl-C` / `SIGINT` (2) shows `130`. When you see `137` in your orchestrator's pod events, that is not a crash in your code — it is the kernel reporting "I had to use the hammer," i.e. your grace period expired and something sent `SIGKILL`.
+
+```js
+// The two exit hooks, and the trap that makes one of them useless
+process.on("exit", (code) => {
+  // SYNCHRONOUS ONLY. The loop is already gone.
+  console.log(`exiting with ${code}`);
+  setTimeout(() => console.log("never runs"), 0); // dropped — no more loop
+});
+
+process.on("beforeExit", () => {
+  // Fires when the loop EMPTIES naturally. Can schedule async work to keep alive.
+  // Does NOT fire on process.exit() or an uncaught fatal.
+});
+```
+
+The `'exit'` event is the sharpest gotcha here: its handler runs **synchronously only**, because by the time it fires the event loop has already stopped. Any `setTimeout`, `fs.writeFile`, or `await` you schedule inside it is silently dropped. `'exit'` is for synchronous last-rites (write a flag, free a sync resource) — never for flushing a network buffer. `'beforeExit'`, by contrast, fires when the loop drains on its own and *can* schedule more async work (it's how some libraries auto-flush), but it does **not** fire on an explicit `process.exit()` or a fatal error. Two events, two completely different trigger conditions — confusing them is how cleanup quietly never happens.
+
+## Signals: the polite request and the unstoppable one
+
+Orchestrators don't reach into your code; they send POSIX signals. **`SIGTERM`** is the universal "please stop" — it is what Kubernetes sends to a terminating pod, what `systemd` sends on `stop`, and what `docker stop` sends. **`SIGINT`** is the terminal interrupt, what `Ctrl-C` raises in the foreground. Both are *catchable*: you register `process.on("SIGTERM", handler)` to intercept the request and run your own shutdown instead of the default (immediate termination). Treat `SIGTERM` and `SIGINT` identically — the orchestrator and the developer are asking for the same thing.
+
+Two signals you cannot touch: **`SIGKILL`** (9) and **`SIGSTOP`**. The kernel handles these directly and never delivers them to your process — there is no handler, no cleanup, no flush. This asymmetry is the entire reason graceful shutdown has a deadline: you get a polite `SIGTERM` with a grace window, and if you overstay it the orchestrator escalates to the unstoppable `SIGKILL`. Your job is to finish *before* the hammer comes down.
+
+```js
+const onSignal = (sig) => {
+  console.log(`received ${sig}, starting graceful shutdown`);
+  shutdown();
+};
+process.on("SIGTERM", onSignal); // k8s / docker stop / systemd
+process.on("SIGINT", onSignal);  // Ctrl-C in dev
+// SIGKILL and SIGSTOP cannot be intercepted — never reach here.
+```
+
+## The process.exit() trap, and the shutdown that does it right
+
+The most tempting wrong answer is `process.exit(0)` inside the `SIGTERM` handler. It feels decisive, and it is a data-loss bug. `process.exit()` terminates **immediately and synchronously** — it does not wait for the event loop to drain. Any buffered `stdout` write, any pending `fs` write, any in-flight database `COMMIT` that hasn't returned is **truncated** the instant you call it. A log line you thought you wrote vanishes; a transaction that was one round-trip from durable is abandoned. The whole point of graceful shutdown is to let the loop empty *naturally*; calling `process.exit()` mid-flight is the opposite of that.
+
+The correct pattern flips a sequence of switches and then lets the process die on its own, with a hard timeout as the only forced exit:
+
+```js
+let shuttingDown = false;
+let ready = true; // health/readiness probe reads this
+
+app.get("/readyz", (_req, res) => res.status(ready ? 200 : 503).end());
+
+async function shutdown() {
+  if (shuttingDown) return; // idempotent: a second SIGTERM must not re-enter
+  shuttingDown = true;
+
+  // (a) Fail readiness so the LB / k8s stops routing NEW traffic to us.
+  ready = false;
+
+  // (e) Hard deadline: if drain hangs, force-exit BELOW the grace period.
+  const forceTimer = setTimeout(() => {
+    console.error("drain timed out, forcing exit");
+    process.exit(1); // 137-style escalation, but on OUR terms with a log line
+  }, 10_000);
+  forceTimer.unref(); // don't let the timer itself keep the loop alive
+
+  try {
+    // (b) Stop accepting NEW connections; let in-flight requests finish.
+    await new Promise((resolve, reject) =>
+      server.close((err) => (err ? reject(err) : resolve()))
+    );
+    // (c)+(d) In-flight work has drained; now close downstream resources.
+    await Promise.all([pool.end(), broker.close(), logger.flush()]);
+    clearTimeout(forceTimer);
+    process.exit(0); // clean: everything drained and closed
+  } catch (err) {
+    console.error("error during shutdown", err);
+    process.exit(1);
+  }
+}
+```
+
+The ordering is load-bearing. Flip readiness **first** so the load balancer deregisters you before you stop accepting — otherwise it keeps sending requests to a socket you're about to close. Then `server.close()`, which stops *new* connections while letting existing ones complete (it does **not** kill live requests). Only after in-flight work drains do you close the DB pool and broker — close them too early and the requests still finishing will hit a dead connection. The `setTimeout` is the safety valve: it must fire *below* the orchestrator's grace period so you exit on your own terms with a log line, rather than being `SIGKILL`ed silently.
+
+<Inset kind="why" lang="en">
+There is one Docker trap that silently defeats all of the above: **PID 1**. When your `Dockerfile` ends with `CMD ["node", "server.js"]`, Node runs as process ID 1 — the init process. The kernel gives PID 1 special treatment: it does **not** install default signal handlers for it. So if your Node process is PID 1 and has *no* explicit `SIGTERM` handler, the signal is simply ignored. `docker stop` sends `SIGTERM`, nothing happens, Docker waits the full 10-second grace period, then sends `SIGKILL` (137). You'll swear your handler "doesn't work" when the real issue is that without an explicit handler PID 1 never had the default one. Fixes: run with `docker run --init` (or `init: true` in compose) to get `tini` as PID 1 forwarding signals to Node, use a real init like `tini` in your image, or — since you're writing handlers anyway — just ensure your explicit `process.on("SIGTERM")` is registered, which works even at PID 1.
+</Inset>
+
+<TradeoffMatrix
+  id="05-process-lifecycle-tradeoff-1"
+  lessonSlug="05-process-lifecycle-and-graceful-shutdown"
+  lang="en"
+  prompt="A Node HTTP service behind Kubernetes (terminationGracePeriodSeconds: 30) needs to stop dropping in-flight requests on every rolling deploy. What does the SIGTERM handler do?"
+  options={[
+    { name: "Flip readiness to 503, server.close() to drain in-flight, then close pools and exit — with a forced process.exit(1) after a ~15s timeout", summary: "Drain with a deadline.", correct: true, justification: "This is the production shape. Readiness flips first so k8s deregisters the pod and stops routing new traffic; server.close() stops accepting while letting in-flight requests finish, so no 502s; pools close only after drain so finishing requests don't hit dead connections; and the timeout (below the 30s grace period) guarantees you exit on your own terms with a log line instead of being SIGKILLed mid-request. Correct ordering plus a hard deadline is exactly what graceful shutdown means." },
+    { name: "Call process.exit(0) immediately inside the handler", summary: "Truncates in-flight work.", justification: "Decisive and wrong. process.exit() terminates synchronously without draining the loop, so in-flight requests, buffered stdout, and an in-flight DB COMMIT are all truncated the instant it runs — the exact data-loss bug graceful shutdown exists to prevent. It's barely better than having no handler at all." },
+    { name: "Register no handler and rely on Kubernetes to wait", summary: "Drops every in-flight request.", justification: "With no SIGTERM handler the default action is immediate termination (143), or — if Node is PID 1 in Docker with no handler — the signal is ignored and you eat the full grace period then SIGKILL (137). Either way in-flight requests die: this is the cause of the 502/ECONNRESET burst on every deploy." },
+    { name: "server.close() but skip flipping readiness", summary: "Race: still gets new traffic.", justification: "Closer, but it leaves the deregistration race open. Until the LB/k8s notices the pod is going away, it keeps routing NEW requests at you while you've stopped accepting — those connections are reset. Flipping readiness to 503 first (often with a short preStop sleep) is what closes that window; draining without it still leaks 502s." },
+  ]}
+/>
+
+<Quiz
+  id="05-process-lifecycle-quiz-1"
+  lessonSlug="05-process-lifecycle-and-graceful-shutdown"
+  lang="en"
+  question="A pod's events show the container exited with code 137 after a deploy. What does that tell you?"
+  choices={[
+    { label: "It was killed by SIGKILL (137 = 128 + 9) — the grace period expired and the orchestrator escalated, so something in shutdown took too long or no SIGTERM handler ran", correct: true },
+    { label: "Your code threw an uncaught exception and crashed", misconception: "An uncaught exception exits 1 (or whatever process.exit code you set), not 137. 137 = 128 + signal 9 specifically means the process was terminated by SIGKILL from outside — the hammer that lands after the grace period, not a crash inside your code." },
+    { label: "The process exited cleanly with status 0", misconception: "0 is clean success. 137 is non-zero and, decoded as 128 + N, identifies a signal: N = 9 = SIGKILL. It is the opposite of a clean exit — it means termination was forced." },
+    { label: "It ran out of memory (OOM)", misconception: "An OOM kill DOES surface as 137 because the OOM killer uses SIGKILL — so 137 is necessary but not sufficient for OOM. After a deploy with no memory spike, the far more likely cause is a SIGTERM that wasn't handled in time, so the grace period expired and SIGKILL followed." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="Graceful shutdown on SIGTERM: the orchestrator asks the app to stop; the app flips its readiness probe to NOT READY so the load balancer deregisters it, stops accepting new connections, drains the requests already in flight, closes the database pool, and only then exits 0 — all inside the orchestrator's grace period so SIGKILL never fires."
+  hue="var(--d-systems)"
+  actors={["orchestrator", "app", "LB", "db"]}
+  messages={[
+    { from: "orchestrator", to: "app", label: "SIGTERM" },
+    { from: "app", to: "LB", label: "/readyz -> 503 (NOT READY)" },
+    { from: "LB", to: "app", label: "deregister: no new traffic" },
+    { from: "app", to: "app", label: "server.close(): stop accepting" },
+    { from: "app", to: "app", label: "drain in-flight requests" },
+    { from: "app", to: "db", label: "pool.end(): close connections" },
+    { from: "app", to: "orchestrator", label: "exit 0 (before grace expires)" },
+  ]}
+  caption="Readiness flips first so the LB stops routing before the app stops accepting (closing the deregistration race). server.close() lets in-flight requests finish; the DB pool closes only after drain. The whole sequence must finish under terminationGracePeriodSeconds (default 30s) or SIGKILL (137) escalates."
+/>
+
+<KeyTakeaway>A process exits when the loop drains. On SIGTERM: flip readiness to 503, `server.close()` to drain in-flight, close pools, then exit below the grace period. Never `process.exit()` mid-flight — it truncates pending I/O.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-process-lifecycle-and-graceful-shutdown-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why must you flip the readiness probe to 503 before calling server.close(), and what breaks if you reverse the order or skip it?", a: "Because there are two independent things that route traffic to you, and they stop at different times. server.close() acts locally and instantly: it makes your process stop accepting NEW TCP connections. But the load balancer / Kubernetes Service is still listed as having you in rotation — it only stops sending you traffic once your readiness probe fails (or your preStop hook completes), which it discovers on its next poll, typically a second or more later. If you call server.close() first (or never flip readiness), there is a window where the LB is still routing new requests at a socket you've already closed, and those connections are reset — the very 502/ECONNRESET burst you were trying to eliminate. Flipping readiness to 503 first starts the LB's deregistration clock; the common refinement is a short preStop sleep (a few seconds) so the deregistration actually propagates before you stop accepting, fully closing the race." },
+    { q: "What exactly is the 'process.exit() trap', and how does the correct shutdown avoid it while still guaranteeing termination?", a: "process.exit() terminates the process immediately and synchronously — it does not wait for the event loop to drain. That means any work the loop still owes — a buffered stdout/log line not yet flushed, a pending fs write, an in-flight database COMMIT that hasn't returned its acknowledgement — is truncated the instant exit() runs. You lose log lines and, worse, can abandon a transaction one round-trip short of durability. The correct shutdown does the opposite: it removes the things keeping the loop alive (server.close() unrefs the listening socket, in-flight requests finish, pool.end() closes connections) and lets the process exit NATURALLY when the loop empties — or calls process.exit(0) only after awaiting all of that. To still guarantee termination if something hangs, it arms a setTimeout (unref'd, set below the orchestrator's grace period) that force-calls process.exit(1) with a log line. So exit() is never used mid-flight to end normal operation; it's used only as a deliberate, logged deadline escalation — turning a silent SIGKILL into an exit on your own terms." }
+  ]}
+/>
+
+<Recap lang="en">
+A Node process runs as long as the event loop has ref'd work and exits — code `0` — the moment that work drains, which is the mechanism graceful shutdown exploits: you don't kill the process, you remove its work and let it leave. Exit codes are the supervisor contract (`0` success, non-zero failure, `128+N` for signals — `137`=SIGKILL, `143`=SIGTERM, `130`=SIGINT), and the two exit hooks differ sharply: `'exit'` runs synchronously only (async scheduled there is dropped) while `'beforeExit'` fires on a natural drain and not on `process.exit()`. Orchestrators ask you to stop with the catchable `SIGTERM` (and `SIGINT` for Ctrl-C); `SIGKILL`/`SIGSTOP` cannot be intercepted, which is why the polite request comes with a deadline. The handler must flip readiness to 503 first (so the LB deregisters and the new-traffic race closes), `server.close()` to drain in-flight requests, then close pools, brokers, and logs, and exit — never `process.exit()` mid-flight, because that truncates buffered writes and in-flight commits. Guard the whole thing with a hard `setTimeout` force-exit set *below* the grace period (k8s default 30s, `docker stop` 10s), and remember the Docker PID-1 trap: without an explicit handler, signals to PID 1 are ignored, so `docker stop` waits out the grace period then SIGKILLs — fix it with `--init`/tini or by registering the handler you already wrote.
+</Recap>
