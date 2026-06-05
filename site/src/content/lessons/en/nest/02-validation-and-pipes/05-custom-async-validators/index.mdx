@@ -1,0 +1,245 @@
+---
+concepts:
+- custom-constraints
+- registerDecorator
+- async-validators
+- useContainer
+- toctou-uniqueness
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-custom-async-validators"
+sources:
+- https://github.com/typestack/class-validator#custom-validation-classes
+- https://docs.nestjs.com/techniques/validation#using-the-built-in-validationpipe
+spiral: []
+status: ready
+summary: 'Custom constraints: a @ValidatorConstraint class or a registerDecorator factory. Async DB validators hide traps — forgetting useContainer leaves injected repos undefined, and the read-then-write race means only a DB unique index, not the validator, guarantees uniqueness.'
+title: 'Custom and async validators (and their traps)'
+track: nest
+unit: 02-validation-and-pipes
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The signup form looked airtight. Someone had written a clean `@IsEmailUnique()` decorator: it queried the users table inside the validator, returned a friendly `400 "email already taken"`, and the demo was flawless. It shipped. Two weeks later support pulled up two accounts with the exact same email, and a third request had crashed with a Postgres `500`. Nothing in the code looked wrong — the validator was *right there*. But the validator had been a lie about what it guaranteed: it read the table, found the email absent, and waved the request through — and the request next to it, half a millisecond later, did exactly the same read and got the same "absent". Both passed. Both inserted. This lesson is about custom and async validators: how to build them, why the injected repository is sometimes `undefined`, and why a validator can never be the thing that keeps two rows apart.
+</Hook>
+
+<Crux>Custom validators are UX, not constraints. An async uniqueness check needs useContainer for DI, and a DB unique index for truth.</Crux>
+
+<Explanation>
+
+## Two ways to write a custom constraint
+
+class-validator gives you two shapes for a custom rule. The first is a **constraint class**: a class decorated with `@ValidatorConstraint` that implements `ValidatorConstraintInterface`. You write `validate()` (return `boolean` or `Promise<boolean>`) and `defaultMessage()`, then attach it to a property with `@Validate(MyConstraint)`.
+
+```ts
+import {
+  ValidatorConstraint,
+  ValidatorConstraintInterface,
+  ValidationArguments,
+  Validate,
+} from 'class-validator';
+
+// A synchronous rule — no I/O, just logic over the value
+@ValidatorConstraint({ name: 'isStrongPassword', async: false })
+export class IsStrongPasswordConstraint implements ValidatorConstraintInterface {
+  validate(value: string): boolean {
+    return typeof value === 'string'
+      && value.length >= 12
+      && /[a-z]/.test(value)
+      && /[A-Z]/.test(value)
+      && /[0-9]/.test(value);
+  }
+  defaultMessage(args: ValidationArguments): string {
+    return `${args.property} must be ≥12 chars with upper, lower, and a digit`;
+  }
+}
+
+export class SignupDto {
+  @Validate(IsStrongPasswordConstraint)
+  password: string;
+}
+```
+
+The second shape is a **decorator factory** built on `registerDecorator`. This is what you reach for when you want a reusable `@IsEmailUnique()` you can drop onto any property — it wraps the same constraint interface in a function that registers it against the target and property:
+
+```ts
+import { registerDecorator, ValidationOptions } from 'class-validator';
+
+// Reusable decorator: @IsEmailUnique() — wraps a constraint via registerDecorator
+export function IsEmailUnique(options?: ValidationOptions) {
+  return function (target: object, propertyName: string) {
+    registerDecorator({
+      name: 'isEmailUnique',
+      target: target.constructor,
+      propertyName,
+      options,
+      validator: IsEmailUniqueConstraint, // the @Injectable() class below
+    });
+  };
+}
+```
+
+Either way the *rule* lives in a constraint class. The decorator factory is just ergonomic packaging so the call site reads `@IsEmailUnique()` instead of `@Validate(IsEmailUniqueConstraint)`.
+
+## Async validators and the DI trap
+
+A uniqueness check has to talk to the database, so its `validate()` returns a `Promise<boolean>` and the constraint is marked `async: true`. To query, it needs the users repository — so you inject it, like any other Nest service:
+
+```ts
+@ValidatorConstraint({ name: 'isEmailUnique', async: true })
+@Injectable()
+export class IsEmailUniqueConstraint implements ValidatorConstraintInterface {
+  constructor(private readonly users: UsersRepository) {} // injected dep
+
+  async validate(email: string): Promise<boolean> {
+    // true = valid = email is NOT taken
+    return !(await this.users.exists({ email }));
+  }
+  defaultMessage(): string {
+    return 'email already taken';
+  }
+}
+```
+
+This compiles, and then crashes at runtime: `Cannot read properties of undefined (reading 'exists')`. The reason is the trap. **class-validator instantiates constraint classes itself, outside Nest's DI container** — it just does `new IsEmailUniqueConstraint()`, with no idea your constructor wanted a repository. So `this.users` is `undefined`. Depending on how you wrote the guard, that's either a crash or — worse — a validator that silently always passes because the `await` on `undefined` throws and gets swallowed.
+
+The one-line fix lives in `main.ts`. `useContainer` (exported by class-validator) tells it to resolve constraints **through Nest's container** instead of `new`-ing them itself:
+
+```ts
+import { useContainer } from 'class-validator';
+import { AppModule } from './app.module';
+
+const app = await NestFactory.create(AppModule);
+// Route constraint instantiation through Nest's DI so @Injectable() deps resolve
+useContainer(app.select(AppModule), { fallbackOnErrors: true });
+```
+
+Now `IsEmailUniqueConstraint` is built by Nest, gets its `UsersRepository`, and `this.users` is real. The `fallbackOnErrors: true` matters: class-validator's *built-in* constraints (`@IsEmail`, `@IsString`, …) aren't Nest providers, so Nest can't resolve them — `fallbackOnErrors` lets class-validator fall back to its own `new` for those instead of throwing. Without it, every built-in validator becomes a "provider not found" error.
+
+<Inset kind="why" lang="en">
+Why isn't a passing async uniqueness validator enough to *guarantee* uniqueness? Because it is a **read-then-write** check with a gap in the middle. The validator runs a `SELECT … WHERE email = ?` and sees no row. But "no row right now" is not "no row when I insert." Two concurrent signups with the same email both run their `SELECT` before either has `INSERT`ed — so both see "absent," both pass validation, and both proceed to insert. Neither validator is wrong about what it saw; they just both saw a world that stopped being true a moment later. Only the database can close that gap, because only the database can serialize the two inserts against a shared `UNIQUE` index — it lets the first commit and rejects the second. The validator reduces friction (a clean 400 for the common case); the index enforces truth.
+</Inset>
+
+## Three traps, and why the index is the real fix
+
+Putting a DB read in the validation layer buys you three problems, in increasing order of severity.
+
+**(1) DI** — the one above: forget `useContainer` and the injected repository is `undefined`. A deploy-day crash, easy to find once you know it exists.
+
+**(2) Perf and enumeration** — validation now runs a query on **every request to that endpoint, before the handler**, including malformed and malicious ones. That's a DB round trip per request, and worse, the distinct `"email already taken"` message turns the endpoint into a **user-enumeration oracle**: an attacker scripts it to learn which emails have accounts. Mitigate with rate limiting and a message that doesn't confirm existence.
+
+**(3) The TOCTOU race — the real lesson.** This is the production incident. The uniqueness check is read-then-write, so under concurrency two signups both pass the validator and both insert. The outcome is either two rows with the same email (no constraint) or a raw Postgres unique-violation surfacing as a `500` (constraint present, unhandled). The fix is to stop pretending validation is a constraint:
+
+```ts
+// 1) The DATABASE is the source of truth — a UNIQUE index serializes inserts
+//    e.g. CREATE UNIQUE INDEX users_email_key ON users (lower(email));
+
+// 2) Catch the unique-violation and map it to a clean 409 — Postgres code 23505
+try {
+  return await this.users.insert(dto);
+} catch (e) {
+  if (e.code === '23505') {           // unique_violation
+    throw new ConflictException('email already taken'); // 409, not 500
+  }
+  throw e;
+}
+```
+
+**Validation is not a constraint.** Keep the async `@IsEmailUnique()` — it gives the common case a friendly `400` without a stack trace. But the `UNIQUE` index is the source of truth: it is the only thing that *serializes* the two concurrent inserts, and catching `23505` turns the loser of that race into a clean `409` instead of a leaked `500`. The validator is the UX; the index is the guarantee.
+
+<FlowDiagram
+  label="Two concurrent signup requests race for the same email under an async uniqueness validator. Request A and Request B each run the @IsEmailUnique async validator, which issues a SELECT WHERE email = ? — and because neither has inserted yet, both SELECTs return 'absent', so both validators pass. Both requests then proceed to INSERT. The database UNIQUE index is the serialization point: it admits the first INSERT and rejects the second with Postgres error code 23505 (unique_violation). The application catches 23505 and maps it to a clean 409 Conflict, instead of leaking a 500. The diagram shows that the validator never closes the race — only the index does."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "a", label: "Request A", sub: "validate" },
+    { id: "b", label: "Request B", sub: "validate" },
+    { id: "sel", label: "SELECT email", sub: "both see absent" },
+    { id: "ins", label: "both INSERT", sub: "race" },
+    { id: "idx", label: "UNIQUE index", sub: "serializes" },
+    { id: "conf", label: "23505 → 409", sub: "loser gets Conflict" },
+  ]}
+  edges={[
+    { from: "a", to: "sel", label: "async validate" },
+    { from: "b", to: "sel", label: "async validate" },
+    { from: "sel", to: "ins", label: "both pass" },
+    { from: "ins", to: "idx", label: "write" },
+    { from: "idx", to: "conf", label: "2nd rejected" },
+  ]}
+  caption="Both async validators pass because both SELECTs ran before either INSERT — the validator can't close the race. The UNIQUE index serializes the inserts; the second fails with 23505, which the app maps to a 409. Validation is UX; the index is the guarantee."
+/>
+
+<TradeoffMatrix
+  id="nest-02-validation-and-pipes-05-custom-async-validators-tradeoff-1"
+  lessonSlug="05-custom-async-validators"
+  lang="en"
+  prompt="You must guarantee that no two users ever share an email, even under concurrent signups. Which approach actually delivers the guarantee?"
+  options={[
+    { name: "A DB UNIQUE index (catch 23505 → 409) as the source of truth, plus an async @IsEmailUnique validator for the friendly 400 message", summary: "Index = truth, validator = UX.", correct: true, justification: "Only the UNIQUE index serializes the two concurrent inserts: the database admits the first and rejects the second with unique_violation (23505), which you catch and map to a clean 409 Conflict instead of a leaked 500. The async validator is kept purely for ergonomics — it returns a friendly 400 for the common, non-racing case without a stack trace — but it is explicitly NOT the thing that enforces uniqueness. This is the senior stance: validation is UX, the database constraint is the guarantee, and you handle the race deterministically at the index." },
+    { name: "An async @IsEmailUnique validator alone — it queries the users table and rejects duplicates", summary: "Read-then-write, loses the race.", justification: "This is exactly the incident. The validator is a read-then-write check: it runs SELECT … WHERE email = ?, and under concurrency two signups both run that SELECT before either INSERTs, so both see 'absent', both pass, and both insert. With no unique index you now have two rows with the same email. The validator is never wrong about what it read — it just can't serialize the inserts, because only the database can. A validator is UX, not a constraint." },
+    { name: "Check-then-insert inside the service (SELECT, then INSERT if absent), no unique index", summary: "Same TOCTOU gap, moved.", justification: "Moving the read-then-write from the validator into the service changes nothing about the race: there is still a window between the SELECT and the INSERT where a concurrent request slips through. Two requests both read 'absent', both insert, both commit. The gap is inherent to read-then-write at the application layer; closing it requires the database to serialize the writes via a UNIQUE index, which this option specifically omits." },
+    { name: "An application-level mutex / lock around the signup handler", summary: "Doesn't scale, wrong layer.", justification: "An in-process mutex only serializes requests within a single Node process; the moment you run two instances (which any real deployment does) the lock is meaningless and the race returns. A distributed lock adds a network round trip, a new failure mode, and still races on lock expiry. You'd be reinventing — badly — the serialization the database already provides for free via a UNIQUE index. Wrong layer for a data-integrity invariant." },
+  ]}
+/>
+
+<Quiz
+  id="nest-02-validation-and-pipes-05-custom-async-validators-quiz-1"
+  lessonSlug="05-custom-async-validators"
+  lang="en"
+  question="Your async IsEmailUniqueConstraint injects a UsersRepository, but at runtime this.users is undefined and validation crashes. What is missing?"
+  choices={[
+    { label: "useContainer(app.select(AppModule), { fallbackOnErrors: true }) in main.ts — without it class-validator instantiates the constraint itself, outside Nest's DI, so the constructor's injected repo is never provided", correct: true },
+    { label: "The constraint is missing @Injectable(), so Nest skips it", misconception: "Adding @Injectable() is necessary but not sufficient: even a perfectly @Injectable() constraint is still instantiated by class-validator's own `new` unless you call useContainer. The decorator marks it as injectable; useContainer is what actually routes class-validator's instantiation through Nest's container so the dependency resolves." },
+    { label: "Async validators can't inject dependencies at all; you must look the repo up via a static service locator", misconception: "Async validators absolutely can use injected dependencies — that's the whole point of wiring useContainer. There's no need for a static service locator; once class-validator resolves constraints through Nest's container, normal constructor injection works exactly as in any provider." },
+    { label: "You forgot to add the constraint to the module's providers array, which is all DI needs", misconception: "Registering the constraint as a provider helps Nest know about it, but on its own it still won't be used by class-validator's instantiation path. The missing piece is useContainer in main.ts — that is what makes class-validator ask Nest for the instance instead of new-ing its own." },
+  ]}
+/>
+
+<Quiz
+  id="nest-02-validation-and-pipes-05-custom-async-validators-quiz-2"
+  lessonSlug="05-custom-async-validators"
+  lang="en"
+  question="Two concurrent signups with the same email both pass the async @IsEmailUnique validator. What actually guarantees that only one of them succeeds?"
+  choices={[
+    { label: "A database UNIQUE index on email: it serializes the two inserts, admits the first and rejects the second with Postgres 23505, which the app maps to a 409", correct: true },
+    { label: "The async validator already prevents it — if both passed, the email must have been free for both", misconception: "Both passing is precisely the bug, not the proof of safety. The validator is a read-then-write check: both requests ran their SELECT before either INSERTed, so both legitimately saw 'absent' and passed. 'Both passed' means the validator could not serialize the inserts — only a database UNIQUE index can do that." },
+    { label: "Wrapping the validator's SELECT in a transaction makes the check atomic with the insert", misconception: "A plain transaction around the SELECT doesn't help, because the two transactions still read a snapshot where the row is absent and only conflict at commit — which is exactly what a UNIQUE index detects. Without the index (or an explicit lock / SERIALIZABLE), the transaction boundary alone doesn't serialize the inserts." },
+    { label: "Setting the validator to async: true makes class-validator run the checks sequentially, so the second sees the first's row", misconception: "async: true only tells class-validator the validate() returns a Promise; it does not serialize separate HTTP requests against each other. The two signups are independent requests on independent connections — nothing in the validator layer orders them. Serialization happens at the database, via the UNIQUE index." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Async DB validators need useContainer or the injected repo is undefined. Validation is read-then-write: only a DB UNIQUE index serializes concurrent inserts — map 23505 to a 409. Validator = UX, index = guarantee.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-02-validation-and-pipes-05-custom-async-validators-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe the two ways to write a custom class-validator constraint, and explain the DI trap that makes an injected repository undefined in an async validator plus its fix.", a: "Two shapes: (1) a constraint class decorated with @ValidatorConstraint({ name, async }) implementing ValidatorConstraintInterface — you write validate(value, args) returning boolean or Promise<boolean> and defaultMessage(args), and attach it with @Validate(MyConstraint); (2) a reusable decorator factory built on registerDecorator({ name, target, propertyName, options, validator }), which packages the same constraint so the call site reads @IsEmailUnique() instead of @Validate(...). For an async DB check you mark the constraint async: true, make validate return Promise<boolean>, and inject the repository in the constructor. The trap: class-validator instantiates constraint classes itself with plain `new`, outside Nest's DI container, so the constructor's injected dependency is never provided — this.users is undefined and validation crashes (or silently always-passes). The fix is one line in main.ts: useContainer(app.select(AppModule), { fallbackOnErrors: true }) from class-validator, which routes constraint instantiation through Nest's container so @Injectable() deps resolve. fallbackOnErrors: true lets class-validator fall back to its own instantiation for built-in constraints (@IsEmail, @IsString) that Nest can't resolve, instead of throwing 'provider not found'." },
+    { q: "Why can an async uniqueness validator never guarantee uniqueness, and what is the correct uniqueness strategy in Nest + Postgres?", a: "An async uniqueness validator is a read-then-write (TOCTOU) check: it runs SELECT … WHERE email = ? and sees no row, but 'no row now' isn't 'no row at insert time'. Two concurrent signups with the same email both run their SELECT before either INSERTs, so both see 'absent', both pass validation, and both insert — producing either two duplicate rows (no constraint) or a raw Postgres unique-violation surfacing as a 500 (constraint present, unhandled). The validator is never wrong about what it read; it simply can't serialize the two inserts, because only the database can. Correct strategy: (1) a DB UNIQUE index is the source of truth — it serializes the inserts, admitting the first and rejecting the second; (2) catch the unique-violation (Postgres SQLSTATE 23505) in the service and map it to a clean 409 Conflict instead of a leaked 500; (3) keep the async @IsEmailUnique validator purely for the friendly 400 on the common non-racing case; (4) add rate limiting and a non-existence-confirming message so the per-request DB read doesn't become a user-enumeration oracle. Validation is UX; the index is the guarantee." },
+  ]}
+/>
+
+<Recap lang="en">
+Custom class-validator constraints come two ways: a class decorated with @ValidatorConstraint implementing ValidatorConstraintInterface (validate + defaultMessage, attached via @Validate), or a reusable decorator factory built on registerDecorator that packages the same constraint as @IsEmailUnique(). An async DB check marks the constraint async: true and returns Promise&lt;boolean>, and must inject its repository — but class-validator instantiates constraints itself with plain new, outside Nest's DI, so the injected repo is undefined and validation crashes. The one-line fix is useContainer(app.select(AppModule), &#123; fallbackOnErrors: true &#125;) in main.ts, which routes instantiation through Nest's container so @Injectable() deps resolve; fallbackOnErrors lets the built-in validators fall back to class-validator's own new instead of erroring. Async DB validation then carries three traps: forgetting useContainer (undefined repo), a DB round trip on every request plus a user-enumeration oracle from a distinct "email taken" message (mitigate with rate limiting and a vague message), and the real one — TOCTOU. Because the check is read-then-write, two concurrent signups both SELECT 'absent' before either INSERTs, both pass, and both insert, yielding duplicates or an unhandled 500. Validation is not a constraint: a DB UNIQUE index is the source of truth that serializes the inserts, and you catch the unique-violation (Postgres 23505) and map it to a clean 409. Keep the validator for the friendly message, but the index is the guarantee.
+</Recap>

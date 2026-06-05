@@ -1,0 +1,215 @@
+---
+concepts:
+- whitelist
+- mass-assignment
+- nested-validation
+- partial-updates
+- forbid-non-whitelisted
+deepensInto: []
+estMin: 17
+lang: ru
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-validation-whitelist-and-nesting"
+sources:
+- https://docs.nestjs.com/techniques/validation#stripping-properties
+- https://github.com/typestack/class-validator#validating-nested-objects
+spiral: []
+status: ready
+summary: 'Закаливание ValidationPipe за пределами базы: whitelist срезает поля без декораторов и убивает mass-assignment, но лишь как один слой; вложенным DTO нужны @ValidateNested + @Type, иначе валидация молча no-op; для PATCH нужен PartialType, а не skipMissingProperties.'
+title: 'Whitelist, вложенная валидация и частичные обновления'
+track: nest
+unit: 02-validation-and-pipes
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+DTO регистрации был как из учебника: `@IsEmail()` на `email`, `@MinLength(8)` на `password`, тесты зелёные, ревью одобрено. Валидация работала идеально — она проверяла ровно те два поля, про которые ей сказали. Через три недели после запуска прилетел тикет: аккаунт с `role: 'admin'`. Никто его не выдавал. В аудит-логе — обычный `POST /auth/register` с телом, которого фронтенд никогда не шлёт: `{ "email": "...", "password": "...", "role": "admin", "isVerified": true }`. Сервис делал `this.userRepo.save(dto)`. `class-validator` увидел два декорированных поля, проверил их и пропустил весь объект целиком — включая два поля, о которых он вообще не слышал. Они уехали прямиком в сохранённую entity. В DTO не было бага. В нём была *граница*, которая пропускала всё, что ей явно не велели остановить. Этот урок — про закрытие этой границы: whitelist, вложенная валидация и частичные обновления.
+</Hook>
+
+<Crux>whitelist срезает поля без декораторов (бьёт mass-assignment); вложенным DTO нужны @ValidateNested + @Type, иначе no-op; PATCH: PartialType.</Crux>
+
+<Explanation>
+
+## whitelist: поле, которого тут быть не должно
+
+По умолчанию `ValidationPipe` валидирует декорированные свойства и *оставляет всё остальное на объекте*. Поле без декоратора не отвергается — валидатор его игнорирует и пропускает нетронутым. Это и есть весь механизм инцидента: недекорированный `role` невидим для валидации, но полностью присутствует в payload, который твой сервис передаёт в ORM.
+
+```ts
+// main.ts — the hardened global pipe
+app.useGlobalPipes(
+  new ValidationPipe({
+    whitelist: true,            // strip any property with NO validation decorator
+    forbidNonWhitelisted: true, // …and 400 instead of silently stripping
+    transform: true,            // instantiate the DTO class (also needed for @Type)
+  }),
+);
+```
+
+`whitelist: true` переворачивает дефолт: любое свойство, у которого нет валидационного декоратора на DTO, **срезается с объекта** до того, как он дойдёт до твоего хендлера. Недекорированные `role` и `isVerified` просто перестают существовать. `forbidNonWhitelisted: true` идёт на шаг дальше — вместо тихого удаления неизвестного поля pipe бросает `400 Bad Request`, называя его (`property role should not exist`). Тихое срезание безопаснее по умолчанию; вариант `forbid` громче и ловит клиентов (и твой собственный фронтенд), шлющих поля, которые им слать не следует, — а именно это и нужно в сервисе, где неожиданное поле это баг, а не шум.
+
+```ts
+// RegisterDto — only these two fields survive whitelist; role/isVerified get stripped
+export class RegisterDto {
+  @IsEmail()
+  email: string;
+
+  @MinLength(8)
+  password: string;
+  // note: NO role, NO isVerified — so whitelist removes them from the body
+}
+```
+
+Это **mass assignment** (он же over-posting) — OWASP API3:2023, *Broken Object Property Level Authorization*. Атакующий не ломает твою валидацию; он эксплуатирует поле, которое твоя валидация никогда не моделировала. `whitelist` срезает его на входе.
+
+<Inset kind="why" lang="ru">
+Почему `whitelist: true` сам по себе недостаточен? Потому что whitelist срезает только поля, у которых *нет* декоратора. В день, когда кто-то добавит декоратор на `role` ради не связанного админ-эндпоинта, делящего тот же DTO, — или ты напишешь `userRepo.save({ ...dto, createdAt })` и спред заново внесёт подконтрольные атакующему ключи, — граница снова потечёт. whitelist защищает *форму* DTO, а не его *использование*. Долговечный фикс — защита в глубину: whitelist, чтобы срезать, **плюс** никогда не сохраняй сырой DTO. Маппи явные поля в entity (`new User(); user.email = dto.email; user.passwordHash = hash(dto.password)`), чтобы единственные свойства, способные дойти до базы, были те, что ты прописал руками. `save(dto)` и `{ ...dto }` — это те две строки, что превращают дыру в валидации в эскалацию привилегий.
+</Inset>
+
+## Вложенная валидация: декоратор, который ничего не делает
+
+`class-validator` **не** рекурсирует во вложенные объекты по умолчанию. Декорируй `city` внутри `AddressDto`, вложи этот `AddressDto` внутрь `RegisterDto` — и валидация на `city` *молча пропускается*. Родитель видит `address` как непрозрачное значение и никогда внутрь не спускается. Невалидные вложенные данные — `city`, который число, отсутствующее обязательное поле — проходят насквозь.
+
+```ts
+import { Type } from 'class-transformer';
+import { ValidateNested, IsString, IsArray, ArrayMinSize } from 'class-validator';
+
+class AddressDto {
+  @IsString() city: string;   // ← validated ONLY if the parent opts in below
+  @IsString() country: string;
+}
+
+export class RegisterDto {
+  @IsEmail() email: string;
+
+  @ValidateNested()           // recurse into the nested object
+  @Type(() => AddressDto)     // class-transformer must instantiate AddressDto first
+  address: AddressDto;
+
+  @ValidateNested({ each: true }) // recurse into EACH element of the array
+  @Type(() => RoleDto)
+  @IsArray()
+  @ArrayMinSize(1)
+  roles: RoleDto[];
+}
+```
+
+Два декоратора заставляют вложенную валидацию реально работать, и нужны **оба**. `@ValidateNested()` велит валидатору спуститься. `@Type(() => AddressDto)` велит `class-transformer` инстанцировать настоящий `AddressDto` из простого JSON — без него `address` остаётся обычным объектом, валидатор не находит метаданных класса для проверки, и вложенные правила становятся no-op. Забыть `@Type` — классический тихий сбой: ни ошибки, ни предупреждения, валидация просто тихо не происходит. Для массивов объектов добавь `{ each: true }`, чтобы рекурсия применялась к каждому элементу, и пара `@IsArray()` / `@ArrayMinSize()` ограничивает сам массив.
+
+## Частичные обновления: PUT заменяет, PATCH патчит
+
+`PUT` заменяет ресурс — ожидается каждое поле. `PATCH` обновляет *некоторые* поля, а остальные отсутствуют by design. Переиспользуй create-DTO для PATCH-хендлера — и каждый `@IsEmail()`, `@MinLength()` теперь ошибочно требует поле, которое клиент намеренно опустил: частичное обновление падает на валидации за то, что оно частичное.
+
+```ts
+import { PartialType } from '@nestjs/mapped-types'; // or @nestjs/swagger
+
+// every field of CreateUserDto becomes optional, decorators preserved
+export class UpdateUserDto extends PartialType(CreateUserDto) {}
+
+// PATCH /users/:id  — body { "email": "new@x.com" } alone now validates
+@Patch(':id')
+update(@Param('id') id: string, @Body() dto: UpdateUserDto) {
+  return this.users.update(id, dto);
+}
+```
+
+`PartialType(CreateUserDto)` строит новый DTO, где каждое унаследованное поле обёрнуто как опциональное (он применяет семантику `@IsOptional()` поле за полем), сохраняя при этом исходные декораторы для любого поля, которое *присутствует*. Это хирургично: отсутствующие поля в порядке, присутствующие всё ещё валидируются. Соблазнительный шорткат — `new ValidationPipe({ skipMissingProperties: true })` — работает, но это тупой инструмент: он пропускает валидацию для **любого** отсутствующего свойства во **всех** DTO приложения, включая обязательные поля, которые ты никогда не хотел делать опциональными, так что по-настоящему-обязательное-но-забытое поле теперь проходит молча. `PartialType` ограничивает опциональность ровно одним update-DTO. Связанная тонкость: `@IsOptional()` пропускает валидацию, когда значение `null`/`undefined`, — это и делает «поле отсутствует» валидным, — но это также значит, что ты не отличишь «клиент не прислал `bio`» от «клиент прислал `bio: null`, чтобы очистить» без отдельного стража `@IsDefined()`/`@ValidateIf`.
+
+<FlowDiagram
+  label="Как закалённый ValidationPipe обрабатывает тело регистрации и где умирает вредоносное поле role. Приходит сырое JSON-тело с email, password, вложенным объектом address и подсунутым полем role: admin. ValidationPipe выполняет три шага по порядку: whitelist срезает каждое свойство без валидационного декоратора, так что недекорированное поле role удаляется с объекта; @ValidateNested с @Type рекурсирует в объект address и валидирует его city и country; forbidNonWhitelisted работает как ворота, которые вернули бы 400, останься любое неизвестное свойство. Результат — чистый DTO, содержащий только email, password и провалидированный address; role уже исчез. Этот чистый DTO затем маппится поле за полем в entity User, без спреда, так что до базы могут дойти только написанные руками присваивания. Поле role срезается на шаге whitelist и никогда не появляется ниже по потоку."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "body", label: "raw body", sub: "+ role:admin" },
+    { id: "strip", label: "whitelist", sub: "strip undecorated" },
+    { id: "nest", label: "@ValidateNested", sub: "recurse + @Type" },
+    { id: "gate", label: "forbidNonWL", sub: "400 if unknown" },
+    { id: "clean", label: "clean DTO", sub: "role gone" },
+    { id: "map", label: "explicit map", sub: "no spread" },
+    { id: "entity", label: "User entity", sub: "to DB" },
+  ]}
+  edges={[
+    { from: "body", to: "strip", label: "role here" },
+    { from: "strip", to: "nest", label: "role stripped" },
+    { from: "nest", to: "gate", label: "address ok" },
+    { from: "gate", to: "clean", label: "pass" },
+    { from: "clean", to: "map", label: "map fields" },
+    { from: "map", to: "entity", label: "save" },
+  ]}
+  caption="Подсунутое поле role:admin срезается на шаге whitelist и никогда не доходит до entity. Защита в глубину: whitelist его удаляет, а явный маппинг полей (никогда save(dto)) означает, что даже заново внесённое поле нельзя сохранить."
+/>
+
+<Inset kind="why" lang="ru">
+Зачем маппить поля явно, если whitelist уже срезал `role`? Потому что whitelist и явный маппинг падают по-разному, так что вместе они прикрывают друг друга. whitelist падает в момент, когда меняется форма DTO, — декоратор, добавленный по не связанной причине, общий DTO, спред `{ ...dto }`, заново вносящий ключи ниже по потоку. Явный маппинг падает… практически никогда, потому что entity получает только те буквальные присваивания, что ты набрал. Цена явного маппинга — несколько строк бойлерплейта на каждый путь create/update. Цена опоры на один whitelist — что один рефакторинг в трёх модулях отсюда молча заново откроет дыру эскалации привилегий. Защита в глубину означает, что ни одно изменение DTO не может стать регрессией безопасности.
+</Inset>
+
+<TradeoffMatrix
+  id="nest-02-validation-and-pipes-04-validation-whitelist-and-nesting-tradeoff-1"
+  lessonSlug="04-validation-whitelist-and-nesting"
+  lang="ru"
+  prompt="Публичный эндпоинт регистрации не должен позволять клиенту назначать себе role (колонка role существует на entity User). Какой подход — самая надёжная защита от mass assignment?"
+  options={[
+    { name: "Включить whitelist: true И маппить явные поля в entity — никогда не сохранять сырой DTO", summary: "Защита в глубину.", correct: true, justification: "Это единственный вариант, переживающий будущий рефакторинг. whitelist срезает недекорированный role на входе, так что он не доходит до сервиса; явный маппинг (user.email = dto.email; user.passwordHash = hash(dto.password)) означает, что entity может получить только поля, набранные руками, так что даже если role позже обзаведётся декоратором или прокрадётся спред { ...dto }, его всё равно нельзя сохранить. Два слоя падают по-разному и прикрывают друг друга — это и есть определение защиты в глубину и сеньорный ответ на OWASP API3:2023." },
+    { name: "whitelist: true в одиночку, затем save(dto) напрямую", summary: "Один слой, течёт при изменении.", justification: "whitelist корректно срезает недекорированный role сегодня — но защищает только форму DTO, не его использование. В день, когда кто-то добавит декоратор на role ради админ-эндпоинта, делящего DTO, или напишет save({ ...dto, ... }), поле снова уедет насквозь. Опора на один валидатор делает единственный не связанный рефакторинг тихой регрессией эскалации привилегий. Нужен явный маппинг как второй слой." },
+    { name: "forbidNonWhitelisted: true только (без явного маппинга)", summary: "Громко, всё равно течёт при добавлении декоратора.", justification: "forbidNonWhitelisted даёт 400 при неизвестном поле, и это отличный сигнал — но это тот же механизм, что и whitelist (он действует на недекорированные поля). В момент, когда у role появляется любой декоратор, оно перестаёт быть «non-whitelisted», 400 перестаёт срабатывать, и если ты всё ещё делаешь save(dto), поле сохраняется. Хорошо для ловли неожиданного ввода, но не замена тому, чтобы никогда не сохранять сырой DTO." },
+    { name: "Доверять фронтенду — он никогда не шлёт поле role", summary: "Это не контроль.", justification: "Фронтенд не граница безопасности; атакующий вызывает эндпоинт напрямую через curl. «Наш клиент это не шлёт» ничего не говорит о том, что шлёт атакующий. Это ровно то допущение, что породило инцидент — тело, которого фронтенд никогда не шлёт, и есть именно то, что показал аудит-лог. Серверное срезание плюс явный маппинг — единственный реальный контроль." },
+  ]}
+/>
+
+<Quiz
+  id="nest-02-validation-and-pipes-04-validation-whitelist-and-nesting-quiz-1"
+  lessonSlug="04-validation-whitelist-and-nesting"
+  lang="ru"
+  question="RegisterDto декорирует только email и password. Тело запроса содержит лишнее `role: 'admin'`. Что делает ValidationPipe при whitelist: true против forbidNonWhitelisted: true?"
+  choices={[
+    { label: "whitelist: true молча срезает role с объекта; forbidNonWhitelisted: true отвергает запрос с 400, называя это свойство", correct: true },
+    { label: "Оба отвергают запрос с 400 — это два названия одного поведения", misconception: "Они различаются. whitelist: true молча срезает недекорированные свойства и пускает (уже чистый) запрос дальше — без ошибки. forbidNonWhitelisted: true превращает это срезание в жёсткий 400 Bad Request, который называет нарушившее свойство. Обычно включают оба: whitelist чтобы удалить, forbidNonWhitelisted чтобы ещё и громко отвергнуть." },
+    { label: "whitelist: true валидирует role как строку; forbidNonWhitelisted: true его игнорирует", misconception: "whitelist никогда не валидирует недекорированное поле — нет декоратора, против которого валидировать. Он его срезает. А forbidNonWhitelisted делает противоположное игнорированию: он превращает присутствие недекорированного поля в 400. Ни один вариант не считает role провалидированным свойством." },
+    { label: "Ни один ничего не делает; role проходит насквозь, потому что у него нет декоратора", misconception: "Это поведение по УМОЛЧАНИЮ (без whitelist) — и ровно дыра mass-assignment. С whitelist: true недекорированный role срезается; с forbidNonWhitelisted: true запрос отвергается. Весь смысл этих флагов — остановить недекорированное поле от прохода насквозь." },
+  ]}
+/>
+
+<Quiz
+  id="nest-02-validation-and-pipes-04-validation-whitelist-and-nesting-quiz-2"
+  lessonSlug="04-validation-whitelist-and-nesting"
+  lang="ru"
+  question="У AddressDto стоит @IsString() на city. Он вложен как `address: AddressDto` внутри RegisterDto без других декораторов на поле. Запрос шлёт `address: { city: 12345 }`. Что происходит?"
+  choices={[
+    { label: "Валидация молча пропускается — без @ValidateNested() и @Type(() => AddressDto) на родительском поле class-validator никогда не спускается во вложенный объект, так что city: 12345 проходит", correct: true },
+    { label: "Отвергается — @IsString() на city падает, потому что 12345 это число", misconception: "@IsString() на city срабатывает, только если родительское поле включило рекурсию. class-validator НЕ рекурсирует во вложенные объекты по умолчанию. Без @ValidateNested() И @Type(() => AddressDto) валидатор считает address непрозрачным значением, никогда не инстанцирует AddressDto, и декоратор city не выполняется — так что 12345 проходит нетронутым." },
+    { label: "Отвергается, потому что address не настоящий экземпляр AddressDto", misconception: "Nest не отвергнет за это — без @Type(() => AddressDto) class-transformer никогда не пытается инстанцировать AddressDto, так что address остаётся обычным объектом и ошибка не возникает. Вложенные правила просто не запускаются. Нужны ОБА — @ValidateNested() (спуститься) и @Type (инстанцировать), — чтобы валидация сработала." },
+    { label: "city валидируется, но country (тоже @IsString) пропускается, потому что отсутствует", misconception: "Здесь не валидируется ни одно вложенное поле — проблема не в отсутствующем поле, а в том, что родитель никогда не включил вложенность. Без @ValidateNested()/@Type на address весь AddressDto пропускается. Добавь оба декоратора, и тогда валидируются и city, и country (отсутствующий country тоже был бы пойман)." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>whitelist срезает недекорированные поля, убивая mass-assignment — но это один слой: ещё маппи явные поля, никогда save(dto). Вложенным DTO нужны @ValidateNested + @Type, иначе no-op. PATCH — PartialType.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="nest-02-validation-and-pipes-04-validation-whitelist-and-nesting-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни уязвимость mass-assignment в эндпоинте регистрации NestJS: как она возникает, что делает whitelist, почему whitelist в одиночку недостаточен и полный фикс.", a: "Mass assignment (OWASP API3:2023, Broken Object Property Level Authorization) возникает, когда клиент шлёт поля, которые DTO никогда не моделировал, а сервис сохраняет сырой DTO. RegisterDto декорирует email и password; атакующий шлёт POST { email, password, role: 'admin', isVerified: true }. По умолчанию ValidationPipe валидирует декорированные поля и оставляет недекорированные на объекте нетронутыми, так что role и isVerified невидимы для валидации, но полностью присутствуют — и userRepo.save(dto) пишет их прямо в entity, эскалируя привилегии. whitelist: true переворачивает дефолт: любое свойство БЕЗ валидационного декоратора срезается с объекта до того, как он дойдёт до хендлера, так что role/isVerified перестают существовать. forbidNonWhitelisted: true идёт дальше и бросает 400, называя неизвестное свойство, вместо тихого срезания. Но whitelist в одиночку недостаточен: он срезает только поля без декоратора, так что в день, когда role обзаведётся декоратором (общий админ-DTO) или ты напишешь save({ ...dto }), поле снова утечёт — whitelist охраняет форму DTO, а не его использование. Долговечный фикс — защита в глубину: whitelist чтобы срезать ПЛЮС явный маппинг полей в entity (user.email = dto.email; user.passwordHash = hash(dto.password)), никогда save(dto) или { ...dto }, так что до базы могут дойти только написанные руками присваивания и ни одно изменение DTO не может стать регрессией безопасности." },
+    { q: "Как заставить валидацию вложенных объектов реально работать и как корректно поддержать PATCH частичные обновления? Покрой тихие сбои.", a: "class-validator НЕ рекурсирует во вложенные объекты по умолчанию — @IsString() на AddressDto.city молча пропускается, когда AddressDto вложен в родителя. Два декоратора на родительском ПОЛЕ нужны оба: @ValidateNested() велит валидатору спуститься, а @Type(() => AddressDto) из class-transformer инстанцирует настоящий AddressDto из простого JSON, чтобы было метаданные класса для проверки. Забыть @Type — классический тихий сбой: ни ошибки, валидация просто не происходит и невалидные вложенные данные проходят. Для массивов объектов используй @ValidateNested({ each: true }) + @Type(() => ItemDto), плюс @IsArray()/@ArrayMinSize() чтобы ограничить сам массив. Для PATCH: PUT заменяет (ожидаются все поля), а PATCH обновляет некоторые, остальные отсутствуют by design, так что переиспользование create-DTO ошибочно требует поля, которые клиент намеренно опустил. Хирургичный фикс — UpdateUserDto extends PartialType(CreateUserDto) (из @nestjs/mapped-types или swagger), который делает каждое унаследованное поле опциональным, сохраняя исходные декораторы для присутствующих полей. Тупая альтернатива, skipMissingProperties: true, пропускает валидацию для ЛЮБОГО отсутствующего свойства во ВСЕХ DTO приложения — включая обязательные поля, которые ты не собирался ослаблять, — так что PartialType предпочтительнее, потому что ограничивает опциональность ровно одним update-DTO. Заметь: @IsOptional() делает «поле отсутствует» валидным, но сам по себе не отличит «не прислано» от «прислано как null»." },
+  ]}
+/>
+
+<Recap lang="ru">
+Закаливание ValidationPipe за пределами базовых декораторов DTO закрывает три границы. Первое, mass assignment: по умолчанию pipe валидирует декорированные поля и оставляет недекорированные на объекте, так что DTO регистрации, декорирующий только email и password, пускает атакующий role: 'admin' внутрь userRepo.save(dto) — OWASP API3:2023, эскалация привилегий. whitelist: true срезает любое свойство без валидационного декоратора; forbidNonWhitelisted: true даёт 400 вместо тихого срезания. Но whitelist охраняет форму DTO, а не его использование, так что настоящий фикс — защита в глубину: whitelist ПЛЮС явный маппинг полей в entity, никогда save(dto) и не спредить сырой DTO. Второе, вложенная валидация: class-validator не рекурсирует по умолчанию, так что декоратор на поле вложенного DTO — тихий no-op, пока родительское поле не несёт оба — @ValidateNested() (спуститься) и @Type(() => NestedDto) (инстанцировать); массивы объектов добавляют `{ each: true }` плюс @IsArray()/@ArrayMinSize(). Третье, частичные обновления: PUT заменяет, а PATCH патчит, так что переиспользование create-DTO ошибочно требует опущенные поля; UpdateUserDto extends PartialType(CreateUserDto) делает каждое поле опциональным хирургично, а skipMissingProperties: true — тупая глобальная альтернатива, ослабляющая обязательные поля, которые ты не собирался. Валидация, проверяющая только названные тобой поля, — это граница, пропускающая всё, что ты не назвал.
+</Recap>
