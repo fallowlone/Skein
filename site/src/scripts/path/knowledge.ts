@@ -27,6 +27,13 @@ function setMastery(state: KnowledgeState, id: string, m: ConceptMastery): Knowl
   return next;
 }
 
+// Records a diagnostic outcome and propagates through the concept DAG:
+//  - correctFrac >= PASS_HIGH: lift every prereq (ancestor) to correctFrac*PROP_UP_FACTOR.
+//    Passing a harder concept is strong evidence its prereqs are known, so lifted ancestors
+//    carry source "diagnostic" — weaker activity won't override them, but a later direct
+//    diagnostic (or decay) still can. This is what lets the planner skip already-mastered prereqs.
+//  - correctFrac < FAIL_LOW: lower every dependent (descendant) to correctFrac.
+//  - FAIL_LOW <= correctFrac < PASS_HIGH (ambiguous band): set the focal concept only, no propagation.
 export function applyDiagnostic(
   state: KnowledgeState, g: ConceptGraph, concept: string, correctFrac: number, now: number,
 ): KnowledgeState {
@@ -60,7 +67,9 @@ export function applySelfDeclare(state: KnowledgeState, concept: string, known: 
   return setMastery(state, concept, { confidence: known ? 1 : 0, source: "declared", lastAt: now });
 }
 
-// Linear decay from 1.0 (≤FRESH) to `floor` (≥STALE). Never raises; never decays declared=0/1 below floor logic applies uniformly.
+// Time decay, applied uniformly to ALL sources (including `declared`): confidence lerps from
+// its current value toward `floor` as age goes FRESH_DAYS -> STALE_DAYS (inclusive closed
+// interval). Never raises; a confidence already <= floor is left untouched.
 export function decay(state: KnowledgeState, _g: ConceptGraph, now: number, floor: number): KnowledgeState {
   const next = new Map<string, ConceptMastery>();
   for (const [id, m] of state) {
