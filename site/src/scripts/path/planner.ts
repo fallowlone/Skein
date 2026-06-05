@@ -5,6 +5,9 @@ import { topoSort, ancestors, buildConceptGraph } from "./graph";
 import { isKnown } from "./knowledge";
 
 const BAND_RANK: Record<Band, number> = { foundations: 0, surface: 1, middle: 2, advanced: 3 };
+// Senior-readiness priority by band: middle is the sweet spot; advanced is deferred until the
+// learner is near the ceiling; foundations are prerequisite, not the frontier. (Mirrors the
+// retired competency.ts weighting.)
 const SENIOR_WEIGHT: Record<Band, number> = { middle: 1.0, surface: 0.9, advanced: 0.8, foundations: 0.4 };
 
 export function resolveGoalTargets(goal: Goal, concepts: Concept[]): string[] {
@@ -12,7 +15,8 @@ export function resolveGoalTargets(goal: Goal, concepts: Concept[]): string[] {
   const rule = goal.target.rule ?? "";
   const m = rule.match(/^band>=(\w+)$/);
   if (m) {
-    const min = BAND_RANK[m[1] as Band] ?? 0;
+    const min = BAND_RANK[m[1] as Band];
+    if (min === undefined) return []; // unknown band token → no targets (avoid matching the whole catalogue)
     return concepts.filter((c) => BAND_RANK[c.band] >= min).map((c) => c.id);
   }
   return [];
@@ -61,14 +65,16 @@ function goalTrackWeight(track: Track, goals: Goal[], config: PathConfig): numbe
     const prio = config.goals.find((x) => x.id === g.id)?.priority ?? 1;
     w += (g.trackWeights[track] ?? 0.5) * prio;
   }
-  return w || 0.5;
+  return w || 0.5; // 0.5 floor: a track always carries some weight unless excludedTracks removes it
 }
 
 export function orderUnits(units: UnitConcepts[], ctx: OrderCtx): UnitConcepts[] {
   const byId = new Map(ctx.concepts.map((c) => [c.id, c]));
   const threshold = ctx.config.weights.masteryThreshold;
   const ready = (u: UnitConcepts) => u.requires.every((c) => isKnown(ctx.state, c, threshold));
-  const bandOf = (u: UnitConcepts): Band => byId.get(u.teaches[0])?.band ?? "middle";
+  // Fallback "foundations" (lowest weight) so a unit teaching an unregistered concept id is
+  // de-prioritised rather than silently boosted to the top.
+  const bandOf = (u: UnitConcepts): Band => byId.get(u.teaches[0])?.band ?? "foundations";
   const value = (u: UnitConcepts) => goalTrackWeight(u.track, ctx.goals, ctx.config) * SENIOR_WEIGHT[bandOf(u)];
 
   const depthMode = ctx.config.breadthVsDepth < 0.5;
@@ -94,8 +100,9 @@ export function orderUnits(units: UnitConcepts[], ctx: OrderCtx): UnitConcepts[]
 }
 
 export function interleaveReviews(steps: PathStep[], srsDue: PathStep[], aggressiveness: number): PathStep[] {
+  // aggressiveness 0 disables in-path reviews entirely (srsDue stays for the /review surface, not the path).
   if (!srsDue.length || aggressiveness <= 0) return steps;
-  const every = Math.max(1, Math.round((1 - aggressiveness) * 4) + 1); // aggr 1 → every 1, aggr 0 → every 5
+  const every = Math.max(1, Math.round((1 - aggressiveness) * 4) + 1); // aggr 1 → every step; approaches every 5 as aggr → 0+
   const out: PathStep[] = [];
   const queue = [...srsDue];
   steps.forEach((s, i) => {

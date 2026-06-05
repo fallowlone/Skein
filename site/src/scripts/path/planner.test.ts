@@ -54,6 +54,11 @@ describe("planner", () => {
     expect(names.indexOf("networking/02-tcp")).toBeLessThan(names.indexOf("databases/01-rel"));
   });
 
+  it("resolveGoalTargets returns [] for an unknown band rule", () => {
+    const bad = { id: "x", label: { en: "x", ru: "x" }, target: { rule: "band>=wizard" }, trackWeights: {} };
+    expect(resolveGoalTargets(bad, CONCEPTS)).toEqual([]);
+  });
+
   it("buildPath returns at most pace.stepsAhead learn steps, each unlocking a target concept", () => {
     const path = buildPath({
       state: emptyState(), goals: [GOALS[0]], config: cfg({ pace: { stepsAhead: 3, srsAggressiveness: 0 } }),
