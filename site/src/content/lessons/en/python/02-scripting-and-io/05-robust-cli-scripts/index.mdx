@@ -1,0 +1,225 @@
+---
+concepts:
+- exit-codes
+- logging
+- retries-backoff
+- signals
+- idempotency
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-robust-cli-scripts"
+sources:
+- https://docs.python.org/3/library/logging.html
+- https://docs.python.org/3/library/signal.html
+spiral: []
+status: ready
+summary: 'A script that runs unattended in cron or CI lives or dies by four contracts: a non-zero exit on failure, logs to stderr instead of print, bounded backoff retries for transient I/O, and signal-safe atomic writes so a kill never ships a truncated file.'
+title: 'Robust CLI scripts: exit codes, logging, retries, signals'
+track: python
+unit: 02-scripting-and-io
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The nightly export had run green for months. Then the upstream API started returning 500s, and the script "handled" it — the body was wrapped in `try: ... except Exception: print("export failed")`, and after printing, control fell off the end of `main` and the process exited. Exited zero. cron saw exit 0, marked the job successful, and sent no alert. The downstream dashboard kept reading yesterday's file because today's never got written, and "yesterday's" slowly became "two weeks ago's." Nobody was paged. The failure was discovered when an analyst noticed the file's modification date hadn't moved in fourteen days. Every byte of that incident is preventable, and every fix is something a script running unattended must do by default: exit non-zero, log to stderr, retry the transient blip, and write atomically.
+</Hook>
+
+<Crux>The exit code is a script's contract with cron/CI: catch-print-return-0 reports failure as green. Fail loud, retry, write atomically.</Crux>
+
+<Explanation>
+
+## Exit codes: the contract with the OS
+
+A process reports success or failure with exactly one number: its **exit code**. `0` means success; anything non-zero means failure. That number is not decoration — it is the only thing cron, CI runners, `&&` chains, systemd, and every orchestrator look at to decide whether the next step runs or an alert fires. `backup.sh && upload.sh` runs `upload` only if `backup` exits 0. CI marks a step red only on non-zero. So the exit code *is* the success signal, and getting it wrong is how a failed job reports green.
+
+```python
+import sys, logging
+
+log = logging.getLogger("export")
+
+def main() -> int:
+    try:
+        data = fetch_export()      # may raise on a 500
+        write_atomic("/data/export.json", data)
+        return 0                   # success — and only here
+    except Exception:
+        log.exception("export failed")  # ERROR + traceback to stderr
+        return 1                   # FAILURE is now visible to cron/CI
+
+if __name__ == "__main__":
+    sys.exit(main())              # the return value becomes the exit code
+```
+
+The deadly pattern is the inverse: catch the exception, `print` a message, and let `main` *fall off the end*. A function that falls off the end returns `None`; `sys.exit(None)` exits **0**. You have just told the OS the job succeeded while it actually failed. Either let the exception propagate (Python exits non-zero with a traceback) or explicitly `sys.exit(1)`. Reserve distinct codes (2, 3, …) only if a caller actually branches on *which* failure — otherwise `1` is plenty.
+
+<Inset kind="why" lang="en">
+Why is `except Exception: print("error")` then falling through one of the most dangerous patterns in an unattended script? Because it converts a failure into a SUCCESS as far as the OS is concerned: the process exits 0, so cron, CI, and monitoring all see green, no alert fires, and the failure is invisible until someone notices stale output days later. `print` also lands on stdout — often discarded, or worse, mixed into piped data — with no level and no timestamp, so even the message is lost. Robustness requires the failure to be LOUD and MACHINE-VISIBLE: log at ERROR to stderr and exit non-zero, so the thing watching the script actually learns that it failed.
+</Inset>
+
+## Logging, not print: the unattended-script rule
+
+`print` writes to stdout with no level, no timestamp, and no routing control. In an interactive session that's fine; in a cron job it's invisible — there's no terminal, and stdout is often captured as the job's *data* or discarded. The `logging` module gives you what an unattended script needs: **levels** (DEBUG/INFO/WARNING/ERROR), timestamps, and a destination configured once. The two rules that matter: diagnostics go to **stderr**, real output goes to **stdout** (so a downstream `| jq` sees clean data, not your log lines), and the level is set from a flag or env var so you can dial up DEBUG without editing code.
+
+```python
+import logging, os, sys
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    stream=sys.stderr,            # diagnostics to stderr; stdout stays clean for data
+)
+log = logging.getLogger("export")
+
+log.info("starting export run")          # routine progress
+log.error("upstream returned 503")       # a problem worth alerting on
+log.exception("unexpected failure")      # ERROR + full traceback, inside an except block
+```
+
+`log.exception` is the one to reach for inside an `except` block — it logs at ERROR *and* attaches the traceback, which is exactly what you want shipped to your log aggregator. print-debugging a cron job produces nothing greppable; structured logs are searchable, shippable, and tie straight into observability.
+
+## Retries with backoff: surviving transient I/O
+
+Network and API calls fail transiently: a timeout, a 503, a rate-limit. The robust response is not "give up" and not "retry forever" — it's a **bounded retry with exponential backoff and jitter**. Wait ~1s, then ~2s, then ~4s, each with a random component so a fleet of scripts doesn't retry in lockstep and stampede the recovering service, up to a cap of attempts. Two hard constraints: only retry **idempotent or transient** operations, and **respect `Retry-After`** when the server sends it.
+
+```python
+import time, random, logging
+
+log = logging.getLogger("export")
+
+def with_backoff(op, *, attempts=5, base=1.0, cap=30.0):
+    for i in range(attempts):
+        try:
+            return op()
+        except TransientError as e:           # ONLY transient/retryable errors
+            if i == attempts - 1:
+                raise                          # budget exhausted -> let it fail
+            delay = min(cap, base * 2 ** i) + random.uniform(0, 1)  # backoff + jitter
+            log.warning("attempt %d failed (%s), retrying in %.1fs", i + 1, e, delay)
+            time.sleep(delay)
+```
+
+The asymmetry is the whole point. A bounded backoff turns a transient 503 into a non-event — the third attempt succeeds and nobody notices. An *unbounded* or *instant* retry does the opposite: it hammers an already-struggling service, turning a blip into an outage. And retrying a non-idempotent `POST` (charge a card, send an email) can double-apply the side effect — so retry reads and idempotent writes, and make non-idempotent operations idempotent with a key before you retry them.
+
+## Signals and atomic writes: dying cleanly
+
+An unattended process gets killed. The orchestrator sends **SIGTERM** to stop it; a human sends **SIGINT** with Ctrl-C. By default both unwind the stack — but if you're halfway through writing a file, the default leaves a **truncated file**, a held lock, or a temp dir full of garbage. Two complementary defenses: handle the signal (or rely on `try/finally` + context managers) to flush and clean up, and never write the real file in place — write a temp file, then **`os.replace`**, which is atomic on a POSIX filesystem. A kill at any instant leaves either the old complete file or the new complete file, never a half-written one.
+
+```python
+import os, signal, tempfile, json
+
+def write_atomic(path: str, obj) -> None:
+    d = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(dir=d)          # same filesystem -> rename is atomic
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(obj, f)
+            f.flush()
+            os.fsync(f.fileno())               # durable before the swap
+        os.replace(tmp, path)                  # atomic: readers see old OR new, never partial
+    except BaseException:
+        os.unlink(tmp)                         # killed mid-write -> no orphan temp
+        raise
+
+def handle_term(signum, frame):
+    raise SystemExit(143)                      # turn SIGTERM into a clean unwind (128+15)
+
+signal.signal(signal.SIGTERM, handle_term)     # finally/with blocks now run on stop
+```
+
+Because `os.replace` is atomic, the kill window where a partial file could be observed simply doesn't exist. Combine that with **idempotency** — a script *will* be re-run (a retry, a manual rerun, an overlapping cron tick), so check-before-act, write atomically, and take a **lockfile** to refuse a second concurrent run. An idempotent script you can safely run twice; a non-idempotent one corrupts state the second time.
+
+<FlowDiagram
+  label="The control flow of one robust unattended run. The script starts and attempts its operation inside a bounded retry loop with exponential backoff: a transient error (timeout, 503) is retried up to a cap, then on a durable failure the script logs at ERROR to stderr and exits 1 so cron and CI see the failure. On success it writes its output atomically via a temp file and os.replace, then exits 0. Independently, a SIGTERM or SIGINT at any point triggers a cleanup path that flushes buffers, completes or discards the atomic temp file, and releases the lockfile before exiting, so a kill never leaves a partial file or held lock."
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "run", label: "run + lockfile", sub: "single instance" },
+    { id: "try", label: "try op", sub: "bounded retry+backoff" },
+    { id: "ok", label: "success", sub: "atomic write -> exit 0" },
+    { id: "fail", label: "failure", sub: "log ERROR->stderr, exit 1" },
+    { id: "sig", label: "SIGTERM/SIGINT", sub: "kill arrives" },
+    { id: "clean", label: "cleanup", sub: "flush, os.replace, unlock" },
+  ]}
+  edges={[
+    { from: "run", to: "try", label: "start" },
+    { from: "try", to: "ok", label: "succeeded" },
+    { from: "try", to: "fail", label: "budget spent" },
+    { from: "sig", to: "clean", label: "handler" },
+    { from: "clean", to: "fail", label: "exit cleanly" },
+  ]}
+  caption="Success exits 0 after an atomic write; durable failure logs to stderr and exits 1 so the scheduler sees it; a signal routes through cleanup so a kill never ships a truncated file or leaks a lock."
+/>
+
+<TradeoffMatrix
+  id="python-02-scripting-and-io-05-robust-cli-scripts-tradeoff-1"
+  lessonSlug="05-robust-cli-scripts"
+  lang="en"
+  prompt="You own a nightly cron export that hits a flaky upstream API and writes a JSON file consumed by a dashboard. How do you make it robust so a failure is never silent and a kill never ships a truncated file?"
+  options={[
+    { name: "Log errors at ERROR to stderr, sys.exit(1) on failure, bounded backoff retries for transient errors, atomic temp-then-os.replace write, and a SIGTERM/SIGINT cleanup handler", summary: "Loud failure + safe writes.", correct: true, justification: "This satisfies every contract an unattended script has. Exit 1 on failure makes cron and CI see red and alert; logging to stderr keeps the message machine-visible and keeps stdout clean for piped data; bounded exponential backoff with jitter rides out transient 503s without stampeding the recovering API; temp-then-os.replace means a kill at any instant leaves the old or new whole file, never a truncated one; and a signal handler lets finally/with blocks flush and release the lock. Each piece closes one failure mode from the war story." },
+    { name: "Wrap the body in try/except Exception that prints 'failed' and returns 0", summary: "Silent green — the incident.", justification: "This is the exact bug from the war story. Returning 0 tells the OS the job succeeded, so cron/CI/monitoring stay green and no alert fires; print lands on stdout with no level or timestamp and is usually discarded; and there's no retry or atomic write. The failure becomes invisible until someone notices stale output days later. It is the opposite of robust — it actively hides failure." },
+    { name: "Add print statements throughout for debugging", summary: "Invisible in cron.", justification: "print-debugging is useless in an unattended job: there's no terminal, stdout is captured as data or discarded, and the lines carry no level or timestamp so they can't be filtered or alerted on. It also pollutes the data stream a downstream consumer reads. Diagnostics belong at the right level on stderr via logging, not as prints — and it does nothing for exit codes, retries, or atomicity." },
+    { name: "Retry forever, instantly, on any error", summary: "Stampede + double-apply.", justification: "Unbounded instant retries turn a transient blip into a self-inflicted outage: the script hammers a struggling API with no backoff, and a fleet of them stampedes in lockstep. Retrying on ANY error means non-idempotent operations (a POST that charges or emails) get double-applied, and a genuinely permanent failure never surfaces because the loop never ends. Retries must be bounded, backed off with jitter, and limited to transient/idempotent operations." },
+  ]}
+/>
+
+<Quiz
+  id="python-02-scripting-and-io-05-robust-cli-scripts-quiz-1"
+  lessonSlug="05-robust-cli-scripts"
+  lang="en"
+  question="A cron script catches an exception, prints 'export failed', and falls off the end of main without calling sys.exit. What does cron conclude, and why?"
+  choices={[
+    { label: "cron concludes the job SUCCEEDED — main returns None, sys.exit(None) exits 0, and cron/CI/&&-chains branch only on the exit code, so 0 means success and no alert fires", correct: true },
+    { label: "cron concludes the job failed because 'export failed' was printed to the output", misconception: "cron does not read your output looking for the word 'failed' — it branches solely on the exit code. Printing a message changes nothing about the exit status. Falling off the end of main returns None and exits 0, so cron records success regardless of what was printed." },
+    { label: "Python automatically exits non-zero whenever an exception is caught", misconception: "Python exits non-zero only when an exception PROPAGATES out of the program uncaught. Once you catch it with except and don't re-raise or sys.exit(1), the program continues normally and exits 0 by default. Catching the exception is precisely what suppressed the non-zero exit here." },
+    { label: "cron retries the job automatically until it succeeds", misconception: "cron does not retry failed jobs on its own — it just runs them on schedule and records the exit status. Retries are something your script implements (bounded backoff). And here cron sees exit 0 anyway, so it considers the run a success and wouldn't retry even if it could." },
+  ]}
+/>
+
+<Quiz
+  id="python-02-scripting-and-io-05-robust-cli-scripts-quiz-2"
+  lessonSlug="05-robust-cli-scripts"
+  lang="en"
+  question="Which operations are safe to wrap in a backoff-retry loop, and what cleanup must a script do so a SIGTERM never ships a corrupt output?"
+  choices={[
+    { label: "Retry only transient/idempotent operations and respect Retry-After; handle SIGTERM/SIGINT and write via a temp file then os.replace so a kill leaves the old or new whole file, never a partial one", correct: true },
+    { label: "Retry any failed operation including POSTs, and just let SIGTERM kill the process — the OS cleans everything up", misconception: "Retrying a non-idempotent POST can double-apply its side effect (charge a card twice, send two emails), so only transient/idempotent ops are safe to retry. And the OS does NOT finish your half-written file — a default SIGTERM mid-write leaves a truncated file and held locks. You must write atomically (temp + os.replace) and handle the signal so finally/with blocks run." },
+    { label: "Retry everything forever with no delay; signals need no handling because Python flushes files on exit", misconception: "Unbounded instant retries stampede a failing service and never surface a permanent error. Python does NOT guarantee your application-level temp file is renamed or your lock released on a SIGTERM — that's your job via os.replace and a finally/handler. Retries must be bounded with backoff and limited to transient/idempotent ops." },
+    { label: "Retrying is unsafe in all cases, so never retry; instead exit 0 on the first error so cron moves on", misconception: "Retrying transient errors is exactly what makes a script robust against flaky I/O — the blanket 'never retry' is wrong. And exiting 0 on an error is the silent-failure bug: it tells cron the job succeeded when it didn't. A failure must exit non-zero." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Unattended = exit non-zero on failure (never catch-print-return-0), log to stderr, retry transient ops with bounded backoff, and handle SIGTERM + write temp-then-os.replace so a kill never ships a partial file.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="python-02-scripting-and-io-05-robust-cli-scripts-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why catch-print-return-0 is the most dangerous pattern in an unattended script, and exactly what to do instead.", a: "An exit code is a process's one-number contract with the OS: 0 means success, non-zero means failure, and cron, CI runners, && chains, and orchestrators branch solely on that number — none of them read your printed text. The pattern try: ... except Exception: print('failed') then falling off the end of main returns None, and sys.exit(None) exits 0, so the OS is told the job SUCCEEDED while it actually failed: cron/CI/monitoring stay green, no alert fires, and the failure is invisible until someone notices stale output days later — the two-weeks-of-silent-failures war story. print also goes to stdout with no level or timestamp, often discarded or mixed into piped data, so even the message is lost. The fix is to make the failure LOUD and MACHINE-VISIBLE: log at ERROR to stderr (log.exception inside the except block, which attaches the traceback), and either let the exception propagate (Python exits non-zero) or explicitly sys.exit(1). Then cron sees red and the alert fires." },
+    { q: "Walk through the four robustness contracts for an unattended script: logging, retries, signals, and idempotency — with the specific mechanism for each.", a: "Logging: use the logging module, not print — diagnostics go to stderr (so stdout stays clean for piped data), each line carries a level (DEBUG/INFO/WARNING/ERROR) and timestamp, and the level is set from a flag/env so you can dial up DEBUG without editing code; log.exception ships the traceback to your aggregator. Retries: transient I/O (timeout, 503, rate-limit) gets a BOUNDED retry with exponential backoff plus jitter (~1s, ~2s, ~4s, capped) so the script rides out a blip without stampeding the recovering service; only retry transient/idempotent operations and respect Retry-After — an unbounded or instant retry turns a blip into an outage, and retrying a non-idempotent POST double-applies. Signals: an orchestrator sends SIGTERM and Ctrl-C sends SIGINT; without handling, a kill mid-write leaves a truncated file or held lock, so handle the signal (or rely on try/finally + context managers) to flush and clean up. Atomicity + idempotency: never write in place — write a temp file then os.replace (atomic on POSIX), so a kill leaves the old or new whole file but never a partial one; and because a script will be re-run, make it idempotent (check-before-act, atomic writes, a lockfile to refuse a concurrent second run) so a rerun can't double-process or corrupt state." },
+  ]}
+/>
+
+<Recap lang="en">
+A script that runs unattended in cron or CI is judged by four contracts, every one of which the silent-export incident violated. First, the exit code is the contract with the OS: 0 is success, non-zero is failure, and cron, CI, and &&-chains branch only on that number — so the deadly pattern is catch the exception, print a message, and fall off the end of main, which returns None, exits 0, and reports a failure as green with no alert; the fix is to let the exception propagate or sys.exit(1). Second, use logging, not print: diagnostics to stderr with levels and timestamps, real data to stdout, level from a flag or env, and log.exception inside an except to ship the traceback — print-debugging is invisible in a cron job. Third, retry transient I/O with bounded exponential backoff plus jitter up to a cap, but only for transient/idempotent operations and respecting Retry-After, because an unbounded or instant retry stampedes a recovering service and retrying a non-idempotent POST double-applies. Fourth, die cleanly: handle SIGTERM and SIGINT (or use try/finally and context managers) to flush and clean up, and write to a temp file then os.replace so a kill at any instant leaves the old or new whole file, never a truncated one — and make the script idempotent with check-before-act, atomic writes, and a lockfile so an inevitable re-run can't double-process or corrupt state. Together: fail loud, log to stderr, retry bounded, write atomically.
+</Recap>
