@@ -3,7 +3,10 @@ import { defineConfig } from "astro/config";
 import tailwind from "@astrojs/tailwind";
 import mdx from "@astrojs/mdx";
 import preact from "@astrojs/preact";
-import { lintCurriculum } from "./src/lint";
+// NOTE: the curriculum lint runs as a SEPARATE post-build process
+// (`bun scripts/lint-dist.mjs`, chained in package.json `build`), not as an
+// in-process astro:build:done integration — that inherited the render's ~10GB
+// heap and the lint allocations OOM-killed (SIGKILL) the CI runner mid-lint.
 
 export default defineConfig({
   output: "static",
@@ -16,7 +19,6 @@ export default defineConfig({
     tailwind({ applyBaseStyles: false }),
     mdx(),
     preact({ compat: false }),
-    lintCurriculum(),
   ],
   markdown: {
     shikiConfig: {
