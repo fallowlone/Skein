@@ -1,0 +1,172 @@
+---
+concepts:
+- module-register
+- resolve-hook
+- load-hook
+- hook-chaining
+- off-thread-loaders
+- transpile-on-load
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-module-customization-hooks
+sources:
+- https://nodejs.org/api/module.html#customization-hooks
+- https://nodejs.org/api/module.html#moduleregisterspecifier-parenturl-options
+- https://nodejs.org/api/module.html#hooks
+spiral: []
+status: ready
+summary: 'Customization hooks intercept resolve and load for every module. Registered via module.register on a separate thread, they chain through next… hooks. Great for dev transpilation and mocking — but they tax startup and a hook that drops source maps wrecks every stack trace.'
+title: 'Module customization hooks: intercepting resolve and load'
+track: node
+unit: 13-modules-deep
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You shipped a TypeScript service that ran straight from source in production via a `register()`-based loader — no build step, "simpler pipeline." Three weeks later a 2am page fires: `TypeError` in `billing.ts` at line 64. You open line 64 and it's a blank line between two functions. Every stack frame is off by a dozen lines, because the load hook transpiled TS → JS on the fly and never emitted a source map, so V8 reports positions in the *compiled* output you've never seen. A five-minute null-check turns into a two-hour archaeology dig through generated code. The loader hook did exactly what you asked. You just forgot it now owns your stack traces.
+</Hook>
+
+<Crux>Customization hooks intercept `resolve` and `load` off-thread, chaining via `next…`; a transpiler that drops source maps poisons every trace.</Crux>
+
+<Explanation>
+
+## The two hooks: resolve and load
+
+Node's module pipeline has two seams you can splice into, and a customization hook is a function that sits on one of them. **`resolve(specifier, context, nextResolve)`** turns a specifier (`"lodash"`, `"./util.js"`, `"data:..."`) into a final, fully-qualified URL plus a declared `format` (`"module"`, `"commonjs"`, `"json"`, …). **`load(url, context, nextLoad)`** takes that URL and returns the actual `source` (a string or buffer) and its `format` — and this is where you can *transform* the bytes before V8 ever sees them. Resolve answers "*which* file"; load answers "*what's in it*". A transpiler is a `load` hook: it intercepts a `.ts` URL, compiles the source, and hands back JavaScript with `format: "module"`.
+
+The third argument is the whole game. `nextResolve` / `nextLoad` is the *next hook in the chain* (or Node's built-in default if you're last). You either handle the request yourself, or you call `next…(specifier, context)` to defer. This is why hooks **compose**: tsx's resolver and a coverage tool's resolver can both be registered, each handling what it cares about and passing the rest down.
+
+```js
+// loader.js — a load hook that transpiles TS on the fly
+import { readFile } from "node:fs/promises";
+import { transform } from "some-fast-transpiler"; // e.g. swc/esbuild
+
+export async function load(url, context, nextLoad) {
+  if (!url.endsWith(".ts")) {
+    return nextLoad(url, context); // not ours — defer down the chain
+  }
+  const raw = await readFile(new URL(url), "utf8");
+  const { code } = await transform(raw, { sourcemap: "inline" }); // ← keep maps!
+  return { format: "module", source: code, shortCircuit: true };
+}
+```
+
+Two non-negotiable details live here. `shortCircuit: true` tells Node you deliberately handled this and are *not* calling `nextLoad` — omit it and Node throws to stop a hook silently swallowing the chain. And `sourcemap: "inline"` is the line that the hook in the intro forgot: without it, every position V8 reports is in the compiled output, not your `.ts`.
+
+## Registering hooks: module.register
+
+You don't wire hooks by hand — you `register()` them, and Node spins them up on a dedicated thread.
+
+```js
+// app entry, run first: node --import ./register.js app.js
+import { register } from "node:module";
+register("./loader.js", import.meta.url); // (specifier, parentURL)
+```
+
+`register(specifier, parentURL)` resolves `specifier` *relative to* `parentURL` (pass `import.meta.url` so a relative `./loader.js` works regardless of cwd), then loads that module **on a separate worker thread** and starts routing every subsequent `import`/`require` through its `resolve` and `load` exports. The ordering rule that bites people: hooks only affect modules loaded **after** `register` runs, so registration must happen before the app's own imports — which is exactly what `--import` guarantees (it runs the file before the main entry). Put `register()` at the top of `app.js` instead and the import of `app.js` itself, and anything it statically imports, was already resolved before your hook existed.
+
+To pass configuration *into* the off-thread hooks, `register` takes a `data` option and a `transferList`, delivered to an optional **`initialize`** hook that runs once on the hook thread:
+
+```js
+register("./loader.js", {
+  parentURL: import.meta.url,
+  data: { tsconfig: "./tsconfig.json" },        // structured-cloned to the hook thread
+});
+
+// loader.js
+export async function initialize(data) {
+  // runs once on the hook thread; stash config, open a MessagePort, etc.
+  globalThis.__tsconfig = data.tsconfig;
+}
+```
+
+<Inset kind="why" lang="en">
+Why a *separate thread*? Pre-Node-20 loader hooks ran **in the same context** as your application, sharing its module graph and globals. That created a snake-eating-its-tail problem: the loader's own `import` statements went through the loader, so a hook could deadlock loading its own dependencies, and any state the hook touched (a monkey-patched global, a half-initialized module) leaked straight into the app. Moving hooks onto an isolated worker thread severs that: the hook graph and the application graph are fully separate, so the loader can pull in heavy deps (a whole transpiler) without polluting or racing the app it's supposed to be loading *for*. The cost of isolation is that you can't share live objects — you communicate by structured-cloned `data` and a `MessagePort`, never by a shared variable.
+</Inset>
+
+## When to reach for a hook — and when not to
+
+Hooks earn their keep in a tight set of cases: on-the-fly TypeScript/JSX transpilation (`tsx`, `ts-node`, swc-node all register a `load` hook), test mocking and instrumentation, custom protocols (`import x from "config:db"`), import-map-style remapping, and coverage tools rewriting source. The common thread is *development and test ergonomics* — running code as authored without a build.
+
+The tradeoffs are real and they compound. **(a) A hook runs for every module**, so a slow `load` adds its cost linearly across your dependency tree — a transpile-on-load step that costs ~30–50ms per file cold turns a 400-file app into 12–20 extra seconds of startup, every `node` invocation. **(b) The off-thread model means no cheap shared state** — you can't reach into the app's globals from a hook; everything crosses a port. **(c) It's an unstable surface.** The hooks API was reshaped between Node 18, 20, and 22 (in-thread → off-thread, `globalPreload` removed, `register` added), so a loader pinned to one major can break on the next. The senior call: **transpile at build time for production** (one cost, source maps emitted to disk, stable artifacts), and reserve hooks for dev/test where the no-build loop is worth the per-run tax.
+
+<TradeoffMatrix
+  id="03-module-customization-hooks-tradeoff-1"
+  lessonSlug="03-module-customization-hooks"
+  lang="en"
+  prompt="You run a TypeScript HTTP service. In PRODUCTION you need fast, predictable startup and stack traces that point at real source lines. How should the TS become runnable JS?"
+  options={[
+    { name: "Build ahead of time (tsc/swc/esbuild) to JS + .map files, deploy the compiled artifact, run plain node", summary: "Build once, ship maps.", correct: true, justification: "This is the production default. You pay the transpile cost once at build time, not on every cold start of every replica; the emitted .map files give V8 correct positions so a 2am stack trace points at the real .ts line; and you ship a frozen, inspectable artifact instead of compiling live on a worker thread whose API shifts between Node majors. Determinism, speed, and accurate traces — exactly what prod needs." },
+    { name: "Register a transpile-on-load hook (module.register) and run the .ts directly in prod", summary: "Per-start tax + risk.", justification: "This is the intro's mistake. The load hook re-transpiles every module on every process start, adding tens of ms per file linearly across the tree (seconds at scale), and it's only as safe as its source-map handling — drop the maps and every prod trace is wrong. You've also bound production to an experimental, fast-moving API. Great for dev ergonomics; the wrong tool for a prod hot path." },
+    { name: "Use require.extensions['.ts'] to compile on require at runtime", summary: "Deprecated + CJS-only.", justification: "require.extensions is long-deprecated, doesn't participate in the ESM pipeline at all, and is the legacy ancestor of load hooks. It carries the same per-run transpile tax as a loader with none of the chaining or off-thread isolation, and it simply doesn't fire for import. A dead end for modern code." },
+    { name: "Skip transpilation; ship the .ts files and let Node strip the types at runtime with no source maps", summary: "Loses positions.", justification: "Even where Node can run TS directly, type-stripping without emitting source maps reproduces the exact failure from the intro: V8 reports positions in the stripped output, so traces drift from your source. Runnable is not the same as debuggable — without maps you've signed up for the same 2am archaeology." },
+  ]}
+/>
+
+<Quiz
+  id="03-module-customization-hooks-quiz-1"
+  lessonSlug="03-module-customization-hooks"
+  lang="en"
+  question="Inside a load hook, what does calling nextLoad(url, context) do?"
+  choices={[
+    { label: "Defers the request to the next hook in the chain (or Node's built-in default loader if this is the last hook), letting hooks compose — you call it for the modules your hook doesn't handle", correct: true },
+    { label: "Re-runs your own load hook recursively on the same URL", misconception: "next… is not recursion into yourself — it passes the request DOWN the chain to the next registered hook or the default loader. Calling your own hook again would loop; nextLoad explicitly hands off." },
+    { label: "Reloads the module from disk, bypassing the module cache", misconception: "nextLoad has nothing to do with the cache. It's the chain-continuation function: it forwards the load request to the next hook/default so unhandled URLs still get loaded normally." },
+    { label: "Cancels the load and throws ERR_MODULE_NOT_FOUND", misconception: "Calling next… is how you SUCCEED for modules you don't handle — it continues the chain. To deliberately handle a module yourself you return a result with shortCircuit: true instead of calling next." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A specifier travelling through the customization-hook chain on its way to V8"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "spec", label: "import 'x.ts'", sub: "specifier" },
+    { id: "res", label: "resolve chain", sub: "→ url + format" },
+    { id: "load", label: "load chain", sub: "→ source" },
+    { id: "xform", label: "transform", sub: "TS→JS + map" },
+    { id: "v8", label: "V8 evaluates", sub: "compiled module" },
+  ]}
+  edges={[
+    { from: "spec", to: "res", label: "nextResolve" },
+    { from: "res", to: "load", label: "url" },
+    { from: "load", to: "xform", label: "nextLoad" },
+    { from: "xform", to: "v8", label: "source+map" },
+  ]}
+  caption="Each specifier walks the resolve chain (each hook calls nextResolve or short-circuits) to a URL, then the load chain (nextLoad / short-circuit) to source bytes a hook may transform. All of this runs on a separate hook thread; only the final source crosses back to the main thread for V8. Drop the source map in 'transform' and V8's positions no longer match your file."
+/>
+
+<KeyTakeaway>Hooks splice into `resolve` (specifier→URL) and `load` (URL→source) via `module.register`, chaining through `next…`, off-thread for isolation. Use them for dev transpilation; build for prod, never drop maps in a `load` hook.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-module-customization-hooks-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why were module customization hooks moved off the main thread, and what does that cost you?", a: "Pre-Node-20 loader hooks ran in the same context as the application, sharing its module graph and globals. That was structurally dangerous: the loader's own imports went through the loader (a hook could deadlock loading its own dependencies), and any global the hook touched leaked into the app it was loading. The off-thread design (around the register() API) puts hooks on an isolated worker thread, so the hook's dependency graph is fully separate from the app's — the loader can pull in a heavy transpiler without polluting or racing the app. The cost is that there is no cheap shared state: you can't reach the app's live objects from a hook. You pass configuration in once via register's data option (structured-cloned) to the initialize hook, and stream anything else over a MessagePort. So you trade convenient shared mutable state for isolation that prevents whole classes of loader-vs-app deadlocks and pollution." },
+    { q: "A transpile-on-load hook is the reason every production stack trace points at the wrong line. What is the mechanism, and what's the fix?", a: "The load hook intercepts each .ts URL, compiles it to JavaScript, and returns that compiled source to V8. V8 only ever sees the compiled bytes, so when it captures a stack it reports line/column positions in the GENERATED output — code you never wrote and never see. Your editor shows the .ts; the trace describes the .js; they drift by however many lines the transform added or removed, so 'error at billing.ts:64' lands on a blank line. The fix is to emit a source map and inline it into the returned source (sourcemap: 'inline' in the transform options), and ensure Node's source-map support is on (it is by default in current versions; --enable-source-maps forces it). With the map, V8 remaps captured positions back to original source and traces point at real lines again. The deeper lesson: the moment a load hook transforms bytes, it owns the fidelity of every stack trace for those modules — source maps aren't optional polish, they're the contract that keeps the code debuggable." },
+  ]}
+/>
+
+<Recap lang="en">
+Node's module pipeline exposes two interception seams, and a customization hook is a function on one of them: `resolve(specifier, context, nextResolve)` maps a specifier to a final URL plus `format`, and `load(url, context, nextLoad)` returns the source bytes — the point where a transpiler turns `.ts` into JavaScript before V8 sees it. The `next…` argument is the next hook (or the default), so hooks compose: handle what's yours, defer the rest, and mark a handled request with `shortCircuit: true`. You install hooks with `module.register(specifier, parentURL)`, which loads them on a *separate worker thread* — isolation that, since Node 20, replaced the dangerous in-thread `globalPreload` model where a loader could deadlock on its own imports or leak globals into the app; the price is no shared state, so config arrives via `register`'s `data` and the `initialize` hook, and anything live travels over a `MessagePort`. Hooks are the right tool for dev/test ergonomics — on-the-fly TS/JSX, mocking, custom protocols, coverage — but they run for *every* module (a ~30–50ms/file transpile is seconds of startup at scale), they can't cheaply share state, and the API churns across majors, so production should transpile at build time. And the failure that defines this lesson: a transpiling `load` hook that omits source maps makes V8 report positions in compiled output, so every stack trace drifts off the real source — emit inline maps, or own the 2am dig.
+</Recap>

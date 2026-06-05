@@ -1,0 +1,213 @@
+---
+concepts:
+- async-iterator-protocol
+- async-generators
+- for-await-of
+- pull-vs-push-backpressure
+- iterator-cleanup-return
+- lazy-pipelines
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: 04-async-iterators-and-generators
+sources:
+- https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/for-await...of
+- https://nodejs.org/api/stream.html#streams-compatibility-with-async-generators-and-async-iterators
+- https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/AsyncGenerator
+spiral: []
+status: ready
+summary: 'Async iterators are pull-based: the consumer pulls each value, so the producer is suspended at yield and backpressure is structural. break/throw runs the generator''s finally so cursors close. Chain generators for a lazy O(1)-memory pipeline.'
+title: 'Async iterators and generators: pull-based streams without the buffer'
+track: node
+unit: 02-async-and-streams
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Your nightly importer worked fine for months, then a customer with a 9-million-row export ran it and the pod died at 1.5 GB with `JavaScript heap out of memory`. You traced it to one innocent line: `const rows = await db.query('SELECT * FROM events'); rows.map(transform)`. The driver buffered the entire result set into a JS array before your code saw a single row, so peak memory scaled with the export, not with your batch size. Nothing was wrong with the transform; the bug was that you pulled all of it into memory at once instead of one row at a time. The fix was not a bigger pod — it was changing *who sets the pace*.
+</Hook>
+
+<Crux>Async iterators are pull-based: the consumer asks for each value, so the producer is suspended at `yield` and backpressure is automatic.</Crux>
+
+<Explanation>
+
+## The async iteration protocol: next() returns a promise
+
+A normal iterable exposes `Symbol.iterator`; an **async** iterable exposes `Symbol.asyncIterator`, a method that returns an iterator whose `next()` returns a `Promise<{ value, done }>` instead of a plain `{ value, done }`. That single difference — the result is a promise — is what lets each step *await something* (a network round-trip, a disk read) before producing the next value. `for await (const x of it)` is pure sugar: it calls `it[Symbol.asyncIterator]()` once, then loops `const { value, done } = await iter.next()` until `done` is true, running the body for each `value`. It is sequential by construction — the loop awaits one `next()` fully before asking for the following one.
+
+You almost never write the protocol by hand. An **async generator** — `async function*` with `yield` — is the ergonomic author's tool: it builds a conforming async iterator for you, and every `yield` *suspends the function* until the consumer calls `next()` again. The function literally stops at `yield` and does not advance until pulled.
+
+```js
+// Paginate a cursor-based API, yielding one record at a time.
+async function* fetchAllUsers(client) {
+  let cursor = null;
+  do {
+    const page = await client.get("/users", { cursor, limit: 100 });
+    for (const user of page.items) {
+      yield user;        // suspends here until the consumer pulls the next value
+    }
+    cursor = page.nextCursor;
+  } while (cursor);       // only fetches the next page when the buffer is drained
+}
+
+// Consume it: one user at a time, never more than one page in memory.
+for await (const user of fetchAllUsers(client)) {
+  await index(user);     // each await fully completes before the next user is pulled
+}
+```
+
+The page loop *cannot* run ahead of the consumer: after yielding the last user of page N, the generator is frozen mid-`for`; it only resumes — and only then issues the request for page N+1 — when `index(user)` resolves and the `for await` calls `next()` again. Memory is bounded to one page plus one in-flight record, whether the API has 100 users or 100 million.
+
+## Pull beats push: backpressure you get for free
+
+This is the senior insight. Callbacks, `EventEmitter`s, and `readable.on('data', …)` are **push**: the producer decides when data arrives and fires it at you. If you can't keep up — a slow DB write behind a fast socket read — the events keep coming and you must implement backpressure by hand: pause the source, buffer, track the buffer size, resume when drained. Forget any of that and the unbounded buffer becomes the OOM in the hook, just relocated.
+
+Async iterators are **pull**: nothing is produced until the consumer calls `next()`. Backpressure is therefore *structural*, not a feature you bolt on — the producer is suspended at `yield` and is physically incapable of running ahead, because the only thing that resumes it is your next pull. A slow consumer simply pulls slower; the producer waits. And because a Node `Readable` implements `Symbol.asyncIterator`, you get this for free over real I/O:
+
+```js
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
+
+// readline over a Readable is itself async-iterable.
+const rl = createInterface({
+  input: createReadStream("huge.log"),    // a 40 GB file is fine
+  crlfDelay: Infinity,
+});
+
+for await (const line of rl) {
+  await ship(line);   // if ship() is slow, the file read naturally throttles
+}
+```
+
+While `ship(line)` is pending, the `for await` does not call `next()`, so `readline` does not request more, so the underlying file stream is not read past its `highWaterMark`. The OS read pauses. You wrote no `.pause()`, no `.resume()`, no buffer accounting — the pull model enforced it.
+
+<Inset kind="why" lang="en">
+Why is push the harder model if both can move the same bytes? In push, the *timing authority* lives with the producer, but the *capacity limit* lives with the consumer — they're split across a boundary, so correctness depends on a feedback channel (pause/resume) that you must wire up and never drop. In pull, both authority and limit live with the consumer: one party decides both when and whether to advance, so there is no channel to misconfigure. Backpressure stops being a protocol and becomes an invariant of the control flow itself.
+</Inset>
+
+## Cleanup on early exit: finally is where cursors close
+
+A pull producer holding a resource — a DB cursor, an open file handle, a pooled connection — has a real risk: the consumer might `break`, `return`, or `throw` out of the `for await` loop before the source is exhausted. The runtime handles this. When you leave a `for await` early, it calls the iterator's `return()` method. Inside an async generator, `return()` makes the suspended `yield` act as if a `return` ran there: **the code after the current `yield` does not execute, but any enclosing `finally` block does.** That `finally` is the only reliable place to release the resource.
+
+```js
+async function* streamRows(pool, sql) {
+  const conn = await pool.connect();
+  const cursor = conn.cursor(sql);
+  try {
+    for (let batch; (batch = await cursor.read(500)).length; ) {
+      for (const row of batch) yield row;   // consumer may break out mid-stream
+    }
+  } finally {
+    // Runs on normal exhaustion AND on break/return/throw, via the generator's return().
+    await cursor.close();
+    conn.release();        // the leak you'd get without finally: a held connection forever
+  }
+}
+
+for await (const row of streamRows(pool, "SELECT * FROM events")) {
+  if (await isDuplicate(row)) break;   // triggers return() → the finally above runs
+  await upsert(row);
+}
+```
+
+The failure mode is concrete: put the `cursor.close()` and `conn.release()` *after* the loop instead of in `finally`, and the first `break` skips them. The connection is never returned to the pool; do that a few thousand times and the pool is exhausted and every subsequent query hangs. One subtlety to keep on your radar: `return()` only fires if iteration actually starts and then stops via `break`/`return`/`throw` or runs to completion. If you grab the iterator manually (`const it = gen[Symbol.asyncIterator]()`), pull a few values, and then just drop the reference without calling `it.return()` or exhausting it, the generator stays suspended at its last `yield` forever and the `finally` never runs — the resource leaks. `for await` always does the right thing; manual iteration makes cleanup your job.
+
+## Composition: lazy pipelines at constant memory
+
+Because a generator both *is* an async iterable and can *consume* one, you can chain them into a pipeline where each stage transforms one item at a time. Compare the eager array style — `(await getAll()).filter(...).map(...)` — which materializes every intermediate array, with a lazy generator pipeline that holds one item per stage:
+
+```js
+async function* mapGen(src, fn)    { for await (const x of src) yield fn(x); }
+async function* filterGen(src, ok) { for await (const x of src) if (ok(x)) yield x; }
+
+// source → filter → map → consumer, one row flowing through at a time
+const pipeline =
+  mapGen(
+    filterGen(streamRows(pool, "SELECT * FROM events"), (r) => r.amount > 0),
+    (r) => ({ id: r.id, cents: Math.round(r.amount * 100) }),
+  );
+
+for await (const record of pipeline) {
+  await sink.write(record);   // backpressure propagates all the way to the cursor
+}
+```
+
+The memory math is the whole point. Materializing 10M rows averaging ~150 bytes is ~1.5 GB of live array — exactly the OOM in the hook, and it gets worse with each intermediate `.map`/`.filter` that allocates another full array. The generator pipeline is **O(1) in the number of rows**: at any instant there is one row in `streamRows`, one in `filterGen`, one in `mapGen`, one being written — four objects, not ten million. You can stream a result set larger than RAM. And because pull-backpressure threads through every stage, a slow `sink.write` throttles the DB cursor at the far end with no extra code.
+
+<TradeoffMatrix
+  id="04-async-iterators-tradeoff-1"
+  lessonSlug="04-async-iterators-and-generators"
+  lang="en"
+  prompt="You must transform and write 10M DB rows in a worker, with bounded peak memory, and you want a slow sink to throttle the read. Which approach fits?"
+  options={[
+    { name: "Async generator pipeline consumed with for await — source gen → map gen → write", summary: "Lazy, O(1), backpressured.", correct: true, justification: "Each stage holds one item, so peak memory is constant regardless of row count, and pull-backpressure threads from the sink all the way back to the cursor — a slow write naturally throttles the read with zero manual pause/resume. This is the pull model doing exactly what it's built for: bounded memory plus structural backpressure for free." },
+    { name: "await db.query('SELECT *') then rows.map(transform) then bulk insert", summary: "Materializes everything.", justification: "This is the hook's OOM verbatim. The driver buffers all 10M rows into one array (~1.5 GB), each .map allocates another full array, and peak memory scales with the export, not the batch — the pod dies before the first insert. There is also no backpressure: you've already paid the whole memory cost up front." },
+    { name: "readable.on('data', row => writeQueue.push(transform(row)))", summary: "Push, unbounded buffer.", justification: "Push model: the source fires rows faster than a slow sink drains writeQueue, so the queue grows without bound — the OOM just relocated from the result array to your queue. You'd have to hand-roll pause/resume and buffer accounting to make it safe, which is exactly the work the pull model removes." },
+    { name: "Promise.all(rows.map(r => write(transform(r))))", summary: "Loads + 10M in-flight writes.", justification: "Doubly wrong: it still materializes all rows first, then fans out 10M concurrent writes with no bound, melting the DB connection pool and the heap at once. for await is sequential by design here; if you genuinely need concurrency, you bound it with a worker pool, not an unbounded Promise.all." },
+  ]}
+/>
+
+<Quiz
+  id="04-async-iterators-quiz-1"
+  lessonSlug="04-async-iterators-and-generators"
+  lang="en"
+  question="A consumer does `for await (const row of streamRows(...)) { ...; break; }` after a few rows. The generator has a try/finally that closes the cursor. What runs?"
+  choices={[
+    { label: "On break, the runtime calls the iterator's return(), which resumes the suspended yield as a return: code after that yield is skipped, but the enclosing finally runs, so the cursor closes", correct: true },
+    { label: "Nothing in the generator runs after break — finally is skipped because the loop exited early", misconception: "Early exit is exactly when return() is invoked. break/return/throw out of a for await calls the iterator's return(), and in an async generator that runs the enclosing finally — that's the whole reason finally is the safe place for cleanup." },
+    { label: "The rest of the generator body runs to completion in the background to finish closing", misconception: "The generator does not run to completion. return() skips the code after the current yield; only finally blocks execute. The remaining rows are never produced." },
+    { label: "The cursor closes only if you call gen.return() yourself; for await does not do it", misconception: "for await calls return() for you on break/return/throw. You only have to call it manually when you drive the iterator by hand and stop pulling without exhausting it." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A lazy async-generator pipeline pulling one item at a time"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "s", label: "source gen", sub: "yield row" },
+    { id: "m", label: "map gen", sub: "yield fn(x)" },
+    { id: "f", label: "filter gen", sub: "yield if ok" },
+    { id: "c", label: "consumer", sub: "for await" },
+  ]}
+  edges={[
+    { from: "s", to: "m", label: "pull" },
+    { from: "m", to: "f", label: "pull" },
+    { from: "f", to: "c", label: "pull" },
+  ]}
+  caption="The consumer pulls; each pull travels back through filter → map → source, which yields exactly one item, suspends, and waits. At any instant there is one item per stage — constant memory regardless of total rows — and a slow consumer throttles the source automatically because the source is frozen at yield until pulled."
+/>
+
+<KeyTakeaway>Pull-based: `for await` awaits each `next()`, so the producer is suspended at `yield` — backpressure is structural. Put cleanup in `finally`; `break`/`throw` runs it via `return()`. Chain generators for an O(1)-memory pipeline.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-async-iterators-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is an async iterator's backpressure 'structural' and free, while a push-based EventEmitter forces you to implement it by hand?", a: "Because pull and push split control differently. In the pull model, the consumer is the only party that advances the stream: nothing is produced until it calls next() (which for await does each loop), and an async generator is literally suspended at its yield until that pull arrives. So a slow consumer just pulls slower, and the producer — being frozen — is physically unable to run ahead and pile up data. There is no buffer to overflow because the next item isn't created until you ask. In push (callbacks, emitter.on('data')), the producer sets the timing and fires events whenever data is ready, but the capacity limit lives with the consumer; those two are split across a boundary, so you must wire a feedback channel (pause/resume) and an explicit buffer with size accounting to throttle the source. Drop or misconfigure that channel and the buffer grows unbounded — that's the OOM, just moved from a result array into your queue. Pull turns backpressure from a protocol you can get wrong into an invariant of the control flow." },
+    { q: "Where do you close a DB cursor in an async generator, and what exactly leaks if you don't?", a: "Close it in a finally inside the generator. When a consumer leaves a for await loop early via break, return, or throw, the runtime calls the iterator's return() method; in an async generator return() resumes the suspended yield as if a return ran there — the code after that yield is skipped, but any enclosing finally block executes. So cursor.close() and conn.release() placed in finally run on normal exhaustion AND on early exit, whereas the same cleanup placed after the loop is skipped entirely the first time the consumer breaks. The leak is concrete: the connection is never returned to the pool; repeat a few thousand times and the pool is exhausted and every later query hangs. One edge to remember: return() only fires through for await or an explicit it.return()/exhaustion. If you grab the iterator manually, pull a few values, and just drop the reference without calling return() or exhausting it, the generator stays suspended forever and finally never runs — so manual iteration makes cleanup your responsibility." },
+  ]}
+/>
+
+<Recap lang="en">
+An async iterable exposes `Symbol.asyncIterator`, whose `next()` returns a `Promise<{ value, done }>`; `for await` is sugar for calling it once and looping awaited `next()` calls until `done`, sequentially. Async generators (`async function*` + `yield`) author these ergonomically: each `yield` suspends the function until the consumer pulls again, so the producer cannot run ahead. That is the core difference from push (callbacks, `EventEmitter`, `.on('data')`), where the producer sets the pace and you must hand-build backpressure with pause/resume and a bounded buffer or risk the OOM. Pull makes backpressure structural and free — and a Node `Readable` is async-iterable, so `for await (const chunk of readable)` throttles real I/O automatically. Put resource cleanup in a `finally`: leaving the loop via `break`/`return`/`throw` calls the iterator's `return()`, which skips code after the current `yield` but runs `finally`, closing cursors and releasing connections; put that cleanup after the loop instead and the first `break` leaks the connection until the pool dies. Chain generators (source → map → filter → consumer) for a lazy pipeline that holds one item per stage — O(1) memory streaming 10M rows instead of materializing a ~1.5 GB array — with pull-backpressure threading end to end. Just remember `for await` is sequential, not concurrent: if you need parallelism, bound it with a worker pool rather than an unbounded `Promise.all`.
+</Recap>

@@ -1,0 +1,188 @@
+---
+concepts:
+- opentelemetry-adot
+- otel-collector
+- signal-correlation
+- context-propagation
+- head-vs-tail-sampling
+- metric-cardinality-cost
+- "SAA-C03:Design High-Performing Architectures"
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-opentelemetry-and-cardinality"
+sources:
+- https://aws-otel.github.io/docs/introduction
+- https://opentelemetry.io/docs/concepts/signals/
+- https://opentelemetry.io/docs/concepts/sampling/
+spiral: []
+status: ready
+summary: 'OpenTelemetry instruments traces, metrics, and logs once and exports anywhere; ADOT is the AWS Collector. The senior trap is cardinality — a user_id in a metric label is one time series per user, which melts the backend and the bill.'
+title: 'OpenTelemetry on AWS: unified signals and the cardinality trap'
+track: "aws"
+unit: "05-observability"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Someone on the platform team wants per-user latency dashboards, so they add one line to the request handler: a `user_id` dimension on the existing `http.server.duration` metric. It ships on a Friday. By Monday the Prometheus/AMP instance backing the dashboards is OOM-killing itself in a crash loop, queries time out, and the on-call who first declared a metrics outage slowly realizes there is no outage — the backend is doing exactly what it was told. Each unique `user_id` value created its own time series; with 1.4 million active users that one label turned a handful of series into roughly a million-and-a-half, and the active series count is what a time-series database holds in memory. The team that runs it on CloudWatch custom metrics instead of Prometheus doesn't crash — they get the same lesson as a five-figure invoice, because each distinct dimension combination is a separate billable metric. Same mistake, two bills: one paid in RAM, one paid in dollars. Nobody was storing too much data by volume. They were storing too many *distinct shapes* of it — and that is cardinality, the one observability number that scales with your user base instead of your traffic.
+</Hook>
+
+<Crux>One SDK, three signals, any backend: OpenTelemetry. The trap: a user_id metric label is one series per user — melting backend and bill.</Crux>
+
+<Explanation>
+
+## OpenTelemetry and ADOT: instrument once, export anywhere
+
+The previous lesson was about X-Ray — AWS's own tracing backend and its agent. The problem with leaning on any single vendor's agent is lock-in: the day you want to send your traces to Datadog, your metrics to a self-hosted Prometheus, and keep logs in CloudWatch, you are re-instrumenting your entire fleet because the vendor agent only speaks to the vendor. **OpenTelemetry (OTel)** is the vendor-neutral answer: one open standard for instrumenting the three signals — **traces, metrics, and logs** — with a single SDK in your code, plus a separate process called the **OTel Collector** that receives, processes, and exports that telemetry to whatever backend you choose. Your application code emits OTLP (the OpenTelemetry wire protocol); the Collector decides where it lands. Swapping backends becomes a Collector config change, not a code change across every service.
+
+On AWS the supported Collector distribution is **ADOT — the AWS Distro for OpenTelemetry**: the upstream Collector plus AWS-maintained exporters (X-Ray, CloudWatch/EMF, Amazon Managed Prometheus) and security patches, with AWS support. The Collector runs in one of three topologies, and the choice is a real tradeoff. As an **agent/sidecar** (one Collector per host or per pod) it is close to the app, adds no network hop, and isolates blast radius — but you run N Collectors and pay that overhead N times. As a **central gateway** (a load-balanced Collector fleet all services ship to) you centralize sampling, batching, and redaction policy in one place — but it is now a shared dependency you must scale and keep highly available, and it is the natural place to do tail sampling because it sees whole traces. Most serious setups run both: a thin agent for collection, a gateway for policy.
+
+```yaml
+# ADOT / OTel Collector: receive OTLP, batch, then FAN OUT to three backends.
+receivers:
+  otlp:
+    protocols:
+      grpc:   # apps push OTLP over gRPC to the local agent
+      http:
+processors:
+  batch: {}   # amortize export calls; never export per-span
+exporters:
+  awsxray: {}                 # traces  -> AWS X-Ray
+  awsemf:                     # metrics -> CloudWatch via Embedded Metric Format
+    namespace: Checkout
+    dimension_rollup_option: NoDimensionRollup
+  prometheusremotewrite:      # metrics -> Amazon Managed Prometheus (AMP)
+    endpoint: "https://aps-workspaces.../api/v1/remote_write"
+service:
+  pipelines:
+    traces:  { receivers: [otlp], processors: [batch], exporters: [awsxray] }
+    metrics: { receivers: [otlp], processors: [batch], exporters: [awsemf, prometheusremotewrite] }
+```
+
+The tradeoff to state out loud: OTel buys you **portability and one instrumentation across every backend**, at the cost of **operating a Collector** (a stateful, memory-bound process you must size and monitor) and living with a spec where some pieces — logs especially — matured later than traces. A turnkey vendor agent skips the Collector entirely; you pay for that convenience in lock-in. The failure mode of getting this wrong is subtle: an under-provisioned gateway Collector silently drops spans under load (the `batch` queue fills and the exporter sheds), so your traces look complete in dev and have holes in prod exactly when you need them.
+
+## Correlating across signals: the trace_id is the join key
+
+The reason you bother unifying the three signals under one standard is **correlation**: being able to pivot from a metric spike to an example trace to the exact log lines for that one request, in seconds, instead of grepping three disconnected systems. The mechanism is a single identifier — the **`trace_id`** — that flows through all three. A trace propagates across service boundaries via the W3C `traceparent` header, so every hop shares the same trace ID:
+
+```
+traceparent: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01
+             │  └─ trace_id (32 hex) ──────────┘ └ span_id ────┘ └ flags
+             └ version
+```
+
+That same `trace_id` gets stamped into every **structured log** the request emits, so filtering logs by one trace ID reconstructs exactly what happened on that request. And on the metrics side, **exemplars** attach a sample `trace_id` to a metric data point — so when a latency histogram bucket spikes, you click the spike and land on a real slow trace, not a guess. Metric → trace → log, one click each. The glue that makes signals *joinable at all* is consistent **resource attributes**: every signal an app emits is tagged with the same `service.name`, `deployment.environment`, `service.version`. Get these inconsistent — one service calls itself `checkout`, another `checkout-svc` — and the backend treats them as different services, the service map fractures, and correlation quietly fails with no error. The failure mode here is not a crash; it is dashboards that look fine and lie.
+
+## Head vs tail sampling: where you decide what to keep
+
+You cannot store every trace at scale — at 5,000 requests/second that is ~13 billion traces a month, and both the storage bill and the SDK/network overhead make 100% retention absurd. So you **sample**, typically keeping **1–10%** of traces. The senior decision is *where* the keep/drop choice happens. **Head sampling** decides at the very start of the trace, at the first service, before any work is done: cheap, stateless, and the decision propagates down the `traceparent` flags so the whole trace is consistently kept or dropped. Its fatal weakness is that it decides *blind* — it cannot know this trace will end in a 500 or take 9 seconds, so a flat 5% head sample will, by definition, throw away 95% of your rare error traces, which are the exact ones you needed.
+
+**Tail sampling** decides *after* the trace completes, once the outcome is known: keep 100% of traces that errored or exceeded a latency threshold, and sample the boring fast successes down to 1%. The signal is dramatically better — you keep what matters and drop only noise. The cost is structural: the Collector must **buffer every span of every in-flight trace in memory** until the trace finishes (a buffering window of, say, 10–30 seconds), then evaluate the policy on the assembled trace. That makes tail sampling stateful, memory-hungry, and sensitive to the buffering window — too short and you decide on incomplete traces; too long and you blow the Collector's memory. It also forces all spans of one trace to reach the *same* Collector instance, which complicates a horizontally scaled gateway.
+
+<Inset kind="why" lang="en">
+Why is head sampling cheap but blind, and tail sampling smart but expensive? Because the value of a trace is only knowable at the *end* — was it slow, did it error? — but the *cost* of keeping it is paid all the way through. Head sampling pays the cost decision up front at the cheapest possible moment (one boolean, propagated in the `traceparent` flags, zero buffering), and in exchange gets zero information: it is flipping a weighted coin before the request even runs. Tail sampling inverts both: it waits until the outcome is known, so it can keep the 0.1% of traces that errored and drop the 99% that were boring — far better signal per stored byte — but to wait, the Collector must hold every span of every open trace in RAM for the whole buffering window. So the rule of thumb is a hybrid: head-sample to a manageable rate to bound the firehose, then tail-sample within that to preferentially keep errors and slow traces. You are trading memory for relevance, on purpose.
+</Inset>
+
+## The cardinality trap: a metric's cost is its number of unique label combinations
+
+This is the failure mode that ends careers' worth of credibility, and it is purely about arithmetic. A metric is not one thing — it is **one time series per unique combination of label (dimension) values**. The metric `http.server.duration{route, status_class, region}` with, say, 20 routes × 5 status classes × 4 regions is 400 time series — totally fine. The cost is the *product* of the cardinalities of every label. The trap is putting a **high-cardinality identifier** in a label: `user_id`, `request_id`, `session_id`, an email, or a raw URL with IDs baked in (`/orders/4821`). A `user_id` label does not add some series — it adds **one series per user**. Tens of thousands of users is tens of thousands of series; 1.4 million users is 1.4 million series from that one label, and if it multiplies with your existing labels, tens of millions. A Prometheus/AMP backend holds active series in memory, so this OOM-kills it; CloudWatch bills each distinct dimension combination as a **separate custom metric** (illustratively ~$0.30/metric/month, region-dependent), so a million combinations is a five-figure line item — the Hook's two bills.
+
+The fix is a discipline, not a feature. **Keep metric labels low-cardinality and bounded** — values from a small, finite set: the **route template** (`/orders/{id}`) not the raw path, **status_class** (`2xx`, `5xx`) not the exact code if you must bound it, `region`/`az`, `service.version`. High-cardinality identifiers belong in **traces and logs**, where they are *supposed* to live — a trace already records `user_id` and `request_id` as span attributes for free, and a structured log carries them as fields — and you reach them via the `trace_id` join, not via a metric label. With **EMF** specifically: a field in the EMF JSON is only billed as a metric dimension if you list it in the `Dimensions` array, so log `user_id` as a plain field (free, queryable) and never put it in `Dimensions`. The rule a senior internalizes: *labels are for things you group and alarm on; identifiers are for things you look one up by — and those go in traces and logs, never in a metric label.*
+
+```yaml
+# ANTIPATTERN — explodes to one series per user/request:
+attributes:
+  - key: user_id      # millions of values -> millions of series
+  - key: http.target  # raw "/orders/4821" -> one series per order id
+
+# FIX — bounded labels on the metric; identifiers move to spans/logs:
+attributes:
+  - key: http.route   # template "/orders/{id}" -> ~tens of series
+  - key: status_class # "2xx"/"4xx"/"5xx" -> a handful
+  - key: region       # finite set
+  # user_id / request_id: keep as SPAN attributes + log fields, not metric labels.
+  #   reach them by joining on trace_id, never by adding a metric dimension.
+```
+
+<TradeoffMatrix
+  id="05-opentelemetry-and-cardinality-tradeoff-1"
+  lessonSlug="05-opentelemetry-and-cardinality"
+  lang="en"
+  prompt="You want per-request, per-user debuggability AND a cheap, scalable latency metric. Where does the user_id belong so you keep both?"
+  options={[
+    { name: "As a span attribute on the trace and a field in the structured log, joined via trace_id — NOT a metric label", summary: "Identifiers live in traces/logs; reach them by join.", correct: true, justification: "Right. A metric's cost is one time series per unique label combination, so a high-cardinality user_id as a metric label is one series per user — millions of series that OOM Prometheus/AMP and bill as a million CloudWatch custom metrics. But the trace already carries user_id and request_id as span attributes for free, and the structured log carries them as fields. You keep full per-user debuggability there, and you reach a specific user's slow request by pivoting metric → exemplar trace_id → trace → logs. The metric itself stays low-cardinality and cheap. Identifiers go where lookup-by-one belongs; metrics stay for group-and-alarm." },
+    { name: "As a metric label so you can build a per-user latency dashboard directly", summary: "Direct, but one series per user.", justification: "This is the Hook's exact mistake. It feels direct, but a metric is one time series per unique label-value combination, so user_id adds one series per user: tens of thousands becomes tens of thousands of series, a million users becomes a million series. Prometheus/AMP holds active series in memory and OOM-crashes; CloudWatch bills each combination as a separate custom metric and you get a five-figure invoice. 'Per-user dashboard from a metric' is precisely the antipattern — per-user belongs in traces/logs." },
+    { name: "Hash the user_id to ~1000 buckets and use the bucket as a metric label", summary: "Bounds cardinality, destroys the use case.", justification: "Half-clever but wrong for the stated goal. Bucketing does bound cardinality to ~1000 series, which is safe for the backend — but it throws away the per-USER debuggability you explicitly wanted: you can no longer find one specific user's request, only a hash bucket of ~1400 users. It's a valid trick when you only need a coarse distribution, but here it fails the requirement. The identifier still belongs in the trace, where you keep it exact and cheap." },
+    { name: "Put user_id in the metric but cap retention to 1 day to limit cost", summary: "Shorter retention, same series explosion.", justification: "Misdiagnoses the cost. The killer is the active-series count the backend must hold and index in memory at any instant, not how long you retain it — a million live series OOM-kills Prometheus/AMP today regardless of retention, and CloudWatch bills per metric that exists at all. Shorter retention trims storage at the margin but does nothing about the cardinality explosion that is the actual failure. Wrong lever." },
+  ]}
+/>
+
+<Quiz
+  id="05-opentelemetry-and-cardinality-quiz-1"
+  lessonSlug="05-opentelemetry-and-cardinality"
+  lang="en"
+  question="A team adds a user_id label to one Prometheus metric with 1.4 million active users, and the backend starts OOM-crashing. What actually drives the cost, and what's the fix?"
+  choices={[
+    { label: "A metric is one time series per unique label combination, so user_id creates ~1 series per user (millions of series) and the active-series count is what the TSDB holds in memory — move user_id into trace/log fields and keep metric labels low-cardinality (route template, status_class, region)", correct: true },
+    { label: "The metric is sampling too much data; lower the scrape interval to reduce volume", misconception: "Scrape interval controls how often each series is sampled — it changes data-point volume, not the number of series. The crash is driven by the count of distinct active time series the TSDB must hold and index in memory, and a slower scrape leaves all million-plus series alive. The fix is removing the high-cardinality label, not scraping less." },
+    { label: "Prometheus can't store strings; user_id must be a number for it to work", misconception: "Label values are strings by design; numeric vs string isn't the issue. A numeric user_id explodes cardinality identically — it's still one distinct value (and thus one series) per user. The problem is the number of unique combinations, not their datatype." },
+    { label: "The retention window is too long; cut it to one day and the OOM stops", misconception: "Retention affects how long old data is kept on disk, not the active-series count held in memory right now. A million live series OOM-kills the backend today regardless of retention. Cardinality, not retention, is the lever; the fix is moving the identifier out of the label entirely." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="OTel SDK emits OTLP to the ADOT Collector, which guards cardinality then fans signals out to three backends"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "app", label: "App + OTel SDK" },
+    { id: "collector", label: "ADOT Collector" },
+    { id: "guard", label: "Cardinality guard" },
+    { id: "xray", label: "X-Ray (traces)" },
+    { id: "cw", label: "CloudWatch/EMF (metrics)" },
+    { id: "amp", label: "Prometheus/AMP (metrics)" },
+  ]}
+  edges={[
+    { from: "app", to: "collector", label: "OTLP (traces/metrics/logs)" },
+    { from: "collector", to: "guard", label: "tail-sample + drop hi-card labels" },
+    { from: "guard", to: "xray", label: "trace_id keeps user_id" },
+    { from: "guard", to: "cw", label: "labels: route/status/region only" },
+    { from: "guard", to: "amp", label: "bounded series" },
+  ]}
+  caption="One instrumentation, exported to many backends. The guard step is where the senior discipline lives: tail-sample to keep errors and slow traces, and strip high-cardinality identifiers (user_id, request_id, raw paths) from metric labels — they ride along in the trace and logs, reachable by trace_id."
+/>
+
+<KeyTakeaway>OTel unifies three signals; ADOT exports anywhere, trace_id joins them. Head sampling is blind, tail buffers traces. The trap: a metric is one series per label combo, so user_id is one per user. Keep IDs in traces/logs.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-opentelemetry-and-cardinality-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does OpenTelemetry + ADOT give you over a single vendor's agent, and what does it cost?", a: "OpenTelemetry is a vendor-neutral standard for instrumenting all three signals — traces, metrics, and logs — with one SDK in your code plus a separate process, the OTel Collector, that receives OTLP and exports it to whatever backend you choose. ADOT (AWS Distro for OpenTelemetry) is the AWS-supported Collector distribution: upstream Collector plus AWS-maintained exporters for X-Ray, CloudWatch/EMF, and Amazon Managed Prometheus. The win is portability: swapping or fanning out backends (traces to X-Ray, metrics to AMP, logs to CloudWatch) is a Collector config change, not re-instrumenting every service — no lock-in to one vendor's agent. The Collector runs as an agent/sidecar (close to the app, no extra hop, isolated blast radius, but N Collectors to run), as a central gateway (one place for sampling/batching/redaction and the natural home for tail sampling, but a shared dependency you must scale and keep HA), or both. The cost: you operate a stateful, memory-bound Collector you must size and monitor, and you live with a spec where logs matured later than traces. Get the gateway under-provisioned and it silently sheds spans under load, so traces look complete in dev and have holes in prod." },
+    { q: "Explain the cardinality trap and the head-vs-tail sampling tradeoff, with the rule for where each identifier belongs.", a: "A metric is one time series per unique combination of its label (dimension) values, so a metric's cost is the product of its labels' cardinalities. Low-cardinality labels (route template, status_class, region) give a bounded handful-to-hundreds of series — fine. Putting a high-cardinality identifier (user_id, request_id, email, raw URL with IDs) in a label adds one series per value: a million users is a million series. Prometheus/AMP holds active series in memory and OOM-crashes; CloudWatch bills each distinct dimension combination as a separate custom metric (~$0.30/metric/month, illustrative), so it's a five-figure bill. Fix: keep metric labels low-cardinality and bounded; put identifiers in traces (as span attributes, free) and structured logs (as fields), reached via the trace_id join — and with EMF, list only low-cardinality keys in the Dimensions array. Rule: labels are for things you group and alarm on; identifiers are for things you look one up by, and those live in traces/logs. Sampling: you keep 1–10% of traces because storing all of them at scale (13B/month at 5k rps) is absurd. Head sampling decides at the trace's start — cheap, stateless, propagated in the traceparent flags, but blind, so a flat 5% throws away 95% of your rare error traces. Tail sampling decides after the trace completes — keep 100% of errors and slow traces, drop boring fast ones — far better signal, but the Collector must buffer every span of every in-flight trace in memory for the buffering window and route all spans of a trace to one instance. The hybrid: head-sample to bound the firehose, then tail-sample within it to keep what matters." },
+  ]}
+/>
+
+<Recap lang="en">
+OpenTelemetry is the vendor-neutral way to instrument all three observability signals — traces, metrics, and logs — once, with a single SDK, and ship them through the OTel Collector to any backend; on AWS that Collector is ADOT, exporting to X-Ray, CloudWatch/EMF, or Amazon Managed Prometheus, so switching or fanning out backends is a config change, not a re-instrumentation, at the price of operating a stateful, memory-bound Collector (as a sidecar agent, a central gateway, or both). The payoff of unifying the signals is correlation: one trace_id, propagated across services by the W3C traceparent header and stamped into every structured log, plus exemplars that link a metric spike to an example trace, lets you pivot metric → trace → log for a single request — but only if consistent resource attributes (service.name, deployment.environment) make the signals joinable, or correlation silently fails. Because you cannot store every trace at scale, you sample 1–10%: head sampling decides cheaply at the start but blind, dropping rare error traces; tail sampling decides after the trace completes so it keeps every error and slow trace, at the cost of buffering whole traces in the Collector's memory — the usual answer is a hybrid. And the senior trap that ties it together is cardinality: a metric is one time series per unique label combination, so a high-cardinality identifier like user_id in a metric label becomes one series per user — millions — which OOM-kills a Prometheus/AMP backend and bills as a million CloudWatch custom metrics. Keep metric labels low-cardinality and bounded (route template, status_class, region), and put user_id, request_id, and raw paths where they belong: in traces and logs, reachable by the trace_id join, never in a metric label.
+</Recap>

@@ -1,0 +1,213 @@
+---
+concepts:
+- async-iterator-protocol
+- async-generators
+- for-await-of
+- pull-vs-push-backpressure
+- iterator-cleanup-return
+- lazy-pipelines
+deepensInto: []
+estMin: 18
+lang: ru
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: 04-async-iterators-and-generators
+sources:
+- https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/for-await...of
+- https://nodejs.org/api/stream.html#streams-compatibility-with-async-generators-and-async-iterators
+- https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/AsyncGenerator
+spiral: []
+status: ready
+summary: 'Асинхронные итераторы работают по запросу: потребитель тянет каждое значение, поэтому продюсер приостановлен на yield, а backpressure структурный. break/throw запускает finally генератора, и курсоры закрываются. Цепочка генераторов — ленивый конвейер с памятью O(1).'
+title: 'Асинхронные итераторы и генераторы: потоки по запросу без буфера'
+track: node
+unit: 02-async-and-streams
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Твой ночной импортёр работал нормально месяцами, потом клиент с выгрузкой в 9 миллионов строк запустил его, и под умер на 1.5 ГБ с `JavaScript heap out of memory`. Ты свёл это к одной невинной строке: `const rows = await db.query('SELECT * FROM events'); rows.map(transform)`. Драйвер забуферил весь результирующий набор в JS-массив до того, как твой код увидел хоть одну строку, поэтому пиковая память масштабировалась с размером выгрузки, а не с размером твоей пачки. С трансформом всё было в порядке; баг был в том, что ты затянул всё в память разом вместо строки за раз. Фикс — не под побольше, а смена того, *кто задаёт темп*.
+</Hook>
+
+<Crux>Асинхронные итераторы — по запросу: потребитель просит каждое значение, продюсер приостановлен на `yield`, а backpressure автоматический.</Crux>
+
+<Explanation>
+
+## Протокол асинхронной итерации: next() возвращает промис
+
+Обычный итерируемый объект предоставляет `Symbol.iterator`; **асинхронный** предоставляет `Symbol.asyncIterator` — метод, который возвращает итератор, чей `next()` возвращает `Promise<{ value, done }>` вместо простого `{ value, done }`. Именно это единственное отличие — результат является промисом — позволяет каждому шагу *что-то await-ить* (сетевой round-trip, чтение с диска) перед тем, как выдать следующее значение. `for await (const x of it)` — чистый сахар: он один раз вызывает `it[Symbol.asyncIterator]()`, затем крутит цикл `const { value, done } = await iter.next()` пока `done` не станет true, выполняя тело для каждого `value`. Он последователен по построению — цикл полностью await-ит один `next()` перед тем, как просить следующий.
+
+Протокол почти никогда не пишут руками. **Асинхронный генератор** — `async function*` с `yield` — это эргономичный инструмент автора: он строит соответствующий протоколу асинхронный итератор за тебя, и каждый `yield` *приостанавливает функцию* до того, как потребитель снова вызовет `next()`. Функция буквально останавливается на `yield` и не движется дальше, пока её не потянут.
+
+```js
+// Paginate a cursor-based API, yielding one record at a time.
+async function* fetchAllUsers(client) {
+  let cursor = null;
+  do {
+    const page = await client.get("/users", { cursor, limit: 100 });
+    for (const user of page.items) {
+      yield user;        // suspends here until the consumer pulls the next value
+    }
+    cursor = page.nextCursor;
+  } while (cursor);       // only fetches the next page when the buffer is drained
+}
+
+// Consume it: one user at a time, never more than one page in memory.
+for await (const user of fetchAllUsers(client)) {
+  await index(user);     // each await fully completes before the next user is pulled
+}
+```
+
+Цикл по странице *не может* убежать вперёд потребителя: выдав последнего пользователя страницы N, генератор заморожен посреди `for`; он возобновляется — и только тогда отправляет запрос за страницей N+1 — когда `index(user)` зарезолвится и `for await` снова вызовет `next()`. Память ограничена одной страницей плюс одной записью в полёте, есть у API 100 пользователей или 100 миллионов.
+
+## Pull побеждает push: backpressure бесплатно
+
+Это и есть senior-инсайт. Колбэки, `EventEmitter`-ы и `readable.on('data', …)` — это **push**: продюсер решает, когда данные приходят, и швыряет их в тебя. Если ты не успеваешь — медленная запись в БД за быстрым чтением из сокета — события всё равно идут, и ты обязан реализовать backpressure руками: приостановить источник, буферизовать, отслеживать размер буфера, возобновить при опустошении. Забудь что-нибудь из этого — и неограниченный буфер превращается в тот самый OOM из вступления, просто переехавший.
+
+Асинхронные итераторы — это **pull**: ничего не производится, пока потребитель не вызовет `next()`. Поэтому backpressure *структурный*, а не приделанная функция — продюсер приостановлен на `yield` и физически неспособен убежать вперёд, потому что единственное, что его возобновляет, — это твой следующий запрос. Медленный потребитель просто тянет медленнее; продюсер ждёт. А поскольку Node `Readable` реализует `Symbol.asyncIterator`, ты получаешь это бесплатно поверх реального I/O:
+
+```js
+import { createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
+
+// readline over a Readable is itself async-iterable.
+const rl = createInterface({
+  input: createReadStream("huge.log"),    // a 40 GB file is fine
+  crlfDelay: Infinity,
+});
+
+for await (const line of rl) {
+  await ship(line);   // if ship() is slow, the file read naturally throttles
+}
+```
+
+Пока `ship(line)` в ожидании, `for await` не вызывает `next()`, поэтому `readline` не запрашивает больше, поэтому нижележащий файловый поток не читается дальше своего `highWaterMark`. Чтение ОС приостанавливается. Ты не написал ни `.pause()`, ни `.resume()`, ни учёта буфера — pull-модель это обеспечила.
+
+<Inset kind="why" lang="ru">
+Почему push — модель сложнее, если обе двигают одни и те же байты? В push *полномочие на тайминг* живёт у продюсера, а *ограничение по ёмкости* — у потребителя; они расщеплены через границу, поэтому корректность зависит от канала обратной связи (pause/resume), который ты обязан подключить и никогда не уронить. В pull и полномочие, и ограничение живут у потребителя: одна сторона решает и когда, и стоит ли продвигаться, поэтому нет канала, который можно было бы неверно настроить. Backpressure перестаёт быть протоколом и становится инвариантом самого потока управления.
+</Inset>
+
+## Очистка при раннем выходе: курсоры закрываются в finally
+
+Pull-продюсер, удерживающий ресурс — курсор БД, открытый файловый дескриптор, соединение из пула, — несёт реальный риск: потребитель может сделать `break`, `return` или `throw` из цикла `for await` до того, как источник исчерпан. Рантайм это обрабатывает. Когда ты покидаешь `for await` рано, он вызывает метод `return()` итератора. Внутри асинхронного генератора `return()` заставляет приостановленный `yield` повести себя так, будто там выполнился `return`: **код после текущего `yield` не выполняется, но любой охватывающий блок `finally` выполняется.** Этот `finally` — единственное надёжное место, чтобы освободить ресурс.
+
+```js
+async function* streamRows(pool, sql) {
+  const conn = await pool.connect();
+  const cursor = conn.cursor(sql);
+  try {
+    for (let batch; (batch = await cursor.read(500)).length; ) {
+      for (const row of batch) yield row;   // consumer may break out mid-stream
+    }
+  } finally {
+    // Runs on normal exhaustion AND on break/return/throw, via the generator's return().
+    await cursor.close();
+    conn.release();        // the leak you'd get without finally: a held connection forever
+  }
+}
+
+for await (const row of streamRows(pool, "SELECT * FROM events")) {
+  if (await isDuplicate(row)) break;   // triggers return() → the finally above runs
+  await upsert(row);
+}
+```
+
+Режим отказа конкретен: помести `cursor.close()` и `conn.release()` *после* цикла вместо `finally` — и первый же `break` их пропустит. Соединение никогда не вернётся в пул; сделай так несколько тысяч раз — пул исчерпан, и каждый следующий запрос виснет. Одна тонкость, которую стоит держать на радаре: `return()` срабатывает, только если итерация реально началась и затем остановилась через `break`/`return`/`throw` или доработала до конца. Если ты захватишь итератор вручную (`const it = gen[Symbol.asyncIterator]()`), вытянешь пару значений, а затем просто сбросишь ссылку, не вызвав `it.return()` и не исчерпав его, генератор останется приостановленным на своём последнем `yield` навсегда, и `finally` никогда не выполнится — ресурс утекает. `for await` всегда делает правильно; ручная итерация делает очистку твоей задачей.
+
+## Композиция: ленивые конвейеры при постоянной памяти
+
+Поскольку генератор и *является* асинхронно-итерируемым, и может *потреблять* такой, ты можешь сцепить их в конвейер, где каждая стадия трансформирует по одному элементу за раз. Сравни жадный стиль с массивами — `(await getAll()).filter(...).map(...)`, который материализует каждый промежуточный массив, с ленивым конвейером из генераторов, который держит по одному элементу на стадию:
+
+```js
+async function* mapGen(src, fn)    { for await (const x of src) yield fn(x); }
+async function* filterGen(src, ok) { for await (const x of src) if (ok(x)) yield x; }
+
+// source → filter → map → consumer, one row flowing through at a time
+const pipeline =
+  mapGen(
+    filterGen(streamRows(pool, "SELECT * FROM events"), (r) => r.amount > 0),
+    (r) => ({ id: r.id, cents: Math.round(r.amount * 100) }),
+  );
+
+for await (const record of pipeline) {
+  await sink.write(record);   // backpressure propagates all the way to the cursor
+}
+```
+
+Арифметика памяти — в этом весь смысл. Материализация 10М строк в среднем по ~150 байт — это ~1.5 ГБ живого массива — ровно тот OOM из вступления, и становится хуже с каждым промежуточным `.map`/`.filter`, который выделяет ещё один полный массив. Конвейер из генераторов — **O(1) по числу строк**: в любой момент есть одна строка в `streamRows`, одна в `filterGen`, одна в `mapGen`, одна записывается — четыре объекта, а не десять миллионов. Ты можешь стримить результирующий набор больше, чем RAM. А поскольку pull-backpressure прошивает каждую стадию, медленный `sink.write` придушит курсор БД на дальнем конце без единой лишней строки кода.
+
+<TradeoffMatrix
+  id="04-async-iterators-tradeoff-1"
+  lessonSlug="04-async-iterators-and-generators"
+  lang="ru"
+  prompt="Нужно трансформировать и записать 10М строк БД в воркере, с ограниченной пиковой памятью, и хочется, чтобы медленный приёмник придушивал чтение. Какой подход подходит?"
+  options={[
+    { name: "Конвейер из асинхронных генераторов, потребляемый через for await — source gen → map gen → запись", summary: "Ленивый, O(1), с backpressure.", correct: true, justification: "Каждая стадия держит по одному элементу, поэтому пиковая память постоянна независимо от числа строк, а pull-backpressure прошивает от приёмника аж до курсора — медленная запись естественно придушивает чтение без единого ручного pause/resume. Это pull-модель ровно за тем, для чего она создана: ограниченная память плюс структурный backpressure бесплатно." },
+    { name: "await db.query('SELECT *'), затем rows.map(transform), затем массовая вставка", summary: "Материализует всё.", justification: "Это дословно тот OOM из вступления. Драйвер буферит все 10М строк в один массив (~1.5 ГБ), каждый .map выделяет ещё один полный массив, а пиковая память масштабируется с выгрузкой, а не с пачкой — под умирает до первой вставки. Backpressure тоже нет: ты уже заплатил всю цену по памяти заранее." },
+    { name: "readable.on('data', row => writeQueue.push(transform(row)))", summary: "Push, неограниченный буфер.", justification: "Push-модель: источник швыряет строки быстрее, чем медленный приёмник опустошает writeQueue, поэтому очередь растёт без границ — OOM просто переехал из результирующего массива в твою очередь. Тебе пришлось бы вручную городить pause/resume и учёт буфера, чтобы это было безопасно, — ровно та работа, которую pull-модель убирает." },
+    { name: "Promise.all(rows.map(r => write(transform(r))))", summary: "Грузит + 10М записей в полёте.", justification: "Вдвойне неверно: всё равно сперва материализует все строки, затем раскидывает 10М конкурентных записей без границы, плавя и пул соединений БД, и кучу разом. for await здесь последователен по дизайну; если конкурентность действительно нужна, её ограничивают пулом воркеров, а не неограниченным Promise.all." },
+  ]}
+/>
+
+<Quiz
+  id="04-async-iterators-quiz-1"
+  lessonSlug="04-async-iterators-and-generators"
+  lang="ru"
+  question="Потребитель делает `for await (const row of streamRows(...)) { ...; break; }` после нескольких строк. У генератора есть try/finally, закрывающий курсор. Что выполнится?"
+  choices={[
+    { label: "На break рантайм вызывает return() итератора, который возобновляет приостановленный yield как return: код после этого yield пропускается, но охватывающий finally выполняется, поэтому курсор закрывается", correct: true },
+    { label: "Ничего в генераторе после break не выполняется — finally пропускается, потому что цикл вышел рано", misconception: "Ранний выход — это ровно тогда, когда вызывается return(). break/return/throw из for await вызывает return() итератора, и в асинхронном генераторе это запускает охватывающий finally — в этом весь смысл, почему finally безопасное место для очистки." },
+    { label: "Остаток тела генератора доработает до конца в фоне, чтобы доделать закрытие", misconception: "Генератор не дорабатывает до конца. return() пропускает код после текущего yield; выполняются только блоки finally. Оставшиеся строки никогда не производятся." },
+    { label: "Курсор закроется, только если ты сам вызовешь gen.return(); for await этого не делает", misconception: "for await вызывает return() за тебя на break/return/throw. Делать это вручную нужно лишь когда ты гоняешь итератор руками и перестаёшь тянуть, не исчерпав его." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A lazy async-generator pipeline pulling one item at a time"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "s", label: "source gen", sub: "yield row" },
+    { id: "m", label: "map gen", sub: "yield fn(x)" },
+    { id: "f", label: "filter gen", sub: "yield if ok" },
+    { id: "c", label: "consumer", sub: "for await" },
+  ]}
+  edges={[
+    { from: "s", to: "m", label: "pull" },
+    { from: "m", to: "f", label: "pull" },
+    { from: "f", to: "c", label: "pull" },
+  ]}
+  caption="Потребитель тянет; каждый запрос идёт назад через filter → map → source, который выдаёт ровно один элемент, приостанавливается и ждёт. В любой момент есть один элемент на стадию — постоянная память независимо от общего числа строк — а медленный потребитель автоматически придушивает источник, потому что источник заморожен на yield, пока его не потянут."
+/>
+
+<KeyTakeaway>По запросу: `for await` await-ит каждый `next()`, продюсер приостановлен на `yield` — backpressure структурный. Очистку клади в `finally`; `break`/`throw` запускает её через `return()`. Сцепляй генераторы ради памяти O(1).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-async-iterators-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему backpressure асинхронного итератора «структурный» и бесплатный, а push-based EventEmitter заставляет реализовывать его руками?", a: "Потому что pull и push по-разному расщепляют управление. В pull-модели потребитель — единственная сторона, продвигающая поток: ничего не производится, пока он не вызовет next() (что for await делает каждый виток), а асинхронный генератор буквально приостановлен на своём yield, пока этот запрос не придёт. Поэтому медленный потребитель просто тянет медленнее, а продюсер — будучи заморожен — физически не способен убежать вперёд и накопить данные. Нет буфера для переполнения, потому что следующий элемент не создаётся, пока ты не попросишь. В push (колбэки, emitter.on('data')) продюсер задаёт тайминг и швыряет события, как только данные готовы, но ограничение по ёмкости живёт у потребителя; эти двое расщеплены через границу, поэтому ты обязан подключить канал обратной связи (pause/resume) и явный буфер с учётом размера, чтобы придушить источник. Урони или неверно настрой этот канал — буфер растёт без границ, и это тот самый OOM, просто переехавший из результирующего массива в твою очередь. Pull превращает backpressure из протокола, который можно сделать неверно, в инвариант потока управления." },
+    { q: "Где закрывать курсор БД в асинхронном генераторе и что именно утекает, если этого не делать?", a: "Закрывай его в finally внутри генератора. Когда потребитель покидает цикл for await рано через break, return или throw, рантайм вызывает метод return() итератора; в асинхронном генераторе return() возобновляет приостановленный yield так, будто там выполнился return — код после этого yield пропускается, но любой охватывающий блок finally выполняется. Поэтому cursor.close() и conn.release(), помещённые в finally, выполняются и при нормальном исчерпании, И при раннем выходе, тогда как та же очистка после цикла пропускается целиком в первый же раз, когда потребитель делает break. Утечка конкретна: соединение никогда не возвращается в пул; повтори несколько тысяч раз — пул исчерпан, и каждый последующий запрос виснет. Один край, который надо помнить: return() срабатывает лишь через for await либо явный it.return()/исчерпание. Если захватишь итератор вручную, вытянешь пару значений и просто сбросишь ссылку, не вызвав return() и не исчерпав его, генератор останется приостановленным навсегда, и finally никогда не выполнится — так что ручная итерация делает очистку твоей ответственностью." },
+  ]}
+/>
+
+<Recap lang="ru">
+Асинхронно-итерируемый объект предоставляет `Symbol.asyncIterator`, чей `next()` возвращает `Promise<{ value, done }>`; `for await` — сахар для одного его вызова и цикла await-нутых `next()` пока не `done`, последовательно. Асинхронные генераторы (`async function*` + `yield`) пишут их эргономично: каждый `yield` приостанавливает функцию, пока потребитель снова не потянет, поэтому продюсер не может убежать вперёд. Это и есть ключевое отличие от push (колбэки, `EventEmitter`, `.on('data')`), где продюсер задаёт темп, а ты обязан вручную строить backpressure через pause/resume и ограниченный буфер — или рискуешь OOM. Pull делает backpressure структурным и бесплатным — а Node `Readable` асинхронно-итерируем, так что `for await (const chunk of readable)` придушивает реальный I/O автоматически. Клади очистку ресурсов в `finally`: выход из цикла через `break`/`return`/`throw` вызывает `return()` итератора, который пропускает код после текущего `yield`, но выполняет `finally`, закрывая курсоры и освобождая соединения; помести эту очистку после цикла вместо этого — и первый же `break` утечёт соединение, пока пул не умрёт. Сцепляй генераторы (source → map → filter → consumer) ради ленивого конвейера, держащего по одному элементу на стадию — память O(1) при стриминге 10М строк вместо материализации ~1.5 ГБ массива — с pull-backpressure, прошитым из конца в конец. Только помни: `for await` последователен, а не конкурентен: если нужна параллельность, ограничь её пулом воркеров, а не неограниченным `Promise.all`.
+</Recap>

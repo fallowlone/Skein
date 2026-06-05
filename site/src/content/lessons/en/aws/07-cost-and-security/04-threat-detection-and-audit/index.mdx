@@ -1,0 +1,225 @@
+---
+concepts:
+- cloudtrail-audit
+- data-events-vs-management-events
+- guardduty-threat-detection
+- aws-config-compliance
+- security-hub-aggregation
+- detection-response-loop
+- "SAA-C03:Design Secure Architectures"
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-threat-detection-and-audit"
+sources:
+- https://docs.aws.amazon.com/awscloudtrail/latest/userguide/cloudtrail-concepts.html
+- https://docs.aws.amazon.com/guardduty/latest/ug/what-is-guardduty.html
+- https://docs.aws.amazon.com/config/latest/developerguide/WhatIsConfig.html
+spiral: []
+status: ready
+summary: 'Lesson 02 prevented; this detects and responds. CloudTrail is the audit spine, GuardDuty flags active threats, Config catches misconfig drift, Security Hub aggregates — then EventBridge routes to automated response. No CloudTrail, no forensics after a breach.'
+title: 'Threat detection and audit: CloudTrail, GuardDuty, Config, Security Hub'
+track: "aws"
+unit: "07-cost-and-security"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Three weeks after a leaked CI access key, finance flags a $40k surprise: GPU instances mining crypto in two regions you never deploy to. You rotate the key, kill the instances, and then the question that actually matters arrives from your CISO: *what else did they touch — did they read the customer-data bucket, create a backdoor user, alter an IAM policy?* You open the console to investigate and find the answer is unknowable. CloudTrail was never enabled org-wide; the one trail that existed logged to an S3 bucket in the same compromised account, and the intruder's `DeleteObjects` wiped it on the way out. Event History only goes back 90 days for management events and shows nothing for the S3 reads you care about. You have no forensic timeline, cannot scope the breach, and must disclose to customers assuming worst case. The attack succeeded because prevention failed once; the *investigation* failed because detection and audit were never wired up at all. This lesson is the second half of security: detect, and respond.
+</Hook>
+
+<Crux>CloudTrail is the audit spine; GuardDuty flags threats, Config catches drift, Security Hub aggregates, EventBridge routes the response.</Crux>
+
+<Explanation>
+
+## CloudTrail: the audit spine you cannot skip
+
+Lesson 02 was about *prevention* — IAM evaluation, KMS, scoping the blast radius before anything goes wrong. This lesson is the other half: assuming something *will* go wrong, how do you see it and react. The foundation of all of it is **CloudTrail**, which records every AWS API call in your account — *who* (the principal), *what* (the action), *when*, *from where* (source IP), and *what happened* (response). It is the immutable answer to "what did they touch?"
+
+CloudTrail splits events into two kinds, and the distinction is a cost and coverage decision. **Management events** are control-plane operations — `RunInstances`, `CreateUser`, `AttachRolePolicy`, `PutBucketPolicy`, `AssumeRole`. They're the spine of any forensic timeline and the first copy is essentially free. **Data events** are the high-volume data-plane operations — S3 object-level `GetObject`/`PutObject`, Lambda `Invoke`, DynamoDB item ops. These are *off by default* because they're firehose-volume; you pay roughly **$0.10 per 100,000 data events** delivered, and a busy S3 bucket can generate millions a day. But data events are exactly what answers "did they *read* the customer-data bucket?" — management events show the bucket *policy* changing, only data events show the objects being *read*. The senior call is selective: management events always on org-wide, data events enabled only on the buckets and functions that actually matter.
+
+The non-negotiable foundation is **one organization trail, multi-region, delivered to a locked-down S3 bucket in a separate logging account, with log-file integrity validation on.** Every clause defends against the Hook. Org-wide and multi-region means a new member account or an attacker pivoting to `eu-north-1` is still recorded. A separate, locked logging account means the intruder who owns the compromised account *cannot* delete the evidence — that was the fatal flaw in the Hook. Log-file validation makes CloudTrail hash-chain and sign every delivered file, so you can later *prove* logs weren't tampered with.
+
+```bash
+# One org-wide, multi-region trail to a locked logging-account bucket,
+# with log-file integrity validation enabled.
+aws cloudtrail create-trail \
+  --name org-audit-trail \
+  --s3-bucket-name acme-central-cloudtrail-logs \
+  --is-organization-trail \
+  --is-multi-region-trail \
+  --enable-log-file-validation \
+  --kms-key-id arn:aws:kms:us-east-1:444455556666:key/trail-cmk
+
+aws cloudtrail start-logging --name org-audit-trail
+
+# Add S3 data events for the ONE bucket that matters (not all buckets).
+aws cloudtrail put-event-selectors \
+  --trail-name org-audit-trail \
+  --advanced-event-selectors '[{
+    "Name": "customer-data reads/writes",
+    "FieldSelectors": [
+      { "Field": "eventCategory", "Equals": ["Data"] },
+      { "Field": "resources.type", "Equals": ["AWS::S3::Object"] },
+      { "Field": "resources.ARN", "StartsWith": ["arn:aws:s3:::acme-customer-data/"] }
+    ]
+  }]'
+
+# Later, prove the logs are intact for the breach window.
+aws cloudtrail validate-logs \
+  --trail-arn arn:aws:cloudtrail:us-east-1:444455556666:trail/org-audit-trail \
+  --start-time 2026-05-01T00:00:00Z
+```
+
+The **failure mode is the absence itself**: no trail (or a single-region one, or one logging to a bucket the attacker controls) means that after a breach you have *zero* forensic timeline and cannot answer the only question that counts. The 90-day Event History the console shows for free is not a substitute — it covers management events only, is per-region, isn't searchable across accounts, and vanishes after 90 days. A real trail is durable, org-wide, and yours.
+
+<Inset kind="why" lang="en">
+Why a *separate* logging account, not just a bucket in the same account with a tight policy? Because the trust boundary for forensics is the account itself. If the trail's bucket lives in the account that gets compromised, the attacker's stolen credentials may carry `s3:DeleteObject` (or can escalate to it), and the first thing a competent intruder does is delete the logs that would expose them — exactly the Hook's `DeleteObjects` wipe. A dedicated logging account that no application principal can write to, owned by a different team, with an SCP denying log deletion and S3 Object Lock on the bucket, means the evidence survives even total compromise of every workload account. Forensics you can delete from the blast radius is not forensics.
+</Inset>
+
+## GuardDuty: managed threat detection, turned on
+
+CloudTrail records; it does not *judge*. Reading raw trails to spot an attack in real time is hopeless at scale. **GuardDuty** is the managed detector: with no agents to install, you turn it on and it continuously analyzes three data sources you already produce — **CloudTrail events, VPC Flow Logs, and DNS query logs** — applying machine learning, anomaly detection, and AWS-curated threat intelligence to surface **findings**. It catches the classics: an EC2 instance mining crypto (it knows mining-pool domains and traffic patterns), credential exfiltration (an IAM key suddenly used from a new country, a Tor exit node, or a different AWS account), S3 anomalous access, and reconnaissance like port scans or API enumeration.
+
+This is exactly the Hook, replayed with detection on. The leaked CI key used from an unusual location to launch instances raises `UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration` within minutes; the instances phoning a mining pool raise `CryptoCurrency:EC2/BitcoinTool.B!DNS`. Instead of finance noticing a $40k bill three weeks later, on-call gets paged the same hour — because GuardDuty was on.
+
+The **tradeoff** is effort-versus-noise. GuardDuty is genuinely low-effort and high-signal — flip it on org-wide and it just works. But a finding sitting in a console nobody watches is worth nothing. Findings need **triage and automated response**, or they pile up until the dashboard is wallpaper. The standard wiring is **EventBridge → Lambda/SNS**: GuardDuty emits findings as EventBridge events, and a rule routes high-severity ones to a remediation Lambda or a pager. Filter aggressively — alerting on *every* low-severity finding is how teams learn to ignore the channel.
+
+```json
+{
+  "source": ["aws.guardduty"],
+  "detail-type": ["GuardDuty Finding"],
+  "detail": {
+    "severity": [{ "numeric": [">=", 7] }]
+  }
+}
+```
+
+```bash
+# Route only high-severity (7.0+) GuardDuty findings to a response target.
+aws events put-rule \
+  --name guardduty-high-sev \
+  --event-pattern file://gd-high-sev.json
+
+aws events put-targets \
+  --rule guardduty-high-sev \
+  --targets 'Id=isolate,Arn=arn:aws:lambda:us-east-1:111122223333:function:gd-respond' \
+            'Id=page,Arn=arn:aws:sns:us-east-1:111122223333:secops-pager'
+```
+
+GuardDuty's severity is a 1.0–8.9+ scale bucketed into Low (1.0–3.9), Medium (4.0–6.9), and High (7.0–8.9). Routing on `>= 7` pages humans for the things that matter while medium/low findings flow to a dashboard for review, not a 3am page.
+
+## AWS Config: configuration drift and compliance posture
+
+GuardDuty answers "is someone attacking *right now*?" **AWS Config** answers a different question: "is my infrastructure *configured* the way it's supposed to be, and when did that change?" It continuously **records the configuration of every resource over time** — a versioned history of each resource's state — and evaluates that state against **rules**: "S3 buckets must not be public," "EBS volumes must be encrypted," "no security group allows `0.0.0.0/0` on port 22." A resource that violates a rule is flagged **NONCOMPLIANT**, and Config gives you a **compliance timeline** showing exactly when a resource drifted out of policy and who changed it (cross-referenced with CloudTrail). It can **auto-remediate** via SSM Automation documents — a public bucket can be re-privatized within seconds of going public, no human in the loop.
+
+The distinction from GuardDuty is the whole point and a common confusion: **Config is misconfiguration and compliance posture (preventable, structural — a door left unlocked); GuardDuty is active threats (behavioral — someone trying the door).** Config tells you the SSH port is open to the world *before* anyone exploits it; GuardDuty tells you someone is brute-forcing that open port *now*. You need both — Config shrinks the attack surface, GuardDuty catches what gets through.
+
+```bash
+# Managed rule: flag any S3 bucket with public read/write,
+# and auto-remediate via an SSM document.
+aws configservice put-config-rule --config-rule '{
+  "ConfigRuleName": "s3-no-public-access",
+  "Source": {
+    "Owner": "AWS",
+    "SourceIdentifier": "S3_BUCKET_PUBLIC_READ_PROHIBITED"
+  }
+}'
+
+aws configservice put-remediation-configurations --remediation-configurations '[{
+  "ConfigRuleName": "s3-no-public-access",
+  "TargetType": "SSM_DOCUMENT",
+  "TargetId": "AWS-DisableS3BucketPublicReadWrite",
+  "Automatic": true,
+  "MaximumAutomaticAttempts": 3
+}]'
+```
+
+Config bills on two axes that surprise teams: roughly **$0.003 per configuration item** recorded (every resource change writes one) and **$0.001 per rule evaluation**. A large, churny account with hundreds of rules across thousands of resources runs real money, so scope recording to the resource types you care about rather than blindly recording everything. The failure mode here is subtle — Config running but with no rules, or rules with no remediation, is a passive history nobody acts on, which is a more expensive version of the GuardDuty "dashboard nobody watches" problem.
+
+## Security Hub and the response loop
+
+You now have three sources of signal — GuardDuty findings, Config compliance, and others (Inspector for CVEs, IAM Access Analyzer for external access). Watching three consoles across a dozen accounts is how things slip. **Security Hub** is the single pane: it **aggregates findings from GuardDuty, Config, Inspector, Access Analyzer, and Macie into one normalized format** (the AWS Security Finding Format), de-duplicates and prioritizes them across every account in the org, and continuously **scores you against standards** — CIS AWS Foundations Benchmark, AWS Foundational Security Best Practices (FSBP), PCI DSS. Instead of "is this one bucket compliant," you get "your org is at 78% against FSBP, here are the failing controls ranked by severity."
+
+The senior loop is one sentence: **detect (GuardDuty, Config) → aggregate (Security Hub) → route (EventBridge) → respond (automated remediation or page).** Security Hub itself emits its aggregated findings to EventBridge, so you wire one response pipeline off Security Hub rather than N pipelines off each source. High-severity, high-confidence findings auto-remediate (re-privatize the bucket, isolate the instance, revoke the key) or page; everything else is a ranked backlog.
+
+The **failure mode at this layer is organizational, not technical**: enabling CloudTrail, GuardDuty, Config, *and* Security Hub, then assigning the output to nobody. You now have a beautiful, expensive dashboard that no one watches and no one owns — and an unwatched alert is identical to no alert. The discipline is the inverse of "turn everything on": alert humans only on high-severity findings, automate the rote remediations (public bucket, open SSH, exposed key) so they fix themselves, and give the backlog an owner with an SLA. Detection without ownership is theater.
+
+<TradeoffMatrix
+  id="04-threat-detection-and-audit-tradeoff-1"
+  lessonSlug="04-threat-detection-and-audit"
+  lang="en"
+  prompt="An EC2 instance with a leaked role credential is mining crypto and exfiltrating data to an external IP, while a separate S3 bucket was just made public by a bad deploy. Which service is the PRIMARY detector for the active mining/exfiltration threat?"
+  options={[
+    { name: "GuardDuty", summary: "Managed threat detection on CloudTrail + Flow Logs + DNS.", correct: true, justification: "Right. Active, behavioral threats — crypto-mining traffic, credential exfiltration, anomalous outbound to a known-bad IP — are exactly what GuardDuty detects by analyzing CloudTrail, VPC Flow Logs, and DNS logs with ML and threat intel. It raises CryptoCurrency:EC2/BitcoinTool and UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration findings in near-real-time, with no agents. AWS Config would separately flag the public bucket as NONCOMPLIANT (a misconfiguration), but it does not detect the active mining or exfiltration — that behavioral signal is GuardDuty's job." },
+    { name: "AWS Config", summary: "Records config over time; evaluates compliance rules.", justification: "Config is the right detector for the public-bucket half of the scenario — it evaluates the bucket against an s3-public rule and flags it NONCOMPLIANT, and can auto-remediate it. But Config sees configuration state and drift, not runtime behavior. It has no view of crypto-mining traffic or data exfiltration, so it is not the primary detector for the active threat. Confusing Config's posture role with GuardDuty's threat role is the classic mix-up." },
+    { name: "CloudTrail", summary: "Records every API call (the audit spine).", justification: "CloudTrail is the raw audit log GuardDuty reads, and it is indispensable for forensics after the fact, but on its own it does not judge or alert — it records RunInstances and AssumeRole calls without flagging that the pattern is malicious. You would have to build the detection yourself. CloudTrail is the spine, not the detector; GuardDuty is the layer that turns those records into a threat finding." },
+    { name: "Security Hub", summary: "Aggregates findings against standards into one pane.", justification: "Security Hub is the aggregation and prioritization layer — it would collect and rank the GuardDuty mining finding and the Config public-bucket finding into one view, and is where the response pipeline hangs. But it generates almost no findings of its own from raw telemetry; it consumes them. The thing that actually detects the active mining/exfiltration upstream is GuardDuty, which Security Hub then surfaces." },
+  ]}
+/>
+
+<Quiz
+  id="04-threat-detection-and-audit-quiz-1"
+  lessonSlug="04-threat-detection-and-audit"
+  lang="en"
+  question={'After a breach you need to know whether the attacker actually read objects in your customer-data S3 bucket. Your org trail logs management events only. What can you determine, and why?'}
+  choices={[
+    { label: "You can see bucket-policy and ACL changes, but NOT the individual object reads — object-level GetObject calls are CloudTrail data events, which are off by default and were never enabled on this bucket", correct: true },
+    { label: "You can see every GetObject because management events include all S3 activity", misconception: "Management events are control-plane only (PutBucketPolicy, PutBucketAcl, CreateBucket). Object-level GetObject/PutObject are data events, a separate category that is off by default precisely because of its volume. Management events alone never show individual object reads." },
+    { label: "You can reconstruct the reads from the 90-day Event History instead", misconception: "Event History also covers management events only, not S3 data events, and is per-region with a 90-day window. It cannot reconstruct object-level reads that were never captured as data events anywhere." },
+    { label: "Object reads are always logged because S3 server access logging is on by default", misconception: "S3 server access logging is a separate, opt-in feature that is off by default, and it is not CloudTrail. If neither CloudTrail data events nor S3 access logging was enabled before the breach, the object-level reads are simply unrecorded." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The detect-and-respond pipeline: telemetry sources feed GuardDuty and Config, which feed Security Hub, which routes through EventBridge to automated response"
+  hue="var(--d-systems)"
+  nodes={[
+    { id: "tele", label: "Telemetry", sub: "CloudTrail, VPC Flow Logs, DNS" },
+    { id: "detect", label: "GuardDuty + Config", sub: "threats + misconfiguration drift" },
+    { id: "hub", label: "Security Hub", sub: "aggregate, de-dup, score vs standards" },
+    { id: "route", label: "EventBridge", sub: "filter by severity, route" },
+    { id: "respond", label: "Respond", sub: "auto-remediate (SSM) or page" },
+  ]}
+  edges={[
+    { from: "tele", to: "detect", label: "analyze" },
+    { from: "detect", to: "hub", label: "findings" },
+    { from: "hub", to: "route", label: "high-sev" },
+    { from: "route", to: "respond", label: "act" },
+  ]}
+  caption="CloudTrail/Flow Logs/DNS are the raw telemetry; GuardDuty judges behavior and Config judges configuration; Security Hub is the single pane that aggregates and ranks; EventBridge filters by severity and routes to automated remediation or a human page. Without the last two stages, the upstream detection is just an unwatched dashboard."
+/>
+
+<KeyTakeaway>CloudTrail is the audit spine — a locked multi-region org trail, or no forensics. GuardDuty flags threats, Config catches drift, Security Hub aggregates, EventBridge routes. Detection with no owner is theater.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-threat-detection-and-audit-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe a non-negotiable CloudTrail setup and contrast management events with data events, including the failure mode of getting it wrong.", a: "The non-negotiable setup is one organization trail, multi-region, delivered to a locked-down S3 bucket in a separate logging account, with log-file integrity validation enabled. Org-wide and multi-region means new accounts and attacker pivots to other regions are still recorded; the separate, locked logging account means the intruder who owns the compromised account cannot delete the evidence (the classic fatal flaw is logging to a bucket the attacker can DeleteObjects); log-file validation hash-chains and signs each file so you can prove logs weren't tampered with. Management events are control-plane operations (RunInstances, CreateUser, PutBucketPolicy, AssumeRole) — the forensic spine, first copy essentially free. Data events are high-volume data-plane operations (S3 object GetObject/PutObject, Lambda Invoke) — off by default, billed about $0.10 per 100,000, and the only thing that answers 'did they read the bucket?' Management events show the bucket policy change; only data events show the objects being read. The failure mode is absence: no trail, single-region, or a trail in the compromised account means zero forensic timeline after a breach, and the free 90-day Event History (management events only, per-region) is no substitute." },
+    { q: "Distinguish GuardDuty, Config, and Security Hub, and state the senior detect-and-respond loop including its main failure mode.", a: "GuardDuty is managed threat detection: agentless, it analyzes CloudTrail, VPC Flow Logs, and DNS logs with ML and threat intel to flag active, behavioral threats — crypto-mining, credential exfiltration (a key used from a new country/Tor), anomalous S3 access, recon. AWS Config is configuration and compliance posture: it records each resource's config over time and evaluates rules (no public S3, EBS encrypted, no 0.0.0.0/0 SSH), flags NONCOMPLIANT, shows a compliance timeline, and can auto-remediate via SSM. The distinction: Config = misconfiguration/structural (a door left unlocked); GuardDuty = active threat/behavioral (someone trying the door). Security Hub aggregates findings from GuardDuty, Config, Inspector, and Access Analyzer into one normalized, de-duplicated, prioritized view across accounts and scores you against standards (CIS, FSBP). The loop: detect (GuardDuty/Config) → aggregate (Security Hub) → route (EventBridge, filter by severity) → respond (auto-remediate via SSM or page). The main failure mode is organizational: enabling all of it but assigning the output to nobody, so it's a dashboard nobody watches; alert humans only on high-severity, automate the rote remediations, and give the backlog an owner with an SLA." },
+  ]}
+/>
+
+<Recap lang="en">
+Prevention (IAM, KMS) is only half of security; this lesson is the other half — detect and respond. CloudTrail is the audit spine: it records every AWS API call (who, what, when, from where), splitting them into management events (control-plane, the forensic spine, first copy essentially free) and data events (S3 object reads, Lambda invokes — high-volume, off by default, ~$0.10/100k, and the only thing that proves whether an attacker read your data). The non-negotiable shape is one multi-region organization trail to a locked S3 bucket in a separate logging account with log-file validation on, so an intruder who owns the compromised account still cannot delete or forge the evidence — the exact failure that left the Hook with no forensic timeline. CloudTrail records but does not judge; GuardDuty does. Agentless, it analyzes CloudTrail, VPC Flow Logs, and DNS logs with ML and threat intel to flag active threats — crypto-mining, credential exfiltration, anomalous access, recon — and the same leaked key that cost $40k silently would have paged on-call the same hour with detection on. Its tradeoff is that low-effort, high-signal findings still need routing (EventBridge → Lambda/SNS) and triage or they pile up; alert only on high severity. AWS Config answers the orthogonal question — is the infrastructure configured correctly and when did it drift — by recording resource config over time, evaluating rules (no public S3, encrypted EBS, no open SSH), and auto-remediating via SSM; Config is misconfiguration posture (the unlocked door), GuardDuty is the active threat (someone trying it), and you need both. Security Hub is the single pane that aggregates GuardDuty, Config, Inspector, and Access Analyzer findings into one normalized, prioritized view across the org and scores you against CIS and FSBP. The whole senior loop is detect → aggregate → route → respond, and its dominant failure is organizational: enabling everything but owning nothing turns it into a dashboard no one watches, which is identical to no detection at all. Automate the rote remediations, page humans only on high severity, and give the rest an owner with an SLA.
+</Recap>

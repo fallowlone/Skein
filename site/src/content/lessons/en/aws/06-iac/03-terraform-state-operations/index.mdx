@@ -1,0 +1,203 @@
+---
+concepts:
+- state-as-mapping
+- terraform-import
+- state-mv-moved-block
+- destroy-by-rename
+- secrets-in-state
+- state-blast-radius
+- "SAA-C03:Design Resilient Architectures"
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-terraform-state-operations"
+sources:
+- https://developer.hashicorp.com/terraform/cli/state
+- https://developer.hashicorp.com/terraform/language/modules/develop/refactoring
+- https://developer.hashicorp.com/terraform/language/state/sensitive-data
+spiral: []
+status: ready
+summary: 'State maps config to real resource IDs and is authoritative: a refactor that renames a resource without a moved block tells Terraform to destroy prod and recreate it empty. Master import, state mv, state rm, and state splitting, and treat state as a secret.'
+title: 'Terraform state operations: import, move, and the destroy-by-rename trap'
+track: "aws"
+unit: "06-iac"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You open a tidy refactor PR: it renames `aws_db_instance.db` to `aws_db_instance.primary` — a one-word change for readability, nothing else touched. Review approves it in thirty seconds; the rename "obviously" can't do anything. CI runs `terraform apply` on merge. The plan, which nobody opened, says `-/+ destroy and then create replacement` for the production RDS instance. Terraform sees the old address gone from config and a new address absent from state, so it does exactly what you told it: it deletes the live database and stands up a fresh empty one. Forty seconds later the app is throwing connection errors against an empty schema, the last automated snapshot is six hours old, and you are restoring prod from backup while customers watch a maintenance page. A rename did that — because state, not your config, is the source of truth, and nobody told it the resource simply moved.
+</Hook>
+
+<Crux>State maps config addresses to real resource IDs and is authoritative. Rename without a moved block and Terraform destroys and recreates it.</Crux>
+
+<Explanation>
+
+## State is the mapping, and the mapping is authoritative
+
+You already set up a remote S3 backend with locking in the previous lesson. Now the dangerous part: operating that state without losing data. The state file is a map. For every resource block in your config it stores the binding to a real cloud object — the address `aws_db_instance.primary` ↔ the actual RDS identifier `db-prod-7f3a`, plus every attribute and dependency edge. `terraform plan` is a three-way diff: it compares your **config**, the **state**, and **reality** (refreshed from the live API), then plans the minimum set of API calls to reconcile them.
+
+The trap is that state, not config, decides what each resource *is*. The reconciliation rule is brutally literal:
+
+- A resource in **config but not state** → Terraform thinks it is new → **CREATE**.
+- A resource in **state but not config** → Terraform thinks you removed it → **DESTROY**.
+- A resource in both, with changed immutable attributes → **REPLACE** (`-/+`, destroy then create).
+
+So when you rename `aws_db_instance.db` to `.primary` in config without telling state, Terraform sees two independent facts: the address `.db` vanished from config (→ destroy the real DB it still maps to) and `.primary` is absent from state (→ create a new empty DB). The literal output is two operations, one destroy and one create, on what you *meant* to be a single resource keeping its identity. The rename was never the problem; failing to move the mapping was.
+
+## import, state mv, and the declarative moved block
+
+Three operations keep the mapping honest during change. **`terraform import`** adopts an existing, unmanaged resource — one created by hand in the console, or by another tool — into state, so Terraform manages it instead of trying to recreate a duplicate that would collide on a unique name:
+
+```bash
+# Adopt a hand-created bucket into management — don't let TF recreate it.
+terraform import aws_s3_bucket.assets acme-prod-assets
+# Now `plan` shows no-op (or only config drift), not a CREATE.
+```
+
+**`terraform state mv`** renames an address in state without touching the real resource — the imperative fix for the Hook:
+
+```bash
+terraform state mv aws_db_instance.db aws_db_instance.primary
+# State now maps .primary → the live db-prod-7f3a; plan is a no-op.
+```
+
+The modern, reviewable form is the declarative **`moved {}`** block, committed alongside the rename so the move travels *with* the PR and runs on `apply` for everyone, including CI — no out-of-band CLI step that a teammate forgets:
+
+```hcl
+resource "aws_db_instance" "primary" {  # renamed from "db"
+  identifier = "db-prod-7f3a"
+  # ...unchanged...
+}
+
+moved {
+  from = aws_db_instance.db
+  to   = aws_db_instance.primary
+}
+```
+
+With the `moved` block, the plan reads `aws_db_instance.db has moved to aws_db_instance.primary` and shows **zero** destroy/create — the mapping is updated, the live database is untouched. The `moved` block also works when you pull a resource into a module: `to = module.data.aws_db_instance.primary`. The failure mode is purely the *absence* of this: rename without it, and the destroy-by-rename trap fires on the next apply.
+
+<Inset kind="why" lang="en">
+Why prefer `moved {}` over `terraform state mv` when both fix the same thing? Because `state mv` is an imperative, out-of-band command: one engineer runs it against their local CLI, and if the matching config rename merges before everyone has run the same `mv` — or if CI applies first — the people without it get a destroy/create plan. The state and the config drift apart by who-ran-what. A `moved` block is declarative and version-controlled: it lives in the `.tf` files, merges atomically with the rename in the same commit, is visible in review, and every `apply` (laptop or CI) performs the move idempotently. After a release or two you can delete it. Reserve `state mv` for surgery you cannot express in config — splitting one address into a `for_each`, or emergency recovery — and make `moved` the default for routine refactors.
+</Inset>
+
+## State holds secrets in plaintext, and state rm orphans on purpose
+
+Here is the property that makes state a liability, not just an index: it stores **resource attributes in plaintext**, including generated secrets. An `aws_db_instance` with a `password`, a generated `tls_private_key`, an `aws_iam_access_key` secret — all land in the state file as readable JSON. Terraform marks them *sensitive* so they don't print in plan output, but in the state file itself they are clear text. The consequences are concrete: a state file committed to git leaks **every** secret in it to anyone who clones the repo, forever in history; a state file in an unencrypted, world-readable S3 bucket is the same leak over HTTP. So state is a secret: encrypt it at rest (S3 SSE, which you set on the backend), lock down bucket access to the CI role and platform team only, never commit `*.tfstate` to git, and rotate any credential that ever touched an exposed state. A single leaked state file = every password, key, and token inside it compromised.
+
+The counterpart to import is **`terraform state rm`**, which removes a resource from state **without destroying the real thing**. You deliberately orphan it — Terraform forgets it exists, but the live resource keeps running and billing:
+
+```bash
+# Stop managing this DB here without deleting it — hand it to another stack.
+terraform state rm aws_db_instance.primary
+# `plan` no longer mentions it; the live db-prod-7f3a is untouched.
+# In the OTHER stack: terraform import aws_db_instance.primary db-prod-7f3a
+```
+
+The senior use is handing a resource between stacks during a split: `state rm` in the source (orphan, don't destroy), then `import` into the target. The failure mode is confusing it with destroy — `state rm` followed by an `apply` in a config that *still references* the resource will recreate or duplicate it, and `terraform destroy` on a resource you meant to orphan deletes the live thing. `rm` forgets; `destroy` kills.
+
+## Blast radius: one giant state vs split state
+
+The last senior call is how much one state file controls. A **monolithic state** for the whole org puts every resource — network, databases, every app — behind one lock and one plan. The costs compound: every `apply` refreshes and risks *everything* (a typo in an app module's plan now lists 500 resources, any of which a fat-fingered approve could touch), plans take **minutes** because they refresh hundreds of resources against the API, and the single state file is a single point of catastrophe — corrupt or lose it and the whole estate is unmanaged at once. There is also **lock contention**: one shared lock means one stuck `apply` (a crashed CI job that never released the lock) blocks the *entire org* from applying until someone runs `terraform force-unlock <LOCK_ID>` — which you do only after confirming no apply is genuinely in flight, because force-unlocking a live apply corrupts state.
+
+**Splitting state** by component and environment — `network/`, `data/`, `app/` per env, each its own state and lock — shrinks the blast radius: an app deploy can never touch the VPC, plans drop to **seconds** because each refreshes tens not hundreds of resources, and a corrupt state damages one layer, not all. The cost is wiring: layers that need each other's outputs read them across states with a `terraform_remote_state` data source, which adds explicit ordering (apply `network` before `app`) and coupling to manage:
+
+```hcl
+# In the app stack: read the VPC's outputs from the network stack's state.
+data "terraform_remote_state" "network" {
+  backend = "s3"
+  config = {
+    bucket = "acme-tf-state"
+    key    = "prod/network/terraform.tfstate"
+    region = "eu-central-1"
+  }
+}
+
+resource "aws_instance" "api" {
+  subnet_id = data.terraform_remote_state.network.outputs.private_subnet_id
+}
+```
+
+The senior heuristic: **split by lifecycle and blast radius.** Things that change at different rates and would be catastrophic together belong in separate states — the VPC (rarely changes, breaks everything) apart from the app (deploys hourly), data apart from compute. Don't split so finely that every change becomes a five-state orchestration; split at the seams where blast radius and change-frequency actually differ.
+
+<TradeoffMatrix
+  id="03-terraform-state-operations-tradeoff-1"
+  lessonSlug="03-terraform-state-operations"
+  lang="en"
+  prompt="You need to rename a managed production RDS instance's resource address in config (aws_db_instance.db → aws_db_instance.primary) for readability, with zero data loss and zero downtime, and the change must apply correctly for every teammate and in CI. Pick the approach."
+  options={[
+    { name: "Add a moved {} block to config alongside the rename, in the same commit", summary: "Declarative, version-controlled move; applies idempotently everywhere.", correct: true, justification: "Right fit. The moved block ships in the same PR as the rename, so the mapping update travels with the code: review sees it, it merges atomically, and every apply — laptop or CI — performs the move idempotently with zero destroy/create on the live database. This is exactly the routine-refactor case the moved block was designed for, and it is the only option that is both safe and automatic for everyone without an out-of-band step." },
+    { name: "Run terraform state mv aws_db_instance.db aws_db_instance.primary locally, then merge the rename", summary: "Imperative state surgery from one CLI.", justification: "It fixes the mapping for the engineer who runs it, but it is out-of-band: if the config rename merges before every teammate runs the same mv — or CI applies first — anyone without it gets the destroy/create plan. Correct mechanically, fragile operationally. state mv is for surgery you cannot express in config, not routine renames where a moved block is safer." },
+    { name: "Just rename the resource in config and apply; the address change is cosmetic", summary: "Trust that a rename is harmless.", justification: "This is the trap itself. State, not config, is authoritative: the old address vanishing from config reads as destroy, the new address absent from state reads as create, so the plan is -/+ on the live RDS — destroy then recreate empty. This is the exact failure the lesson exists to prevent; it loses the database." },
+    { name: "terraform state rm the old address, then import the real instance under the new address", summary: "Orphan then re-adopt.", justification: "It would technically preserve the data — rm forgets without destroying, import re-adopts the live db-prod-7f3a under the new address — but it is two manual, error-prone steps for what a single moved block does declaratively and in review. If you rm and forget to import (or import the wrong id), you get a duplicate or an unmanaged resource. Over-engineered and riskier than the moved block." },
+  ]}
+/>
+
+<Quiz
+  id="03-terraform-state-operations-quiz-1"
+  lessonSlug="03-terraform-state-operations"
+  lang="en"
+  question="A teammate created an S3 bucket by hand in the console. You want Terraform to manage it going forward without recreating it. Which command brings it under management?"
+  choices={[
+    { label: "terraform import aws_s3_bucket.assets acme-prod-assets — it adopts the existing live resource into state so plan shows a no-op instead of a CREATE", correct: true },
+    { label: "terraform state rm aws_s3_bucket.assets — this registers the bucket so Terraform starts managing it", misconception: "state rm does the opposite: it REMOVES a resource from state without destroying the real thing. Run on a bucket not yet in state it does nothing useful; it never adopts an existing resource. import is the adopt command." },
+    { label: "Add the resource block and run apply — Terraform detects the existing bucket and links to it automatically", misconception: "Terraform does not auto-discover existing resources. With the bucket in config but not state, apply tries to CREATE it and fails on the name collision (the bucket already exists). You must import to bind config to the live resource first." },
+    { label: "terraform state mv console.bucket aws_s3_bucket.assets — move it from the console namespace into state", misconception: "state mv only renames an address that already exists IN state; there is no console namespace to move from. A hand-created resource isn't in state at all, so there is nothing to mv. import is the only command that adopts an unmanaged resource." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Terraform plan diffs config against state against reality, then the state mapping decides create, update, or destroy"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "config", label: "Config (.tf)", sub: "desired" },
+    { id: "state", label: "State", sub: "config to real ID" },
+    { id: "real", label: "Reality (AWS)", sub: "refreshed" },
+    { id: "plan", label: "terraform plan", sub: "3-way diff" },
+    { id: "create", label: "CREATE", sub: "in config, not state" },
+    { id: "destroy", label: "DESTROY", sub: "in state, not config" },
+  ]}
+  edges={[
+    { from: "config", to: "plan", label: "desired" },
+    { from: "state", to: "plan", label: "mapping" },
+    { from: "real", to: "plan", label: "refresh" },
+    { from: "plan", to: "create", label: "new addr" },
+    { from: "plan", to: "destroy", label: "gone addr" },
+  ]}
+  caption="Plan reconciles three inputs, but the state mapping is authoritative: an address present in config but absent from state plans a CREATE; present in state but absent from config plans a DESTROY. A rename without a moved block is exactly 'gone address' + 'new address' — destroy the old, create the new."
+/>
+
+<KeyTakeaway>State maps config to real IDs and is authoritative: config-only CREATEs, state-only DESTROYs, so renaming without a moved block recreates prod empty. import adopts, moved renames, rm orphans; encrypt and split state.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-terraform-state-operations-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does renaming a resource in config without a moved block destroy and recreate it, and what are the two safe fixes?", a: "State, not config, is the source of truth for what each resource is: it maps each config address (aws_db_instance.db) to a real cloud ID (db-prod-7f3a). terraform plan does a three-way diff of config, state, and reality and reconciles literally — an address in config but not state reads as new (CREATE), an address in state but not config reads as removed (DESTROY). Renaming .db to .primary in config alone produces both facts at once: .db is gone from config (destroy the live DB it still maps to) and .primary is absent from state (create a new empty one), so the plan is -/+ on production RDS. Two safe fixes: (1) terraform state mv aws_db_instance.db aws_db_instance.primary, an imperative one-off that renames the address in state without touching the real resource; (2) a declarative moved { from = aws_db_instance.db, to = aws_db_instance.primary } block committed alongside the rename, which travels with the PR and runs idempotently on every apply including CI — preferred for routine refactors because state mv is out-of-band and drifts between teammates." },
+    { q: "Why is the state file a secret, and how do import, state rm, and state splitting each relate to safe state operations?", a: "State stores resource attributes in plaintext, including generated RDS passwords, TLS private keys, and IAM secret keys; Terraform marks them sensitive so they don't print, but in the file they are readable JSON. So a state file committed to git or sitting in an unencrypted public S3 bucket leaks every secret in it — treat state as a secret: S3 SSE encryption, locked bucket access, never in git, rotate anything exposed. import adopts an existing unmanaged resource into state so Terraform manages it instead of recreating a colliding duplicate. state rm is the inverse: it removes a resource from state WITHOUT destroying the real one — deliberate orphaning, e.g. to hand a resource to another stack (rm in source, import in target); don't confuse it with destroy, which deletes the live resource. State splitting trades blast radius for wiring: a monolith means every apply risks everything, plans take minutes, one corrupt file is catastrophic, and one stuck DynamoDB/S3 lock blocks the whole org (recover with force-unlock only when no apply is truly in flight). Splitting by lifecycle and blast radius (network/data/app per env, joined by terraform_remote_state data sources) cuts plans to seconds and contains corruption, at the cost of explicit ordering and cross-state coupling." },
+  ]}
+/>
+
+<Recap lang="en">
+The state file is the authoritative map from each config resource address to a real cloud resource ID, and terraform plan is a three-way diff of config, state, and reality that reconciles them literally: an address in config but not state plans a CREATE, and an address in state but not config plans a DESTROY. That literal rule is the root of most state disasters — rename a resource in config without telling state and Terraform reads it as the old address being deleted and a new one created, so a cosmetic rename of a production RDS instance plans -/+ (destroy then recreate empty) and loses the database on apply. Three operations keep the mapping honest: terraform import adopts an existing unmanaged resource into state so it isn't recreated as a colliding duplicate; terraform state mv (or, preferred, a declarative moved {} block committed with the rename) renames an address in state without touching the real resource, which is the fix for the destroy-by-rename trap; and terraform state rm removes a resource from state without destroying it, for deliberately orphaning a resource before handing it to another stack. State is also a secret — it stores attributes, including generated passwords and private keys, in plaintext — so it must be encrypted at rest, access-locked, and never committed to git, and any credential in a leaked state is compromised. Finally, blast radius is a design decision: a monolithic state makes every apply risk everything, takes minutes to plan, is a single point of catastrophe, and serializes the whole org behind one lock (recoverable with force-unlock, carefully), whereas splitting state by lifecycle and blast radius — network, data, app per environment, joined with terraform_remote_state data sources — shrinks risk and cuts plan time to seconds at the cost of ordering and cross-state wiring.
+</Recap>
