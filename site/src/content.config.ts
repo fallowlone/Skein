@@ -212,7 +212,19 @@ const lab = defineCollection({
 export type LabData = z.infer<typeof lab.schema>;
 
 // ── Projects ────────────────────────────────────────────────────────────────
-const ProjectSchema = z.object({
+// A guided milestone (additive over the legacy plain {en,ru}): staged goal +
+// a self-checklist definition-of-done + the lessons that feed it. `reviewPrompt`
+// is the P3 seam (stored, not graded in v1).
+const GuidedMilestone = z.object({
+  id: z.string().regex(/^[a-z0-9-]+$/),
+  title: BiText,
+  goal: BiText,
+  definitionOfDone: z.array(BiText).min(1),
+  feedsFrom: z.array(z.string()).optional(),
+  reviewPrompt: BiText.optional(),
+});
+
+export const ProjectSchema = z.object({
   slug: z.string().regex(/^[a-z0-9-]+$/),
   title: BiText,
   pitch: BiText,
@@ -224,7 +236,7 @@ const ProjectSchema = z.object({
   skills: z.array(z.string()).min(1),
   stack: z.array(z.string()).min(1).optional(),
   resources: z.array(z.object({ label: z.string(), url: z.string().url() })).min(1).optional(),
-  milestones: z.array(BiText).min(2),
+  milestones: z.array(z.union([BiText, GuidedMilestone])).min(2),
   seniorStretch: z.array(BiText).min(1),
   brief: BiText.optional(),
 });
