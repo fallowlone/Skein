@@ -24,6 +24,9 @@ export type UserState = {
   retrieval: Record<string, { attempted: boolean; lastAt: number; attempts: number }>;
   dismissedRevisit: Record<string, number>;
   manualTierFlips: number;
+  // Optional: lets the roadmap avoid re-nagging a just-dismissed recommendation.
+  // Optional so old persisted payloads stay valid under the load() merge.
+  roadmap?: { lastRecommendedTrack?: string; dismissedAt?: number };
 };
 
 const defaults: UserState = {
@@ -173,6 +176,13 @@ export function dismissRevisit(slug: string) {
       ...userState.value.dismissedRevisit,
       [slug]: Date.now(),
     },
+  };
+}
+
+export function setRoadmapDismissal(track: string) {
+  userState.value = {
+    ...userState.value,
+    roadmap: { lastRecommendedTrack: track, dismissedAt: Date.now() },
   };
 }
 
