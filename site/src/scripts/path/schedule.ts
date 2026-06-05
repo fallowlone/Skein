@@ -82,7 +82,12 @@ export function schedulePlan(path: Path, cfg: DeadlineConfig, nowMs: number): Sc
   // steps are dropped first. Replace with value/cost once steps carry a learning-value weight.
   const dropUnits = path.steps.filter((s) => !placed.has(s.unit))
     .map((s) => ({ id: s.unit, estMin: s.estMin, roi: 1 / Math.max(1, s.estMin) }));
-  const feas = feasibility(required, available, dropUnits);
+  // Any step that couldn't be packed into the calendar means the plan does NOT fit, regardless of
+  // the aggregate budget (e.g. a single step longer than every remaining day). Report unplaced
+  // steps as dropped instead of silently losing them under a "fits"/"under" aggregate verdict.
+  const feas: Feasibility = dropUnits.length
+    ? { verdict: "over", deltaMin: dropUnits.reduce((n, d) => n + d.estMin, 0), dropped: dropUnits.map((d) => d.id) }
+    : feasibility(required, available, dropUnits);
 
   const countdownDays = Math.max(0, Math.ceil((cfg.targetDateMs - nowMs) / DAY));
   return { days: plan, feasibility: feas, countdownDays };
