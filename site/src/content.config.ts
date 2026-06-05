@@ -125,8 +125,26 @@ const PredictTask = TaskBase.extend({
   reveal: BiText,
 });
 
+// review: the learner critiques a diff against planted findings (a senior muscle:
+// spot the bug / missing test / unstated tradeoff / simpler design). v1 = objective
+// self-check reveal. `decoys` are plausible non-issues that test discrimination.
+const Finding = z.object({
+  id: z.string().regex(/^[a-z0-9-]+$/),
+  label: BiText,
+  severity: z.enum(["bug", "missing-test", "tradeoff", "simplification"]),
+  explanation: BiText,
+  planted: z.literal(true),
+});
+const Decoy = z.object({ id: z.string().regex(/^[a-z0-9-]+$/), label: BiText, explanation: BiText });
+const ReviewTask = TaskBase.extend({
+  type: z.literal("review"),
+  diff: z.object({ lang: z.string().min(1), code: z.string().min(1) }),
+  findings: z.array(Finding).min(1),
+  decoys: z.array(Decoy).optional(),
+});
+
 const PracticeTask = z.discriminatedUnion("type", [
-  DiagnoseTask, FixTask, SandboxTask, IncidentTask, DesignTask, PredictTask,
+  DiagnoseTask, FixTask, SandboxTask, IncidentTask, DesignTask, PredictTask, ReviewTask,
 ]);
 
 const practice = defineCollection({
