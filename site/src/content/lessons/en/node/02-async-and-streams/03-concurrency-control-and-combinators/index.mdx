@@ -1,0 +1,217 @@
+---
+concepts:
+- promise-combinators
+- promise-allsettled
+- bounded-concurrency
+- fan-out-stampede
+- abortcontroller
+- cancellation
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: 03-concurrency-control-and-combinators
+sources:
+- https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/all
+- https://nodejs.org/api/globals.html#class-abortcontroller
+- https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Promise/allSettled
+spiral: []
+status: ready
+summary: 'Promise.all rejects on first failure but never cancels its siblings; an unbounded fan-out DoSes your own DB. The senior answer is a bounded worker pool plus AbortController, which actually cancels the loser instead of leaking it.'
+title: 'Concurrency control: combinators, bounded fan-out, and cancellation'
+track: node
+unit: 02-async-and-streams
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+You ship a nightly job that enriches users: `await Promise.all(ids.map(id => fetchUser(id)))`. It runs green against 200 test rows. The first production night it hits 48,000 rows, and at 02:14 your DB pool of 20 connections is drained in milliseconds, every other service sharing that database starts timing out with `ETIMEDOUT`, and the on-call for the *payments* team gets paged because their checkout queries can't get a connection. You didn't write a slow job — you wrote a self-inflicted denial-of-service that fired 48,000 connections at once. The fix isn't a bigger pool. It's admitting that "do all of these" and "do all of these *at once*" are different instructions.
+</Hook>
+
+<Crux>`Promise.all` never cancels siblings; unbounded fan-out DoSes your backend. Bound concurrency to N; use `AbortController` to truly cancel.</Crux>
+
+<Explanation>
+
+## The four combinators, and the semantics people get wrong
+
+The four static `Promise` combinators look interchangeable until a failure exposes how differently they settle. Pick the wrong one and you either crash on a partial failure you could have tolerated, or you silently keep results from work you've already abandoned.
+
+```js
+const settle = (ms, ok = true, v) =>
+  new Promise((res, rej) => setTimeout(() => (ok ? res(v) : rej(new Error(v))), ms));
+
+// Promise.all — resolves to an ordered array, OR rejects on the FIRST rejection.
+await Promise.all([settle(10, true, "a"), settle(20, true, "b")]);    // ["a","b"]
+await Promise.all([settle(10, false, "x"), settle(30, true, "b")]);   // throws Error("x") at 10ms
+
+// Promise.allSettled — NEVER rejects. One descriptor per input, in order.
+await Promise.allSettled([settle(10, true, "a"), settle(20, false, "x")]);
+// [{ status: "fulfilled", value: "a" }, { status: "rejected", reason: Error("x") }]
+
+// Promise.race — settles as the FIRST to settle, win OR lose.
+await Promise.race([settle(50, true, "slow"), settle(10, false, "fast-fail")]); // throws at 10ms
+
+// Promise.any — first FULFILLMENT; if ALL reject, throws AggregateError(.errors[])
+await Promise.any([settle(10, false, "x"), settle(20, true, "b")]);   // "b"
+await Promise.any([settle(10, false, "x"), settle(20, false, "y")]);  // AggregateError
+```
+
+The mechanism that bites you lives in one sentence: **`Promise.all` rejecting does not cancel the other promises.** A promise is not a task you can kill; it is a one-way notification that some already-running work has finished. When `Promise.all` sees the first rejection it rejects *its own* promise immediately, but the other fetches, queries, and timers keep running to completion in the background — you've simply stopped *listening*. So a `Promise.all` over 50 DB calls where call #3 rejects at 10ms still holds all 50 connections open until the slowest of the remaining 47 returns. Use `all` when partial failure is unacceptable (you want the whole batch or nothing) and `allSettled` when partial failure is *expected* and you need to inspect every outcome.
+
+## The unbounded fan-out trap
+
+Here is the line that pages people, and the one that looks like the fix but isn't:
+
+```js
+// ANTI-PATTERN A — unbounded fan-out: 48,000 in flight at once
+await Promise.all(ids.map(id => fetchFromDb(id)));
+// .map runs all 48,000 thunks synchronously → 48,000 pending promises → 48,000
+// connection requests slam a pool of 20. Pool drains, queue overflows, ETIMEDOUT,
+// and you've DoS'd every service sharing that database. Memory spikes too:
+// 48,000 in-flight request objects + their buffers.
+
+// ANTI-PATTERN B — fully sequential: correct, but glacial
+for (const id of ids) await fetchFromDb(id);
+// One at a time. 48,000 × 40ms = 1,920s ≈ 32 minutes. You traded a crash for a job
+// that misses its window. The pool now sits 95% idle while you wait.
+```
+
+Both are wrong, and they are wrong in *opposite* directions: A asks for infinite parallelism, B asks for none. The senior answer is **bounded concurrency** — keep exactly `N` operations in flight at any instant, where `N` is sized to your downstream capacity (a 20-connection pool wants `N ≈ 10–16`, leaving headroom for other callers). Throughput is then roughly `N / latency`: with 40ms calls, `N=1` finishes in ~32 min, `N=16` in `48000 × 40ms / 16 ≈ 120s`, and `N=∞` "finishes" by crashing the database. The whole skill is choosing `N` deliberately instead of letting `.map` choose `∞` for you.
+
+<Inset kind="why" lang="en">
+Why doesn't a bigger pool fix anti-pattern A? Because the bottleneck moves but never disappears. Raise the pool to 200 and you've just moved the stampede onto the database's CPU, lock manager, and disk — 200 concurrent writes contend on the same hot rows and you get lock waits and deadlocks instead of `ETIMEDOUT`. Raise it to 48,000 and the OS runs out of file descriptors or the DB refuses connections. Concurrency is a *shared budget* across every caller of that resource; the client's job is to stay under the budget, not to demand the resource grow to meet an unbounded demand. Bounded concurrency is flow control for outbound work, exactly as backpressure is for streams.
+</Inset>
+
+## A bounded worker pool from scratch
+
+You don't need a library for this, and writing it once cements the mechanism. The pattern: start `N` "workers" that each pull the next task from a shared cursor and loop until the queue is empty. Tasks are *thunks* — `() => Promise` — not already-started promises, because the whole point is to control *when* each one starts.
+
+```js
+async function runPool(tasks, limit) {
+  const results = new Array(tasks.length);
+  let next = 0; // shared cursor; ++ is atomic between awaits (single-threaded)
+
+  async function worker() {
+    while (next < tasks.length) {
+      const i = next++;            // claim an index
+      results[i] = await tasks[i]();// run one, then loop for the next
+    }
+  }
+
+  // Start exactly `limit` workers; never more than `limit` tasks are in flight.
+  const workers = Array.from({ length: Math.min(limit, tasks.length) }, worker);
+  await Promise.all(workers);      // all workers drain the queue
+  return results;                  // results stay aligned with input order
+}
+
+// Usage: at most 16 DB calls in flight at any moment, regardless of ids.length
+const thunks = ids.map(id => () => fetchFromDb(id));
+const rows = await runPool(thunks, 16);
+```
+
+Two senior details. First, this is `allSettled`-unsafe as written — if any `tasks[i]()` rejects, the `await` inside `worker` throws, that worker dies, and the outer `Promise.all(workers)` rejects (while the *other* workers keep draining in the background — same non-cancellation rule as above). If partial failure is acceptable, wrap the call: `results[i] = await tasks[i]().then(v => ({ ok: true, v }), e => ({ ok: false, e }))`. Second, in production reach for the battle-tested version — `p-limit` (wrap each call: `limit(() => fetchFromDb(id))`) or a `Promise.map`-with-concurrency from `bluebird`/`p-map`. They add the same cap plus niceties (per-call `AbortSignal`, error aggregation), but the engine is exactly the loop above.
+
+## Cancellation that actually cancels: AbortController
+
+A bounded pool stops you from *starting* too much. `AbortController` lets you *stop* work already in flight — the piece `Promise.race` cannot do. A `Promise.race([work, timeout])` settles when the timeout wins, but `work` keeps running, keeps holding its connection, and may later reject with nobody listening (an unhandled rejection). That's a **leak of the loser**. `AbortController` instead signals the underlying operation to abort for real.
+
+```js
+// LEAKY timeout: race resolves at 2s, but the fetch runs to its own 30s+ default,
+// still holding a socket, and if it later rejects → unhandledRejection.
+const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000));
+await Promise.race([fetch(url), timeout]); // fetch is NOT cancelled
+
+// REAL cancellation: the signal tears down the socket at 2s.
+const res = await fetch(url, { signal: AbortSignal.timeout(2000) }); // throws TimeoutError; socket closed
+
+// Manual control + combining signals. AbortSignal.any aborts when ANY input does.
+const ac = new AbortController();
+const signal = AbortSignal.any([ac.signal, AbortSignal.timeout(5000)]);
+signal.addEventListener("abort", () => cleanup(), { once: true });
+const data = await fetch(url, { signal }); // aborts on ac.abort() OR after 5s
+// ...later, e.g. on client disconnect: ac.abort(new Error("client gone"));
+```
+
+The numbers matter for survival under load. Node's `fetch`/undici has no overall timeout by default — a stalled upstream can hold a request for tens of seconds (and connection-level defaults are in the 5–10s range, not a request cap), and with a leaky `race` those sockets pile up until you exhaust the pool, which is the connection stampede again from the *outbound* side. An `AbortSignal.timeout(2000)` caps the cost of a single slow upstream at 2s *and* frees the socket immediately, so a 2s budget instead of a 30s+ hang is a 15× reduction in worst-case occupancy per call. Thread the *same* signal into every awaited op in a request — `fetch`, `fs` reads, your pool's tasks — so one abort unwinds the whole tree.
+
+<TradeoffMatrix
+  id="03-concurrency-control-tradeoff-1"
+  lessonSlug="03-concurrency-control-and-combinators"
+  lang="en"
+  prompt="You must enrich 48,000 user rows by calling a DB behind a 20-connection pool (≈40ms/call), inside a nightly job with a tight window. Other services share that database. How do you run the calls?"
+  options={[
+    { name: "Bounded pool: runPool(thunks, 12) — at most 12 calls in flight, sized under the shared pool", summary: "Cap concurrency to N.", correct: true, justification: "This is the senior default. You keep ~12 of 20 connections busy — saturating your share of throughput (48000×40ms/12 ≈ 160s, inside the window) while leaving headroom so the payments service can still get connections. N is chosen deliberately against the downstream budget, not by .map. It also bounds memory: at most 12 in-flight request objects, not 48,000." },
+    { name: "Unbounded: await Promise.all(ids.map(id => fetchFromDb(id)))", summary: "All at once.", justification: "This is the hook's outage. .map starts all 48,000 thunks synchronously, so 48,000 connection requests slam a 20-slot pool; it drains in milliseconds, the queue overflows, ETIMEDOUT cascades to every service on that DB, and memory spikes from 48,000 in-flight requests. 'Do all of these' is not 'do all at once' — Promise.all only collects results, it never limits concurrency." },
+    { name: "Sequential: for (const id of ids) await fetchFromDb(id)", summary: "One at a time.", justification: "Correct and safe but glacial: 48,000 × 40ms ≈ 32 minutes, blowing the nightly window while the pool sits 95% idle. You traded the crash for a missed SLA. It only makes sense when each call truly depends on the previous one's result, which enrichment does not." },
+    { name: "Unbounded all, but raise the pool to 500 connections", summary: "Grow the pool.", justification: "Moves the bottleneck onto the database itself. 500 concurrent calls contend on CPU, the lock manager, and hot rows — you trade ETIMEDOUT for lock waits and deadlocks, and you've stolen connections from every other service. Concurrency is a shared budget; the client must stay under it, not force the resource to grow to meet an unbounded demand." },
+  ]}
+/>
+
+<Quiz
+  id="03-concurrency-control-quiz-1"
+  lessonSlug="03-concurrency-control-and-combinators"
+  lang="en"
+  question="You run await Promise.race([fetch(url), rejectAfter(2000)]) and the timeout wins at 2s. What is the state of the underlying fetch?"
+  choices={[
+    { label: "It keeps running to its own timeout, still holding the socket; if it later rejects with no listener it becomes an unhandledRejection — the loser is leaked, not cancelled", correct: true },
+    { label: "Promise.race cancels the fetch automatically when the timeout wins", misconception: "race only chooses which settlement you observe; it has no power to cancel work. A promise is a notification, not a handle to running work. The fetch runs on, holding its socket. Real cancellation needs AbortController/AbortSignal passed into fetch." },
+    { label: "The fetch is paused and resumes if you await it again", misconception: "There is no pause/resume on a promise or a fetch. The HTTP request continues independently; awaiting the same promise later just gives you its eventual settlement. Nothing was suspended." },
+    { label: "The fetch is garbage-collected immediately because nothing references its result", misconception: "An in-flight fetch is kept alive by the live socket and its internal callbacks, not by your reference to the result. GC can't reclaim work that is still scheduled to run; the socket stays open until the request itself finishes or is aborted." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Ids fan in through a bounded pool of N workers into ordered results"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "ids", label: "48,000 ids", sub: "thunks[]" },
+    { id: "q", label: "shared queue", sub: "cursor next++" },
+    { id: "cap", label: "limit = N", sub: "e.g. 16" },
+    { id: "w1", label: "worker 1", sub: "1 in flight" },
+    { id: "w2", label: "worker N", sub: "1 in flight" },
+    { id: "res", label: "results[]", sub: "input order" },
+  ]}
+  edges={[
+    { from: "ids", to: "q", label: "enqueue" },
+    { from: "q", to: "cap", label: "cap N" },
+    { from: "cap", to: "w1" },
+    { from: "cap", to: "w2" },
+    { from: "w1", to: "res" },
+    { from: "w2", to: "res" },
+  ]}
+  caption="The map produces 48,000 thunks, but only N workers ever pull from the queue, so at most N calls are in flight at once. Each worker runs one task, writes to its index to preserve order, then loops. N is sized below the downstream pool's budget; an AbortSignal threaded into each task can tear the whole tree down on timeout or client disconnect."
+/>
+
+<KeyTakeaway>`Promise.all` never bounds concurrency or cancels siblings. Cap outbound work to `N` with a pool (≈ N/latency), use `allSettled` for partial failure, and `AbortSignal.timeout` — not `race` — to truly cancel.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-concurrency-control-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is `await Promise.all(ids.map(id => fetchFromDb(id)))` over 48,000 ids a self-inflicted DoS, and what is the senior fix?", a: "Array.map runs all 48,000 thunks synchronously, so the moment the line executes you have 48,000 pending promises — meaning 48,000 connection requests slamming a pool of, say, 20. The pool drains in milliseconds, its wait queue overflows, calls fail with ETIMEDOUT, and because the pool is shared, every other service on that database (payments, etc.) also can't get a connection — you've denial-of-serviced your own backend. Memory spikes too, from 48,000 in-flight request objects and their buffers. Promise.all only collects results; it does not limit concurrency. The fix is bounded concurrency: a worker pool that keeps at most N tasks in flight (sized below the downstream budget, e.g. N ≈ 12 against a 20-connection pool), so throughput is ~N/latency and the resource stays under its shared budget. Raising the pool size is not a fix — it just moves the stampede onto the DB's CPU, lock manager, and hot rows." },
+    { q: "Why does a Promise.race timeout leak, and how does AbortController differ?", a: "A promise is a one-way notification that some already-running work finished — not a handle you can use to stop it. Promise.race([work, timeout]) just picks whichever settles first to expose to you; when the timeout wins, `work` is still running, still holding its socket/connection, and if it later rejects with no one listening it surfaces as an unhandledRejection. That's a leak of the loser: you stopped listening but the work didn't stop. Under load these abandoned sockets accumulate and exhaust the outbound pool — the stampede from the other direction. AbortController is different: passing controller.signal (or AbortSignal.timeout(ms)) into fetch/undici/fs actually signals the operation to tear down — the socket closes and the call rejects with a TimeoutError/AbortError. So a 2s AbortSignal.timeout caps a single slow upstream at 2s AND frees the socket immediately (vs a 30s+ default hang), roughly a 15× cut in worst-case per-call occupancy. Thread one signal into every awaited op in a request, and AbortSignal.any([a, b]) lets one abort (timeout OR client-disconnect) unwind the whole tree." },
+  ]}
+/>
+
+<Recap lang="en">
+The four combinators settle differently the moment something fails: `Promise.all` returns an ordered array but rejects on the first rejection — *without* cancelling its siblings, which keep running and holding resources because a promise only notifies, it can't kill work; `allSettled` never rejects and hands back one `{status, value/reason}` per input so you can tolerate partial failure; `race` settles on the first settle, win or lose; `any` takes the first fulfillment or throws `AggregateError` if all reject. The war story is concurrency, not collection: `await Promise.all(ids.map(fetch))` over tens of thousands of ids fires them all at once and DoSes a shared pool (`ETIMEDOUT` everywhere), while a sequential `for await` is safe but glacial (48,000 × 40ms ≈ 32 min). The senior answer is a bounded worker pool — `N` workers pulling thunks from a shared cursor, at most `N` in flight, throughput ≈ `N/latency`, `N` sized *below* the downstream budget — reaching for `p-limit`/`p-map` in production. And cancellation is its own discipline: `Promise.race` for a timeout leaks the loser (it runs on, holding its socket, risking an unhandled rejection), whereas `AbortController`/`AbortSignal.timeout(ms)` actually tears the operation down, capping a slow upstream at, say, 2s instead of 30s+ and freeing the socket — thread one signal (combine with `AbortSignal.any`) through every awaited op so a single abort unwinds the entire tree.
+</Recap>

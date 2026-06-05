@@ -1,0 +1,200 @@
+---
+concepts:
+- stream-pipeline
+- pipe-error-trap
+- transform-streams
+- object-mode
+- web-streams-interop
+- fd-leak-emfile
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: 05-stream-pipelines-and-transforms
+sources:
+- https://nodejs.org/api/stream.html#streampipelinesource-transforms-destination-callback
+- https://nodejs.org/api/stream.html#implementing-a-transform-stream
+- https://nodejs.org/api/webstreams.html
+spiral: []
+status: ready
+summary: '.pipe() does not forward errors or destroy the chain, so one mid-stream failure leaks fds until EMFILE. stream.pipeline() wires errors and cleanup; write Transforms with _transform, and bridge Node and Web streams at the edges.'
+title: 'Stream pipelines, transforms, and the .pipe() error trap'
+track: node
+unit: 02-async-and-streams
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The ingest service crashed every Tuesday around the same time, always with `EMFILE: too many open files`, never reproducible in staging. Open file descriptors, graphed over a week, climbed in a slow staircase — a few hundred a day — until the process hit the 4096 `ulimit` and `accept()` started failing. The hot path was three lines: `req.pipe(gunzip).pipe(parser)`. Most requests were fine. But a fraction sent a malformed gzip body, `gunzip` threw, and because `.pipe()` forwards data but not errors, the inbound socket was never destroyed. Each bad request leaked one fd. The code wasn't wrong on the happy path — it was missing the unhappy one entirely.
+</Hook>
+
+<Crux>`.pipe()` forwards data, not errors, and never auto-destroys the chain — one mid-stream failure leaks an fd until EMFILE. Use `pipeline()`.</Crux>
+
+<Explanation>
+
+## The `.pipe()` error trap: leaks one fd per failure
+
+Lesson 02 left you with the rule "use `pipeline()`, not manual `pipe()`." This is *why*, in mechanism. `a.pipe(b).pipe(c)` wires data flow and backpressure correctly — that part works — but it does two dangerous things by omission. First, **it does not forward errors.** If `b` emits an `'error'`, that error stays on `b`; it is not propagated to `a` or `c`. Second, **it does not destroy the rest of the chain on failure.** When `b` errors, `a` is left open and flowing, and `c` is never told to close. Whatever resources `a` and `c` hold — a file descriptor, a socket, an in-flight buffer — leak.
+
+```js
+// THE TRAP: a malformed gzip body throws in gunzip; the socket leaks.
+import zlib from "node:zlib";
+
+function handler(req, res) {
+  const gunzip = zlib.createGunzip();
+  const parser = createNdjsonParser();
+
+  req.pipe(gunzip).pipe(parser);   // ❌ no error wiring, no cleanup
+
+  parser.on("data", (record) => save(record));
+  parser.on("end", () => res.end("ok"));
+  // gunzip throws on bad input → 'error' on gunzip only.
+  // req (the socket) is never destroyed. One leaked fd per bad request.
+}
+```
+
+On a single CLI run this is invisible: the process exits and the OS reclaims the fd. On a long-lived **server** it is fatal. Each leaked descriptor is permanent for the process lifetime, and they accumulate one per failure. A default `ulimit -n` is often 1024, raised to **4096** on busy boxes; once you've leaked that many, every new socket, file open, and `accept()` fails with `EMFILE`, and the service falls over — exactly the Tuesday staircase. Worse, an `'error'` on a stream with no listener is itself an `uncaughtException`, so the *other* failure mode of the naked pipe is a hard crash. The trap has two exits and both are bad.
+
+## The fix: `stream.pipeline()`
+
+`stream.pipeline(...streams, callback)` was added to close this exact hole. It wires the same data flow and backpressure as `pipe()`, and additionally: it **forwards an error from any stage** to one callback, and it **destroys every stream in the chain** — on failure *and* on normal completion. One place learns the outcome; nothing leaks. The promise form from `node:stream/promises` gives you the same guarantees behind `await`, which is the shape you want in modern async code.
+
+```js
+// THE FIX: pipeline wires errors AND destroys the whole chain on any outcome.
+import { pipeline } from "node:stream/promises";
+import zlib from "node:zlib";
+
+async function handler(req, res) {
+  try {
+    await pipeline(
+      req,                       // Readable: the inbound socket
+      zlib.createGunzip(),       // Transform: throws on a malformed body
+      createNdjsonParser(),      // Transform: objectMode records out
+      saveSink(),                // Writable: persists each record
+    );
+    res.end("ok");
+  } catch (err) {
+    // gunzip's error lands HERE. req, gunzip, parser, sink are ALL destroyed.
+    res.statusCode = 400;
+    res.end("bad body");
+  }
+}
+```
+
+When `createGunzip()` throws on the malformed body, `pipeline` rejects, every stream — including the inbound socket `req` — is destroyed, and the fd is released. No staircase, no `uncaughtException`. The callback form, `pipeline(req, gunzip, parser, sink, (err) => …)`, is identical in guarantees; use it when you're not in an `async` function. For a **single** stream rather than a chain, `stream.finished(stream, cb)` (or its promise form) tells you when one stream is done or has errored without re-implementing the listener bookkeeping. The rule sharpens: any time more than one stream is involved, reach for `pipeline()` first and never type `.pipe(` in server code.
+
+## Authoring a Transform: `_transform`, `_flush`, object mode
+
+A `Transform` is a Duplex whose readable side is a function of its writable side — gzip, a cipher, a per-line parser. You author one by implementing **`_transform(chunk, encoding, callback)`**: do the work, push zero or more outputs with `this.push(...)`, then call `callback()` to signal you're done with *this* chunk and ready for the next. An optional **`_flush(callback)`** runs once when the writable side ends — your chance to emit a trailer or whatever's left in an internal accumulator. Set **`objectMode: true`** when chunks are records (parsed rows) rather than bytes; then `this.push(obj)` emits a JS object instead of a Buffer.
+
+```js
+import { Transform } from "node:stream";
+
+// Byte stream in → one object per NDJSON line out. objectMode on the read side.
+class NdjsonParser extends Transform {
+  constructor() {
+    super({ readableObjectMode: true });  // bytes in, objects out
+    this.tail = "";
+  }
+  _transform(chunk, _enc, cb) {
+    const lines = (this.tail + chunk).split("\n");
+    this.tail = lines.pop();             // last fragment may be a partial line
+    try {
+      for (const line of lines) {
+        if (line) this.push(JSON.parse(line));   // emit one record per line
+      }
+      cb();                              // success: ready for next chunk
+    } catch (err) {
+      cb(err);                           // failure: propagate, do NOT throw + cb
+    }
+  }
+  _flush(cb) {
+    if (this.tail) this.push(JSON.parse(this.tail));  // last line, no newline
+    cb();
+  }
+}
+```
+
+A Transform has **two** highWaterMarks — one per side — each at the default of 16384 bytes (16KB) for byte mode or 16 objects in object mode, and it participates in backpressure on both: it stops pulling from upstream when its readable side is full, and signals upstream to pause. Three failure modes bite here. **Signal errors via `cb(err)`, not by throwing** synchronously inside an async continuation — a throw there escapes the stream machinery and becomes an `uncaughtException`, just like the EventEmitter trap. **Never call `cb` twice**: a double callback is a hard `ERR_MULTIPLE_CALLBACK` and corrupts the stream's internal state. And the cardinal sin — **a Transform that buffers everything in `_flush`** (accumulate all chunks, emit at the end) silently defeats streaming: it holds the entire dataset in memory, so a 4GB input that should cost ~3×16KB across a three-stage pipeline instead costs 4GB and OOMs. The whole point is to push as you go.
+
+<Inset kind="why" lang="en">
+Modern Node ships two stream worlds. Alongside Node's own streams there are **Web Streams** — the WHATWG `ReadableStream` / `WritableStream` / `TransformStream` — the same API the browser and edge runtimes use. They matter because `fetch()` gives you `Response.body` as a Web `ReadableStream`, not a Node Readable, so anywhere you `fetch()` and want to pipe the body into a Node sink you must bridge. `stream.Readable.fromWeb(webReadable)` and `nodeReadable.toWeb()` adapt between them: `Readable.fromWeb(res.body)` turns a fetch body into a Node Readable you can drop straight into `pipeline()`. The tradeoff is real. Web Streams are **portable** — the identical code runs in the browser, Deno, Cloudflare Workers, and Node — but they're **slower and thinner**: fewer built-ins, no `objectMode` ergonomics, and the adapter adds a per-chunk copy/wrap on the order of a few microseconds each, which adds up on a hot, small-chunk path. Node streams are faster and battle-tested but Node-only. Heuristic: use Web Streams at the edge and at `fetch` boundaries for portability; convert to Node streams for heavy in-process transformation, and keep the conversion at the seam, not in the inner loop.
+</Inset>
+
+<TradeoffMatrix
+  id="05-stream-pipelines-and-transforms-tradeoff-1"
+  lessonSlug="05-stream-pipelines-and-transforms"
+  lang="en"
+  prompt="A long-lived HTTP server pipes an inbound request through a gunzip Transform and an NDJSON parser to a sink. A fraction of requests carry a malformed gzip body. How do you wire the chain?"
+  options={[
+    { name: "await pipeline(req, gunzip, parser, sink) from node:stream/promises, wrapped in try/catch", summary: "Errors + cleanup, all stages destroyed.", correct: true, justification: "The correct senior choice. pipeline wires backpressure across every stage, forwards an error from ANY stage (here gunzip throwing on the bad body) to the single await/catch, and destroys EVERY stream in the chain — including the inbound socket req — on both failure and completion. So a malformed body rejects cleanly, the fd is released, and there is no leak and no uncaughtException. One try/catch handles done-or-failed." },
+    { name: "req.pipe(gunzip).pipe(parser).pipe(sink) — manual chained pipe", summary: "Leaks one fd per bad request → EMFILE.", justification: "This is the trap. pipe() forwards data and backpressure but NOT errors and does NOT destroy the chain: when gunzip throws, req is left open and the socket's fd leaks, one per malformed request. On a long-lived server they accumulate in a staircase until you hit the ulimit (~1024–4096) and every new connection fails with EMFILE. The 'error' on gunzip with no listener is also an uncaughtException. Both exits are bad." },
+    { name: "Keep .pipe() but add gunzip.on('error', ...) and parser.on('error', ...) handlers", summary: "Stops the crash, still leaks.", justification: "Adding error listeners stops the uncaughtException, so it looks fixed. But handling an error is not destroying the chain: when gunzip errors you still have to manually req.destroy(), gunzip.destroy(), parser.destroy(), sink.destroy() in the right order, and any one you forget leaks. This is re-implementing pipeline() by hand, badly — pipeline does exactly this cleanup correctly for free." },
+    { name: "Wrap the whole req.pipe(gunzip).pipe(parser) in a try/catch", summary: "Catches nothing — async errors escape.", justification: "try/catch only catches synchronous throws in the same tick. pipe() returns immediately and the gunzip 'error' fires later, on a future tick, when the try block is long gone — so the catch never runs. The error still surfaces as an unhandled 'error'/uncaughtException and the fd still leaks. This is the classic 'wrapped the wrong thing' mistake." },
+  ]}
+/>
+
+<Quiz
+  id="05-stream-pipelines-and-transforms-quiz-1"
+  lessonSlug="05-stream-pipelines-and-transforms"
+  lang="en"
+  question="In req.pipe(gunzip).pipe(parser) on a server, gunzip throws on a malformed body. What happens to req's file descriptor, and what's the eventual systemic failure?"
+  choices={[
+    { label: "req is never destroyed because .pipe() doesn't forward errors or clean up the chain, so its socket fd leaks — one per bad request — and the process eventually hits the ulimit (~1024–4096) and fails new connections with EMFILE", correct: true },
+    { label: "pipe() automatically destroys req when gunzip errors, so the fd is released and nothing leaks", misconception: "That is exactly what pipe() does NOT do. pipe() forwards data and backpressure but neither propagates errors nor destroys the rest of the chain. The upstream req stays open and its fd leaks; only pipeline() (or stream.finished + manual destroy) cleans up on error." },
+    { label: "Node garbage-collects the leaked socket on the next GC cycle, so the fds are reclaimed automatically", misconception: "An open socket with an active fd is reachable from the event loop and is not eligible for GC; even if it were, GC frees JS memory, not OS file descriptors. The fd stays open until something explicitly destroys the stream — which naked pipe never does on error." },
+    { label: "The error crashes the process immediately on the first bad request, so there's no slow leak to worry about", misconception: "It can crash (an 'error' with no listener becomes uncaughtException), but the described leak scenario is the slow one: with the data/end listeners present the error often just orphans req without an immediate crash, and fds climb a staircase over days until EMFILE. The systemic failure is gradual, not instant." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A stream pipeline: a source feeds two transforms into a sink; when a transform errors, pipeline destroys every stream in the chain so no file descriptor leaks"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "src", label: "Source", sub: "Readable (socket/fd)" },
+    { id: "t1", label: "Transform", sub: "gunzip" },
+    { id: "t2", label: "Transform", sub: "parser (objectMode)" },
+    { id: "sink", label: "Sink", sub: "Writable" },
+  ]}
+  edges={[
+    { from: "src", to: "t1", label: "chunks" },
+    { from: "t1", to: "t2", label: "records" },
+    { from: "t2", to: "sink", label: "write" },
+    { from: "t1", to: "src", label: "error → destroy ALL (no leak)" },
+  ]}
+  caption="Each stage flows data forward with backpressure. With pipeline(), an error anywhere — e.g. gunzip on a bad body — propagates to one await/callback AND destroys every stream including the source socket, releasing the fd. With naked .pipe(), that error reaches no one, the source is left open, and one fd leaks per failure until EMFILE."
+/>
+
+<KeyTakeaway>`.pipe()` moves data but not errors and never destroys the chain — one failure leaks an fd until EMFILE. Use `pipeline()` for errors + cleanup. Write Transforms with `_transform`; signal failure via `cb(err)`, never a double `cb`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-stream-pipelines-and-transforms-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does req.pipe(gunzip).pipe(parser) leak a file descriptor when gunzip errors, and exactly how does stream.pipeline() prevent it?", a: ".pipe() wires data flow and backpressure but does two things by omission: it does not forward errors, and it does not destroy the rest of the chain on failure. So when gunzip emits 'error', that error stays on gunzip — it is not propagated to req or parser — and nothing tells the upstream req (the inbound socket) to close. req is left open and flowing, so its file descriptor leaks; on a server that's one leaked fd per malformed request, and they accumulate in a staircase until the process hits its ulimit (commonly 1024, often raised to 4096) and every new socket/file/accept fails with EMFILE. Separately, an 'error' on a stream with no listener becomes an uncaughtException, the second bad exit. stream.pipeline(...streams, cb) — and the promise form from node:stream/promises — fixes both: it forwards an error from ANY stage to one callback/await, and it destroys EVERY stream in the chain on both failure and normal completion. So a gunzip error rejects the await, req/gunzip/parser/sink are all destroyed, the fd is released, and there's no leak and no uncaughtException." },
+    { q: "What are the rules for authoring a Transform's _transform/_flush, and what's the memory failure mode to avoid?", a: "Implement _transform(chunk, encoding, callback): do the work, emit outputs with this.push(...) (zero, one, or many per input chunk), then call callback() to signal you're done with this chunk and ready for the next; pass callback(err) to propagate a failure. _flush(callback) runs once when the writable side ends — use it to emit a trailer or a final partial accumulator (e.g. the last NDJSON line that had no trailing newline). Set objectMode (or readableObjectMode/writableObjectMode per side) when chunks are records rather than bytes. The hard rules: signal errors with cb(err), do NOT throw inside an async continuation (it escapes the stream and becomes uncaughtException); never call cb twice (a double callback is ERR_MULTIPLE_CALLBACK and corrupts internal state). A Transform has two highWaterMarks, one per side, defaulting to 16KB (16384 bytes) for byte streams or 16 objects in object mode, and it backpressures on both sides. The memory failure mode: a Transform that accumulates all chunks and only emits in _flush defeats streaming entirely — it holds the whole dataset in RAM, so a 4GB input that should cost ~3×16KB across a three-stage pipeline instead costs 4GB and OOMs. Push as you go." },
+  ]}
+/>
+
+<Recap lang="en">
+Lesson 02 said "use `pipeline()`, not `pipe()`"; this is the mechanism and the cost. `a.pipe(b).pipe(c)` forwards data and backpressure but, by omission, does not forward errors and does not destroy the chain on failure — so when a middle stage like `gunzip` throws on a malformed body, the upstream socket is left open and its file descriptor leaks, one per bad request, climbing a staircase until the process hits its `ulimit` (~1024–4096) and dies with `EMFILE`; the same naked-pipe error with no listener is also an `uncaughtException`. `stream.pipeline(...streams, cb)` — and `pipeline` from `node:stream/promises` for `await` — closes both holes: it propagates an error from any stage to one callback/await and destroys every stream on failure *and* completion, releasing all resources; `stream.finished()` does the same for a single stream. You author a `Transform` by implementing `_transform(chunk, enc, cb)` (push outputs, then `cb()` or `cb(err)`) and optional `_flush(cb)`, using `objectMode` for record streams; a Transform has two highWaterMarks (16KB / 16 objects by default) and backpressures on both sides, so never throw instead of `cb(err)`, never call `cb` twice, and never buffer the whole stream in `_flush` or you trade ~3×16KB for the entire file and OOM. Finally, Node now carries WHATWG Web Streams alongside its own; `Readable.fromWeb()` / `.toWeb()` bridge them for `fetch()` bodies and edge runtimes — Web Streams are portable but slower and thinner, so convert at the seam and keep Node streams in the hot inner loop.
+</Recap>

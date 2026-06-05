@@ -1,0 +1,200 @@
+---
+concepts:
+- stream-pipeline
+- pipe-error-trap
+- transform-streams
+- object-mode
+- web-streams-interop
+- fd-leak-emfile
+deepensInto: []
+estMin: 18
+lang: ru
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: 05-stream-pipelines-and-transforms
+sources:
+- https://nodejs.org/api/stream.html#streampipelinesource-transforms-destination-callback
+- https://nodejs.org/api/stream.html#implementing-a-transform-stream
+- https://nodejs.org/api/webstreams.html
+spiral: []
+status: ready
+summary: '.pipe() не пробрасывает ошибки и не разрушает цепочку, так что один сбой в середине течёт fd-шками до EMFILE. stream.pipeline() проводит ошибки и очистку; пиши Transform через _transform и мости Node- и Web-потоки на стыках.'
+title: 'Конвейеры потоков, трансформы и ловушка .pipe()'
+track: node
+unit: 02-async-and-streams
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Сервис ingest падал каждый вторник примерно в одно и то же время, всегда с `EMFILE: too many open files`, и никогда не воспроизводился в стейджинге. Открытые файловые дескрипторы, нарисованные за неделю, поднимались медленной лесенкой — по несколько сотен в день — пока процесс не упирался в `ulimit` 4096, и `accept()` не начинал отказывать. Горячий путь был в три строки: `req.pipe(gunzip).pipe(parser)`. Большинство запросов были в порядке. Но часть присылала битое gzip-тело, `gunzip` бросал ошибку, и поскольку `.pipe()` пробрасывает данные, но не ошибки, входящий сокет так и не разрушался. Каждый плохой запрос утекал одним fd. Код был верен на счастливом пути — несчастливого в нём просто не было.
+</Hook>
+
+<Crux>`.pipe()` пробрасывает данные, но не ошибки, и не разрушает цепочку — один сбой течёт fd до EMFILE. Используй `pipeline()`.</Crux>
+
+<Explanation>
+
+## Ловушка `.pipe()`: утечка одного fd на каждый сбой
+
+Урок 02 оставил тебе правило «используй `pipeline()`, а не ручной `pipe()`». Вот *почему* — по механизму. `a.pipe(b).pipe(c)` верно проводит поток данных и backpressure — эта часть работает, — но по умолчанию делает две опасные вещи. Первое: **он не пробрасывает ошибки.** Если `b` генерит `'error'`, эта ошибка остаётся на `b`; она не распространяется ни на `a`, ни на `c`. Второе: **он не разрушает остаток цепочки при сбое.** Когда `b` падает, `a` остаётся открытым и текущим, а `c` никто не велит закрыться. Все ресурсы, что держат `a` и `c`, — файловый дескриптор, сокет, буфер в полёте — утекают.
+
+```js
+// THE TRAP: a malformed gzip body throws in gunzip; the socket leaks.
+import zlib from "node:zlib";
+
+function handler(req, res) {
+  const gunzip = zlib.createGunzip();
+  const parser = createNdjsonParser();
+
+  req.pipe(gunzip).pipe(parser);   // ❌ no error wiring, no cleanup
+
+  parser.on("data", (record) => save(record));
+  parser.on("end", () => res.end("ok"));
+  // gunzip throws on bad input → 'error' on gunzip only.
+  // req (the socket) is never destroyed. One leaked fd per bad request.
+}
+```
+
+В одиночном запуске CLI это невидимо: процесс завершается и ОС забирает fd обратно. На долгоживущем **сервере** это смертельно. Каждый утёкший дескриптор постоянен на всё время жизни процесса, и они накапливаются по одному на сбой. Стандартный `ulimit -n` часто 1024, поднятый до **4096** на нагруженных машинах; как только ты утёк столько, каждый новый сокет, открытие файла и `accept()` отказывают с `EMFILE`, и сервис валится — ровно та вторничная лесенка. Хуже того, `'error'` на потоке без слушателя сам по себе становится `uncaughtException`, так что *второй* режим сбоя голого pipe — жёсткое падение. У ловушки два выхода, и оба плохие.
+
+## Фикс: `stream.pipeline()`
+
+`stream.pipeline(...streams, callback)` добавили, чтобы закрыть именно эту дыру. Он проводит тот же поток данных и backpressure, что и `pipe()`, и дополнительно: **пробрасывает ошибку из любого этапа** в один callback и **разрушает каждый поток в цепочке** — при сбое *и* при нормальном завершении. Одно место узнаёт исход; ничто не утекает. Промис-форма из `node:stream/promises` даёт те же гарантии за `await` — это та форма, что нужна в современном async-коде.
+
+```js
+// THE FIX: pipeline wires errors AND destroys the whole chain on any outcome.
+import { pipeline } from "node:stream/promises";
+import zlib from "node:zlib";
+
+async function handler(req, res) {
+  try {
+    await pipeline(
+      req,                       // Readable: the inbound socket
+      zlib.createGunzip(),       // Transform: throws on a malformed body
+      createNdjsonParser(),      // Transform: objectMode records out
+      saveSink(),                // Writable: persists each record
+    );
+    res.end("ok");
+  } catch (err) {
+    // gunzip's error lands HERE. req, gunzip, parser, sink are ALL destroyed.
+    res.statusCode = 400;
+    res.end("bad body");
+  }
+}
+```
+
+Когда `createGunzip()` падает на битом теле, `pipeline` реджектится, каждый поток — включая входящий сокет `req` — разрушается, и fd освобождается. Никакой лесенки, никакого `uncaughtException`. Callback-форма, `pipeline(req, gunzip, parser, sink, (err) => …)`, идентична по гарантиям; используй её, когда ты не в `async`-функции. Для **одного** потока, а не цепочки, `stream.finished(stream, cb)` (или его промис-форма) сообщит, когда поток завершён или упал, без переписывания учёта слушателей вручную. Правило заостряется: всякий раз, когда задействован больше чем один поток, первым делом тянись за `pipeline()` и никогда не печатай `.pipe(` в серверном коде.
+
+## Авторинг Transform: `_transform`, `_flush`, object mode
+
+`Transform` — это Duplex, у которого читаемая сторона есть функция от записываемой: gzip, шифр, построчный парсер. Ты пишешь его, реализуя **`_transform(chunk, encoding, callback)`**: сделай работу, отправь ноль или больше выходов через `this.push(...)`, затем вызови `callback()`, сигнализируя, что с *этим* чанком ты закончил и готов к следующему. Опциональный **`_flush(callback)`** бежит один раз, когда записываемая сторона заканчивается, — это твой шанс отдать трейлер или то, что осталось во внутреннем накопителе. Ставь **`objectMode: true`**, когда чанки — это записи (распарсенные строки), а не байты; тогда `this.push(obj)` отдаёт JS-объект вместо Buffer.
+
+```js
+import { Transform } from "node:stream";
+
+// Byte stream in → one object per NDJSON line out. objectMode on the read side.
+class NdjsonParser extends Transform {
+  constructor() {
+    super({ readableObjectMode: true });  // bytes in, objects out
+    this.tail = "";
+  }
+  _transform(chunk, _enc, cb) {
+    const lines = (this.tail + chunk).split("\n");
+    this.tail = lines.pop();             // last fragment may be a partial line
+    try {
+      for (const line of lines) {
+        if (line) this.push(JSON.parse(line));   // emit one record per line
+      }
+      cb();                              // success: ready for next chunk
+    } catch (err) {
+      cb(err);                           // failure: propagate, do NOT throw + cb
+    }
+  }
+  _flush(cb) {
+    if (this.tail) this.push(JSON.parse(this.tail));  // last line, no newline
+    cb();
+  }
+}
+```
+
+У Transform **два** highWaterMark — по одному на сторону — каждый со значением по умолчанию 16384 байта (16КБ) в байтовом режиме или 16 объектов в object mode, и он участвует в backpressure на обеих: он перестаёт тянуть сверху, когда его читаемая сторона полна, и сигналит верху притормозить. Тут кусаются три режима сбоя. **Сигналь об ошибках через `cb(err)`, а не throw** синхронно внутри async-продолжения — throw там ускользает из машинерии потока и становится `uncaughtException`, ровно как ловушка EventEmitter. **Никогда не вызывай `cb` дважды**: двойной callback — это жёсткий `ERR_MULTIPLE_CALLBACK`, портящий внутреннее состояние потока. И кардинальный грех — **Transform, который буферизует всё в `_flush`** (накопить все чанки, отдать в конце), молча убивает стриминг: он держит весь датасет в памяти, так что вход 4ГБ, который должен был стоить ~3×16КБ на трёхэтапном конвейере, вместо этого стоит 4ГБ и роняет процесс по OOM. Весь смысл — пушить по ходу.
+
+<Inset kind="why" lang="ru">
+Современный Node несёт два мира потоков. Рядом с собственными потоками Node есть **Web Streams** — WHATWG `ReadableStream` / `WritableStream` / `TransformStream` — тот же API, что у браузера и edge-рантаймов. Они важны, потому что `fetch()` отдаёт тебе `Response.body` как Web `ReadableStream`, а не Node Readable, так что везде, где ты делаешь `fetch()` и хочешь спайпить тело в Node-приёмник, нужно мостить. `stream.Readable.fromWeb(webReadable)` и `nodeReadable.toWeb()` адаптируют между ними: `Readable.fromWeb(res.body)` превращает тело fetch в Node Readable, который можно прямо засунуть в `pipeline()`. Компромисс реален. Web Streams **переносимы** — идентичный код бежит в браузере, Deno, Cloudflare Workers и Node, — но они **медленнее и тоньше**: меньше встроенного, нет эргономики `objectMode`, и адаптер добавляет копию/обёртку на чанк порядка нескольких микросекунд каждая, что складывается на горячем пути с мелкими чанками. Node-потоки быстрее и проверены боем, но только под Node. Эвристика: используй Web Streams на edge и на границах `fetch` ради переносимости; конвертируй в Node-потоки для тяжёлой трансформации внутри процесса и держи конвертацию на стыке, а не во внутреннем цикле.
+</Inset>
+
+<TradeoffMatrix
+  id="05-stream-pipelines-and-transforms-tradeoff-1"
+  lessonSlug="05-stream-pipelines-and-transforms"
+  lang="ru"
+  prompt="Долгоживущий HTTP-сервер пайпит входящий запрос через gunzip-Transform и NDJSON-парсер в приёмник. Часть запросов несёт битое gzip-тело. Как ты соединяешь цепочку?"
+  options={[
+    { name: "await pipeline(req, gunzip, parser, sink) из node:stream/promises, обёрнутый в try/catch", summary: "Ошибки + очистка, все этапы разрушены.", correct: true, justification: "Верный сеньорский выбор. pipeline проводит backpressure через каждый этап, пробрасывает ошибку из ЛЮБОГО этапа (здесь gunzip падает на битом теле) в единственный await/catch и разрушает КАЖДЫЙ поток в цепочке — включая входящий сокет req — при сбое и при завершении. Так битое тело реджектится чисто, fd освобождается, нет утечки и нет uncaughtException. Один try/catch обрабатывает «готово-или-упало»." },
+    { name: "req.pipe(gunzip).pipe(parser).pipe(sink) — ручной цепной pipe", summary: "Течёт одним fd на плохой запрос → EMFILE.", justification: "Это ловушка. pipe() пробрасывает данные и backpressure, но НЕ ошибки и НЕ разрушает цепочку: когда gunzip падает, req остаётся открытым и fd сокета утекает, по одному на битый запрос. На долгоживущем сервере они накапливаются лесенкой, пока ты не упрёшься в ulimit (~1024–4096), и каждое новое соединение не отвалится с EMFILE. 'error' на gunzip без слушателя — это ещё и uncaughtException. Оба выхода плохие." },
+    { name: "Оставить .pipe(), но добавить обработчики gunzip.on('error', ...) и parser.on('error', ...)", summary: "Останавливает падение, всё равно течёт.", justification: "Добавление слушателей error останавливает uncaughtException, так что выглядит починенным. Но обработать ошибку — не значит разрушить цепочку: когда gunzip падает, тебе всё равно надо вручную req.destroy(), gunzip.destroy(), parser.destroy(), sink.destroy() в правильном порядке, и любой забытый утекает. Это переписывание pipeline() руками, плохо — pipeline делает ровно эту очистку верно и бесплатно." },
+    { name: "Обернуть весь req.pipe(gunzip).pipe(parser) в try/catch", summary: "Ничего не ловит — async-ошибки ускользают.", justification: "try/catch ловит только синхронные throw в том же tick. pipe() возвращается сразу, а 'error' gunzip срабатывает позже, на будущем tick, когда блок try давно ушёл — так что catch не выполнится. Ошибка всё равно всплывает как необработанный 'error'/uncaughtException, и fd всё равно течёт. Это классическая ошибка «обернул не то»." },
+  ]}
+/>
+
+<Quiz
+  id="05-stream-pipelines-and-transforms-quiz-1"
+  lessonSlug="05-stream-pipelines-and-transforms"
+  lang="ru"
+  question="В req.pipe(gunzip).pipe(parser) на сервере gunzip падает на битом теле. Что станет с файловым дескриптором req и каков итоговый системный сбой?"
+  choices={[
+    { label: "req никогда не разрушается, потому что .pipe() не пробрасывает ошибки и не чистит цепочку, так что fd его сокета утекает — по одному на плохой запрос — и процесс в итоге упирается в ulimit (~1024–4096) и отказывает новым соединениям с EMFILE", correct: true },
+    { label: "pipe() автоматически разрушает req, когда gunzip падает, так что fd освобождается и ничего не течёт", misconception: "Это ровно то, чего pipe() НЕ делает. pipe() пробрасывает данные и backpressure, но ни распространяет ошибки, ни разрушает остаток цепочки. Верхний req остаётся открытым, и его fd течёт; только pipeline() (или stream.finished + ручной destroy) чистит при ошибке." },
+    { label: "Node соберёт утёкший сокет сборщиком мусора на следующем цикле GC, так что fd-шки заберутся автоматически", misconception: "Открытый сокет с активным fd достижим из event loop и не подлежит GC; и даже если бы подлежал, GC освобождает JS-память, а не файловые дескрипторы ОС. fd остаётся открытым, пока что-то явно не разрушит поток — а голый pipe этого при ошибке не делает никогда." },
+    { label: "Ошибка роняет процесс сразу на первом плохом запросе, так что медленной утечки бояться нечего", misconception: "Упасть он может ('error' без слушателя становится uncaughtException), но описанный сценарий утечки — медленный: при наличии слушателей data/end ошибка часто просто осиротит req без немедленного падения, и fd-шки лезут лесенкой днями до EMFILE. Системный сбой постепенный, а не мгновенный." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Конвейер потоков: источник кормит два трансформа в приёмник; когда трансформ падает, pipeline разрушает каждый поток в цепочке, так что ни один файловый дескриптор не течёт"
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "src", label: "Источник", sub: "Readable (сокет/fd)" },
+    { id: "t1", label: "Transform", sub: "gunzip" },
+    { id: "t2", label: "Transform", sub: "parser (objectMode)" },
+    { id: "sink", label: "Приёмник", sub: "Writable" },
+  ]}
+  edges={[
+    { from: "src", to: "t1", label: "чанки" },
+    { from: "t1", to: "t2", label: "записи" },
+    { from: "t2", to: "sink", label: "write" },
+    { from: "t1", to: "src", label: "error → destroy ВСЁ (без утечки)" },
+  ]}
+  caption="Каждый этап гонит данные вперёд с backpressure. С pipeline() ошибка где угодно — например gunzip на битом теле — распространяется в один await/callback И разрушает каждый поток, включая сокет-источник, освобождая fd. С голым .pipe() эта ошибка не доходит ни до кого, источник остаётся открытым, и один fd течёт на каждый сбой до EMFILE."
+/>
+
+<KeyTakeaway>`.pipe()` гонит данные, но не ошибки, и не разрушает цепочку — один сбой течёт fd до EMFILE. Используй `pipeline()` ради ошибок + очистки. Пиши Transform через `_transform`; сигналь о сбое через `cb(err)`, не двойной `cb`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-stream-pipelines-and-transforms-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Почему req.pipe(gunzip).pipe(parser) течёт файловым дескриптором, когда gunzip падает, и как именно stream.pipeline() это предотвращает?", a: ".pipe() проводит поток данных и backpressure, но по умолчанию делает две вещи: не пробрасывает ошибки и не разрушает остаток цепочки при сбое. Так что когда gunzip генерит 'error', эта ошибка остаётся на gunzip — она не распространяется на req или parser — и ничто не велит верхнему req (входящему сокету) закрыться. req остаётся открытым и текущим, так что его файловый дескриптор течёт; на сервере это один утёкший fd на битый запрос, и они накапливаются лесенкой, пока процесс не упрётся в ulimit (обычно 1024, часто поднятый до 4096), и каждый новый сокет/файл/accept не отвалится с EMFILE. Отдельно: 'error' на потоке без слушателя становится uncaughtException — второй плохой выход. stream.pipeline(...streams, cb) — и промис-форма из node:stream/promises — чинит оба: он пробрасывает ошибку из ЛЮБОГО этапа в один callback/await и разрушает КАЖДЫЙ поток в цепочке при сбое и при нормальном завершении. Так ошибка gunzip реджектит await, req/gunzip/parser/sink все разрушаются, fd освобождается, и нет ни утечки, ни uncaughtException." },
+    { q: "Каковы правила авторинга _transform/_flush у Transform и какой режим сбоя по памяти надо избегать?", a: "Реализуй _transform(chunk, encoding, callback): сделай работу, отдай выходы через this.push(...) (ноль, один или много на входной чанк), затем вызови callback(), сигнализируя, что с этим чанком закончил и готов к следующему; передай callback(err), чтобы пробросить сбой. _flush(callback) бежит один раз, когда записываемая сторона заканчивается, — используй его, чтобы отдать трейлер или финальный частичный накопитель (например, последнюю NDJSON-строку без завершающего перевода строки). Ставь objectMode (или readableObjectMode/writableObjectMode по сторонам), когда чанки — записи, а не байты. Жёсткие правила: сигналь об ошибках через cb(err), НЕ делай throw внутри async-продолжения (он ускользает из потока и становится uncaughtException); никогда не вызывай cb дважды (двойной callback — это ERR_MULTIPLE_CALLBACK, портящий внутреннее состояние). У Transform два highWaterMark, по одному на сторону, со значением по умолчанию 16КБ (16384 байта) в байтовом режиме или 16 объектов в object mode, и он делает backpressure на обеих сторонах. Режим сбоя по памяти: Transform, который накапливает все чанки и отдаёт только в _flush, полностью убивает стриминг — он держит весь датасет в RAM, так что вход 4ГБ, который должен был стоить ~3×16КБ на трёхэтапном конвейере, вместо этого стоит 4ГБ и роняет процесс по OOM. Пушь по ходу." },
+  ]}
+/>
+
+<Recap lang="ru">
+Урок 02 сказал «используй `pipeline()`, а не `pipe()`»; вот механизм и цена. `a.pipe(b).pipe(c)` пробрасывает данные и backpressure, но по умолчанию не пробрасывает ошибки и не разрушает цепочку при сбое — так что когда средний этап вроде `gunzip` падает на битом теле, верхний сокет остаётся открытым и его файловый дескриптор течёт, по одному на плохой запрос, лезя лесенкой, пока процесс не упрётся в `ulimit` (~1024–4096) и не умрёт с `EMFILE`; та же ошибка голого pipe без слушателя — ещё и `uncaughtException`. `stream.pipeline(...streams, cb)` — и `pipeline` из `node:stream/promises` ради `await` — закрывает обе дыры: он пробрасывает ошибку из любого этапа в один callback/await и разрушает каждый поток при сбое *и* при завершении, освобождая все ресурсы; `stream.finished()` делает то же для одного потока. Ты пишешь `Transform`, реализуя `_transform(chunk, enc, cb)` (пушь выходы, затем `cb()` или `cb(err)`) и опциональный `_flush(cb)`, используя `objectMode` для потоков записей; у Transform два highWaterMark (16КБ / 16 объектов по умолчанию) и backpressure на обеих сторонах, так что никогда не делай throw вместо `cb(err)`, никогда не вызывай `cb` дважды и никогда не буферизуй весь поток в `_flush`, иначе ты меняешь ~3×16КБ на весь файл и роняешь по OOM. Наконец, Node теперь несёт WHATWG Web Streams рядом со своими; `Readable.fromWeb()` / `.toWeb()` мостят их для тел `fetch()` и edge-рантаймов — Web Streams переносимы, но медленнее и тоньше, так что конвертируй на стыке и держи Node-потоки в горячем внутреннем цикле.
+</Recap>
