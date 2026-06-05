@@ -1,0 +1,221 @@
+---
+concepts:
+- task-definition-vs-task-vs-service
+- task-lifecycle-states
+- execution-role-vs-task-role
+- awsvpc-eni-exhaustion
+- fargate-vs-ec2-capacity-providers
+- stopped-reason-debugging
+- "SAA-C03:Design High-Performing Architectures"
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-ecs-internals-and-task-lifecycle"
+sources:
+- https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-lifecycle.html
+- https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-networking-awsvpc.html
+- https://docs.aws.amazon.com/AmazonECS/latest/developerguide/cluster-capacity-providers.html
+spiral: []
+status: ready
+summary: 'A task definition is the immutable blueprint, a task is a running instance, a service reconciles N of them. Tasks march through a lifecycle; awsvpc gives each its own ENI (a finite resource); capacity providers pick Fargate vs EC2; and stoppedReason tells you why a task died.'
+title: 'ECS internals: task lifecycle, awsvpc networking, capacity providers'
+track: "aws"
+unit: "02-compute-and-deploy"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Black Friday traffic doubles, you bump the service's desired count from 20 to 60, and watch. Forty new tasks wedge in `PROVISIONING` and never move. The ALB is still serving the 20 healthy tasks, but they're saturating, p99 climbs, and a fraction of requests start timing out. You scan the events tab and there it is, over and over: `RESOURCE:ENI`. Nothing is wrong with your image, your roles, or your code — you've run the subnet out of free IP addresses, and ECS cannot attach a network interface to a task it has nowhere to plug in. The scale-out you reached for to *save* the launch is the thing dropping traffic. This is what lives under the happy-path deploy: a scheduler reconciling desired against running, against a VPC that has hard, countable limits.
+</Hook>
+
+<Crux>A definition is the immutable blueprint, a task one instance, a service reconciles N. In awsvpc each task burns a finite ENI and subnet IP.</Crux>
+
+<Explanation>
+
+## Task definition, task, service — and the lifecycle the scheduler runs
+
+Three nouns get used interchangeably and they are not the same thing. A **task definition** is an immutable, versioned blueprint: which containers, their image, CPU/memory, the two IAM roles, the network mode, port mappings, and log config. Registering it produces a numbered revision (`myapp:7`) you never edit — you register a new revision. A **task** is one running instantiation of a revision: actual containers on actual capacity with a real network interface. A **service** is the controller that keeps **N tasks** of a given definition running, registers them with a load balancer, and drives autoscaling. The service runs a continuous **reconciliation loop**: compare *desired count* to *running count*, and if they differ, launch or stop tasks until they match — the same converge-to-desired-state model as a Kubernetes controller.
+
+A task does not blink into existence. It walks a lifecycle, and knowing the states tells you *where* a stuck task is stuck:
+
+```text
+PROVISIONING → PENDING → ACTIVATING → RUNNING
+            → DEACTIVATING → STOPPING → DEPROVISIONING → STOPPED
+```
+
+In **PROVISIONING**, ECS sets up prerequisites the task needs before launch — for awsvpc tasks, this is where the **ENI is allocated and attached**. **PENDING** is a wait-for-capacity state: the scheduler is waiting on resources or the agent. **ACTIVATING** is where the agent pulls images, creates containers, wires up networking, and registers load-balancer targets. **RUNNING** is steady state. On the way down, **DEACTIVATING** drains the load balancer, **STOPPING** sends SIGTERM (then SIGKILL after the stop timeout), **DEPROVISIONING** detaches and deletes the ENI, and **STOPPED** is terminal. The failure-mode payoff: a task wedged in `PROVISIONING` is a *resource* problem (no ENI, no IP), a task cycling through `RUNNING → STOPPED` repeatedly is a *runtime* problem (crash, failed health check). The state names the layer.
+
+```json
+{
+  "family": "checkout",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::111122223333:role/ecsTaskExecutionRole",
+  "taskRoleArn":      "arn:aws:iam::111122223333:role/checkoutTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "checkout",
+      "image": "111122223333.dkr.ecr.eu-central-1.amazonaws.com/checkout:7",
+      "secrets": [
+        { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:eu-central-1:111122223333:secret:checkout/db-AbCdEf" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/checkout",
+          "awslogs-region": "eu-central-1",
+          "awslogs-stream-prefix": "checkout"
+        }
+      }
+    }
+  ]
+}
+```
+
+Note the **two roles**, because confusing them is the single most common ECS bug. The `executionRoleArn` is assumed by the ECS *agent* — AWS infrastructure — at launch, *before your code runs*, to pull the image from ECR, write to CloudWatch Logs, and decrypt the `secrets` values from Secrets Manager / SSM. The `taskRoleArn` is assumed *inside the container* by your application code for its own AWS calls (read S3, query DynamoDB). They are not interchangeable: a missing execution-role permission means the task never *starts* (`CannotPullContainerError`, or `ResourceInitializationError` decrypting a secret); a missing task-role permission means the app *runs fine but gets `AccessDenied`* at the API call.
+
+<Inset kind="why" lang="en">
+**Why does the execution role pull the image, not the task role?** Because the pull happens before your container exists. The ECS agent (AWS-managed infrastructure) needs ECR + CloudWatch + Secrets Manager permission to even *construct* the task — fetch the layers, create the log stream, inject the decrypted secret as an env var. Only once the container is running does *your code* assume the task role via the SDK's credential chain (the container-credentials endpoint at `169.254.170.2`). The classic failure: an engineer hits `AccessDenied` on `s3:GetObject`, "fixes" it by attaching the S3 policy to the execution role, the error doesn't move, and they're baffled — the agent can now read S3, but the agent isn't the one calling it. S3 permissions belong on the **task** role. Reverse symptom: a task stuck in `PENDING` with `CannotPullContainerError` is an *execution*-role (or networking) problem, never a task-role one.
+</Inset>
+
+## awsvpc networking: one ENI per task, and ENIs are finite
+
+In **awsvpc** mode — mandatory for Fargate, the modern default for EC2 — each task gets its **own elastic network interface (ENI)** with a private IP in your subnet. That's the feature: a task is a first-class VPC citizen with its own security group, its own IP, and direct flow logs, instead of sharing the host's interface and juggling ports (`bridge`/`host` mode). The cost is that an ENI and an IP are **real, countable resources**, and you can run out of both.
+
+Two limits bite. First, **subnet IPs**: a `/24` subnet has 256 addresses, AWS reserves 5, so **251 usable** — meaning at most ~251 awsvpc tasks across *everything* sharing that subnet, and that's where the Hook's scale-out died (`RESOURCE:ENI` is also raised on IP exhaustion). Second, on **EC2** capacity, **ENIs-per-instance** is capped by instance type: a `c5.large` allows 3 ENIs total, the primary counts as one, so you can run only **2 awsvpc tasks** on it — bin-packing dense tiny tasks hits the ENI wall long before CPU or memory. **ENI trunking** (`awsvpcTrunking` account setting) attaches a shared trunk interface so the same `c5.large` jumps to an effective **10 tasks**, but only on instances launched *after* you enable it. **Fargate** sidesteps the per-instance ENI limit entirely — every task gets a dedicated ENI no matter how many you launch — but each one still **consumes a subnet IP**, so Fargate does *not* save you from subnet exhaustion. The senior reflex: size subnets for peak task count plus deploy headroom (rolling deploys briefly run new + old), and use a `/22` or `/21` for anything that scales, never a `/26`.
+
+```bash
+# Why is the scale-out stuck? Read the service events — they name the cause.
+aws ecs describe-services --cluster prod --services checkout \
+  --query "services[0].events[0:5].message"
+# => "... unable to place a task because no container instance met all of
+#     its requirements ... has insufficient ENI capacity. RESOURCE:ENI"
+
+# How many free IPs does the task subnet actually have right now?
+aws ec2 describe-subnets --subnet-ids subnet-aaa \
+  --query "Subnets[0].{Cidr:CidrBlock,Free:AvailableIpAddressCount}"
+# => { "Cidr": "10.0.1.0/24", "Free": 0 }   <-- there's your outage
+```
+
+## Capacity providers: Fargate vs EC2, and how to choose
+
+A **capacity provider** answers "where do tasks actually run?" There are two families. **Fargate** is serverless: no hosts to patch, scale, or bin-pack; you pay **per-task vCPU/memory by the second** (1-minute minimum); it's the fastest to operate and the right default. The price is a per-vCPU premium over raw EC2, and less control — no daemon containers, no GPUs, limited instance-type and kernel-tuning options. **EC2** capacity providers run your own instances in an Auto Scaling group fronted by the provider, which manages **managed scaling** (grows/shrinks the ASG to fit pending tasks) and **managed termination protection** (won't scale in an instance still running tasks). EC2 is cheaper at steady high utilization, supports **Spot** for ~70% savings on interruptible work, GPUs, and daemonsets — but you own patching, AMIs, the ENI-density math above, and cluster bin-packing. **Fargate Spot** offers the same interruption discount without managing hosts, for jobs that tolerate a 2-minute termination notice.
+
+```json
+{
+  "capacityProviders": ["FARGATE", "FARGATE_SPOT"],
+  "defaultCapacityProviderStrategy": [
+    { "capacityProvider": "FARGATE",      "base": 4, "weight": 1 },
+    { "capacityProvider": "FARGATE_SPOT", "base": 0, "weight": 4 }
+  ]
+}
+```
+
+That strategy reads: keep a guaranteed **base of 4** tasks on on-demand Fargate (your floor, never interrupted), then split everything above the base **1:4** — for every 1 on-demand task, run 4 on Spot. It's the canonical "stay-up baseline on-demand, burst cheap on Spot" pattern, and the same shape works for an EC2 + EC2-Spot mix.
+
+<TradeoffMatrix
+  id="05-ecs-internals-tradeoff-1"
+  lessonSlug="05-ecs-internals-and-task-lifecycle"
+  lang="en"
+  prompt="A platform team runs ~120 small containerized services. Most are bursty and low-traffic, a handful are steady at high utilization 24/7, and there's a nightly batch tier that's fully interruptible. The team is small and explicitly wants to minimize ops toil. Pick the primary capacity strategy."
+  options={[
+    { name: "Fargate for the fleet + Fargate Spot for the batch tier", summary: "Serverless everywhere; Spot for interruptible jobs.", correct: true, justification: "Right fit. With 120 mostly-bursty services and a small team that wants minimal toil, Fargate's no-host model removes patching, AMI management, ENI-density math, and bin-packing — the dominant cost here is engineer time, not the per-vCPU premium. Bursty/low-traffic services barely accrue the premium because per-second billing scales to near-zero when idle. The fully-interruptible nightly batch goes on Fargate Spot for ~70% savings with no host management. The few steady high-util services pay a premium, but that's a small, bounded slice — not worth standing up and operating an EC2 cluster for the whole team." },
+    { name: "EC2 capacity provider with Spot for everything", summary: "Cheapest compute, you run the instances.", justification: "Wrong for this team. EC2 is cheaper per-vCPU at steady high utilization, but you pay for it in ops: patching AMIs, managing the ASG, doing the ENI-per-instance density math (a c5.large fits only 2 awsvpc tasks without trunking), and bin-packing 120 services onto hosts. A small team that explicitly wants minimal toil would drown. All-Spot is also reckless for the steady 24/7 services — they'd take interruptions they can't tolerate." },
+    { name: "All on-demand EC2, no Spot, oversized instances", summary: "Max stability, manual capacity.", justification: "Worst of both. You take on all the EC2 operational burden (patching, scaling, bin-packing, ENI math) AND throw away Spot savings on the batch tier that's literally designed to be interrupted. Oversized instances to avoid bin-packing pain means paying for idle capacity all day for a mostly-bursty workload — the exact anti-pattern Fargate's per-second scale-to-near-zero solves." },
+    { name: "Lambda for all 120 services", summary: "Fully serverless functions.", justification: "Wrong tool. These are containerized long-running services behind load balancers, not short event-driven functions. The nightly batch may exceed Lambda's 15-minute hard cap, steady 24/7 services would pay per-request billing on constant traffic (worse than per-second compute), and you'd be re-architecting 120 services off containers for no benefit. Capacity providers are the question; Lambda isn't a capacity provider." },
+  ]}
+/>
+
+## Why a task won't start: reading stoppedReason
+
+When a task dies, ECS records **why** on the stopped task: a coarse `stopCode` and a human `stoppedReason`. This is the senior debugging entry point — you read these *before* guessing.
+
+```bash
+aws ecs describe-tasks --cluster prod --tasks <task-arn> \
+  --query "tasks[0].{Code:stopCode,Reason:stoppedReason,
+                     Containers:containers[].{N:name,Reason:reason,Exit:exitCode}}"
+```
+
+The checklist, keyed to what you'll see:
+
+- **`CannotPullContainerError`** — image pull failed. Causes: missing/insufficient **execution role**, a private subnet with **no NAT/VPC endpoints** to reach ECR (very common), wrong image tag, or an `arm64`/`amd64` mismatch. Task dies in `PENDING`/`ACTIVATING`.
+- **`RESOURCE:ENI` / `RESOURCE:MEMORY` / `RESOURCE:CPU`** (`stopCode: TaskFailedToStart` / placement event) — the cluster has no room: subnet IPs exhausted (ENI), or no EC2 instance with enough CPU/memory. Stuck in `PROVISIONING`/`PENDING`.
+- **`ResourceInitializationError`** — usually decrypting a `secrets` value: the **execution role** lacks `secretsmanager:GetSecretValue` / `ssm:GetParameters` (or `kms:Decrypt` on the key).
+- **`Essential container ... exited`** with a non-zero `exitCode` — your app crashed, or it failed the **container/ALB health check** and ECS killed it. In a service this becomes a **deploy loop**: new tasks fail the check, ECS won't promote them, old tasks stay. The **deployment circuit breaker** (`enable: true, rollback: true`) detects the loop and **rolls back** to the last good revision instead of churning forever.
+
+**Numbers to hold:** a Fargate task is typically `RUNNING` in **tens of seconds** (ENI attach + image pull); image pull alone is **seconds to minutes** by image size, which is why slim images and pull-through cache matter. The stop timeout (SIGTERM → SIGKILL) defaults to **30 seconds**. None of this is guesswork — `stoppedReason` points at the layer; you fix that layer.
+
+<Quiz
+  id="05-ecs-internals-quiz-1"
+  lessonSlug="05-ecs-internals-and-task-lifecycle"
+  lang="en"
+  question="Your container starts and runs, but its code gets AccessDenied on s3:GetObject. The task definition has both an execution role and a task role. Where do the S3 permissions belong, and what would attaching them to the execution role do?"
+  choices={[
+    { label: "On the task role — it's the identity your app assumes at runtime; putting them on the execution role lets the ECS agent read S3 but not your code, so the error wouldn't move", correct: true },
+    { label: "On the execution role — it's the role ECS uses to run the task, so it covers all the task's AWS access", misconception: "The execution role is assumed by the ECS agent (AWS infrastructure) before your code runs — to pull the image, write logs, and decrypt secrets. Your application code never uses it. Attaching S3 there grants the agent access, not your container, so the AccessDenied persists." },
+    { label: "On the container instance's IAM role", misconception: "That role (on EC2 capacity) is for the ECS agent/host, not for your task's app calls. On Fargate there is no instance role at all. Application AWS permissions belong on the task role, which works identically on Fargate and EC2." },
+    { label: "Nowhere — Fargate grants S3 to tasks by default", misconception: "Fargate grants nothing by default; least privilege means the task role starts empty. You must explicitly attach an s3:GetObject policy scoped to the bucket onto the task role." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The ECS task lifecycle: a task walks from PROVISIONING (ENI attach) through PENDING and ACTIVATING (image pull, container create) to RUNNING, then back down through DEACTIVATING, STOPPING, and DEPROVISIONING (ENI detach) to STOPPED — and where it wedges tells you the failure layer."
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "prov", label: "PROVISIONING", sub: "attach ENI + IP" },
+    { id: "pend", label: "PENDING", sub: "wait for capacity" },
+    { id: "act", label: "ACTIVATING", sub: "pull image, create" },
+    { id: "run", label: "RUNNING", sub: "steady state" },
+    { id: "deact", label: "DEACTIVATING", sub: "drain from LB" },
+    { id: "stop", label: "STOPPING", sub: "SIGTERM → SIGKILL" },
+    { id: "deprov", label: "DEPROVISIONING", sub: "detach ENI" },
+    { id: "stopped", label: "STOPPED", sub: "terminal + stoppedReason" },
+  ]}
+  edges={[
+    { from: "prov", to: "pend", label: "ENI ok" },
+    { from: "pend", to: "act", label: "capacity ok" },
+    { from: "act", to: "run", label: "healthy" },
+    { from: "run", to: "deact", label: "stop / deploy" },
+    { from: "deact", to: "stop", label: "drained" },
+    { from: "stop", to: "deprov", label: "exited" },
+    { from: "deprov", to: "stopped", label: "ENI freed" },
+  ]}
+  caption="Stuck in PROVISIONING/PENDING is a resource problem (RESOURCE:ENI on subnet-IP exhaustion, RESOURCE:CPU/MEMORY on a full EC2 cluster); cycling RUNNING → STOPPED is a runtime problem (crash, failed health check). The state names the layer before you read stoppedReason."
+/>
+
+<KeyTakeaway>Execution role pulls image/secrets; task role runs the app. Each awsvpc task burns an ENI + IP, so scale-outs hit RESOURCE:ENI. Fargate: no hosts, premium; EC2: cheaper, you patch. stoppedReason names the layer.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-ecs-internals-retrieval"
+  lang="en"
+  questions={[
+    { q: "Distinguish task definition, task, and service, then walk the lifecycle and say what a stuck PROVISIONING vs a RUNNING→STOPPED loop tells you.", a: "A task definition is an immutable, versioned blueprint (containers, image, CPU/memory, the two IAM roles, network mode, ports, log config); registering it makes a numbered revision you never edit. A task is one running instantiation of a revision — real containers on real capacity with a real ENI. A service is the controller that keeps N tasks running, registers them with a load balancer, drives autoscaling, and runs a reconciliation loop comparing desired count to running count, launching or stopping tasks until they match. The lifecycle: PROVISIONING (attach ENI/IP for awsvpc) → PENDING (wait for capacity) → ACTIVATING (pull image, create containers, wire networking, register LB targets) → RUNNING → DEACTIVATING (drain from LB) → STOPPING (SIGTERM then SIGKILL after the stop timeout, default 30s) → DEPROVISIONING (detach/delete ENI) → STOPPED (terminal, carries stoppedReason). A task wedged in PROVISIONING/PENDING is a resource problem — no ENI/IP (RESOURCE:ENI) or no CPU/memory on the EC2 cluster. A task cycling RUNNING → STOPPED is a runtime problem — a crash or a failed health check. The state names the layer." },
+    { q: "Explain execution role vs task role, why awsvpc ENIs are finite, and how stoppedReason guides debugging a task that won't start.", a: "The execution role is assumed by the ECS agent (AWS infrastructure) at launch, before your code runs, to pull the image from ECR, write to CloudWatch Logs, and decrypt secrets from Secrets Manager/SSM; a missing permission means the task never starts (CannotPullContainerError, ResourceInitializationError). The task role is assumed inside the container by your app code via the container-credentials endpoint for its own AWS calls (S3, DynamoDB); a missing permission means the app runs fine but gets AccessDenied — so app permissions like s3:GetObject go on the task role, never the execution role. awsvpc gives each task its own ENI and a private subnet IP, both finite: a /24 has 251 usable IPs (a hard ceiling on awsvpc tasks sharing it), and on EC2 the ENI-per-instance limit caps density (a c5.large fits only 2 awsvpc tasks without trunking, ~10 with awsvpcTrunking). Fargate gives every task a dedicated ENI but still consumes a subnet IP, so it doesn't save you from subnet exhaustion. To debug a stuck task, read stopCode and stoppedReason first: CannotPullContainerError = execution role or no NAT/endpoint to ECR or arch mismatch; RESOURCE:ENI = subnet IPs exhausted; RESOURCE:CPU/MEMORY = full EC2 cluster; ResourceInitializationError = execution role can't decrypt a secret; essential container exited non-zero = crash or failed health check, which in a service becomes a deploy loop the deployment circuit breaker rolls back." },
+  ]}
+/>
+
+<Recap lang="en">
+ECS has three nouns that get conflated: a task definition is an immutable, versioned blueprint (containers, image, CPU/memory, the two roles, network mode, ports, logs); a task is one running instantiation of a revision; a service is the controller that reconciles a desired count of N tasks, ties them to a load balancer, and autoscales. A task walks a lifecycle — PROVISIONING (attach ENI/IP) → PENDING (wait for capacity) → ACTIVATING (pull image, create containers) → RUNNING → DEACTIVATING (drain) → STOPPING (SIGTERM then SIGKILL after ~30s) → DEPROVISIONING (detach ENI) → STOPPED — and where it wedges names the layer: PROVISIONING/PENDING is a resource problem, a RUNNING→STOPPED loop is a runtime problem. The two roles are the classic trap: the execution role is the agent's identity (pull image, write logs, decrypt secrets) used before your code runs, while the task role is your app's runtime identity for its own AWS calls — S3 permissions belong on the task role, and attaching them to the execution role lets the agent read S3 but never your code. awsvpc mode makes each task a first-class VPC citizen with its own ENI and security group, but ENIs and IPs are finite: a /24 yields 251 usable IPs, a c5.large fits only 2 awsvpc tasks without trunking (~10 with awsvpcTrunking), and Fargate dodges the per-instance ENI limit but still burns a subnet IP — so scale-outs into a small subnet wedge in PROVISIONING with RESOURCE:ENI. Capacity providers choose where tasks run: Fargate (no hosts, per-second billing, premium, less control) versus EC2 (cheaper at steady scale, Spot for ~70% off, GPUs and daemonsets, but you own patching and bin-packing), often blended with a base-on-demand-plus-Spot strategy. And when a task dies, stopCode and stoppedReason name the failed layer — CannotPullContainerError, RESOURCE:ENI, ResourceInitializationError, or an essential container exiting non-zero — so you fix that layer instead of guessing, and let the deployment circuit breaker roll back a failing deploy.
+</Recap>

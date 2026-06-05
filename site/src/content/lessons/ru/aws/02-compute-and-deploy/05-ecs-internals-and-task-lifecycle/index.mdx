@@ -1,0 +1,221 @@
+---
+concepts:
+- task-definition-vs-task-vs-service
+- task-lifecycle-states
+- execution-role-vs-task-role
+- awsvpc-eni-exhaustion
+- fargate-vs-ec2-capacity-providers
+- stopped-reason-debugging
+- "SAA-C03:Design High-Performing Architectures"
+deepensInto: []
+estMin: 19
+lang: ru
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: "05-ecs-internals-and-task-lifecycle"
+sources:
+- https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-lifecycle.html
+- https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task-networking-awsvpc.html
+- https://docs.aws.amazon.com/AmazonECS/latest/developerguide/cluster-capacity-providers.html
+spiral: []
+status: ready
+summary: 'Task definition — неизменный чертёж, task — работающий экземпляр, service сводит N к желаемому числу. Задачи проходят жизненный цикл; awsvpc даёт каждой свой ENI (конечный ресурс); capacity providers выбирают Fargate или EC2; а stoppedReason говорит, почему задача умерла.'
+title: 'Внутренности ECS: жизненный цикл задачи, сеть awsvpc, capacity providers'
+track: "aws"
+unit: "02-compute-and-deploy"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Трафик Чёрной пятницы удваивается, ты поднимаешь desired count сервиса с 20 до 60 и смотришь. Сорок новых задач застревают в `PROVISIONING` и не двигаются. ALB всё ещё обслуживает 20 здоровых задач, но они захлёбываются, p99 растёт, и часть запросов начинает отваливаться по таймауту. Ты открываешь вкладку событий, и вот оно, снова и снова: `RESOURCE:ENI`. С образом, ролями и кодом всё в порядке — ты исчерпал свободные IP-адреса в подсети, и ECS не может прицепить сетевой интерфейс к задаче, которую некуда воткнуть. Тот самый scale-out, которым ты тянулся *спасти* запуск, и роняет трафик. Вот что живёт под счастливым путём деплоя: планировщик, сводящий желаемое к работающему, против VPC с жёсткими счётными лимитами.
+</Hook>
+
+<Crux>Определение — неизменный чертёж, задача — один экземпляр, сервис сводит к N. В awsvpc каждая задача жжёт конечный ENI и IP подсети.</Crux>
+
+<Explanation>
+
+## Task definition, task, service — и жизненный цикл планировщика
+
+Три слова используют как синонимы, а это не одно и то же. **Task definition** — неизменный версионированный чертёж: какие контейнеры, их образ, CPU/память, две IAM-роли, сетевой режим, маппинг портов, конфиг логов. Регистрация даёт нумерованную ревизию (`myapp:7`), которую ты не правишь — ты регистрируешь новую ревизию. **Task** — один работающий экземпляр ревизии: реальные контейнеры на реальной ёмкости с реальным сетевым интерфейсом. **Service** — контроллер, который держит **N задач** заданного определения, регистрирует их в балансировщике и ведёт автомасштабирование. Сервис крутит непрерывный **цикл сведения (reconciliation)**: сравнивает *desired count* с *running count*, и если они различаются, запускает или останавливает задачи, пока не сойдутся, — та же модель схождения к желаемому состоянию, что и у контроллера Kubernetes.
+
+Задача не возникает мгновенно. Она проходит жизненный цикл, и знание состояний говорит, *где* застрявшая задача застряла:
+
+```text
+PROVISIONING → PENDING → ACTIVATING → RUNNING
+            → DEACTIVATING → STOPPING → DEPROVISIONING → STOPPED
+```
+
+В **PROVISIONING** ECS готовит то, что задаче нужно до запуска — для awsvpc-задач здесь **выделяется и прицепляется ENI**. **PENDING** — состояние ожидания ёмкости: планировщик ждёт ресурсов или агента. **ACTIVATING** — здесь агент тянет образы, создаёт контейнеры, настраивает сеть и регистрирует таргеты балансировщика. **RUNNING** — установившийся режим. На спуске **DEACTIVATING** сливает задачу из балансировщика, **STOPPING** шлёт SIGTERM (затем SIGKILL по таймауту остановки), **DEPROVISIONING** отцепляет и удаляет ENI, а **STOPPED** — терминальное. Выигрыш по разбору сбоев: задача, застрявшая в `PROVISIONING`, — это проблема *ресурса* (нет ENI, нет IP), а задача, циклящая `RUNNING → STOPPED`, — проблема *рантайма* (краш, проваленный health check). Состояние называет слой.
+
+```json
+{
+  "family": "checkout",
+  "requiresCompatibilities": ["FARGATE"],
+  "networkMode": "awsvpc",
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::111122223333:role/ecsTaskExecutionRole",
+  "taskRoleArn":      "arn:aws:iam::111122223333:role/checkoutTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "checkout",
+      "image": "111122223333.dkr.ecr.eu-central-1.amazonaws.com/checkout:7",
+      "secrets": [
+        { "name": "DB_PASSWORD", "valueFrom": "arn:aws:secretsmanager:eu-central-1:111122223333:secret:checkout/db-AbCdEf" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/checkout",
+          "awslogs-region": "eu-central-1",
+          "awslogs-stream-prefix": "checkout"
+        }
+      }
+    }
+  ]
+}
+```
+
+Обрати внимание на **две роли** — их путаница это самый частый баг ECS. `executionRoleArn` принимается *агентом* ECS — инфраструктурой AWS — при запуске, *до того как заработает твой код*, чтобы вытянуть образ из ECR, писать в CloudWatch Logs и расшифровать значения `secrets` из Secrets Manager / SSM. `taskRoleArn` принимается *внутри контейнера* кодом твоего приложения для его собственных вызовов AWS (читать S3, запрашивать DynamoDB). Они не взаимозаменяемы: нехватка прав у execution role означает, что задача вообще не *стартует* (`CannotPullContainerError` или `ResourceInitializationError` при расшифровке секрета); нехватка прав у task role означает, что приложение *работает, но получает `AccessDenied`* на вызове API.
+
+<Inset kind="why" lang="ru">
+**Почему образ тянет execution role, а не task role?** Потому что вытягивание происходит до того, как существует твой контейнер. Агенту ECS (инфраструктуре под управлением AWS) нужны права ECR + CloudWatch + Secrets Manager, чтобы вообще *собрать* задачу — притянуть слои, создать лог-стрим, подставить расшифрованный секрет как переменную окружения. И только когда контейнер уже работает, *твой код* принимает task role через цепочку учётных данных SDK (эндпоинт container-credentials на `169.254.170.2`). Классический сбой: инженер ловит `AccessDenied` на `s3:GetObject`, «чинит» это, навесив S3-политику на execution role, ошибка не сдвигается, и он в недоумении — теперь агент может читать S3, но не агент его вызывает. Права на S3 принадлежат **task** role. Обратный симптом: задача, застрявшая в `PENDING` с `CannotPullContainerError`, — это проблема execution role (или сети), но никогда task role.
+</Inset>
+
+## Сеть awsvpc: один ENI на задачу, и ENI конечны
+
+В режиме **awsvpc** — обязательном для Fargate, современном дефолте для EC2 — каждая задача получает **собственный сетевой интерфейс (ENI)** с приватным IP в твоей подсети. В этом и фича: задача — полноправный гражданин VPC со своей security group, своим IP и прямыми flow-логами, вместо того чтобы делить интерфейс хоста и жонглировать портами (режимы `bridge`/`host`). Цена в том, что ENI и IP — **реальные счётные ресурсы**, и оба можно исчерпать.
+
+Кусают два лимита. Первый — **IP подсети**: подсеть `/24` имеет 256 адресов, AWS резервирует 5, остаётся **251 пригодных** — то есть максимум ~251 awsvpc-задача на *всё*, что делит эту подсеть, и именно тут умер scale-out из вступления (`RESOURCE:ENI` поднимается и при исчерпании IP). Второй — на ёмкости **EC2** число **ENI на инстанс** ограничено типом: `c5.large` допускает 3 ENI всего, первичный считается одним, так что на нём можно запустить лишь **2 awsvpc-задачи** — плотная упаковка крошечных задач упирается в стену ENI задолго до CPU или памяти. **ENI trunking** (настройка аккаунта `awsvpcTrunking`) цепляет общий транковый интерфейс, и тот же `c5.large` прыгает до эффективных **10 задач**, но только на инстансах, запущенных *после* включения. **Fargate** обходит лимит ENI на инстанс целиком — каждая задача получает выделенный ENI, сколько бы ты ни запустил — но каждая всё равно **потребляет IP подсети**, так что Fargate *не* спасает от исчерпания подсети. Сеньорский рефлекс: размеряй подсети под пиковое число задач плюс запас на деплой (rolling-деплои кратко держат новые + старые) и бери `/22` или `/21` для всего, что масштабируется, а не `/26`.
+
+```bash
+# Почему scale-out застрял? Читай события сервиса — они называют причину.
+aws ecs describe-services --cluster prod --services checkout \
+  --query "services[0].events[0:5].message"
+# => "... unable to place a task because no container instance met all of
+#     its requirements ... has insufficient ENI capacity. RESOURCE:ENI"
+
+# Сколько свободных IP в подсети задачи прямо сейчас?
+aws ec2 describe-subnets --subnet-ids subnet-aaa \
+  --query "Subnets[0].{Cidr:CidrBlock,Free:AvailableIpAddressCount}"
+# => { "Cidr": "10.0.1.0/24", "Free": 0 }   <-- вот твой инцидент
+```
+
+## Capacity providers: Fargate против EC2 и как выбрать
+
+**Capacity provider** отвечает на вопрос «где задачи на самом деле работают?». Есть два семейства. **Fargate** — serverless: нет хостов для патчинга, масштабирования и упаковки; ты платишь **посекундно за vCPU/память задачи** (минимум 1 минута); это быстрее всего в эксплуатации и правильный дефолт. Цена — наценка за vCPU поверх голого EC2 и меньше контроля: нет daemon-контейнеров, нет GPU, ограничены типы инстансов и тюнинг ядра. Capacity providers на **EC2** запускают твои инстансы в Auto Scaling-группе перед провайдером, который ведёт **managed scaling** (растит/сжимает ASG под ожидающие задачи) и **managed termination protection** (не сожмёт инстанс, на котором ещё крутятся задачи). EC2 дешевле при постоянной высокой утилизации, поддерживает **Spot** для экономии ~70% на прерываемой работе, GPU и daemonset-ы — но патчинг, AMI, ту самую математику плотности ENI и упаковку кластера ты держишь сам. **Fargate Spot** даёт ту же скидку за прерываемость без управления хостами, для задач, терпящих 2-минутное уведомление о завершении.
+
+```json
+{
+  "capacityProviders": ["FARGATE", "FARGATE_SPOT"],
+  "defaultCapacityProviderStrategy": [
+    { "capacityProvider": "FARGATE",      "base": 4, "weight": 1 },
+    { "capacityProvider": "FARGATE_SPOT", "base": 0, "weight": 4 }
+  ]
+}
+```
+
+Эта стратегия читается так: держи гарантированную **базу из 4** задач на on-demand Fargate (твой пол, никогда не прерывается), а всё сверх базы дели **1:4** — на каждую 1 on-demand-задачу запускай 4 на Spot. Это канонический паттерн «базовый on-demand держит, дешёвый Spot бёрстит», и та же форма работает для микса EC2 + EC2-Spot.
+
+<TradeoffMatrix
+  id="05-ecs-internals-tradeoff-1"
+  lessonSlug="05-ecs-internals-and-task-lifecycle"
+  lang="ru"
+  prompt="Платформенная команда держит ~120 маленьких контейнерных сервисов. Большинство всплесковые и низконагруженные, горстка постоянно высоконагружена 24/7, и есть ночной батч-слой, полностью прерываемый. Команда маленькая и явно хочет минимизировать операционную рутину. Выбери основную стратегию ёмкости."
+  options={[
+    { name: "Fargate на весь парк + Fargate Spot на батч-слой", summary: "Serverless везде; Spot для прерываемых джобов.", correct: true, justification: "Правильно. При 120 в основном всплесковых сервисах и маленькой команде, желающей минимума рутины, безхостовая модель Fargate убирает патчинг, управление AMI, математику плотности ENI и упаковку — доминирующая стоимость тут время инженеров, а не наценка за vCPU. Всплесковые/низконагруженные сервисы почти не накапливают наценку, потому что посекундная тарификация падает почти до нуля в простое. Полностью прерываемый ночной батч идёт на Fargate Spot за ~70% экономии без управления хостами. Несколько постоянно высоконагруженных сервисов платят наценку, но это маленький ограниченный кусок — не повод поднимать и обслуживать EC2-кластер на всю команду." },
+    { name: "EC2 capacity provider со Spot на всё", summary: "Самые дешёвые вычисления, инстансы держишь сам.", justification: "Неверно для этой команды. EC2 дешевле за vCPU при постоянной высокой утилизации, но ты платишь за это операционкой: патчинг AMI, управление ASG, математика ENI на инстанс (c5.large без trunking вмещает лишь 2 awsvpc-задачи) и упаковка 120 сервисов по хостам. Маленькая команда, явно хотящая минимума рутины, утонет. All-Spot ещё и безрассуден для постоянных 24/7-сервисов — они поймают прерывания, которых не терпят." },
+    { name: "Только on-demand EC2, без Spot, инстансы с запасом", summary: "Максимум стабильности, ёмкость вручную.", justification: "Худшее из обоих. Ты берёшь всю операционную нагрузку EC2 (патчинг, масштабирование, упаковка, математика ENI) И выбрасываешь экономию Spot на батч-слое, который буквально создан для прерываний. Инстансы с запасом ради ухода от боли упаковки означают оплату простойной ёмкости весь день для в основном всплесковой нагрузки — ровно тот антипаттерн, который решает посекундное падение Fargate почти до нуля." },
+    { name: "Lambda на все 120 сервисов", summary: "Полностью serverless-функции.", justification: "Не тот инструмент. Это контейнерные долгоживущие сервисы за балансировщиками, а не короткие событийные функции. Ночной батч может превысить жёсткий лимит Lambda в 15 минут, постоянные 24/7-сервисы платили бы за запрос на непрерывном трафике (хуже посекундных вычислений), и ты переархитектурил бы 120 сервисов с контейнеров без пользы. Вопрос про capacity providers; Lambda не capacity provider." },
+  ]}
+/>
+
+## Почему задача не стартует: чтение stoppedReason
+
+Когда задача умирает, ECS записывает на остановленной задаче **почему**: грубый `stopCode` и человекочитаемый `stoppedReason`. Это сеньорская точка входа в отладку — ты читаешь их *до* того, как гадать.
+
+```bash
+aws ecs describe-tasks --cluster prod --tasks <task-arn> \
+  --query "tasks[0].{Code:stopCode,Reason:stoppedReason,
+                     Containers:containers[].{N:name,Reason:reason,Exit:exitCode}}"
+```
+
+Чек-лист, привязанный к тому, что увидишь:
+
+- **`CannotPullContainerError`** — провал вытягивания образа. Причины: отсутствует/недостаточна **execution role**, приватная подсеть **без NAT/VPC-эндпоинтов** для доступа к ECR (очень частое), неверный тег образа или несовпадение `arm64`/`amd64`. Задача умирает в `PENDING`/`ACTIVATING`.
+- **`RESOURCE:ENI` / `RESOURCE:MEMORY` / `RESOURCE:CPU`** (`stopCode: TaskFailedToStart` / событие размещения) — в кластере нет места: исчерпаны IP подсети (ENI), либо нет EC2-инстанса с достаточным CPU/памятью. Застревает в `PROVISIONING`/`PENDING`.
+- **`ResourceInitializationError`** — обычно расшифровка значения `secrets`: у **execution role** нет `secretsmanager:GetSecretValue` / `ssm:GetParameters` (или `kms:Decrypt` на ключе).
+- **`Essential container ... exited`** с ненулевым `exitCode` — приложение упало или провалило **container/ALB health check**, и ECS его убил. В сервисе это становится **петлёй деплоя**: новые задачи проваливают проверку, ECS не повышает их, старые остаются. **Deployment circuit breaker** (`enable: true, rollback: true`) ловит петлю и **откатывает** на последнюю хорошую ревизию вместо вечного перемалывания.
+
+**Числа, которые держать в голове:** задача Fargate обычно в `RUNNING` за **десятки секунд** (прицеп ENI + вытягивание образа); само вытягивание — **секунды-минуты** по размеру образа, поэтому слим-образы и pull-through cache важны. Таймаут остановки (SIGTERM → SIGKILL) по умолчанию **30 секунд**. Тут нет гаданий — `stoppedReason` указывает на слой; ты чинишь этот слой.
+
+<Quiz
+  id="05-ecs-internals-quiz-1"
+  lessonSlug="05-ecs-internals-and-task-lifecycle"
+  lang="ru"
+  question="Контейнер стартует и работает, но его код ловит AccessDenied на s3:GetObject. В task definition есть и execution role, и task role. Куда вешать права на S3, и что сделало бы навешивание их на execution role?"
+  choices={[
+    { label: "На task role — это личность, которую приложение принимает в рантайме; навешивание на execution role даёт читать S3 агенту ECS, но не коду, так что ошибка не сдвинется", correct: true },
+    { label: "На execution role — это роль, которой ECS запускает задачу, значит она покрывает весь доступ задачи к AWS", misconception: "Execution role принимается агентом ECS (инфраструктурой AWS) до запуска кода — чтобы вытянуть образ, писать логи и расшифровать секреты. Код приложения её не использует. Навесив S3 туда, ты дашь доступ агенту, а не контейнеру, и AccessDenied сохранится." },
+    { label: "На IAM-роль инстанса контейнера", misconception: "Та роль (на ёмкости EC2) для агента/хоста, а не для вызовов приложения. На Fargate роли инстанса нет вовсе. Права приложения на AWS принадлежат task role, которая работает одинаково на Fargate и EC2." },
+    { label: "Никуда — Fargate даёт задачам S3 по умолчанию", misconception: "Fargate не даёт ничего по умолчанию; least privilege значит, что task role стартует пустой. Нужно явно навесить политику s3:GetObject, ограниченную бакетом, на task role." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Жизненный цикл задачи ECS: задача идёт от PROVISIONING (прицеп ENI) через PENDING и ACTIVATING (вытягивание образа, создание контейнера) к RUNNING, затем обратно вниз через DEACTIVATING, STOPPING и DEPROVISIONING (отцеп ENI) к STOPPED — и где она застряла, говорит о слое сбоя."
+  hue="var(--d-systems)"
+  perRow={4}
+  nodes={[
+    { id: "prov", label: "PROVISIONING", sub: "прицеп ENI + IP" },
+    { id: "pend", label: "PENDING", sub: "ждёт ёмкость" },
+    { id: "act", label: "ACTIVATING", sub: "тянет образ, создаёт" },
+    { id: "run", label: "RUNNING", sub: "рабочий режим" },
+    { id: "deact", label: "DEACTIVATING", sub: "слив из LB" },
+    { id: "stop", label: "STOPPING", sub: "SIGTERM → SIGKILL" },
+    { id: "deprov", label: "DEPROVISIONING", sub: "отцеп ENI" },
+    { id: "stopped", label: "STOPPED", sub: "терминал + stoppedReason" },
+  ]}
+  edges={[
+    { from: "prov", to: "pend", label: "ENI готов" },
+    { from: "pend", to: "act", label: "ёмкость есть" },
+    { from: "act", to: "run", label: "здоров" },
+    { from: "run", to: "deact", label: "стоп / деплой" },
+    { from: "deact", to: "stop", label: "слита" },
+    { from: "stop", to: "deprov", label: "вышла" },
+    { from: "deprov", to: "stopped", label: "ENI освобождён" },
+  ]}
+  caption="Застряла в PROVISIONING/PENDING — проблема ресурса (RESOURCE:ENI при исчерпании IP подсети, RESOURCE:CPU/MEMORY на полном EC2-кластере); циклит RUNNING → STOPPED — проблема рантайма (краш, проваленный health check). Состояние называет слой до того, как ты прочтёшь stoppedReason."
+/>
+
+<KeyTakeaway>Execution role тянет образ/секреты; task role — это приложение. Каждая awsvpc-задача жжёт ENI + IP, scale-out упирается в RESOURCE:ENI. Fargate: нет хостов, дороже; EC2: дешевле, патчишь. stoppedReason — слой сбоя.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-ecs-internals-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Различи task definition, task и service, затем пройди жизненный цикл и скажи, о чём говорит застревание в PROVISIONING против петли RUNNING→STOPPED.", a: "Task definition — неизменный версионированный чертёж (контейнеры, образ, CPU/память, две IAM-роли, сетевой режим, порты, конфиг логов); регистрация даёт нумерованную ревизию, которую не правят. Task — один работающий экземпляр ревизии: реальные контейнеры на реальной ёмкости с реальным ENI. Service — контроллер, держащий N задач, регистрирующий их в балансировщике, ведущий автомасштабирование и крутящий цикл сведения, сравнивая desired count с running count и запуская/останавливая задачи до совпадения. Жизненный цикл: PROVISIONING (прицеп ENI/IP для awsvpc) → PENDING (ждёт ёмкость) → ACTIVATING (тянет образ, создаёт контейнеры, настраивает сеть, регистрирует таргеты LB) → RUNNING → DEACTIVATING (слив из LB) → STOPPING (SIGTERM, затем SIGKILL по таймауту остановки, по умолчанию 30с) → DEPROVISIONING (отцеп/удаление ENI) → STOPPED (терминал, несёт stoppedReason). Задача, застрявшая в PROVISIONING/PENDING, — проблема ресурса: нет ENI/IP (RESOURCE:ENI) или нет CPU/памяти на EC2-кластере. Задача, циклящая RUNNING → STOPPED, — проблема рантайма: краш или проваленный health check. Состояние называет слой." },
+    { q: "Объясни execution role против task role, почему ENI в awsvpc конечны и как stoppedReason ведёт отладку задачи, которая не стартует.", a: "Execution role принимается агентом ECS (инфраструктурой AWS) при запуске, до того как заработает код, чтобы вытянуть образ из ECR, писать в CloudWatch Logs и расшифровать секреты из Secrets Manager/SSM; нехватка прав означает, что задача не стартует (CannotPullContainerError, ResourceInitializationError). Task role принимается внутри контейнера кодом приложения через эндпоинт container-credentials для его собственных вызовов AWS (S3, DynamoDB); нехватка прав означает, что приложение работает, но ловит AccessDenied — поэтому права приложения вроде s3:GetObject идут на task role, никогда на execution role. awsvpc даёт каждой задаче свой ENI и приватный IP подсети, оба конечны: /24 имеет 251 пригодный IP (жёсткий потолок awsvpc-задач, делящих её), а на EC2 лимит ENI на инстанс ограничивает плотность (c5.large без trunking вмещает лишь 2 awsvpc-задачи, ~10 с awsvpcTrunking). Fargate даёт каждой задаче выделенный ENI, но всё равно потребляет IP подсети, так что не спасает от исчерпания подсети. Чтобы отладить застрявшую задачу, сначала читай stopCode и stoppedReason: CannotPullContainerError = execution role либо нет NAT/эндпоинта к ECR либо несовпадение архитектуры; RESOURCE:ENI = исчерпаны IP подсети; RESOURCE:CPU/MEMORY = полный EC2-кластер; ResourceInitializationError = execution role не может расшифровать секрет; essential-контейнер вышел ненулевым = краш или проваленный health check, что в сервисе становится петлёй деплоя, которую откатывает deployment circuit breaker." },
+  ]}
+/>
+
+<Recap lang="ru">
+В ECS три слова, которые путают: task definition — неизменный версионированный чертёж (контейнеры, образ, CPU/память, две роли, сетевой режим, порты, логи); task — один работающий экземпляр ревизии; service — контроллер, сводящий desired count из N задач, привязывающий их к балансировщику и автомасштабирующий. Задача проходит жизненный цикл — PROVISIONING (прицеп ENI/IP) → PENDING (ждёт ёмкость) → ACTIVATING (тянет образ, создаёт контейнеры) → RUNNING → DEACTIVATING (слив) → STOPPING (SIGTERM, затем SIGKILL через ~30с) → DEPROVISIONING (отцеп ENI) → STOPPED — и где она застряла, называет слой: PROVISIONING/PENDING — проблема ресурса, петля RUNNING→STOPPED — проблема рантайма. Две роли — классическая ловушка: execution role это личность агента (тянуть образ, писать логи, расшифровать секреты), используемая до кода, а task role — личность приложения в рантайме для его собственных вызовов AWS — права на S3 принадлежат task role, и навешивание их на execution role даёт читать S3 агенту, но никогда коду. Режим awsvpc делает каждую задачу полноправным гражданином VPC со своим ENI и security group, но ENI и IP конечны: /24 даёт 251 пригодный IP, c5.large без trunking вмещает лишь 2 awsvpc-задачи (~10 с awsvpcTrunking), а Fargate обходит лимит ENI на инстанс, но всё равно жжёт IP подсети — так что scale-out в маленькую подсеть застревает в PROVISIONING с RESOURCE:ENI. Capacity providers выбирают, где задачи работают: Fargate (нет хостов, посекундная тарификация, наценка, меньше контроля) против EC2 (дешевле при постоянном масштабе, Spot для ~70% экономии, GPU и daemonset-ы, но патчинг и упаковку держишь сам), часто смешанные стратегией «базовый on-demand плюс Spot». А когда задача умирает, stopCode и stoppedReason называют слой сбоя — CannotPullContainerError, RESOURCE:ENI, ResourceInitializationError или essential-контейнер, вышедший ненулевым — так что ты чинишь этот слой вместо гадания и даёшь deployment circuit breaker откатить проваленный деплой.
+</Recap>
