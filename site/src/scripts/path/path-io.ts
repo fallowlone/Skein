@@ -16,7 +16,7 @@ import tracksJson from "~/content/tracks.json";
 import { masteryOf } from "./knowledge";
 import diagnosticsBundle from "~/content/path/diagnostics-bundle.json";
 import { buildConceptGraph } from "./graph";
-import { userState } from "~/scripts/user-state";
+import { userState, importUserState } from "~/scripts/user-state";
 import { pretestQuestions, advancedQuestions } from "~/scripts/pretest-questions";
 import { seedFromPretest } from "./pretest-seed";
 import { pickProbe, type DiagItem } from "./calibration";
@@ -25,7 +25,6 @@ import committedOverrides from "~/content/path/concept-overrides.json";
 import type { Overrides } from "./graph";
 import { safeApply, mergeOverrides, loosenUnitEdges } from "./overrides";
 import { serializeStateBundle, parseStateBundle } from "./state-io";
-import { importUserState } from "~/scripts/user-state";
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────────────────
 export function unitsFromMap(map: Record<string, { teaches: string[]; requires: string[]; estMin: number }>): UnitConcepts[] {
@@ -114,7 +113,17 @@ const O_KEY = "awesome.path-overrides.v1";
 function loadOverrides(): Overrides {
   const base: Overrides = { addEdges: [], removeEdges: [], retag: [] };
   if (typeof window === "undefined") return base;
-  try { const raw = localStorage.getItem(O_KEY); if (raw) return { ...base, ...JSON.parse(raw) }; } catch { /* keep base */ }
+  try {
+    const raw = localStorage.getItem(O_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      return {
+        addEdges: Array.isArray(p.addEdges) ? p.addEdges : [],
+        removeEdges: Array.isArray(p.removeEdges) ? p.removeEdges : [],
+        retag: [],
+      };
+    }
+  } catch { /* keep base */ }
   return base;
 }
 
@@ -239,11 +248,28 @@ export function importState(text: string): { ok: true } | { ok: false; error: st
   const r = parseStateBundle(text);
   if (!r.ok) return r;
   const b = r.bundle;
-  if (b.pathKnowledge) knowledge.value = deserializeKnowledge(b.pathKnowledge);
-  if (b.pathConfig) { const merged = mergeConfig(b.pathConfig as any) as StoredPathConfig; merged.view = (b.pathConfig as any).view ?? { order: [] }; config.value = merged; }
-  if (b.pathOverrides) overrides.value = { addEdges: [], removeEdges: [], retag: [], ...b.pathOverrides };
-  if (b.userState) importUserState(b.userState as any);
-  return { ok: true };
+  try {
+    // Build every section first; assigning signals can't throw, so we commit only after all
+    // sections parse cleanly — no half-write on a malformed-but-version-valid bundle.
+    const nextKnowledge = b.pathKnowledge ? deserializeKnowledge(b.pathKnowledge) : undefined;
+    let nextConfig: StoredPathConfig | undefined;
+    if (b.pathConfig) {
+      const merged = mergeConfig(b.pathConfig as any) as StoredPathConfig;
+      const order = (b.pathConfig as any).view?.order;
+      merged.view = { order: Array.isArray(order) ? order : [] };
+      nextConfig = merged;
+    }
+    const nextOverrides = b.pathOverrides
+      ? { addEdges: b.pathOverrides.addEdges ?? [], removeEdges: b.pathOverrides.removeEdges ?? [], retag: [] }
+      : undefined;
+    if (nextKnowledge) knowledge.value = nextKnowledge;
+    if (nextConfig) config.value = nextConfig;
+    if (nextOverrides) overrides.value = nextOverrides;
+    if (b.userState) importUserState(b.userState as any);
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "Import failed" };
+  }
 }
 
 export function activeGoals() {
