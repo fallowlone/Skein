@@ -24,6 +24,9 @@ import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync } from 
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mergeCrossTrackEdges } from "./cross-track-merge.mjs";
+import { mergeIntraTrackEdges } from "./intra-track-merge.mjs";
+import { deriveIntraTrackEdges } from "./intra-track-derive.mjs";
+import { isAcyclicWithEdges } from "./acyclic-gate.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SITE = join(HERE, "..", ".."); // site/
@@ -142,7 +145,7 @@ function harvest(trackFilter) {
     const level = scalars.level || "";
     const cs = lists.concepts || [];
     const words = wordCount(raw.slice(bodyStart));
-    units.get(unitId).lessons.push({ slug, level, concepts: cs, words });
+    units.get(unitId).lessons.push({ slug, level, concepts: cs, words, prereqs: lists.prereqs || [] });
     for (const c of cs) {
       if (!concepts.has(c)) concepts.set(c, { levels: new Set(), tracks: new Map(), units: new Set() });
       const rec = concepts.get(c);
@@ -412,6 +415,16 @@ function main() {
   }
 
   const goals = buildGoals(concepts);
+
+  // Intra-track edges: derived deterministically from lesson `prereqs` (captured above). Written to
+  // its own committed artifact so the lightweight regenerators (build-intra-edges.mjs /
+  // build-overrides.mjs) stay in sync without a full harvest. Content-pull only — the runtime's
+  // deriveUnitRequires filters intra-track edges out of unit ordering.
+  const { edges: intraEdges, warnings: intraWarnings } = deriveIntraTrackEdges([...units.values()]);
+  for (const w of intraWarnings) console.warn(w);
+  writeFileSync(join(OUT, "intra-track-edges.json"), JSON.stringify(intraEdges, null, 2) + "\n");
+
+  // Merge cross-track (curated) + intra-track (derived) edges into the generated concept-overrides.
   let rawCrossTrack = [];
   const ctFile = join(OUT, "cross-track-edges.json");
   if (existsSync(ctFile)) {
@@ -419,9 +432,20 @@ function main() {
     catch (e) { console.warn(`cross-track-edges.json: parse failed (${e.message}); ignoring`); }
   }
   const ctMerge = mergeCrossTrackEdges(rawCrossTrack, conceptsOut);
-  for (const w of ctMerge.warnings) console.warn(w);
-  const overrides = { addEdges: ctMerge.addEdges, removeEdges: [], retag: [] };
-  console.log(`cross-track-edges: ${ctMerge.addEdges.length} merged, ${ctMerge.skipped} skipped`);
+  const itMerge = mergeIntraTrackEdges(intraEdges, conceptsOut);
+  for (const w of [...ctMerge.warnings, ...itMerge.warnings]) console.warn(w);
+  const seenOv = new Set();
+  const mergedAddEdges = [];
+  for (const e of [...ctMerge.addEdges, ...itMerge.addEdges]) {
+    const k = `${e.concept}|${e.requires}`;
+    if (seenOv.has(k)) continue;
+    seenOv.add(k);
+    mergedAddEdges.push(e);
+  }
+  const gate = isAcyclicWithEdges(conceptsOut, mergedAddEdges);
+  if (!gate.ok) { console.error(`cross/intra edges introduce a cycle (${gate.unplaced} nodes unplaced); aborting`); process.exit(1); }
+  const overrides = { addEdges: mergedAddEdges, removeEdges: [], retag: [] };
+  console.log(`overrides: ${mergedAddEdges.length} addEdges (cross ${ctMerge.addEdges.length}, intra ${itMerge.addEdges.length})`);
 
   // write
   mkdirSync(OUT, { recursive: true });
