@@ -350,7 +350,9 @@ function loadLabelCache() {
   try { return JSON.parse(readFileSync(f, "utf8")); } catch { return {}; }
 }
 function loadDiagnosedConcepts() {
-  const dir = join(CACHE, "diagnostics");
+  // diagnostics are committed artifacts under src/content/path/diagnostics/ (authored by the
+  // enrichment subagents); the .path-cache copy is optional. Count the committed source.
+  const dir = join(OUT, "diagnostics");
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => f.replace(/\.json$/, ""));
 }
