@@ -46,6 +46,7 @@ export interface PathData {
   goals: PathGoalLike[];
   overrides: PathOverridesLike;
   diagnostics: PathDiagnosticLike[]; // one entry per diagnostics/<concept>.json file found
+  crossTrackEdges?: { concept: string; requires: string }[]; // optional curated source (cross-track-edges.json)
 }
 
 // Effective requires-edges after applying overrides (same order as graph.ts).
@@ -151,6 +152,16 @@ export function validatePathData(data: PathData): string[] {
     for (const r of e.requires ?? []) if (!ids.has(r)) push(`override retag: unknown requires concept "${r}"`);
   }
 
+  // cross-track-edges.json source sanity (if present): ids exist + genuinely cross-track.
+  const trackById = new Map(concepts.map((c) => [c.id, c.track]));
+  for (const e of data.crossTrackEdges ?? []) {
+    if (!e || typeof e.concept !== "string" || typeof e.requires !== "string") { push(`cross-track-edges malformed element`); continue; }
+    if (!ids.has(e.concept)) push(`cross-track-edges: unknown concept "${e.concept}"`);
+    if (!ids.has(e.requires)) push(`cross-track-edges: unknown prereq "${e.requires}"`);
+    const tx = trackById.get(e.concept), ty = trackById.get(e.requires);
+    if (tx && ty && tx === ty) push(`cross-track-edges: "${e.concept}→${e.requires}" is intra-track (${tx})`);
+  }
+
   // acyclic after overrides
   const cyc = cycleNodes(ids, effectiveRequires(concepts, overrides));
   if (cyc.length) push(`concept graph has a cycle (${cyc.slice(0, 8).join(", ")}${cyc.length > 8 ? ", …" : ""})`);
@@ -192,6 +203,7 @@ export async function checkPath(siteSrc: string): Promise<string[]> {
   const unitConcepts = (await readJson<Record<string, PathUnitLike>>(join(dir, "unit-concepts.json"))) ?? {};
   const goals = (await readJson<PathGoalLike[]>(join(dir, "goals.json"))) ?? [];
   const overrides = (await readJson<PathOverridesLike>(join(dir, "concept-overrides.json"))) ?? {};
+  const crossTrackEdges = (await readJson<{ concept: string; requires: string }[]>(join(dir, "cross-track-edges.json"))) ?? [];
 
   const diagnostics: PathDiagnosticLike[] = [];
   try {
@@ -207,5 +219,5 @@ export async function checkPath(siteSrc: string): Promise<string[]> {
     }
   } catch { /* no diagnostics dir yet */ }
 
-  return validatePathData({ concepts, unitConcepts, goals, overrides, diagnostics });
+  return validatePathData({ concepts, unitConcepts, goals, overrides, diagnostics, crossTrackEdges });
 }
