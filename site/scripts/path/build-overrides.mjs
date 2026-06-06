@@ -19,8 +19,10 @@ if (existsSync(ctFile)) {
 const { addEdges, skipped, warnings } = mergeCrossTrackEdges(raw, concepts);
 for (const w of warnings) console.warn(w);
 
-// Acyclic gate (Kahn over base requires + merged addEdges).
-const req = new Map(concepts.map((c) => [c.id, [...c.requires]]));
+// Acyclic gate (Kahn over base requires + merged addEdges). Inlined rather than shared with the
+// TS lint rule (src/lint/rules/path.ts) because this is a standalone Node/Bun script — no clean
+// import path without transpiling. Keep the two implementations behaviourally equivalent.
+const req = new Map(concepts.map((c) => [c.id, [...(c.requires ?? [])]]));
 for (const e of addEdges) { const a = req.get(e.concept); if (a && !a.includes(e.requires)) a.push(e.requires); }
 const ids = new Set(req.keys());
 const indeg = new Map([...ids].map((id) => [id, 0]));
