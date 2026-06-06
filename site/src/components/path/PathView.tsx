@@ -8,6 +8,7 @@ import {
 import PathCard from "./PathCard";
 import GoalPicker from "./GoalPicker";
 import PathConfigDrawer from "./PathConfigDrawer";
+import DeadlinePanel from "./DeadlinePanel";
 
 const L = {
   en: { title: "Your path", recompute: "Recompute", goals: "Goals & deadline", settings: "Tune", reset: "Reset",
@@ -42,8 +43,7 @@ export default function PathView({ lang }: { lang: Locale }) {
         </section>
       )}
 
-      {/* Deadline panel — Task 6 inserts <DeadlinePanel schedule={schedule} lang={lang}/> here */}
-      {schedule && <p class="text-sm text-stone-500">{schedule.countdownDays} days</p>}
+      {schedule && <DeadlinePanel lang={lang} schedule={schedule} />}
 
       <ol class="flex flex-col gap-3">
         {path.steps.length === 0 && <li class="text-sm text-stone-500">{t.empty}</li>}
