@@ -17,6 +17,7 @@ import { checkBlockStubs } from "./rules/block-stubs";
 import { checkDrill } from "./rules/drill";
 import { checkLab } from "./rules/lab";
 import { checkCapstones } from "./rules/capstones";
+import { checkPath } from "./rules/path";
 
 async function walk(dir: string): Promise<string[]> {
   const items = await readdir(dir, { withFileTypes: true });
@@ -91,6 +92,7 @@ export async function runLint(root: string, siteSrc: string): Promise<{ errors: 
   errors.push(...(await checkPracticeReview(siteSrc)));
   errors.push(...(await checkPracticeDebug(siteSrc)));
   errors.push(...(await checkBlockStubs(siteSrc)));
+  errors.push(...(await checkPath(siteSrc)));
   const pc = await checkPracticeCount(siteSrc);
   errors.push(...pc.errors);
   warnings.push(...pc.warnings);
