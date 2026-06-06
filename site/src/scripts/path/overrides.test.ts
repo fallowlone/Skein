@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { CONCEPTS, UNITS } from "./__fixtures__/mini-graph";
-import { mergeOverrides, applyOverridesToConcepts, safeApply, loosenUnitEdges } from "./overrides";
-import { buildConceptGraph, validateAcyclic, ancestors } from "./graph";
+import { mergeOverrides, applyOverridesToConcepts, safeApply, loosenUnitEdges, applyOverridesFull } from "./overrides";
+import { buildConceptGraph, validateAcyclic, ancestors, induceUnitGraph } from "./graph";
+import type { UnitConcepts } from "./types";
 
 const byId = (cs = CONCEPTS) => new Map(cs.map((c) => [c.id, c]));
 
@@ -59,5 +60,53 @@ describe("overrides", () => {
     expect(() => applyOverridesToConcepts(CONCEPTS, bad)).not.toThrow();
     const out = applyOverridesToConcepts(CONCEPTS, bad);
     expect(byId(out).get("tcp-handshake")!.requires).not.toContain("ip-addressing"); // the one valid edge still applies
+  });
+});
+
+describe("applyOverridesFull", () => {
+  const uById = (us: UnitConcepts[]) => new Map(us.map((u) => [u.unit, u]));
+
+  it("a cross-track addEdge adds the prereq to the consumer unit's requires", () => {
+    // indexing (databases) requires tcp-handshake (networking); indexing is taught by databases/02-index
+    const res = applyOverridesFull(CONCEPTS, UNITS, { addEdges: [{ concept: "indexing", requires: "tcp-handshake" }] }, {});
+    expect(uById(res.units).get("databases/02-index")!.requires).toContain("tcp-handshake");
+    expect(res.droppedLocal).toBe(false);
+  });
+
+  it("an intra-track addEdge does NOT add a unit-requires supplement", () => {
+    // tls (networking) requires ip-addressing (networking) — same track → no ordering supplement
+    const res = applyOverridesFull(CONCEPTS, UNITS, { addEdges: [{ concept: "tls", requires: "ip-addressing" }] }, {});
+    expect(uById(res.units).get("networking/03-tls")!.requires).not.toContain("ip-addressing");
+  });
+
+  it("a removeEdge cancels the cross-track supplement for that pair", () => {
+    const res = applyOverridesFull(
+      CONCEPTS, UNITS,
+      { addEdges: [{ concept: "indexing", requires: "tcp-handshake" }] },
+      { removeEdges: [{ concept: "indexing", requires: "tcp-handshake" }] },
+    );
+    expect(uById(res.units).get("databases/02-index")!.requires).not.toContain("tcp-handshake");
+  });
+
+  it("when local introduces a cycle, supplements mirror committed-only", () => {
+    const res = applyOverridesFull(
+      CONCEPTS, UNITS,
+      { addEdges: [{ concept: "indexing", requires: "tcp-handshake" }] }, // committed cross-track (valid)
+      { addEdges: [{ concept: "mvcc", requires: "consensus" }] },          // local → concept cycle, dropped
+    );
+    expect(res.droppedLocal).toBe(true);
+    expect(uById(res.units).get("databases/02-index")!.requires).toContain("tcp-handshake"); // committed kept
+    expect(uById(res.units).get("databases/03-mvcc")!.requires).not.toContain("consensus");  // dropped → no supplement
+  });
+
+  it("induceUnitGraph then orders the prereq unit before the consumer", () => {
+    const res = applyOverridesFull(CONCEPTS, UNITS, { addEdges: [{ concept: "indexing", requires: "tcp-handshake" }] }, {});
+    const g = induceUnitGraph(res.units, buildConceptGraph(res.concepts));
+    expect(g.get("databases/02-index")).toContain("networking/02-tcp");
+  });
+
+  it("ignores unknown-id edges (no throw, no supplement)", () => {
+    const res = applyOverridesFull(CONCEPTS, UNITS, { addEdges: [{ concept: "ghost", requires: "tcp-handshake" }] }, {});
+    expect(res.units).toEqual(UNITS); // unchanged reference-equal contents
   });
 });
