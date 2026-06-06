@@ -1,16 +1,21 @@
 // src/components/path/GoalPicker.tsx
+import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
-import { config, content, setGoals, toggleExcludedTrack, setDeadline } from "~/scripts/path/path-io";
+import { config, content, setGoals, toggleExcludedTrack, setDeadline, toggleCustomTarget, searchConcepts } from "~/scripts/path/path-io";
 import type { DeadlineConfig } from "~/scripts/path/types";
 
 const L = {
-  en: { title: "Goals & deadline", priority: "priority", exclude: "Excluded tracks", deadline: "Deadline", date: "Target date", hours: "Hours per weekday (Mon–Sun)", clear: "Clear deadline", close: "Done", set: "Set deadline" },
-  ru: { title: "Цели и дедлайн", priority: "приоритет", exclude: "Исключённые треки", deadline: "Дедлайн", date: "Целевая дата", hours: "Часов по дням (Пн–Вс)", clear: "Убрать дедлайн", close: "Готово", set: "Задать дедлайн" },
+  en: { title: "Goals & deadline", priority: "priority", targets: "Custom targets", search: "Search concepts to target…", remove: "remove", exclude: "Excluded tracks", deadline: "Deadline", date: "Target date", hours: "Hours per weekday (Mon–Sun)", clear: "Clear deadline", close: "Done", set: "Set deadline" },
+  ru: { title: "Цели и дедлайн", priority: "приоритет", targets: "Свои цели", search: "Найти концепты для цели…", remove: "убрать", exclude: "Исключённые треки", deadline: "Дедлайн", date: "Целевая дата", hours: "Часов по дням (Пн–Вс)", clear: "Убрать дедлайн", close: "Готово", set: "Задать дедлайн" },
 } as const;
 
 export default function GoalPicker({ lang, onClose }: { lang: Locale; onClose: () => void }) {
   const t = L[lang];
+  const [q, setQ] = useState("");
   const cfg = config.value;
+  const custom = cfg.customTargets ?? [];
+  const results = searchConcepts(content.concepts, content.taughtConcepts, q, lang, 20)
+    .filter((c) => !custom.includes(c.id));
   const tracks = [...new Set(content.concepts.map((c) => c.track))].sort();
   const goalPrio = (id: string) => cfg.goals.find((g) => g.id === id)?.priority ?? 0;
 
@@ -52,6 +57,31 @@ export default function GoalPicker({ lang, onClose }: { lang: Locale; onClose: (
             </li>
           ))}
         </ul>
+
+        <h3 class="font-semibold mb-2">{t.targets}</h3>
+        <div class="flex flex-wrap gap-1 mb-2">
+          {custom.map((id) => (
+            <button key={id} class="rounded border border-sky-400 bg-sky-50 px-2 py-1 text-xs text-sky-800"
+              onClick={() => toggleCustomTarget(id)} title={t.remove}>
+              {content.conceptById.get(id)?.label[lang] ?? id} ✕
+            </button>
+          ))}
+        </div>
+        <input value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} placeholder={t.search}
+          class="mb-2 block w-full rounded border border-stone-300 px-2 py-1 text-sm" />
+        {results.length > 0 && (
+          <ul class="mb-6 max-h-48 overflow-y-auto rounded border border-stone-200">
+            {results.map((c) => (
+              <li key={c.id}>
+                <button class="flex w-full items-center justify-between px-2 py-1 text-left text-sm hover:bg-stone-100"
+                  onClick={() => { toggleCustomTarget(c.id); setQ(""); }}>
+                  <span>{c.label[lang]}</span>
+                  <span class="text-xs text-stone-400">{c.track}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
 
         <h3 class="font-semibold mb-2">{t.exclude}</h3>
         <div class="flex flex-wrap gap-1 mb-6">
