@@ -414,6 +414,13 @@ function main() {
   const diagnosedIds = loadDiagnosedConcepts().sort();
   writeFileSync(join(OUT, "diagnostics-index.json"), JSON.stringify(diagnosedIds, null, 2) + "\n");
 
+  // Full diagnostic banks keyed by concept — the calibration island imports this (it can't readdir).
+  const diagBundle = {};
+  for (const id of diagnosedIds) {
+    diagBundle[id] = JSON.parse(readFileSync(join(OUT, "diagnostics", `${id}.json`), "utf8"));
+  }
+  writeFileSync(join(OUT, "diagnostics-bundle.json"), JSON.stringify(diagBundle, null, 2) + "\n");
+
   const diagnosed = loadDiagnosedConcepts();
   const labeledRu = conceptsOut.filter((c) => labelCache[c.id]?.ru).length;
   console.log(JSON.stringify({
