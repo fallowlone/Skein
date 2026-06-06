@@ -2,11 +2,12 @@ import { describe, it, expect } from "vitest";
 import {
   unitsFromMap, applyViewOrder, masteryByTrack, serializeKnowledge, deserializeKnowledge,
   togglePin, moveInOrder,
+  content, computePath, config,
 } from "./path-io";
 import { emptyState, applySelfDeclare } from "./knowledge";
-import type { PathStep, Concept } from "./types";
+import type { PathStep, Concept, Track } from "./types";
 
-const step = (unit: string, track = "networking"): PathStep =>
+const step = (unit: string, track = "networking" as Track): PathStep =>
   ({ unit, track, unlocks: [], reason: "", kind: "learn", estMin: 10 });
 
 describe("path-io pure helpers", () => {
@@ -56,5 +57,22 @@ describe("path-io pure helpers", () => {
     const arr = serializeKnowledge(s);
     expect(arr).toEqual([["a", { confidence: 1, source: "declared", lastAt: 123 }]]);
     expect(deserializeKnowledge(arr).get("a")).toEqual({ confidence: 1, source: "declared", lastAt: 123 });
+  });
+});
+
+describe("path-io cold-start", () => {
+  it("the bundle loads the full graph", () => {
+    expect(content.concepts.length).toBeGreaterThan(4000);
+    expect(content.units.length).toBe(274);
+    expect(content.goals.map((g) => g.id)).toContain("senior-fullstack");
+  });
+
+  it("computePath returns dependency-ordered learn steps for the default goal", () => {
+    config.value = { ...config.value, pace: { stepsAhead: 8, srsAggressiveness: 0 } };
+    const { path } = computePath();
+    expect(path.steps.length).toBeGreaterThan(0);
+    expect(path.steps.length).toBeLessThanOrEqual(8);
+    expect(path.steps.every((s: PathStep) => s.kind === "learn")).toBe(true);
+    expect(path.steps[0].estMin).toBeGreaterThan(0);
   });
 });
