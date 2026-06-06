@@ -19,7 +19,7 @@ import { buildConceptGraph } from "./graph";
 import { userState } from "~/scripts/user-state";
 import { pretestQuestions, advancedQuestions } from "~/scripts/pretest-questions";
 import { seedFromPretest } from "./pretest-seed";
-import { pickProbe } from "./calibration";
+import { pickProbe, type DiagItem } from "./calibration";
 import { targetFrontier } from "./planner";
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────────────────
@@ -95,7 +95,9 @@ const teachesByUnit = new Map(units.map((u) => [u.unit, u.teaches]));
 const quickCheckUnits = new Set(units.filter((u) => u.teaches.some((c) => diagnosedConcepts.has(c))).map((u) => u.unit));
 
 const graph = buildConceptGraph(concepts);
-const diagnostics = diagnosticsBundle as Record<string, { concept: string; items: import("./calibration").DiagItem[] }>;
+// NOTE: `graph` is a const evaluated at module load; loadKnowledge (below) reads it but is only
+// *called* by the `knowledge` signal init further down, so `graph` is always initialized first.
+const diagnostics = diagnosticsBundle as Record<string, { concept: string; items: DiagItem[] }>;
 
 export const content = { concepts, units, goals, goalById, conceptById, diagnosedConcepts, quickCheckUnits, unitTitleById, trackOrder, diagnostics, graph };
 
@@ -106,11 +108,13 @@ const C_KEY = "awesome.path-config.v1";
 
 function loadKnowledge(): KnowledgeState {
   if (typeof window === "undefined") return emptyState();
-  try {
-    const raw = localStorage.getItem(K_KEY);
-    if (raw) return deserializeKnowledge(JSON.parse(raw));
-  } catch { /* fall through to seed */ }
-  // Empty state + a prior pretest → seed concept confidences from it (cold-start personalization).
+  // Non-empty stored state wins — including when it fails to parse (corrupt data is NOT a cold start,
+  // so we must never discard it by re-seeding). Only genuinely-absent storage seeds from the pretest.
+  const raw = localStorage.getItem(K_KEY);
+  if (raw !== null) {
+    try { return deserializeKnowledge(JSON.parse(raw)); } catch { return emptyState(); }
+  }
+  // Truly empty + a prior pretest → seed concept confidences from it (cold-start personalization).
   const pretest = userState.value.pretest;
   if (pretest) return seedFromPretest(emptyState(), graph, pretest, pretestQuestions, advancedQuestions, Date.now());
   return emptyState();
@@ -187,7 +191,7 @@ export function resetPath(): void {
 }
 
 export function activeGoals() {
-  return config.value.goals.map((g) => goalById.get(g.id)).filter(Boolean) as import("./types").Goal[];
+  return config.value.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
 }
 export function applyDiagnosticResult(concept: string, correctFrac: number): void {
   knowledge.value = applyDiagnostic(knowledge.value, graph, concept, correctFrac, Date.now());
