@@ -50,7 +50,7 @@ export default function PathView({ lang }: { lang: Locale }) {
         {path.steps.map((s) => (
           <PathCard
             key={s.unit} lang={lang} step={s} pinned={isPinned(s.unit)}
-            hasQuickCheck={(content.units.find((u) => u.unit === s.unit)?.teaches ?? []).some((c) => content.diagnosedConcepts.has(c))}
+            hasQuickCheck={content.quickCheckUnits.has(s.unit)}
             onKnow={() => skipUnit(s.unit)} onSkip={() => skipUnit(s.unit)}
             onPin={() => pinUnit(s.unit)} onMove={(d) => moveUnit(s.unit, d)}
           />
