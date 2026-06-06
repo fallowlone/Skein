@@ -69,4 +69,43 @@ describe("deriveIntraTrackEdges", () => {
     }];
     expect(deriveIntraTrackEdges(FB).edges.map((e) => `${e.concept}->${e.requires}`)).toEqual(["y->x"]);
   });
+
+  it("resolves a fully-qualified cross-unit path prereq to the target lesson's anchor", () => {
+    const XUNIT = [
+      { id: "db/01-basics", track: "db", order: 1, unitSlug: "01-basics",
+        lessons: [{ slug: "01-intro", concepts: ["b-tree"], prereqs: [] }] },
+      { id: "db/02-adv", track: "db", order: 2, unitSlug: "02-adv",
+        lessons: [{ slug: "01-deep", concepts: ["lsm-tree"], prereqs: ["db/01-basics/01-intro"] }] },
+    ];
+    const { edges } = deriveIntraTrackEdges(XUNIT);
+    expect(edges.map((e) => `${e.concept}->${e.requires}`)).toEqual(["lsm-tree->b-tree"]);
+    // cross-unit `via` carries the target unit for provenance
+    expect(edges[0].via).toBe("01-deep<-db/01-basics/01-intro");
+    expect(edges[0].track).toBe("db");
+  });
+
+  it("skips a cross-track path prereq (out of scope; handled by cross-track curation)", () => {
+    const XTRACK = [
+      { id: "net/01", track: "net", order: 1, unitSlug: "01",
+        lessons: [{ slug: "01-tcp", concepts: ["tcp"], prereqs: [] }] },
+      // db unit ordered AFTER net so the ref is cycle-valid; it must still be skipped for being cross-track.
+      { id: "db/01", track: "db", order: 2, unitSlug: "01",
+        lessons: [{ slug: "01-q", concepts: ["query"], prereqs: ["net/01/01-tcp"] }] },
+    ];
+    const { edges, warnings } = deriveIntraTrackEdges(XTRACK);
+    expect(edges).toEqual([]);
+    expect(warnings.some((w) => w.includes("cross-track"))).toBe(true);
+  });
+
+  it("skips a bare cross-unit slug that is not a sibling", () => {
+    const BARE = [
+      { id: "t/01", track: "t", order: 1, unitSlug: "01",
+        lessons: [{ slug: "01-a", concepts: ["a"], prereqs: [] }] },
+      { id: "t/02", track: "t", order: 2, unitSlug: "02",
+        lessons: [{ slug: "05-b", concepts: ["b"], prereqs: ["01-a"] }] }, // bare "01-a" lives in unit 01, not a sibling
+    ];
+    const { edges, warnings } = deriveIntraTrackEdges(BARE);
+    expect(edges).toEqual([]);
+    expect(warnings.some((w) => w.includes("01-a"))).toBe(true);
+  });
 });
