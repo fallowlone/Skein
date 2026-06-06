@@ -80,3 +80,49 @@ export function loosenUnitEdges(unit: string, units: UnitConcepts[], concepts: C
   }
   return dedupe(out);
 }
+
+// Module-level shape guard (mirrors the local one inside applyOverridesToConcepts; kept separate
+// so the working P3-B function is untouched).
+const isEdgeShape = (e: unknown): e is Edge =>
+  !!e && typeof (e as Edge).concept === "string" && typeof (e as Edge).requires === "string";
+
+// The add-edges actually applied to the concept graph, mirroring safeApply's drop logic:
+// committed+local merged minus removeEdges; committed-only when local was dropped for a cycle.
+function effectiveAddEdges(committed: Overrides | undefined, local: Overrides | undefined, droppedLocal: boolean): Edge[] {
+  const merged = droppedLocal ? mergeOverrides(committed, undefined) : mergeOverrides(committed, local);
+  const removed = new Set((merged.removeEdges ?? []).filter(isEdgeShape).map(keyOf));
+  return (merged.addEdges ?? []).filter(isEdgeShape).filter((e) => !removed.has(keyOf(e)));
+}
+
+// For each effective addEdge X→Y with track(X) !== track(Y), add Y to the requires of every unit
+// teaching X (skip if the unit already teaches/requires Y). This is what makes a cross-track concept
+// prereq reorder units, since induceUnitGraph reads unit.requires (not concept.requires).
+function deriveUnitRequires(units: UnitConcepts[], concepts: Concept[], adds: Edge[]): UnitConcepts[] {
+  if (!adds.length) return units;
+  const trackOf = new Map(concepts.map((c) => [c.id, c.track]));
+  const reqByConcept = new Map<string, Set<string>>();
+  for (const e of adds) {
+    const tx = trackOf.get(e.concept), ty = trackOf.get(e.requires);
+    if (tx === undefined || ty === undefined || tx === ty) continue; // unknown id or intra-track
+    if (!reqByConcept.has(e.concept)) reqByConcept.set(e.concept, new Set());
+    reqByConcept.get(e.concept)!.add(e.requires);
+  }
+  if (!reqByConcept.size) return units;
+  return units.map((u) => {
+    const extra = new Set<string>();
+    for (const t of u.teaches) for (const y of reqByConcept.get(t) ?? []) {
+      if (!u.teaches.includes(y) && !u.requires.includes(y)) extra.add(y);
+    }
+    return extra.size ? { ...u, requires: [...u.requires, ...extra] } : u;
+  });
+}
+
+// Apply overrides to BOTH layers: effective concepts (content-pull + mastery, via safeApply) AND
+// augmented unit.requires (hard cross-track ordering). Single source of truth for what was applied.
+export function applyOverridesFull(
+  concepts: Concept[], units: UnitConcepts[], committed: Overrides, local: Overrides,
+): { concepts: Concept[]; units: UnitConcepts[]; droppedLocal: boolean } {
+  const { concepts: eff, droppedLocal } = safeApply(concepts, committed, local);
+  const adds = effectiveAddEdges(committed, local, droppedLocal);
+  return { concepts: eff, units: deriveUnitRequires(units, concepts, adds), droppedLocal };
+}
