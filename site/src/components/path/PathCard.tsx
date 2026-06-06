@@ -1,4 +1,5 @@
 // src/components/path/PathCard.tsx
+import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import type { PathStep } from "~/scripts/path/types";
 import { content } from "~/scripts/path/path-io";
@@ -12,14 +13,23 @@ type Props = {
   lang: Locale; step: PathStep; pinned: boolean; hasQuickCheck: boolean;
   onKnow: () => void; onSkip: () => void; onPin: () => void; onMove: (d: "up" | "down") => void;
   onQuickCheck: () => void; onLoosen: () => void;
+  onDragStart: () => void; onDrop: () => void;
 };
 
-export default function PathCard({ lang, step, pinned, hasQuickCheck, onKnow, onSkip, onPin, onMove, onQuickCheck, onLoosen }: Props) {
+export default function PathCard({ lang, step, pinned, hasQuickCheck, onKnow, onSkip, onPin, onMove, onQuickCheck, onLoosen, onDragStart, onDrop }: Props) {
   const t = L[lang];
+  const [over, setOver] = useState(false);
   const title = content.unitTitleById.get(step.unit)?.[lang] ?? step.unit;
   const concepts = step.unlocks.map((id) => content.conceptById.get(id)?.label[lang] ?? id);
   return (
-    <li class="rounded-lg border border-stone-300 bg-white/70 p-4 flex flex-col gap-2">
+    <li
+      draggable
+      onDragStart={() => onDragStart()}
+      onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={() => { setOver(false); onDrop(); }}
+      class={`rounded-lg border bg-white/70 p-4 flex flex-col gap-2 ${over ? "border-sky-500 ring-2 ring-sky-200" : "border-stone-300"}`}
+    >
       <div class="flex items-center justify-between gap-3">
         <h3 class="font-semibold text-stone-900">{title}</h3>
         <span class="text-xs uppercase tracking-wide text-stone-500">{t[step.kind]} · {step.estMin} {t.min}</span>
