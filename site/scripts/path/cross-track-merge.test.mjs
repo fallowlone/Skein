@@ -19,13 +19,16 @@ describe("mergeCrossTrackEdges", () => {
     expect(r.addEdges).toEqual([]);
     expect(r.skipped).toBe(2);
   });
-  it("dedupes repeated edges", () => {
+  it("dedupes repeated edges (with a warning)", () => {
     const r = mergeCrossTrackEdges([{ concept: "a", requires: "b" }, { concept: "a", requires: "b" }], CONCEPTS);
     expect(r.addEdges).toHaveLength(1);
     expect(r.skipped).toBe(1);
+    expect(r.warnings.some((w) => w.includes("duplicate"))).toBe(true);
   });
   it("tolerates non-array / junk elements", () => {
-    expect(mergeCrossTrackEdges(null, CONCEPTS).addEdges).toEqual([]);
+    const nonArray = mergeCrossTrackEdges(null, CONCEPTS);
+    expect(nonArray.addEdges).toEqual([]);
+    expect(nonArray.skipped).toBe(1);
     expect(mergeCrossTrackEdges([null, "x", { concept: 5 }], CONCEPTS).addEdges).toEqual([]);
   });
 });
