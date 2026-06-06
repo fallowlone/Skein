@@ -3,6 +3,7 @@ import {
   unitsFromMap, applyViewOrder, masteryByTrack, serializeKnowledge, deserializeKnowledge,
   togglePin, moveInOrder,
   content, computePath, config,
+  nextCalibrationProbe, unitProbeConcepts,
 } from "./path-io";
 import { emptyState, applySelfDeclare } from "./knowledge";
 import type { PathStep, Concept, Track } from "./types";
@@ -57,6 +58,24 @@ describe("path-io pure helpers", () => {
     const arr = serializeKnowledge(s);
     expect(arr).toEqual([["a", { confidence: 1, source: "declared", lastAt: 123 }]]);
     expect(deserializeKnowledge(arr).get("a")).toEqual({ confidence: 1, source: "declared", lastAt: 123 });
+  });
+});
+
+describe("path-io calibration surface", () => {
+  it("exposes the diagnostics bundle for the 35 diagnosed concepts", () => {
+    expect(Object.keys(content.diagnostics).length).toBe(35);
+    expect(content.diagnostics["idempotency"].items.length).toBeGreaterThanOrEqual(2);
+  });
+  it("nextCalibrationProbe returns a diagnosed concept (cold-start)", () => {
+    const p = nextCalibrationProbe();
+    expect(p === null || content.diagnosedConcepts.has(p)).toBe(true);
+  });
+  it("unitProbeConcepts filters a unit's teaches to diagnosed concepts", () => {
+    const withProbe = content.units.find((u) => u.teaches.some((c) => content.diagnosedConcepts.has(c)));
+    expect(withProbe).toBeDefined();
+    const probes = unitProbeConcepts(withProbe!.unit);
+    expect(probes.every((c) => content.diagnosedConcepts.has(c))).toBe(true);
+    expect(probes.length).toBeGreaterThan(0);
   });
 });
 
