@@ -14,6 +14,13 @@ import diagnosticsIndex from "~/content/path/diagnostics-index.json";
 import unitsJson from "~/content/units.json";
 import tracksJson from "~/content/tracks.json";
 import { masteryOf } from "./knowledge";
+import diagnosticsBundle from "~/content/path/diagnostics-bundle.json";
+import { buildConceptGraph } from "./graph";
+import { userState } from "~/scripts/user-state";
+import { pretestQuestions, advancedQuestions } from "~/scripts/pretest-questions";
+import { seedFromPretest } from "./pretest-seed";
+import { pickProbe } from "./calibration";
+import { targetFrontier } from "./planner";
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────────────────
 export function unitsFromMap(map: Record<string, { teaches: string[]; requires: string[]; estMin: number }>): UnitConcepts[] {
@@ -66,7 +73,7 @@ export function deserializeKnowledge(arr: [string, ConceptMastery][]): Knowledge
 // ── (Task 2 appends the content bundle + signals + mutations below this line) ──
 import { buildPath } from "./planner";
 import { schedulePlan } from "./schedule";
-import { emptyState, applySelfDeclare } from "./knowledge";
+import { emptyState, applySelfDeclare, applyDiagnostic } from "./knowledge";
 import { mergeConfig, clampConfig } from "./config";
 import type { DeadlineConfig } from "./types";
 
@@ -87,7 +94,10 @@ const teachesByUnit = new Map(units.map((u) => [u.unit, u.teaches]));
 // not O(units) (matters in deadline mode where the path is not stepsAhead-sliced).
 const quickCheckUnits = new Set(units.filter((u) => u.teaches.some((c) => diagnosedConcepts.has(c))).map((u) => u.unit));
 
-export const content = { concepts, units, goals, goalById, conceptById, diagnosedConcepts, quickCheckUnits, unitTitleById, trackOrder };
+const graph = buildConceptGraph(concepts);
+const diagnostics = diagnosticsBundle as Record<string, { concept: string; items: import("./calibration").DiagItem[] }>;
+
+export const content = { concepts, units, goals, goalById, conceptById, diagnosedConcepts, quickCheckUnits, unitTitleById, trackOrder, diagnostics, graph };
 
 // ── persistence (versioned, mirrors user-state.ts) ─────────────────────────────
 import { signal, effect } from "@preact/signals";
@@ -96,8 +106,14 @@ const C_KEY = "awesome.path-config.v1";
 
 function loadKnowledge(): KnowledgeState {
   if (typeof window === "undefined") return emptyState();
-  try { const raw = localStorage.getItem(K_KEY); return raw ? deserializeKnowledge(JSON.parse(raw)) : emptyState(); }
-  catch { return emptyState(); }
+  try {
+    const raw = localStorage.getItem(K_KEY);
+    if (raw) return deserializeKnowledge(JSON.parse(raw));
+  } catch { /* fall through to seed */ }
+  // Empty state + a prior pretest → seed concept confidences from it (cold-start personalization).
+  const pretest = userState.value.pretest;
+  if (pretest) return seedFromPretest(emptyState(), graph, pretest, pretestQuestions, advancedQuestions, Date.now());
+  return emptyState();
 }
 function defaultStoredConfig(): StoredPathConfig {
   return { ...(mergeConfig({}) as StoredPathConfig), view: { order: [] } };
@@ -168,4 +184,18 @@ export function resetPath(): void {
   knowledge.value = emptyState();
   config.value = defaultStoredConfig();
   if (typeof window !== "undefined") { try { localStorage.removeItem(K_KEY); localStorage.removeItem(C_KEY); } catch {} }
+}
+
+export function activeGoals() {
+  return config.value.goals.map((g) => goalById.get(g.id)).filter(Boolean) as import("./types").Goal[];
+}
+export function applyDiagnosticResult(concept: string, correctFrac: number): void {
+  knowledge.value = applyDiagnostic(knowledge.value, graph, concept, correctFrac, Date.now());
+}
+export function nextCalibrationProbe(): string | null {
+  const frontier = targetFrontier(activeGoals(), config.value, concepts);
+  return pickProbe(knowledge.value, graph, frontier, diagnosedConcepts, config.value.weights.masteryThreshold);
+}
+export function unitProbeConcepts(unitId: string): string[] {
+  return (teachesByUnit.get(unitId) ?? []).filter((c) => diagnosedConcepts.has(c));
 }
