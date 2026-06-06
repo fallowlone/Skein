@@ -194,6 +194,13 @@ export function resetAll() {
   if (typeof window !== "undefined") localStorage.removeItem(KEY);
 }
 
+/** Replace local state from an imported bundle (StateIO). Merges onto defaults so a partial/old
+ *  payload stays valid, mirroring load(). Does not touch the server — a later account-sync proceeds. */
+export function importUserState(partial: Partial<UserState>): void {
+  userState.value = { ...defaults, ...partial };
+  save(userState.value);
+}
+
 let syncActive = false;
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 
