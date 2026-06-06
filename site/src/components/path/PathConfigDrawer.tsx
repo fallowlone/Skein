@@ -3,6 +3,8 @@ import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import { config, setKnob } from "~/scripts/path/path-io";
 import type { Tier } from "~/scripts/path/types";
+import OverridesEditor from "./OverridesEditor";
+import StateIOPanel from "./StateIOPanel";
 
 const TIERS: Tier[] = ["junior", "middle", "senior"];
 const L = {
@@ -58,6 +60,8 @@ export default function PathConfigDrawer({ lang, onClose }: { lang: Locale; onCl
             </label>
           </div>
         )}
+        <OverridesEditor lang={lang} />
+        <StateIOPanel lang={lang} />
       </aside>
     </div>
   );
