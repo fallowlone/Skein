@@ -409,6 +409,10 @@ function main() {
   writeFileSync(join(OUT, "unit-concepts.json"), JSON.stringify(unitConceptsOut, null, 2) + "\n");
   writeFileSync(join(OUT, "goals.json"), JSON.stringify(goals, null, 2) + "\n");
   writeFileSync(join(OUT, "concept-overrides.json"), JSON.stringify(overrides, null, 2) + "\n");
+  // Diagnostics index: the island cannot readdir(), so emit the list of diagnosed
+  // concept ids as committed JSON for path-io.ts to import.
+  const diagnosedIds = loadDiagnosedConcepts().sort();
+  writeFileSync(join(OUT, "diagnostics-index.json"), JSON.stringify(diagnosedIds, null, 2) + "\n");
 
   const diagnosed = loadDiagnosedConcepts();
   const labeledRu = conceptsOut.filter((c) => labelCache[c.id]?.ru).length;
