@@ -58,5 +58,16 @@ for (const file of walk(LESSONS_EN)) {
 
 const { edges, warnings } = deriveIntraTrackEdges([...units.values()]);
 for (const w of warnings) console.warn(w);
-writeFileSync(join(OUT, "intra-track-edges.json"), JSON.stringify(edges, null, 2) + "\n");
-console.log(`intra-track-edges.json: ${edges.length} edges from ${units.size} units (${warnings.length} skipped prereqs)`);
+
+// Filter by CONCEPT primaryTrack (the graph's track definition in concepts.json). The derivation
+// keys on lesson track, but a concept shared across tracks has a single primaryTrack; edges whose
+// endpoints differ in primaryTrack are genuinely cross-track (curated cross-track domain), not here.
+const concepts = JSON.parse(readFileSync(join(OUT, "concepts.json"), "utf8"));
+const trackOf = new Map(concepts.map((c) => [c.id, c.track]));
+const intra = edges.filter((e) => {
+  const tc = trackOf.get(e.concept), tr = trackOf.get(e.requires);
+  return tc !== undefined && tr !== undefined && tc === tr;
+});
+
+writeFileSync(join(OUT, "intra-track-edges.json"), JSON.stringify(intra, null, 2) + "\n");
+console.log(`intra-track-edges.json: ${intra.length} edges (${edges.length - intra.length} concept-cross-track dropped) from ${units.size} units (${warnings.length} skipped prereqs)`);
