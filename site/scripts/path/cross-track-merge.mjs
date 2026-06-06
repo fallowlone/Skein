@@ -3,7 +3,7 @@
 // duplicate / malformed → counted in `skipped` (with a warning), so the build stays green.
 export function mergeCrossTrackEdges(rawEdges, conceptsOut) {
   const warnings = [];
-  if (!Array.isArray(rawEdges)) return { addEdges: [], skipped: 0, warnings: ["cross-track-edges: not an array; ignored"] };
+  if (!Array.isArray(rawEdges)) return { addEdges: [], skipped: 1, warnings: ["cross-track-edges: not an array; ignored"] };
   const trackOf = new Map(conceptsOut.map((c) => [c.id, c.track]));
   const addEdges = [];
   const seen = new Set();
@@ -17,7 +17,7 @@ export function mergeCrossTrackEdges(rawEdges, conceptsOut) {
     if (e.concept === e.requires) { skipped++; warnings.push(`cross-track-edges: self-loop ${e.concept}`); continue; }
     if (tx === ty) { skipped++; warnings.push(`cross-track-edges: intra-track ${e.concept}→${e.requires} (${tx})`); continue; }
     const k = `${e.concept}|${e.requires}`;
-    if (seen.has(k)) { skipped++; continue; }
+    if (seen.has(k)) { skipped++; warnings.push(`cross-track-edges: duplicate ${e.concept}→${e.requires}`); continue; }
     seen.add(k);
     addEdges.push({ concept: e.concept, requires: e.requires });
   }
