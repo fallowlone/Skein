@@ -29,10 +29,19 @@ Add a **deterministic, precision-first** set of intra-track concept→concept pr
 harvested from lesson `prereqs`, so the path's **concept DAG** becomes correct (not merely linear):
 
 1. **pulls the right prerequisite content in** — when a learner targets a concept, the specific
-   within-unit prerequisite concepts (and their teaching lessons) enter the missing set, beyond the
-   single previous-unit anchor; and
+   prerequisite concepts (and their teaching lessons) enter the missing set, beyond the single
+   previous-unit anchor; and
 2. **propagates mastery correctly** — knowing a later concept implies knowing the specific
-   within-unit foundations it declares a dependency on.
+   foundations it declares a dependency on.
+
+**`prereqs` come in three forms; two are harvested.** A prereq is either (a) a **sibling slug**
+(`"06-foo"`, same unit) — within-unit ordering the unit-spine misses; (b) a **fully-qualified path**
+(`"track/unitSlug/lessonSlug"`) — an author-declared **cross-unit, same-track skip-back** dep, the
+deepest gap the linear anchor-chain leaves open; or (c) a **bare cross-unit slug** (`"01-foo"`
+naming a lesson in another unit) — ambiguous (a slug is not unit-qualified), so left unresolved.
+Forms (a) and (b) are both deterministic and author-declared, so both are harvested. (An earlier
+revision scoped this to (a) only on the assumption cross-unit deps needed LLM curation; the
+fully-qualified path form falsifies that — they are exact references, no curation needed.)
 
 **Decided: content-pull only — no unit reordering.** Within a track, units are already a *total
 linear chain* (`unit.requires = [prevAnchor]`), so intra-track edges cannot reorder units; a unit
@@ -46,8 +55,11 @@ by subagents. Author-declared deps are the most precise source available; the cr
 discovery pipeline (keystones + sonnet + opus review) is **out of scope** here.
 
 **Out of scope:**
-- Cross-unit (skip-back) intra-track deps not expressible via sibling-lesson `prereqs` — those would
-  need curation; deferred.
+- **Bare cross-unit slug** prereqs (form (c)) — a slug alone is not unit-qualified, so resolution is
+  ambiguous; left unresolved (counted in the skip log).
+- **Cross-track** prereqs (a fully-qualified path whose target lesson is in a *different* track) —
+  out of this slice; they are covered by the separate curated cross-track edges. The derivation
+  emits a same-track-only edge set; cross-track path-refs are skipped with a warning.
 - Co-occurrence heuristics (concept[i] requires concept[i-1] within a lesson's list) — too noisy;
   rejected for precision.
 - The `deepensInto` / `spiral` frontmatter fields — not prerequisite relations; ignored.
@@ -70,7 +82,8 @@ design; concept-level readiness, content-pull, and mastery propagation become co
 
 A new pure module `site/scripts/path/intra-track-derive.mjs` exports
 `deriveIntraTrackEdges(units)`. `units` is the harvester's per-unit structure, extended so each
-lesson record carries `prereqs` (the sibling-lesson slugs from frontmatter).
+lesson record carries `prereqs` (the slugs/paths from frontmatter). It receives **all** units, so it
+has the global visibility needed to resolve cross-unit path references.
 
 Algorithm:
 
@@ -80,15 +93,21 @@ Algorithm:
   `c`. A concept is *new in L* iff `firstLesson(c) === L`.
 - **`anchor(P)`** = the first concept in `P`'s concept list (lesson order) with `firstLesson===P`;
   if `P` introduces nothing new, fall back to `P.concepts[0]` (mirrors the spine's anchor fallback).
+- **Prereq resolution (`resolvePrereq(L, p)`).** Split `p` on `/`: a **1-part** token resolves to
+  the sibling lesson in `L`'s own unit with that slug (form (a)); a **3-part** token
+  `track/unitSlug/lessonSlug` resolves to that fully-qualified lesson in any unit, via a global
+  `"unitId::slug"` index (form (b)); any other shape (incl. bare cross-unit slugs, form (c)) → `null`.
 - For each lesson `L` with `prereqs:[P₁…Pₖ]`:
-  - resolve each `Pᵢ` to the sibling lesson in `L`'s **same unit** whose slug equals `Pᵢ`;
-    if none → skip that prereq with a warning (keeps it intra-unit, hence intra-track, by
-    construction);
-  - for each `c ∈ newConcepts(L)` and each resolved `Pᵢ`: emit `{ concept: c, requires: anchor(Pᵢ) }`
-    unless `c === anchor(Pᵢ)`.
-- **Cycle safety.** Keep an edge `c → r` only if `r` is **strictly earlier** than `c` in the stable
-  seq order (same rule as `breakCycles` in `build-path-data.mjs`). A forward or typo'd prereq is
-  dropped, never emitted.
+  - resolve each `Pᵢ`; if it does not resolve → skip with a warning;
+  - if the resolved `Pᵢ` is in a **different track** than `L` → skip with a `cross-track` warning
+    (out of scope — the emitted set is same-track only);
+  - for each `c ∈ newConcepts(L)` and each in-track resolved `Pᵢ`: emit
+    `{ concept: c, requires: anchor(Pᵢ) }` unless `c === anchor(Pᵢ)`.
+- **Cycle safety.** Keep an edge `c → r` only if `r`'s first lesson is **strictly earlier** than `L`
+  in the stable seq order (same spirit as `breakCycles` in `build-path-data.mjs`). A forward or
+  typo'd prereq — sibling or cross-unit — is dropped, never emitted.
+- **Provenance.** `via` is `"<L.slug><-<P.slug>"` for siblings, `"<L.slug><-<P.unitId>/<P.slug>"`
+  for cross-unit, so a reviewer can see which unit a cross-unit edge came from.
 - **Output.** Dedup by `concept|requires`; return a sorted flat list of
   `{ concept, requires, via, track }`, where `via = "<L.slug>←<Pᵢ.slug>"` and `track` are provenance
   for human review (the merge and runtime ignore them).
