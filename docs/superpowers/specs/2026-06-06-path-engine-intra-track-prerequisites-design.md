@@ -34,14 +34,17 @@ harvested from lesson `prereqs`, so the path's **concept DAG** becomes correct (
 2. **propagates mastery correctly** — knowing a later concept implies knowing the specific
    foundations it declares a dependency on.
 
-**`prereqs` come in three forms; two are harvested.** A prereq is either (a) a **sibling slug**
-(`"06-foo"`, same unit) — within-unit ordering the unit-spine misses; (b) a **fully-qualified path**
-(`"track/unitSlug/lessonSlug"`) — an author-declared **cross-unit, same-track skip-back** dep, the
-deepest gap the linear anchor-chain leaves open; or (c) a **bare cross-unit slug** (`"01-foo"`
-naming a lesson in another unit) — ambiguous (a slug is not unit-qualified), so left unresolved.
-Forms (a) and (b) are both deterministic and author-declared, so both are harvested. (An earlier
-revision scoped this to (a) only on the assumption cross-unit deps needed LLM curation; the
-fully-qualified path form falsifies that — they are exact references, no curation needed.)
+**`prereqs` come in four forms; three are harvested.** A prereq is either (a) a **sibling slug**
+(`"06-foo"`, same unit) — within-unit ordering the unit-spine misses; (b) a **2-part
+`"unitSlug/lessonSlug"`** — a cross-unit reference with the **track implicit** (= the consuming
+lesson's own track), the most common authored cross-unit form (~⅓ of all prereqs); (c) a
+**fully-qualified path** (`"track/unitSlug/lessonSlug"`) — an explicit cross-unit, possibly
+cross-track reference; or (d) a **bare cross-unit slug** (`"01-foo"` naming a lesson in another
+unit) — ambiguous (a slug is not unit-qualified), so left unresolved. Forms (a)–(c) are all
+deterministic and author-declared, so all are harvested (cross-track results from (c) are dropped
+downstream — see §4.2). (Earlier revisions scoped this first to (a) only, then (a)+(c), on the
+assumption cross-unit deps needed LLM curation; the path forms falsify that — they are exact
+references, no curation needed. Form (b)'s missing track is unambiguously the consuming lesson's.)
 
 **Decided: content-pull only — no unit reordering.** Within a track, units are already a *total
 linear chain* (`unit.requires = [prevAnchor]`), so intra-track edges cannot reorder units; a unit
@@ -94,9 +97,12 @@ Algorithm:
 - **`anchor(P)`** = the first concept in `P`'s concept list (lesson order) with `firstLesson===P`;
   if `P` introduces nothing new, fall back to `P.concepts[0]` (mirrors the spine's anchor fallback).
 - **Prereq resolution (`resolvePrereq(L, p)`).** Split `p` on `/`: a **1-part** token resolves to
-  the sibling lesson in `L`'s own unit with that slug (form (a)); a **3-part** token
+  the sibling lesson in `L`'s own unit with that slug (form (a)); a **2-part** token
+  `unitSlug/lessonSlug` resolves to `${L.track}/unitSlug::lessonSlug` — track forced to the consuming
+  lesson's, so it is structurally same-track and cannot be cross-track (form (b)); a **3-part** token
   `track/unitSlug/lessonSlug` resolves to that fully-qualified lesson in any unit, via a global
-  `"unitId::slug"` index (form (b)); any other shape (incl. bare cross-unit slugs, form (c)) → `null`.
+  `"unitId::slug"` index (form (c)); any other shape (incl. a bare cross-unit 1-part slug that is not
+  a sibling, form (d)) → `null`.
 - For each lesson `L` with `prereqs:[P₁…Pₖ]`:
   - resolve each `Pᵢ`; if it does not resolve → skip with a warning;
   - if the resolved `Pᵢ` is in a **different track** than `L` → skip with a `cross-track` warning
@@ -171,10 +177,11 @@ cross-track slice (which had to add `applyOverridesFull`).
 
 ## 5. Validation & tests
 
-- **`intra-track-derive.test.mjs`** (pure): a fixture (one track, one unit, three lessons with
-  `prereqs`) asserts — new-concept → prereq-lesson anchor; a reused concept gets no new edge; a
-  forward/typo prereq is dropped (cycle safety); an unresolved sibling slug is skipped; the anchor
-  fallback fires when a prereq lesson introduces nothing new.
+- **`intra-track-derive.test.mjs`** (pure): fixtures assert — new-concept → prereq-lesson anchor; a
+  reused concept gets no new edge; a forward/typo prereq is dropped (cycle safety); an unresolved
+  slug is skipped; anchor fallback when a prereq lesson introduces nothing new; dedup of identical
+  pairs; cross-unit **3-part** path resolution; **2-part** track-implicit resolution; a cross-track
+  3-part path is skipped; a bare cross-unit slug is skipped.
 - **`intra-track-merge.test.mjs`** (pure): keeps a valid intra-track edge; drops cross-track,
   unknown id, self-loop, duplicate, and spine-dup; tolerates `null`/non-array/junk elements (returns
   `[]`, never throws).
@@ -213,10 +220,12 @@ P0 files and the runtime (`overrides.ts`, `path-io.ts`) are **not** modified.
 - **Decision C — anchor as the single representative of a prereq lesson.** Sparse, mirrors the
   spine's unit-anchor philosophy; precision-first. May slightly over- or under-connect versus an
   exhaustive cross-product, accepted as the defensible sparse choice.
-- **Volume — est. 2000–3500 edges** after dedup / cycle-drop / spine-dup-drop (more than the
-  cross-track 268, all author-declared). Density only enriches the concept DAG; because unit
-  ordering is untouched, there is **no path-rigidity / over-serialization risk**. `safeApply`'s
-  graph grows to ~7.5k edges — still O(V+E), memoized by overrides-signal identity.
+- **Volume — 4267 source edges** (3338 within-unit + 929 cross-unit), 314 concept-cross-track dropped
+  at generation, 66 spine-dup/dedup dropped at merge → **4201 intra addEdges** merged with the 268
+  curated cross-track → **4469 `concept-overrides.json` addEdges** (all author-declared). Density only
+  enriches the concept DAG; because unit ordering is untouched, there is **no path-rigidity /
+  over-serialization risk**. `safeApply`'s graph grows to ~9k edges — still O(V+E), memoized by
+  overrides-signal identity.
 - **Risk — combined cross+intra cycle.** Mitigated by the shared acyclic gate over spine + cross +
   intra in both builders, plus per-edge cycle-safety in the derivation.
 - **Risk — baseline concept DAG changes for all users.** Intended: the graph becomes correct rather
