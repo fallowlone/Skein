@@ -166,11 +166,23 @@ if (typeof window !== "undefined") {
 }
 
 // ── recompute (the single entry point; reads signals → subscribes the caller) ──
+// Memoize the override application by the overrides signal's identity — the signal is replaced
+// (not mutated) on every edit, so an identity hit means nothing changed. Keeps unrelated renders
+// (knob drags, pins) from paying safeApply's graph rebuild when overrides are non-empty.
+let _safeApplyCache: { key: Overrides; result: { concepts: Concept[]; droppedLocal: boolean } } | null = null;
+function effectiveConcepts(): { concepts: Concept[]; droppedLocal: boolean } {
+  const key = overrides.value;
+  if (_safeApplyCache && _safeApplyCache.key === key) return _safeApplyCache.result;
+  const result = safeApply(concepts, committedOverrides as Overrides, key);
+  _safeApplyCache = { key, result };
+  return result;
+}
+
 export function computePath(): { path: Path; schedule?: Schedule; droppedLocal: boolean } {
   const cfg = config.value;
   const now = Date.now();
   const goalObjs = cfg.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
-  const { concepts: eff, droppedLocal } = safeApply(concepts, committedOverrides as Overrides, overrides.value);
+  const { concepts: eff, droppedLocal } = effectiveConcepts();
   const raw = buildPath({
     state: knowledge.value, goals: goalObjs, config: cfg,
     content: { concepts: eff, units, goalById }, srsDue: [], now, trackOrder,
