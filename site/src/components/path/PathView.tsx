@@ -4,7 +4,7 @@ import type { Locale } from "~/i18n";
 import {
   knowledge, config, content, computePath, masteryByTrack,
   skipUnit, pinUnit, moveUnit, isPinned, resetPath,
-  unitProbeConcepts, applyDiagnosticResult,
+  unitProbeConcepts, applyDiagnosticResult, loosenUnit,
 } from "~/scripts/path/path-io";
 import PathCard from "./PathCard";
 import GoalPicker from "./GoalPicker";
@@ -16,11 +16,13 @@ const L = {
   en: { title: "Your path", recompute: "Recompute", goals: "Goals & deadline", settings: "Tune", reset: "Reset",
         coldTitle: "Start here", coldBody: "We've planned a path toward becoming a senior fullstack engineer, beginning at the foundations. Mark what you already know, or set a goal to retarget.",
         coldCta: "Calibrate (5 min)",
-        masteryTitle: "Mastery by track", known: "known", empty: "Nothing to study for the current goal — try a broader goal or unskip units." },
+        masteryTitle: "Mastery by track", known: "known", empty: "Nothing to study for the current goal — try a broader goal or unskip units.",
+        droppedNote: "Some local prerequisite edits created a cycle and were ignored." },
   ru: { title: "Твой путь", recompute: "Пересчитать", goals: "Цели и дедлайн", settings: "Настроить", reset: "Сбросить",
         coldTitle: "Начни здесь", coldBody: "Мы построили путь к уровню senior fullstack, начиная с основ. Отметь, что уже знаешь, или задай цель, чтобы перенацелить.",
         coldCta: "Калибровка (5 мин)",
-        masteryTitle: "Освоение по трекам", known: "освоено", empty: "Для текущей цели учить нечего — выбери более широкую цель или верни пропущенные юниты." },
+        masteryTitle: "Освоение по трекам", known: "освоено", empty: "Для текущей цели учить нечего — выбери более широкую цель или верни пропущенные юниты.",
+        droppedNote: "Некоторые локальные правки пререквизитов создали цикл и были проигнорированы." },
 } as const;
 
 export default function PathView({ lang }: { lang: Locale }) {
@@ -28,7 +30,7 @@ export default function PathView({ lang }: { lang: Locale }) {
   const [drawer, setDrawer] = useState<null | "goals" | "config">(null);
   const [quickUnit, setQuickUnit] = useState<string | null>(null);
   const k = knowledge.value; const cfg = config.value;
-  const { path, schedule } = computePath();
+  const { path, schedule, droppedLocal } = computePath();
   const mastery = masteryByTrack(k, content.concepts, cfg.weights.masteryThreshold);
   const isColdStart = k.size === 0;
 
@@ -49,6 +51,8 @@ export default function PathView({ lang }: { lang: Locale }) {
         </section>
       )}
 
+      {droppedLocal && <p class="rounded border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">{t.droppedNote}</p>}
+
       {schedule && <DeadlinePanel lang={lang} schedule={schedule} />}
 
       <ol class="flex flex-col gap-3">
@@ -60,6 +64,7 @@ export default function PathView({ lang }: { lang: Locale }) {
             onKnow={() => skipUnit(s.unit)} onSkip={() => skipUnit(s.unit)}
             onPin={() => pinUnit(s.unit)} onMove={(d) => moveUnit(s.unit, d)}
             onQuickCheck={() => setQuickUnit(s.unit)}
+            onLoosen={() => loosenUnit(s.unit)}
           />
         ))}
       </ol>
