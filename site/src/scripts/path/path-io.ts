@@ -96,18 +96,19 @@ function loadKnowledge(): KnowledgeState {
   try { const raw = localStorage.getItem(K_KEY); return raw ? deserializeKnowledge(JSON.parse(raw)) : emptyState(); }
   catch { return emptyState(); }
 }
+function defaultStoredConfig(): StoredPathConfig {
+  return { ...(mergeConfig({}) as StoredPathConfig), view: { order: [] } };
+}
 function loadConfig(): StoredPathConfig {
-  const base = mergeConfig({}) as StoredPathConfig;
-  base.view = { order: [] };
-  if (typeof window === "undefined") return base;
+  if (typeof window === "undefined") return defaultStoredConfig();
   try {
     const raw = localStorage.getItem(C_KEY);
-    if (!raw) return base;
+    if (!raw) return defaultStoredConfig();
     const stored = JSON.parse(raw);
     const merged = mergeConfig(stored) as StoredPathConfig;
     merged.view = { order: stored.view?.order ?? [] };
     return merged;
-  } catch { return base; }
+  } catch { return defaultStoredConfig(); }
 }
 
 export const knowledge = signal<KnowledgeState>(loadKnowledge());
@@ -121,13 +122,14 @@ if (typeof window !== "undefined") {
 // ── recompute (the single entry point; reads signals → subscribes the caller) ──
 export function computePath(): { path: Path; schedule?: Schedule } {
   const cfg = config.value;
+  const now = Date.now();
   const goalObjs = cfg.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
   const raw = buildPath({
     state: knowledge.value, goals: goalObjs, config: cfg,
-    content: { concepts, units, goalById }, srsDue: [], now: Date.now(), trackOrder,
+    content: { concepts, units, goalById }, srsDue: [], now, trackOrder,
   });
   const path: Path = { steps: applyViewOrder(raw.steps, cfg.view.order) };
-  const schedule = cfg.deadline ? schedulePlan(path, cfg.deadline, Date.now()) : undefined;
+  const schedule = cfg.deadline ? schedulePlan(path, cfg.deadline, now) : undefined;
   return { path, schedule };
 }
 
@@ -159,7 +161,6 @@ export function setKnob(patch: Partial<Pick<PathConfig, "breadthVsDepth" | "dept
 export function setDeadline(d: DeadlineConfig | undefined): void { setCfg({ deadline: d }); }
 export function resetPath(): void {
   knowledge.value = emptyState();
-  const base = mergeConfig({}) as StoredPathConfig; base.view = { order: [] };
-  config.value = base;
+  config.value = defaultStoredConfig();
   if (typeof window !== "undefined") { try { localStorage.removeItem(K_KEY); localStorage.removeItem(C_KEY); } catch {} }
 }
