@@ -22,3 +22,17 @@ describe("xp", () => {
     expect(hi.toNext).toBeGreaterThan(0);
   });
 });
+
+describe("xpFromState path bonus param", () => {
+  const base = { pretest: null, history: {}, retrieval: {}, progression: undefined } as any;
+  it("adds the path bonus when provided", () => {
+    expect(xpFromState(base, 0, 0, 40)).toBe(40);
+  });
+  it("defaults to 0 (omitted param leaves the total unchanged)", () => {
+    expect(xpFromState(base, 0, 0)).toBe(xpFromState(base, 0, 0, 0));
+    expect(xpFromState(base, 0, 0)).toBe(0);
+  });
+  it("ignores a negative bonus", () => {
+    expect(xpFromState(base, 0, 0, -100)).toBe(0);
+  });
+});
