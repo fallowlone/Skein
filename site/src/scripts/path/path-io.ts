@@ -67,7 +67,7 @@ export function deserializeKnowledge(arr: [string, ConceptMastery][]): Knowledge
 import { buildPath } from "./planner";
 import { schedulePlan } from "./schedule";
 import { emptyState, applySelfDeclare } from "./knowledge";
-import { mergeConfig } from "./config";
+import { mergeConfig, clampConfig } from "./config";
 import type { DeadlineConfig } from "./types";
 
 // View-only state the pure core ignores (pin/reorder). Persisted with the config.
@@ -83,8 +83,11 @@ const diagnosedConcepts = new Set(diagnosticsIndex as string[]);
 const unitTitleById = new Map((unitsJson as any[]).map((u) => [u.id, u.title as { en: string; ru: string }]));
 const trackOrder = new Map((tracksJson as any[]).map((t) => [t.slug as string, t.order as number]));
 const teachesByUnit = new Map(units.map((u) => [u.unit, u.teaches]));
+// Units that teach ≥1 diagnosed concept — precomputed once so a card render is O(1),
+// not O(units) (matters in deadline mode where the path is not stepsAhead-sliced).
+const quickCheckUnits = new Set(units.filter((u) => u.teaches.some((c) => diagnosedConcepts.has(c))).map((u) => u.unit));
 
-export const content = { concepts, units, goals, goalById, conceptById, diagnosedConcepts, unitTitleById, trackOrder };
+export const content = { concepts, units, goals, goalById, conceptById, diagnosedConcepts, quickCheckUnits, unitTitleById, trackOrder };
 
 // ── persistence (versioned, mirrors user-state.ts) ─────────────────────────────
 import { signal, effect } from "@preact/signals";
@@ -134,7 +137,9 @@ export function computePath(): { path: Path; schedule?: Schedule } {
 }
 
 // ── mutation helpers (write through signals → autosave → reactive recompute) ──
-const setCfg = (patch: Partial<StoredPathConfig>) => { config.value = { ...config.value, ...patch }; };
+// Re-clamp on every write so "stored config is always valid" holds between reloads,
+// not just at load. clampConfig preserves view/goals/deadline (it spreads the input).
+const setCfg = (patch: Partial<StoredPathConfig>) => { config.value = clampConfig({ ...config.value, ...patch }) as StoredPathConfig; };
 
 export function declareKnown(concept: string, known: boolean): void {
   knowledge.value = applySelfDeclare(knowledge.value, concept, known, Date.now());
