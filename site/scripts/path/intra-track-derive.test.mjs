@@ -108,4 +108,18 @@ describe("deriveIntraTrackEdges", () => {
     expect(edges).toEqual([]);
     expect(warnings.some((w) => w.includes("01-a"))).toBe(true);
   });
+
+  it("resolves a 2-part `unitSlug/lessonSlug` prereq within the consuming lesson's track", () => {
+    const TWO = [
+      { id: "db/01-basics", track: "db", order: 1, unitSlug: "01-basics",
+        lessons: [{ slug: "01-intro", concepts: ["b-tree"], prereqs: [] }] },
+      { id: "db/02-adv", track: "db", order: 2, unitSlug: "02-adv",
+        // 2-part: track is implicit (= db). Points to db/01-basics/01-intro.
+        lessons: [{ slug: "01-deep", concepts: ["lsm-tree"], prereqs: ["01-basics/01-intro"] }] },
+    ];
+    const { edges } = deriveIntraTrackEdges(TWO);
+    expect(edges.map((e) => `${e.concept}->${e.requires}`)).toEqual(["lsm-tree->b-tree"]);
+    expect(edges[0].via).toBe("01-deep<-db/01-basics/01-intro"); // cross-unit via carries the resolved unit
+    expect(edges[0].track).toBe("db");
+  });
 });

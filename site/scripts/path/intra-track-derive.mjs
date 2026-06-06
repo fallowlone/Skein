@@ -1,7 +1,8 @@
 // Derive intra-track concept→concept prerequisite edges from lesson `prereqs`. Pure & deterministic
-// — no I/O, no clock. A prereq is either a SIBLING lesson slug ("NN-...") in the same unit, or a
-// FULLY-QUALIFIED path ("track/unitSlug/lessonSlug") to a lesson in another unit (cross-unit,
-// author-declared skip-back deps). Each lesson L's NEWLY-introduced concepts require the ANCHOR
+// — no I/O, no clock. A prereq takes one of three resolvable forms: a SIBLING lesson slug
+// ("NN-...") in the same unit, a 2-part "unitSlug/lessonSlug" (cross-unit, track implicit = the
+// consuming lesson's own track), or a FULLY-QUALIFIED path ("track/unitSlug/lessonSlug") to any
+// lesson. Each lesson L's NEWLY-introduced concepts require the ANCHOR
 // concept of each resolved prereq lesson P (anchor = first concept first-introduced in P; fallback
 // P.concepts[0]). An edge c→a is emitted only when a's first lesson is strictly earlier than L in
 // the stable lesson sequence (cycle-safe) AND P is in the SAME track as L (cross-track prereqs are
@@ -60,11 +61,14 @@ export function deriveIntraTrackEdges(unitList) {
     byKey.set(`${l.unitId}::${l.slug}`, l);
   }
 
-  // Resolve a prereq token to a lesson. "NN-slug" → sibling in L's unit; "track/unit/lesson" →
-  // that fully-qualified lesson (any unit). Other forms (e.g. a bare cross-unit slug) → null.
+  // Resolve a prereq token to a lesson. "NN-slug" → sibling in L's unit;
+  // "unitSlug/lessonSlug" → cross-unit, same-track (track implicit = L.track);
+  // "track/unit/lesson" → fully-qualified (any unit). Other forms → null.
   const resolvePrereq = (L, pslug) => {
     const parts = pslug.split("/");
     if (parts.length === 1) return byUnit.get(L.unitId)?.get(pslug) ?? null;
+    // 2-part "unitSlug/lessonSlug": track implicit = the consuming lesson's track (cross-unit, same-track).
+    if (parts.length === 2) return byKey.get(`${L.track}/${parts[0]}::${parts[1]}`) ?? null;
     if (parts.length === 3) return byKey.get(`${parts[0]}/${parts[1]}::${parts[2]}`) ?? null;
     return null;
   };
