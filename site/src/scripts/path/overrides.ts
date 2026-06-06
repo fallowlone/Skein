@@ -82,17 +82,9 @@ export function loosenUnitEdges(unit: string, units: UnitConcepts[], concepts: C
 }
 
 // Module-level shape guard (mirrors the local one inside applyOverridesToConcepts; kept separate
-// so the working P3-B function is untouched).
+// so the working P3-B function is untouched — unify the two if that function is ever refactored).
 const isEdgeShape = (e: unknown): e is Edge =>
   !!e && typeof (e as Edge).concept === "string" && typeof (e as Edge).requires === "string";
-
-// The add-edges actually applied to the concept graph, mirroring safeApply's drop logic:
-// committed+local merged minus removeEdges; committed-only when local was dropped for a cycle.
-function effectiveAddEdges(committed: Overrides | undefined, local: Overrides | undefined, droppedLocal: boolean): Edge[] {
-  const merged = droppedLocal ? mergeOverrides(committed, undefined) : mergeOverrides(committed, local);
-  const removed = new Set((merged.removeEdges ?? []).filter(isEdgeShape).map(keyOf));
-  return (merged.addEdges ?? []).filter(isEdgeShape).filter((e) => !removed.has(keyOf(e)));
-}
 
 // For each effective addEdge X→Y with track(X) !== track(Y), add Y to the requires of every unit
 // teaching X (skip if the unit already teaches/requires Y). This is what makes a cross-track concept
@@ -123,6 +115,10 @@ export function applyOverridesFull(
   concepts: Concept[], units: UnitConcepts[], committed: Overrides, local: Overrides,
 ): { concepts: Concept[]; units: UnitConcepts[]; droppedLocal: boolean } {
   const { concepts: eff, droppedLocal } = safeApply(concepts, committed, local);
-  const adds = effectiveAddEdges(committed, local, droppedLocal);
-  return { concepts: eff, units: deriveUnitRequires(units, concepts, adds), droppedLocal };
+  // Effective add-edges actually applied to the concept graph, mirroring safeApply's drop logic:
+  // committed+local merged minus removeEdges; committed-only when local was dropped for a cycle.
+  const merged = droppedLocal ? mergeOverrides(committed, undefined) : mergeOverrides(committed, local);
+  const removed = new Set((merged.removeEdges ?? []).filter(isEdgeShape).map(keyOf));
+  const adds = (merged.addEdges ?? []).filter(isEdgeShape).filter((e) => !removed.has(keyOf(e)));
+  return { concepts: eff, units: deriveUnitRequires(units, eff, adds), droppedLocal };
 }
