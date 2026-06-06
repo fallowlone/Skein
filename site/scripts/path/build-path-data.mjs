@@ -366,6 +366,17 @@ function main() {
   const { units, concepts } = harvest(trackFilter);
   const spine = buildSpine(units, concepts);
   const labelCache = loadLabelCache();
+  // Committed ru-label source (P3-D) overrides the .path-cache dev cache so a re-harvest
+  // preserves curated ru instead of re-humanizing.
+  const ruLabelFile = join(OUT, "concept-labels.json");
+  if (existsSync(ruLabelFile)) {
+    try {
+      const ruMap = JSON.parse(readFileSync(ruLabelFile, "utf8"));
+      for (const [id, ru] of Object.entries(ruMap)) {
+        if (typeof ru === "string" && ru.trim()) labelCache[id] = { ...(labelCache[id] || {}), ru: ru.trim() };
+      }
+    } catch (e) { console.warn(`concept-labels.json: parse failed (${e.message}); ignoring`); }
+  }
 
   // assemble concepts (sorted by id), requires = sparse spine edge.
   const rawRequires = new Map();
