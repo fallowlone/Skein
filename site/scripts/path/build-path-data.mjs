@@ -23,6 +23,7 @@
 import { readdirSync, readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { mergeCrossTrackEdges } from "./cross-track-merge.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SITE = join(HERE, "..", ".."); // site/
@@ -400,7 +401,16 @@ function main() {
   }
 
   const goals = buildGoals(concepts);
-  const overrides = { addEdges: [], removeEdges: [], retag: [] };
+  let rawCrossTrack = [];
+  const ctFile = join(OUT, "cross-track-edges.json");
+  if (existsSync(ctFile)) {
+    try { rawCrossTrack = JSON.parse(readFileSync(ctFile, "utf8")); }
+    catch (e) { console.warn(`cross-track-edges.json: parse failed (${e.message}); ignoring`); }
+  }
+  const ctMerge = mergeCrossTrackEdges(rawCrossTrack, conceptsOut);
+  for (const w of ctMerge.warnings) console.warn(w);
+  const overrides = { addEdges: ctMerge.addEdges, removeEdges: [], retag: [] };
+  console.log(`cross-track-edges: ${ctMerge.addEdges.length} merged, ${ctMerge.skipped} skipped`);
 
   // write
   mkdirSync(OUT, { recursive: true });
