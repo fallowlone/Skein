@@ -47,6 +47,7 @@ export interface PathData {
   overrides: PathOverridesLike;
   diagnostics: PathDiagnosticLike[]; // one entry per diagnostics/<concept>.json file found
   crossTrackEdges?: { concept: string; requires: string }[]; // optional curated source (cross-track-edges.json)
+  intraTrackEdges?: { concept: string; requires: string }[]; // optional generated source (intra-track-edges.json)
 }
 
 // Effective requires-edges after applying overrides (same order as graph.ts).
@@ -162,6 +163,16 @@ export function validatePathData(data: PathData): string[] {
     if (tx && ty && tx === ty) push(`cross-track-edges: "${e.concept}→${e.requires}" is intra-track (${tx})`);
   }
 
+  // intra-track-edges.json source sanity (if present): ids exist + genuinely intra-track + not self.
+  for (const e of data.intraTrackEdges ?? []) {
+    if (!e || typeof e.concept !== "string" || typeof e.requires !== "string") { push(`intra-track-edges malformed element`); continue; }
+    if (!ids.has(e.concept)) push(`intra-track-edges: unknown concept "${e.concept}"`);
+    if (!ids.has(e.requires)) push(`intra-track-edges: unknown prereq "${e.requires}"`);
+    if (e.concept === e.requires) push(`intra-track-edges: self-loop "${e.concept}"`);
+    const itx = trackById.get(e.concept), ity = trackById.get(e.requires);
+    if (itx && ity && itx !== ity) push(`intra-track-edges: "${e.concept}→${e.requires}" is cross-track (${itx}/${ity})`);
+  }
+
   // acyclic after overrides
   const cyc = cycleNodes(ids, effectiveRequires(concepts, overrides));
   if (cyc.length) push(`concept graph has a cycle (${cyc.slice(0, 8).join(", ")}${cyc.length > 8 ? ", …" : ""})`);
@@ -204,6 +215,7 @@ export async function checkPath(siteSrc: string): Promise<string[]> {
   const goals = (await readJson<PathGoalLike[]>(join(dir, "goals.json"))) ?? [];
   const overrides = (await readJson<PathOverridesLike>(join(dir, "concept-overrides.json"))) ?? {};
   const crossTrackEdges = (await readJson<{ concept: string; requires: string }[]>(join(dir, "cross-track-edges.json"))) ?? [];
+  const intraTrackEdges = (await readJson<{ concept: string; requires: string }[]>(join(dir, "intra-track-edges.json"))) ?? [];
 
   const diagnostics: PathDiagnosticLike[] = [];
   try {
@@ -219,5 +231,5 @@ export async function checkPath(siteSrc: string): Promise<string[]> {
     }
   } catch { /* no diagnostics dir yet */ }
 
-  return validatePathData({ concepts, unitConcepts, goals, overrides, diagnostics, crossTrackEdges });
+  return validatePathData({ concepts, unitConcepts, goals, overrides, diagnostics, crossTrackEdges, intraTrackEdges });
 }
