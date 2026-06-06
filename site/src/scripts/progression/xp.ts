@@ -7,6 +7,7 @@ export function xpFromState(
   state: Pick<UserState, "pretest" | "history" | "retrieval" | "progression">,
   drillsSolved: number,
   englishKnown = 0,
+  pathStepBonus = 0,
 ): number {
   let xp = 0;
   if (state.pretest) xp += XP.pretest;
@@ -16,6 +17,7 @@ export function xpFromState(
   xp += Object.keys(state.progression?.achievements ?? {}).length * XP.achievement;
   xp += Math.max(0, drillsSolved) * XP.drill;
   xp += englishXp(englishKnown);
+  xp += Math.max(0, pathStepBonus);
   return xp;
 }
 
