@@ -4,7 +4,7 @@ import type { Locale } from "~/i18n";
 import {
   knowledge, config, content, computePath, masteryByTrack,
   skipUnit, pinUnit, moveUnit, isPinned, resetPath,
-  unitProbeConcepts, applyDiagnosticResult, loosenUnit,
+  unitProbeConcepts, applyDiagnosticResult, loosenUnit, reorderPath,
 } from "~/scripts/path/path-io";
 import PathCard from "./PathCard";
 import GoalPicker from "./GoalPicker";
@@ -29,6 +29,7 @@ export default function PathView({ lang }: { lang: Locale }) {
   const t = L[lang];
   const [drawer, setDrawer] = useState<null | "goals" | "config">(null);
   const [quickUnit, setQuickUnit] = useState<string | null>(null);
+  const [dragUnit, setDragUnit] = useState<string | null>(null);
   const k = knowledge.value; const cfg = config.value;
   const { path, schedule, droppedLocal } = computePath();
   const mastery = masteryByTrack(k, content.concepts, cfg.weights.masteryThreshold);
@@ -65,6 +66,11 @@ export default function PathView({ lang }: { lang: Locale }) {
             onPin={() => pinUnit(s.unit)} onMove={(d) => moveUnit(s.unit, d)}
             onQuickCheck={() => setQuickUnit(s.unit)}
             onLoosen={() => loosenUnit(s.unit)}
+            onDragStart={() => setDragUnit(s.unit)}
+            onDrop={() => {
+              if (dragUnit && dragUnit !== s.unit) reorderPath(path.steps.map((x) => x.unit), dragUnit, s.unit);
+              setDragUnit(null);
+            }}
           />
         ))}
       </ol>
