@@ -54,6 +54,35 @@ export function moveInOrder(order: string[], unit: string, dir: "up" | "down"): 
   return next;
 }
 
+// Searchable target picker: taught + clean-label concepts matching the query on label[lang] or id.
+// "Clean" mirrors the keystone filter — drops long-tail junk ids/labels (e.g. "--cpu-prof", " foo").
+export function searchConcepts(concepts: Concept[], taught: Set<string>, query: string, lang: "en" | "ru", limit = 20): Concept[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const clean = (c: Concept) =>
+    taught.has(c.id) && /^[a-z0-9]/i.test(c.id) && c.label[lang] === c.label[lang].trim() && c.label[lang].length > 1;
+  const out: Concept[] = [];
+  for (const c of concepts) {
+    if (!clean(c)) continue;
+    if (c.label[lang].toLowerCase().includes(q) || c.id.toLowerCase().includes(q)) out.push(c);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+// Move `from` adjacent to `to` in the full visible unit-id sequence (DnD reorder).
+// When dragging down (fromIdx < toIdx), inserts after `to`; when dragging up, inserts before `to`.
+// No-op if from === to or either id is absent.
+export function reorderList(unitIds: string[], from: string, to: string): string[] {
+  const fromIdx = unitIds.indexOf(from);
+  const toIdx = unitIds.indexOf(to);
+  if (from === to || fromIdx === -1 || toIdx === -1) return unitIds;
+  const arr = unitIds.filter((u) => u !== from);
+  const ti = arr.indexOf(to);
+  arr.splice(fromIdx < toIdx ? ti + 1 : ti, 0, from);
+  return arr;
+}
+
 export interface TrackMastery { track: string; known: number; total: number; avg: number; }
 export function masteryByTrack(state: KnowledgeState, concepts: Concept[], threshold: number): TrackMastery[] {
   const m = new Map<string, { known: number; total: number; sum: number }>();
@@ -94,6 +123,7 @@ const diagnosedConcepts = new Set(diagnosticsIndex as string[]);
 const unitTitleById = new Map((unitsJson as any[]).map((u) => [u.id, u.title as { en: string; ru: string }]));
 const trackOrder = new Map((tracksJson as any[]).map((t) => [t.slug as string, t.order as number]));
 const teachesByUnit = new Map(units.map((u) => [u.unit, u.teaches]));
+const taughtConcepts = new Set(units.flatMap((u) => u.teaches));
 // Units that teach ≥1 diagnosed concept — precomputed once so a card render is O(1),
 // not O(units) (matters in deadline mode where the path is not stepsAhead-sliced).
 const quickCheckUnits = new Set(units.filter((u) => u.teaches.some((c) => diagnosedConcepts.has(c))).map((u) => u.unit));
@@ -103,7 +133,7 @@ const graph = buildConceptGraph(concepts);
 // *called* by the `knowledge` signal init further down, so `graph` is always initialized first.
 const diagnostics = diagnosticsBundle as Record<string, { concept: string; items: DiagItem[] }>;
 
-export const content = { concepts, units, goals, goalById, conceptById, diagnosedConcepts, quickCheckUnits, unitTitleById, trackOrder, diagnostics, graph };
+export const content = { concepts, units, goals, goalById, conceptById, diagnosedConcepts, quickCheckUnits, unitTitleById, trackOrder, diagnostics, graph, taughtConcepts };
 
 // ── persistence (versioned, mirrors user-state.ts) ─────────────────────────────
 import { signal, effect } from "@preact/signals";
@@ -207,6 +237,7 @@ export function skipUnit(unitId: string): void {
 }
 export function pinUnit(unitId: string): void { setCfg({ view: { order: togglePin(config.value.view.order, unitId) } }); }
 export function moveUnit(unitId: string, dir: "up" | "down"): void { setCfg({ view: { order: moveInOrder(config.value.view.order, unitId, dir) } }); }
+export function reorderPath(unitIds: string[], from: string, to: string): void { setCfg({ view: { order: reorderList(unitIds, from, to) } }); }
 export function isPinned(unitId: string): boolean { return config.value.view.order.includes(unitId); }
 
 export function setGoals(g: { id: string; priority: number }[]): void { setCfg({ goals: g }); }
