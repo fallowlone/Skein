@@ -53,4 +53,11 @@ describe("overrides", () => {
       { concept: "tcp-handshake", requires: "ports-sockets" },
     ]));
   });
+
+  it("tolerates junk elements (null / non-edge) without throwing", () => {
+    const bad = { removeEdges: [null, { concept: "tcp-handshake", requires: "ip-addressing" }, "x", { concept: 5 }] } as any;
+    expect(() => applyOverridesToConcepts(CONCEPTS, bad)).not.toThrow();
+    const out = applyOverridesToConcepts(CONCEPTS, bad);
+    expect(byId(out).get("tcp-handshake")!.requires).not.toContain("ip-addressing"); // the one valid edge still applies
+  });
 });

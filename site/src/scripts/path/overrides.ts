@@ -24,14 +24,20 @@ export function mergeOverrides(committed?: Overrides, local?: Overrides): Overri
 // so a stale exported override never crashes a newer graph (buildConceptGraph's addEdges is strict).
 export function applyOverridesToConcepts(concepts: Concept[], ov: Overrides): Concept[] {
   const ids = new Set(concepts.map((c) => c.id));
+  // Element-shape guard: tampered localStorage / a malformed-but-version-valid import could carry
+  // junk elements (null, strings). Skip anything that isn't a {concept, requires} string pair so a
+  // bad override never crashes the path. This is the single lenient trust boundary.
+  const isEdge = (e: unknown): e is Edge =>
+    !!e && typeof (e as Edge).concept === "string" && typeof (e as Edge).requires === "string";
   const addByConcept = new Map<string, Set<string>>();
   for (const e of ov.addEdges ?? []) {
-    if (!ids.has(e.concept) || !ids.has(e.requires) || e.concept === e.requires) continue;
+    if (!isEdge(e) || !ids.has(e.concept) || !ids.has(e.requires) || e.concept === e.requires) continue;
     if (!addByConcept.has(e.concept)) addByConcept.set(e.concept, new Set());
     addByConcept.get(e.concept)!.add(e.requires);
   }
   const removeByConcept = new Map<string, Set<string>>();
   for (const e of ov.removeEdges ?? []) {
+    if (!isEdge(e)) continue;
     if (!removeByConcept.has(e.concept)) removeByConcept.set(e.concept, new Set());
     removeByConcept.get(e.concept)!.add(e.requires);
   }
@@ -51,6 +57,10 @@ export function safeApply(
   committed: Overrides,
   local: Overrides,
 ): { concepts: Concept[]; droppedLocal: boolean } {
+  // Fast path: no override edges at all → no graph rebuild (the common case; building +
+  // validating the full concept graph is ~40ms, and computePath runs on every island render).
+  const empty = (o?: Overrides) => !(o?.addEdges?.length) && !(o?.removeEdges?.length);
+  if (empty(committed) && empty(local)) return { concepts, droppedLocal: false };
   const withLocal = applyOverridesToConcepts(concepts, mergeOverrides(committed, local));
   if (validateAcyclic(buildConceptGraph(withLocal)).ok) return { concepts: withLocal, droppedLocal: false };
   const committedOnly = applyOverridesToConcepts(concepts, mergeOverrides(committed, undefined));
