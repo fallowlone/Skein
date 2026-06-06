@@ -11,18 +11,23 @@ import GoalPicker from "./GoalPicker";
 import PathConfigDrawer from "./PathConfigDrawer";
 import DeadlinePanel from "./DeadlinePanel";
 import DiagnosticRunner from "./DiagnosticRunner";
+import { currentXp } from "~/scripts/progression/current";
+import { levelFromXp } from "~/scripts/progression/xp";
+import { completedStepCount, PATH_STEP_BONUS } from "~/scripts/progression/path-xp";
 
 const L = {
   en: { title: "Your path", recompute: "Recompute", goals: "Goals & deadline", settings: "Tune", reset: "Reset",
         coldTitle: "Start here", coldBody: "We've planned a path toward becoming a senior fullstack engineer, beginning at the foundations. Mark what you already know, or set a goal to retarget.",
         coldCta: "Calibrate (5 min)",
         masteryTitle: "Mastery by track", known: "known", empty: "Nothing to study for the current goal — try a broader goal or unskip units.",
-        droppedNote: "Some local prerequisite edits created a cycle and were ignored." },
+        droppedNote: "Some local prerequisite edits created a cycle and were ignored.",
+        level: "Level", steps: "Steps completed", xp: "XP" },
   ru: { title: "Твой путь", recompute: "Пересчитать", goals: "Цели и дедлайн", settings: "Настроить", reset: "Сбросить",
         coldTitle: "Начни здесь", coldBody: "Мы построили путь к уровню senior fullstack, начиная с основ. Отметь, что уже знаешь, или задай цель, чтобы перенацелить.",
         coldCta: "Калибровка (5 мин)",
         masteryTitle: "Освоение по трекам", known: "освоено", empty: "Для текущей цели учить нечего — выбери более широкую цель или верни пропущенные юниты.",
-        droppedNote: "Некоторые локальные правки пререквизитов создали цикл и были проигнорированы." },
+        droppedNote: "Некоторые локальные правки пререквизитов создали цикл и были проигнорированы.",
+        level: "Уровень", steps: "Шагов пройдено", xp: "XP" },
 } as const;
 
 export default function PathView({ lang }: { lang: Locale }) {
@@ -34,6 +39,9 @@ export default function PathView({ lang }: { lang: Locale }) {
   const { path, schedule, droppedLocal } = computePath();
   const mastery = masteryByTrack(k, content.concepts, cfg.weights.masteryThreshold);
   const isColdStart = k.size === 0;
+  const xp = currentXp();
+  const lvl = levelFromXp(xp);
+  const doneSteps = completedStepCount(k, content.units, cfg.weights.masteryThreshold);
 
   return (
     <div class="flex flex-col gap-6">
@@ -43,6 +51,12 @@ export default function PathView({ lang }: { lang: Locale }) {
         <button class="rounded border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100" onClick={() => setDrawer("config")}>{t.settings}</button>
         <button class="rounded border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100" onClick={() => resetPath()}>{t.reset}</button>
       </header>
+
+      <section class="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-stone-200 bg-white/60 px-4 py-2 text-sm">
+        <span><span class="font-semibold">{t.level} {lvl.level}</span> · {xp} {t.xp}</span>
+        <span class="text-stone-500">+{lvl.intoLevel} / {lvl.intoLevel + lvl.toNext}</span>
+        <span class="ml-auto text-stone-600">{t.steps}: {doneSteps} <span class="text-emerald-600">(+{doneSteps * PATH_STEP_BONUS} {t.xp})</span></span>
+      </section>
 
       {isColdStart && (
         <section class="rounded-lg border border-amber-300 bg-amber-50 p-4">
