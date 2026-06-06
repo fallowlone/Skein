@@ -84,3 +84,30 @@ describe("validatePathData", () => {
     expect(errs.some((e) => /must have 2-4 items/.test(e))).toBe(true);
   });
 });
+
+describe("cross-track-edges source validation", () => {
+  const base: Omit<PathData, "crossTrackEdges"> = {
+    concepts: [
+      { id: "a", label: { en: "A", ru: "А" }, track: "x", band: "middle" as const, requires: [] },
+      { id: "b", label: { en: "B", ru: "Б" }, track: "y", band: "surface" as const, requires: [] },
+      { id: "c", label: { en: "C", ru: "В" }, track: "x", band: "surface" as const, requires: [] },
+    ],
+    unitConcepts: { "x/01": { teaches: ["a", "c"], requires: [], estMin: 10 }, "y/01": { teaches: ["b"], requires: [], estMin: 10 } },
+    goals: [{ id: "g", label: { en: "G", ru: "Г" }, target: { concepts: ["a"] } }],
+    overrides: { addEdges: [], removeEdges: [], retag: [] },
+    diagnostics: [],
+  };
+
+  it("accepts a valid cross-track edge", () => {
+    const errs = validatePathData({ ...base, crossTrackEdges: [{ concept: "a", requires: "b" }] });
+    expect(errs.filter((e) => e.includes("cross-track-edges"))).toEqual([]);
+  });
+  it("flags an unknown id", () => {
+    const errs = validatePathData({ ...base, crossTrackEdges: [{ concept: "a", requires: "ghost" }] });
+    expect(errs.some((e) => e.includes("cross-track-edges") && e.includes("ghost"))).toBe(true);
+  });
+  it("flags an intra-track edge", () => {
+    const errs = validatePathData({ ...base, crossTrackEdges: [{ concept: "a", requires: "c" }] });
+    expect(errs.some((e) => e.includes("cross-track-edges") && e.includes("intra-track"))).toBe(true);
+  });
+});
