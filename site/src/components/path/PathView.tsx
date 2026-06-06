@@ -4,11 +4,13 @@ import type { Locale } from "~/i18n";
 import {
   knowledge, config, content, computePath, masteryByTrack,
   skipUnit, pinUnit, moveUnit, isPinned, resetPath,
+  unitProbeConcepts, applyDiagnosticResult,
 } from "~/scripts/path/path-io";
 import PathCard from "./PathCard";
 import GoalPicker from "./GoalPicker";
 import PathConfigDrawer from "./PathConfigDrawer";
 import DeadlinePanel from "./DeadlinePanel";
+import DiagnosticRunner from "./DiagnosticRunner";
 
 const L = {
   en: { title: "Your path", recompute: "Recompute", goals: "Goals & deadline", settings: "Tune", reset: "Reset",
@@ -24,6 +26,7 @@ const L = {
 export default function PathView({ lang }: { lang: Locale }) {
   const t = L[lang];
   const [drawer, setDrawer] = useState<null | "goals" | "config">(null);
+  const [quickUnit, setQuickUnit] = useState<string | null>(null);
   const k = knowledge.value; const cfg = config.value;
   const { path, schedule } = computePath();
   const mastery = masteryByTrack(k, content.concepts, cfg.weights.masteryThreshold);
@@ -56,6 +59,7 @@ export default function PathView({ lang }: { lang: Locale }) {
             hasQuickCheck={content.quickCheckUnits.has(s.unit)}
             onKnow={() => skipUnit(s.unit)} onSkip={() => skipUnit(s.unit)}
             onPin={() => pinUnit(s.unit)} onMove={(d) => moveUnit(s.unit, d)}
+            onQuickCheck={() => setQuickUnit(s.unit)}
           />
         ))}
       </ol>
@@ -75,6 +79,14 @@ export default function PathView({ lang }: { lang: Locale }) {
 
       {drawer === "goals" && <GoalPicker lang={lang} onClose={() => setDrawer(null)} />}
       {drawer === "config" && <PathConfigDrawer lang={lang} onClose={() => setDrawer(null)} />}
+      {quickUnit && (
+        <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setQuickUnit(null)}>
+          <div class="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <DiagnosticRunner lang={lang} conceptIds={unitProbeConcepts(quickUnit)}
+              onConcept={(c, f) => applyDiagnosticResult(c, f)} onDone={() => setQuickUnit(null)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
