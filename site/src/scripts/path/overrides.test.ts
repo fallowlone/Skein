@@ -107,6 +107,15 @@ describe("applyOverridesFull", () => {
 
   it("ignores unknown-id edges (no throw, no supplement)", () => {
     const res = applyOverridesFull(CONCEPTS, UNITS, { addEdges: [{ concept: "ghost", requires: "tcp-handshake" }] }, {});
-    expect(res.units).toEqual(UNITS); // unchanged reference-equal contents
+    expect(res.units).toBe(UNITS); // fast path returns the same array reference
+  });
+
+  it("only the qualifying taught concept triggers the supplement on a multi-teaches unit", () => {
+    // networking/01-ip teaches ["ip-addressing", "ports-sockets"]; add a cross-track prereq for
+    // ip-addressing only (→ relational-model, databases). ports-sockets gets nothing.
+    const res = applyOverridesFull(CONCEPTS, UNITS, { addEdges: [{ concept: "ip-addressing", requires: "relational-model" }] }, {});
+    const u = uById(res.units).get("networking/01-ip")!;
+    expect(u.requires).toContain("relational-model");
+    expect(u.requires.filter((r) => r !== "relational-model")).toEqual([]); // only the one new edge added
   });
 });
