@@ -420,8 +420,15 @@ function main() {
   // its own committed artifact so the lightweight regenerators (build-intra-edges.mjs /
   // build-overrides.mjs) stay in sync without a full harvest. Content-pull only — the runtime's
   // deriveUnitRequires filters intra-track edges out of unit ordering.
-  const { edges: intraEdges, warnings: intraWarnings } = deriveIntraTrackEdges([...units.values()]);
+  const { edges: intraEdgesRaw, warnings: intraWarnings } = deriveIntraTrackEdges([...units.values()]);
   for (const w of intraWarnings) console.warn(w);
+  // Filter by CONCEPT primaryTrack (graph track definition); drop edges that are cross-track by
+  // concept track (shared concepts) — they belong to the curated cross-track set, not here.
+  const intraTrackOf = new Map(conceptsOut.map((c) => [c.id, c.track]));
+  const intraEdges = intraEdgesRaw.filter((e) => {
+    const tc = intraTrackOf.get(e.concept), tr = intraTrackOf.get(e.requires);
+    return tc !== undefined && tr !== undefined && tc === tr;
+  });
   writeFileSync(join(OUT, "intra-track-edges.json"), JSON.stringify(intraEdges, null, 2) + "\n");
 
   // Merge cross-track (curated) + intra-track (derived) edges into the generated concept-overrides.
