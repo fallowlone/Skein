@@ -21,6 +21,11 @@ import { pretestQuestions, advancedQuestions } from "~/scripts/pretest-questions
 import { seedFromPretest } from "./pretest-seed";
 import { pickProbe, type DiagItem } from "./calibration";
 import { targetFrontier } from "./planner";
+import committedOverrides from "~/content/path/concept-overrides.json";
+import type { Overrides } from "./graph";
+import { safeApply, mergeOverrides, loosenUnitEdges } from "./overrides";
+import { serializeStateBundle, parseStateBundle } from "./state-io";
+import { importUserState } from "~/scripts/user-state";
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────────────────
 export function unitsFromMap(map: Record<string, { teaches: string[]; requires: string[]; estMin: number }>): UnitConcepts[] {
@@ -105,6 +110,13 @@ export const content = { concepts, units, goals, goalById, conceptById, diagnose
 import { signal, effect } from "@preact/signals";
 const K_KEY = "awesome.path-knowledge.v1";
 const C_KEY = "awesome.path-config.v1";
+const O_KEY = "awesome.path-overrides.v1";
+function loadOverrides(): Overrides {
+  const base: Overrides = { addEdges: [], removeEdges: [], retag: [] };
+  if (typeof window === "undefined") return base;
+  try { const raw = localStorage.getItem(O_KEY); if (raw) return { ...base, ...JSON.parse(raw) }; } catch { /* keep base */ }
+  return base;
+}
 
 function loadKnowledge(): KnowledgeState {
   if (typeof window === "undefined") return emptyState();
@@ -136,24 +148,27 @@ function loadConfig(): StoredPathConfig {
 
 export const knowledge = signal<KnowledgeState>(loadKnowledge());
 export const config = signal<StoredPathConfig>(loadConfig());
+export const overrides = signal<Overrides>(loadOverrides());
 
 if (typeof window !== "undefined") {
   effect(() => { try { localStorage.setItem(K_KEY, JSON.stringify(serializeKnowledge(knowledge.value))); } catch {} });
   effect(() => { try { localStorage.setItem(C_KEY, JSON.stringify(config.value)); } catch {} });
+  effect(() => { try { localStorage.setItem(O_KEY, JSON.stringify(overrides.value)); } catch {} });
 }
 
 // ── recompute (the single entry point; reads signals → subscribes the caller) ──
-export function computePath(): { path: Path; schedule?: Schedule } {
+export function computePath(): { path: Path; schedule?: Schedule; droppedLocal: boolean } {
   const cfg = config.value;
   const now = Date.now();
   const goalObjs = cfg.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
+  const { concepts: eff, droppedLocal } = safeApply(concepts, committedOverrides as Overrides, overrides.value);
   const raw = buildPath({
     state: knowledge.value, goals: goalObjs, config: cfg,
-    content: { concepts, units, goalById }, srsDue: [], now, trackOrder,
+    content: { concepts: eff, units, goalById }, srsDue: [], now, trackOrder,
   });
   const path: Path = { steps: applyViewOrder(raw.steps, cfg.view.order) };
   const schedule = cfg.deadline ? schedulePlan(path, cfg.deadline, now) : undefined;
-  return { path, schedule };
+  return { path, schedule, droppedLocal };
 }
 
 // ── mutation helpers (write through signals → autosave → reactive recompute) ──
@@ -188,6 +203,47 @@ export function resetPath(): void {
   knowledge.value = emptyState();
   config.value = defaultStoredConfig();
   if (typeof window !== "undefined") { try { localStorage.removeItem(K_KEY); localStorage.removeItem(C_KEY); } catch {} }
+}
+
+export function loosenUnit(unitId: string): void {
+  overrides.value = mergeOverrides(overrides.value, { removeEdges: loosenUnitEdges(unitId, units, concepts) });
+}
+export function addOverrideEdge(concept: string, requires: string, kind: "add" | "remove"): void {
+  const patch: Overrides = kind === "add" ? { addEdges: [{ concept, requires }] } : { removeEdges: [{ concept, requires }] };
+  overrides.value = mergeOverrides(overrides.value, patch);
+}
+export function removeOverrideEntry(kind: "add" | "remove", concept: string, requires: string): void {
+  const cur = overrides.value;
+  const drop = (es: { concept: string; requires: string }[] = []) => es.filter((e) => !(e.concept === concept && e.requires === requires));
+  overrides.value = kind === "add" ? { ...cur, addEdges: drop(cur.addEdges) } : { ...cur, removeEdges: drop(cur.removeEdges) };
+}
+export function clearOverrides(): void {
+  overrides.value = { addEdges: [], removeEdges: [], retag: [] };
+}
+export function conceptExists(id: string): boolean { return conceptById.has(id); }
+
+export function exportState(now: number): void {
+  const bundle = serializeStateBundle(
+    { knowledge: knowledge.value, config: config.value, overrides: overrides.value, userState: userState.value },
+    now,
+  );
+  if (typeof window === "undefined") return;
+  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = `awesome-path-state-${now}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+export function importState(text: string): { ok: true } | { ok: false; error: string } {
+  const r = parseStateBundle(text);
+  if (!r.ok) return r;
+  const b = r.bundle;
+  if (b.pathKnowledge) knowledge.value = deserializeKnowledge(b.pathKnowledge);
+  if (b.pathConfig) { const merged = mergeConfig(b.pathConfig as any) as StoredPathConfig; merged.view = (b.pathConfig as any).view ?? { order: [] }; config.value = merged; }
+  if (b.pathOverrides) overrides.value = { addEdges: [], removeEdges: [], retag: [], ...b.pathOverrides };
+  if (b.userState) importUserState(b.userState as any);
+  return { ok: true };
 }
 
 export function activeGoals() {
