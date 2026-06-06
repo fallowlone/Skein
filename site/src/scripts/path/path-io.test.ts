@@ -8,6 +8,8 @@ import {
 } from "./path-io";
 import { emptyState, applySelfDeclare } from "./knowledge";
 import type { PathStep, Concept, Track } from "./types";
+import conceptsJson from "~/content/path/concepts.json";
+import unitConceptsJson from "~/content/path/unit-concepts.json";
 
 const step = (unit: string, track = "networking" as Track): PathStep =>
   ({ unit, track, unlocks: [], reason: "", kind: "learn", estMin: 10 });
@@ -116,5 +118,28 @@ describe("path-io overrides + state-io", () => {
     const r = importState("{ not json");
     expect(r.ok).toBe(false);
     expect(overrides.value.removeEdges).toEqual([]);
+  });
+});
+
+describe("path-io cross-track override wiring", () => {
+  // Find a real cross-track pair: a consumer concept taught by some unit, and a prereq concept
+  // from a different track also taught by some unit. (4798 concepts / 29 tracks → always exists.)
+  function crossTrackPair(): { consumer: string; prereq: string } {
+    const taught = new Set<string>();
+    const units = unitConceptsJson as Record<string, { teaches: string[] }>;
+    for (const k of Object.keys(units)) for (const t of units[k].teaches) taught.add(t);
+    const cs = (conceptsJson as { id: string; track: string }[]).filter((c) => taught.has(c.id));
+    const consumer = cs[0];
+    const prereq = cs.find((c) => c.track !== consumer.track)!;
+    return { consumer: consumer.id, prereq: prereq.id };
+  }
+
+  it("a cross-track local override edge keeps computePath valid (no throw, not dropped)", () => {
+    const { consumer, prereq } = crossTrackPair();
+    overrides.value = { addEdges: [{ concept: consumer, requires: prereq }], removeEdges: [], retag: [] };
+    const res = computePath();
+    expect(Array.isArray(res.path.steps)).toBe(true);
+    expect(res.droppedLocal).toBe(false);
+    clearOverrides();
   });
 });
