@@ -1,5 +1,5 @@
 // src/components/path/CalibrationFlow.tsx
-import { useState } from "preact/hooks";
+import { useState, useRef } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import { knowledge, nextCalibrationProbe, unitProbeConcepts, applyDiagnosticResult } from "~/scripts/path/path-io";
 import DiagnosticRunner from "./DiagnosticRunner";
@@ -17,12 +17,15 @@ export default function CalibrationFlow({ lang, unit: unitProp }: { lang: Locale
   const [phase, setPhase] = useState<"intro" | "run" | "done">("intro");
   const [probes, setProbes] = useState(0);
   const [current, setCurrent] = useState<string[]>([]);
+  // Concepts already directly probed this session. A mid-band answer (0.3–0.7) leaves a concept
+  // "ambiguous" so nextCalibrationProbe would re-pick the identical bank; stop instead of re-serving.
+  const probed = useRef(new Set<string>());
 
   const nextProbe = () => {
     if (unit) return null; // unit mode runs once over the whole set
     if (probes >= MAX_PROBES) return null;
     const p = nextCalibrationProbe();
-    return p ? [p] : null;
+    return p && !probed.current.has(p) ? [p] : null;
   };
 
   const begin = () => {
@@ -32,7 +35,7 @@ export default function CalibrationFlow({ lang, unit: unitProp }: { lang: Locale
     setCurrent([first]); setPhase("run");
   };
 
-  const onConcept = (concept: string, frac: number) => applyDiagnosticResult(concept, frac);
+  const onConcept = (concept: string, frac: number) => { applyDiagnosticResult(concept, frac); probed.current.add(concept); };
   const onDone = () => {
     const np = nextProbe();
     setProbes((n) => n + current.length);
@@ -57,7 +60,7 @@ export default function CalibrationFlow({ lang, unit: unitProp }: { lang: Locale
     return (
       <div class="max-w-xl flex flex-col gap-4">
         <h1 class="text-2xl font-bold">{t.title}</h1>
-        <DiagnosticRunner lang={lang} conceptIds={current} onConcept={onConcept} onDone={onDone} />
+        <DiagnosticRunner key={current.join(",")} lang={lang} conceptIds={current} onConcept={onConcept} onDone={onDone} />
         <a class="text-sm text-stone-500 underline" href={roadmap}>{t.skip}</a>
       </div>
     );
