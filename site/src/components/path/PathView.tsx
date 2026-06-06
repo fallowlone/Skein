@@ -13,9 +13,11 @@ import DeadlinePanel from "./DeadlinePanel";
 const L = {
   en: { title: "Your path", recompute: "Recompute", goals: "Goals & deadline", settings: "Tune", reset: "Reset",
         coldTitle: "Start here", coldBody: "We've planned a path toward becoming a senior fullstack engineer, beginning at the foundations. Mark what you already know, or set a goal to retarget.",
+        coldCta: "Calibrate (5 min)",
         masteryTitle: "Mastery by track", known: "known", empty: "Nothing to study for the current goal — try a broader goal or unskip units." },
   ru: { title: "Твой путь", recompute: "Пересчитать", goals: "Цели и дедлайн", settings: "Настроить", reset: "Сбросить",
         coldTitle: "Начни здесь", coldBody: "Мы построили путь к уровню senior fullstack, начиная с основ. Отметь, что уже знаешь, или задай цель, чтобы перенацелить.",
+        coldCta: "Калибровка (5 мин)",
         masteryTitle: "Освоение по трекам", known: "освоено", empty: "Для текущей цели учить нечего — выбери более широкую цель или верни пропущенные юниты." },
 } as const;
 
@@ -40,6 +42,7 @@ export default function PathView({ lang }: { lang: Locale }) {
         <section class="rounded-lg border border-amber-300 bg-amber-50 p-4">
           <h2 class="font-semibold text-amber-900">{t.coldTitle}</h2>
           <p class="text-sm text-amber-800 mt-1">{t.coldBody}</p>
+          <a class="mt-3 inline-block rounded bg-sky-600 px-4 py-2 text-sm text-white" href={`/${lang}/calibrate`}>{t.coldCta}</a>
         </section>
       )}
 
