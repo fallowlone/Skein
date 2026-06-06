@@ -5,6 +5,7 @@ import {
   content, computePath, config,
   nextCalibrationProbe, unitProbeConcepts,
   overrides, loosenUnit, clearOverrides, importState,
+  searchConcepts, reorderList,
 } from "./path-io";
 import { emptyState, applySelfDeclare } from "./knowledge";
 import type { PathStep, Concept, Track } from "./types";
@@ -141,5 +142,52 @@ describe("path-io cross-track override wiring", () => {
     expect(Array.isArray(res.path.steps)).toBe(true);
     expect(res.droppedLocal).toBe(false);
     clearOverrides();
+  });
+});
+
+describe("searchConcepts", () => {
+  const taught = new Set(["tcp-handshake", "indexing", "--junk"]);
+  const concepts = [
+    { id: "tcp-handshake", label: { en: "TCP handshake", ru: "TCP-рукопожатие" }, track: "networking", band: "middle", requires: [] },
+    { id: "indexing", label: { en: "Indexing", ru: "Индексы" }, track: "databases", band: "middle", requires: [] },
+    { id: "--junk", label: { en: " junk", ru: " junk" }, track: "x", band: "advanced", requires: [] },
+    { id: "untaught", label: { en: "Untaught", ru: "—" }, track: "x", band: "middle", requires: [] },
+  ] as any;
+
+  it("matches on label and respects the taught + clean-label filter", () => {
+    const r = searchConcepts(concepts, taught, "tcp", "en", 20);
+    expect(r.map((c) => c.id)).toEqual(["tcp-handshake"]);
+  });
+  it("matches on id too", () => {
+    expect(searchConcepts(concepts, taught, "indexing", "en").map((c) => c.id)).toEqual(["indexing"]);
+  });
+  it("excludes junk-id / leading-space-label and untaught concepts", () => {
+    expect(searchConcepts(concepts, taught, "junk", "en")).toEqual([]);
+    expect(searchConcepts(concepts, taught, "untaught", "en")).toEqual([]); // not taught
+  });
+  it("empty query returns []", () => {
+    expect(searchConcepts(concepts, taught, "  ", "en")).toEqual([]);
+  });
+  it("caps the result count", () => {
+    const many = Array.from({ length: 50 }, (_, i) =>
+      ({ id: `c${i}`, label: { en: `match ${i}`, ru: `m ${i}` }, track: "x", band: "middle", requires: [] }));
+    const t = new Set(many.map((c) => c.id));
+    expect(searchConcepts(many as any, t, "match", "en", 20)).toHaveLength(20);
+  });
+});
+
+describe("reorderList", () => {
+  it("moves a unit before the drop target (down)", () => {
+    expect(reorderList(["a", "b", "c", "d"], "a", "c")).toEqual(["b", "c", "a", "d"]);
+  });
+  it("moves a unit before the drop target (up)", () => {
+    expect(reorderList(["a", "b", "c", "d"], "d", "b")).toEqual(["a", "d", "b", "c"]);
+  });
+  it("no-op when from === to", () => {
+    expect(reorderList(["a", "b", "c"], "b", "b")).toEqual(["a", "b", "c"]);
+  });
+  it("returns the input unchanged when an id is missing", () => {
+    expect(reorderList(["a", "b"], "z", "a")).toEqual(["a", "b"]);
+    expect(reorderList(["a", "b"], "a", "z")).toEqual(["a", "b"]);
   });
 });
