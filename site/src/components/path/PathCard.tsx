@@ -11,9 +11,10 @@ const L = {
 type Props = {
   lang: Locale; step: PathStep; pinned: boolean; hasQuickCheck: boolean;
   onKnow: () => void; onSkip: () => void; onPin: () => void; onMove: (d: "up" | "down") => void;
+  onQuickCheck: () => void;
 };
 
-export default function PathCard({ lang, step, pinned, hasQuickCheck, onKnow, onSkip, onPin, onMove }: Props) {
+export default function PathCard({ lang, step, pinned, hasQuickCheck, onKnow, onSkip, onPin, onMove, onQuickCheck }: Props) {
   const t = L[lang];
   const title = content.unitTitleById.get(step.unit)?.[lang] ?? step.unit;
   const concepts = step.unlocks.map((id) => content.conceptById.get(id)?.label[lang] ?? id);
@@ -32,7 +33,7 @@ export default function PathCard({ lang, step, pinned, hasQuickCheck, onKnow, on
         <button class={`rounded border px-2 py-1 ${pinned ? "border-amber-500 bg-amber-50" : "border-stone-300 hover:bg-stone-100"}`} onClick={onPin}>{pinned ? t.pinned : t.pin}</button>
         <button class="rounded border border-stone-300 px-2 py-1 hover:bg-stone-100" onClick={() => onMove("up")} aria-label="up">{t.up}</button>
         <button class="rounded border border-stone-300 px-2 py-1 hover:bg-stone-100" onClick={() => onMove("down")} aria-label="down">{t.down}</button>
-        {hasQuickCheck && <span class="ml-auto rounded bg-emerald-50 px-2 py-1 text-emerald-700">✓ {t.quick}</span>}
+        {hasQuickCheck && <button class="ml-auto rounded bg-emerald-50 px-2 py-1 text-emerald-700 hover:bg-emerald-100" onClick={onQuickCheck}>✓ {t.quick}</button>}
       </div>
     </li>
   );
