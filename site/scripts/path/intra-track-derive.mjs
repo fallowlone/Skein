@@ -1,9 +1,11 @@
-// Derive intra-track concept→concept prerequisite edges from lesson `prereqs` (sibling lesson
-// slugs within a unit). Pure & deterministic — no I/O, no clock. Each lesson L's NEWLY-introduced
-// concepts require the ANCHOR concept of each resolved prereq lesson P (anchor = first concept
-// first-introduced in P; fallback P.concepts[0]). An edge c→a is emitted only when a's first
-// lesson is strictly earlier than L in the stable lesson sequence (cycle-safe). Intra-track is
-// guaranteed because prereqs resolve to siblings in the same unit (hence same track).
+// Derive intra-track concept→concept prerequisite edges from lesson `prereqs`. Pure & deterministic
+// — no I/O, no clock. A prereq is either a SIBLING lesson slug ("NN-...") in the same unit, or a
+// FULLY-QUALIFIED path ("track/unitSlug/lessonSlug") to a lesson in another unit (cross-unit,
+// author-declared skip-back deps). Each lesson L's NEWLY-introduced concepts require the ANCHOR
+// concept of each resolved prereq lesson P (anchor = first concept first-introduced in P; fallback
+// P.concepts[0]). An edge c→a is emitted only when a's first lesson is strictly earlier than L in
+// the stable lesson sequence (cycle-safe) AND P is in the SAME track as L (cross-track prereqs are
+// out of scope — handled by the curated cross-track edges).
 //
 // Input `unitList`: iterable of { id, track, order, unitSlug, lessons: [{ slug, concepts, prereqs }] }.
 // Returns { edges: [{concept, requires, via, track}] sorted, warnings: string[] }.
@@ -27,7 +29,7 @@ export function deriveIntraTrackEdges(unitList) {
   }
 
   const seqOf = (l) => l.order * 1000 + l.idx;
-  // strict ordering: seq, then unit id, then slug (deterministic across cross-track seq collisions).
+  // strict ordering: seq, then unit id, then slug (deterministic across seq collisions).
   const earlier = (a, b) => {
     const sa = seqOf(a), sb = seqOf(b);
     if (sa !== sb) return sa - sb;
@@ -49,12 +51,23 @@ export function deriveIntraTrackEdges(unitList) {
     return l.concepts[0] ?? null;
   };
 
-  // sibling lookup by slug within a unit.
+  // lookups: sibling-by-slug within a unit, and global by "unitId::slug" for path-form prereqs.
   const byUnit = new Map();
+  const byKey = new Map();
   for (const l of lessons) {
     if (!byUnit.has(l.unitId)) byUnit.set(l.unitId, new Map());
     byUnit.get(l.unitId).set(l.slug, l);
+    byKey.set(`${l.unitId}::${l.slug}`, l);
   }
+
+  // Resolve a prereq token to a lesson. "NN-slug" → sibling in L's unit; "track/unit/lesson" →
+  // that fully-qualified lesson (any unit). Other forms (e.g. a bare cross-unit slug) → null.
+  const resolvePrereq = (L, pslug) => {
+    const parts = pslug.split("/");
+    if (parts.length === 1) return byUnit.get(L.unitId)?.get(pslug) ?? null;
+    if (parts.length === 3) return byKey.get(`${parts[0]}/${parts[1]}::${parts[2]}`) ?? null;
+    return null;
+  };
 
   const edges = [];
   const seen = new Set();
@@ -63,18 +76,20 @@ export function deriveIntraTrackEdges(unitList) {
     const newCs = L.concepts.filter((c) => isNewIn(c, L));
     if (!newCs.length) continue;
     for (const pslug of L.prereqs) {
-      const P = byUnit.get(L.unitId)?.get(pslug);
-      if (!P) { warnings.push(`intra-track-derive: ${L.unitId}/${L.slug} prereq "${pslug}" not a sibling lesson; skipped`); continue; }
+      const P = resolvePrereq(L, pslug);
+      if (!P) { warnings.push(`intra-track-derive: ${L.unitId}/${L.slug} prereq "${pslug}" did not resolve (not a sibling or known path); skipped`); continue; }
+      if (P.track !== L.track) { warnings.push(`intra-track-derive: ${L.unitId}/${L.slug} prereq "${pslug}" is cross-track (${P.track}); skipped`); continue; }
       const a = anchorOf(P);
       if (!a) continue;
       const aFirst = firstLesson.get(a);
       if (!aFirst || earlier(aFirst, L) >= 0) continue; // anchor not strictly earlier → would risk a cycle
+      const via = P.unitId === L.unitId ? `${L.slug}<-${P.slug}` : `${L.slug}<-${P.unitId}/${P.slug}`;
       for (const c of newCs) {
         if (c === a) continue;
         const k = `${c}|${a}`;
         if (seen.has(k)) continue;
         seen.add(k);
-        edges.push({ concept: c, requires: a, via: `${L.slug}<-${P.slug}`, track: L.track });
+        edges.push({ concept: c, requires: a, via, track: L.track });
       }
     }
   }
