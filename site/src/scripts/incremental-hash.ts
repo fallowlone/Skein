@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 /** Split an MDX/MD file into its YAML frontmatter block and the body after it. */
 export function splitFrontmatter(raw: string): { frontmatter: string; body: string } {
-  const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  const m = raw.match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)([\s\S]*)$/);
   if (!m) return { frontmatter: "", body: raw };
   return { frontmatter: m[1], body: m[2] };
 }
@@ -63,9 +63,19 @@ export function decideBuild(
   if (forceFull || !prev || prev.globalHash !== current.globalHash) {
     return { mode: "full", changedPages: [] };
   }
+  // Defense in depth: the global hash already moves when a lesson is added or
+  // removed (its frontmatter projection changes), so the key sets should be
+  // identical here. If they ever diverge, fall back to full rather than risk a
+  // stale or missing page.
   const changedPages: string[] = [];
   for (const [key, h] of Object.entries(current.pages)) {
+    if (!(key in prev.pages)) {
+      return { mode: "full", changedPages: [] }; // new page → structural change
+    }
     if (prev.pages[key] !== h) changedPages.push(key);
+  }
+  if (Object.keys(prev.pages).length !== Object.keys(current.pages).length) {
+    return { mode: "full", changedPages: [] }; // a prev page vanished
   }
   return { mode: "incremental", changedPages };
 }
