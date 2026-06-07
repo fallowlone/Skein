@@ -36,9 +36,13 @@ if (mode === "full") {
   // Incremental: snapshot the cached dist, render only changed pages, overlay.
   await rm(PREV, { recursive: true, force: true });
   await cp(DIST, PREV, { recursive: true });
+  // Astro syncs + bundles the FULL content collection even when rendering a few
+  // pages, so it needs the same big heap the full build uses (package.json
+  // `build` and the CI incremental job both set this) — else it OOM-aborts.
   run("bunx", ["astro", "build"], {
     INCREMENTAL_PLAN: JSON.stringify(plan),
     SHARD_TOTAL: "1",
+    NODE_OPTIONS: "--max-old-space-size=10240",
   });
   run("bun", ["scripts/incremental-merge.mjs"]);
   run("bun", ["scripts/lint-dist.mjs"]); // same lint the full `build` chains
