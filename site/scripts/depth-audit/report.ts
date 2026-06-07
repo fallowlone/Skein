@@ -12,9 +12,10 @@ export interface ScoresJson {
   generatedNote: string;
   bar: number;
   scale: "absolute";
-  summary: { spineTotal: number; spinePassing: number; spineFailing: number; foundationsCount: number };
-  spine: UnitRow[];
-  foundations: UnitRow[];
+  summary: { spineTotal: number; spinePassing: number; spineFailing: number; noTeachingCount: number; foundationsCount: number };
+  spine: UnitRow[];        // scored spine units — gated against the bar
+  noTeaching: UnitRow[];   // units with no teaching lessons (e.g. start-here nav) — not gradable
+  foundations: UnitRow[];  // scored foundation units — reported, not gated
 }
 
 function toRow(s: UnitScore, bar: number): UnitRow {
@@ -29,8 +30,9 @@ function toRow(s: UnitScore, bar: number): UnitRow {
 
 export function buildReport(scores: UnitScore[], bar: number): { json: ScoresJson; markdown: string } {
   const sorted = [...scores].sort((a, b) => a.overall - b.overall); // worst first
-  const spine = sorted.filter((s) => !isFoundation(s.unitKey)).map((s) => toRow(s, bar));
-  const foundations = sorted.filter((s) => isFoundation(s.unitKey)).map((s) => toRow(s, bar));
+  const spine = sorted.filter((s) => !isFoundation(s.unitKey) && s.scored).map((s) => toRow(s, bar));
+  const noTeaching = sorted.filter((s) => !s.scored).map((s) => toRow(s, bar));
+  const foundations = sorted.filter((s) => isFoundation(s.unitKey) && s.scored).map((s) => toRow(s, bar));
   const spineFailing = spine.filter((u) => !u.passes).length;
 
   const json: ScoresJson = {
@@ -38,9 +40,9 @@ export function buildReport(scores: UnitScore[], bar: number): { json: ScoresJso
     bar, scale: "absolute",
     summary: {
       spineTotal: spine.length, spinePassing: spine.length - spineFailing,
-      spineFailing, foundationsCount: foundations.length,
+      spineFailing, noTeachingCount: noTeaching.length, foundationsCount: foundations.length,
     },
-    spine, foundations,
+    spine, noTeaching, foundations,
   };
 
   const row = (u: UnitRow) =>
@@ -53,10 +55,14 @@ export function buildReport(scores: UnitScore[], bar: number): { json: ScoresJso
   const markdown = [
     `# Depth audit — report`,
     ``,
-    `Absolute bar = **${bar}** (teaching-lesson weighted mean). Spine: ${spineFailing}/${spine.length} units below bar. Foundations (${foundations.length}) reported separately, not gated.`,
+    `Absolute bar = **${bar}** (teaching-lesson weighted mean). Spine: ${spineFailing}/${spine.length} units below bar. ` +
+      `${noTeaching.length} units have no teaching lessons (not gradable); foundations (${foundations.length}) reported separately, not gated.`,
     ``,
     `## Spine (gated)`,
     table(spine),
+    ``,
+    `## No teaching content (not gradable — navigation/aux-only units)`,
+    table(noTeaching),
     ``,
     `## Foundations (not gated — beginner tracks)`,
     table(foundations),
