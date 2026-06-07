@@ -8,11 +8,14 @@ export function validateUnitGrade(x: unknown): Valid {
   if (typeof x !== "object" || x === null) return { ok: false, error: "not an object" };
   const o = x as Record<string, unknown>;
   if (typeof o.unitKey !== "string") return { ok: false, error: "unitKey" };
+  if (typeof o.graderModel !== "string") return { ok: false, error: "graderModel" };
   if (!Array.isArray(o.grades)) return { ok: false, error: "grades not array" };
+  if (o.grades.length === 0) return { ok: false, error: "grades is empty" };
   for (const g of o.grades) {
     if (typeof g !== "object" || g === null) return { ok: false, error: "grade not object" };
     const gg = g as Record<string, unknown>;
     if (typeof gg.lessonKey !== "string") return { ok: false, error: "lessonKey" };
+    if (typeof gg.justification !== "string") return { ok: false, error: "justification" };
     if (typeof gg.scores !== "object" || gg.scores === null) return { ok: false, error: "scores" };
     const s = gg.scores as Record<string, unknown>;
     for (const d of DIMENSIONS) {

@@ -17,4 +17,12 @@ describe("runAudit", () => {
     expect(thin.passes).toBe(false);
     expect(deep.passes).toBe(true);
   });
+  it("throws when a grade entry is invalid", () => {
+    expect(() => runAudit({
+      grades: [{ unitKey: "x", graderModel: "m", grades: [
+        { lessonKey: "x/1", scores: { mechanism: 9, tradeoff: 1, failureMode: 1, realNumbers: 1, seniorDepth: 1, practiceCoverage: 1 }, justification: "j" },
+      ]}],
+      labels: [{ unitKey: "x", label: "good" }],
+    })).toThrow();
+  });
 });

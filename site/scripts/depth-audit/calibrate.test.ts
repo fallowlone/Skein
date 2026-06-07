@@ -22,4 +22,10 @@ describe("calibrateBar", () => {
     expect(r.f1).toBeLessThan(1);
     expect(r.misclassified.length).toBeGreaterThan(0);
   });
+  it("throws when the labeled set lacks one class", () => {
+    expect(() => calibrateBar([
+      { unitKey: "a", label: "thin", overall: 1.0 },
+      { unitKey: "b", label: "thin", overall: 2.0 },
+    ])).toThrow(/both/);
+  });
 });
