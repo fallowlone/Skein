@@ -40,28 +40,42 @@ because `ConnectedLessons` and next-lesson resolution render other lessons' titl
 
 So define:
 - **GLOBAL_HASH** = hash of everything that can affect more than one page: all
-  `src/**` except lesson MDX + practice JSON (i.e. components, layouts, scripts, css, i18n),
-  `astro.config.mjs`, `tracks.json`, `units.json`, and the **nav-frontmatter of every lesson**.
-- **perLesson[key]** = hash of that lesson's MDX **body** + its practice JSON + its
-  **non-nav** frontmatter (summary/sources/estMin/etc. — fields rendered only on its own page).
+  `src/**` except lesson MDX **body** + practice JSON (i.e. components, layouts, scripts, css,
+  i18n, `tracks.json`, `units.json`, `content/path/**`, etc.), `astro.config.mjs`, **and the
+  full frontmatter of every lesson**.
+- **perLesson[pageKey]** = hash of that lesson's MDX **body** + its practice JSON — the only
+  inputs rendered solely on that lesson's own page. `pageKey = <lang>/<track>/<unit>/<slug>`
+  (per-language, since en/ru bodies are separate files; a shared practice edit marks both).
+
+> **Refinement (2026-06-07, supersedes the earlier nav/non-nav split):** the original design
+> split frontmatter into "nav" (global) and "non-nav" (per-lesson, e.g. `summary/sources/estMin`).
+> Grounding against the code disproved the split: `estMin` is rendered cross-lesson on the track
+> index (`learn/[track]/index.astro` shows every sibling lesson's `estMin`), so treating it as
+> per-lesson would ship a stale track index. Per-field classification is error-prone (one missed
+> cross-lesson read = a stale page). Instead, **all frontmatter is global**; only the MDX body +
+> practice are per-lesson. This is provably safe with zero per-field auditing. Cost: a frontmatter
+> edit (rare — and never what the practice campaign touches) triggers a full rebuild. Verified no
+> build-time aggregate (pagefind/sitemap/search index/JSON endpoint) embeds lesson bodies, so a
+> body/practice change provably affects only its own page.
 
 Decision:
 - No cached dist/manifest, or **GLOBAL_HASH changed**, or forced/periodic → **FULL build**.
-- Else → **INCREMENTAL**: render only lessons whose `perLesson` hash changed.
+- Else → **INCREMENTAL**: render only pages whose `perLesson` hash changed.
 
 When GLOBAL_HASH is unchanged, the only possible changes are isolated lesson bodies/practice,
 which affect only their own page — so reusing every other page from cache is provably correct.
-(Adding a lesson or editing a title changes nav-frontmatter → GLOBAL_HASH → full rebuild.)
+(Adding a lesson or editing any frontmatter field changes GLOBAL_HASH → full rebuild.)
 
 ## 4. Components
 
 ### 4.1 `site/src/scripts/build-incremental.ts` (new, TDD)
-- `globalHash(inputs)` + `lessonHash(entry)` — pure hashing over the categorized inputs.
-- `decideBuild(prevManifest, current)` → `{ mode: "full" | "incremental", changedLessons: string[] }`.
+- `globalHash(parts)` + `pageHash(bodyRaw, practiceRaw)` — pure hashing (in `incremental-hash.ts`).
+- `decideBuild(prevManifest, current, forceFull)` → `{ mode: "full" | "incremental", changedPages: string[] }`.
 - `selectLessons(paths)` / `selectOther(paths)` — getStaticPaths gates read the mode +
-  changed-set from an env var (a temp file path, like the shard env): in `incremental` mode
-  `selectLessons` keeps only changed keys and `selectOther` returns `[]`; in `full` mode both
-  return everything. Mirrors `build-shard.ts`.
+  changed-set from the `INCREMENTAL_PLAN` env var (the plan JSON, like the shard env): in
+  `incremental` mode `selectLessons` keeps only changed `pageKey`s and `selectOther` returns
+  `[]`; in `full` mode both return everything. Mirrors `build-shard.ts` (the lesson route
+  composes `shardPaths(selectLessons(paths))`).
 
 ### 4.2 Pre-build decision script `site/scripts/incremental-plan.mjs`
 Reads the restored `build-cache/manifest.json` (if any), walks `src/` to compute current
@@ -88,7 +102,8 @@ then write the new `build-cache/manifest.json`.
   schedule force `FORCE_FULL_BUILD=1` (self-heal).
 
 ### 4.6 Manifest `build-cache/manifest.json` (gitignored; CI-cached)
-`{ globalHash: string, lessons: Record<lessonKey, string>, builtAt, pageCount }`.
+`{ globalHash: string, pages: Record<pageKey, string>, builtAt, pageCount }` where
+`pageKey = <lang>/<track>/<unit>/<slug>`.
 
 ## 5. Risks & mitigations
 - **Cache drift / a stale page slips through** → the GLOBAL_HASH gate makes incremental safe by
