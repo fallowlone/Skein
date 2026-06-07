@@ -10,9 +10,13 @@ lesson in that unit on a 6-dimension senior-depth rubric — then run the determ
 audit to emit `docs/audit/depth-scores.json` + `docs/audit/depth-report.md`. Return all
 three files.
 
-## Setup (no npm install needed — the scripts are stdlib-only, run under `bun`)
-1. Clone/checkout the repo, branch **`feat/senior-plus-campaign`**.
-2. `cd site && bun scripts/depth-audit/worklist.ts`
+## Setup (no `bun install` needed — the scripts are stdlib-only, run under `bun`)
+1. Clone the **private** GitHub repo `fallowlone/awesome-everything` (use the connected
+   GitHub access), checkout branch **`feat/senior-plus-campaign`**. All commands below run
+   from the `site/` directory.
+2. Prereq: this repo uses `bun`. If `bun` is not available:
+   `curl -fsSL https://bun.sh/install | bash`
+3. `cd site && bun scripts/depth-audit/worklist.ts`
    → writes `site/scripts/depth-audit/worklist.json` (≈276 units, 1686 lessons) with
    absolute paths valid in YOUR checkout. MUST print `1686 lessons`. This is your work list.
 
