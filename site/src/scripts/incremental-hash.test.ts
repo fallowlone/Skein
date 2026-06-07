@@ -14,6 +14,13 @@ describe("splitFrontmatter", () => {
     expect(frontmatter).toBe("");
     expect(body).toBe("no frontmatter here");
   });
+
+  it("does not truncate a body that contains a standalone --- line", () => {
+    const raw = "---\ntitle: T\nslug: 01-x\n---\nbefore\n---\nafter";
+    const { frontmatter, body } = splitFrontmatter(raw);
+    expect(frontmatter).toBe("title: T\nslug: 01-x");
+    expect(body).toBe("before\n---\nafter");
+  });
 });
 
 describe("frontmatterField", () => {
@@ -86,5 +93,13 @@ describe("decideBuild", () => {
     const d = decideBuild(prev, { globalHash: "G1", pages: prev.pages });
     expect(d.mode).toBe("incremental");
     expect(d.changedPages).toEqual([]);
+  });
+  it("is FULL when a page key was added (present in current, absent in prev)", () => {
+    const d = decideBuild(prev, { globalHash: "G1", pages: { ...prev.pages, "en/n/01/c": "h3" } });
+    expect(d.mode).toBe("full");
+  });
+  it("is FULL when a page key was removed (present in prev, absent in current)", () => {
+    const d = decideBuild(prev, { globalHash: "G1", pages: { "en/n/01/a": "h1" } });
+    expect(d.mode).toBe("full");
   });
 });
