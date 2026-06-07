@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { splitFrontmatter, frontmatterField, hashParts, pageHash, pageKeyOf } from "./incremental-hash";
+import { splitFrontmatter, frontmatterField, hashParts, pageHash, pageKeyOf, decideBuild, type Manifest } from "./incremental-hash";
 
 describe("splitFrontmatter", () => {
   it("separates the YAML frontmatter block from the body", () => {
@@ -57,5 +57,34 @@ describe("pageKeyOf", () => {
   it("builds <lang>/<track>/<unit>/<slug>", () => {
     expect(pageKeyOf({ lang: "en", track: "networking", unit: "03-tcp", slug: "01-intro" }))
       .toBe("en/networking/03-tcp/01-intro");
+  });
+});
+
+const prev: Manifest = {
+  globalHash: "G1",
+  pages: { "en/n/01/a": "h1", "ru/n/01/a": "h2" },
+};
+
+describe("decideBuild", () => {
+  it("is FULL when there is no previous manifest", () => {
+    expect(decideBuild(null, { globalHash: "G1", pages: {} }).mode).toBe("full");
+  });
+  it("is FULL when the global hash changed", () => {
+    const d = decideBuild(prev, { globalHash: "G2", pages: prev.pages });
+    expect(d.mode).toBe("full");
+    expect(d.changedPages).toEqual([]);
+  });
+  it("is FULL when forceFull is set, even if nothing else changed", () => {
+    expect(decideBuild(prev, { globalHash: "G1", pages: prev.pages }, true).mode).toBe("full");
+  });
+  it("is INCREMENTAL listing only the pages whose hash changed", () => {
+    const d = decideBuild(prev, { globalHash: "G1", pages: { "en/n/01/a": "h1-NEW", "ru/n/01/a": "h2" } });
+    expect(d.mode).toBe("incremental");
+    expect(d.changedPages).toEqual(["en/n/01/a"]);
+  });
+  it("is INCREMENTAL with an empty change set when global is unchanged and no body/practice moved", () => {
+    const d = decideBuild(prev, { globalHash: "G1", pages: prev.pages });
+    expect(d.mode).toBe("incremental");
+    expect(d.changedPages).toEqual([]);
   });
 });
