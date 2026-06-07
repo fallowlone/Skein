@@ -4,7 +4,7 @@
 // Precondition: build-cache/prev-dist/ holds the previous full dist; dist/ holds
 // ONLY the freshly-rendered changed lesson pages (+ their identical assets).
 import { execFileSync } from "node:child_process";
-import { stat, rename, rm } from "node:fs/promises";
+import { stat, rename, rm, cp } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -20,11 +20,14 @@ if (!(await exists(PREV))) {
   process.exit(1);
 }
 
-// `cp -an`: copy the cached tree into dist WITHOUT clobbering. Freshly-built
-// changed pages already in dist win; every unchanged page + asset is filled from
-// the cache. Identical hashed assets collide to the same bytes. Works on BSD
-// (macOS) and GNU (Linux) cp alike.
-execFileSync("cp", ["-an", `${PREV}/.`, `${DIST}/`], { stdio: "inherit" });
+// Overlay the cached tree UNDER the freshly-built pages: copy prev-dist into
+// dist WITHOUT clobbering. Freshly-built changed pages already in dist win;
+// every unchanged page + asset is filled from the cache (identical hashed assets
+// collide to the same bytes). `force: false` keeps existing files and—with the
+// default `errorOnExist: false`—skips them silently. We use node's fs.cp instead
+// of `cp -n` because BSD cp (macOS) returns a non-zero exit when it skips an
+// existing file, which would falsely fail the merge.
+await cp(PREV, DIST, { recursive: true, force: false });
 
 // Completeness guard: the merged dist MUST contain every lesson page.
 execFileSync("bun", ["scripts/check-dist-complete.mjs"], { cwd: siteRoot, stdio: "inherit" });
