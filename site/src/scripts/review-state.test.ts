@@ -42,10 +42,13 @@ describe("review-state store", () => {
   });
 
   it("dueBefore sorts soonest-due first", () => {
-    addCard({ ...card, cardKey: "a", lessonKey: "a" });
-    addCard({ ...card, cardKey: "b", lessonKey: "b" });
+    // Seed both cards on the SAME fixed clock as the review/query below — otherwise
+    // addCard defaults to the real Date.now() while recordReview uses 2026-06-05, making
+    // the dueAt comparison depend on the wall clock (the flaky CI failure this fixes).
     const now = Date.parse("2026-06-05T00:00:00Z");
-    recordReview("a", "easy", now); // a pushed far out
+    addCard({ ...card, cardKey: "a", lessonKey: "a" }, now);
+    addCard({ ...card, cardKey: "b", lessonKey: "b" }, now);
+    recordReview("a", "easy", now); // a pushed far out from `now`; b stays fresh/due-now
     const due = dueBefore(now + 999 * DAY);
     expect(due[0].cardKey).toBe("b"); // b still due now → first
   });
