@@ -24,6 +24,8 @@ function f1At(rows: LabeledScore[], bar: number) {
 
 export function calibrateBar(rows: LabeledScore[]): Calibration {
   if (rows.length === 0) throw new Error("calibrateBar: empty labeled set");
+  if (!rows.some((r) => r.label === "good") || !rows.some((r) => r.label === "thin"))
+    throw new Error("calibrateBar: labeled set must contain both 'good' and 'thin' examples");
   const lo = Math.min(...rows.map((r) => r.overall));
   const hi = Math.max(...rows.map((r) => r.overall));
   let best = { bar: (lo + hi) / 2, f1: -1, precision: 0, recall: 0 };

@@ -27,4 +27,15 @@ describe("validateUnitGrade", () => {
     expect(validateUnitGrade(null).ok).toBe(false);
     expect(validateUnitGrade({ grades: "nope" }).ok).toBe(false);
   });
+  it("rejects an empty grades array", () => {
+    expect(validateUnitGrade({ ...good, grades: [] }).ok).toBe(false);
+  });
+  it("rejects a missing graderModel", () => {
+    const bad = structuredClone(good); delete (bad as any).graderModel;
+    expect(validateUnitGrade(bad).ok).toBe(false);
+  });
+  it("rejects a missing justification", () => {
+    const bad = structuredClone(good); delete (bad.grades[0] as any).justification;
+    expect(validateUnitGrade(bad).ok).toBe(false);
+  });
 });
