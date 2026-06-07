@@ -18,40 +18,115 @@ concurrency:
 permissions:
   contents: read
 
-jobs:
-  build-deploy:
-    runs-on: ubuntu-latest
-    # Single-threaded render is ~23 min for ~4850 pages and growing; the
-    # curriculum lint hook (astro:build:done) adds a couple more. 30 min was
-    # too tight (job was SIGKILL'd mid-lint). Durable fix = shard the render.
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+env:
+  # Number of parallel render shards. MUST equal the length of the build-shard
+  # matrix below. The single-threaded render was ~23 min for ~4850 pages; the
+  # ~3.4k lesson pages (the dominant cost) are split N-ways here so each shard
+  # renders ~1/N of them in parallel. See site/src/scripts/build-shard.ts.
+  SHARD_TOTAL: "6"
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+jobs:
+  # Cheap fail-fast gates — run once, in seconds, before spinning up 6 builders.
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.11
-
-      - name: Install root deps (provides wrangler)
+      - name: Install root deps
         run: bun install --frozen-lockfile
-
       - name: Install site deps
         run: bun install --frozen-lockfile
         working-directory: site
-
-      # Cheap gates first — fail in seconds, not after the ~10-min render.
       - name: Unit tests
         run: bun run test
         working-directory: site
-
       - name: Execute runnable code samples
         run: bun run verify:samples
         working-directory: site
 
-      - name: Build site (astro build + lint)
-        run: bun run build
+  # Render one shard of the site. Each job sets SHARD_INDEX; the lesson route's
+  # getStaticPaths keeps only its slice. Runs `astro build` WITHOUT the lint —
+  # lint needs the full merged dist and runs once in merge-deploy.
+  build-shard:
+    needs: gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        # Keep this list's length in sync with env.SHARD_TOTAL above.
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      - name: Install site deps
+        run: bun install --frozen-lockfile
+        working-directory: site
+      - name: Build shard ${{ matrix.shard }}/${{ env.SHARD_TOTAL }}
+        working-directory: site
+        env:
+          SHARD_TOTAL: ${{ env.SHARD_TOTAL }}
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: NODE_OPTIONS=--max-old-space-size=10240 bunx astro build
+      - name: Upload shard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.shard }}
+          path: site/dist
+          retention-days: 1
+          if-no-files-found: error
+
+  # Merge every shard's dist, verify completeness, lint the full site, deploy.
+  merge-deploy:
+    needs: build-shard
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      - name: Install root deps (provides wrangler)
+        run: bun install --frozen-lockfile
+      - name: Install site deps (for lint + guard)
+        run: bun install --frozen-lockfile
+        working-directory: site
+
+      - name: Download shard artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: shards
+
+      # Union the slices into site/dist. Lesson pages are disjoint across shards;
+      # shared non-lesson pages and hashed _astro assets are identical, so a
+      # later copy simply overwrites with the same bytes.
+      - name: Merge shards
+        run: |
+          mkdir -p site/dist
+          shopt -s nullglob
+          count=0
+          for d in shards/dist-*; do
+            cp -a "$d/." site/dist/
+            count=$((count + 1))
+          done
+          echo "Merged $count shard(s)."
+          if [ "$count" -ne "$SHARD_TOTAL" ]; then
+            echo "Expected $SHARD_TOTAL shards, merged $count" >&2
+            exit 1
+          fi
+
+      - name: Verify dist completeness
+        run: bun scripts/check-dist-complete.mjs
+        working-directory: site
+
+      - name: Lint merged dist
+        run: bun scripts/lint-dist.mjs
         working-directory: site
 
       # Read the dispatch input via env (never interpolate untrusted input into a
