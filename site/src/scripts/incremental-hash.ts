@@ -33,3 +33,39 @@ export function pageHash(bodyRaw: string, practiceRaw: string): string {
 export function pageKeyOf(p: { lang: string; track: string; unit: string; slug: string }): string {
   return `${p.lang}/${p.track}/${p.unit}/${p.slug}`;
 }
+
+export interface Manifest {
+  globalHash: string;
+  pages: Record<string, string>;
+  pageCount?: number;
+  builtAt?: string;
+}
+
+export interface BuildDecision {
+  mode: "full" | "incremental";
+  changedPages: string[];
+}
+
+/**
+ * Decide full vs incremental. FULL whenever anything shared could affect other
+ * pages (no cache, global hash changed, or forced). Otherwise INCREMENTAL with
+ * the exact set of pages whose body/practice hash moved.
+ *
+ * Note: a lesson added or removed changes the frontmatter projection inside the
+ * global hash, so such structural changes always land in the FULL branch — the
+ * incremental branch only ever sees the same key set with some hashes changed.
+ */
+export function decideBuild(
+  prev: Manifest | null,
+  current: { globalHash: string; pages: Record<string, string> },
+  forceFull = false,
+): BuildDecision {
+  if (forceFull || !prev || prev.globalHash !== current.globalHash) {
+    return { mode: "full", changedPages: [] };
+  }
+  const changedPages: string[] = [];
+  for (const [key, h] of Object.entries(current.pages)) {
+    if (prev.pages[key] !== h) changedPages.push(key);
+  }
+  return { mode: "incremental", changedPages };
+}
