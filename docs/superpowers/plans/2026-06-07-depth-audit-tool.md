@@ -16,8 +16,15 @@
 
 ## File structure
 
+> **PATH CORRECTION (confirmed during Task 1):** all tool files live under
+> `site/scripts/depth-audit/` — the repo's canonical scripts dir. `site/`'s vitest
+> config only picks up `site/scripts/**`. Test commands run **from `site/`** as
+> `bunx vitest run scripts/depth-audit/<x>.test.ts` (no `../`). Relative-path code is
+> resolved from `site/scripts/depth-audit/`: `site/src` = `../../src`,
+> repo `docs/audit` = `../../../docs/audit`.
+
 ```
-scripts/depth-audit/
+site/scripts/depth-audit/
   types.ts            Shared types + rubric dimensions (no logic)
   rubric.ts           Weights, overall score, JSON grade schema, prompt builder
   lessons.ts          Enumerate EN lessons grouped by unit (fs, regex frontmatter)
@@ -387,7 +394,7 @@ import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { enumerateUnits } from "./lessons";
 
-const siteSrc = fileURLToPath(new URL("../../site/src", import.meta.url));
+const siteSrc = fileURLToPath(new URL("../../src", import.meta.url));
 const out = fileURLToPath(new URL("./worklist.json", import.meta.url));
 
 const units = await enumerateUnits(siteSrc);
@@ -978,17 +985,15 @@ if (import.meta.main) {
   const grades = JSON.parse(await (await import("node:fs/promises")).readFile(here("./grades.json"), "utf8"));
   const cal = JSON.parse(await (await import("node:fs/promises")).readFile(here("./calibration-set.json"), "utf8"));
   const { json, markdown } = runAudit({ grades, labels: cal.labels });
-  const out = here("../../site/../docs/audit"); // -> repo docs/audit
-  const outDir = here("../../docs/audit");
+  const outDir = here("../../../docs/audit"); // site/scripts/depth-audit -> repo docs/audit
   await mkdir(outDir, { recursive: true });
   await writeFile(`${outDir}/depth-scores.json`, JSON.stringify(json, null, 2));
   await writeFile(`${outDir}/depth-report.md`, markdown);
   console.log(`audit: bar=${json.bar} f1=${json.calibrationF1} failing=${json.summary.failing}/${json.summary.total} -> docs/audit/`);
-  void out;
 }
 ```
 
-> Path note: `scripts/depth-audit/audit.ts` → `new URL("../../docs/audit", import.meta.url)` resolves to repo-root `docs/audit`. Verify the printed path in Step 6 and fix the relative segment if your layout differs. Remove the unused `out`/`void out` line once confirmed.
+> Path note: from `site/scripts/depth-audit/audit.ts`, `new URL("../../../docs/audit", import.meta.url)` resolves to repo-root `docs/audit` (verified during Task 1). Confirm the printed path in Step 6.
 
 - [ ] **Step 5: Run, expect pass**
 
