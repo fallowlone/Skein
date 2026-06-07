@@ -1,31 +1,43 @@
+// scripts/depth-audit/aggregate.ts
 import { DIMENSIONS, type DimScores, type UnitGradeResult } from "./types";
 import { weightedOverall } from "./rubric";
-
-export const FLOOR = 2;
+import { classifyLesson } from "./classify";
 
 export interface UnitScore {
   unitKey: string;
-  lessonCount: number;
-  dimMean: DimScores;
-  overall: number;            // weighted, 0..5
-  minSeniorDepth: number;
-  minFailureMode: number;
-  worstLesson: string;        // lessonKey with the lowest weighted overall
+  scored: boolean;             // false when the unit has no teaching lessons
+  teachingCount: number;
+  auxiliaryCount: number;
+  dimMean: DimScores;          // mean over teaching lessons (all-zero when scored:false)
+  overall: number;             // teaching-only weighted mean, 0..5 (0 when scored:false)
+  worstTeachingLesson: string | null;
   passes: (bar: number) => boolean;
 }
 
 export function aggregateUnit(u: UnitGradeResult): UnitScore {
-  const n = u.grades.length;
+  const teaching = u.grades.filter((g) => classifyLesson(g.lessonKey) === "teaching");
+  const auxiliaryCount = u.grades.length - teaching.length;
+
+  if (teaching.length === 0) {
+    const zero = Object.fromEntries(DIMENSIONS.map((d) => [d, 0])) as DimScores;
+    return {
+      unitKey: u.unitKey, scored: false, teachingCount: 0, auxiliaryCount,
+      dimMean: zero, overall: 0, worstTeachingLesson: null, passes: () => false,
+    };
+  }
+
+  const n = teaching.length;
   const dimMean = Object.fromEntries(
-    DIMENSIONS.map((d) => [d, u.grades.reduce((s, g) => s + g.scores[d], 0) / n]),
+    DIMENSIONS.map((d) => [d, teaching.reduce((s, g) => s + g.scores[d], 0) / n]),
   ) as DimScores;
   const overall = weightedOverall(dimMean);
-  const minSeniorDepth = Math.min(...u.grades.map((g) => g.scores.seniorDepth));
-  const minFailureMode = Math.min(...u.grades.map((g) => g.scores.failureMode));
-  const worstLesson = [...u.grades].sort((a, b) => weightedOverall(a.scores) - weightedOverall(b.scores))[0].lessonKey;
+  const worstTeachingLesson = [...teaching]
+    .sort((a, b) => weightedOverall(a.scores) - weightedOverall(b.scores))[0].lessonKey;
+
   return {
-    unitKey: u.unitKey, lessonCount: n, dimMean, overall, minSeniorDepth, minFailureMode, worstLesson,
-    passes: (bar: number) => overall >= bar && minSeniorDepth >= FLOOR && minFailureMode >= FLOOR,
+    unitKey: u.unitKey, scored: true, teachingCount: n, auxiliaryCount,
+    dimMean, overall, worstTeachingLesson,
+    passes: (bar: number) => overall >= bar,
   };
 }
 
