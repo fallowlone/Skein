@@ -1,32 +1,49 @@
+// scripts/depth-audit/aggregate.test.ts
 import { describe, it, expect } from "vitest";
-import { aggregateUnit, FLOOR } from "./aggregate";
+import { aggregateUnit } from "./aggregate";
 import type { UnitGradeResult } from "./types";
 
-const mk = (over: number): UnitGradeResult["grades"][number]["scores"] =>
-  ({ mechanism: over, tradeoff: over, failureMode: over, realNumbers: over, seniorDepth: over, practiceCoverage: over });
+const mk = (o: number) => ({ mechanism: o, tradeoff: o, failureMode: o, realNumbers: o, seniorDepth: o, practiceCoverage: o });
+const lesson = (key: string, o: number) => ({ lessonKey: key, scores: mk(o), justification: "" });
 
-const unit = (a: number, b: number): UnitGradeResult => ({
-  unitKey: "t/u", graderModel: "m",
-  grades: [
-    { lessonKey: "t/u/01", scores: mk(a), justification: "" },
-    { lessonKey: "t/u/02", scores: mk(b), justification: "" },
-  ],
-});
-
-describe("aggregateUnit", () => {
-  it("averages dimensions across lessons", () => {
-    const r = aggregateUnit(unit(4, 2));
-    expect(r.dimMean.seniorDepth).toBe(3);
+describe("aggregateUnit (teaching-only)", () => {
+  it("averages teaching lessons and ignores auxiliary entries", () => {
+    const u: UnitGradeResult = {
+      unitKey: "t/u", graderModel: "m",
+      grades: [
+        lesson("t/u/01-real", 4),
+        lesson("t/u/02-real", 2),
+        lesson("t/u/project", 0),     // auxiliary — excluded
+        lesson("t/u/quiz-choice", 0), // auxiliary — excluded
+      ],
+    };
+    const r = aggregateUnit(u);
+    expect(r.teachingCount).toBe(2);
+    expect(r.auxiliaryCount).toBe(2);
+    expect(r.dimMean.seniorDepth).toBe(3); // (4+2)/2, auxiliary 0s ignored
     expect(r.overall).toBeCloseTo(3, 5);
+    expect(r.scored).toBe(true);
   });
-  it("fails when a single lesson is below the floor even if the mean clears the bar", () => {
-    const r = aggregateUnit(unit(5, 1)); // mean 3, but lesson 2 seniorDepth=1 < FLOOR
-    expect(r.minSeniorDepth).toBe(1);
-    expect(r.passes(2.5)).toBe(false);
+
+  it("passes iff teaching overall >= bar (no per-lesson floor)", () => {
+    const u: UnitGradeResult = {
+      unitKey: "t/u", graderModel: "m",
+      grades: [lesson("t/u/01-junior-intro", 2), lesson("t/u/06-senior", 5)], // mean 3.5
+    };
+    const r = aggregateUnit(u);
+    expect(r.overall).toBeCloseTo(3.5, 5);
+    expect(r.passes(3.5)).toBe(true);   // a low junior-tier lesson does NOT fail the unit
+    expect(r.passes(3.6)).toBe(false);
   });
-  it("passes when overall clears the bar and no lesson is below the floor", () => {
-    const r = aggregateUnit(unit(3, 4));
-    expect(r.passes(3)).toBe(true);
+
+  it("marks a unit with no teaching lessons as scored:false and not passing", () => {
+    const u: UnitGradeResult = {
+      unitKey: "t/u", graderModel: "m",
+      grades: [lesson("t/u/project", 3), lesson("t/u/quiz-short", 4)],
+    };
+    const r = aggregateUnit(u);
+    expect(r.scored).toBe(false);
+    expect(r.teachingCount).toBe(0);
+    expect(r.passes(0)).toBe(false);
   });
-  it("FLOOR is 2", () => expect(FLOOR).toBe(2));
 });
