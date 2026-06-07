@@ -1,114 +1,151 @@
 // src/components/path/PathView.tsx
+// The single Planning-screen island. Plain Preact composition — NO client:* here;
+// roadmap.astro mounts this once. Sections (re-skin of docs/redesign/v2 Planning.html):
+//   XP/level strip · cold-start banner · droppedLocal warning
+//   01 · GOAL  · 02 · INSTRUMENT (concept-mastery map) · 03 · PATH (next units)
+//   04 · INSTRUMENT (deadline) · Advanced knobs.
+// Owns the three reused modals: GoalPicker, PathConfigDrawer, DiagnosticRunner.
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
-  knowledge, config, content, computePath, masteryByTrack,
-  skipUnit, pinUnit, moveUnit, isPinned, resetPath,
-  unitProbeConcepts, applyDiagnosticResult, loosenUnit, reorderPath,
+  knowledge, config, content, computePath,
+  unitProbeConcepts, applyDiagnosticResult,
 } from "~/scripts/path/path-io";
-import PathCard from "./PathCard";
-import GoalPicker from "./GoalPicker";
-import PathConfigDrawer from "./PathConfigDrawer";
-import DeadlinePanel from "./DeadlinePanel";
-import DiagnosticRunner from "./DiagnosticRunner";
 import { currentXp } from "~/scripts/progression/current";
 import { levelFromXp } from "~/scripts/progression/xp";
 import { completedStepCount, PATH_STEP_BONUS } from "~/scripts/progression/path-xp";
+import GoalSection from "./planning/GoalSection";
+import ConceptMasteryMap from "./planning/ConceptMasteryMap";
+import NextPath from "./planning/NextPath";
+import DeadlineSection from "./planning/DeadlineSection";
+import AdvancedKnobs from "./planning/AdvancedKnobs";
+import GoalPicker from "./GoalPicker";
+import PathConfigDrawer from "./PathConfigDrawer";
+import DiagnosticRunner from "./DiagnosticRunner";
 
 const L = {
-  en: { title: "Your path", recompute: "Recompute", goals: "Goals & deadline", settings: "Tune", reset: "Reset",
-        coldTitle: "Start here", coldBody: "We've planned a path toward becoming a senior fullstack engineer, beginning at the foundations. Mark what you already know, or set a goal to retarget.",
-        coldCta: "Calibrate (5 min)",
-        masteryTitle: "Mastery by track", known: "known", empty: "Nothing to study for the current goal — try a broader goal or unskip units.",
-        droppedNote: "Some local prerequisite edits created a cycle and were ignored.",
-        level: "Level", steps: "Steps completed", xp: "XP" },
-  ru: { title: "Твой путь", recompute: "Пересчитать", goals: "Цели и дедлайн", settings: "Настроить", reset: "Сбросить",
-        coldTitle: "Начни здесь", coldBody: "Мы построили путь к уровню senior fullstack, начиная с основ. Отметь, что уже знаешь, или задай цель, чтобы перенацелить.",
-        coldCta: "Калибровка (5 мин)",
-        masteryTitle: "Освоение по трекам", known: "освоено", empty: "Для текущей цели учить нечего — выбери более широкую цель или верни пропущенные юниты.",
-        droppedNote: "Некоторые локальные правки пререквизитов создали цикл и были проигнорированы.",
-        level: "Уровень", steps: "Шагов пройдено", xp: "XP" },
+  en: {
+    level: "Level", xp: "XP", steps: "Steps completed",
+    coldTitle: "Start here",
+    coldBody: "We've planned a path toward becoming a senior fullstack engineer, beginning at the foundations. Mark what you already know, or set a goal to retarget.",
+    coldCta: "Calibrate (5 min)",
+    droppedNote: "Some local prerequisite edits created a cycle and were ignored.",
+    goalHead: "What are you aiming at?", goalNote: "Active goals shape the plan below",
+    mapHead: "Concept-mastery map", mapNote: "Everything you've surveyed — and the gaps",
+    pathHead: "Next units — dependency-ordered", pathNote: "Prereqs first · concepts you know are skipped",
+    dlHead: "Deadline & exam-prep mode", dlNote: "An honest, dated schedule from your real availability",
+    secGoal: "01 · GOAL", secMap: "02 · INSTRUMENT", secPath: "03 · PATH", secDl: "04 · INSTRUMENT",
+  },
+  ru: {
+    level: "Уровень", xp: "XP", steps: "Шагов пройдено",
+    coldTitle: "Начни здесь",
+    coldBody: "Мы построили путь к уровню senior fullstack, начиная с основ. Отметь, что уже знаешь, или задай цель, чтобы перенацелить.",
+    coldCta: "Калибровка (5 мин)",
+    droppedNote: "Некоторые локальные правки пререквизитов создали цикл и были проигнорированы.",
+    goalHead: "К чему ты идёшь?", goalNote: "Активные цели формируют план ниже",
+    mapHead: "Карта освоения концептов", mapNote: "Всё, что размечено — и пробелы",
+    pathHead: "Следующие юниты — по зависимостям", pathNote: "Пререквизиты вперёд · известное пропускается",
+    dlHead: "Дедлайн и подготовка к экзамену", dlNote: "Честный план по датам из твоей реальной загрузки",
+    secGoal: "01 · ЦЕЛЬ", secMap: "02 · ИНСТРУМЕНТ", secPath: "03 · ПУТЬ", secDl: "04 · ИНСТРУМЕНТ",
+  },
 } as const;
 
 export default function PathView({ lang }: { lang: Locale }) {
   const t = L[lang];
-  const [drawer, setDrawer] = useState<null | "goals" | "config">(null);
+  const [modal, setModal] = useState<null | "goals" | "config">(null);
   const [quickUnit, setQuickUnit] = useState<string | null>(null);
-  const [dragUnit, setDragUnit] = useState<string | null>(null);
-  const k = knowledge.value; const cfg = config.value;
-  const { path, schedule, droppedLocal } = computePath();
-  const mastery = masteryByTrack(k, content.concepts, cfg.weights.masteryThreshold);
+
+  const k = knowledge.value;        // subscribe
+  const cfg = config.value;         // subscribe
+  const { droppedLocal } = computePath();
   const isColdStart = k.size === 0;
+
   const xp = currentXp();
   const lvl = levelFromXp(xp);
   const doneSteps = completedStepCount(k, content.units, cfg.weights.masteryThreshold);
+  const intoPct = lvl.intoLevel + lvl.toNext > 0
+    ? Math.round((lvl.intoLevel / (lvl.intoLevel + lvl.toNext)) * 100)
+    : 0;
 
   return (
-    <div class="flex flex-col gap-6">
-      <header class="flex flex-wrap items-center gap-3">
-        <h1 class="text-3xl font-extrabold mr-auto">{t.title}</h1>
-        <button class="rounded border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100" onClick={() => setDrawer("goals")}>{t.goals}</button>
-        <button class="rounded border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100" onClick={() => setDrawer("config")}>{t.settings}</button>
-        <button class="rounded border border-stone-300 px-3 py-1.5 text-sm hover:bg-stone-100" onClick={() => resetPath()}>{t.reset}</button>
-      </header>
+    <div>
+      {/* XP / level strip */}
+      <div class="xp-strip">
+        <span class="xs-level">{t.level} {lvl.level}</span>
+        <span class="xs-xp">{xp} {t.xp}</span>
+        <div class="xs-bar"><div style={`width:${intoPct}%`} /></div>
+        <span class="xs-steps">{t.steps}: {doneSteps} <b>+{doneSteps * PATH_STEP_BONUS} {t.xp}</b></span>
+      </div>
 
-      <section class="flex flex-wrap items-center gap-x-6 gap-y-1 rounded-lg border border-stone-200 bg-white/60 px-4 py-2 text-sm">
-        <span><span class="font-semibold">{t.level} {lvl.level}</span> · {xp} {t.xp}</span>
-        <span class="text-stone-500">+{lvl.intoLevel} / {lvl.intoLevel + lvl.toNext}</span>
-        <span class="ml-auto text-stone-600">{t.steps}: {doneSteps} <span class="text-emerald-600">(+{doneSteps * PATH_STEP_BONUS} {t.xp})</span></span>
-      </section>
-
+      {/* Cold-start banner */}
       {isColdStart && (
-        <section class="rounded-lg border border-amber-300 bg-amber-50 p-4">
-          <h2 class="font-semibold text-amber-900">{t.coldTitle}</h2>
-          <p class="text-sm text-amber-800 mt-1">{t.coldBody}</p>
-          <a class="mt-3 inline-block rounded bg-sky-600 px-4 py-2 text-sm text-white" href={`/${lang}/calibrate`}>{t.coldCta}</a>
+        <section class="banner cold">
+          <h2>{t.coldTitle}</h2>
+          <p>{t.coldBody}</p>
+          <a class="btn btn-primary btn-sm" href={`/${lang}/calibrate`}><span>{t.coldCta}</span><span class="arrow">→</span></a>
         </section>
       )}
 
-      {droppedLocal && <p class="rounded border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">{t.droppedNote}</p>}
+      {/* droppedLocal warning */}
+      {droppedLocal && <p class="banner dropped">{t.droppedNote}</p>}
 
-      {schedule && <DeadlinePanel lang={lang} schedule={schedule} />}
-
-      <ol class="flex flex-col gap-3">
-        {path.steps.length === 0 && <li class="text-sm text-stone-500">{t.empty}</li>}
-        {path.steps.map((s) => (
-          <PathCard
-            key={s.unit} lang={lang} step={s} pinned={isPinned(s.unit)}
-            hasQuickCheck={content.quickCheckUnits.has(s.unit)}
-            onKnow={() => skipUnit(s.unit)} onSkip={() => skipUnit(s.unit)}
-            onPin={() => pinUnit(s.unit)} onMove={(d) => moveUnit(s.unit, d)}
-            onQuickCheck={() => setQuickUnit(s.unit)}
-            onLoosen={() => loosenUnit(s.unit)}
-            onDragStart={() => setDragUnit(s.unit)}
-            onDrop={() => {
-              if (dragUnit && dragUnit !== s.unit) reorderPath(path.steps.map((x) => x.unit), dragUnit, s.unit);
-              setDragUnit(null);
-            }}
-          />
-        ))}
-      </ol>
-
-      <section>
-        <h2 class="text-lg font-bold mb-2">{t.masteryTitle}</h2>
-        <ul class="grid grid-cols-2 sm:grid-cols-3 gap-2">
-          {mastery.filter((m) => m.known > 0).length === 0 && <li class="text-sm text-stone-400 col-span-full">—</li>}
-          {mastery.map((m) => (
-            <li key={m.track} class="rounded border border-stone-200 p-2 text-sm">
-              <div class="flex justify-between"><span class="font-medium">{m.track}</span><span class="text-stone-500">{m.known}/{m.total}</span></div>
-              <div class="mt-1 h-1.5 rounded bg-stone-200"><div class="h-full rounded bg-emerald-500" style={`width:${Math.round(m.avg * 100)}%`} /></div>
-            </li>
-          ))}
-        </ul>
+      {/* 01 · GOAL */}
+      <section class="screen-section" aria-labelledby="goal-h">
+        <div class="sec-head">
+          <span class="sec-index">{t.secGoal}</span>
+          <h2 id="goal-h">{t.goalHead}</h2>
+          <span class="sec-note">{t.goalNote}</span>
+        </div>
+        <GoalSection lang={lang} onCustom={() => setModal("goals")} />
       </section>
 
-      {drawer === "goals" && <GoalPicker lang={lang} onClose={() => setDrawer(null)} />}
-      {drawer === "config" && <PathConfigDrawer lang={lang} onClose={() => setDrawer(null)} />}
+      {/* 02 · INSTRUMENT — concept-mastery map */}
+      <section class="screen-section" aria-labelledby="map-h">
+        <div class="sec-head">
+          <span class="sec-index">{t.secMap}</span>
+          <h2 id="map-h">{t.mapHead}</h2>
+          <span class="sec-note">{t.mapNote}</span>
+        </div>
+        <ConceptMasteryMap lang={lang} />
+      </section>
+
+      {/* 03 · PATH — next units */}
+      <section class="screen-section" aria-labelledby="next-h">
+        <div class="sec-head">
+          <span class="sec-index">{t.secPath}</span>
+          <h2 id="next-h">{t.pathHead}</h2>
+          <span class="sec-note">{t.pathNote}</span>
+        </div>
+        <NextPath lang={lang} onQuickCheck={(u) => setQuickUnit(u)} />
+      </section>
+
+      {/* 04 · INSTRUMENT — deadline */}
+      <section class="screen-section" aria-labelledby="dl-h">
+        <div class="sec-head">
+          <span class="sec-index">{t.secDl}</span>
+          <h2 id="dl-h">{t.dlHead}</h2>
+          <span class="sec-note">{t.dlNote}</span>
+        </div>
+        <DeadlineSection lang={lang} />
+      </section>
+
+      {/* Advanced knobs */}
+      <section class="screen-section">
+        <AdvancedKnobs lang={lang} onGraphEdits={() => setModal("config")} />
+      </section>
+
+      {/* modals (reused, mounted conditionally) */}
+      {modal === "goals" && <GoalPicker lang={lang} onClose={() => setModal(null)} />}
+      {modal === "config" && <PathConfigDrawer lang={lang} onClose={() => setModal(null)} />}
       {quickUnit && (
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setQuickUnit(null)}>
           <div class="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <DiagnosticRunner lang={lang} conceptIds={unitProbeConcepts(quickUnit)}
-              onConcept={(c, f) => applyDiagnosticResult(c, f)} onDone={() => setQuickUnit(null)} />
+            <DiagnosticRunner
+              lang={lang}
+              conceptIds={unitProbeConcepts(quickUnit)}
+              onConcept={(c, f) => applyDiagnosticResult(c, f)}
+              onDone={() => setQuickUnit(null)}
+            />
           </div>
         </div>
       )}
