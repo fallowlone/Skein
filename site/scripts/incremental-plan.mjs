@@ -16,7 +16,18 @@ const SRC = join(siteRoot, "src");
 const LESSONS = join(SRC, "content", "lessons");
 const PRACTICE = join(SRC, "content", "practice");
 const CACHE = join(siteRoot, "build-cache");
-const CONFIG = join(siteRoot, "astro.config.mjs");
+
+// Root files OUTSIDE src/ that still affect rendered output. They must be in
+// the global hash so editing any of them forces a full rebuild (never ship a
+// stale page): tailwind tokens drive every page's CSS; package.json/bun.lock
+// pin what astro/preact/tailwind/mdx emit; tsconfig is included defensively.
+const ROOT_GLOBAL_FILES = [
+  "astro.config.mjs",
+  "tailwind.config.ts",
+  "tsconfig.json",
+  "package.json",
+  "bun.lock",
+];
 
 const isUnder = (p, dir) => p === dir || p.startsWith(dir + "/");
 
@@ -78,7 +89,12 @@ const globalParts = [
   ...globalFiles
     .sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0))
     .map((f) => `${f.rel}\0${f.content}`),
-  `astro.config.mjs\0${await readFile(CONFIG, "utf8")}`,
+  ...(await Promise.all(
+    ROOT_GLOBAL_FILES.map(async (name) => {
+      const content = await readFile(join(siteRoot, name), "utf8").catch(() => "");
+      return `${name}\0${content}`;
+    }),
+  )),
   "FRONTMATTER",
   ...fmProjection.sort(),
 ];
