@@ -1,8 +1,8 @@
 # Depth-audit tool
 
-LLM-grades every EN lesson on a 6-dimension senior-depth rubric, scores each unit,
-calibrates a pass bar against a hand-labeled set, and writes
-`docs/audit/depth-scores.json` + `docs/audit/depth-report.md` (gap-sorted, worst-first).
+LLM-grades every EN lesson on a 6-dimension senior-depth rubric, scores each unit over its
+teaching lessons, and writes `docs/audit/depth-scores.json` + `docs/audit/depth-report.md`
+(spine/foundations split, worst-first) — gating spine units against an absolute bar.
 
 Step A of the Senior+ Campaign. Spec:
 `docs/superpowers/specs/2026-06-07-senior-plus-campaign-design.md`.
@@ -24,19 +24,27 @@ Step A of the Senior+ Campaign. Spec:
    `site/scripts/depth-audit/grades.json`.
 4. `cd site && bun run audit:depth`  → `docs/audit/depth-scores.json` + `depth-report.md`
 
-## Re-grade gate (after authoring a unit)
-Filter `worklist.json` to the changed unitKeys, run steps 2–4 on that slice, and assert
-the unit's `passes === true` in `depth-scores.json`. A unit is "done" only when it clears
-the calibrated bar. Calibration is deterministic — relabeling `calibration-set.json` and
-re-running `audit:depth` re-tunes the bar without re-grading.
+## Bar (absolute)
+Pass/fail uses an absolute bar on each unit's **teaching-lesson** weighted mean (auxiliary
+entries — start-here overviews, quiz-*, project, drill — are excluded from the score).
+Default `DEPTH_BAR=3.5`; override via env. Foundations tracks (math/base-cs/algorithms) are
+reported separately and not gated. `calibrate.ts` + `calibration-set.json` are legacy (off
+the default path).
+
+## Re-grade gate (after authoring/editing a unit)
+1. Re-grade only the changed units (the grading Workflow / cowork) and write their entries
+   into `scripts/depth-audit/grades.json`.
+2. `cd site && bun scripts/depth-audit/audit.ts --gate --units track/unit-a,track/unit-b`
+   → exits 0 if every named spine unit's teaching mean ≥ bar, 1 otherwise (foundations are
+   ignored). Use this as a content-quality gate for the capstone or any new lessons.
 
 ## Model
 Grading agents default to `sonnet`; pass `model: "opus"` in the args for the highest-stakes
 re-grades. Token cost scales with lesson count (~1686 lessons across ~276 units).
 
-## Note on "stub" vs depth
-Every authored lesson is `status: ready` — there are no stub *lessons*. The "~47% stub
-units" in the weaknesses audit are units **declared in `units.json` with no authored
-lessons**, which this tool (lesson-enumeration based) does not see. This tool measures the
-**depth** of what exists; a separate coverage check is needed for declared-but-empty units
-(tracked for Step B / Core-Path selection).
+## Verdict
+The first full audit found the content is already comprehensive and senior-grade — the big
+backfill premise (47% stubs / weak spine / 57% practice) did not survive measurement; those
+were Explore-agent estimates + an auxiliary-entry artifact. See
+`docs/audit/2026-06-07-depth-audit-findings.md`. This tool now serves mainly as a re-grade
+gate for *future* content (capstone, edits).
