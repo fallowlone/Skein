@@ -1,28 +1,38 @@
-// @vitest-environment node
+// scripts/depth-audit/audit.test.ts
 import { describe, it, expect } from "vitest";
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { runAudit } from "./audit";
+import { runAudit, gate, barFromEnv, DEFAULT_BAR } from "./audit";
+import type { UnitGradeResult } from "./types";
 
-const read = async (n: string) => JSON.parse(await readFile(fileURLToPath(new URL(`./__fixtures__/${n}`, import.meta.url)), "utf8"));
+const mk = (o: number) => ({ mechanism: o, tradeoff: o, failureMode: o, realNumbers: o, seniorDepth: o, practiceCoverage: o });
+const unit = (key: string, o: number): UnitGradeResult =>
+  ({ unitKey: key, graderModel: "m", grades: [{ lessonKey: `${key}/01-x`, scores: mk(o), justification: "j" }] });
+
+const grades = [unit("networking/03-deep", 4), unit("apis/01-thin", 3), unit("math/01-numbers", 2)];
 
 describe("runAudit", () => {
-  it("produces a bar that separates the fixture units and flags the thin one", async () => {
-    const grades = await read("grades.json");
-    const cal = await read("calibration-set.json");
-    const { json } = runAudit({ grades, labels: cal.labels });
-    expect(json.summary.total).toBe(2);
-    const thin = json.units.find((u) => u.unitKey === "t/thin")!;
-    const deep = json.units.find((u) => u.unitKey === "t/deep")!;
-    expect(thin.passes).toBe(false);
-    expect(deep.passes).toBe(true);
+  it("gates spine units on the bar and lists foundations separately", () => {
+    const { json } = runAudit(grades, 3.5);
+    expect(json.summary.spineTotal).toBe(2);
+    expect(json.summary.spineFailing).toBe(1);
+    expect(json.summary.foundationsCount).toBe(1);
   });
-  it("throws when a grade entry is invalid", () => {
-    expect(() => runAudit({
-      grades: [{ unitKey: "x", graderModel: "m", grades: [
-        { lessonKey: "x/1", scores: { mechanism: 9, tradeoff: 1, failureMode: 1, realNumbers: 1, seniorDepth: 1, practiceCoverage: 1 }, justification: "j" },
-      ]}],
-      labels: [{ unitKey: "x", label: "good" }],
-    })).toThrow();
+});
+
+describe("gate", () => {
+  it("returns failing spine units among the named units, ignoring foundations", () => {
+    const r = gate(grades, ["apis/01-thin", "math/01-numbers"], 3.5);
+    expect(r.failing).toEqual(["apis/01-thin"]); // math is foundation → not gated
+  });
+  it("passes when the named spine unit clears the bar", () => {
+    const r = gate(grades, ["networking/03-deep"], 3.5);
+    expect(r.failing).toEqual([]);
+  });
+});
+
+describe("barFromEnv", () => {
+  it("defaults to DEFAULT_BAR and reads DEPTH_BAR when valid", () => {
+    expect(barFromEnv({})).toBe(DEFAULT_BAR);
+    expect(barFromEnv({ DEPTH_BAR: "4" })).toBe(4);
+    expect(barFromEnv({ DEPTH_BAR: "junk" })).toBe(DEFAULT_BAR);
   });
 });
