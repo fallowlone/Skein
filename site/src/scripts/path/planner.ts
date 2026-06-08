@@ -3,6 +3,7 @@ import type { Concept, Goal, KnowledgeState, PathConfig, UnitConcepts, Path, Pat
 import type { ConceptGraph } from "./graph";
 import { topoSort, ancestors, buildConceptGraph, induceUnitGraph, validateAcyclic } from "./graph";
 import { isKnown } from "./knowledge";
+import { normalizeRanks, goalWeightFactor } from "./goal-rank";
 
 const BAND_RANK: Record<Band, number> = { foundations: 0, surface: 1, middle: 2, advanced: 3 };
 // Senior-readiness priority by band: middle is the sweet spot; advanced is deferred until the
@@ -76,11 +77,14 @@ export interface OrderCtx {
   goals: Goal[]; concepts: Concept[]; trackOrder: Map<string, number>;
 }
 
-function goalTrackWeight(track: Track, goals: Goal[], config: PathConfig): number {
+// Exported for unit tests. `ranks` maps goalId → normalized rank (1 = most important);
+// the weight factor inverts rank so the rank-1 goal's tracks carry the most weight.
+export function goalTrackWeight(track: Track, goals: Goal[], ranks: Map<string, number>): number {
+  const n = ranks.size;
   let w = 0;
   for (const g of goals) {
-    const prio = config.goals.find((x) => x.id === g.id)?.priority ?? 1;
-    w += (g.trackWeights[track] ?? 0.5) * prio;
+    const rank = ranks.get(g.id) ?? (n || 1); // unranked → least weight; n=0 guard → 1
+    w += (g.trackWeights[track] ?? 0.5) * goalWeightFactor(rank, n || 1);
   }
   return w || 0.5; // 0.5 floor: a track always carries some weight unless excludedTracks removes it
 }
@@ -90,7 +94,8 @@ export function orderUnits(units: UnitConcepts[], ctx: OrderCtx): UnitConcepts[]
   // Fallback "foundations" (lowest weight) so a unit teaching an unregistered concept id is
   // de-prioritised rather than silently boosted to the top.
   const bandOf = (u: UnitConcepts): Band => byId.get(u.teaches[0])?.band ?? "foundations";
-  const value = (u: UnitConcepts) => goalTrackWeight(u.track, ctx.goals, ctx.config) * SENIOR_WEIGHT[bandOf(u)];
+  const ranks = new Map(normalizeRanks(ctx.config.goals).map((r) => [r.id, r.rank]));
+  const value = (u: UnitConcepts) => goalTrackWeight(u.track, ctx.goals, ranks) * SENIOR_WEIGHT[bandOf(u)];
   const to = (u: UnitConcepts) => ctx.trackOrder.get(u.track) ?? 99;
   const depthMode = ctx.config.breadthVsDepth < 0.5;
 
