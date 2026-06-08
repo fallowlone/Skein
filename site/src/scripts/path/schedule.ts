@@ -1,5 +1,6 @@
 // site/src/scripts/path/schedule.ts
-import type { Path, DeadlineConfig, Feasibility, DayPlan, Schedule } from "./types";
+import type { Path, DeadlineConfig, Feasibility, DayPlan, Schedule, Tier } from "./types";
+import { tierEffort } from "./tier-effort";
 
 const DAY = 86_400_000;
 const UNDER_RATIO = 1.25; // >25% spare budget => "under" (room for more), else "fits"
@@ -63,28 +64,29 @@ export function feasibility(
   return { verdict: "over", deltaMin: requiredMin - availableMin, dropped };
 }
 
-export function schedulePlan(path: Path, cfg: DeadlineConfig, nowMs: number): Schedule {
+export function schedulePlan(path: Path, cfg: DeadlineConfig, nowMs: number, tier: Tier = "middle"): Schedule {
+  const effort = tierEffort(tier);
+  const scale = (m: number) => Math.round(m * effort);
+
   const days = studyDays(nowMs, cfg.targetDateMs, cfg.perWeekdayHours, cfg.blackoutDates ?? [], cfg.tzOffsetMin);
   const plan: DayPlan[] = days.map((d) => ({ date: d.date, minutes: d.minutes, steps: [] }));
-  const required = path.steps.reduce((n, s) => n + s.estMin, 0);
+  const required = path.steps.reduce((n, s) => n + scale(s.estMin), 0);
   const available = availableMinutes(days);
 
   let di = 0, used = 0;
   const placed = new Set<string>();
   for (const step of path.steps) {
-    while (di < plan.length && used + step.estMin > plan[di].minutes) { di++; used = 0; }
+    const cost = scale(step.estMin);
+    while (di < plan.length && used + cost > plan[di].minutes) { di++; used = 0; }
     if (di >= plan.length) break;
-    plan[di].steps.push(step);
-    used += step.estMin;
+    plan[di].steps.push(step); // step keeps its canonical estMin for display; budgeting uses `cost`
+    used += cost;
     placed.add(step.unit);
   }
-  // roi here is a cost-only placeholder (1/estMin): with no per-step value field yet, longer
+  // roi here is a cost-only placeholder (1/cost): with no per-step value field yet, longer
   // steps are dropped first. Replace with value/cost once steps carry a learning-value weight.
   const dropUnits = path.steps.filter((s) => !placed.has(s.unit))
-    .map((s) => ({ id: s.unit, estMin: s.estMin, roi: 1 / Math.max(1, s.estMin) }));
-  // Any step that couldn't be packed into the calendar means the plan does NOT fit, regardless of
-  // the aggregate budget (e.g. a single step longer than every remaining day). Report unplaced
-  // steps as dropped instead of silently losing them under a "fits"/"under" aggregate verdict.
+    .map((s) => ({ id: s.unit, estMin: scale(s.estMin), roi: 1 / Math.max(1, scale(s.estMin)) }));
   const feas: Feasibility = dropUnits.length
     ? { verdict: "over", deltaMin: dropUnits.reduce((n, d) => n + d.estMin, 0), dropped: dropUnits.map((d) => d.id) }
     : feasibility(required, available, dropUnits);
