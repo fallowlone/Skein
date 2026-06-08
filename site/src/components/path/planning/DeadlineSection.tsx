@@ -318,7 +318,9 @@ function PaceRow({ lang }: { lang: Locale }) {
   const t = L[lang];
   const p = currentPace();
   if (!p || p.status === "no-data") return null;
-  const dl = config.value.deadline!;
+  const dl = config.value.deadline;
+  if (!dl) return null; // p is non-null only when a deadline exists; explicit guard avoids the non-null assertion
+
   const doneH = Math.round(p.doneMin / 60);
   const totalH = Math.round((dl.baselineRequiredMin ?? 0) / 60);
   const finish = p.projectedFinishMs ? new Date(p.projectedFinishMs).toISOString().slice(0, 10) : null;
