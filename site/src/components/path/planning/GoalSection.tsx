@@ -90,15 +90,13 @@ export default function GoalSection({ lang }: { lang: Locale }) {
                 <span class="g-name">{g.label[lang]}</span>
                 <span class="g-meta">{goalMeta(lang, g)}</span>
               </button>
-              {on && (
-                <div class="g-rank">
-                  <span class="g-share">{t.rankNote(rank!, shareOf(rank!))}</span>
-                  <span class="g-arrows">
-                    <button type="button" aria-label={t.up} disabled={rank === 1} onClick={() => move(g.id, "up")}>↑</button>
-                    <button type="button" aria-label={t.down} disabled={rank === n} onClick={() => move(g.id, "down")}>↓</button>
-                  </span>
-                </div>
-              )}
+              <div class={`g-rank${on ? "" : " g-rank-hidden"}`}>
+                <span class="g-share">{on ? t.rankNote(rank!, shareOf(rank!)) : ""}</span>
+                <span class="g-arrows">
+                  <button type="button" aria-label={t.up} disabled={!on || rank === 1} onClick={() => on && move(g.id, "up")}>↑</button>
+                  <button type="button" aria-label={t.down} disabled={!on || rank === n} onClick={() => on && move(g.id, "down")}>↓</button>
+                </span>
+              </div>
             </div>
           );
         })}
