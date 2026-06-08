@@ -32,8 +32,8 @@ export default function HoursPicker(
           return (
             <div key={i} class="hp-day">
               <div class="hp-name">{DAYS[lang][i]}</div>
-              <button type="button" class="hp-btn dec" aria-label={`${DAYS[lang][i]} −`}
-                onClick={() => bump(i, -0.5)} disabled={h <= 0}>−</button>
+              <button type="button" class="hp-btn inc" aria-label={`${DAYS[lang][i]} +`}
+                onClick={() => bump(i, 0.5)} disabled={h >= max}>+</button>
               <div
                 class={`hp-val${h === 0 ? " off" : ""}`}
                 role="spinbutton"
@@ -49,8 +49,8 @@ export default function HoursPicker(
                 <span class="hv">{h === 0 ? "·" : fmtH(h)}</span>
                 <span class="hu">{UNIT[lang]}</span>
               </div>
-              <button type="button" class="hp-btn inc" aria-label={`${DAYS[lang][i]} +`}
-                onClick={() => bump(i, 0.5)} disabled={h >= max}>+</button>
+              <button type="button" class="hp-btn dec" aria-label={`${DAYS[lang][i]} −`}
+                onClick={() => bump(i, -0.5)} disabled={h <= 0}>−</button>
             </div>
           );
         })}
