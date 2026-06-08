@@ -33,6 +33,12 @@ export function unitsFromMap(map: Record<string, { teaches: string[]; requires: 
   }));
 }
 
+// Collapse the depthTier config (string or per-track map) to a single tier for scheduling. v1
+// uses the string form; a per-track map falls back to "middle" (mirrors DeadlineSection).
+export function tierOf(cfg: PathConfig): Tier {
+  return typeof cfg.depthTier === "string" ? cfg.depthTier : "middle";
+}
+
 export function applyViewOrder(steps: PathStep[], order: string[]): PathStep[] {
   if (!order.length) return steps;
   const rank = new Map(order.map((u, i) => [u, i]));
@@ -105,10 +111,16 @@ export function deserializeKnowledge(arr: [string, ConceptMastery][]): Knowledge
 }
 // ── (Task 2 appends the content bundle + signals + mutations below this line) ──
 import { buildPath } from "./planner";
-import { schedulePlan } from "./schedule";
+import { schedulePlan, studyDays, availableMinutes } from "./schedule";
 import { emptyState, applySelfDeclare, applyDiagnostic } from "./knowledge";
 import { mergeConfig, clampConfig } from "./config";
 import type { DeadlineConfig } from "./types";
+import { tierEffort } from "./tier-effort";
+import { pace, type Pace } from "./pace";
+import { suggestFixes, bestCombo, type Fix, type LeverInputs } from "./optimize";
+import { fullRequiredMin, goalDropDeltaMin, trackExcludeDeltaMin } from "./optimize-deltas";
+import { normalizeRanks } from "./goal-rank";
+import type { Tier } from "./types";
 
 // View-only state the pure core ignores (pin/reorder). Persisted with the config.
 export interface PathView { order: string[] }
@@ -218,8 +230,18 @@ export function computePath(): { path: Path; schedule?: Schedule; droppedLocal: 
     content: { concepts: eff, units: effUnits, goalById }, srsDue: [], now, trackOrder,
   });
   const path: Path = { steps: applyViewOrder(raw.steps, cfg.view.order) };
-  const schedule = cfg.deadline ? schedulePlan(path, cfg.deadline, now) : undefined;
+  const schedule = cfg.deadline ? schedulePlan(path, cfg.deadline, now, tierOf(cfg)) : undefined;
   return { path, schedule, droppedLocal };
+}
+
+// Assemble the planner BuildInput from current signals + (optionally overridden) config.
+function buildInputFor(cfg: StoredPathConfig) {
+  const { concepts: eff, units: effUnits } = effectiveContent();
+  const goalObjs = cfg.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
+  return {
+    state: knowledge.value, goals: goalObjs, config: cfg,
+    content: { concepts: eff, units: effUnits, goalById }, srsDue: [], now: Date.now(), trackOrder,
+  };
 }
 
 // ── mutation helpers (write through signals → autosave → reactive recompute) ──
@@ -250,7 +272,21 @@ export function toggleExcludedTrack(track: string): void {
   setCfg({ excludedTracks: cur.includes(track) ? cur.filter((x) => x !== track) : [...cur, track] });
 }
 export function setKnob(patch: Partial<Pick<PathConfig, "breadthVsDepth" | "depthTier" | "pace" | "weights">>): void { setCfg(patch as Partial<StoredPathConfig>); }
-export function setDeadline(d: DeadlineConfig | undefined): void { setCfg({ deadline: d }); }
+export function setDeadline(d: DeadlineConfig | undefined): void {
+  if (!d) { setCfg({ deadline: undefined }); return; }
+  const prev = config.value.deadline;
+  const tier = tierOf(config.value);
+  // Required minutes of the FULL path under the current goals/knowledge (deadline-independent).
+  const required = fullRequiredMin(buildInputFor({ ...config.value, deadline: d }), tier);
+  let next: DeadlineConfig;
+  if (!prev?.startedAtMs) {
+    next = { ...d, startedAtMs: Date.now(), baselineRequiredMin: required };
+  } else {
+    // Keep the original anchor; raise the baseline only if scope grew (so "done" never goes negative).
+    next = { ...d, startedAtMs: prev.startedAtMs, baselineRequiredMin: Math.max(prev.baselineRequiredMin ?? 0, required) };
+  }
+  setCfg({ deadline: next });
+}
 export function resetPath(): void {
   knowledge.value = emptyState();
   config.value = defaultStoredConfig();
@@ -328,3 +364,100 @@ export function nextCalibrationProbe(): string | null {
 export function unitProbeConcepts(unitId: string): string[] {
   return (teachesByUnit.get(unitId) ?? []).filter((c) => diagnosedConcepts.has(c));
 }
+
+// ── deadline read-models for the UI (pace + optimization suggestions) ──────────
+export function currentPace(): Pace | null {
+  const cfg = config.value;
+  const dl = cfg.deadline;
+  if (!dl?.startedAtMs || dl.baselineRequiredMin == null) return null;
+  const { path } = computePath();
+  const tier = tierOf(cfg);
+  const required = path.steps.reduce((n, s) => n + Math.round(s.estMin * tierEffort(tier)), 0);
+  return pace(dl.baselineRequiredMin, required, dl.startedAtMs, Date.now(), dl.targetDateMs);
+}
+
+// Build the LeverInputs from the live schedule + what-if deltas, then suggest fixes.
+export function currentFixes(): { fixes: Fix[]; combo: Fix[]; deficitMin: number } {
+  const cfg = config.value;
+  const dl = cfg.deadline;
+  const { path, schedule } = computePath();
+  if (!dl || !schedule) return { fixes: [], combo: [], deficitMin: 0 };
+
+  const deficitMin = schedule.feasibility.verdict === "over" ? schedule.feasibility.deltaMin : 0;
+  const behind = currentPace()?.status === "behind";
+  // Healthy plan and on/ahead of pace → no suggestions needed; skip all lever computation.
+  if (deficitMin <= 0 && !behind) return { fixes: [], combo: [], deficitMin: 0 };
+
+  const tier = tierOf(cfg);
+  const now = Date.now();
+
+  // raise-hours: add H to every currently-active weekday remaining to the date.
+  const remainingHours = (perDay: number[]) =>
+    availableMinutes(studyDays(now, dl.targetDateMs, perDay, dl.blackoutDates ?? [], dl.tzOffsetMin));
+  const baseAvail = remainingHours(dl.perWeekdayHours);
+  const bump = (h: number) => remainingHours(dl.perWeekdayHours.map((x) => (x > 0 ? x + h : x))) - baseAvail;
+  const raiseHours = [{ hours: 0.5, deltaMin: bump(0.5) }, { hours: 1, deltaMin: bump(1) }].filter((r) => r.deltaMin > 0);
+
+  // extend-date: add D days of availability at the current weekday pattern.
+  const extend = (days: number) =>
+    availableMinutes(studyDays(now, dl.targetDateMs + days * 86_400_000, dl.perWeekdayHours, dl.blackoutDates ?? [], dl.tzOffsetMin)) - baseAvail;
+  const extendDate = [{ days: 7, deltaMin: extend(7) }, { days: 14, deltaMin: extend(14) }].filter((e) => e.deltaMin > 0);
+
+  // lower-depth: one tier step down, if any (cheap arithmetic).
+  const lower: Record<Tier, Tier | null> = { senior: "middle", middle: "junior", junior: null };
+  const lowerTier = lower[tier];
+  const required = path.steps.reduce((n, s) => n + Math.round(s.estMin * tierEffort(tier)), 0);
+  const lowerDepth = lowerTier
+    ? { tier: lowerTier, deltaMin: Math.max(0, required - Math.round(required * (tierEffort(lowerTier) / tierEffort(tier)))) }
+    : undefined;
+
+  // Scope-cut levers (expensive: each calls buildPath twice). Only compute when there is a real deficit.
+  let dropGoal: LeverInputs["dropGoal"]; let excludeTrack: LeverInputs["excludeTrack"];
+  if (deficitMin > 0) {
+    const input = buildInputFor(cfg);
+    const ranked = normalizeRanks(cfg.goals);
+    const lowestRankId = ranked.length ? ranked[ranked.length - 1].id : null;
+    if (lowestRankId) {
+      dropGoal = { goalId: lowestRankId, label: goalById.get(lowestRankId)?.label.en ?? lowestRankId, deltaMin: goalDropDeltaMin(input, tier, lowestRankId) };
+    }
+    const pathTracks = [...new Set(path.steps.map((s) => s.track))].filter((trk) => !cfg.excludedTracks.includes(trk));
+    // 0.5 floor mirrors planner's goalTrackWeight and guards Math.max() against an empty goals list (→ -Infinity → NaN sort).
+    const weightOf = (trk: string) => Math.max(0.5, ...input.goals.map((g) => g.trackWeights[trk as keyof typeof g.trackWeights] ?? 0.5));
+    const lowestTrack = pathTracks.sort((a, b) => weightOf(a) - weightOf(b))[0];
+    if (lowestTrack) excludeTrack = { track: lowestTrack, deltaMin: trackExcludeDeltaMin(input, tier, lowestTrack) };
+  }
+
+  const levers: LeverInputs = { deficitMin, raiseHours, extendDate, lowerDepth, dropGoal, excludeTrack, behind: !!behind };
+  const fixes = suggestFixes(levers);
+  return { fixes, combo: bestCombo(fixes, deficitMin), deficitMin };
+}
+
+// Apply a single fix descriptor through existing mutators.
+export function applyFix(fix: Fix): void {
+  const cfg = config.value;
+  const dl = cfg.deadline;
+  switch (fix.kind) {
+    case "raise-hours": {
+      if (!dl) return;
+      const h = fix.patch.hours as number;
+      setDeadline({ ...dl, perWeekdayHours: dl.perWeekdayHours.map((x) => (x > 0 ? x + h : x)) });
+      break;
+    }
+    case "extend-date": {
+      if (!dl) return;
+      setDeadline({ ...dl, targetDateMs: dl.targetDateMs + (fix.patch.days as number) * 86_400_000 });
+      break;
+    }
+    case "lower-depth":
+      setKnob({ depthTier: fix.patch.tier as Tier });
+      break;
+    case "drop-goal":
+      setGoals(cfg.goals.filter((g) => g.id !== (fix.patch.goalId as string)));
+      break;
+    case "exclude-track":
+      toggleExcludedTrack(fix.patch.track as string);
+      break;
+  }
+}
+
+export function applyCombo(combo: Fix[]): void { for (const f of combo) applyFix(f); }
