@@ -47,8 +47,10 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
 
   const href = startHref(lang, units[0].unit);
   const p = currentPace();
-  const { combo } = currentFixes();
-  const catchUp = (p?.status === "behind" || (schedule?.feasibility.verdict === "over")) ? combo[0] : undefined;
+  const { fixes, combo } = currentFixes();
+  // combo is empty when there's no budget deficit; fall back to the top catch-up lever so the
+  // "behind but budget still fits" case still surfaces an action (combo only covers over-budget).
+  const catchUp = (p?.status === "behind" || (schedule?.feasibility.verdict === "over")) ? (combo[0] ?? fixes[0]) : undefined;
 
   return (
     <section class="today-card">
