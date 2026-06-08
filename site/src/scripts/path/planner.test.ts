@@ -6,7 +6,9 @@ import { DEFAULT_CONFIG } from "./config";
 import { emptyState, applyDiagnostic } from "./knowledge";
 import {
   resolveGoalTargets, targetFrontier, missingConcepts, conceptsToUnits, orderUnits, buildPath,
+  goalTrackWeight,
 } from "./planner";
+import { normalizeRanks } from "./goal-rank";
 import type { PathConfig } from "./types";
 
 const g = buildConceptGraph(CONCEPTS);
@@ -100,5 +102,20 @@ describe("resolveGoalTargets — track-band>= rule", () => {
   it("returns [] for an unknown band token", () => {
     const bad = { ...frontendDev, target: { rule: "track-band>=nonsense" } };
     expect(resolveGoalTargets(bad, CONCEPTS)).toEqual([]);
+  });
+});
+
+describe("goalTrackWeight — rank inverts into weight", () => {
+  const goals = [
+    { id: "g-net", label: { en: "", ru: "" }, target: { rule: "band>=middle" }, trackWeights: { networking: 1 } },
+    { id: "g-db",  label: { en: "", ru: "" }, target: { rule: "band>=middle" }, trackWeights: { databases: 1 } },
+  ] as any[];
+  it("rank-1 goal's track weighs more than rank-2 goal's track", () => {
+    const ranks = new Map(normalizeRanks([{ id: "g-db", priority: 1 }, { id: "g-net", priority: 2 }]).map((r) => [r.id, r.rank]));
+    expect(goalTrackWeight("databases" as any, goals, ranks)).toBeGreaterThan(goalTrackWeight("networking" as any, goals, ranks));
+  });
+  it("floors at 0.5 for an untargeted track", () => {
+    const ranks = new Map([["g-net", 1]]);
+    expect(goalTrackWeight("frontend" as any, [goals[0]], ranks)).toBe(0.5);
   });
 });
