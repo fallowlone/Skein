@@ -36,6 +36,8 @@ export interface DeadlineConfig {
   perWeekdayHours: number[]; // length 7, Mon..Sun; 0 = day off
   blackoutDates?: string[];  // ISO "YYYY-MM-DD"
   tzOffsetMin: number;       // minutes; keeps the core clock-free
+  startedAtMs?: number;          // when the deadline was first activated (pace baseline anchor)
+  baselineRequiredMin?: number;  // scaled required minutes at activation; raised if scope grows
 }
 
 export interface PathWeights {
