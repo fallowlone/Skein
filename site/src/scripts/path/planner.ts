@@ -13,6 +13,20 @@ const SENIOR_WEIGHT: Record<Band, number> = { middle: 1.0, surface: 0.9, advance
 export function resolveGoalTargets(goal: Goal, concepts: Concept[]): string[] {
   if (goal.target.concepts) return [...goal.target.concepts];
   const rule = goal.target.rule ?? "";
+
+  // track-band>=<band>: middle+ (or given band+) concepts in this goal's CORE tracks only —
+  // a core track is a trackWeights entry with weight >= 1. Support tracks (< 1) bias ordering
+  // via goalTrackWeight but are NOT targeted, so the frontier stays scoped to the role.
+  const tb = rule.match(/^track-band>=(\w+)$/);
+  if (tb) {
+    const min = BAND_RANK[tb[1] as Band];
+    if (min === undefined) return [];
+    const core = new Set(
+      Object.entries(goal.trackWeights).filter(([, w]) => (w ?? 0) >= 1).map(([t]) => t),
+    );
+    return concepts.filter((c) => core.has(c.track) && BAND_RANK[c.band] >= min).map((c) => c.id);
+  }
+
   const m = rule.match(/^band>=(\w+)$/);
   if (m) {
     const min = BAND_RANK[m[1] as Band];
