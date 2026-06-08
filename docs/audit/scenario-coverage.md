@@ -2,7 +2,7 @@
 
 Lessons: 798
 
-Candidates remaining — incident: 274, debug: 427, review: 761
+Candidates remaining — incident: 204, debug: 154, review: 280
 
 | track | #les | inc% | dbg% | rev% |
 |---|---|---|---|---|
@@ -11,7 +11,7 @@ Candidates remaining — incident: 274, debug: 427, review: 761
 | aws | 30 | 87% | 0% | 0% |
 | backend | 48 | 67% | 0% | 0% |
 | browser | 50 | 84% | 0% | 0% |
-| caching | 13 | 62% | 0% | 0% |
+| caching | 13 | 69% | 0% | 0% |
 | ci-cd | 25 | 76% | 0% | 0% |
 | data-engineering | 8 | 25% | 0% | 0% |
 | databases | 54 | 50% | 0% | 4% |

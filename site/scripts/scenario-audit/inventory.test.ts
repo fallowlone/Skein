@@ -10,9 +10,13 @@ describe("typesByLesson", () => {
     const got = typesByLesson(files as any);
     expect(got.get("networking/01-x/01-a")?.types).toEqual(new Set(["diagnose", "incident"]));
   });
-  it("flags a lesson at the 8-task cap", () => {
-    const files = [{ lessonKey: "n/01/01", track: "networking", tasks: Array(8).fill({ type: "fix" }) }];
+  it("flags a lesson at the 5-task practice-count ceiling, but not at 4", () => {
+    const files = [
+      { lessonKey: "n/01/full", track: "networking", tasks: Array(5).fill({ type: "fix" }) },
+      { lessonKey: "n/01/room", track: "networking", tasks: Array(4).fill({ type: "fix" }) },
+    ];
     const got = typesByLesson(files as any);
-    expect(got.get("n/01/01")?.atCap).toBe(true);
+    expect(got.get("n/01/full")?.atCap).toBe(true);
+    expect(got.get("n/01/room")?.atCap).toBe(false);
   });
 });
