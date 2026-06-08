@@ -1,21 +1,31 @@
 // src/components/path/planning/GoalSection.tsx
-// 01 · GOAL — preset goals from content.goals as toggle cards with live P1/P2/P3
-// priority chips driven by config.goals. Toggling reflows priorities via setGoals.
-// A dashed "Custom goal" card asks the parent to open the GoalPicker modal.
+// 01 · GOAL — preset goals as toggle cards with a clear rank (1 = most important; rank 1 gets
+// the most time) and a live time-share explainer. A collapsible "refine" block holds custom
+// concept targets + excluded tracks (formerly the GoalPicker modal — now inline, single source).
+import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import type { Goal } from "~/scripts/path/types";
-import { config, content, setGoals } from "~/scripts/path/path-io";
+import {
+  config, content, setGoals, toggleCustomTarget, toggleExcludedTrack, searchConcepts,
+} from "~/scripts/path/path-io";
+import { normalizeRanks, goalWeightFactor } from "~/scripts/path/goal-rank";
 
 const L = {
   en: {
     tracks: (n: number) => `${n} track${n === 1 ? "" : "s"}`,
     concepts: (n: number) => `${n} concept${n === 1 ? "" : "s"}`,
-    custom: "+ Custom goal", customMeta: "pick tracks / concepts",
+    rankNote: (rank: number, pct: number) => `#${rank} · ~${pct}% of plan time`,
+    refine: "Refine / custom targets", hide: "Hide",
+    targets: "Custom targets", search: "Search concepts to target…",
+    exclude: "Excluded tracks", up: "more important", down: "less important",
   },
   ru: {
     tracks: (n: number) => `${n} трек${n === 1 ? "" : n < 5 ? "а" : "ов"}`,
     concepts: (n: number) => `${n} концепт${n === 1 ? "" : n < 5 ? "а" : "ов"}`,
-    custom: "+ Своя цель", customMeta: "выбрать треки / концепты",
+    rankNote: (rank: number, pct: number) => `№${rank} · ~${pct}% времени плана`,
+    refine: "Уточнить / свои цели", hide: "Скрыть",
+    targets: "Свои цели", search: "Найти концепты для цели…",
+    exclude: "Исключённые треки", up: "важнее", down: "менее важно",
   },
 } as const;
 
@@ -29,19 +39,21 @@ function goalMeta(lang: Locale, g: Goal): string {
   return parts.join(" · ");
 }
 
-export default function GoalSection({ lang, onCustom }: { lang: Locale; onCustom: () => void }) {
+export default function GoalSection({ lang }: { lang: Locale }) {
   const t = L[lang];
   const cfg = config.value; // subscribe
-  const active = cfg.goals; // {id, priority}[]
+  const active = cfg.goals;
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
 
-  // Active goals in ascending priority → P1, P2, P3 … so the chip reflows on toggle.
-  const ranked = [...active].sort((a, b) => a.priority - b.priority);
-  const prioOf = (id: string): number | null => {
-    const i = ranked.findIndex((g) => g.id === id);
-    return i === -1 ? null : i + 1;
-  };
+  const ranked = normalizeRanks(active);
+  const n = ranked.length;
+  const rankOf = (id: string) => ranked.find((r) => r.id === id)?.rank ?? null;
+  // Time-share: a goal's weight factor over the sum of all active factors.
+  const factorSum = ranked.reduce((s, r) => s + goalWeightFactor(r.rank, n), 0) || 1;
+  const shareOf = (rank: number) => Math.round((goalWeightFactor(rank, n) / factorSum) * 100);
 
-  // Toggle a goal: remove if active, else append at the next priority slot.
+  // Toggle on → append at the next (least-important) rank, encoded as priority = max+1.
   const toggle = (id: string) => {
     if (active.some((g) => g.id === id)) {
       setGoals(active.filter((g) => g.id !== id));
@@ -51,23 +63,82 @@ export default function GoalSection({ lang, onCustom }: { lang: Locale; onCustom
     }
   };
 
+  // Reorder: rewrite priorities to the new rank order so normalizeRanks stays consistent.
+  const move = (id: string, dir: "up" | "down") => {
+    const order = [...ranked].map((r) => r.id);
+    const i = order.indexOf(id);
+    const j = dir === "up" ? i - 1 : i + 1;
+    if (j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    setGoals(order.map((gid, idx) => ({ id: gid, priority: idx + 1 })));
+  };
+
+  const custom = cfg.customTargets ?? [];
+  const results = searchConcepts(content.concepts, content.taughtConcepts, q, lang, 20).filter((c) => !custom.includes(c.id));
+  const tracks = [...new Set(content.concepts.map((c) => c.track))].sort();
+
   return (
-    <div class="goals">
-      {content.goals.map((g) => {
-        const prio = prioOf(g.id);
-        const on = prio !== null;
-        return (
-          <button key={g.id} type="button" class="goal" aria-pressed={on} onClick={() => toggle(g.id)}>
-            {on && <span class="g-prio">P{prio}</span>}
-            <span class="g-name">{g.label[lang]}</span>
-            <span class="g-meta">{goalMeta(lang, g)}</span>
-          </button>
-        );
-      })}
-      <button type="button" class="goal is-custom" aria-pressed={false} onClick={onCustom}>
-        <span class="g-name">{t.custom}</span>
-        <span class="g-meta">{t.customMeta}</span>
+    <div>
+      <div class="goals">
+        {content.goals.map((g) => {
+          const rank = rankOf(g.id);
+          const on = rank !== null;
+          return (
+            <div key={g.id} class={`goal-wrap${on ? " on" : ""}`}>
+              <button type="button" class="goal" aria-pressed={on} onClick={() => toggle(g.id)}>
+                {on && <span class="g-prio">{rank}</span>}
+                <span class="g-name">{g.label[lang]}</span>
+                <span class="g-meta">{goalMeta(lang, g)}</span>
+              </button>
+              {on && (
+                <div class="g-rank">
+                  <span class="g-share">{t.rankNote(rank!, shareOf(rank!))}</span>
+                  <span class="g-arrows">
+                    <button type="button" aria-label={t.up} disabled={rank === 1} onClick={() => move(g.id, "up")}>↑</button>
+                    <button type="button" aria-label={t.down} disabled={rank === n} onClick={() => move(g.id, "down")}>↓</button>
+                  </span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <button type="button" class="goal-refine-toggle" onClick={() => setOpen((v) => !v)}>
+        {open ? t.hide : t.refine}
       </button>
+
+      {open && (
+        <div class="goal-refine">
+          <h3>{t.targets}</h3>
+          <div class="chips">
+            {custom.map((id) => (
+              <button key={id} class="chip on" onClick={() => toggleCustomTarget(id)}>
+                {content.conceptById.get(id)?.label[lang] ?? id} ✕
+              </button>
+            ))}
+          </div>
+          <input class="refine-search" value={q} onInput={(e) => setQ((e.target as HTMLInputElement).value)} placeholder={t.search} />
+          {results.length > 0 && (
+            <ul class="refine-results">
+              {results.map((c) => (
+                <li key={c.id}>
+                  <button onClick={() => { toggleCustomTarget(c.id); setQ(""); }}>
+                    <span>{c.label[lang]}</span><span class="r-track">{c.track}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          <h3>{t.exclude}</h3>
+          <div class="chips">
+            {tracks.map((tr) => {
+              const offTrack = cfg.excludedTracks.includes(tr);
+              return <button key={tr} class={`chip${offTrack ? " excluded" : ""}`} onClick={() => toggleExcludedTrack(tr)}>{tr}</button>;
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
