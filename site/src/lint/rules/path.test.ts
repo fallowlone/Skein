@@ -64,6 +64,17 @@ describe("validatePathData", () => {
     expect(validatePathData(d).some((e) => /goal "broken" resolves to no concepts/.test(e))).toBe(true);
   });
 
+  it("resolves a track-band>= goal to its core-track (weight>=1) middle+ concepts", () => {
+    const d = good();
+    d.goals.push({
+      id: "frontend-dev", label: { en: "FE", ru: "ФЕ" },
+      target: { rule: "track-band>=middle" },
+      trackWeights: { networking: 1, databases: 0.7 }, // databases is support (<1) → excluded
+    });
+    // networking middle+ = tcp-handshake → goal resolves, no "no concepts" error
+    expect(validatePathData(d).some((e) => /goal "frontend-dev" resolves to no concepts/.test(e))).toBe(false);
+  });
+
   it("flags a goal targeting an unknown concept", () => {
     const d = good();
     d.goals[1].target.concepts = ["ghost"];
