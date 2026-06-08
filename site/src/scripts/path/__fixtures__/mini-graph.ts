@@ -30,6 +30,9 @@ export const GOALS: Goal[] = [
     trackWeights: { networking: 1.0, databases: 1.0, distributed: 1.0 } },
   { id: "backend-job", label: { en: "Backend job", ru: "Бэкенд-работа" }, target: { concepts: ["indexing", "mvcc", "tcp-handshake"] },
     trackWeights: { databases: 1.0, networking: 0.8, distributed: 0.6 } },
+  { id: "frontend-dev", label: { en: "Frontend dev", ru: "Frontend-разработчик" }, target: { rule: "track-band>=middle" },
+    // core (weight 1 → targeted): networking; support (weight < 1 → order-only): databases
+    trackWeights: { networking: 1.0, databases: 0.7 } },
 ];
 
 // Deterministic track ordering passed into the planner (mirrors tracks.json `order`).
