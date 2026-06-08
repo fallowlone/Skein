@@ -81,3 +81,24 @@ describe("planner", () => {
     expect(path.steps.every((s) => s.kind === "learn")).toBe(true);
   });
 });
+
+describe("resolveGoalTargets — track-band>= rule", () => {
+  const frontendDev = GOALS.find((g) => g.id === "frontend-dev")!;
+
+  it("targets only middle+ concepts in CORE tracks (weight >= 1), excluding support tracks", () => {
+    const ids = resolveGoalTargets(frontendDev, CONCEPTS);
+    // core track networking middle+: tcp-handshake, tls. databases is support (0.7) → excluded.
+    expect(ids.sort()).toEqual(["tcp-handshake", "tls"]);
+  });
+
+  it("ignores foundations/surface bands even in a core track", () => {
+    const ids = resolveGoalTargets(frontendDev, CONCEPTS);
+    expect(ids).not.toContain("ip-addressing"); // foundations
+    expect(ids).not.toContain("ports-sockets"); // foundations
+  });
+
+  it("returns [] for an unknown band token", () => {
+    const bad = { ...frontendDev, target: { rule: "track-band>=nonsense" } };
+    expect(resolveGoalTargets(bad, CONCEPTS)).toEqual([]);
+  });
+});
