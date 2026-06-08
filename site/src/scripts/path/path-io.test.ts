@@ -6,7 +6,9 @@ import {
   nextCalibrationProbe, unitProbeConcepts,
   overrides, loosenUnit, clearOverrides, importState,
   searchConcepts, reorderList,
+  tierOf,
 } from "./path-io";
+import { DEFAULT_CONFIG } from "./config";
 import { emptyState, applySelfDeclare } from "./knowledge";
 import type { PathStep, Concept, Track } from "./types";
 import conceptsJson from "~/content/path/concepts.json";
@@ -189,5 +191,14 @@ describe("reorderList", () => {
   it("returns the input unchanged when an id is missing", () => {
     expect(reorderList(["a", "b"], "z", "a")).toEqual(["a", "b"]);
     expect(reorderList(["a", "b"], "a", "z")).toEqual(["a", "b"]);
+  });
+});
+
+describe("tierOf", () => {
+  it("returns the string tier", () => {
+    expect(tierOf({ ...DEFAULT_CONFIG, depthTier: "junior" })).toBe("junior");
+  });
+  it("falls back to middle for a per-track map", () => {
+    expect(tierOf({ ...DEFAULT_CONFIG, depthTier: { frontend: "senior" } })).toBe("middle");
   });
 });
