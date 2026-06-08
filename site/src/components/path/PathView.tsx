@@ -2,9 +2,9 @@
 // The single Planning-screen island. Plain Preact composition — NO client:* here;
 // roadmap.astro mounts this once. Sections (re-skin of docs/redesign/v2 Planning.html):
 //   XP/level strip · cold-start banner · droppedLocal warning
-//   01 · GOAL  · 02 · INSTRUMENT (concept-mastery map) · 03 · PATH (next units)
-//   04 · INSTRUMENT (deadline) · Advanced knobs.
-// Owns the three reused modals: GoalPicker, PathConfigDrawer, DiagnosticRunner.
+//   TodayFocus · 01 · GOAL · 02 · INSTRUMENT (deadline) · 03 · PATH (next units)
+//   04 · INSTRUMENT (concept-mastery map) · Advanced knobs.
+// Owns the two reused modals: PathConfigDrawer, DiagnosticRunner.
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
@@ -19,7 +19,7 @@ import ConceptMasteryMap from "./planning/ConceptMasteryMap";
 import NextPath from "./planning/NextPath";
 import DeadlineSection from "./planning/DeadlineSection";
 import AdvancedKnobs from "./planning/AdvancedKnobs";
-import GoalPicker from "./GoalPicker";
+import TodayFocus from "./planning/TodayFocus";
 import PathConfigDrawer from "./PathConfigDrawer";
 import DiagnosticRunner from "./DiagnosticRunner";
 
@@ -34,7 +34,7 @@ const L = {
     mapHead: "Concept-mastery map", mapNote: "Everything you've surveyed — and the gaps",
     pathHead: "Next units — dependency-ordered", pathNote: "Prereqs first · concepts you know are skipped",
     dlHead: "Deadline & exam-prep mode", dlNote: "An honest, dated schedule from your real availability",
-    secGoal: "01 · GOAL", secMap: "02 · INSTRUMENT", secPath: "03 · PATH", secDl: "04 · INSTRUMENT",
+    secGoal: "01 · GOAL", secDl: "02 · INSTRUMENT", secPath: "03 · PATH", secMap: "04 · INSTRUMENT",
   },
   ru: {
     level: "Уровень", xp: "XP", steps: "Шагов пройдено",
@@ -46,13 +46,13 @@ const L = {
     mapHead: "Карта освоения концептов", mapNote: "Всё, что размечено — и пробелы",
     pathHead: "Следующие юниты — по зависимостям", pathNote: "Пререквизиты вперёд · известное пропускается",
     dlHead: "Дедлайн и подготовка к экзамену", dlNote: "Честный план по датам из твоей реальной загрузки",
-    secGoal: "01 · ЦЕЛЬ", secMap: "02 · ИНСТРУМЕНТ", secPath: "03 · ПУТЬ", secDl: "04 · ИНСТРУМЕНТ",
+    secGoal: "01 · ЦЕЛЬ", secDl: "02 · ИНСТРУМЕНТ", secPath: "03 · ПУТЬ", secMap: "04 · ИНСТРУМЕНТ",
   },
 } as const;
 
 export default function PathView({ lang }: { lang: Locale }) {
   const t = L[lang];
-  const [modal, setModal] = useState<null | "goals" | "config">(null);
+  const [modal, setModal] = useState<null | "config">(null);
   const [quickUnit, setQuickUnit] = useState<string | null>(null);
 
   const k = knowledge.value;        // subscribe
@@ -89,6 +89,9 @@ export default function PathView({ lang }: { lang: Locale }) {
       {/* droppedLocal warning */}
       {droppedLocal && <p class="banner dropped">{t.droppedNote}</p>}
 
+      {/* TODAY focus */}
+      <TodayFocus lang={lang} />
+
       {/* 01 · GOAL */}
       <section class="screen-section" aria-labelledby="goal-h">
         <div class="sec-head">
@@ -96,17 +99,17 @@ export default function PathView({ lang }: { lang: Locale }) {
           <h2 id="goal-h">{t.goalHead}</h2>
           <span class="sec-note">{t.goalNote}</span>
         </div>
-        <GoalSection lang={lang} onCustom={() => setModal("goals")} />
+        <GoalSection lang={lang} />
       </section>
 
-      {/* 02 · INSTRUMENT — concept-mastery map */}
-      <section class="screen-section" aria-labelledby="map-h">
+      {/* 02 · INSTRUMENT — deadline */}
+      <section class="screen-section" aria-labelledby="dl-h">
         <div class="sec-head">
-          <span class="sec-index">{t.secMap}</span>
-          <h2 id="map-h">{t.mapHead}</h2>
-          <span class="sec-note">{t.mapNote}</span>
+          <span class="sec-index">{t.secDl}</span>
+          <h2 id="dl-h">{t.dlHead}</h2>
+          <span class="sec-note">{t.dlNote}</span>
         </div>
-        <ConceptMasteryMap lang={lang} />
+        <DeadlineSection lang={lang} />
       </section>
 
       {/* 03 · PATH — next units */}
@@ -119,14 +122,14 @@ export default function PathView({ lang }: { lang: Locale }) {
         <NextPath lang={lang} onQuickCheck={(u) => setQuickUnit(u)} />
       </section>
 
-      {/* 04 · INSTRUMENT — deadline */}
-      <section class="screen-section" aria-labelledby="dl-h">
+      {/* 04 · INSTRUMENT — concept-mastery map */}
+      <section class="screen-section" aria-labelledby="map-h">
         <div class="sec-head">
-          <span class="sec-index">{t.secDl}</span>
-          <h2 id="dl-h">{t.dlHead}</h2>
-          <span class="sec-note">{t.dlNote}</span>
+          <span class="sec-index">{t.secMap}</span>
+          <h2 id="map-h">{t.mapHead}</h2>
+          <span class="sec-note">{t.mapNote}</span>
         </div>
-        <DeadlineSection lang={lang} />
+        <ConceptMasteryMap lang={lang} />
       </section>
 
       {/* Advanced knobs */}
@@ -135,7 +138,6 @@ export default function PathView({ lang }: { lang: Locale }) {
       </section>
 
       {/* modals (reused, mounted conditionally) */}
-      {modal === "goals" && <GoalPicker lang={lang} onClose={() => setModal(null)} />}
       {modal === "config" && <PathConfigDrawer lang={lang} onClose={() => setModal(null)} />}
       {quickUnit && (
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setQuickUnit(null)}>
