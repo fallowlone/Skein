@@ -93,7 +93,21 @@ function cycleNodes(ids: Set<string>, req: Map<string, string[]>): string[] {
 
 function resolveGoal(goal: PathGoalLike, concepts: PathConceptLike[]): string[] {
   if (goal.target.concepts) return [...goal.target.concepts];
-  const m = (goal.target.rule ?? "").match(/^band>=(\w+)$/);
+  const rule = goal.target.rule ?? "";
+
+  // track-band>=<band>: middle+ concepts in the goal's CORE tracks (trackWeights >= 1) only.
+  // Mirrors planner.resolveGoalTargets — keep the two in sync.
+  const tb = rule.match(/^track-band>=(\w+)$/);
+  if (tb) {
+    const min = BAND_RANK[tb[1] as Band];
+    if (min === undefined) return [];
+    const core = new Set(
+      Object.entries(goal.trackWeights ?? {}).filter(([, w]) => (w ?? 0) >= 1).map(([t]) => t),
+    );
+    return concepts.filter((c) => core.has(c.track) && BAND_RANK[c.band as Band] >= min).map((c) => c.id);
+  }
+
+  const m = rule.match(/^band>=(\w+)$/);
   if (m) {
     const min = BAND_RANK[m[1] as Band];
     if (min === undefined) return [];
