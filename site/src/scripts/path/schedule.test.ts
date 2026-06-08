@@ -2,6 +2,7 @@
 import { describe, it, expect } from "vitest";
 import { studyDays, availableMinutes, feasibility, schedulePlan } from "./schedule";
 import type { PathStep, DeadlineConfig } from "./types";
+import { tierEffort } from "./tier-effort";
 
 // 2026-06-08 is a Monday (UTC). Use UTC (tzOffsetMin 0) for predictable civil days.
 const MON_2026_06_08 = Date.UTC(2026, 5, 8);
@@ -70,5 +71,31 @@ describe("schedule", () => {
     const s = schedulePlan({ steps: [step("big", 200)] }, cfg(), MON_2026_06_08);
     expect(s.feasibility.verdict).toBe("over");
     expect(s.feasibility.dropped).toContain("big");
+  });
+});
+
+describe("schedulePlan — tier scales required minutes", () => {
+  it("junior packs more (or equal) steps than senior in the same budget", () => {
+    const path = { steps: [step("a", 120), step("b", 120), step("c", 120)] };
+    const jr = schedulePlan(path, cfg(), MON_2026_06_08, "junior");
+    const sr = schedulePlan(path, cfg(), MON_2026_06_08, "senior");
+    const placed = (s: ReturnType<typeof schedulePlan>) => s.days.reduce((n, d) => n + d.steps.length, 0);
+    expect(placed(jr)).toBeGreaterThanOrEqual(placed(sr));
+  });
+
+  it("defaults to middle (1.0) when tier omitted — back-compat with existing callers", () => {
+    const path = { steps: [step("a", 120)] };
+    const def = schedulePlan(path, cfg(), MON_2026_06_08);
+    const mid = schedulePlan(path, cfg(), MON_2026_06_08, "middle");
+    expect(def.feasibility).toEqual(mid.feasibility);
+  });
+
+  it("senior depth can flip fits → over (deep-read costs 1.25x)", () => {
+    // 5 days * 120 min = 600 budget; 5 steps * 100 min = 500 required at middle (fits),
+    // 625 at senior (over).
+    const path = { steps: Array.from({ length: 5 }, (_, i) => step(`u${i}`, 100)) };
+    expect(schedulePlan(path, cfg(), MON_2026_06_08, "middle").feasibility.verdict).not.toBe("over");
+    expect(schedulePlan(path, cfg(), MON_2026_06_08, "senior").feasibility.verdict).toBe("over");
+    expect(tierEffort("senior")).toBe(1.25); // anchors the arithmetic above
   });
 });
