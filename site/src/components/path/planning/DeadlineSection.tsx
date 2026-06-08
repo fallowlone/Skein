@@ -6,10 +6,11 @@
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import type { DeadlineConfig, Schedule, Tier } from "~/scripts/path/types";
-import { config, content, computePath, setDeadline, setKnob } from "~/scripts/path/path-io";
+import { config, content, computePath, setDeadline, setKnob, currentPace, currentFixes, applyFix, applyCombo } from "~/scripts/path/path-io";
 import { scheduleBudget } from "~/scripts/path/schedule-budget";
+import HoursPicker, { fmtH } from "./HoursPicker";
+import type { Fix } from "~/scripts/path/optimize";
 
-const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"] as const;
 const TIERS: Tier[] = ["junior", "middle", "senior"];
 
 const L = {
@@ -33,6 +34,19 @@ const L = {
     aria: (d: string) => `${d} hours`,
     sig: "Signature. Set a date and your real weekday hours; the engine returns a dated plan and an honest verdict — including what gets dropped when the budget doesn't fit.",
     hoursUnit: "h",
+    paceHead: "Pace",
+    paceDone: (done: number, total: number) => `Done ${done} of ${total} h`,
+    paceBehind: (days: number) => `~${days} day(s) behind at your current pace`,
+    paceAhead: "Ahead of your planned pace",
+    paceOnTrack: "On your planned pace",
+    paceFinish: (d: string) => `projected finish ${d}`,
+    fixHead: "How to make it fit",
+    fixRaise: (h: number, save: number) => `+${fmtH(h)} h on each weekday — frees ${Math.round(save / 60)} h`,
+    fixExtend: (d: number, save: number) => `Move the date +${d} days — frees ${Math.round(save / 60)} h`,
+    fixDepth: (tier: string, save: number) => `Read at ${tier} depth — saves ${Math.round(save / 60)} h`,
+    fixDrop: (label: string, save: number) => `Drop goal "${label}" — saves ${Math.round(save / 60)} h`,
+    fixExclude: (track: string, save: number) => `Exclude track ${track} — saves ${Math.round(save / 60)} h`,
+    fixApply: "Apply", fixAuto: "Optimize for me", fixFits: "✓ closes the gap",
   },
   ru: {
     target: "Целевая дата",
@@ -54,11 +68,22 @@ const L = {
     aria: (d: string) => `${d}, часов`,
     sig: "Подпись. Задай дату и реальные часы по будням; движок вернёт план по датам и честный вердикт — включая то, что выпадет, если бюджет не сходится.",
     hoursUnit: "ч",
+    paceHead: "Темп",
+    paceDone: (done: number, total: number) => `Сделано ${done} из ${total} ч`,
+    paceBehind: (days: number) => `отстаёшь ~${days} дн. при текущем темпе`,
+    paceAhead: "С опережением графика",
+    paceOnTrack: "В графике",
+    paceFinish: (d: string) => `прогноз финиша ${d}`,
+    fixHead: "Как уложиться",
+    fixRaise: (h: number, save: number) => `+${fmtH(h)} ч в каждый будний день — освободит ${Math.round(save / 60)} ч`,
+    fixExtend: (d: number, save: number) => `Сдвинь дату на +${d} дн. — освободит ${Math.round(save / 60)} ч`,
+    fixDepth: (tier: string, save: number) => `Читай на глубине ${tier} — сэкономит ${Math.round(save / 60)} ч`,
+    fixDrop: (label: string, save: number) => `Снять цель «${label}» — сэкономит ${Math.round(save / 60)} ч`,
+    fixExclude: (track: string, save: number) => `Исключить трек ${track} — сэкономит ${Math.round(save / 60)} ч`,
+    fixApply: "Применить", fixAuto: "Оптимизировать за меня", fixFits: "✓ закрывает дефицит",
   },
 } as const;
 
-function fmtH(h: number): string { return Number.isInteger(h) ? String(h) : h.toFixed(1); }
-function clampHour(v: number): number { return Math.max(0, Math.min(8, Math.round(v * 2) / 2)); }
 // Minutes EAST of UTC. Engine convention (schedule.ts studyDays): `ms + tzOffsetMin*60000`
 // must land on the local wall-clock day, so this is the NEGATIVE of getTimezoneOffset().
 function tzNow(): number { return -new Date().getTimezoneOffset(); }
@@ -73,49 +98,6 @@ const DEFAULT_HOURS = [2, 2, 2, 1.5, 1.5, 0, 0]; // Mon..Sun seed when first ena
 function currentTier(): Tier {
   const dt = config.value.depthTier;
   return typeof dt === "string" ? dt : "middle";
-}
-
-/* ── Weekday-hours stepper grid ──────────────────────────────────────────────── */
-function WeekHoursGrid({ lang, hours, onSet }: { lang: Locale; hours: number[]; onSet: (i: number, v: number) => void }) {
-  const t = L[lang];
-  const bump = (i: number, delta: number) => onSet(i, clampHour((hours[i] ?? 0) + delta));
-  const totalH = hours.reduce((a, b) => a + b, 0);
-  const off = hours.filter((h) => h === 0).length;
-  return (
-    <div>
-      <div class="weekgrid">
-        {DAY_KEYS.map((_, i) => {
-          const h = hours[i] ?? 0;
-          return (
-            <div key={i} class="daycol">
-              <div class="dname">{t.days[i]}</div>
-              <button
-                type="button"
-                class={`hstep${h === 0 ? " off" : ""}`}
-                role="spinbutton"
-                aria-label={t.aria(t.days[i])}
-                aria-valuenow={h}
-                aria-valuemin={0}
-                aria-valuemax={8}
-                aria-valuetext={`${fmtH(h)} ${t.hoursUnit}`}
-                onClick={() => bump(i, h >= 6 ? -h : 0.5)}
-                onContextMenu={(e) => { e.preventDefault(); bump(i, -0.5); }}
-                onWheel={(e) => { e.preventDefault(); bump(i, e.deltaY < 0 ? 0.5 : -0.5); }}
-                onKeyDown={(e) => {
-                  if (e.key === "ArrowUp") { e.preventDefault(); bump(i, 0.5); }
-                  if (e.key === "ArrowDown") { e.preventDefault(); bump(i, -0.5); }
-                }}
-              >
-                <span class="hv">{h === 0 ? "·" : fmtH(h)}</span>
-                <span class="hu">{t.hoursUnit}</span>
-              </button>
-            </div>
-          );
-        })}
-      </div>
-      <div class="weekgrid-note">{t.weekTotal(totalH, off)}</div>
-    </div>
-  );
 }
 
 /* ── Blackout date chips ─────────────────────────────────────────────────────── */
@@ -205,7 +187,7 @@ export default function DeadlineSection({ lang }: { lang: Locale }) {
 
             <div class="field-row">
               <label>{t.hours}</label>
-              <WeekHoursGrid lang={lang} hours={hours} onSet={setHour} />
+              <HoursPicker lang={lang} hours={hours} onSet={setHour} />
             </div>
 
             <div class="field-row">
@@ -270,6 +252,8 @@ function DeadlineOutput({ lang, schedule }: { lang: Locale; schedule: Schedule }
           <span>{t.need(Math.round(budget.needMin / 60))}</span>
         </div>
         <p class="v-honest">{honest}</p>
+        <PaceRow lang={lang} />
+        <FixList lang={lang} />
       </div>
 
       {planned.length > 0 && (
@@ -290,6 +274,62 @@ function DeadlineOutput({ lang, schedule }: { lang: Locale; schedule: Schedule }
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ── Pace row + Fix list ─────────────────────────────────────────────────────── */
+type LStrings = typeof L["en"] | typeof L["ru"];
+
+function fixLabel(lang: Locale, t: LStrings, f: Fix): string {
+  const save = f.deltaMin;
+  switch (f.kind) {
+    case "raise-hours":   return t.fixRaise(f.patch.hours as number, save);
+    case "extend-date":   return t.fixExtend(f.patch.days as number, save);
+    case "lower-depth":   return t.fixDepth(f.patch.tier as string, save);
+    case "drop-goal":     return t.fixDrop((f.patch.label as string) ?? (f.patch.goalId as string), save);
+    case "exclude-track": return t.fixExclude(f.patch.track as string, save);
+  }
+}
+
+function FixList({ lang }: { lang: Locale }) {
+  const t = L[lang];
+  const { fixes, combo, deficitMin } = currentFixes();
+  if (fixes.length === 0) return null;
+  return (
+    <div class="fixlist">
+      <div class="panel-head" style="margin:var(--s-3) 0 var(--s-2)"><span class="ph-label">{t.fixHead}</span></div>
+      <ul class="fix-items">
+        {fixes.map((f, i) => (
+          <li key={i} class="fix-item">
+            <span class="fix-text">{fixLabel(lang, t, f)}{f.closesGap && <em class="fix-fits"> {t.fixFits}</em>}</span>
+            <button type="button" class="btn btn-sm" onClick={() => applyFix(f)}>{t.fixApply}</button>
+          </li>
+        ))}
+      </ul>
+      {deficitMin > 0 && combo.length > 0 && (
+        <button type="button" class="btn btn-primary btn-sm fix-auto" onClick={() => applyCombo(combo)}>{t.fixAuto}</button>
+      )}
+    </div>
+  );
+}
+
+function PaceRow({ lang }: { lang: Locale }) {
+  const t = L[lang];
+  const p = currentPace();
+  if (!p || p.status === "no-data") return null;
+  const dl = config.value.deadline!;
+  const doneH = Math.round(p.doneMin / 60);
+  const totalH = Math.round((dl.baselineRequiredMin ?? 0) / 60);
+  const finish = p.projectedFinishMs ? new Date(p.projectedFinishMs).toISOString().slice(0, 10) : null;
+  const state = p.status === "behind" ? t.paceBehind(p.behindDays) : p.status === "ahead" ? t.paceAhead : t.paceOnTrack;
+  // Note: PaceStatus uses "on-track" (hyphen) for the neutral state — the ternary above covers it as the else branch.
+  return (
+    <div class={`pace-row ${p.status}`}>
+      <span class="ph-label">{t.paceHead}</span>
+      <span class="pace-done">{t.paceDone(doneH, totalH)}</span>
+      <span class="pace-state">{state}</span>
+      {finish && p.status === "behind" && <span class="pace-finish">{t.paceFinish(finish)}</span>}
     </div>
   );
 }
