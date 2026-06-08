@@ -17,6 +17,8 @@
 5. **Senior bar.** Real senior pitfalls — cache stampede, LRU recency, retry amplification / no jitter, connection-pool exhaustion, N+1, idempotency gaps, consistent-hash wraparound, head-of-line blocking, lock ordering, ignoring HTTP status, unbounded growth. NOT toy exercises ("sum an array").
 6. **Bilingual & distinct.** Every `{en, ru}` field needs a genuine RU translation that differs from EN (the `practice-parity` lint rejects `en === ru` on prose ≥ 25 chars). Keep technical terms in their usual form; translate the prose.
 7. **Topical fit, no redundancy.** The task must teach something the lesson is about AND that its existing tasks don't already cover. Read the lesson's existing practice tasks first.
+8. **Numbers must be self-consistent (incidents).** Recompute every numeric claim AND cross-check it against the task's other steps — a value stated one way in step 3 and differently in step 5 is a defect. Watch unit errors (MB vs KB, /sec vs /day, bits vs bytes) and never mislabel a multiplier (a 10× confusion is not "300×"). The calibration caught a "64 MB" that should have been 6.4 MB.
+9. **Name the failure mechanism correctly for the runtime.** Don't claim a thread-level data race in single-threaded JS/Node — say "global, not per-request state" or "async interleaving" instead. Distinguish serialized vs deserialized size vs total RSS. The defect can be real while the stated physics is wrong; both must be right.
 
 ---
 
