@@ -102,6 +102,9 @@ const SandboxTask = TaskBase.extend({
   type: z.literal("sandbox"),
   runtime: z.enum(["sql", "js", "parametric"]),
   setup: z.string().optional(),
+  // Visible starter shown in the editor — for "run-the-demo / explore" sandboxes where the code is
+  // the point (the learner runs and tweaks it). Distinct from `setup`, which runs hidden before it.
+  initialCode: z.string().optional(),
   expected: ExecCheck.optional(),
   parametric: z.object({ component: z.string() }).optional(),
 });
