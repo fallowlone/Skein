@@ -22,9 +22,12 @@ export async function runDebug(args: {
   const { setup, learnerCode, verify, check } = args;
   let out = "";
   try {
-    const { getQuickJS } = await import("quickjs-emscripten"); // code-split WASM
+    const { getQuickJS, shouldInterruptAfterDeadline } = await import("quickjs-emscripten"); // code-split WASM
     const QuickJS = await getQuickJS();
     const vm = QuickJS.newContext();
+    // Hard wall-clock budget: a runaway loop (e.g. an unfinished scaffold whose loop never
+    // advances) is interrupted instead of hanging the caller forever.
+    vm.runtime.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + 1000));
 
     const logFn = vm.newFunction("log", (...vmArgs) => {
       out += vmArgs.map((a) => vm.dump(a)).join(" ") + "\n";

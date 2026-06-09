@@ -23,9 +23,12 @@ export default function JsSandbox({ lang, setup, initialCode, check, onResult }:
     setBusy(true); setError(null); setStdout(null); setVerdict(null);
     let out = "";
     try {
-      const { getQuickJS } = await import("quickjs-emscripten"); // code-split WASM
+      const { getQuickJS, shouldInterruptAfterDeadline } = await import("quickjs-emscripten"); // code-split WASM
       const QuickJS = await getQuickJS();
       const vm = QuickJS.newContext();
+      // Hard 1s budget so a learner's infinite loop (`while (true) {}`) is interrupted instead of
+      // freezing the browser tab.
+      vm.runtime.setInterruptHandler(shouldInterruptAfterDeadline(Date.now() + 1000));
       // expose console.log → capture
       const logFn = vm.newFunction("log", (...args) => {
         out += args.map((a) => vm.dump(a)).join(" ") + "\n";
