@@ -60,6 +60,98 @@
         { "en": "Config (c): avoid delete-on-change (it stampedes); use versioned keys or update-in-place so the hot key never goes absent, optionally with a near-cache, and a short TTL backstop.", "ru": "Конфиг (в): избегай удаления-при-смене (оно штурмует); используй версионированные ключи или обновление-на-месте, чтобы горячий ключ не отсутствовал, опционально near-кэш, и короткую TTL-подстраховку." }
       ],
       "model": { "en": "Page (a) — TTL expiry, ~30s with jitter. It's a 6-query derived object, so explicit invalidation would couple the write path to a value with no single owning row (high coupling, fragile), while a 30s jittered TTL is simple, self-healing, and within the staleness budget. Balance (b) — money, low tolerance: explicit invalidation on write (or write-through) so it reflects within ~1s, but back it with a short TTL so a missed invalidation self-corrects, and use versioned keys to avoid the write-time delete-race that could write a stale balance back into the cache — a stale balance is a correctness bug you can't accept, so eliminate the race rather than hope. Config (c) — hot key, delete-on-change stampedes: don't delete. Use versioned keys (bump the version on the twice-daily change so readers cleanly miss the new version) or update-in-place so the hot key is never absent and there's no gap to stampede into; layer a near-cache in each app process to absorb the per-request read volume, with a short TTL backstop. Across all three the DB stays authoritative and each scheme matches the data's staleness tolerance against the coupling and race cost it's worth paying.", "ru": "Страница (а) — истечение по TTL, ~30с с джиттером. Это объект из 6 запросов, так что явная инвалидация сцепила бы путь записи со значением без единой владеющей строки (высокое сцепление, хрупко), тогда как TTL 30с с джиттером прост, самоисцеляется и в пределах бюджета устаревания. Баланс (б) — деньги, низкая терпимость: явная инвалидация на записи (или write-through), чтобы отражалось за ~1с, но подстрахуй коротким TTL, чтобы пропущенная инвалидация самоисправилась, и используй версионированные ключи во избежание гонки удаления на записи, что могла бы записать устаревший баланс обратно в кэш — устаревший баланс это баг корректности, который нельзя принять, так что устрани гонку, а не надейся. Конфиг (в) — горячий ключ, удаление-при-смене штурмует: не удаляй. Используй версионированные ключи (инкременть версию при смене дважды в день, чтобы читатели чисто промахивались по новой версии) или обновление-на-месте, чтобы горячий ключ никогда не отсутствовал и не было зазора для стампиды; наложи near-кэш в каждом процессе приложения для поглощения по-запросного объёма чтений, с короткой TTL-подстраховкой. По всем трём БД остаётся авторитетной, и каждая схема сопоставляет терпимость данных к устареванию против цены сцепления и гонки, что стоит платить." }
+    },
+    {
+      "id": "incident-bulk-invalidation-cold-cache",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 15,
+      "title": {
+        "en": "A one-line invalidation flushed the whole cache",
+        "ru": "Однострочная инвалидация смыла весь кэш"
+      },
+      "prompt": {
+        "en": "A schema migration touched a column used by many cached objects, so an engineer added a deploy step to 'invalidate the affected entries.' Seconds after deploy, the database CPU pins at 100%, p99 latency goes 30×, and the cache hit rate reads ~0%. The migration itself was fine. Work the incident; commit before revealing.",
+        "ru": "Миграция схемы затронула колонку, используемую многими кэшированными объектами, поэтому инженер добавил в деплой шаг «инвалидировать затронутые записи». Через секунды после деплоя CPU базы упирается в 100%, p99 растёт в 30×, а hit rate кэша читается как ~0%. Сама миграция была в порядке. Веди инцидент; сформулируй до раскрытия."
+      },
+      "steps": [
+        {
+          "label": { "en": "1 · Read the signals", "ru": "1 · Считай сигналы" },
+          "prompt": {
+            "en": "Hit rate is ~0% (not merely degraded), the spike starts the instant the invalidation step runs, and it hits ALL object types at once. What does 'hit rate floored to zero, all keys, at deploy time' tell you happened?",
+            "ru": "Hit rate ~0% (не просто деградировал), скачок стартует в момент шага инвалидации и бьёт по ВСЕМ типам объектов разом. О чём говорит «hit rate в нулях, все ключи, в момент деплоя»?"
+          },
+          "reveal": {
+            "en": "A bulk invalidation evicted essentially the entire cache at once — not a targeted delete of the affected entries. A near-zero hit rate across every object type, starting exactly at the invalidation step, means the keyspace was wiped (e.g. a pattern delete that matched far more than intended, or a FLUSHALL). Every subsequent read is now a cold miss that goes to the DB, so the DB is serving the full uncached read load it was never sized for.",
+            "ru": "Массовая инвалидация вытеснила по сути весь кэш разом — а не точечно удалила затронутые записи. Hit rate около нуля по всем типам объектов, стартующий ровно на шаге инвалидации, означает, что пространство ключей стёрто (например, удаление по паттерну, совпавшее с куда большим, чем задумано, или FLUSHALL). Каждое последующее чтение теперь холодный промах, идущий в БД, так что БД отдаёт полную некэшированную нагрузку чтений, под которую её никогда не размеряли."
+          }
+        },
+        {
+          "label": { "en": "2 · Name the mechanism", "ru": "2 · Назови механизм" },
+          "prompt": {
+            "en": "Why does an empty cache produce a 30× DB spike and not just a gradual warm-up — what is the difference between this and a normal cold start?",
+            "ru": "Почему пустой кэш даёт 30× скачок БД, а не плавный прогрев — в чём разница с обычным холодным стартом?"
+          },
+          "reveal": {
+            "en": "With the cache emptied under live peak traffic, every concurrent request for every key misses simultaneously and stampedes the DB — and because many requests want the SAME hot keys, they don't even deduplicate: thousands of identical expensive queries fire in the recompute window for each popular key (a stampede per key, multiplied across the whole keyspace). The DB was sized assuming the cache absorbs ~99% of reads; instantaneously it must absorb 100%, plus the duplicate fan-out. A controlled cold start warms gradually under low traffic; this dumped the full uncached load at peak in one instant.",
+            "ru": "При кэше, опустошённом под живым пиковым трафиком, каждый параллельный запрос каждого ключа промахивается одновременно и штурмует БД — а поскольку много запросов хотят ОДНИ горячие ключи, они даже не дедуплицируются: тысячи идентичных дорогих запросов летят в окно пересчёта на каждый популярный ключ (стампид на ключ, помноженный на всё пространство). БД размерена в расчёте, что кэш поглощает ~99% чтений; мгновенно она должна поглотить 100% плюс дублирующий веер. Контролируемый холодный старт прогревается плавно под низким трафиком; этот сбросил полную некэшированную нагрузку на пике в один миг."
+          }
+        },
+        {
+          "label": { "en": "3 · Stop the bleeding", "ru": "3 · Останови кровотечение" },
+          "prompt": {
+            "en": "The DB is saturated now. What is the fastest mitigation to relieve it while the cache refills?",
+            "ru": "БД насыщена. Какая самая быстрая мера разгрузит её, пока кэш наполняется?"
+          },
+          "reveal": {
+            "en": "Throttle the miss fan-out so the DB isn't asked the same thing thousands of times: turn on request coalescing / single-flight so concurrent misses for one key collapse to one DB query, and/or shed or rate-limit traffic at the edge to give the cache room to repopulate. If a stale snapshot is available, serve stale while revalidating. These don't undo the flush — they cap how hard the cold cache hits the DB so it can survive the warm-up instead of falling over.",
+            "ru": "Притормози веер промахов, чтобы БД не спрашивали одно и то же тысячи раз: включи коалесцирование запросов / single-flight, чтобы параллельные промахи одного ключа схлопывались в один запрос к БД, и/или сбрось или ограничь трафик на краю, дав кэшу место перезаполниться. Если есть устаревший снимок — отдавай устаревшее, обновляя в фоне. Это не отменяет смыв — лишь ограничивает, насколько сильно холодный кэш бьёт по БД, чтобы она пережила прогрев, а не легла."
+          }
+        },
+        {
+          "label": { "en": "4 · The durable fix", "ru": "4 · Устойчивый фикс" },
+          "prompt": {
+            "en": "How should a wide invalidation be done so it never empties the cache into the DB again?",
+            "ru": "Как делать широкую инвалидацию, чтобы она больше не вываливала кэш в БД?"
+          },
+          "reveal": {
+            "en": "Never bulk-delete a live cache. Three durable techniques, ideally combined: (1) Versioned namespace — prefix keys with a schema/version token and bump the token to logically invalidate everything at once; old keys are ignored and expire by TTL while new reads populate the new namespace gradually, so there is no instantaneous mass miss. (2) Staggered/rolling invalidation — if you must delete, invalidate in small batches over a window (with jitter) so misses spread out instead of detonating together. (3) Re-warm before/while invalidating — pre-populate the new values (or let single-flight + serve-stale cover the gap) so the DB never sees an uncoalesced cold flood. Pair any of these with single-flight as a standing safety net. The root cause was treating 'invalidate many entries' as a synchronous mass-delete instead of a gradual, coalesced transition.",
+            "ru": "Никогда не делай массовое удаление живого кэша. Три устойчивых техники, в идеале вместе: (1) Версионированный неймспейс — префиксуй ключи токеном схемы/версии и инкременти токен, чтобы логически инвалидировать всё разом; старые ключи игнорируются и истекают по TTL, пока новые чтения постепенно заполняют новый неймспейс, так что нет мгновенного массового промаха. (2) Ступенчатая/катящаяся инвалидация — если удалять надо, инвалидируй малыми пачками в окне (с джиттером), чтобы промахи рассеялись, а не сдетонировали вместе. (3) Перепрогрев до/во время инвалидации — предзаполни новые значения (или дай single-flight + выдаче устаревшего закрыть зазор), чтобы БД не видела нескоалесцированный холодный поток. Сочетай любую из этих с single-flight как постоянной страховкой. Корень — трактовка «инвалидировать много записей» как синхронного массового удаления вместо постепенного скоалесцированного перехода."
+          }
+        },
+        {
+          "label": { "en": "5 · Postmortem action", "ru": "5 · Действие по постмортему" },
+          "prompt": {
+            "en": "What guardrail keeps a future deploy from issuing a wildcard/flush invalidation against a live cache by accident?",
+            "ru": "Какая страховка не даст будущему деплою случайно выдать wildcard/flush-инвалидацию по живому кэшу?"
+          },
+          "reveal": {
+            "en": "Make wide invalidation a controlled operation, not a one-liner: disable/forbid FLUSHALL and unbounded pattern (KEYS/SCAN-delete) commands on the production cache via ACLs, and route any mass invalidation through a tool that does it via version-bump or staggered batches with a built-in rate limit. Add a deploy-time check that alarms if an invalidation step would touch more than a safe fraction of the keyspace. The fix turns 'one engineer can wipe the cache with one command' into 'a wide invalidation is a deliberate, rate-limited, version-based operation.'",
+            "ru": "Сделай широкую инвалидацию контролируемой операцией, а не однострочником: отключи/запрети FLUSHALL и безграничные паттерн-команды (KEYS/SCAN-удаление) на продовом кэше через ACL и маршрутизируй любую массовую инвалидацию через инструмент, делающий её через bump версии или ступенчатые пачки со встроенным rate limit. Добавь проверку на деплое, что алармит, если шаг инвалидации затронет более безопасной доли пространства ключей. Фикс превращает «один инженер может стереть кэш одной командой» в «широкая инвалидация — намеренная, ограниченная по темпу, версионная операция»."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-event-driven-invalidation-consumer",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 12,
+      "title": { "en": "Review an event-driven cache invalidator", "ru": "Отревьюй событийный инвалидатор кэша" },
+      "prompt": { "en": "This consumer invalidates cache entries from a stream of DB change events. Review it like a senior: name the real defects in its ordering, idempotency, and failure handling; don't flag the non-issues.", "ru": "Этот consumer инвалидирует записи кэша из потока событий изменения БД. Отревьюй как senior: назови реальные дефекты в его порядке, идемпотентности и обработке сбоев; не цепляйся к не-проблемам." },
+      "diff": {
+        "lang": "js",
+        "code": "// consumes {key, newValue, version} change events, at-least-once\nasync function onChange(evt) {\n  // write the new value straight into the cache\n  await cache.set(evt.key, evt.newValue);\n  ack(evt);                       // ack immediately\n}\n\n// the producer emits an event on every DB write to the row" },
+      "findings": [
+        { "id": "set-not-delete-or-version", "severity": "bug", "planted": true, "label": { "en": "Out-of-order events overwrite newer with older", "ru": "События не по порядку перезаписывают новое старым" }, "explanation": { "en": "It blindly `set`s newValue and ignores `evt.version`. At-least-once + parallel consumers means events can arrive out of order or be redelivered; an older event processed after a newer one writes the STALE value back into the cache and it sticks. Either delete the key (let the next read reload the authoritative DB) or guard the write with the version — only overwrite if `evt.version` is newer than the cached version. As written, reordering re-poisons the cache.", "ru": "Он слепо `set`-ит newValue и игнорирует `evt.version`. At-least-once + параллельные consumer'ы означают, что события могут приходить не по порядку или переотправляться; старое событие, обработанное после нового, пишет УСТАРЕВШЕЕ значение обратно в кэш, и оно залипает. Либо удаляй ключ (пусть следующее чтение перезагрузит авторитетную БД), либо защищай запись версией — перезаписывай лишь если `evt.version` новее кэшированной. Как написано, переупорядочивание заново отравляет кэш." } },
+        { "id": "ack-before-invalidate-success", "severity": "bug", "planted": true, "label": { "en": "Acks even when the cache write failed", "ru": "Подтверждает даже при провале записи кэша" }, "explanation": { "en": "`ack(evt)` runs unconditionally after `await cache.set`. If `cache.set` throws (cache blip), the await rejects and ack never runs — actually fine — but if set silently fails or the code is changed to swallow errors, the ack would drop the event and leave the cache stale forever with no redelivery. The invalidation must only ack after a confirmed successful invalidation, and a failure must NOT ack so the event is redelivered. The dangerous shape is acking work that didn't complete.", "ru": "`ack(evt)` выполняется безусловно после `await cache.set`. Если `cache.set` бросает (сбой кэша), await отклоняется и ack не выполнится — это как раз нормально — но если set тихо падает или код изменят, чтобы глотать ошибки, ack отбросит событие и оставит кэш устаревшим навсегда без переотправки. Инвалидация должна подтверждать лишь после подтверждённой успешной инвалидации, а сбой НЕ должен подтверждать, чтобы событие переотправилось. Опасна форма, подтверждающая невыполненную работу." } },
+        { "id": "set-resurrects-cold-key", "severity": "tradeoff", "planted": true, "label": { "en": "Writing newValue populates keys nobody is reading", "ru": "Запись newValue заполняет ключи, что никто не читает" }, "explanation": { "en": "Pushing newValue into the cache on every change populates entries even for keys with no readers, inflating memory and evicting genuinely hot entries — and it also resurrects a key a reader's TTL would otherwise have let go cold. Invalidation by DELETE (lazy repopulation on the next read) keeps the cache holding only what's actually read; pre-writing on every change is a write-through-from-events choice that's usually the wrong default for a derived cache.", "ru": "Проталкивание newValue в кэш на каждое изменение заполняет записи даже для ключей без читателей, раздувая память и вытесняя по-настоящему горячие записи — и ещё воскрешает ключ, что TTL читателя иначе дал бы остыть. Инвалидация через DELETE (ленивое перезаполнение при следующем чтении) держит в кэше лишь реально читаемое; предзапись на каждое изменение — это выбор write-through-из-событий, обычно неверный дефолт для производного кэша." } },
+        { "id": "no-reorder-test", "severity": "missing-test", "planted": true, "label": { "en": "No test for out-of-order / duplicate events", "ru": "Нет теста на события не по порядку / дубли" }, "explanation": { "en": "At-least-once delivery guarantees duplicates and possible reordering, yet there's no test feeding an old event after a new one and asserting the cache keeps the newer value. That's the exact path the version-guard bug breaks, and it ships untested.", "ru": "At-least-once-доставка гарантирует дубли и возможное переупорядочивание, но нет теста, подающего старое событие после нового и утверждающего, что кэш держит более новое значение. Это ровно тот путь, что ломает баг защиты версией, и он уезжает непротестированным." } }
+      ],
+      "decoys": [
+        { "id": "no-batching", "label": { "en": "It processes one event at a time instead of batching", "ru": "Обрабатывает по одному событию вместо батчинга" }, "explanation": { "en": "A throughput optimization, not a correctness defect — batching invalidations can help at scale but is optional polish; the ordering/idempotency bugs are the real issues.", "ru": "Оптимизация пропускной способности, не дефект корректности — батчинг инвалидаций может помочь на масштабе, но это опциональная полировка; реальные проблемы — баги порядка/идемпотентности." } },
+        { "id": "evt-shape", "label": { "en": "The event should carry the full row, not just newValue", "ru": "Событие должно нести всю строку, а не только newValue" }, "explanation": { "en": "Out of scope — what the event carries is a producer design choice; the consumer's defects (version guard, ack discipline) stand regardless of payload shape.", "ru": "Вне рамок — что несёт событие, это выбор дизайна producer'а; дефекты consumer'а (защита версией, дисциплина ack) стоят независимо от формы payload'а." } }
+      ]
     }
   ]
 }

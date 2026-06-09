@@ -47,6 +47,79 @@
         { "en": "Explains the rollback undoes the increment, so there's no gap.", "ru": "Объясняет, что откат отменяет инкремент, поэтому пропуска нет." },
         { "en": "Acknowledges the cost: serialization/contention on the counter row, and keeps a normal identity surrogate key.", "ru": "Признаёт цену: сериализация/конкуренция на строке-счётчике, и держит нормальный identity суррогатный ключ." }
       ]
+    },
+    {
+      "id": "incident-int4-identity-exhaustion",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 15,
+      "title": { "en": "An int4 identity column runs out of numbers", "ru": "У int4 identity-колонки кончились номера" },
+      "prompt": { "en": "09:40 — every INSERT into events fails with 'integer out of range'. The table was created years ago with id integer GENERATED ALWAYS AS IDENTITY. Writes are fully down; reads work. Work the incident, committing to each answer before revealing.", "ru": "09:40 — каждый INSERT в events падает с 'integer out of range'. Таблица создана годы назад как id integer GENERATED ALWAYS AS IDENTITY. Запись полностью лежит; чтения работают. Веди инцидент, формулируя ответ до раскрытия каждого шага." },
+      "steps": [
+        {
+          "label": { "en": "1 · Read the signal", "ru": "1 · Считай сигнал" },
+          "prompt": { "en": "Only INSERTs fail, with 'integer out of range'; the row count is around 2.1 billion. What ceiling did you hit, and why is it exactly here?", "ru": "Падают только INSERT'ы с 'integer out of range'; число строк около 2.1 миллиарда. В какой потолок ты упёрся и почему именно тут?" },
+          "reveal": { "en": "A 4-byte signed integer maxes out at 2,147,483,647 (~2.147 billion). The identity sequence has handed out every value up to that, and the next nextval would exceed int4, so the INSERT errors before touching the heap. Note the count is near 2.1B but gaps from rollbacks mean the sequence reached the ceiling with fewer live rows — it is the sequence's last value, not the row count, that matters.", "ru": "4-байтное знаковое целое упирается в 2 147 483 647 (~2.147 миллиарда). Identity-последовательность раздала все значения до него, а следующий nextval превысил бы int4, поэтому INSERT падает ещё до обращения к heap. Учти: счётчик около 2.1млрд, но пропуски от откатов значат, что последовательность достигла потолка при меньшем числе живых строк — важно последнее значение последовательности, а не число строк." }
+        },
+        {
+          "label": { "en": "2 · Estimate the real fix cost", "ru": "2 · Оцени цену настоящего фикса" },
+          "prompt": { "en": "The fix is to widen the column to bigint. Why is ALTER TABLE events ALTER COLUMN id TYPE bigint NOT the quick fix it looks like on a 300 GB table?", "ru": "Фикс — расширить колонку до bigint. Почему ALTER TABLE events ALTER COLUMN id TYPE bigint НЕ такой быстрый фикс, каким кажется, на таблице в 300 ГБ?" },
+          "reveal": { "en": "Changing a column type from int4 to int8 rewrites every row (the on-disk width changes 4→8 bytes) under an ACCESS EXCLUSIVE lock, plus it rebuilds every index on the table. On 300 GB that is potentially hours of full table lock — a far longer outage than the one you're in. So you cannot just run the ALTER during an incident; you need an online migration path.", "ru": "Смена типа колонки с int4 на int8 переписывает каждую строку (ширина на диске меняется 4→8 байт) под ACCESS EXCLUSIVE блокировкой и перестраивает все индексы таблицы. На 300 ГБ это потенциально часы полной блокировки — простой куда длиннее текущего. Поэтому нельзя просто запустить ALTER в инциденте; нужен путь онлайн-миграции." }
+        },
+        {
+          "label": { "en": "3 · Stop the bleeding", "ru": "3 · Останови кровотечение" },
+          "prompt": { "en": "Writes are down right now. What can you do in minutes to accept inserts again WITHOUT the full rewrite?", "ru": "Запись лежит прямо сейчас. Что можно сделать за минуты, чтобы снова принимать вставки БЕЗ полной перезаписи?" },
+          "reveal": { "en": "Add a new bigint id column quickly and switch the application to it as the key, OR — if a surrogate that can momentarily go negative is acceptable — reset the identity's sequence to the most-negative int4 (ALTER ... RESTART WITH -2147483648), buying ~2.1 billion more values while you plan the real migration. Either restores writes immediately; both are stopgaps, not the fix. Reseting into the negative range only works if nothing assumes the id is positive.", "ru": "Быстро добавь новую bigint id-колонку и переключи приложение на неё как на ключ, ЛИБО — если суррогат, временно уходящий в минус, приемлем — сбрось последовательность identity в самый отрицательный int4 (ALTER ... RESTART WITH -2147483648), выиграв ещё ~2.1 миллиарда значений, пока планируешь настоящую миграцию. Любое сразу возвращает запись; оба — затычки, не фикс. Сброс в отрицательный диапазон работает, только если ничто не полагается на положительность id." }
+        },
+        {
+          "label": { "en": "4 · The durable migration", "ru": "4 · Устойчивая миграция" },
+          "prompt": { "en": "Describe the zero-downtime path to a real bigint primary key.", "ru": "Опиши путь без простоя к настоящему bigint первичному ключу." },
+          "reveal": { "en": "Add a new id_big bigint column (instant — a nullable add doesn't rewrite in modern Postgres), backfill it in batches from id (and from the sequence for new rows via a trigger or a bigint identity default), build a unique index on it CONCURRENTLY, then in one short transaction swap the primary key to id_big and point foreign keys at it. The whole heavy work happens online in batches; only the final constraint swap takes a brief lock. New tables should start as bigint identity from day one — the storage cost of int8 is negligible against this incident.", "ru": "Добавь новую колонку id_big bigint (мгновенно — добавление nullable не переписывает в современном Postgres), заполни её пакетами из id (и из последовательности для новых строк через триггер или bigint identity default), построй уникальный индекс на ней CONCURRENTLY, затем в одной короткой транзакции переключи первичный ключ на id_big и направь внешние ключи на него. Вся тяжёлая работа идёт онлайн пакетами; короткую блокировку берёт лишь финальная смена ограничения. Новые таблицы должны стартовать как bigint identity с первого дня — цена хранения int8 ничтожна против этого инцидента." }
+        },
+        {
+          "label": { "en": "5 · Postmortem action", "ru": "5 · Действие по постмортему" },
+          "prompt": { "en": "What single proactive alert would have caught this weeks early?", "ru": "Какой один проактивный алерт поймал бы это за недели?" },
+          "reveal": { "en": "Alert on sequence saturation: for each identity/serial sequence, compute last_value / max_value_of_type and warn at, say, 80%. That percentage rises slowly and predictably, so a threshold gives weeks of lead time to run the online migration calmly. Lagging signals like INSERT error rate only fire after writes are already down.", "ru": "Алерт на насыщение последовательности: для каждой identity/serial-последовательности считай last_value / max_value_of_type и предупреждай, скажем, на 80%. Этот процент растёт медленно и предсказуемо, так что порог даёт недели форы спокойно провести онлайн-миграцию. Запаздывающие сигналы вроде частоты ошибок INSERT срабатывают, только когда запись уже легла." }
+        }
+      ]
+    },
+    {
+      "id": "debug-generated-total-not-recomputed",
+      "type": "debug",
+      "difficulty": "stretch",
+      "estMin": 12,
+      "title": { "en": "A cached generated total goes stale on update", "ru": "Кешированный generated-итог устаревает при обновлении" },
+      "prompt": { "en": "This JS row models a Postgres STORED generated column total = price + tax: the engine recomputes it on every INSERT AND every UPDATE of a base column. The model only computes it on insert, so after updating price the total is stale. Fix `setPrice`/`setTax` so total is always derived from the current base values, exactly as a generated column would be.", "ru": "Эта JS-строка моделирует STORED generated колонку Postgres total = price + tax: движок пересчитывает её на каждом INSERT И каждом UPDATE базовой колонки. Модель считает её только на вставке, поэтому после обновления price итог устаревает. Почини `setPrice`/`setTax`, чтобы total всегда выводился из текущих базовых значений, ровно как сделала бы generated-колонка." },
+      "evidence": { "en": "insert price=1000 tax=80 -> total=1080 (ok); then setPrice(2000) -> total still 1080 (a generated column would now be 2080).", "ru": "вставка price=1000 tax=80 -> total=1080 (ок); затем setPrice(2000) -> total всё ещё 1080 (generated-колонка стала бы 2080)." },
+      "starter": "class Row {\n  constructor(price, tax){ this.price = price; this.tax = tax; this.total = price + tax; }\n  setPrice(p){ this.price = p; }\n  setTax(t){ this.tax = t; }\n}",
+      "verify": "const r = new Row(1000, 80);\nr.setPrice(2000);\nr.setTax(120);\nconst ok = r.total === 2120;\nconsole.log(ok ? 'PASS' : 'FAIL total=' + r.total);",
+      "check": { "kind": "stdout-contains", "value": "PASS" },
+      "hints": [
+        { "en": "A STORED generated column is recomputed whenever any base column it depends on changes — not just on insert.", "ru": "STORED generated колонка пересчитывается при изменении любой базовой колонки, от которой зависит — не только на вставке." },
+        { "en": "After mutating price or tax, re-derive total from this.price + this.tax in the same call.", "ru": "После изменения price или tax заново выведи total из this.price + this.tax в том же вызове." }
+      ],
+      "reveal": { "en": "`setPrice`/`setTax` mutate a base value but never re-derive the dependent total, so it keeps the value computed once at construction. A real STORED generated column is engine-maintained: Postgres recomputes the expression on every write to a referenced column. The fix is to recompute in each setter (this.total = this.price + this.tax) — or better, make total a getter so it can never drift. The lesson: an app-maintained 'cached' total is exactly the trap generated columns exist to remove; if you copy a derived value into a field, every mutation path must rewrite it, and one missed path silently corrupts the data.", "ru": "`setPrice`/`setTax` меняют базовое значение, но никогда не выводят зависимый total заново, поэтому он хранит значение, посчитанное один раз при создании. Настоящая STORED generated колонка поддерживается движком: Postgres пересчитывает выражение на каждой записи в колонку-источник. Фикс — пересчитывать в каждом сеттере (this.total = this.price + this.tax) — или лучше сделать total геттером, чтобы он не мог дрейфовать. Урок: поддерживаемый приложением «кешированный» итог — ровно та ловушка, ради устранения которой и существуют generated-колонки; если копируешь выведенное значение в поле, каждый путь мутации обязан его переписать, а один пропущенный путь тихо портит данные." }
+    },
+    {
+      "id": "review-serial-vs-identity-migration",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 12,
+      "title": { "en": "Review a new-table key definition", "ru": "Отревьюй определение ключа новой таблицы" },
+      "prompt": { "en": "A teammate adds this DDL for a high-write audit table. Review it like a senior: name the real defects in the key and id choices; don't flag the non-issues.", "ru": "Коллега добавляет этот DDL для аудит-таблицы с высокой записью. Отревьюй как senior: назови реальные дефекты в выборе ключа и id; не цепляйся к не-проблемам." },
+      "diff": {
+        "lang": "sql",
+        "code": "CREATE TABLE audit_log (\n  id serial PRIMARY KEY,\n  actor_id integer NOT NULL,\n  action text NOT NULL,\n  payload jsonb,\n  created_at timestamptz DEFAULT now()\n);\n\n-- app inserts ~30M rows/day; rows are read by created_at range\nINSERT INTO audit_log (id, actor_id, action) VALUES (1, 42, 'login');"
+      },
+      "findings": [
+        { "id": "serial-int4-overflow", "severity": "bug", "planted": true, "label": { "en": "serial is int4 — overflows in ~10 weeks", "ru": "serial — это int4 — переполнится за ~10 недель" }, "explanation": { "en": "`serial` is a 4-byte integer capped at ~2.147 billion. At 30M rows/day the sequence reaches that ceiling in roughly 72 days and every INSERT then fails with 'integer out of range'. For a high-write table use `bigint GENERATED ALWAYS AS IDENTITY` (bigserial's modern form) from the start.", "ru": "`serial` — 4-байтное целое с потолком ~2.147 миллиарда. При 30М строк/день последовательность достигает потолка примерно за 72 дня, и каждый INSERT затем падает с 'integer out of range'. Для таблицы с высокой записью используй `bigint GENERATED ALWAYS AS IDENTITY` (современная форма bigserial) с самого начала." } },
+        { "id": "serial-not-identity", "severity": "bug", "planted": true, "label": { "en": "serial lets the app inject ids that collide", "ru": "serial позволяет приложению вставлять конфликтующие id" }, "explanation": { "en": "`serial` is just a default, not engine ownership, so the explicit INSERT of id=1 here writes 1 without advancing the sequence — later the sequence will hand out 1 again and hit a unique-violation. `GENERATED ALWAYS AS IDENTITY` rejects an explicit id (needs OVERRIDING SYSTEM VALUE), preventing exactly this collision.", "ru": "`serial` — лишь default, а не владение движком, поэтому явный INSERT id=1 здесь пишет 1, не продвигая последовательность — позже последовательность снова выдаст 1 и словит unique-violation. `GENERATED ALWAYS AS IDENTITY` отвергает явный id (нужен OVERRIDING SYSTEM VALUE), предотвращая ровно этот конфликт." } },
+        { "id": "no-created-at-index", "severity": "missing-test", "planted": true, "label": { "en": "No index on created_at despite range reads", "ru": "Нет индекса на created_at, хотя читают по диапазону" }, "explanation": { "en": "The comment says rows are read by created_at range, but only id is indexed (via the PK). Every range query will Seq Scan a growing 30M-rows/day table. Add an index on created_at (or a BRIN index, ideal for an append-only time-ordered column).", "ru": "Комментарий говорит, что читают по диапазону created_at, но проиндексирован лишь id (через PK). Каждый диапазонный запрос будет делать Seq Scan по растущей таблице в 30М строк/день. Добавь индекс на created_at (или BRIN-индекс, идеальный для append-only колонки во времени)." } }
+      ],
+      "decoys": [
+        { "id": "jsonb-payload", "label": { "en": "payload should be json not jsonb", "ru": "payload должен быть json, а не jsonb" }, "explanation": { "en": "Not a defect — jsonb is the right default: it's parsed once, indexable, and faster to query. Plain json is only preferable when you must preserve byte-exact input, which an audit payload rarely needs.", "ru": "Не дефект — jsonb правильный дефолт: парсится один раз, индексируем и быстрее в запросах. Обычный json предпочтителен лишь когда надо сохранить ввод байт-в-байт, что аудит-payload редко требует." } },
+        { "id": "created-at-nullable", "label": { "en": "created_at has no NOT NULL", "ru": "у created_at нет NOT NULL" }, "explanation": { "en": "Minor style at most — the DEFAULT now() means inserts always populate it, so it is effectively never null. Adding NOT NULL is reasonable polish, not a blocking defect like the int4 overflow.", "ru": "В худшем случае мелочь — DEFAULT now() означает, что вставки всегда его заполняют, так что фактически он не бывает null. Добавить NOT NULL — разумная полировка, не блокирующий дефект как переполнение int4." } }
+      ]
     }
   ]
 }
