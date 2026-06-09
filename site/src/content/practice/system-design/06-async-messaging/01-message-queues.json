@@ -59,6 +59,98 @@
         { "en": "Names the new failure handling: visibility timeout sized above the email API's p99, a DLQ for repeatedly-failing sends with an alarm, and explicitly accepts 'late' as the tradeoff for 'never lost'.", "ru": "Называет новую обработку сбоев: visibility timeout выше p99 email API, DLQ для повторно падающих отправок с алярмом, и явно принимает 'поздно' как компромисс за 'никогда не потеряно'." }
       ],
       "model": { "en": "Put a durable queue between checkout and email. On a successful payment, checkout enqueues { receipt_id, order_id, to } and returns to the user immediately — payment threads no longer wait on the email API, so its slowness can't drain the pool. A separate email worker consumes the queue at-least-once: it dedups on receipt_id (skip + re-ack if already sent) so a redelivery never sends twice, sizes the visibility timeout above the email API's p99 and heartbeats long sends, and after N failures routes the message to a DLQ that's alarmed for human follow-up. The guarantee shifts from 'email is synchronous and can take checkout down' to 'email is never lost but may arrive minutes late' — an explicit, acceptable tradeoff. Note this only protects email; the payment charge remains synchronous and its own idempotency is handled separately.", "ru": "Поставь долговечную очередь между checkout и email. При успешном платеже checkout кладёт { receipt_id, order_id, to } и сразу возвращает ответ пользователю — платёжные потоки больше не ждут email API, поэтому его медлительность не вычерпает пул. Отдельный email-воркер потребляет очередь at-least-once: дедуплицирует по receipt_id (пропустить + переподтвердить, если уже отправлено), чтобы переотправка не послала дважды, размеряет visibility timeout выше p99 email API и heartbeat'ит долгие отправки, а после N сбоев отправляет сообщение в DLQ, что заалармлен для разбора человеком. Гарантия сдвигается с 'email синхронен и может уронить checkout' на 'email никогда не потерян, но может прийти на минуты позже' — явный, приемлемый компромисс. Заметь: это защищает лишь email; платёжное списание остаётся синхронным, и его идемпотентность обрабатывается отдельно." }
+    },
+    {
+      "id": "incident-parallel-consumers-break-ordering",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 15,
+      "title": {
+        "en": "Scaling consumers corrupted account state",
+        "ru": "Масштабирование consumer'ов испортило состояние счетов"
+      },
+      "prompt": {
+        "en": "To clear a growing backlog, the team scaled an account-events worker from 1 consumer to 8. The backlog drained, but within an hour support tickets spike: some accounts show a SUSPEND that should have been undone, balances that don't match the event history, and a few profiles reverted to old values. Throughput is great; correctness is broken. Work the incident; commit before revealing.",
+        "ru": "Чтобы разгрести растущий бэклог, команда масштабировала воркер событий счетов с 1 consumer'а до 8. Бэклог разгребся, но за час всплеск тикетов: у части счетов виден SUSPEND, который должны были отменить, балансы не сходятся с историей событий, и пара профилей откатилась к старым значениям. Пропускная способность отличная; корректность сломана. Веди инцидент; сформулируй до раскрытия."
+      },
+      "steps": [
+        {
+          "label": { "en": "1 · Read the change", "ru": "1 · Считай изменение" },
+          "prompt": {
+            "en": "The only change was 1 → 8 consumers, and the symptoms are all 'an earlier state won over a later one.' What property did a single consumer provide that 8 consumers do not?",
+            "ru": "Единственное изменение — 1 → 8 consumer'ов, и все симптомы вида «раннее состояние победило позднее». Какое свойство давал один consumer, что не дают 8?"
+          },
+          "reveal": {
+            "en": "Per-stream ordering. A single consumer processes messages one at a time in queue order, so an account's events apply in the order they were produced. Eight consumers pull and process messages CONCURRENTLY, so two events for the same account can be handled in parallel and finish in the wrong order — a later UNSUSPEND can complete before an earlier SUSPEND, or an older profile-update can land after a newer one. The scale-up traded ordering for throughput without anyone deciding to. The symptoms ('earlier won over later') are the fingerprint of lost ordering, not data corruption in the store.",
+            "ru": "Пер-поточный порядок. Один consumer обрабатывает сообщения по одному в порядке очереди, так что события счёта применяются в порядке их создания. Восемь consumer'ов забирают и обрабатывают сообщения ПАРАЛЛЕЛЬНО, так что два события одного счёта могут обрабатываться параллельно и завершиться в неверном порядке — поздний UNSUSPEND может завершиться раньше раннего SUSPEND, или старое обновление профиля лечь после нового. Scale-up обменял порядок на пропускную способность, и никто этого не решал. Симптомы («раннее победило позднее») — отпечаток потерянного порядка, а не порчи данных в хранилище."
+          }
+        },
+        {
+          "label": { "en": "2 · Name the mechanism", "ru": "2 · Назови механизм" },
+          "prompt": {
+            "en": "Walk a concrete interleaving of two events for one account across two consumers that ends with the wrong final state. Why doesn't at-least-once delivery or a DLQ catch this?",
+            "ru": "Проведи конкретное переплетение двух событий одного счёта на двух consumer'ах, оканчивающееся неверным финальным состоянием. Почему at-least-once или DLQ это не ловят?"
+          },
+          "reveal": {
+            "en": "Event E1 = SUSPEND(acct) produced at t0, E2 = UNSUSPEND(acct) produced at t1 > t0. Consumer A pulls E1, consumer B pulls E2; B is faster and writes UNSUSPEND first, then A writes SUSPEND — final state SUSPENDED, the opposite of the intended UNSUSPENDED. Delivery semantics don't help: both messages were delivered exactly as required; the queue never promised that two messages handled by different consumers apply in order. A DLQ only catches messages that FAIL — these both succeeded, just in the wrong order. The defect is processing order-dependent events without preserving per-key order.",
+            "ru": "Событие E1 = SUSPEND(acct), создано в t0, E2 = UNSUSPEND(acct), создано в t1 > t0. Consumer A забирает E1, consumer B забирает E2; B быстрее и пишет UNSUSPEND первым, затем A пишет SUSPEND — финал SUSPENDED, противоположность задуманному UNSUSPENDED. Семантика доставки не помогает: оба сообщения доставлены как требовалось; очередь никогда не обещала, что два сообщения, обработанные разными consumer'ами, применятся по порядку. DLQ ловит лишь сообщения, что ПРОВАЛИЛИСЬ — эти оба успешны, просто не в том порядке. Дефект — обработка порядко-зависимых событий без сохранения пер-ключевого порядка."
+          }
+        },
+        {
+          "label": { "en": "3 · Stop the bleeding", "ru": "3 · Останови кровотечение" },
+          "prompt": {
+            "en": "Accounts are still being corrupted. What is the fastest action to stop new corruption while you design the real fix?",
+            "ru": "Счета всё ещё портятся. Какое самое быстрое действие остановит новую порчу, пока проектируешь настоящий фикс?"
+          },
+          "reveal": {
+            "en": "Scale back to a single consumer (concurrency 1) immediately. That restores total in-order processing and stops new out-of-order writes at once — accepting the backlog/throughput hit as the lesser evil versus ongoing corruption. Then plan a reconciliation pass to repair accounts whose final state disagrees with their event history (replay each affected account's events in produced-order to recompute the correct state). Reducing concurrency is the fast, safe lever; the throughput problem is solved properly in the durable fix, not by re-corrupting data.",
+            "ru": "Немедленно сократи до одного consumer'а (concurrency 1). Это восстанавливает полный упорядоченный обработку и сразу прекращает новые внеочередные записи — принимая удар по бэклогу/пропускной способности как меньшее зло против продолжающейся порчи. Затем спланируй проход сверки для починки счетов, чей финал расходится с историей событий (переиграй события каждого затронутого счёта в порядке создания, чтобы пересчитать верное состояние). Снижение конкурентности — быстрый безопасный рычаг; проблему пропускной способности решает устойчивый фикс, а не повторная порча данных."
+          }
+        },
+        {
+          "label": { "en": "4 · The durable fix", "ru": "4 · Устойчивый фикс" },
+          "prompt": {
+            "en": "How do you get parallelism for throughput AND per-account ordering at the same time?",
+            "ru": "Как получить параллелизм ради пропускной способности И пер-счётный порядок одновременно?"
+          },
+          "reveal": {
+            "en": "Partition by the ordering key so that all events for one account go to ONE partition/consumer, while DIFFERENT accounts spread across partitions and parallelize. Concretely: use a partitioned log (Kafka) keyed by account_id, or a FIFO queue with a message-group-id = account_id (SQS FIFO), or hash account_id to one of N single-threaded worker lanes. Ordering is only ever required per account, not globally, so partitioning by account preserves the order that matters while scaling out across accounts — you can run 8 consumers again, each owning a disjoint set of accounts. As a belt-and-suspenders, make handlers idempotent and version/sequence-guarded (apply an event only if its sequence is the next expected for that account, or only if newer), so a stray reorder or redelivery can't corrupt state. Global total order was never the requirement; per-key order was.",
+            "ru": "Партиционируй по ключу порядка, чтобы все события одного счёта шли в ОДНУ партицию/consumer, а РАЗНЫЕ счета распределялись по партициям и параллелились. Конкретно: используй партиционированный лог (Kafka) с ключом account_id, или FIFO-очередь с message-group-id = account_id (SQS FIFO), или хешируй account_id в одну из N однопоточных рабочих дорожек. Порядок нужен лишь пер-счёт, не глобально, так что партиционирование по счёту сохраняет важный порядок при масштабировании между счетами — можно снова запустить 8 consumer'ов, каждый владеет непересекающимся набором счетов. Для подстраховки сделай обработчики идемпотентными и с защитой версией/последовательностью (применяй событие лишь если его номер — следующий ожидаемый для счёта, или лишь если новее), чтобы случайный реордер или переотправка не испортили состояние. Глобальный полный порядок никогда не требовался; требовался пер-ключевой порядок."
+          }
+        },
+        {
+          "label": { "en": "5 · Postmortem action", "ru": "5 · Действие по постмортему" },
+          "prompt": {
+            "en": "What guardrail would have made the ordering requirement visible before the scale-up shipped?",
+            "ru": "Какая страховка сделала бы требование порядка видимым до выката scale-up?"
+          },
+          "reveal": {
+            "en": "Encode the ordering contract in the consumer and test it: handlers should carry an explicit expected-sequence (or version) check per account and reject/park an event that arrives out of order, which turns 'silent corruption' into a visible, alarmable error — and a test that feeds two same-account events out of order asserts the final state is correct. Document that this stream is order-sensitive and that concurrency must be achieved by partitioning the key, not by raw consumer count. The miss was that 'increase concurrency' looked like a safe knob; the sequence-guard plus the per-key-partition rule make the requirement explicit so the next scale-up can't silently break it.",
+            "ru": "Закодируй контракт порядка в consumer'е и протестируй его: обработчики должны нести явную проверку ожидаемого номера (или версии) на счёт и отвергать/парковать событие, пришедшее не по порядку, что превращает «тихую порчу» в видимую, заалармливаемую ошибку — а тест, подающий два события одного счёта не по порядку, утверждает, что финал верен. Задокументируй, что этот поток чувствителен к порядку и что конкурентность достигается партиционированием ключа, а не сырым числом consumer'ов. Промах был в том, что «увеличить конкурентность» выглядело безопасной ручкой; защита номером плюс правило пер-ключевой партиции делают требование явным, чтобы следующий scale-up не сломал его тихо."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-queue-consumer-loop",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 12,
+      "title": { "en": "Review an at-least-once consumer loop", "ru": "Отревьюй цикл consumer'а at-least-once" },
+      "prompt": { "en": "This worker pulls from an at-least-once queue and processes side-effecting jobs. Review it like a senior: name the real defects in its ack timing, idempotency, and failure handling; don't flag the non-issues.", "ru": "Этот воркер забирает из очереди at-least-once и обрабатывает задачи с побочными эффектами. Отревьюй как senior: назови реальные дефекты в его тайминге ack, идемпотентности и обработке сбоев; не цепляйся к не-проблемам." },
+      "diff": {
+        "lang": "js",
+        "code": "// at-least-once queue; handler charges a card (a side effect)\nwhile (true) {\n  const msg = await queue.receive();\n  queue.ack(msg);                 // ack first so we don't reprocess\n  try {\n    await chargeCard(msg.amount, msg.cardId);\n  } catch (err) {\n    log.error(err);               // swallow and move on\n  }\n}" },
+      "findings": [
+        { "id": "ack-before-process", "severity": "bug", "planted": true, "label": { "en": "Acks before processing — a crash loses the job", "ru": "Подтверждает до обработки — падение теряет задачу" }, "explanation": { "en": "`queue.ack(msg)` runs before `chargeCard`. If the worker dies between ack and the charge (OOM, deploy, crash), the queue considers the message done and never redelivers it — the charge silently never happens (at-most-once, with loss). Ack only AFTER the work is durably complete so a crash redelivers instead of dropping. Acking first to 'avoid reprocessing' trades a duplicate (recoverable with idempotency) for a lost charge (unrecoverable).", "ru": "`queue.ack(msg)` выполняется до `chargeCard`. Если воркер умирает между ack и списанием (OOM, деплой, краш), очередь считает сообщение готовым и не переотправляет — списание тихо не происходит (at-most-once, с потерей). Подтверждай лишь ПОСЛЕ надёжного завершения работы, чтобы падение переотправляло, а не теряло. Ack первым «чтобы избежать повтора» меняет дубль (поправимый идемпотентностью) на потерянное списание (непоправимое)." } },
+        { "id": "no-idempotency", "severity": "bug", "planted": true, "label": { "en": "Charge is not idempotent — redelivery double-charges", "ru": "Списание не идемпотентно — переотправка списывает дважды" }, "explanation": { "en": "At-least-once delivery WILL redeliver (timeout, rebalance, retry), and chargeCard has no dedup key, so a redelivered message charges the card a second time. A side-effecting handler on an at-least-once queue must be idempotent: dedup on a stable key (message/charge id) so a redelivery is a no-op. Once the charge is idempotent, ack-after-process is safe — duplicates collapse and crashes redeliver harmlessly.", "ru": "Доставка at-least-once ОБЯЗАТЕЛЬНО переотправит (таймаут, ребаланс, ретрай), а у chargeCard нет ключа дедупа, так что переотправленное сообщение спишет карту повторно. Обработчик с побочными эффектами на at-least-once-очереди обязан быть идемпотентным: дедуп по стабильному ключу (id сообщения/списания), чтобы переотправка была no-op. Когда списание идемпотентно, ack-после-обработки безопасен — дубли схлопываются, а падения переотправляются безвредно." } },
+        { "id": "swallow-error", "severity": "bug", "planted": true, "label": { "en": "Catches and discards a failed charge", "ru": "Ловит и отбрасывает провалившееся списание" }, "explanation": { "en": "On a charge failure it logs and continues, and (combined with the early ack) the message is already gone — so a transient failure means the charge is permanently dropped with no retry and no DLQ. A failed side effect must either be retried (don't ack, let redelivery re-attempt) or routed to a DLQ after N attempts; swallowing the error turns a retriable blip into silent data loss.", "ru": "При сбое списания он логирует и продолжает, и (вместе с ранним ack) сообщение уже исчезло — так что временный сбой означает навсегда отброшенное списание без ретрая и без DLQ. Провалившийся побочный эффект должен либо повторяться (не делай ack, дай переотправке переповторить), либо уходить в DLQ после N попыток; проглатывание ошибки превращает поправимую икоту в тихую потерю данных." } },
+        { "id": "no-redelivery-test", "severity": "missing-test", "planted": true, "label": { "en": "No test for redelivery or crash-after-ack", "ru": "Нет теста на переотправку или падение-после-ack" }, "explanation": { "en": "The two paths that matter on an at-least-once queue — the same message delivered twice, and a crash between ack and completion — have no tests. A test should deliver a message twice and assert exactly one charge, and simulate a crash after ack to show the job is lost (proving the ack must move). These are exactly the branches the bugs live in.", "ru": "Два важных на at-least-once-очереди пути — то же сообщение, доставленное дважды, и падение между ack и завершением — не покрыты тестами. Тест должен доставить сообщение дважды и утвердить ровно одно списание, а также сымитировать падение после ack, чтобы показать потерю задачи (доказав, что ack должен переехать). Это ровно те ветки, где живут баги." } }
+      ],
+      "decoys": [
+        { "id": "while-true", "label": { "en": "while(true) is a bad loop construct", "ru": "while(true) — плохая конструкция цикла" }, "explanation": { "en": "Stylistic — a long-running consumer poll loop is legitimately an infinite loop; a named run() with a shutdown flag is nicer but not a correctness defect.", "ru": "Стилистика — долгоживущий цикл опроса consumer'а законно бесконечен; именованный run() с флагом остановки приятнее, но не дефект корректности." } },
+        { "id": "log-error-only", "label": { "en": "It logs with log.error instead of a metric", "ru": "Логирует через log.error вместо метрики" }, "explanation": { "en": "Observability polish, not the bug — emitting a metric is good practice, but the load-bearing defect is that the error is swallowed and the message already acked, not the choice of log vs metric.", "ru": "Полировка наблюдаемости, не баг — эмитить метрику хорошо, но несущий дефект в том, что ошибка проглочена, а сообщение уже подтверждено, а не в выборе лог против метрики." } }
+      ]
     }
   ]
 }

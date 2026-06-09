@@ -60,6 +60,98 @@
         { "en": "Handles the author's own post seeing it immediately via explicit population/invalidation on write (or write-through for that key), not by waiting for the TTL.", "ru": "Обрабатывает мгновенную видимость собственного поста автору через явное заполнение/инвалидацию на записи (или write-through для этого ключа), а не ожиданием TTL." }
       ],
       "model": { "en": "Reads: cache-aside with a short jittered TTL (e.g. 10s ± a spread). The 50:1 read ratio means hits dominate, and the few-second staleness budget fits a TTL; jitter avoids synchronized expiry stampedes. Writes: write to the durable DB first and acknowledge only once it persists (never write-back — a lost post is unacceptable), then explicitly populate or invalidate the author's own feed key so they see their post immediately rather than waiting out the TTL. So: cache-aside reads + DB-first writes with explicit invalidation on the writer's key, with a TTL backstop so any missed invalidation self-corrects within seconds. This composes one read pattern and one write pattern, matches the staleness budget to the data, and keeps the DB authoritative — the cache stays a disposable speed layer.", "ru": "Чтения: cache-aside с коротким TTL с джиттером (например, 10с ± разброс). Отношение 50:1 значит, что доминируют попадания, а бюджет в пару секунд устаревания вписывается в TTL; джиттер избегает стампид синхронного истечения. Записи: пиши сначала в надёжную БД и подтверждай лишь после сохранения (никакого write-back — потерянный пост недопустим), затем явно заполни или инвалидируй ключ ленты самого автора, чтобы он видел свой пост сразу, а не ждал TTL. Итого: чтения cache-aside + записи БД-первой с явной инвалидацией ключа писателя, с TTL-подстраховкой, чтобы любая пропущенная инвалидация самоисправилась за секунды. Это компонует один паттерн чтения и один записи, сопоставляет бюджет устаревания данным и держит БД авторитетной — кэш остаётся одноразовым слоем скорости." }
+    },
+    {
+      "id": "incident-cache-aside-update-then-delete-stale",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 15,
+      "title": {
+        "en": "A profile edit that won't stick",
+        "ru": "Правка профиля, что не приживается"
+      },
+      "prompt": {
+        "en": "Support reports a trickle of users whose saved profile change reverts on the next page load — but only sometimes, and only under load. The write path updates Postgres then sets the cache key to the new value (cache-aside, update-the-cache-on-write). Nothing crashes; the DB is correct; only the cache occasionally holds the OLD value indefinitely. Work the incident; commit before revealing.",
+        "ru": "Поддержка сообщает о струйке пользователей, чья сохранённая правка профиля откатывается при следующей загрузке — но лишь иногда и лишь под нагрузкой. Путь записи обновляет Postgres, затем ставит в ключ кэша новое значение (cache-aside, обновление-кэша-на-записи). Ничего не падает; БД корректна; лишь кэш изредка держит СТАРОЕ значение бесконечно. Веди инцидент; сформулируй до раскрытия."
+      },
+      "steps": [
+        {
+          "label": { "en": "1 · Read the signals", "ru": "1 · Считай сигналы" },
+          "prompt": {
+            "en": "The DB row is always the new value; the cache sometimes holds the old value with a long TTL; it only happens under concurrency. What class of bug do 'correct DB, stale cache, only under load' point to?",
+            "ru": "Строка БД всегда новое значение; кэш иногда держит старое с длинным TTL; происходит лишь при конкурентности. На какой класс бага указывает «БД верна, кэш устарел, лишь под нагрузкой»?"
+          },
+          "reveal": {
+            "en": "An interleaving (race) between a slow cache-aside READ and a concurrent WRITE — not a logic error in either path alone, since each is correct in isolation. 'Only under load' and 'persists for the full TTL' are the fingerprints: two operations on the same key overlapped in an unlucky order, and one of them wrote a stale value into the cache that then sits there until the TTL expires. In single-threaded-per-request Node this is async interleaving across requests, not a thread data race.",
+            "ru": "Переплетение (гонка) между медленным cache-aside ЧТЕНИЕМ и параллельной ЗАПИСЬЮ — не логическая ошибка в одном пути отдельно, ведь каждый корректен изолированно. «Лишь под нагрузкой» и «держится весь TTL» — отпечатки: две операции над одним ключом наложились в неудачном порядке, и одна из них записала устаревшее значение в кэш, что лежит там до истечения TTL. В Node (один поток на запрос) это async-переплетение между запросами, а не потоковая гонка данных."
+          }
+        },
+        {
+          "label": { "en": "2 · Trace the interleave", "ru": "2 · Проследи переплетение" },
+          "prompt": {
+            "en": "Lay out the exact ordering of a slow reader (cache miss → load OLD from DB → set cache) and a writer (update DB to NEW → set cache to NEW) that ends with OLD stuck in the cache.",
+            "ru": "Разложи точный порядок медленного читателя (промах → загрузка СТАРОГО из БД → set кэша) и писателя (update БД на НОВОЕ → set кэша на НОВОЕ), оканчивающийся СТАРЫМ, застрявшим в кэше."
+          },
+          "reveal": {
+            "en": "T0 reader misses, starts a slow DB read and fetches the OLD value (it began before the write). T1 writer updates the DB to NEW. T2 writer sets the cache to NEW. T3 the slow reader finally finishes and does its set(cache, OLD) — overwriting NEW with the stale value it read back at T0. The cache now holds OLD for the full TTL, even though the DB is NEW and the writer 'did everything right.' The hazard is the reader writing a value it fetched before the write, after the write's cache update.",
+            "ru": "T0 читатель промахивается, стартует медленное чтение БД и достаёт СТАРОЕ значение (он начал до записи). T1 писатель обновляет БД на НОВОЕ. T2 писатель ставит в кэш НОВОЕ. T3 медленный читатель наконец завершает и делает set(cache, СТАРОЕ) — перезаписывая НОВОЕ устаревшим значением, прочитанным на T0. Кэш теперь держит СТАРОЕ весь TTL, хотя БД — НОВОЕ и писатель «всё сделал правильно». Опасность — читатель пишет значение, добытое до записи, после кэш-обновления записи."
+          }
+        },
+        {
+          "label": { "en": "3 · Stop the bleeding", "ru": "3 · Останови кровотечение" },
+          "prompt": {
+            "en": "It's mid-incident and users are still seeing reverts. What is the fastest mitigation that shrinks the blast radius without a code deploy?",
+            "ru": "Середина инцидента, пользователи всё ещё видят откаты. Какая самая быстрая мера сжимает радиус поражения без деплоя кода?"
+          },
+          "reveal": {
+            "en": "Cut the TTL on the affected keys way down (e.g. from an hour to a few seconds) via config, so any value the race poisons self-heals within seconds instead of lingering. You can also proactively delete the affected profile keys so the next read repopulates from the correct DB. Neither closes the race — they just bound how long a poisoned entry survives — but they immediately stop the 'revert that lasts an hour' complaints.",
+            "ru": "Резко сократи TTL на затронутых ключах (например, с часа до пары секунд) через конфиг, чтобы любое значение, отравленное гонкой, самоисцелялось за секунды, а не залёживалось. Можно также проактивно удалить затронутые ключи профилей, чтобы следующее чтение перезаполнило из корректной БД. Ни то ни другое не закрывает гонку — лишь ограничивает, сколько живёт отравленная запись — но сразу прекращает жалобы на «откат, что держится час»."
+          }
+        },
+        {
+          "label": { "en": "4 · The durable fix", "ru": "4 · Устойчивый фикс" },
+          "prompt": {
+            "en": "State the change to the write/read patterns that removes the race, and why the popular 'just update the cache on write' choice was the wrong one here.",
+            "ru": "Назови изменение паттернов записи/чтения, убирающее гонку, и почему популярный выбор «просто обновляй кэш на записи» был здесь неверным."
+          },
+          "reveal": {
+            "en": "On write, DELETE the cache key instead of SETTING it (the Cache-Aside / Facebook 'invalidate, don't update' rule). A delete is the safe operation: after the DB is updated and the key is deleted, the next read misses and reloads the now-correct DB value. The reader's late set can still write a stale value, but pairing it with a short TTL plus delete-on-write makes the stale window tiny and self-correcting; for strict correctness, version the cache value (store {version, value} and only overwrite if the incoming version is newer) so a late reader carrying an old version can't clobber a newer write. Updating-the-cache-on-write was wrong because a reader and a writer can both 'set' the same key in either order, and set-set has no protection; delete-on-write plus a TTL backstop (and versioning if needed) does.",
+            "ru": "На записи УДАЛЯЙ ключ кэша, а не СТАВЬ значение (правило Cache-Aside / Facebook «инвалидируй, не обновляй»). Удаление — безопасная операция: после обновления БД и удаления ключа следующее чтение промахивается и перезагружает уже корректное значение БД. Поздний set читателя всё ещё может записать устаревшее, но пара с коротким TTL плюс удаление-на-записи делает окно устаревания крошечным и самоисправляющимся; для строгой корректности версионируй значение кэша (храни {version, value} и перезаписывай лишь если входящая версия новее), чтобы поздний читатель со старой версией не затёр более новую запись. Обновление-кэша-на-записи было неверно, потому что читатель и писатель оба могут «set»-ить один ключ в любом порядке, а set-set не защищён; удаление-на-записи плюс TTL-подстраховка (и версионирование при нужде) защищает."
+          }
+        },
+        {
+          "label": { "en": "5 · Postmortem action", "ru": "5 · Действие по постмортему" },
+          "prompt": {
+            "en": "What detection would have caught this before support did, given the DB is always correct?",
+            "ru": "Какое обнаружение поймало бы это раньше поддержки, учитывая, что БД всегда корректна?"
+          },
+          "reveal": {
+            "en": "Run a continuous cache-vs-DB consistency sampler: pick random keys, compare the cached value to the authoritative DB value, and alert when the divergence rate (cache holds a value older than the DB beyond the expected propagation window) crosses a floor. Because the DB is the source of truth, a cache≠DB sample IS the bug, surfaced directly rather than inferred from user complaints. Bonus: log a counter for 'reader set overwrote a newer value' once versioning is in place — a nonzero count points straight at the race.",
+            "ru": "Запусти непрерывный сэмплер согласованности кэш-против-БД: бери случайные ключи, сравнивай кэшированное значение с авторитетным значением БД и алармь, когда доля расхождений (кэш держит значение старше БД сверх ожидаемого окна распространения) перейдёт порог. Поскольку БД — источник истины, сэмпл кэш≠БД ЕСТЬ баг, вскрытый напрямую, а не выведенный из жалоб. Бонус: логируй счётчик «set читателя перезаписал более новое значение», когда версионирование на месте — ненулевой счёт прямо указывает на гонку."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-cache-aside-helper",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 12,
+      "title": { "en": "Review a cache-aside read/write helper", "ru": "Отревьюй helper cache-aside чтения/записи" },
+      "prompt": { "en": "These two helpers implement cache-aside reads and writes for a shared service. Review them like a senior: name the real defects in the read/write ordering and value handling; don't flag the non-issues.", "ru": "Эти два helper'а реализуют cache-aside чтения и записи для общего сервиса. Отревьюй как senior: назови реальные дефекты в порядке чтения/записи и обработке значений; не цепляйся к не-проблемам." },
+      "diff": {
+        "lang": "js",
+        "code": "async function readUser(id) {\n  const hit = await cache.get('user:' + id);\n  if (hit) return hit;                      // cache hit\n  const row = await db.queryUser(id);\n  await cache.set('user:' + id, row, 3600); // 1h TTL\n  return row;\n}\n\nasync function updateUser(id, patch) {\n  const next = { ...(await db.queryUser(id)), ...patch };\n  await cache.set('user:' + id, next, 3600); // update cache first\n  await db.updateUser(id, patch);            // then persist\n  return next;\n}" },
+      "findings": [
+        { "id": "cache-before-db", "severity": "bug", "planted": true, "label": { "en": "Cache is updated before the DB persists", "ru": "Кэш обновляется до сохранения в БД" }, "explanation": { "en": "updateUser sets the cache, then writes the DB. If the DB write fails (or the process dies between the two), the cache now serves a value that was never persisted — readers see a 'saved' change that doesn't exist in the source of truth. Always write the durable store first and ACK only on success, then touch the cache.", "ru": "updateUser ставит кэш, затем пишет БД. Если запись БД падает (или процесс умирает между двумя), кэш теперь отдаёт значение, что не было сохранено — читатели видят «сохранённое» изменение, которого нет в источнике истины. Всегда пиши надёжное хранилище первым и подтверждай лишь при успехе, затем трогай кэш." } },
+        { "id": "set-not-delete", "severity": "bug", "planted": true, "label": { "en": "Write sets the cache instead of deleting it — set/set race", "ru": "Запись ставит кэш вместо удаления — гонка set/set" }, "explanation": { "en": "Updating the cache with the new value races a concurrent slow reader that fetched the OLD value before the write: the reader's later set can overwrite the writer's value, leaving a stale entry for the full TTL. The cache-aside rule is invalidate (delete) on write, not update — a delete makes the next read reload the correct DB value, and there is no set/set race to lose.", "ru": "Обновление кэша новым значением гонится с параллельным медленным читателем, что добыл СТАРОЕ значение до записи: поздний set читателя может перезаписать значение писателя, оставив устаревшую запись на весь TTL. Правило cache-aside — инвалидировать (удалять) на записи, а не обновлять — удаление заставляет следующее чтение перезагрузить корректное значение БД, и нет гонки set/set, которую можно проиграть." } },
+        { "id": "falsy-hit", "severity": "bug", "planted": true, "label": { "en": "`if (hit)` mis-handles falsy cached values", "ru": "`if (hit)` неверно обрабатывает falsy значения кэша" }, "explanation": { "en": "`if (hit) return hit` treats a cached `0`, `''`, `false`, or `null` as a miss, so any legitimately falsy value is never served from cache and re-queries the DB every time (or, worse, masks a negative-cache 'not found'). Check presence explicitly — distinguish a real miss (key absent) from a falsy stored value, e.g. compare against a sentinel or check `hit !== undefined` on a get that returns undefined only on miss.", "ru": "`if (hit) return hit` трактует кэшированные `0`, `''`, `false` или `null` как промах, так что любое законно falsy значение никогда не отдаётся из кэша и каждый раз перезапрашивает БД (или, хуже, маскирует negative-cache «не найдено»). Проверяй наличие явно — отличай реальный промах (ключа нет) от falsy сохранённого значения, например сравни с sentinel или проверь `hit !== undefined` на get, что возвращает undefined лишь при промахе." } },
+        { "id": "no-concurrency-test", "severity": "missing-test", "planted": true, "label": { "en": "No test for the read/write interleave", "ru": "Нет теста на переплетение чтения/записи" }, "explanation": { "en": "The dangerous path — a slow read overlapping a write on the same key — has no test, so the stale-after-write bug ships silently. A test should simulate read-loads-OLD, then write, then read's late set, and assert the cache ends holding the NEW value (which only passes once write deletes instead of sets).", "ru": "Опасный путь — медленное чтение, наложенное на запись того же ключа — не покрыт тестом, так что баг устаревания-после-записи уезжает тихо. Тест должен сымитировать чтение-грузит-СТАРОЕ, затем запись, затем поздний set чтения и утвердить, что кэш в итоге держит НОВОЕ значение (что проходит лишь когда запись удаляет, а не ставит)." } }
+      ],
+      "decoys": [
+        { "id": "string-key", "label": { "en": "Building the key with 'user:' + id is fragile", "ru": "Сборка ключа через 'user:' + id хрупка" }, "explanation": { "en": "Stylistic. A namespaced string key is standard; a template literal or a key-builder helper is equivalent and not worth blocking on.", "ru": "Стилистика. Ключ с неймспейсом-строкой — стандарт; шаблонный литерал или helper-сборщик эквивалентны и блокировать на этом не стоит." } },
+        { "id": "spread-patch", "label": { "en": "Merging with object spread loses nested fields", "ru": "Слияние через spread теряет вложенные поля" }, "explanation": { "en": "Out of scope for this review — shallow merge may be exactly the intended semantics for a flat patch; the defects here are the cache/DB ordering and the falsy check, not the merge depth.", "ru": "Вне рамок этого ревью — поверхностное слияние может быть ровно задуманной семантикой для плоского патча; дефекты тут — порядок кэш/БД и проверка falsy, а не глубина слияния." } }
+      ]
     }
   ]
 }
