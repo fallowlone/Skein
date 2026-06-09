@@ -60,6 +60,99 @@
           { "en": "Keeps durability by batching log writes and overlapping replication off the critical path (not by dropping durability).", "ru": "Сохраняет долговечность батчингом записей лога и перекрытием репликации прочь с критического пути (не дропом долговечности)." }
         ]
       }
+    },
+    {
+      "id": "incident-sequencer-input-backpressure-halt",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 15,
+      "title": {
+        "en": "The matching engine stops matching but never crashes",
+        "ru": "Движок матчинга перестаёт матчить, но никогда не падает"
+      },
+      "prompt": {
+        "en": "09:31:02 at the open — order acknowledgements stop. The matching engine process is up, CPU near zero, no errors logged, the order book unchanged for 800 ms. Then it bursts back to life and acks a flood at once. Members complain their orders 'froze' then all filled at a worse price. Work the incident; commit to each answer before revealing.",
+        "ru": "09:31:02 на открытии — подтверждения заявок прекращаются. Процесс движка матчинга жив, CPU около нуля, ошибок в логе нет, книга заявок не меняется 800 мс. Затем он взрывается к жизни и подтверждает поток разом. Участники жалуются, что их заявки «зависли», а затем все исполнились по худшей цене. Веди инцидент; сформулируй ответ до раскрытия каждого шага."
+      },
+      "steps": [
+        {
+          "label": { "en": "1 · Read the signals", "ru": "1 · Считай сигналы" },
+          "prompt": {
+            "en": "Engine process alive, CPU ~0%, no errors, book frozen 800 ms, then a sudden burst. A single-threaded deterministic engine consuming a sequenced input stream — what does 'alive but idle, then a catch-up burst' tell you about WHERE it is stuck?",
+            "ru": "Процесс движка жив, CPU ~0%, ошибок нет, книга заморожена 800 мс, затем внезапный всплеск. Однопоточный детерминированный движок, потребляющий секвенсированный поток входов — о чём говорит «жив, но простаивает, затем догоняющий всплеск» о том, ГДЕ он застрял?"
+          },
+          "reveal": {
+            "en": "It is not computing (CPU ~0) and not crashing — it is blocked waiting for input. The engine only matches messages that have been durably sequenced and handed to it. If the sequenced-input feed stalls, the engine sits idle with nothing to consume; the moment the backlog releases, it drains the queued messages in one burst. So the fault is upstream of the match loop, on the path that delivers sequenced messages to the engine — not in matching itself.",
+            "ru": "Он не считает (CPU ~0) и не падает — он заблокирован в ожидании входа. Движок матчит только сообщения, что были долговечно секвенсированы и переданы ему. Если поток секвенсированных входов застопорился, движок простаивает без данных для потребления; как только бэклог отпускает, он сливает накопленные сообщения одним всплеском. Значит дефект выше цикла матчинга, на пути доставки секвенсированных сообщений движку — не в самом матчинге."
+          }
+        },
+        {
+          "label": { "en": "2 · Name the mechanism", "ru": "2 · Назови механизм" },
+          "prompt": {
+            "en": "The sequencer must replicate each message to a follower and get an ack before it is durable enough to release downstream. One follower's disk got slow (a noisy-neighbour VM), pushing replication ack from ~0.2 ms to ~80 ms per batch. The sequencer waits for a quorum ack before releasing. Why does an 80 ms tail on ONE follower freeze the whole engine?",
+            "ru": "Секвенсор обязан реплицировать каждое сообщение на follower и получить ack, прежде чем оно станет достаточно долговечным для передачи дальше. Диск одного follower стал медленным (шумный сосед на VM), подняв replication ack с ~0,2 мс до ~80 мс на батч. Секвенсор ждёт quorum ack до передачи. Почему хвост в 80 мс на ОДНОМ follower замораживает весь движок?"
+          },
+          "reveal": {
+            "en": "This is head-of-line blocking on the durability barrier. The engine must consume messages in strict sequence order to stay deterministic, so message N+1 cannot be released until N is durable. If the quorum-ack for one batch stalls 80 ms, EVERY subsequent message queues behind it — the single canonical order that guarantees fairness also serializes the stall. At the open, ~1M orders/sec means 800 ms of blocking queues ~800k messages, which then drain as the burst. The slow follower never errored, so nothing alerted on failure; it just added latency. The mechanism is a slow dependency in series with the only ordered path, not a crash or a code bug in the matcher.",
+            "ru": "Это head-of-line blocking на барьере долговечности. Движок обязан потреблять сообщения в строгом порядке последовательности, чтобы оставаться детерминированным, поэтому сообщение N+1 нельзя передать, пока N не долговечно. Если quorum-ack одного батча застрял на 80 мс, КАЖДОЕ последующее сообщение встаёт в очередь за ним — единый каноничный порядок, что гарантирует честность, ещё и сериализует затык. На открытии ~1М заявок/с означает, что 800 мс блокировки накапливают ~800k сообщений, которые затем сливаются всплеском. Медленный follower никогда не выдавал ошибку, поэтому ничто не алертило на сбой; он просто добавил задержку. Механизм — медленная зависимость последовательно с единственным упорядоченным путём, а не крэш или баг кода в матчере."
+          }
+        },
+        {
+          "label": { "en": "3 · Stop the bleeding", "ru": "3 · Останови кровотечение" },
+          "prompt": {
+            "en": "It is mid-session, the slow follower is still degraded. What is the fastest mitigation that keeps durability intact?",
+            "ru": "Сессия в разгаре, медленный follower всё ещё деградирует. Какая самая быстрая мера сохраняет долговечность нетронутой?"
+          },
+          "reveal": {
+            "en": "Eject the slow follower from the replication quorum so acks come from the healthy replicas only. Quorum durability is preserved as long as enough fast followers remain (e.g. 2 of 3); the laggard rejoins later by catching up from the log. This removes the slow node from the critical ack path immediately without dropping the durability guarantee. Do NOT relax the durability barrier (acking before replication) to 'go faster' — that risks losing acknowledged orders, which is the one thing this system must never do.",
+            "ru": "Выкини медленный follower из quorum репликации, чтобы ack приходил только от здоровых реплик. Quorum-долговечность сохраняется, пока остаётся достаточно быстрых followers (напр. 2 из 3); отстающий переподключится позже, догнав по логу. Это сразу убирает медленный узел с критического пути ack без снятия гарантии долговечности. НЕ ослабляй барьер долговечности (ack до репликации) ради «скорости» — это рискует потерей подтверждённых заявок, чего эта система не должна делать никогда."
+          }
+        },
+        {
+          "label": { "en": "4 · The durable fix", "ru": "4 · Устойчивый фикс" },
+          "prompt": {
+            "en": "Name two structural changes so one slow replica can never stall the ordered stream again.",
+            "ru": "Назови два структурных изменения, чтобы один медленный реплика больше никогда не стопорил упорядоченный поток."
+          },
+          "reveal": {
+            "en": "(1) Make quorum tolerant by design: require a fast quorum (e.g. any 2 of 3 / N of 2N+1) and exclude the slowest acker automatically with a tight timeout, so a single laggard is never on the critical path. (2) Decouple sequencing from per-message durability with batched/pipelined replication: pipeline acks so the sequencer isn't blocked one-batch-at-a-time, and isolate followers from noisy-neighbour storage (dedicated fast disks). Bonus structural lever: cap the acceptable ack latency and shed/route around a replica that exceeds it. The point is that the single ordered path must depend only on a FAST quorum, never on the slowest node.",
+            "ru": "(1) Сделай quorum толерантным по дизайну: требуй быстрый quorum (напр. любые 2 из 3 / N из 2N+1) и автоматически исключай самого медленного ackера жёстким таймаутом, чтобы один отстающий никогда не был на критическом пути. (2) Расцепи секвенсирование и помессаджную долговечность батчированной/пайплайненной репликацией: пайплайнь ack, чтобы секвенсор не блокировался по одному батчу, и изолируй followers от шумных соседей по хранилищу (выделенные быстрые диски). Бонусный рычаг: ограничь приемлемую задержку ack и сбрасывай/обходи реплику, что её превышает. Суть: единственный упорядоченный путь должен зависеть только от БЫСТРОГО quorum, никогда от самого медленного узла."
+          }
+        },
+        {
+          "label": { "en": "5 · Postmortem action", "ru": "5 · Действие по постмортему" },
+          "prompt": {
+            "en": "Latency alerts were green throughout. What single metric would have caught this before members noticed?",
+            "ru": "Алерты задержки были зелёными всё время. Какая одна метрика поймала бы это до того, как заметили участники?"
+          },
+          "reveal": {
+            "en": "Alert on the input-to-match queue depth (and the sequencer's time-to-durable / replication ack p99), not just on match latency or error rate. A growing gap between 'messages sequenced' and 'messages matched', or a per-follower ack-latency spike, is the leading indicator; member-visible fill latency is lagging. Per-replica ack-latency monitoring also surfaces the noisy-neighbour follower directly, so you eject it before it backs up the stream — a slow-but-healthy dependency is exactly what error-only alerting misses.",
+            "ru": "Алерт на глубину очереди вход-к-матчу (и time-to-durable секвенсора / p99 ack репликации), а не только на задержку матча или rate ошибок. Растущий разрыв между «сообщений секвенсировано» и «сообщений сматчено» или скачок ack-задержки на конкретном follower — опережающий индикатор; видимая участникам задержка исполнения — запаздывающая. Помониторинг ack-задержки на каждую реплику также прямо выявляет шумного соседа-follower, чтобы выкинуть его до того, как он подопрёт поток — медленная-но-здоровая зависимость это ровно то, что пропускает алертинг только по ошибкам."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-order-book-insert-helper",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 12,
+      "title": { "en": "Review the order-book insert/match helper", "ru": "Отревьюй helper вставки/матчинга книги заявок" },
+      "prompt": { "en": "This `matchBuy` walks the ask side of an in-memory order book to fill an incoming buy. It is about to run inside the deterministic matching core. Review it like a senior: name the real defects in its price-time priority and core determinism; don't flag the non-issues.", "ru": "Этот `matchBuy` идёт по стороне асков in-memory книги заявок, чтобы исполнить входящую покупку. Он вот-вот будет работать внутри детерминированного ядра матчинга. Отревьюй как senior: назови реальные дефекты в приоритете цена-время и детерминизме ядра; не цепляйся к не-проблемам." },
+      "diff": {
+        "lang": "js",
+        "code": "// asks: array of resting sell orders. Each: { price, qty, seq, ts }\nfunction matchBuy(asks, incomingQty, limitPrice) {\n  // best price first; break ties by most-recent arrival\n  asks.sort((a, b) => a.price - b.price || b.seq - a.seq);\n  const trades = [];\n  let remaining = incomingQty;\n  for (const ask of asks) {\n    if (ask.price > limitPrice) break;\n    const fill = Math.min(remaining, ask.qty);\n    trades.push({ price: ask.price, qty: fill, ts: Date.now() });\n    ask.qty -= fill;\n    remaining -= fill;\n    if (remaining <= 0) break;\n  }\n  return trades;\n}"
+      },
+      "findings": [
+        { "id": "tie-break-wrong-direction", "severity": "bug", "planted": true, "label": { "en": "Tie-break favours the newest order, not the oldest", "ru": "Разрешение ничьи в пользу новейшей заявки, не старейшей" }, "explanation": { "en": "Price-time priority fills the EARLIEST order at a given price first, but `b.seq - a.seq` sorts a tie descending by sequence — newest first. At equal price the most-recently-arrived resting order fills ahead of one that has been waiting, which is unfair and wrong. The tie comparator must be `a.seq - b.seq` (oldest sequence first).", "ru": "Приоритет цена-время исполняет САМУЮ РАННЮЮ заявку на данной цене первой, но `b.seq - a.seq` сортирует ничью по убыванию номера — новейшие первыми. При равной цене позже всех пришедшая лежащая заявка исполняется впереди той, что ждала, — это нечестно и неверно. Компаратор ничьи должен быть `a.seq - b.seq` (старейший номер первым)." } },
+        { "id": "date-now-in-core", "severity": "bug", "planted": true, "label": { "en": "Date.now() inside the deterministic core", "ru": "Date.now() внутри детерминированного ядра" }, "explanation": { "en": "The match reads the wall clock for the trade timestamp. Two replicas consuming the identical sequenced stream will stamp different times, breaking determinism and reproducibility for audit. Timestamps must be captured by the sequencer as a logged input and passed into the match, never read inside it.", "ru": "Матч читает настенные часы для метки времени сделки. Две реплики, потребляющие идентичный секвенсированный поток, проштампуют разное время, ломая детерминизм и воспроизводимость для аудита. Метки времени должны захватываться секвенсором как логируемый вход и передаваться в матч, а не читаться внутри него." } },
+        { "id": "mutates-input-asks", "severity": "bug", "planted": true, "label": { "en": "sort() mutates the shared order book in place", "ru": "sort() мутирует общую книгу заявок на месте" }, "explanation": { "en": "`asks.sort(...)` reorders the caller's live order-book array in place (Array.prototype.sort is destructive). If asks is the canonical resting book, its stored order is now scrambled, corrupting state for the next match. A book should already be maintained in priority order, or you sort a copy — never mutate the shared structure as a side effect of matching.", "ru": "`asks.sort(...)` переупорядочивает живой массив книги заявок вызывающего на месте (Array.prototype.sort деструктивен). Если asks — каноничная лежащая книга, её хранимый порядок теперь перемешан, что портит состояние для следующего матча. Книга должна уже поддерживаться в порядке приоритета, либо сортируй копию — никогда не мутируй общую структуру как побочный эффект матчинга." } },
+        { "id": "no-partial-rest-test", "severity": "missing-test", "planted": true, "label": { "en": "No test for the partial-fill / tie-break path", "ru": "Нет теста на путь частичного исполнения / разрешения ничьи" }, "explanation": { "en": "There is no test asserting that two resting orders at the SAME price fill oldest-first, nor that an unfilled remainder is handled. That is exactly the branch where the tie-break bug hides; a test with two equal-priced asks and a partial fill would have caught it.", "ru": "Нет теста, утверждающего, что две лежащие заявки по ОДНОЙ цене исполняются старейшая-первой, ни что необработанный остаток обрабатывается. Это ровно та ветка, где прячется баг разрешения ничьи; тест с двумя равноценными асками и частичным исполнением поймал бы его." } }
+      ],
+      "decoys": [
+        { "id": "for-of-loop", "label": { "en": "Use indexed for instead of for…of", "ru": "Использовать индексный for вместо for…of" }, "explanation": { "en": "Stylistic. Iterating the sorted asks with for…of is fine and clear; switching loop style changes nothing.", "ru": "Стилистика. Итерация отсортированных асков через for…of нормальна и понятна; смена стиля цикла ничего не меняет." } },
+        { "id": "math-min-fill", "label": { "en": "Math.min for the fill quantity is unnecessary", "ru": "Math.min для объёма исполнения избыточен" }, "explanation": { "en": "Not a defect — `Math.min(remaining, ask.qty)` is the correct way to fill at most what's left against at most what's resting; it is the right partial-fill logic, not a smell.", "ru": "Не дефект — `Math.min(remaining, ask.qty)` корректный способ исполнить не больше остатка против не больше лежащего; это правильная логика частичного исполнения, не запах." } }
+      ]
     }
   ]
 }
