@@ -59,6 +59,98 @@
         { "en": "Defends the write path: the command is idempotent (a client-generated comment id) so an accidental re-post dedups instead of duplicating, even though the events themselves are at-least-once.", "ru": "Защищает путь записи: команда идемпотентна (id комментария, сгенерированный клиентом), чтобы случайный репост дедуплицировался, а не дублировался, даже хотя сами события at-least-once." }
       ],
       "model": { "en": "Treat the lag as a UX problem, not a backend defect. On submit, write the command (post comment) with a client-generated comment_id so the operation is idempotent — an accidental re-post with the same id is deduped, never duplicated. Immediately render the comment optimistically in the user's own list (and show a subtle 'posting…' / 'sending' state until acknowledged), so the acting user always sees their own write regardless of read-model lag. For correctness on refresh, give the acting user read-your-own-writes: route their reads to the write model (or a session-pinned fresh view) for a short window after they post, so they never hit the stale read model for their own recent action. Other users see the comment within the 0–3s the read model takes to catch up, which is acceptable. This keeps async/CQRS intact while removing the confusing 'did my click work?' gap and the duplicate posts it caused.", "ru": "Трактуй задержку как проблему UX, а не дефект бэкенда. При отправке пиши команду (постинг комментария) с client-сгенерированным comment_id, чтобы операция была идемпотентна — случайный репост с тем же id дедуплицируется, а не дублируется. Сразу отрисуй комментарий оптимистично в собственном списке пользователя (и покажи ненавязчивое состояние 'публикуется…' / 'отправляется', пока не подтверждено), чтобы действующий пользователь всегда видел свою запись независимо от лага read-модели. Ради корректности при обновлении дай действующему пользователю read-your-own-writes: маршрутизируй его чтения на write-модель (или session-pinned свежую проекцию) на короткое окно после поста, чтобы он не попадал в устаревшую read-модель по своему недавнему действию. Другие пользователи видят комментарий в течение 0–3с, что нужно read-модели на догон, — это приемлемо. Это сохраняет async/CQRS, убирая сбивающий зазор 'сработал ли мой клик?' и вызванные им дубли постов." }
+    },
+    {
+      "id": "incident-saga-no-compensation-partial-state",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 15,
+      "title": {
+        "en": "Customers charged for orders that never shipped",
+        "ru": "Клиенты списаны за заказы, что не отгрузились"
+      },
+      "prompt": {
+        "en": "An order flow spans services: reserve-inventory → charge-payment → create-shipment, each triggered by the previous service's event. Finance reports a cluster of customers who were charged but whose orders show no shipment and no refund. It correlates with a 3-minute outage of the shipping service this morning. Work the incident; commit before revealing.",
+        "ru": "Поток заказа охватывает сервисы: резерв-склада → списание-платежа → создание-отгрузки, каждый запускается событием предыдущего. Финансы сообщают о группе клиентов, что были списаны, но чьи заказы не показывают ни отгрузки, ни возврата. Это коррелирует с 3-минутным сбоем сервиса отгрузки этим утром. Веди инцидент; сформулируй до раскрытия."
+      },
+      "steps": [
+        {
+          "label": { "en": "1 · Read the signals", "ru": "1 · Считай сигналы" },
+          "prompt": {
+            "en": "The affected orders all reached charge-payment but stalled before create-shipment, and they sit there with no refund. What does 'stopped mid-flow and never rolled back' tell you about how this multi-step flow handles a step failure?",
+            "ru": "Затронутые заказы все дошли до списания-платежа, но застряли до создания-отгрузки и висят без возврата. О чём говорит «остановился посреди потока и не откатился» о том, как этот многошаговый поток обрабатывает сбой шага?"
+          },
+          "reveal": {
+            "en": "The distributed flow (a saga) has no compensation. Each step commits in its OWN service's transaction — there is no single ACID transaction spanning reserve+charge+ship — so when create-shipment couldn't run, the already-committed charge was not undone. A correct saga must either roll forward (retry until it succeeds) or roll BACK by running compensating actions (refund the charge, release the inventory). 'Charged, not shipped, not refunded' is the signature of a saga that commits each step but has no rollback path when a later step fails.",
+            "ru": "Распределённый поток (сага) не имеет компенсации. Каждый шаг коммитится в транзакции СВОЕГО сервиса — нет единой ACID-транзакции, охватывающей резерв+списание+отгрузку — так что когда создание-отгрузки не смогло выполниться, уже закоммиченное списание не откатилось. Корректная сага должна либо катиться вперёд (повторять до успеха), либо откатываться НАЗАД, запуская компенсирующие действия (вернуть списание, освободить резерв). «Списан, не отгружен, не возвращён» — подпись саги, что коммитит каждый шаг, но не имеет пути отката при сбое позднего шага."
+          }
+        },
+        {
+          "label": { "en": "2 · Name the mechanism", "ru": "2 · Назови механизм" },
+          "prompt": {
+            "en": "During the 3-minute shipping outage, why did the orders get permanently stuck instead of resuming when shipping came back? Where did the 'continue this order' intent live?",
+            "ru": "Во время 3-минутного сбоя отгрузки почему заказы застряли навсегда, а не возобновились, когда отгрузка вернулась? Где жило намерение «продолжить этот заказ»?"
+          },
+          "reveal": {
+            "en": "In pure choreography the 'continue' intent lives only in the event that the payment service emitted (PaymentCharged → triggers create-shipment). If the shipping service was down when that event was delivered and the event was dropped (or its consumer wasn't retrying/durably queued), nothing holds the knowledge that this order still needs shipping — there is no central record of 'order N is mid-flow, next step pending.' So when shipping recovers, it has no backlog of pending orders to resume; the orders are orphaned, charged, waiting on an event that already came and went. The missing piece is durable process state plus a retry/timeout that re-drives the next step.",
+            "ru": "В чистой хореографии намерение «продолжить» живёт лишь в событии, что испустил платёжный сервис (PaymentCharged → запускает создание-отгрузки). Если сервис отгрузки лежал, когда это событие доставлялось, и событие было отброшено (или его consumer не повторял/не был в долговечной очереди), ничто не хранит знание, что этому заказу всё ещё нужна отгрузка — нет центральной записи «заказ N посреди потока, следующий шаг ждёт». Так что когда отгрузка восстанавливается, у неё нет бэклога ждущих заказов для возобновления; заказы осиротели, списаны, ждут события, что уже пришло и ушло. Недостаёт долговечного состояния процесса плюс ретрая/таймаута, что переподнимает следующий шаг."
+          }
+        },
+        {
+          "label": { "en": "3 · Stop the bleeding", "ru": "3 · Останови кровотечение" },
+          "prompt": {
+            "en": "Customers are charged and waiting right now. What is the fastest action to make the affected customers whole?",
+            "ru": "Клиенты списаны и ждут прямо сейчас. Какое самое быстрое действие сделает затронутых клиентов целыми?"
+          },
+          "reveal": {
+            "en": "Identify the stuck set (charged, no shipment, in the outage window) and resolve each either forward or back: re-drive create-shipment for orders that can still ship (replay the PaymentCharged event or trigger the step manually), and for those that can't, issue compensating refunds and release the reserved inventory. Pick one direction per order based on whether fulfillment is still possible. This is a manual stand-in for the compensation/retry the saga should have done automatically; it clears the immediate customer harm but doesn't prevent recurrence.",
+            "ru": "Определи застрявшее множество (списаны, нет отгрузки, в окне сбоя) и разреши каждый вперёд или назад: переподними создание-отгрузки для заказов, что ещё могут отгрузиться (переиграй событие PaymentCharged или запусти шаг вручную), а для тех, что не могут — выпусти компенсирующие возвраты и освободи зарезервированный склад. Выбирай направление на заказ по тому, возможна ли ещё доставка. Это ручная замена компенсации/ретрая, что сага должна была сделать автоматически; устраняет немедленный вред клиентам, но не предотвращает повтор."
+          }
+        },
+        {
+          "label": { "en": "4 · The durable fix", "ru": "4 · Устойчивый фикс" },
+          "prompt": {
+            "en": "What structure gives the flow automatic recovery and rollback so a downstream blip can't strand a charged order again?",
+            "ru": "Какая структура даёт потоку автоматическое восстановление и откат, чтобы сбой downstream снова не оставил списанный заказ брошенным?"
+          },
+          "reveal": {
+            "en": "Make the saga explicit with durable process state and compensations — typically an orchestrator. A coordinator persists each order's saga state (which steps done, which pending) and drives the next step; a step that fails transiently is RETRIED with backoff (roll forward), and a step that fails terminally triggers COMPENSATING transactions in reverse (refund the payment, release the inventory) to roll the saga back to a consistent state. Because the state is durable, a downstream outage just pauses the order; when the dependency recovers, the orchestrator (or a timeout/re-drive) resumes it from where it stalled — no orphaned charges. Each step and each compensation must be idempotent (events are at-least-once), so retries and replays don't double-charge or double-refund. The point: a saga that only commits forward is incomplete — it needs retry for transient failure and compensation for terminal failure, anchored in durable process state.",
+            "ru": "Сделай сагу явной с долговечным состоянием процесса и компенсациями — обычно через оркестратор. Координатор персистит состояние саги каждого заказа (какие шаги сделаны, какие ждут) и ведёт следующий шаг; шаг, упавший временно, ПОВТОРЯЕТСЯ с backoff (катится вперёд), а шаг, упавший терминально, запускает КОМПЕНСИРУЮЩИЕ транзакции в обратном порядке (вернуть платёж, освободить склад), откатывая сагу к согласованному состоянию. Поскольку состояние долговечно, сбой downstream лишь приостанавливает заказ; когда зависимость восстанавливается, оркестратор (или таймаут/переподнятие) возобновляет его с места затыка — без осиротевших списаний. Каждый шаг и каждая компенсация обязаны быть идемпотентны (события at-least-once), чтобы ретраи и реплеи не списывали и не возвращали дважды. Суть: сага, что лишь коммитит вперёд, неполна — ей нужен ретрай на временный сбой и компенсация на терминальный, закреплённые в долговечном состоянии процесса."
+          }
+        },
+        {
+          "label": { "en": "5 · Postmortem action", "ru": "5 · Действие по постмортему" },
+          "prompt": {
+            "en": "What single alert would have caught the stuck orders within minutes, not at finance's monthly reconciliation?",
+            "ru": "Какой один алерт поймал бы застрявшие заказы за минуты, а не на месячной сверке финансов?"
+          },
+          "reveal": {
+            "en": "Alert on sagas that have been in a non-terminal state past their expected duration: 'orders charged but not shipped and not refunded for > T minutes.' With durable saga state this is a trivial query (and the orchestrator can auto-trigger compensation on a timeout); without it, the invariant 'every charge ends in either a shipment or a refund' is unobservable, which is why it took a finance report to find. The leading indicator is stuck-saga age, not a downstream error rate — the downstream had already recovered while the orders stayed stranded.",
+            "ru": "Алармь на саги, что висят в нетерминальном состоянии дольше ожидаемой длительности: «заказы списаны, но не отгружены и не возвращены > T минут». С долговечным состоянием саги это тривиальный запрос (и оркестратор может авто-запустить компенсацию по таймауту); без него инвариант «каждое списание кончается отгрузкой или возвратом» ненаблюдаем, потому и понадобился отчёт финансов. Опережающий индикатор — возраст застрявшей саги, а не доля ошибок downstream — downstream уже восстановился, пока заказы оставались брошенными."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-saga-step-handler",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 12,
+      "title": { "en": "Review a saga step handler", "ru": "Отревьюй обработчик шага саги" },
+      "prompt": { "en": "This handler runs one step of an order saga in response to the previous step's event. Review it like a senior: name the real defects in its idempotency, failure handling, and rollback; don't flag the non-issues.", "ru": "Этот обработчик выполняет один шаг саги заказа в ответ на событие предыдущего шага. Отревьюй как senior: назови реальные дефекты в его идемпотентности, обработке сбоев и откате; не цепляйся к не-проблемам." },
+      "diff": {
+        "lang": "js",
+        "code": "// triggered by InventoryReserved (at-least-once). Charges, then emits next event.\nasync function onInventoryReserved(evt) {\n  const charge = await payments.charge(evt.orderId, evt.amount); // side effect\n  await db.insert('charges', { orderId: evt.orderId, chargeId: charge.id });\n  await broker.publish('PaymentCharged', { orderId: evt.orderId });\n  ack(evt);\n}" },
+      "findings": [
+        { "id": "charge-not-idempotent", "severity": "bug", "planted": true, "label": { "en": "Redelivery double-charges the customer", "ru": "Переотправка списывает с клиента дважды" }, "explanation": { "en": "InventoryReserved is at-least-once, so this handler can run twice for one order, and `payments.charge` has no idempotency key — the second run charges the card again. A saga step with a side effect must be idempotent: pass an idempotency key (orderId) so a duplicate charge request is a no-op, or check the `charges` table for an existing charge before calling the gateway. Without it, every redelivery is a real double-charge.", "ru": "InventoryReserved — at-least-once, так что этот обработчик может выполниться дважды для одного заказа, а у `payments.charge` нет ключа идемпотентности — второй прогон списывает карту снова. Шаг саги с побочным эффектом обязан быть идемпотентным: передавай ключ идемпотентности (orderId), чтобы дублирующий запрос списания был no-op, или проверяй таблицу `charges` на существующее списание перед вызовом шлюза. Без этого каждая переотправка — реальное двойное списание." } },
+        { "id": "no-compensation-on-publish-fail", "severity": "bug", "planted": true, "label": { "en": "No compensation if a later step can't proceed", "ru": "Нет компенсации, если поздний шаг не может продолжиться" }, "explanation": { "en": "The handler charges and emits PaymentCharged but has no path to UNDO the charge if the saga later fails (shipment impossible). It only rolls forward. A saga step that takes an irreversible-by-default action must define its compensating action (refund + release inventory) and the orchestrator/handler must invoke it on terminal downstream failure, or charged orders strand exactly as in the incident.", "ru": "Обработчик списывает и эмитит PaymentCharged, но не имеет пути ОТМЕНИТЬ списание, если сага позже падает (отгрузка невозможна). Он лишь катится вперёд. Шаг саги, делающий по умолчанию необратимое действие, обязан определить компенсирующее действие (возврат + освобождение склада), и оркестратор/обработчик обязан вызвать его при терминальном сбое downstream, иначе списанные заказы зависают ровно как в инциденте." } },
+        { "id": "dual-write-publish", "severity": "bug", "planted": true, "label": { "en": "DB insert and publish aren't atomic — phantom/lost event", "ru": "Вставка в БД и публикация не атомарны — фантом/потеря события" }, "explanation": { "en": "The `charges` insert and the `broker.publish` are two systems with no shared transaction. A crash between them either records a charge with no PaymentCharged emitted (saga stalls) or, if reordered, emits an event for a charge that didn't persist (phantom). Use a transactional outbox: write the charge row and an outbox row in one local transaction, and let a relay publish PaymentCharged — so the event exists iff the charge did.", "ru": "Вставка `charges` и `broker.publish` — две системы без общей транзакции. Падение между ними либо записывает списание без испущенного PaymentCharged (сага застревает), либо, при перестановке, эмитит событие для несохранённого списания (фантом). Используй транзакционный outbox: пиши строку списания и outbox-строку в одной локальной транзакции, и пусть relay публикует PaymentCharged — так событие существует тогда и только тогда, когда существовало списание." } },
+        { "id": "no-duplicate-test", "severity": "missing-test", "planted": true, "label": { "en": "No test for duplicate delivery or downstream-failure rollback", "ru": "Нет теста на дубль-доставку или откат при сбое downstream" }, "explanation": { "en": "The two saga-critical paths — the same event delivered twice (must charge once) and a terminal downstream failure (must compensate) — have no tests. A test should deliver InventoryReserved twice and assert a single charge, and another should fail the downstream step and assert a refund/compensation runs. These are the exact branches the idempotency and compensation bugs live in.", "ru": "Два критичных для саги пути — то же событие, доставленное дважды (списать раз), и терминальный сбой downstream (надо компенсировать) — не покрыты тестами. Тест должен доставить InventoryReserved дважды и утвердить одно списание, а другой — провалить downstream-шаг и утвердить запуск возврата/компенсации. Это ровно те ветки, где живут баги идемпотентности и компенсации." } }
+      ],
+      "decoys": [
+        { "id": "evt-amount-field", "label": { "en": "The amount should be looked up, not taken from the event", "ru": "Сумму надо искать, а не брать из события" }, "explanation": { "en": "Defensible either way — carrying the amount in the event is a normal event-carried-state-transfer choice; re-looking it up is an alternative, not a defect. The real issues are idempotency, atomicity, and compensation.", "ru": "Защитимо в обе стороны — нести сумму в событии это нормальный выбор event-carried-state-transfer; перепоиск это альтернатива, не дефект. Реальные проблемы — идемпотентность, атомарность и компенсация." } },
+        { "id": "handler-name", "label": { "en": "The handler name couples it to the triggering event", "ru": "Имя обработчика сцепляет его с запускающим событием" }, "explanation": { "en": "Stylistic — naming a handler after the event it consumes is clear and conventional; it is not a coupling defect worth blocking on.", "ru": "Стилистика — называть обработчик по событию, что он потребляет, ясно и общепринято; это не дефект сцепления, на котором стоит блокировать." } }
+      ]
     }
   ]
 }
