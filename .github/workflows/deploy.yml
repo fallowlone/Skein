@@ -24,9 +24,6 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  SHARD_TOTAL: "6"
-
 jobs:
   gates:
     runs-on: ubuntu-latest
@@ -51,22 +48,25 @@ jobs:
         run: bun run verify:scenario
         working-directory: site
 
-  # Decide full vs incremental. Restores the manifest from the rolling cache,
-  # hashes the tree, writes plan.json + next-manifest.json (shared downstream).
-  plan:
+  # Single job: plan (full vs incremental) → build → lint → deploy, all in one
+  # runner. No cross-job artifacts — the only state handed between runs is the
+  # rolling dist+manifest cache (actions/cache, a separate quota from the
+  # artifact storage that the old sharded pipeline exhausted on the free tier).
+  build-deploy:
     needs: gates
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    outputs:
-      mode: ${{ steps.plan.outputs.mode }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.11
+      - name: Install root deps (provides wrangler)
+        run: bun install --frozen-lockfile
       - name: Install site deps
         run: bun install --frozen-lockfile
         working-directory: site
+
       - name: Restore dist + manifest cache
         uses: actions/cache/restore@v4
         with:
@@ -75,161 +75,32 @@ jobs:
             site/build-cache/manifest.json
           key: site-dist-${{ github.run_id }}
           restore-keys: site-dist-
+
       - name: Plan build
         id: plan
         working-directory: site
         env:
           FORCE_FULL_BUILD: ${{ (github.event_name == 'schedule' || inputs.force_full == 'true') && '1' || '0' }}
         run: bun scripts/incremental-plan.mjs
-      - name: Upload plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-plan
-          path: |
-            site/build-cache/plan.json
-            site/build-cache/next-manifest.json
-          retention-days: 1
-          if-no-files-found: error
 
-  # ── FULL path ──────────────────────────────────────────────────────────────
-  build-shard:
-    needs: plan
-    if: needs.plan.outputs.mode == 'full'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: true
-      matrix:
-        shard: [0, 1, 2, 3, 4, 5]
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.11
-      - name: Install site deps
-        run: bun install --frozen-lockfile
-        working-directory: site
-      - name: Build shard ${{ matrix.shard }}/${{ env.SHARD_TOTAL }}
+      # ── FULL: render the whole site (no shards — one runner, ~11 min) ──
+      - name: Full build
+        if: steps.plan.outputs.mode == 'full'
         working-directory: site
         env:
-          SHARD_TOTAL: ${{ env.SHARD_TOTAL }}
-          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_TOTAL: "1"
         run: NODE_OPTIONS=--max-old-space-size=10240 bunx astro build
-      - name: Upload shard artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-${{ matrix.shard }}
-          path: site/dist
-          retention-days: 1
-          if-no-files-found: error
-
-  merge-deploy:
-    needs: [plan, build-shard]
-    if: needs.plan.outputs.mode == 'full'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.11
-      - name: Install root deps (provides wrangler)
-        run: bun install --frozen-lockfile
-      - name: Install site deps (for lint + guard)
-        run: bun install --frozen-lockfile
-        working-directory: site
-      - name: Download shard artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: dist-*
-          path: shards
-      - name: Download plan
-        uses: actions/download-artifact@v4
-        with:
-          name: build-plan
-          path: site/build-cache
-      - name: Merge shards
-        run: |
-          mkdir -p site/dist
-          shopt -s nullglob
-          count=0
-          for d in shards/dist-*; do
-            cp -a "$d/." site/dist/
-            count=$((count + 1))
-          done
-          echo "Merged $count shard(s)."
-          if [ "$count" -ne "$SHARD_TOTAL" ]; then
-            echo "Expected $SHARD_TOTAL shards, merged $count" >&2
-            exit 1
-          fi
       - name: Verify dist completeness
+        if: steps.plan.outputs.mode == 'full'
         run: bun scripts/check-dist-complete.mjs
         working-directory: site
-      - name: Lint merged dist
-        run: bun scripts/lint-dist.mjs
-        working-directory: site
-      - name: Promote manifest
+      - name: Promote manifest (full)
+        if: steps.plan.outputs.mode == 'full'
         run: mv site/build-cache/next-manifest.json site/build-cache/manifest.json
-      - name: Save dist + manifest cache
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            site/dist
-            site/build-cache/manifest.json
-          key: site-dist-${{ github.run_id }}
-      - name: Resolve deploy branch
-        id: branch
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_BRANCH: ${{ inputs.branch }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_BRANCH" ]; then
-            name="$INPUT_BRANCH"
-          else
-            name="main"
-          fi
-          if ! printf '%s' "$name" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
-            echo "Invalid branch name: $name" >&2
-            exit 1
-          fi
-          echo "name=$name" >> "$GITHUB_OUTPUT"
-      - name: Deploy to Cloudflare Pages
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          DEPLOY_BRANCH: ${{ steps.branch.outputs.name }}
-        run: bunx wrangler pages deploy site/dist --project-name=awesome-everything --branch="$DEPLOY_BRANCH"
 
-  # ── INCREMENTAL path ────────────────────────────────────────────────────────
-  build-incremental:
-    needs: plan
-    if: needs.plan.outputs.mode == 'incremental'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.11
-      - name: Install root deps (provides wrangler)
-        run: bun install --frozen-lockfile
-      - name: Install site deps
-        run: bun install --frozen-lockfile
-        working-directory: site
-      - name: Restore dist + manifest cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            site/dist
-            site/build-cache/manifest.json
-          key: site-dist-${{ github.run_id }}
-          restore-keys: site-dist-
-      - name: Download plan
-        uses: actions/download-artifact@v4
-        with:
-          name: build-plan
-          path: site/build-cache
+      # ── INCREMENTAL: render only changed pages, overlay onto cached dist ──
       - name: Snapshot cached dist
+        if: steps.plan.outputs.mode == 'incremental'
         run: |
           if [ ! -d site/dist ]; then
             echo "Restored cache had no dist/ — cannot run incremental." >&2
@@ -238,6 +109,7 @@ jobs:
           rm -rf site/build-cache/prev-dist
           cp -a site/dist site/build-cache/prev-dist
       - name: Render changed pages
+        if: steps.plan.outputs.mode == 'incremental'
         working-directory: site
         env:
           SHARD_TOTAL: "1"
@@ -245,9 +117,12 @@ jobs:
           INCREMENTAL_PLAN="$(cat build-cache/plan.json)" \
             NODE_OPTIONS=--max-old-space-size=10240 bunx astro build
       - name: Overlay + guard + promote manifest
+        if: steps.plan.outputs.mode == 'incremental'
         run: bun scripts/incremental-merge.mjs
         working-directory: site
-      - name: Lint merged dist
+
+      # ── common: lint, persist cache, deploy ──
+      - name: Lint dist
         run: bun scripts/lint-dist.mjs
         working-directory: site
       - name: Save dist + manifest cache
