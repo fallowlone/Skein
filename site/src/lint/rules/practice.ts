@@ -143,7 +143,7 @@ export async function checkPracticeDebug(siteSrc: string): Promise<string[]> {
   return errs;
 }
 
-/** Tracks flipped to error (lesson without a 3–5 task practice file fails the build).
+/** Tracks flipped to error (lesson without a 3–8 task practice file fails the build).
  *  Empty in P1 — everything is a warning. Add track slugs here as a track is filled. */
 export const PRACTICE_REQUIRED_TRACKS: string[] = ["networking", "algorithms", "observability", "performance", "base-cs", "browser", "backend", "databases", "math", "engineering-practice", "apis", "caching", "distributed", "frontend", "queues", "security", "ai-llm", "data-engineering", "deployment", "system-design", "system-design-cases"];
 
@@ -185,7 +185,7 @@ export async function checkPracticeCount(siteSrc: string): Promise<{ errors: str
     const count = data?.tasks?.length ?? 0;
     let msg: string | null = null;
     if (!data) msg = `practice-count: ready lesson "${key}" has no practice file`;
-    else if (count < 3 || count > 5) msg = `practice-count: lesson "${key}" has ${count} tasks (want 3–5)`;
+    else if (count < 3 || count > 8) msg = `practice-count: lesson "${key}" has ${count} tasks (want 3–8)`;
     if (msg) (required ? errors : warnings).push(msg);
   }
   return { errors, warnings };
