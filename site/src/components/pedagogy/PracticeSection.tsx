@@ -193,11 +193,11 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
       }
       if (task.runtime === "sql") {
         return <Suspense fallback={<Loading lang={lang} />}>
-          <SqlSandbox lang={lang} setup={task.setup} initialSql="" check={task.expected} onResult={(ok) => ok && done()} />
+          <SqlSandbox lang={lang} setup={task.setup} initialSql={task.initialCode ?? ""} check={task.expected} onResult={(ok) => ok && done()} />
         </Suspense>;
       }
       return <Suspense fallback={<Loading lang={lang} />}>
-        <JsSandbox lang={lang} setup={task.setup} initialCode="" check={task.expected} onResult={(ok) => ok && done()} />
+        <JsSandbox lang={lang} setup={task.setup} initialCode={task.initialCode ?? ""} check={task.expected} onResult={(ok) => ok && done()} />
       </Suspense>;
     }
     case "review":
@@ -401,18 +401,21 @@ function Blanks({ lang, lessonKey, taskId, evidence, blanks, onChange }: {
   return (
     <div>
       {evidence && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{evidence}</pre>}
-      <ul class="space-y-3">
+      <ul class="space-y-4">
         {blanks.map((b) => (
           <li key={b.id}>
-            <input class="font-mono w-full max-w-md px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
-              value={values[b.id] ?? ""}
-              onInput={(e) => setValues({ ...values, [b.id]: (e.target as HTMLInputElement).value })} />
-            {result && (
-              <span class={`ml-2 text-sm ${result[b.id] ? "text-ok" : "text-danger"}`}>
-                {result[b.id] ? "✓" : tt(lang, "try again", "ещё раз")}
-              </span>
-            )}
-            {result && !result[b.id] && b.hint && <div class="text-xs text-muted mt-1">{b.hint}</div>}
+            {b.hint && <label class="block text-sm text-ink-2 mb-1">{b.hint}</label>}
+            <div class="flex items-center">
+              <input class="font-mono w-full max-w-md px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
+                placeholder={tt(lang, "one word or number", "одно слово или число")}
+                value={values[b.id] ?? ""}
+                onInput={(e) => setValues({ ...values, [b.id]: (e.target as HTMLInputElement).value })} />
+              {result && (
+                <span class={`ml-2 text-sm shrink-0 ${result[b.id] ? "text-ok" : "text-danger"}`}>
+                  {result[b.id] ? "✓" : tt(lang, "try again", "ещё раз")}
+                </span>
+              )}
+            </div>
           </li>
         ))}
       </ul>

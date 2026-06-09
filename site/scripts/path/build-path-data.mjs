@@ -381,16 +381,27 @@ function main() {
     } catch (e) { console.warn(`concept-labels.json: parse failed (${e.message}); ignoring`); }
   }
 
-  // assemble concepts (sorted by id), requires = sparse spine edge.
-  const rawRequires = new Map();
-  for (const cid of concepts.keys()) {
-    const fu = spine.firstUnit.get(cid);
-    const pa = fu ? spine.prevAnchor.get(fu) : null;
-    rawRequires.set(cid, pa && pa !== cid ? [pa] : []);
+  // Concept prerequisites come from AUTHORED lesson `prereqs` (deriveIntraTrackEdges resolves the
+  // prereq forms → concept→requires edges), NOT a positional "previous-unit anchor" spine. Same-track
+  // only here; cross-track prereqs are added via the curated cross-track overrides. This makes a unit
+  // gate on its REAL prerequisite (e.g. combinatorics→multiplication), not on whatever unit happens to
+  // sit before it in track order.
+  const { edges: intraEdgesRaw, warnings: intraWarnings } = deriveIntraTrackEdges([...units.values()]);
+  for (const w of intraWarnings) console.warn(w);
+  const ptOf = (id) => { const rec = concepts.get(id); return rec ? primaryTrack(rec) : undefined; };
+  const intraEdges = intraEdgesRaw.filter((e) => {
+    const tc = ptOf(e.concept), tr = ptOf(e.requires);
+    return tc !== undefined && tr !== undefined && tc === tr;
+  });
+  const authoredReqByConcept = new Map();
+  for (const e of intraEdges) {
+    if (!authoredReqByConcept.has(e.concept)) authoredReqByConcept.set(e.concept, new Set());
+    authoredReqByConcept.get(e.concept).add(e.requires);
   }
-  // stable order for cycle-break = by first-teaching-unit sequence (then id). Spine edges point
-  // from a concept to the previous unit's anchor, i.e. monotone-decreasing in unit order, so this
-  // ordering keeps every legitimate edge and only drops a genuine cycle (reuse pathology).
+  const rawRequires = new Map();
+  for (const cid of concepts.keys()) rawRequires.set(cid, [...(authoredReqByConcept.get(cid) ?? [])].sort());
+  // stable order for cycle-break = by first-teaching-unit sequence (then id); authored edges already
+  // point strictly-earlier (intra-track-derive enforces it), so cycle-break drops nothing legitimate.
   const seqOfConcept = (id) => {
     const fu = spine.firstUnit.get(id);
     return fu ? spine.seqOf(fu) : Number.MAX_SAFE_INTEGER;
@@ -409,26 +420,24 @@ function main() {
   const unitConceptsOut = {};
   for (const u of [...units.values()].sort((a, b) => a.id.localeCompare(b.id))) {
     const teaches = [...new Set(u.lessons.flatMap((l) => l.concepts))].sort();
-    const pa = spine.prevAnchor.get(u.id);
-    const requires = pa && !teaches.includes(pa) ? [pa] : [];
-    unitConceptsOut[u.id] = { teaches, requires, estMin: estMinOf(u) };
+    const teachSet = new Set(teaches);
+    // unit requires = authored prereq concepts of what it teaches that are taught by OTHER units
+    // (the real cross-unit prerequisites), not the previous unit's anchor. Same-track only — a
+    // concept shared with another track (e.g. `combination`, primaryTrack=algorithms) must not drag
+    // that track's prereqs into this unit; cross-track ordering is handled by the curated overrides.
+    const reqs = new Set();
+    for (const c of teaches) for (const r of authoredReqByConcept.get(c) ?? []) {
+      if (!teachSet.has(r) && ptOf(r) === u.track) reqs.add(r);
+    }
+    unitConceptsOut[u.id] = { teaches, requires: [...reqs].sort(), estMin: estMinOf(u) };
   }
 
   const goals = buildGoals(concepts);
 
-  // Intra-track edges: derived deterministically from lesson `prereqs` (captured above). Written to
-  // its own committed artifact so the lightweight regenerators (build-intra-edges.mjs /
-  // build-overrides.mjs) stay in sync without a full harvest. Content-pull only — the runtime's
-  // deriveUnitRequires filters intra-track edges out of unit ordering.
-  const { edges: intraEdgesRaw, warnings: intraWarnings } = deriveIntraTrackEdges([...units.values()]);
-  for (const w of intraWarnings) console.warn(w);
-  // Filter by CONCEPT primaryTrack (graph track definition); drop edges that are cross-track by
-  // concept track (shared concepts) — they belong to the curated cross-track set, not here.
-  const intraTrackOf = new Map(conceptsOut.map((c) => [c.id, c.track]));
-  const intraEdges = intraEdgesRaw.filter((e) => {
-    const tc = intraTrackOf.get(e.concept), tr = intraTrackOf.get(e.requires);
-    return tc !== undefined && tr !== undefined && tc === tr;
-  });
+  // Intra-track edges (authored, same-track) were derived above and now seed the base concept/unit
+  // requires. Still written as their own committed artifact so the lightweight regenerators
+  // (build-intra-edges.mjs / build-overrides.mjs) stay in sync, and merged into concept-overrides
+  // below (redundant with the base requires now, but harmless — buildConceptGraph dedups).
   writeFileSync(join(OUT, "intra-track-edges.json"), JSON.stringify(intraEdges, null, 2) + "\n");
 
   // Merge cross-track (curated) + intra-track (derived) edges into the generated concept-overrides.
@@ -459,7 +468,9 @@ function main() {
   mkdirSync(join(OUT, "diagnostics"), { recursive: true });
   writeFileSync(join(OUT, "concepts.json"), JSON.stringify(conceptsOut, null, 2) + "\n");
   writeFileSync(join(OUT, "unit-concepts.json"), JSON.stringify(unitConceptsOut, null, 2) + "\n");
-  writeFileSync(join(OUT, "goals.json"), JSON.stringify(goals, null, 2) + "\n");
+  // goals.json is hand-curated (role presets beyond buildGoals' four); never clobber an existing one.
+  // buildGoals only seeds it on a clean checkout where the file is absent.
+  if (!existsSync(join(OUT, "goals.json"))) writeFileSync(join(OUT, "goals.json"), JSON.stringify(goals, null, 2) + "\n");
   writeFileSync(join(OUT, "concept-overrides.json"), JSON.stringify(overrides, null, 2) + "\n");
   // Diagnostics index: the island cannot readdir(), so emit the list of diagnosed
   // concept ids as committed JSON for path-io.ts to import.
