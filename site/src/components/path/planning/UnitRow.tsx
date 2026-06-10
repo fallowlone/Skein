@@ -8,6 +8,19 @@ import type { Locale } from "~/i18n";
 import type { PathStep } from "~/scripts/path/types";
 import { content } from "~/scripts/path/path-io";
 import { hueForTrack } from "./domain-hue";
+import unitsJson from "~/content/units.json";
+
+// Unit id → lesson count, so a step is legibly "a unit of N lessons", not "a lesson".
+const LESSON_COUNT = new Map<string, number>(
+  (unitsJson as Array<{ id: string; lessons: string[] }>).map((u) => [u.id, u.lessons?.length ?? 0]),
+);
+
+function ruLessons(n: number): string {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "урок";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "урока";
+  return "уроков";
+}
 
 const L = {
   en: {
@@ -15,12 +28,14 @@ const L = {
     up: "↑", down: "↓", loosen: "Loosen", quick: "quick check", min: "min",
     learn: "learn", review: "review", check: "check", start: "Start", queued: "Queued",
     prereqsMet: "prereqs met", needs: "needs",
+    lessons: (n: number) => `${n} lesson${n === 1 ? "" : "s"} — complete all to finish this step`,
   },
   ru: {
     unlocks: "Открывает", iKnow: "Уже знаю", skip: "Пропустить", pin: "Закрепить", pinned: "Закреплено",
     up: "↑", down: "↓", loosen: "Ослабить", quick: "проверка", min: "мин",
     learn: "изучить", review: "повторить", check: "проверка", start: "Начать", queued: "В очереди",
     prereqsMet: "пререквизиты готовы", needs: "нужно",
+    lessons: (n: number) => `${n} ${ruLessons(n)} — шаг засчитан, когда пройдены все`,
   },
 } as const;
 
@@ -82,6 +97,12 @@ export default function UnitRow(p: UnitRowProps) {
             : <span class="prereq pending">{t.needs}: {unmetLabel}{unmetCount > 1 ? ` +${unmetCount - 1}` : ""}</span>}
           <span>·</span>
           <span>~{step.estMin} {t.min} · {t[step.kind]}</span>
+          {(LESSON_COUNT.get(step.unit) ?? 0) > 0 && (
+            <>
+              <span>·</span>
+              <span>{t.lessons(LESSON_COUNT.get(step.unit)!)}</span>
+            </>
+          )}
         </div>
         <div class="u-actions">
           <button type="button" class="u-act" onClick={p.onKnow}>{t.iKnow}</button>
