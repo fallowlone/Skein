@@ -1,0 +1,161 @@
+---
+concepts:
+- react-error-recovery
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-recovery-and-degradation"
+sources:
+- https://github.com/bvaughn/react-error-boundary
+- https://react.dev/reference/react/Component
+- https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/
+spiral: []
+status: ready
+summary: 'Recovery is state eviction: resetKeys or reset() remount the crashed subtree so corrupted state dies. Retry transient failures with exponential backoff and jitter, never in a tight loop. Degrade per widget so the page lives; fail the whole page only when integrity is at stake.'
+title: 'Recovery and degradation: evict state, back off on retry, fail honestly'
+track: "react"
+unit: "09-error-handling"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The quotes API browned out for two minutes — elevated 5xx, nothing dramatic. Then the client made it dramatic. The trading dashboard's rates widget had a boundary with a Retry button, and Retry was wired as "call the fetch again, immediately, on every click and on every error". Thirty thousand open dashboards started hammering a degraded API in lockstep, each failure scheduling the next attempt one second later. Server load graphs show the API receiving eight times its normal traffic *from its own clients* at the exact moment it could least afford it — a two-minute brownout stretched into a forty-minute outage, caused by the recovery code. Meanwhile a second bug hid in the same widget: when a malformed tick crashed it, clicking Retry re-rendered the same tree against the same poisoned Redux state and crashed again within one frame. Users clicked Retry, watched the fallback blink, and filed tickets that said "the retry button is decorative". Two lessons in one incident: recovery means evicting the state that crashed, and retrying means deliberately *not* retrying right away.
+</Hook>
+
+<Crux>Recovery is state eviction: reset remounts by key. Retry with backoff, degrade per widget, fail the page only for integrity.</Crux>
+
+<Explanation>
+
+## Recovery is state eviction, not re-rendering
+
+When a boundary catches, the subtree below it is unmounted — but the *cause* of the crash usually lives on: in a parent's state, in a store, in a URL param. The crash is a symptom; the corrupted or unexpected state is the disease. So "retry" cannot mean "render the same thing again" — same state, same render, same throw, often within a single frame. Recovery means **remounting the subtree with the poisoned state evicted or replaced**.
+
+`react-error-boundary` gives you both directions of that move:
+
+```jsx
+<ErrorBoundary
+  FallbackComponent={QuoteFallback}
+  resetKeys={[symbol]}          // symbol changes → boundary auto-resets, subtree remounts
+  onReset={() => refetchQuote()} // clear the cause along with the crash state
+>
+  <QuotePanel symbol={symbol} />
+</ErrorBoundary>
+```
+
+`resetKeys` is the declarative direction: when any value in the array changes — the user picks another symbol, the route param updates — the boundary leaves its error state and remounts children. The crash was *about* the old input, so new input is the natural recovery trigger. `resetErrorBoundary()` (handed to the fallback) is the imperative direction: a Retry button. But pressing it only clears the boundary's own error flag and remounts children with *fresh local state* — if the poison lives outside the subtree, you must also fix the cause in `onReset`: refetch, clear the cache entry, reset the store slice. Plain React without the library does the same thing with a `key`: bump `key={attempt}` on the subtree and React unmounts the old instance, state and all, and mounts a new one. Remounting is the point — a corrupted child's state must die, and key identity is how React decides what dies.
+
+<Quiz
+  id="02-recovery-quiz-1"
+  lessonSlug="02-recovery-and-degradation"
+  lang="en"
+  question="A fallback's Retry button calls resetErrorBoundary(). The widget crashes again within one frame, every time. What is the most likely mechanism?"
+  choices={[
+    { label: "The crash cause lives outside the boundary — store state or a parent prop — so the remounted subtree re-reads the same poisoned input and throws again; reset must also clear the cause, e.g. in onReset", correct: true },
+    { label: "resetErrorBoundary only re-renders the fallback, never the children, so the error state is still set", misconception: "It does clear the error state and remounts children — that part works. The instant re-crash is evidence the cause survived the remount: children mount with fresh local state but immediately read the same external state that crashed them. The fix is pairing reset with cause eviction, not a different reset call." },
+    { label: "The boundary needs resetKeys for the button to work; without it reset() is a no-op", misconception: "resetKeys and resetErrorBoundary are independent triggers for the same reset — declarative on input change versus imperative from the fallback. Neither is required for the other. A reset that re-crashes is not a wiring problem; it is the same poisoned external input being re-read by a freshly mounted tree." },
+    { label: "React batches the reset with the next render, so the old crashed tree renders once more before the remount", misconception: "There is no extra render of the old tree — it was unmounted when the boundary caught. The re-crash is the new tree's first render against unchanged external state, which is why the pattern looks instantaneous and deterministic rather than like a timing race." },
+  ]}
+/>
+
+## Retry with backoff — or become the second outage
+
+Transient failures — a 503, a dropped connection, a brownout — deserve a retry. But the Hook's incident is the standard failure mode of naive retry: thousands of clients retrying at the same fixed interval form a synchronized wave (the *thundering retry*), and the load you add arrives precisely when the service is least able to absorb it. Client-side retry is a distributed-systems decision made in UI code. The discipline is the same as on the backend:
+
+```js
+async function retryFetch(url, { tries = 3, base = 1000, cap = 30_000 } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (res.status >= 500) throw new Error("HTTP " + res.status);
+      return res;
+    } catch (err) {
+      if (attempt + 1 >= tries) throw err;             // budget exhausted → boundary
+      const delay = Math.min(cap, base * 2 ** attempt); // 1s, 2s, 4s … capped
+      await new Promise((r) => setTimeout(r, delay + Math.random() * delay)); // jitter
+    }
+  }
+}
+```
+
+Three rules hide in those ten lines. **Exponential backoff** spreads the wave over time — 1s, 2s, 4s instead of a fixed metronome. **Jitter** desynchronizes the clients — without the random term, thirty thousand dashboards that failed together retry together forever. **A retry budget** ends the story: after the budget, throw to the boundary and let a *human-paced* action (the Retry button) become the next attempt — a user clicking is naturally rate-limited and naturally jittered. And only retry what is plausibly transient: a 503 yes, a 400 from a malformed request no — retrying a deterministic failure is a tight loop with extra steps.
+
+## Partial degradation: error budgets, applied to pixels
+
+A widget boundary does more than catch — it converts a crash into a *degraded mode* while the rest of the page lives. That is error-budget thinking applied to UI: not every region of the screen has the same availability requirement, so not every region should fail with the same blast radius. A recommendations rail can fail to an empty slot and nobody loses money. A quotes widget can show the last successful tick, visibly marked stale, which beats both a spinner and a hole. The page-level question becomes: which regions are *decorative*, which are *degradable with stale data*, and which are *integrity-critical*?
+
+The fallback itself owes the user three honesty rules. Say *what broke* at the user's granularity — "Quotes are unavailable" beats "Something went wrong", and both beat an infinite spinner, which is a lie about progress. Offer the *real next action* — a Retry wired through reset-plus-cause-eviction, not a decorative one. And *keep the exits alive* — navigation, the rest of the page, the data the user already entered. A fallback that traps the user is a second failure on top of the first.
+
+Then there is the case where partial survival is the wrong goal. If the broken thing is **integrity-critical** — the auth context that decides whose data renders, the payment step that decides how much gets charged, the cart total feeding the order — degrading politely around it risks showing user A the session of user B, or charging against a stale total. There you *fail the page intentionally*: full-route fallback, no cheerful "some features may be unavailable". Availability is a feature; correctness is the product.
+
+<Quiz
+  id="02-recovery-quiz-2"
+  lessonSlug="02-recovery-and-degradation"
+  lang="en"
+  question="During a quotes-API brownout, which client retry policy adds the least load at the worst moment while still recovering quickly?"
+  choices={[
+    { label: "Exponential backoff with jitter and a small retry budget, then surface the boundary fallback and let the user's Retry click be the next attempt", correct: true },
+    { label: "Immediate retry on every failure — the API is already degraded, so a few extra requests change nothing", misconception: "A few extra requests per client times every open client is a synchronized wave that multiplies load exactly when capacity is lowest — the Hook's incident measured eight times normal traffic from its own clients. Recovery code must assume it runs on thousands of machines at once." },
+    { label: "A fixed 1-second retry interval — predictable, simple, and spreads the load evenly", misconception: "Fixed intervals do the opposite of spreading: clients that failed together retry together, forming lockstep waves every second. Without jitter the synchronization never decays. Exponential spacing plus a random term is what actually flattens the wave." },
+    { label: "Retry every failure including 400s — the user should never see an error if code can retry", misconception: "A 400 is deterministic: the request itself is malformed, and the thousandth attempt fails like the first — a tight loop with extra steps. Retry is for plausibly transient failures (5xx, network drops). Deterministic failures should reach the boundary immediately, where the fallback can say what broke." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why remount instead of asking the crashed component to repair itself? Because React cannot know how much of the subtree's state participated in the crash — a reducer that produced NaN, a memoized selector caching a poisoned slice, a ref holding a dead DOM node. Any of it might re-trigger the throw. Unmounting is the only operation with a guarantee: all local state, effects and refs of the old instance are gone, and the new mount starts from props and initial state — the same reasoning as process restart in supervision trees (Erlang's "let it crash") rather than in-place repair. It also explains the limit of reset: a remount only purges state *inside* the boundary. State that lives above it — stores, caches, URL — survives by design, which is exactly why onReset exists and why reset without cause-eviction loops.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="From caught crash to recovery: classify the failure, retry transient causes with backoff, degrade non-critical widgets, and reserve whole-page failure for integrity"
+  hue="var(--d-frontend)"
+  perRow={3}
+  nodes={[
+    { id: "caught", label: "Boundary catches", sub: "subtree unmounted" },
+    { id: "classify", label: "Classify the failure", sub: "transient? critical?" },
+    { id: "retry", label: "Retry with backoff", sub: "1s, 2s, 4s + jitter, budget" },
+    { id: "degrade", label: "Degrade the widget", sub: "stale or empty, page lives" },
+    { id: "reset", label: "Reset: remount by key", sub: "evict state + fix cause" },
+    { id: "fail", label: "Fail the whole page", sub: "auth, payment integrity" },
+  ]}
+  edges={[
+    { from: "caught", to: "classify" },
+    { from: "classify", to: "retry", label: "transient" },
+    { from: "classify", to: "degrade", label: "non-critical" },
+    { from: "classify", to: "fail", label: "integrity" },
+    { from: "retry", to: "reset", label: "success" },
+    { from: "degrade", to: "reset", label: "user retries" },
+  ]}
+  caption="Reset is the convergence point: whether a backoff retry succeeded or the user clicked Retry in a degraded widget, recovery completes by remounting the subtree with the cause evicted. The integrity branch never converges — auth and payment failures take the page down on purpose."
+/>
+
+<KeyTakeaway>Reset means remount: resetKeys or reset() plus onReset evict the crashed subtree's state and clear the cause — re-rendering the same poisoned state just re-crashes. Retry only transient failures, with exponential backoff, jitter and a budget. Degrade widgets to stale or empty states; fail the whole page deliberately when auth or payment integrity is on the line.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-recovery-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why recovery from a boundary catch requires a remount, and the two triggers react-error-boundary offers.", a: "The crash is a symptom of state — corrupted local state, a poisoned store slice, a bad input — and React cannot know which parts of the subtree participated, so the only safe operation is unmounting the old instance entirely: local state, effects and refs die, and the new mount starts clean (the same logic as process restart in supervision trees). Plain React does it by bumping a key. react-error-boundary offers resetKeys — declarative auto-reset when listed values change, natural because new input invalidates the crash about the old input — and resetErrorBoundary(), the imperative Retry handed to the fallback. Both only purge state inside the boundary; a cause living above it (store, cache, URL) survives, which is why onReset exists for cause eviction and why a Retry without it re-crashes within a frame." },
+    { q: "State the three rules of client-side retry and the page-level degradation decision that frames them.", a: "Retry only plausibly transient failures — 5xx and network drops, never deterministic 400s. Space attempts with exponential backoff capped at a maximum, and add jitter so thousands of clients that failed together do not retry together — fixed intervals create synchronized waves that hit the service at its weakest, the thundering-retry pattern that turns brownouts into outages. End with a small budget, then surface the boundary fallback so the user's click becomes the naturally rate-limited next attempt. The framing decision: classify each page region as decorative (fail to empty), degradable (show stale data, visibly marked), or integrity-critical (auth, payment, cart totals) — the last class fails the whole page intentionally, because rendering around a broken integrity component risks showing wrong data or charging wrong amounts." },
+  ]}
+/>
+
+<Recap lang="en">
+A boundary catching the error is the beginning of recovery, not the end. The crash is usually a symptom of state — in the subtree, in a store, in a URL param — so re-rendering the same tree against the same state re-throws within a frame; real recovery is state eviction, and remounting is how React evicts: the old instance's state, effects and refs are destroyed and the new mount starts from initial values. react-error-boundary packages both triggers — resetKeys auto-resets when the inputs the crash was about change, and resetErrorBoundary gives the fallback an imperative Retry — while onReset is where you evict causes that live above the boundary, since a remount only purges what is inside it. Retrying the underlying operation is a distributed-systems decision made in UI code: retry only plausibly transient failures, space attempts with exponential backoff and jitter so synchronized client waves do not hammer a degraded API into a real outage, and stop after a small budget, letting the boundary fallback hand the pacing to the human. Around all of this sits the degradation map of the page — error-budget thinking applied to pixels: decorative regions fail to empty slots, degradable regions show visibly stale data, and the fallback owes the user honesty in three parts: name what broke, offer a Retry that actually evicts the cause, keep navigation and entered data alive. The exception proves the design: when the broken component is integrity-critical — auth context, payment step, cart total — partial survival is the dangerous option, and failing the whole page intentionally is the senior move, because availability is a feature but correctness is the product.
+</Recap>

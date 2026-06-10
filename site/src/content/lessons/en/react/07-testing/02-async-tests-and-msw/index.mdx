@@ -1,0 +1,159 @@
+---
+concepts:
+- react-async-testing
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-async-tests-and-msw"
+sources:
+- https://testing-library.com/docs/dom-testing-library/api-async
+- https://mswjs.io/docs/
+- https://testing-library.com/docs/guiding-principles
+- https://vitest.dev/guide/
+spiral: []
+status: ready
+summary: 'findBy is getBy plus waitFor — 1 s timeout, 50 ms polls — so async UI is awaited, not slept for. MSW 2.x intercepts at the network seam: http.get plus HttpResponse, server.use for per-test overrides. Fetch mocks couple tests to the client; MSW survives client refactors.'
+title: 'Async tests and MSW: mock the network, not the fetch'
+track: "react"
+unit: "07-testing"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Fourteen red CI runs in one week, all in the same spec, none reproducible locally. The dashboard team ran tests on 10-core laptops where the order grid rendered 90 ms after the mocked fetch resolved; CI ran four Vitest workers on a shared 2-vCPU runner, where the same render took 1.3 seconds under saturated CPU — and `waitFor` gave up at its default 1,000 ms. The first "fix" doubled the timeout globally. The next month a different test started flaking for the opposite reason: it asserted the loading spinner with `getByRole("status")` *after* awaiting a click, and on fast runs the response had already landed — the spinner was gone before the assertion ran. The third incident was the expensive one: a test wrapped `fireEvent.click(submit)` *inside* a `waitFor` callback "to make it reliable". waitFor retries its callback every 50 ms until it stops throwing — so the form submitted four times per test run, the deduplication bug that behavior masked shipped to production, and a customer got charged twice. Three flakes, one root: the team was fighting async with sleeps and retries instead of modeling it — await the state you want, never put side effects in a polling loop, and mock at a seam that does not move.
+</Hook>
+
+<Crux>findBy is getBy plus waitFor — 1 s timeout, 50 ms polls. Mock at the network seam: fetch mocks die in the first client refactor.</Crux>
+
+<Explanation>
+
+## findBy and waitFor: polling, not sleeping
+
+`findByRole(...)` is literally `getByRole` wrapped in `waitFor`: it re-runs the query every 50 ms until it succeeds or a 1,000 ms budget burns, returning a promise. That is the entire async toolkit you need for "data appears": `await screen.findByRole("row", { name: /order #1042/i })` expresses "the user eventually sees this" with no sleep, no arbitrary delay, and a precise failure (timeout with the last query error, not a generic assertion miss). Both knobs are honest configuration, not magic: per call — `findByRole("row", {}, { timeout: 3000 })` — or suite-wide via `configure({ asyncUtilTimeout })` when your CI runners are genuinely slower than laptops, which they are: a 2-vCPU shared runner under parallel workers routinely takes 5–10x longer per render than a dev machine, and that multiplier is exactly what turns a comfortable 90 ms wait into a 1.3 s timeout breach.
+
+`waitFor` itself has three rules that prevent the Hook's incidents. **One assertion per callback** — waitFor retries until the callback stops throwing, so a callback with five expectations reports the failure of whichever ran last, and the first four re-execute on every poll. **No side effects inside the callback** — a `fireEvent` or `user.click` inside waitFor re-fires on every 50 ms retry; that is how the Hook's form submitted four times and masked a dedup bug. **Never empty** — `await waitFor(() => {})` is a sleep with extra steps; it waits exactly one tick and asserts nothing, papering over an ordering you have not understood. To assert something *disappears*, invert: `await waitForElementToBeRemoved(() => screen.queryByRole("status"))` — note `queryBy`, the variant that returns null instead of throwing, which is the correct probe for absence.
+
+Asserting the loading state has its own trap: after `await user.click(submit)`, the response may already have landed — mock servers respond in microtasks. Assert the spinner *synchronously after the action that starts the request* with `getByRole("status")` (it must be there immediately if your component renders it immediately), or add an explicit delay to the handler when the intermediate state is the thing under test.
+
+<Quiz
+  id="02-async-tests-and-msw-quiz-1"
+  lessonSlug="02-async-tests-and-msw"
+  lang="en"
+  question="A test does: await waitFor(() => { fireEvent.click(submitButton); expect(screen.getByText(/saved/i)).toBeInTheDocument(); }). It passes. What actually happened?"
+  choices={[
+    { label: "waitFor retried the callback every 50 ms until the toast appeared — re-firing the click on every retry. The form likely submitted several times; the test passes while hiding duplicate submissions", correct: true },
+    { label: "waitFor ran the callback once and waited for the expectation to become true reactively", misconception: "waitFor has no reactive subscription — it is a polling loop that re-executes the whole callback until nothing throws. Everything in the callback, including side effects, runs once per poll interval. That is precisely why side effects inside waitFor are forbidden: they multiply." },
+    { label: "The click is deduplicated by waitFor, so only the assertion repeats", misconception: "waitFor cannot distinguish side effects from assertions — it re-runs the entire function. There is no built-in dedup; each retry dispatches a fresh click. The correct shape is: perform the action once outside, then await the outcome with findBy or a single-assertion waitFor." },
+    { label: "This is fine because the server is mocked, so repeated clicks cost nothing", misconception: "The cost is not performance — it is fidelity. A user clicks once; the test clicked four times, which masks double-submit and idempotency bugs. The Hook's duplicate-charge incident shipped behind exactly this pattern: the retry loop hid the missing dedup guard." },
+  ]}
+/>
+
+## MSW 2.x: mock the seam that does not move
+
+Mocking `fetch` couples the test to a transport function. The day the team migrates from raw `fetch` to axios, or wraps data access in react-query, every `vi.spyOn(global, "fetch")` test breaks — not because behavior changed, but because the seam moved. MSW intercepts at the *network boundary* instead: handlers describe HTTP traffic — method, path, response — and the component under test runs its real data-fetching code, whatever that code is this quarter. The refactor from fetch to axios to react-query changes zero tests, which is the property that makes a 1,000-test suite survivable.
+
+```ts
+// handlers shared by tests and Storybook alike
+import { http, HttpResponse } from "msw";
+import { setupServer } from "msw/node";
+
+export const server = setupServer(
+  http.get("/api/orders", () =>
+    HttpResponse.json([{ id: 1042, status: "shipped" }]),
+  ),
+);
+
+// test setup file
+beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
+afterEach(() => server.resetHandlers());
+afterAll(() => server.close());
+```
+
+Three load-bearing details. `onUnhandledRequest: "error"` turns every request you forgot to mock into a loud failure instead of a silent hang that later surfaces as a waitFor timeout — the single best flake-prevention switch in the stack. `server.resetHandlers()` in `afterEach` discards per-test overrides so one test's 500 does not leak into the next — skipping it is a top-three source of order-dependent failures. And `server.use(...)` *prepends* handlers for the current test only:
+
+```tsx
+it("shows the error boundary on a 500", async () => {
+  server.use(http.get("/api/orders", () =>
+    new HttpResponse(null, { status: 500 }),
+  ));
+  render(<Orders />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(/could not load/i);
+});
+
+it("treats network failure differently from a 500", async () => {
+  server.use(http.get("/api/orders", () => HttpResponse.error()));
+  render(<Orders />);
+  expect(await screen.findByRole("alert")).toHaveTextContent(/offline/i);
+});
+```
+
+That pair is the error-state discipline: a 500 and a network failure (`HttpResponse.error()`) are different user experiences — server said no versus server unreachable — and a component that collapses them into one message is a real finding, surfaced only because the seam lets you express both.
+
+<Quiz
+  id="02-async-tests-and-msw-quiz-2"
+  lessonSlug="02-async-tests-and-msw"
+  lang="en"
+  question="A team migrates data fetching from raw fetch to react-query. Suite A mocked fetch with vi.spyOn(global, 'fetch'); suite B used MSW handlers. What happens to each suite, and why?"
+  choices={[
+    { label: "Suite A breaks wholesale — its seam was the fetch function, which the code no longer calls the same way. Suite B passes unchanged: react-query still issues the same HTTP requests, and MSW intercepts at that boundary", correct: true },
+    { label: "Both break, because react-query caches responses and tests must mock the cache", misconception: "MSW tests do not care what client or cache sits between the component and the network — the contract under test is the HTTP traffic. A fresh QueryClient per test keeps the cache from leaking between tests, but the handlers themselves need no change; that is the point of the seam." },
+    { label: "Both pass, because mocks are transparent to refactors by design", misconception: "Mocks are only as durable as their seam. A spy on global.fetch asserts which function is called with which arguments — implementation detail by definition; react-query calls fetch internally with its own signatures and timing, so those spies break or silently stop intercepting. Seam choice is the durability decision." },
+    { label: "Suite B breaks because MSW cannot intercept react-query requests", misconception: "react-query is not a transport — it delegates to fetch/XHR under the hood, and MSW intercepts those primitives in Node (and via Service Worker in the browser). Query libraries are the headline use case for MSW: the tests keep passing across the migration." },
+  ]}
+/>
+
+## Green locally, red in CI: the timing post-mortem
+
+Re-run the Hook's three incidents against the rules and each one resolves. The 1.3 s render breaching a 1 s budget is not a flaky test — it is a correct test with a wrong budget for the environment; raise `asyncUtilTimeout` deliberately for CI-class hardware, do not sprinkle sleeps. The spinner assertion racing its own removal is an ordering bug in the test: intermediate states are asserted synchronously at the moment they must exist, or made deterministic with a delayed handler. The click-inside-waitFor is the only true defect, and it hid a production bug — which is the general lesson: most "flaky async tests" are tests that encode a wrong model of time, and the fix is never `retry: 2`. A useful audit heuristic for an inherited suite, in order: grep for `waitFor` callbacks containing more than one statement; grep for any event dispatch inside `waitFor`; grep for `setTimeout`/`sleep` in tests; then check whether `onUnhandledRequest` is set to error. Those four greps found 31 latent flakes in the Hook's 600-test suite in an afternoon.
+
+<Inset kind="why" lang="en">
+Why can the same handler file drive tests, Storybook, and local dev? Because MSW has two interception engines behind one handler API. In Node (Vitest, Jest) `setupServer` patches the request primitives — `fetch`, `http`, `XMLHttpRequest` — at the module level, so interception is in-process and adds well under a millisecond per request. In the browser, `setupWorker` registers a Service Worker that intercepts real network requests at the proxy layer the platform provides — actual requests, visible in DevTools, answered by your handlers. Same `http.get("/api/orders", ...)` definition, two execution environments. That symmetry is why investing in a good handler library pays three times: component tests, Storybook fixtures, and offline development all consume the one source of truth for "what the API does".
+</Inset>
+
+</Explanation>
+
+<SequenceDiagram
+  label="One async test against the network seam: render, intercepted fetch, polled query — and a per-test 500 override"
+  hue="var(--d-frontend)"
+  actors={["Test", "Component", "MSW server"]}
+  messages={[
+    { from: "Test", to: "MSW server", label: "server.use(500)" },
+    { from: "Test", to: "Component", label: "render()" },
+    { from: "Component", to: "MSW server", label: "GET /api/orders" },
+    { from: "MSW server", to: "Component", label: "500 HttpResponse" },
+    { from: "Test", to: "Component", label: "await findByRole" },
+    { from: "Component", to: "Test", label: "alert rendered" },
+  ]}
+  caption="The component runs its real data-fetching code; MSW answers at the network boundary. server.use prepends a handler for this test only — afterEach resetHandlers() discards it. findByRole polls every 50 ms within its 1 s budget, so the test awaits the user-visible outcome instead of sleeping."
+/>
+
+<KeyTakeaway>findBy = getBy + waitFor with a 1 s / 50 ms polling budget — await outcomes, never sleep. Keep waitFor callbacks to one assertion and zero side effects; a click inside waitFor re-fires every poll. MSW mocks the network seam, so client refactors change zero tests; server.use overrides per test, resetHandlers prevents leaks, onUnhandledRequest: error makes forgotten mocks loud.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-async-tests-and-msw-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the mechanics of findBy and the three waitFor rules, with the failure each rule prevents.", a: "findBy is getBy wrapped in waitFor: it re-runs the query every 50 ms until success or the 1,000 ms default budget expires, returning a promise — configurable per call ({ timeout }) or suite-wide (asyncUtilTimeout) for slower CI hardware, where a 2-vCPU shared runner can be 5-10x slower than a laptop. Rule one: one assertion per waitFor callback — the loop retries until nothing throws, so multiple expectations re-execute every poll and the reported failure is whichever ran last. Rule two: no side effects in the callback — an event dispatched inside waitFor re-fires every 50 ms; this is the pattern that submits a form four times and masks dedup bugs. Rule three: never an empty callback — waitFor(() => {}) is a disguised sleep asserting nothing. For disappearance, use waitForElementToBeRemoved with queryBy (returns null instead of throwing). For loading states, assert synchronously right after the triggering action, because mocked responses can land in microtasks." },
+    { q: "Why does mocking at the network seam with MSW outlive fetch mocks, and which three setup details prevent whole categories of flakes?", a: "A fetch spy asserts which function is called and how — an implementation detail. When data access migrates from fetch to axios to react-query, the function and its call signature change while the HTTP traffic stays identical, so fetch-mock suites break wholesale and MSW suites pass untouched: handlers describe method, path, and response at the boundary that does not move, and the component runs its real fetching code. The three details: onUnhandledRequest: 'error' turns every forgotten mock into an immediate loud failure instead of a silent hang that resurfaces as a waitFor timeout; server.resetHandlers() in afterEach discards per-test overrides so one test's 500 cannot leak into the next (a top source of order-dependent flakes); server.use prepends a handler scoped to the current test, which is how you express 500s versus HttpResponse.error() network failures — two distinct user experiences a robust component must distinguish. Same handlers drive Node tests via patched primitives and the browser via Service Worker." },
+  ]}
+/>
+
+<Recap lang="en">
+Async testing has exactly one sound primitive: await the user-visible outcome. findBy embodies it — getBy wrapped in waitFor, polling every 50 ms inside a 1,000 ms default budget, both knobs adjustable per call or suite-wide when CI hardware is honestly slower than laptops, which a shared 2-vCPU runner under parallel workers is by 5-10x. waitFor carries three rules with incident-grade consequences: one assertion per callback, because the loop re-runs everything until nothing throws; no side effects, because a click inside the callback re-fires every poll — the Hook's four-fold form submission that masked a dedup bug all the way to a double charge; never empty, because waitFor of an empty function is a sleep wearing a seatbelt. Disappearance is asserted with waitForElementToBeRemoved over queryBy, and loading states are asserted synchronously at the instant they must exist, because mocked responses land in microtasks. On the mocking side, the durable decision is the seam. Spying on fetch couples tests to a transport function that the next refactor renames; MSW intercepts at the network boundary — http.get plus HttpResponse describing traffic, not call sites — so the fetch-to-axios-to-react-query migration changes zero tests. The setup trio does the flake prevention: onUnhandledRequest error makes forgotten mocks fail loudly, resetHandlers in afterEach stops per-test overrides leaking into order-dependence, and server.use scopes a 500 or a network failure to the one test that needs it — two error experiences a serious component distinguishes. The same handlers run in Node through patched primitives and in the browser through a Service Worker, which is why one handler library feeds tests, Storybook, and offline dev. And when CI goes red while local stays green, read it as a model-of-time bug in the test, not weather: budget, ordering, or a side effect in a polling loop — never reach for retry.
+</Recap>
