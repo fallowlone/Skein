@@ -1,0 +1,168 @@
+---
+concepts:
+- go-sqlc
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-sqlc-and-wrappers"
+sources:
+- https://docs.sqlc.dev
+- https://pkg.go.dev/database/sql
+- https://github.com/golang-migrate/migrate
+spiral: []
+status: ready
+summary: 'Raw database/sql means boilerplate and scan bugs; sqlc generates typed Go from real SQL with compile-time column checks; builders cover dynamic WHERE; ORMs trade explicitness for magic. The generated Querier interface enables test fakes.'
+title: 'sqlc and the wrapper spectrum: typed SQL codegen, query builders, and honest ORM tradeoffs'
+track: "go"
+unit: "08-data-access"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Compliance ordered 1,200 dormant accounts deactivated. The engineer wrote the obvious GORM line — `db.Model(&u).Updates(User{Active: false})` — watched it run without error, closed the ticket. Five weeks later an auditor found all 1,200 accounts still active, several with fresh logins. The line had executed an UPDATE with an empty SET list — GORM skips zero-valued struct fields on Updates, and `false` is the zero value of `bool`. Documented behavior, not a bug: the ORM cannot tell "I did not mention this field" from "I set it to false", so it guesses. The post-incident diff that actually fixed it was one annotated SQL query — `UPDATE users SET active = false WHERE id = ANY($1)` — that a reviewer could read, EXPLAIN, and approve in thirty seconds. That is the whole argument of this lesson: the further your data layer drifts from SQL you can see, the more its failure modes become semantic surprises that execute cleanly.
+</Hook>
+
+<Crux>Write SQL, generate Go: sqlc gives typed queries and compile-time checks; ORMs trade that explicitness for magic you debug later.</Crux>
+
+<Explanation>
+
+## The spectrum, honestly
+
+Every Go data layer sits somewhere on a four-point spectrum, and each point has a real cost — the dishonest move is pretending yours does not.
+
+**Raw `database/sql`** is maximal control and maximal boilerplate: every query repeats the Query/defer Close/Next/Scan/Err ceremony from earlier in this unit, and positional `Scan` is a standing refactor hazard — reorder two same-typed columns in the SELECT and `name` lands in `email` with no error anywhere. **Query builders** (squirrel is the standard) compose SQL from Go values: the right tool for genuinely dynamic queries — twelve optional admin filters — but the query now exists only at runtime, so nothing checks it before execution. **Full ORMs** (GORM) maximize ergonomics: relations, hooks, migrations-by-struct. The price is semantic distance — the Hook's zero-value rule, save-order magic, N+1 queries materializing out of innocent-looking field access — and a review process where nobody sees the SQL that will actually run. **sqlc** stakes out the fourth point: you write real SQL files, and code generation gives you typed Go functions. The SQL is visible; the boilerplate is generated; the checking happens before the code ships.
+
+<Quiz
+  id="03-sqlc-and-wrappers-quiz-1"
+  lessonSlug="03-sqlc-and-wrappers"
+  lang="en"
+  question={`db.Model(&user).Updates(User{Active: false, Name: "Bo"}) runs against GORM. Which columns does the generated UPDATE set?`}
+  choices={[
+    { label: "Only name — Updates with a struct argument skips zero-valued fields, and false is the zero value of bool", correct: true },
+    { label: "Both active and name, since both were explicitly written in the struct literal", misconception: "Go gives GORM no way to distinguish a field you wrote as false from a field you never mentioned — both arrive as the zero value. The struct form drops them all; setting zero values requires the map form or Select on specific columns." },
+    { label: "All columns of the user struct, like a full row save", misconception: "That is Save semantics, not Updates with a struct. Updates builds a partial SET list — which is exactly why the zero-value rule bites: the partial list silently loses the fields you most explicitly meant to zero out." },
+    { label: "None — mixing zero and non-zero fields is an error GORM rejects", misconception: "Nothing errors, which is what makes this failure mode dangerous: the UPDATE executes cleanly with a SET list that quietly omits active, and the deactivation from the Hook never happens." },
+  ]}
+/>
+
+## sqlc mechanics: SQL in, typed Go out
+
+You write queries in a `.sql` file, each with a name and a cardinality annotation:
+
+```sql
+-- name: GetUser :one
+SELECT id, email, active FROM users WHERE id = $1;
+
+-- name: ListOrgUsers :many
+SELECT id, email FROM users
+WHERE org_id = $1 AND active
+ORDER BY created_at DESC
+LIMIT $2;
+
+-- name: DeactivateUsers :exec
+UPDATE users SET active = false, updated_at = now() WHERE id = ANY($1::bigint[]);
+```
+
+`sqlc generate` parses these together with your schema and emits typed Go:
+
+```go
+// Generated. Scan order and field mapping are owned by the generator —
+// the positional-swap bug class is gone, because no human writes Scan anymore.
+func (q *Queries) GetUser(ctx context.Context, id int64) (GetUserRow, error)
+func (q *Queries) ListOrgUsers(ctx context.Context, arg ListOrgUsersParams) ([]ListOrgUsersRow, error)
+func (q *Queries) DeactivateUsers(ctx context.Context, ids []int64) error
+```
+
+The check happens at *generation time*: reference a column that does not exist, pass a `string` where the schema says `bigint`, return four columns into a three-field struct — `sqlc generate` fails, in CI, before review. `:one` compiles to `QueryRow` (zero rows still surfaces as `sql.ErrNoRows` at the call site — sqlc does not hide the semantics of the layer below); `:many` compiles to the full Query/Close/Err loop, written correctly every time; `:exec` to `ExecContext`. The generated `Querier` interface is the part teams underrate — it is a test seam you did not have to design. Handler tests take a hand-rolled fake; only the repository layer needs a real database.
+
+Two integration points keep it honest at system scale. **Transactions**: the generated code runs on anything that satisfies its DBTX interface, so `WithTx` reuses the previous lesson's helper unchanged —
+
+```go
+q := store.New(db) // *Queries bound to the pool
+
+err := withTx(ctx, db, nil, func(tx *sql.Tx) error {
+	qtx := q.WithTx(tx) // same generated methods, now riding the pinned connection
+	if err := qtx.DeactivateUsers(ctx, ids); err != nil {
+		return err
+	}
+	return qtx.InsertAuditEvent(ctx, auditParams)
+})
+```
+
+**Migrations**: sqlc does not own your schema — a migration tool does (golang-migrate or goose: numbered SQL files, applied in order, recorded in a version table). sqlc *reads* those same migration files to learn the schema, which closes the drift loop: rename a column in a migration, rerun `sqlc generate`, and the compiler hands you the complete list of call sites to fix. The same rename with hand-written Scan code compiles fine and corrupts quietly.
+
+Where sqlc stops, it stops abruptly: it generates one static statement per annotation, so a search endpoint with twelve optional filters cannot be one sqlc query. Chaining `coalesce($1, col)` tricks technically works and reliably produces both unreadable SQL and unusable query plans. That is the builder's territory — squirrel behind the same repository interface — or a hand-built WHERE over an allowlisted column set. A senior data layer is a composite, not a monoculture.
+
+<Quiz
+  id="03-sqlc-and-wrappers-quiz-2"
+  lessonSlug="03-sqlc-and-wrappers"
+  lang="en"
+  question="What exactly does sqlc verify, and at what moment?"
+  choices={[
+    { label: "At code-generation time it parses the schema and every query, failing the build on unknown columns, type mismatches, and arity errors", correct: true },
+    { label: "At application startup it validates the generated queries against the live database", misconception: "sqlc does no runtime work at all — there is no sqlc library in your binary, only generated source. The schema it checks against is the one parsed from your migration files at generate time, which is why CI must run generate (or vet) to catch drift." },
+    { label: "At runtime it wraps each query and verifies the returned columns match the struct", misconception: "The generated code is plain database/sql calls with Scan targets fixed at generation time. If the live database diverges from the migrations sqlc read, you get ordinary runtime Scan errors — the guarantee is only as good as your migration discipline." },
+    { label: "It checks queries for performance problems like missing indexes", misconception: "sqlc verifies shape, not speed: columns, types, parameter counts. EXPLAIN and index review remain human work — which the SQL-first style at least makes possible, since the reviewable artifact is the actual query." },
+  ]}
+/>
+
+## The team-scale argument
+
+The strongest case for SQL-first is not type safety — it is review. With sqlc, the diff in a pull request *is* the query: a reviewer can read it, paste it into `EXPLAIN ANALYZE`, and spot the missing index or the accidental cross join before merge. With an ORM DSL, the reviewer mentally compiles chained method calls into SQL and hopes their mental model matches the library version — the Hook is what it looks like when it does not. The same property pays at 3 a.m.: `pg_stat_statements` shows you a slow query, and with sqlc you can grep for its literal text and land on one annotated, named query. And the boundary stays honest in the other direction too: reporting queries with window functions, recursive CTEs, EXPLAIN-driven rewrites — those stay raw SQL by their nature, and sqlc happily generates types for most of them, because it never asked the SQL to be simple, only to be static.
+
+<Inset kind="why" lang="en">
+Why does generation-time checking beat runtime validation here? Because the schema is the slowest-moving, most-shared contract in the system — it changes through reviewed migrations, not per request. Checking queries against it once, at build, costs nothing at runtime and converts a whole bug class (drift between code and schema) into compile failures with file-and-line locations. The residual risk is honest and explicit: the guarantee holds only if the database you deploy against actually matches the migrations sqlc read — which is exactly why migrations-as-the-single-schema-source is a discipline, not a preference.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="Schema and queries flow through sqlc generate into typed code, with one escape hatch for dynamic SQL"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "mig", label: "migrations/", sub: "goose / migrate" },
+    { id: "queries", label: "queries.sql", sub: ":one :many :exec" },
+    { id: "gen", label: "sqlc generate", sub: "checks in CI" },
+    { id: "code", label: "Typed Go", sub: "Querier interface" },
+    { id: "tx", label: "WithTx", sub: "rides a pinned conn" },
+    { id: "dyn", label: "Dynamic WHERE", sub: "squirrel / raw SQL" },
+  ]}
+  edges={[
+    { from: "mig", to: "gen", label: "schema source" },
+    { from: "queries", to: "gen", label: "annotations" },
+    { from: "gen", to: "code", label: "fails on drift" },
+    { from: "code", to: "tx", label: "same methods" },
+    { from: "code", to: "dyn", label: "escape hatch" },
+  ]}
+  caption="Migrations are the single schema source: sqlc parses them, so a renamed column fails generation instead of corrupting at runtime. Static queries get generated types and a fake-able Querier; the dynamic minority lives behind the same repository interface, built with squirrel or careful raw SQL."
+/>
+
+<KeyTakeaway>Place each query deliberately on the spectrum: sqlc for the static majority — real SQL in, typed Go out, column and type errors caught at generate time in CI; builders or careful raw SQL for dynamic filters sqlc cannot express; ORMs only with their magic priced in. Let migrations own the schema sqlc reads, route transactions through WithTx, and exploit the generated Querier as a free test seam. The diff that reviewers see should be the SQL that runs.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-sqlc-and-wrappers-retrieval"
+  lang="en"
+  questions={[
+    { q: "Lay out the four points of the data-access spectrum with the failure mode each one carries.", a: "Raw database/sql: full control, but every query hand-writes the Query/Close/Scan/Err ceremony, and positional Scan means a reordered SELECT silently swaps same-typed columns — a corruption bug, not a crash. Query builders like squirrel: the only sound answer for genuinely dynamic queries, but the SQL exists only at runtime, so nothing validates it before execution. Full ORMs like GORM: maximal ergonomics, but semantic distance — struct-based Updates skips zero-valued fields by documented design, so deactivations silently do not happen; reviewers never see the SQL. sqlc: real SQL files plus generated typed Go — visible queries, generated boilerplate, generation-time checks; its hard limit is that each annotation is one static statement, so dynamic WHERE clauses must live elsewhere. A production layer composes these: sqlc for the static majority, a builder for the dynamic minority, behind one repository interface." },
+    { q: "Explain the sqlc pipeline end to end — schema source, what generate checks, transactions, and the test seam.", a: "Migrations (golang-migrate or goose) are the single schema source: numbered SQL files applied in order. sqlc parses those same files plus queries.sql, where each query carries a name and cardinality annotation — :one maps to QueryRow with sql.ErrNoRows passing through, :many to a correctly-written Query/Close/Err loop, :exec to ExecContext. At generate time it validates every query against the parsed schema: unknown columns, type mismatches, and arity errors fail the build in CI, so schema drift becomes a compile failure with file and line instead of a runtime scan error. The generated methods run on a DBTX interface, so WithTx wraps them in the retry-helper transactions from the previous lesson without modification. And the generated Querier interface is a free test seam: handlers test against a fake, while a thin integration layer exercises the real database." },
+  ]}
+/>
+
+<Recap lang="en">
+The data-access spectrum runs from raw database/sql through sqlc and query builders to full ORMs, and the honest engineering move is knowing the cost at each point. Raw access pays in boilerplate and in positional Scan bugs where two same-typed columns swap without an error. ORMs pay in semantic distance: GORM's struct Updates skipping zero values is documented, reviewable behavior that still deactivated nobody in the Hook, because the SQL that ran was never in the diff. sqlc occupies the middle deliberately: you write real SQL with :one/:many/:exec annotations, and generation emits typed functions whose Scan order no human maintains. The verification is at generate time against the schema parsed from your migration files — golang-migrate or goose own the schema, sqlc reads it, and CI rerunning generate turns drift into a build failure with a location instead of a 3 a.m. mystery. Generated code rides the same database/sql machinery as everything in this unit: WithTx routes it through the pinned-connection retry helper, and the Querier interface gives handler tests a fake for free. The boundary is sharp: dynamic WHERE clauses are builder or careful-raw territory behind the same repository interface, and reporting SQL with window functions stays raw because it should. At team scale the decisive property is that the artifact under review and the artifact in production are the same string of SQL — readable, EXPLAINable, greppable from pg_stat_statements straight to one named query.
+</Recap>

@@ -1,0 +1,161 @@
+---
+concepts:
+- go-api-versioning
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-contract-versioning"
+sources:
+- https://protobuf.dev/programming-guides/proto3/
+- https://protobuf.dev/programming-guides/encoding/
+- https://buf.build/docs
+spiral: []
+status: ready
+summary: 'Protobuf evolves by addition: new fields with new tags deploy in any order because unknown fields are skipped and absent fields read as defaults. Changing or reusing a tag silently corrupts decoded data — reserved retires tags, buf breaking gates CI, a v2 package forks the rest.'
+title: 'Contract versioning: evolve by addition, reserve dead tags, let buf breaking guard the wire'
+track: "go"
+unit: "09-grpc-and-apis"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Six months after the pricing team deleted `int64 discount_cents = 5;` from the Order message, a fraud engineer added `int64 risk_score = 5;`. The compiler was happy, every test passed, the deploy was green. Then the nightly batch job replayed last quarter's archived orders through the new schema, and the fraud model started seeing risk scores of 1499 and 250 — which were discounts of $14.99 and $2.50, decoded into the wrong field. No error was raised because there was no error to raise: the decoder matched tag 5, found a varint where it expected a varint, and did its job perfectly. Loyal customers with big discounts got flagged as high-risk; three weeks of quietly poisoned fraud decisions passed before a support escalation made anyone diff the proto history. The one-line fix that would have made the September change a compile error instead of a data corruption: `reserved 5;`.
+</Hook>
+
+<Crux>Protobuf evolves by addition: a new field with a new tag is always safe; touching an existing tag silently corrupts decoded data.</Crux>
+
+<Explanation>
+
+## Addition is the only safe verb
+
+The previous lesson established that tags are the wire identity. Versioning follows from two decoder rules. **Unknown fields are skipped, not rejected**: an old reader hitting a tag it does not know reads past it using the wire type (and modern proto3 preserves those bytes through a re-serialize, so proxies do not strip data). **Absent fields read as defaults**: a new reader of an old message sees zero, empty string, false. Put together: adding a field with a *fresh* tag is safe in both directions, and producer and consumer can deploy in either order — the property that makes independent service deployment possible at all.
+
+```proto
+message Order {
+  string order_id = 1;
+  int64 total_cents = 2;
+  string promo_code = 7;            // new field, new tag — safe both ways
+  optional int32 rating = 8;        // explicit presence: unset vs 0 distinguishable
+}
+```
+
+The `optional` line is doing real work. Plain proto3 scalars have no presence: a `rating` of 0 and a never-set `rating` serialize identically, which is poisonous for "user gave zero stars" versus "user has not rated". The `optional` keyword restores explicit presence — in Go the generated field becomes a pointer and you get a has-check. This is also the answer to where `required` went: proto3 removed it because a required field is a contract you can never unwind. The moment one required field ships, no writer may ever omit it and no schema may ever drop it — every old reader hard-rejects the message. Requiredness is validation, and validation belongs in application code that can evolve, not in the wire format that cannot.
+
+<Quiz
+  id="02-contract-versioning-quiz-1"
+  lessonSlug="02-contract-versioning"
+  lang="en"
+  question="A producer adds string promo_code = 7 and deploys before any consumer updates. What do the old consumers do with the new field?"
+  choices={[
+    { label: "They skip it by wire type and keep working; modern proto3 even preserves the bytes if they re-serialize the message", correct: true },
+    { label: "They reject the message with an unknown-field error, so the producer must deploy last", misconception: "Skipping unknown fields is the load-bearing design decision of protobuf — rejection would force lock-step deployment of every producer and consumer, exactly what schema evolution exists to avoid. Deploy order does not matter for additive changes." },
+    { label: "They read it into the nearest field of the same type", misconception: "The decoder matches strictly by tag number — tag 7 either exists in the reader schema or it is skipped. Misreads into another field happen only when two schema versions disagree about the same tag, which is the corruption case, not the addition case." },
+    { label: "They crash on the wire-type mismatch because tag 7 used to be unused", misconception: "An unused tag has no wire type to mismatch — the key itself tells the decoder how to skip the value. That self-describing key is precisely what makes unknown data skippable." },
+  ]}
+/>
+
+## The forbidden moves, and how a field actually retires
+
+Three changes break the contract, in ascending order of nastiness:
+
+- **Changing a type** — sometimes loud, sometimes quiet. `string` to `int64` changes the wire type and old data fails to parse or arrives as garbage. The quiet version: `int32` and `int64` share a wire type, so nothing errors — but an old `int32` reader of a value past 2³¹ silently truncates it.
+- **Changing a tag** — the field becomes, on the wire, a *different field*. Every already-written message and every not-yet-deployed writer now disagrees with you.
+- **Reusing a deleted tag** — the Hook. Old data and lagging writers still emit the tag with its old meaning; if the types are wire-compatible the decoder cannot even notice. This is the only corruption here that is invisible to both the compiler and the runtime.
+
+Because deletion creates the reuse hazard, deletion is a process, not an edit. Mark the field `[deprecated = true]` so generated code warns consumers. Migrate writers until nothing emits it. Only then delete — and in the same commit, retire the identity forever:
+
+```proto
+message Order {
+  reserved 5;                   // tag can never be reassigned — compile error
+  reserved "discount_cents";    // name too: protects JSON mapping reuse
+  string order_id = 1;
+  int64 total_cents = 2;
+}
+```
+
+With `reserved 5;` in place, September's `risk_score = 5` is a `protoc` error at the fraud engineer's desk instead of three weeks of poisoned decisions.
+
+<Inset kind="why" lang="en">
+Why does the decoder not carry a schema version and just reject mismatched data? Because the messages outlive the services. Archived events, queued jobs, and rows in a datastore were written by every schema version you have ever shipped, and will be read by versions you have not written yet. A version-check would make old data unreadable on every release. Protobuf instead makes each field self-describing enough to skip — and pushes the real safety burden to one rule humans must keep: a tag, once shipped, is permanent.
+</Inset>
+
+## Fork versus evolve — and the gate that actually enforces all this
+
+Additive evolution has a ceiling: when the *meaning* of the data changes — amounts move from cents to a decimal type, one message splits into three, a resource is remodeled — patching fields one at a time leaves both halves of the team confused about what a message means. That is what package versions are for: `package checkout.v1;` and `package checkout.v2;` are distinct types and distinct services that can be served side by side from one binary. Consumers migrate at their own pace; v1 gets a deprecation window and a shutdown date. Fork when meaning changes; evolve when you are only adding. A v2 is expensive — you will run both for months — so teams that fork over a renamed field are paying for ceremony, and teams that "evolve" a semantic change are shipping the Hook with extra steps.
+
+None of this survives contact with a hurried Friday merge unless a machine checks it. That is `buf breaking` in CI:
+
+```yaml
+# .github/workflows/proto.yml — the actual gate
+- uses: bufbuild/buf-action@v1
+  with:
+    breaking_against: "https://github.com/acme/protos.git#branch=main"
+```
+
+`buf breaking` diffs your proto against the live contract and fails the PR on tag reuse, type changes, field deletion without `reserved` — the whole forbidden list, at the WIRE level or the stricter FILE level that also protects generated-code compatibility. Human review misses a reused tag; the diff looks like a clean addition. The machine does not. The same logic argues for treating protos as a first-class shared artifact — one repo or a schema registry (the Buf Schema Registry is the hosted version), with consumer teams as required reviewers on contract changes. The schema is the one piece of code whose blast radius is every service that speaks it.
+
+<Quiz
+  id="02-contract-versioning-quiz-2"
+  lessonSlug="02-contract-versioning"
+  lang="en"
+  question="Why did proto3 drop the required keyword that proto2 had?"
+  choices={[
+    { label: "A required field can never be safely removed or omitted once shipped — it freezes the contract forever, so validation moved to application code", correct: true },
+    { label: "Required fields made messages significantly larger on the wire", misconception: "Requiredness costs nothing in bytes — the field is encoded identically either way. The cost is temporal: every reader forever hard-rejects messages lacking the field, so the schema loses its ability to evolve. The problem is coupling, not size." },
+    { label: "proto3 validates required fields automatically, so the keyword became redundant", misconception: "proto3 validates nothing of the sort — it went the opposite direction: all fields are optional on the wire, and any must-be-present rule lives in your handlers or a validation library, where rules can change without breaking decoding." },
+    { label: "It was removed because Go has no way to represent missing scalar fields", misconception: "Go represents presence fine — the optional keyword generates pointer fields with has-semantics. The removal was a language-independent schema-evolution decision made years before the Go API shape it affects." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The lifecycle of a protobuf field, the shortcut that corrupts data, and the CI gate that blocks it"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "add", label: "add field", sub: "new tag — always safe" },
+    { id: "dep", label: "deprecated = true", sub: "codegen warns users" },
+    { id: "stop", label: "stop writing", sub: "readers see defaults" },
+    { id: "res", label: "reserved 5", sub: "identity retired forever" },
+    { id: "reuse", label: "tag reused", sub: "silent misread of old data" },
+    { id: "ci", label: "buf breaking", sub: "fails the PR" },
+  ]}
+  edges={[
+    { from: "add", to: "dep", label: "field ages" },
+    { from: "dep", to: "stop", label: "writers migrate" },
+    { from: "stop", to: "res", label: "delete + reserve" },
+    { from: "stop", to: "reuse", label: "deleted, no reserve" },
+    { from: "reuse", to: "ci", label: "caught only here" },
+  ]}
+  caption="The safe path runs left to right: deprecate, drain writers, reserve. Skipping the reserve step leaves the tag free to reuse — wire-compatible types misread with no error, and only a breaking-change diff in CI catches it before production data does."
+/>
+
+<KeyTakeaway>Protobuf schema evolution has one safe verb: add a field with a fresh tag — unknown fields skip, absent fields default, deploy order stops mattering. Changing a type, changing a tag, or reusing a deleted tag corrupts silently when wire types align, so deletion ends with reserved, not with delete. proto3 dropped required because requiredness freezes contracts; optional restores explicit presence. Fork to a v2 package when meaning changes; gate every proto PR with buf breaking.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-contract-versioning-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through why reusing a deleted tag corrupts data with no error, and the full retirement flow that prevents it.", a: "The decoder identifies fields only by tag number plus wire type. If tag 5 was int64 discount_cents, was deleted, and later becomes int64 risk_score, both are varints — so archived messages and lagging writers emitting old tag-5 data decode cleanly into the new field. Nothing can object: the compiler saw a valid schema, the runtime saw a well-formed varint. The data is simply wrong. Prevention is a process: mark the field deprecated so generated code warns, migrate every writer until the field is no longer emitted, then delete it and add reserved 5 and reserved with the old name in the same commit. reserved makes any future reuse a protoc compile error, and reserving the name also protects JSON field mappings." },
+    { q: "When do you fork a v2 package instead of evolving v1, and what enforces the difference in practice?", a: "Evolve in place when changes are additive — new fields with new tags, new RPCs — because unknown-field skipping and defaults make those safe in both directions. Fork to checkout.v2 when the meaning of data changes: unit changes like cents to decimal, message splits, resource remodeling. A fork creates parallel types and services served side by side, with consumers migrating on their own schedule and v1 getting a sunset date — expensive, which is why renames alone do not justify it. The enforcement is buf breaking in CI diffing every PR against the live main contract: it mechanically catches tag reuse, type changes, and unreserved deletions that human reviewers reliably miss, at WIRE or stricter FILE rule levels." },
+  ]}
+/>
+
+<Recap lang="en">
+Protobuf versioning rests on two decoder behaviors: unknown tags are skipped using their self-describing wire type (and preserved through re-serialization in modern proto3), and absent fields read as type defaults. Together they make addition with a fresh tag the one always-safe change — producers and consumers deploy in any order, which is the property microservices quietly depend on. Everything else is a forbidden move with a characteristic failure: type changes either fail loudly across wire types or truncate quietly within one (int32 reading an int64); tag changes turn a field into a different field; and tag reuse after deletion is the worst because it is invisible — old data decodes into the new field with no error when wire types align, as the discount-becomes-risk-score incident showed. Deletion is therefore a process: deprecate so codegen warns, drain the writers, then delete and reserve both the tag and the name in the same commit, making future reuse a compile error. proto3 dropped required because a required field freezes the contract permanently — requiredness is validation and belongs in code that can change; the optional keyword restores explicit presence where unset-versus-zero matters. When meaning itself changes, evolve no further: fork a v2 package, serve both, sunset v1 deliberately — and accept the months of double-running as the honest price of a semantic break. The enforcement that survives hurried merges is mechanical: buf breaking in CI against the live contract, with consumer teams reviewing schema PRs, because the schema's blast radius is every service that speaks it.
+</Recap>
