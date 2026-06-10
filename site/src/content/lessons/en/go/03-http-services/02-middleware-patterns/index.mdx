@@ -1,0 +1,186 @@
+---
+concepts:
+- go-middleware
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: middle
+order: 2
+prereqs: []
+slug: "02-middleware-patterns"
+sources:
+- https://pkg.go.dev/net/http
+- https://go.dev/blog/routing-enhancements
+spiral: []
+status: ready
+summary: 'Middleware is func(http.Handler) http.Handler composed outside-in: logging outside recovery outside auth. Request-scoped data rides the context with unexported typed keys. Wrapping ResponseWriter to capture status risks double WriteHeader and silently losing Flusher and Hijacker.'
+title: 'Middleware patterns: chaining, ordering, context, and the ResponseWriter wrapping traps'
+track: "go"
+unit: "03-http-services"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The dashboards said the deploy was perfect: error rate 0.0%, every response a 200. The support queue said otherwise — customers were getting blank pages. It took an hour to find the gap: the team had shipped a new logging middleware that wrapped ResponseWriter to record the status code, defaulting the field to 200 and updating it in WriteHeader. But the panic-recovery middleware sat *outside* the logger, so when a handler panicked, recovery wrote its 500 to the *raw* writer — the logger's wrapper never saw it and reported its default. Same week, a second casualty surfaced: the server-sent-events endpoint stopped streaming. The wrapper struct didn't implement Flusher, so the SSE handler's type assertion `w.(http.Flusher)` quietly failed and events buffered until the connection died. Two outages, one root cause: a ResponseWriter wrapper is not transparent, and middleware order is not a style choice — both are semantics you have to design.
+</Hook>
+
+<Crux>Middleware is func(http.Handler) http.Handler. Order is semantics, and a ResponseWriter wrapper silently drops Flusher and Hijacker.</Crux>
+
+<Explanation>
+
+## The shape: a function that eats a Handler and returns one
+
+Go has no middleware framework because the Handler interface already is one. A middleware is any function with this signature:
+
+```go
+func Logging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, r) // call inward
+		slog.Info("request", "method", r.Method, "path", r.URL.Path,
+			"dur", time.Since(start))
+	})
+}
+
+// Composition is just function application, innermost first:
+handler := Logging(Recover(Auth(mux)))
+```
+
+The closure runs code before and after `next.ServeHTTP` — that is the entire mechanism. Because `ServeMux` is itself a Handler, the same middleware wraps one route or the whole router. Chains read inside-out: `Logging(Recover(Auth(mux)))` means a request passes Logging → Recover → Auth → mux, and the response unwinds back through them in reverse. Teams that dislike the nested-call pyramid write a ten-line `Chain(mux, Auth, Recover, Logging)` helper that folds the slice — same semantics, flatter code. Resist importing a middleware framework for this; the function composition *is* the feature, and every third-party middleware that takes `http.Handler` plugs straight in.
+
+## Ordering is policy, not preference
+
+Each layer can only observe layers inside it and protect layers inside it. That single rule dictates the canonical order:
+
+- **Logging outermost** — it must see every request, including ones auth rejects, and record the status recovery writes. Put it inside auth and your access log goes blind to 401s.
+- **Recovery outside auth and business middleware** — a panic in *any* inner layer must become a 500 plus a stack trace in the log, not a killed connection. (net/http's built-in recover only closes the connection; the client sees a reset, not a status.)
+- **Auth before anything that does work** — rate limiting and body parsing for an unauthenticated caller is paying for an attacker's traffic.
+
+The Hook's first outage is the ordering rule violated: recovery sat outside logging, so recovery's 500 was written to the raw writer where the logger could not see it. Flip them — `Logging(Recover(...))` — and the logger's wrapper is what recovery writes through. There is no universally correct total order; there is a correct order *relative to what each layer must observe*, and you should be able to justify every position in your chain with a sentence.
+
+<Quiz
+  id="02-middleware-patterns-quiz-1"
+  lessonSlug="02-middleware-patterns"
+  lang="en"
+  question="A chain is built as Recover(Logging(mux)) — recovery outermost, then logging, then the router. A handler panics. What does the access log record for that request?"
+  choices={[
+    { label: "Whatever the logging wrapper saw before the panic — typically its default 200, never the 500 that recovery writes to the raw writer outside it", correct: true },
+    { label: "The 500, because recovery writes it before the logger's deferred log line runs", misconception: "Recovery writes the 500 to the writer it was given — the raw one. The logger's status-capturing wrapper sits inside and never sees that WriteHeader call, so its recorded status stays at the default. Order decides what each layer can observe." },
+    { label: "Nothing — the panic unwinds past the logger and kills its log statement", misconception: "If the logger logs in a defer (or after next returns during unwinding via recover above it), its line still emits. The problem is not a missing line, it is a wrong status in the line — quieter and worse." },
+    { label: "The 500, because all wrappers share the same underlying connection state", misconception: "Wrappers do share the connection, but status capture is bookkeeping inside one specific wrapper struct. A WriteHeader call that bypasses that struct updates the connection yet leaves the wrapper's recorded field untouched." },
+  ]}
+/>
+
+## Request-scoped data: context with typed keys
+
+Auth middleware authenticates; the handler three layers in needs the user. The channel between them is the request's context:
+
+```go
+type ctxKey struct{} // unexported type: no other package can collide
+
+func WithUser(ctx context.Context, u *User) context.Context {
+	return context.WithValue(ctx, ctxKey{}, u)
+}
+
+func UserFrom(ctx context.Context) (*User, bool) {
+	u, ok := ctx.Value(ctxKey{}).(*User)
+	return u, ok
+}
+
+// middleware:   r = r.WithContext(WithUser(r.Context(), user))
+// handler:      u, ok := UserFrom(r.Context())
+```
+
+Three rules keep this from rotting. Use an unexported key type, never a string — string keys collide across packages silently. Wrap access in typed helpers so the `any`-typed `Value` API never leaks into handlers. And keep context values to *request-scoped facts a generic layer attaches*: user identity, trace ID, deadline. The moment a value is a required input to business logic, it belongs in a function parameter — context values are invisible in signatures, unchecked by the compiler, and a nil assertion away from a panic. The honest cost: each `WithValue` is an allocation and lookup is a linear walk up the chain — irrelevant at four values, real at forty.
+
+## Wrapping ResponseWriter, and the two traps
+
+To log the status code you must wrap, because `ResponseWriter` offers no getter:
+
+```go
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+	wrote  bool
+}
+
+func (sw *statusWriter) WriteHeader(code int) {
+	if sw.wrote { return } // swallow the second call: net/http logs
+	sw.status, sw.wrote = code, true // "superfluous WriteHeader" otherwise
+	sw.ResponseWriter.WriteHeader(code)
+}
+
+func (sw *statusWriter) Write(b []byte) (int, error) {
+	if !sw.wrote { sw.WriteHeader(http.StatusOK) } // implicit 200 path
+	return sw.ResponseWriter.Write(b)
+}
+```
+
+Trap one is **WriteHeader called twice**: a handler writes 200, then an error path writes 500 — the second call is a no-op on the wire (headers already sent) and net/http logs `superfluous response.WriteHeader`. Your wrapper must model that, including the implicit `WriteHeader(200)` that the first `Write` triggers. Trap two is **interface erasure**: the embedded field forwards the three `ResponseWriter` methods, but the concrete writer underneath also implements `http.Flusher` (streaming), `http.Hijacker` (websockets take the raw conn), and supports `io.ReaderFrom` (the `sendfile` path that makes `http.ServeContent` fast). Your wrapper implements none of them, so every `w.(http.Flusher)` assertion downstream now fails — the Hook's dead SSE endpoint. Either implement and forward the extras you need, or use `http.NewResponseController(w)` (Go 1.20+), which unwraps layers to find flush and hijack support — that, plus exposing an `Unwrap() http.ResponseWriter` method on your wrapper, is the modern contract.
+
+<Quiz
+  id="02-middleware-patterns-quiz-2"
+  lessonSlug="02-middleware-patterns"
+  lang="en"
+  question="After deploying a status-capturing ResponseWriter wrapper, the websocket upgrade endpoint starts failing while plain JSON endpoints work fine. What is the most likely mechanism?"
+  choices={[
+    { label: "The wrapper struct does not implement http.Hijacker, so the upgrade's type assertion on the writer fails — embedding forwards only the three ResponseWriter methods", correct: true },
+    { label: "Wrapping a ResponseWriter is not allowed for connections that upgrade", misconception: "Wrapping is fine — the stdlib expects it, which is why NewResponseController and the Unwrap convention exist. The failure is the wrapper hiding the underlying writer's optional interfaces, not the act of wrapping." },
+    { label: "The wrapper's WriteHeader guard blocks the 101 Switching Protocols status", misconception: "A hijack-based upgrade takes over the raw TCP connection before normal status writing matters; the failure happens earlier, at the w.(http.Hijacker) assertion that the wrapper type cannot satisfy." },
+    { label: "Websockets require the original *http.ResponseWriter pointer identity", misconception: "There is no pointer-identity requirement and ResponseWriter is an interface, not a concrete pointer type. What upgraders need is the Hijacker capability — reachable through a wrapper if it forwards it or exposes Unwrap." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why did the stdlib add http.NewResponseController instead of making wrappers illegal or automatic? Because both extremes lose: forbidding wrappers kills the entire middleware ecosystem, and auto-forwarding optional interfaces is impossible — a wrapper type either has a Flush method or it does not, and Go interfaces are satisfied at compile time. The controller is the escape hatch that walks Unwrap chains at runtime asking each layer for the capability, so a logging wrapper that knows nothing about flushing no longer breaks streaming three layers down — as long as every wrapper in the chain plays the Unwrap convention.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="A request passes through the middleware onion inward to the handler, and the response unwinds back out through every wrapper"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "req", label: "Request", sub: "from Server" },
+    { id: "log", label: "Logging", sub: "wraps writer, sees all" },
+    { id: "rec", label: "Recover", sub: "panic to 500" },
+    { id: "auth", label: "Auth", sub: "user into context" },
+    { id: "mux", label: "ServeMux", sub: "routes" },
+    { id: "h", label: "Handler", sub: "UserFrom(ctx)" },
+  ]}
+  edges={[
+    { from: "req", to: "log", label: "in" },
+    { from: "log", to: "rec", label: "next" },
+    { from: "rec", to: "auth", label: "next" },
+    { from: "auth", to: "mux", label: "ctx + user" },
+    { from: "mux", to: "h", label: "match" },
+  ]}
+  caption="Each layer observes only what is inside it: logging outermost sees auth rejections and recovery's 500; recovery protects everything inward. The response travels the same chain in reverse — through every wrapped writer."
+/>
+
+<KeyTakeaway>Middleware is plain function composition over the Handler interface — no framework needed. Order encodes policy: logging outside recovery outside auth, because a layer only observes layers within it. Request-scoped data crosses layers via context with unexported key types and typed accessors. A status-capturing ResponseWriter wrapper must guard double WriteHeader, model the implicit 200, and forward or Unwrap to Flusher and Hijacker — or streaming and websockets silently break.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-middleware-patterns-retrieval"
+  lang="en"
+  questions={[
+    { q: "Justify the canonical middleware order — logging, recovery, auth, router — using the observation rule.", a: "A middleware can only observe and protect what is inside its wrap. Logging goes outermost so the access log records every request including those auth rejects, and so its status-capturing wrapper is the writer that recovery's 500 passes through — put recovery outside logging and the log shows the wrapper's default 200 while the client got a 500. Recovery sits outside auth and all business layers so a panic anywhere inward becomes a logged 500 instead of net/http's bare connection close. Auth comes before anything that spends resources, so unauthenticated traffic is rejected before body parsing or downstream calls. The general test: for each pair of layers, ask which one must see the other's effects — that dependency fixes their relative order." },
+    { q: "List the traps in wrapping http.ResponseWriter for status capture and the modern mitigations.", a: "Trap one: WriteHeader discipline. Headers go on the wire once; a second WriteHeader is a no-op plus a superfluous-WriteHeader log, and the first Write implies WriteHeader(200) — the wrapper must track wrote-state and model the implicit 200 or it records wrong statuses. Trap two: interface erasure. Embedding forwards only ServeHTTP-facing methods; the underlying writer's http.Flusher (SSE/streaming), http.Hijacker (websocket upgrades), and io.ReaderFrom (sendfile fast path) vanish, so downstream type assertions silently fail. Mitigations: forward the optional interfaces you need explicitly, expose Unwrap() http.ResponseWriter, and prefer http.NewResponseController (Go 1.20+) on the consuming side — it walks the Unwrap chain to reach flush and hijack capabilities through any number of well-behaved wrappers." },
+  ]}
+/>
+
+<Recap lang="en">
+Go middleware is the Handler interface used twice: a middleware takes the next Handler and returns a new one, running code before and after next.ServeHTTP inside a closure. Chains compose by nesting — Logging(Recover(Auth(mux))) — and read outside-in, with the response unwinding back through every layer. Order is semantics, derived from one rule: a layer observes only what it wraps. Logging outermost records auth rejections and recovery's 500s through its own wrapper; recovery outside business layers converts panics into logged 500s instead of bare connection resets; auth runs before anything that costs money. Request-scoped facts travel in the context: unexported key types prevent cross-package collisions, typed helpers keep the untyped Value API contained, and anything business logic requires belongs in a parameter, not a context value — WithValue allocates and lookups walk a chain. Status capture demands wrapping ResponseWriter, which brings two traps: WriteHeader can effectively fire twice (including the implicit 200 on first Write), so the wrapper tracks write state; and embedding erases the underlying writer's Flusher, Hijacker, and ReaderFrom, breaking SSE, websockets, and the sendfile path for any downstream type assertion. Forward what you need, expose Unwrap, and use http.NewResponseController to reach capabilities through wrapper chains. Two production outages in this lesson came from violating exactly these rules — order blindness and interface erasure — not from exotic bugs.
+</Recap>

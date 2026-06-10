@@ -1,0 +1,157 @@
+---
+concepts:
+- go-errors-as-api
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-errors-as-api"
+sources:
+- https://go.dev/blog/error-handling-and-go
+- https://pkg.go.dev/errors
+spiral: []
+status: ready
+summary: 'Errors are part of your public API: sentinel vs typed vs opaque, the errors.Is/As contract you promise, wrapping discipline at package boundaries — %w exports the whole chain — and keeping errors stable across versions so consumers never have to parse text.'
+title: 'Errors as API: sentinels, types, the Is/As contract, and the %w that leaks your internals'
+track: "go"
+unit: "05-generics-and-design"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The release notes for the payments client v1.7.3 listed one item: improved error messages. A copy edit — `upstream timeout` became `upstream deadline exceeded`, clearer and more accurate. Four hours after a consumer team upgraded, their overnight settlement job died with three thousand unprocessed transfers. Their retry layer decided what was retryable like this: `strings.Contains(err.Error(), "timeout")`. The new wording made every transient failure look permanent, the job stopped retrying, and the queue backed up silently until the morning alert. The postmortem's awkward finding: both teams were at fault by halves. The consumer parsed error text because, three majors ago, the client exported nothing else — no sentinel, no type, just `fmt.Errorf` with prose. Whatever your errors expose, somebody depends on — Hyrum's law does not exempt the parts you considered cosmetic. If you do not design the error API deliberately, your log messages become the API, and a copy edit becomes a breaking change.
+</Hook>
+
+<Crux>Errors you return are API. Promise errors.Is/As targets; %w exports the wrapped chain, so wrap deliberately. Text is never the contract.</Crux>
+
+<Explanation>
+
+## Three kinds of errors you can promise
+
+An exported function's error result is as much API as its other return values, and there are exactly three contracts you can offer. A **sentinel** is an exported package-level value — `io.EOF`, `sql.ErrNoRows`, your `ErrNotFound` — promising one comparable identity that consumers test with `errors.Is`. Cheap to provide, but it carries no data and it is forever: you can never un-export it, and every code path that returns it is pinned to that meaning. A **typed error** is an exported struct or interface implementing `error` — `*fs.PathError`, your `*RateLimitError` — retrieved with `errors.As`, carrying structured fields like `RetryAfter`. The richest contract, and the costliest: its fields and semantics version like any public struct. An **opaque** error promises nothing except non-nil-ness — the consumer can log it, but not branch on it. Opaque is the *default you should fight to keep*: every sentinel and type you export is surface you maintain across versions, so the design question is never "what errors do I have" but "what decisions must my callers make". Callers who only need success/failure get opaque; callers who branch (retry? 404? backoff how long?) get the smallest sentinel or type that supports the branch. A useful middle path is the behaviour interface — exporting only `interface{ Timeout() bool }`-style capability checks — which lets callers ask the question without coupling to a concrete identity.
+
+## errors.Is and errors.As are the contract; wrapping is the plumbing
+
+Since Go 1.13, `fmt.Errorf` with `%w` records the wrapped error, and `errors.Is`/`errors.As` walk the resulting chain: `Is` compares identities link by link, `As` finds the first link assignable to a target type. That walk is what you are promising when you document "returns ErrNotFound when absent" — not `err == ErrNotFound`, which breaks the moment anyone adds context with `%w` in between. The full contract in code:
+
+```go
+// Package user — the error API, designed, documented, tested.
+var ErrNotFound = errors.New("user: not found") // sentinel: exported forever
+
+type RateLimitError struct { // typed: carries data consumers branch on
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitError) Error() string {
+	return fmt.Sprintf("user: rate limited, retry after %s", e.RetryAfter)
+}
+
+// Consumer side — the only two checks your docs should ever require:
+if errors.Is(err, user.ErrNotFound) { /* 404, no retry */ }
+
+var rl *user.RateLimitError
+if errors.As(err, &rl) { backoff(rl.RetryAfter) }
+```
+
+Inside your module, wrap freely — `fmt.Errorf("load profile %s: %w", id, err)` adds the context that makes logs debuggable while keeping `Is`/`As` working through the chain. The discipline point is that *wrapping is transitive visibility*: everything reachable through `%w` links is testable by the consumer, which is exactly what the next section is about.
+
+<Quiz
+  id="04-errors-as-api-quiz-1"
+  lessonSlug="04-errors-as-api"
+  lang="en"
+  question="errors.Is(err, user.ErrNotFound) returns true. What exactly is guaranteed?"
+  choices={[
+    { label: "ErrNotFound is reachable in err's wrap chain (or some link's Is method claims equivalence) — nothing about err's own identity, type, or message text", correct: true },
+    { label: "err == user.ErrNotFound — Is is just a nil-safe spelling of equality", misconception: "Is walks the whole chain of %w links, comparing at each step; equality is only its first probe. That walk is the entire point — direct == breaks as soon as any layer adds context with %w." },
+    { label: "err.Error() contains the substring 'not found'", misconception: "Identity and message are independent channels. A wrap chain can carry any prose around the sentinel, and matching on text is precisely the consumer mistake that turned a copy edit into the Hook's outage." },
+    { label: "err was created inside the user package", misconception: "Any code that obtained the sentinel can wrap or return it, and an Is method can declare equivalence without the value appearing at all. The guarantee is about chain membership, not provenance." },
+  ]}
+/>
+
+## Wrapping discipline at boundaries: %w leaks internals
+
+Here is the senior-level trap. Your storage layer does `return fmt.Errorf("get user: %w", sql.ErrNoRows)` and the error crosses your package boundary. You have just published, irrevocably, that your package is backed by `database/sql`: any consumer can now write `errors.Is(err, sql.ErrNoRows)`, some consumer eventually *will* (Hyrum again), and your migration to a cache or a different driver becomes their breaking change — a dependency you never listed in any interface. The rule that follows: **at a package boundary, translate errors instead of propagating them**. Map internal failures onto your published vocabulary; wrap *your* sentinel with `%w`, and seal the internal cause with `%v`, which keeps its text for logs but cuts the chain:
+
+```go
+func (s *Store) Get(ctx context.Context, id string) (*User, error) {
+	u, err := s.db.GetUser(ctx, id)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return nil, fmt.Errorf("get user %s: %w", id, ErrNotFound) // your vocabulary
+	case err != nil:
+		return nil, fmt.Errorf("get user %s: %v", id, err) // %v seals: text kept, chain cut
+	}
+	return u, nil
+}
+```
+
+The `%w` vs `%v` choice is therefore an API decision, not a formatting preference: `%w` means "I support `Is`/`As` against everything behind this link, forever"; `%v` means "context for humans, no contract". Go 1.20's multi-error wrapping (`errors.Join`, multiple `%w` verbs) widens the same door — every joined error is reachable by `Is`/`As` — so the boundary rule applies to each branch. Inside the module, default to `%w`; at the exported surface, default to translation.
+
+## Stability across versions: error text is not API, but someone thinks it is
+
+The contract you should document and test is small: which sentinels exist, which types exist, which functions can return them — in doc comments on each (the convention `// Get returns an error satisfying errors.Is(err, ErrNotFound) when…` is machine-checkable in a test). Then hold the line on what is *not* contract: message text. You cannot stop a consumer from matching strings — the Hook's consumer had reasons, even decent ones — but you can make text-matching unnecessary (every documented branch reachable via `Is`/`As`) and you can refuse to treat wording as frozen. Versioning rules that follow from the mechanics: removing or renaming a sentinel, or narrowing when it is returned, is a major-version break; *adding* a field to a typed error is fine, changing a field's meaning is not; switching a path from returning your sentinel to wrapping somebody else's leaks again. And write the test that pins the promise — `errors.Is(Get(ctx, missing), ErrNotFound)` asserted through your real wrap chain — because the chain is built by `fmt.Errorf` calls scattered across the codebase, and one teammate "improving" a `%w` to a `%v` (or vice versa) silently rewrites your public API.
+
+<Quiz
+  id="04-errors-as-api-quiz-2"
+  lessonSlug="04-errors-as-api"
+  lang="en"
+  question="A store package wraps sql.ErrNoRows with %w and returns it across its exported boundary. What did the package just promise?"
+  choices={[
+    { label: "That errors.Is(err, sql.ErrNoRows) works for consumers — the SQL backend is now observable API, and migrating storage breaks whoever checks it", correct: true },
+    { label: "Nothing — wrapping is an internal logging convenience invisible to callers", misconception: "%w is the opposite of invisible: it is the verb that makes the wrapped error reachable by every consumer's errors.Is walk. The logging-only verb is %v, which keeps the text and cuts the chain." },
+    { label: "Only that the error text mentions sql: no rows in result set", misconception: "Text is the one thing that was never the contract. The leak is structural — chain reachability — and it persists no matter how the message is worded or rewritten." },
+    { label: "That the consumer will get a *sql.DB handle via errors.As", misconception: "As extracts error values in the chain that match a target type, not arbitrary objects like database handles. The exposure is the sentinel's identity (and any typed errors in the chain), which is already enough to freeze your storage choice." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="An internal failure crossing the package boundary: translated into the published vocabulary with %w to your sentinel, sealed with %v for context — consumers branch only via errors.Is and errors.As"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "internal", label: "sql.ErrNoRows", sub: "internal cause" },
+    { id: "boundary", label: "Boundary translation", sub: "switch on causes" },
+    { id: "sentinel", label: "ErrNotFound", sub: "published, %w-wrapped" },
+    { id: "sealed", label: "Sealed context", sub: "%v: text kept, chain cut" },
+    { id: "is", label: "errors.Is / As", sub: "the consumer contract" },
+    { id: "leak", label: "Leaked %w", sub: "backend becomes API" },
+  ]}
+  edges={[
+    { from: "internal", to: "boundary", label: "caught" },
+    { from: "boundary", to: "sentinel", label: "translate" },
+    { from: "boundary", to: "sealed", label: "unknown causes" },
+    { from: "sentinel", to: "is", label: "documented branch" },
+    { from: "internal", to: "leak", label: "raw %w escape" },
+  ]}
+  caption="Inside the module, %w freely adds context. At the exported surface, wrap only your own vocabulary; an escaped %w to a dependency's sentinel makes your storage engine part of your public API."
+/>
+
+<KeyTakeaway>Design the error surface like any API: opaque by default, the smallest sentinel or typed error wherever callers must branch, behaviour interfaces for capability checks. Document and test the `errors.Is`/`As` promises. At package boundaries translate, don't propagate: `%w` your own sentinels, `%v` to seal internal causes — a leaked `%w` makes your dependencies observable API. Error text is for humans; the Hook's outage is what happens when it becomes the contract.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-errors-as-api-retrieval"
+  lang="en"
+  questions={[
+    { q: "Compare sentinel, typed, and opaque errors as API contracts: what each promises, costs across versions, and when each is the right choice.", a: "A sentinel (exported var like ErrNotFound) promises one identity testable with errors.Is — cheap, dataless, and permanent: removing it or narrowing when it is returned is a major break. A typed error (*RateLimitError with fields, via errors.As) is the richest contract and versions like any public struct — adding fields is safe, changing their meaning is not. An opaque error promises only non-nil and should be the default, because every exported identity is surface maintained forever. Choose by the caller's decision: no branching needed → opaque; a yes/no branch (404?) → sentinel; a branch needing data (how long to back off?) → typed; capability checks without identity coupling → a small behaviour interface like Timeout() bool." },
+    { q: "Why is the choice between %w and %v at a package boundary an API decision, and what does the boundary-translation pattern look like?", a: "%w makes the wrapped error reachable through every consumer's errors.Is/As walk — wrapping sql.ErrNoRows with %w publishes that your package sits on database/sql, somebody will depend on it per Hyrum's law, and a storage migration becomes their breaking change. %v keeps the cause's text for humans but cuts the chain, promising nothing. So the boundary pattern: catch known internal causes, re-express them in your published vocabulary by %w-wrapping your own sentinel (fmt.Errorf with get user %s: %w around ErrNotFound), and seal unknown causes with %v. Inside the module %w freely; at the exported surface, translate. And pin it with a test that asserts errors.Is through the real wrap chain, because one teammate swapping %w for %v silently rewrites the public API." },
+  ]}
+/>
+
+<Recap lang="en">
+Errors cross your package boundary, so they are your API — the only question is whether you design that surface or let it accrete. The vocabulary has three entries. Sentinels: exported values like `ErrNotFound`, one identity testable by `errors.Is`, dataless and permanent. Typed errors: exported structs like `*RateLimitError` carrying fields via `errors.As`, versioned like any public type. Opaque errors: non-nil and nothing more — the right default, because every exported identity is maintenance forever; export precisely what caller decisions require, plus behaviour interfaces when a capability check beats an identity. The mechanics promise is the `Is`/`As` chain walk over `%w` links — never `==`, never text — documented per function and pinned by a test through the real wrap chain. The discipline lives at boundaries: `%w` is transitive visibility, so wrapping a dependency's sentinel across your exported surface publishes your implementation — consumers will check `errors.Is(err, sql.ErrNoRows)`, and your cache migration becomes their outage. Translate instead: known causes become your sentinels via `%w`, unknown causes are sealed with `%v`, which keeps text for logs and cuts the chain; Go 1.20's `errors.Join` widens reachability, so the rule covers every joined branch. Stability follows the same logic — removing a sentinel or narrowing its uses is a major break, adding fields to typed errors is not — and message text is never the contract, though the Hook's settlement outage shows consumers will treat it as one if you give them nothing better. The deliverable of this lesson is a checklist: published vocabulary, documented Is/As promises, boundary translation, and a test that fails when someone changes a verb.
+</Recap>

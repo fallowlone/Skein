@@ -1,0 +1,151 @@
+---
+concepts:
+- python-threads-processes
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: middle
+order: 2
+prereqs: []
+slug: "02-threads-and-processes"
+sources:
+- https://docs.python.org/3/library/concurrent.futures.html
+- https://docs.python.org/3/whatsnew/3.13.html
+spiral: []
+status: ready
+summary: 'ThreadPoolExecutor for I/O-bound, ProcessPoolExecutor for CPU-bound — minus the pickling tax. The GIL does not prevent races: check-then-act and += still need locks. fork copies locks but not the threads holding them, so fork+threads deadlocks; spawn is the safe default.'
+title: 'Threads vs processes: choosing by workload, races under the GIL, and the fork+threads deadlock'
+track: "python"
+unit: "05-concurrency"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The report service had run for a year: a Flask app with a background thread flushing metrics, plus a `ProcessPoolExecutor` for PDF rendering. Then it moved from a Mac laptop to a Linux container and started hanging — not crashing, hanging — about once every two hundred renders. `py-spy dump` on the stuck worker showed it waiting forever inside `logging`'s internal lock, in a child process with exactly one thread. The cause was a textbook fork bomb of a different kind: on Linux, `multiprocessing` defaulted to `fork`, which clones the parent's memory at a random instant — including a `logging` lock that the metrics thread happened to be holding. The child inherits the locked lock but not the thread that would unlock it. First render in that child touches logging, waits on a lock whose owner does not exist in this process, and waits until the deploy is rolled back. One line — `mp_context=multiprocessing.get_context("spawn")` — ended a three-day investigation.
+</Hook>
+
+<Crux>Threads for I/O, processes for CPU — and pay the pickle tax. The GIL doesn't stop races. fork copies locks without their owners.</Crux>
+
+<Explanation>
+
+## Choosing by workload: where each pool actually wins
+
+`concurrent.futures` gives both pools one interface, but the physics differ. **ThreadPoolExecutor** shares the process memory: submitting a task costs microseconds, passing a 500 MB DataFrame to a worker costs nothing — it is a reference. The previous lesson explained the constraint: threads only overlap where the GIL is released, so the thread pool is for **I/O-bound** work — HTTP calls, database queries, S3 reads — where workers spend their lives blocked in the kernel. Sizing is forgiving (default is `min(32, cpu_count + 4)`); for I/O you can run dozens of threads per core. **ProcessPoolExecutor** buys true CPU parallelism by paying rent in serialization: every argument and every return value crosses the process boundary through **pickle**. That tax is the most common reason "parallelized" code gets slower. Honest numbers: pickling ~100 MB of plain Python objects takes on the order of a second each way, so shipping a large DataFrame to a worker that does 200 ms of computation is a net loss of seconds. The pattern that works: send *small* descriptions of work (a file path, an ID range), let the worker load its own data, return *small* results. And batch — `executor.map(fn, items, chunksize=100)` amortizes per-task IPC overhead that would otherwise dominate when each item takes microseconds.
+
+```python
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+import multiprocessing as mp
+
+# I/O-bound: threads. 32 workers, each blocked in the kernel most of the time.
+with ThreadPoolExecutor(max_workers=32) as pool:
+    pages = list(pool.map(fetch_url, urls))          # overlaps for real
+
+# CPU-bound: processes. Pass paths, not data — the args cross via pickle.
+ctx = mp.get_context("spawn")                        # explicit start method
+with ProcessPoolExecutor(max_workers=8, mp_context=ctx) as pool:
+    results = list(pool.map(render_pdf, paths, chunksize=4))
+```
+
+## The GIL does not make your code thread-safe
+
+A dangerous half-truth: "Python threads can't race because of the GIL." The GIL guarantees one bytecode runs at a time — but `count += 1` is **three** bytecodes (load, add, store), and the 5 ms switch can land between any two of them. Two threads load the same value, both add one, both store: an increment is lost. In a quick test, two threads doing 1,000,000 unguarded `+=` each typically land visibly short of 2,000,000 on 3.9 and earlier — modern CPython (3.10+) switches only between full bytecode lines, making this *specific* demo usually pass, which is worse: the race is still there, just rarer and unreproducible in tests. The general killer is **check-then-act**: `if key not in cache: cache[key] = expensive()` — two threads pass the check before either writes, and the expensive call runs twice (or worse, half-initialized state becomes visible). Individual dict and list operations are atomic in CPython, but any *sequence* of operations that must be consistent needs a `threading.Lock`. The discipline is the same as in any language: identify invariants spanning more than one operation and guard them; the GIL changes the probability of the interleaving, never the possibility.
+
+```python
+import threading
+
+cache, lock = {}, threading.Lock()
+
+def get_config(key):
+    with lock:                      # guard the whole check-then-act
+        if key not in cache:
+            cache[key] = load_from_disk(key)   # runs exactly once per key
+        return cache[key]
+```
+
+<Quiz
+  id="02-threads-and-processes-quiz-1"
+  lessonSlug="02-threads-and-processes"
+  lang="en"
+  question="Two threads run `balance -= amount` on a shared account under the GIL. Is a lock needed?"
+  choices={[
+    { label: "Yes — the statement compiles to load/subtract/store bytecodes, and a thread switch between them loses an update; the GIL never protects multi-bytecode sequences", correct: true },
+    { label: "No — the GIL ensures only one thread runs at a time, so the subtraction cannot be interrupted", misconception: "One bytecode at a time, not one statement. The eval loop can hand the GIL to another thread between the load and the store, and both threads then write back a stale balance." },
+    { label: "No, as long as balance is an int, because integers are immutable and therefore thread-safe", misconception: "Immutability protects the int object, not the name binding. The race is on reading the name, computing, and rebinding — three separate steps that interleave regardless of the value's immutability." },
+    { label: "Yes, but only on the free-threaded 3.13t build; with the GIL the sequence is atomic", misconception: "Free-threading widens the race window, but the window exists under the GIL too — the 5 ms switch interval lands between bytecodes. Code that races on 3.13t was already broken on 3.12, just less often." },
+  ]}
+/>
+
+## fork vs spawn: how a child process is born
+
+`multiprocessing` creates workers via a **start method**, and the choice is a correctness decision. **fork** (historically the Linux default) clones the parent process at the moment of the call: instant, no re-import, all loaded data available copy-on-write. Its fatal interaction is the Hook's bug: `fork()` copies the whole address space *including every held lock*, but only the calling thread survives into the child. Any lock held by another thread at fork time — logging's lock, an allocator lock inside a C library, a connection pool's mutex — is locked forever in the child, and the first touch deadlocks. The rule: **fork and threads do not mix**, and almost everything spawns threads behind your back (logging handlers, grpc, boto3, OpenBLAS). CPython 3.12 started emitting a `DeprecationWarning` when fork happens in a multi-threaded process, and the default start method is moving away from bare fork (macOS switched to spawn back in 3.8; Linux moves to forkserver in 3.14). **spawn** starts a fresh interpreter and imports your module — slow (hundreds of ms per worker), requires everything submitted to be picklable and the entry point guarded with `if __name__ == "__main__":` (otherwise each child re-executes the pool creation: a process bomb), but immune to inherited-lock deadlocks. **forkserver** is the middle path: a clean single-threaded server process forks workers on demand. Production guidance: set the start method explicitly — `mp.get_context("spawn")` — and never rely on the platform default, because that is exactly what changed between the laptop and the container.
+
+<Quiz
+  id="02-threads-and-processes-quiz-2"
+  lessonSlug="02-threads-and-processes"
+  lang="en"
+  question="A Linux service with a background logging thread adds a fork-based ProcessPoolExecutor. Workers occasionally hang forever on their first log line. Why?"
+  choices={[
+    { label: "fork cloned the process while the logging thread held its lock; the child inherits the locked lock but not the thread, so unlocking never happens", correct: true },
+    { label: "The GIL is shared between parent and child after fork, so the child waits for the parent to release it", misconception: "fork gives the child a full copy of the interpreter, including its own GIL. Nothing is shared post-fork — that is the problem: the lock state was copied, the lock owner was not." },
+    { label: "Logging is not picklable, so the child crashes when it receives the logger", misconception: "fork does not pickle anything — that is spawn's constraint. Under fork the child gets the logger by memory copy; the failure is the copied lock's state, not serialization." },
+    { label: "Too many file descriptors are inherited and the child blocks on opening the log file", misconception: "FD inheritance causes leaks and double-writes, not this hang. py-spy points at the lock acquire inside logging, which matches the inherited-lock deadlock signature, not fd exhaustion." },
+  ]}
+/>
+
+## Shared state across processes: mostly, don't
+
+Processes share nothing by default, and the escape hatches are expensive or sharp. `multiprocessing.Queue` and pool results move data by pickling. `Manager()` objects proxy every access through a server process — convenient, roughly 1000× slower than a local dict. `multiprocessing.shared_memory` and `Value`/`Array` give real shared buffers but reintroduce every race from the threads section *without* the GIL's accidental protection, so they need `multiprocessing.Lock`. The architecture that survives production: workers are stateless functions over their arguments; shared state lives in something built for it (Redis, the database) or is reduced to a final merge step in the parent. If you find yourself reaching for `Manager().dict()` on a hot path, the design is telling you it wanted threads — or a different decomposition.
+
+<Inset kind="why" lang="en">
+Why is the pickle tax unavoidable for processes but absent for threads? Virtual memory. Threads live in one address space: a reference passed to a worker points at the same physical pages. Processes get separate address spaces by design — that isolation is the feature you are buying — so an object must be flattened to bytes, copied through a pipe, and rebuilt on the other side. fork's copy-on-write softens the cost for data that exists *before* the fork (children read parent pages for free until someone writes — though CPython's refcount updates write to every object header, eroding the benefit), but anything submitted *after* workers start must cross via serialization. That is why the worker-loads-its-own-data pattern wins: it converts an IPC copy into a local read.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="Choosing the pool: classify the workload, then pay each pool's characteristic cost"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "work", label: "Workload", sub: "classify first" },
+    { id: "io", label: "I/O-bound", sub: "blocked in kernel" },
+    { id: "cpu", label: "CPU-bound", sub: "pure-Python compute" },
+    { id: "tpe", label: "ThreadPoolExecutor", sub: "shared memory + locks" },
+    { id: "ppe", label: "ProcessPoolExecutor", sub: "pickle tax both ways" },
+    { id: "start", label: "Start method", sub: "spawn, not fork+threads" },
+  ]}
+  edges={[
+    { from: "work", to: "io", label: "waits" },
+    { from: "work", to: "cpu", label: "computes" },
+    { from: "io", to: "tpe", label: "GIL released" },
+    { from: "cpu", to: "ppe", label: "true parallel" },
+    { from: "ppe", to: "start", label: "configure" },
+  ]}
+  caption="Threads share memory for free but serialize bytecode and still race on check-then-act. Processes parallelize for real but pay pickle on every boundary and inherit fork's locked-lock trap."
+/>
+
+<KeyTakeaway>Classify the workload first: I/O-bound goes to ThreadPoolExecutor (GIL released in the kernel, memory shared for free), CPU-bound to ProcessPoolExecutor (true parallelism, pickle tax on every argument and result — ship paths and IDs, not DataFrames). The GIL never made code thread-safe: `+=` is three bytecodes and check-then-act still needs a Lock. Set the start method explicitly: fork copies held locks without the threads that would release them, so fork plus any background thread is a latent deadlock — spawn (or forkserver) is the production default.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-threads-and-processes-retrieval"
+  lang="en"
+  questions={[
+    { q: "A teammate parallelized a pandas pipeline with ProcessPoolExecutor and it got slower. Name the two most likely costs and the restructuring that fixes them.", a: "First, the pickle tax: every argument and result is serialized across the process boundary, and pickling ~100 MB of objects costs about a second each way — passing big DataFrames to workers doing sub-second compute is a net loss. Fix: pass small work descriptions (paths, ID ranges), have workers load their own input and return small aggregates. Second, per-task IPC overhead: thousands of tiny tasks drown in dispatch cost — fix with chunksize in executor.map so each round-trip carries a batch. Also verify the work is actually CPU-bound pure Python; if it is mostly NumPy releasing the GIL, threads may parallelize it with zero serialization cost." },
+    { q: "Explain the fork+threads deadlock mechanism and the production rules that prevent it.", a: "fork() clones the entire address space at the instant of the call, including the state of every lock, but only the forking thread exists in the child. If any other thread held a lock at that instant — logging's handler lock, a C allocator lock, a pool mutex — the child's copy is locked with no owner to release it; the child's first attempt to acquire blocks forever. Intermittent by nature: it only bites when the fork lands inside the critical section. Rules: never combine fork with a process that has background threads (logging, grpc, boto3 spawn them silently); set the start method explicitly with mp.get_context('spawn') or forkserver rather than trusting the platform default (macOS spawn since 3.8, Linux moving off fork in 3.14, 3.12 warns); guard entry points with if __name__ == '__main__' since spawn re-imports the module." },
+  ]}
+/>
+
+<Recap lang="en">
+One interface, two physics. ThreadPoolExecutor shares the process: submission is microseconds, data passes by reference, and it is the right tool for I/O-bound work because blocking calls release the GIL — but pure-Python compute serializes, and the GIL never protected invariants: `+=` is load/add/store, check-then-act races, and modern CPython merely makes the races rarer and less reproducible, so multi-operation invariants take a `threading.Lock`. ProcessPoolExecutor buys real CPU parallelism and charges pickle on every boundary crossing — about a second per 100 MB each way — so the winning shape is small arguments in (paths, IDs), workers loading their own data, small results out, with `chunksize` batching tiny tasks. Process creation is governed by the start method: fork is fast and copy-on-write but clones held locks without their owning threads, which is the classic intermittent child-process deadlock the moment anything in the parent runs threads (logging, grpc, boto3 do, silently); spawn starts a clean interpreter at the cost of re-import, picklability, and a mandatory `if __name__ == "__main__"` guard; forkserver forks from a clean single-threaded template. Defaults differ by platform and era — macOS spawn since 3.8, Linux leaving bare fork in 3.14, a DeprecationWarning for fork-in-threads since 3.12 — so pin it explicitly with `mp.get_context("spawn")`. Cross-process shared state is a smell: Manager proxies are ~1000× slower than a dict, shared_memory revives un-GIL-protected races; keep workers stateless and merge at the end.
+</Recap>

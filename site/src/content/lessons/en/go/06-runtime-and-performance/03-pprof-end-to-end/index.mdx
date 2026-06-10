@@ -1,0 +1,151 @@
+---
+concepts:
+- go-pprof
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-pprof-end-to-end"
+sources:
+- https://go.dev/blog/pprof
+- https://pkg.go.dev/net/http/pprof
+- https://go.dev/doc/diagnostics
+spiral: []
+status: ready
+summary: 'net/http/pprof turns a prod service into a self-reporting lab: CPU at 100 Hz, heap inuse vs alloc, goroutine, mutex and block profiles. Read flamegraphs by width, diff heap snapshots with -base to corner leaks, and keep continuous profiling for incidents you did not predict.'
+title: 'pprof end to end: CPU, heap, goroutine and mutex profiles from a live service to the leak'
+track: "go"
+unit: "06-runtime-and-performance"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The billing service was restarted every four days by a cron job nobody wanted to own. Memory climbed ~200 MB a day; the original author had left; the restart was "temporary" eight months ago. The engineer who finally killed the cron did it with two curl commands a day apart: `curl -o monday.pb localhost:6060/debug/pprof/heap`, then the same on Tuesday, then `go tool pprof -base monday.pb tuesday.pb`. The diff view subtracted everything stable — buffers, caches, connection pools, all the noise that makes a raw heap profile unreadable — and left exactly one growing edge: 190 MB/day of `inuse_space` allocated in `audit.(*Recorder).Append`, retained by a package-level slice that an "audit trail" feature wrote to and nothing ever read. Two snapshots, one subtraction, eight months of mystery gone. The profile had been sitting on port 6060 the entire time, two flags away from anyone who asked. pprof is not a crisis tool — it is a standing instrument; the crisis is just when people remember it exists.
+</Hook>
+
+<Crux>pprof is the runtime's X-ray: CPU, heap (inuse vs alloc), goroutine, mutex profiles. Diff two heap snapshots and the leak names itself.</Crux>
+
+<Explanation>
+
+## Instrumenting production: net/http/pprof done right
+
+`import _ "net/http/pprof"` registers handlers under `/debug/pprof/` — on `http.DefaultServeMux`, which is the part that bites. If your main server uses the default mux, your profiling endpoints are now public: an internet-facing `/debug/pprof/` leaks symbol names, source paths, and lets anyone trigger 30-second CPU captures. The production pattern is a **separate internal listener**:
+
+```go
+import (
+	"net/http"
+	_ "net/http/pprof" // registers on http.DefaultServeMux
+	"runtime"
+)
+
+func main() {
+	runtime.SetMutexProfileFraction(100) // sample 1/100 mutex contention events
+	runtime.SetBlockProfileRate(10_000)  // sample blocking ≥10 µs (ns units)
+
+	go func() {
+		// internal port only: cluster network / localhost, never the LB
+		http.ListenAndServe("127.0.0.1:6060", nil) // serves DefaultServeMux
+	}()
+	// main API server on its own mux, own port …
+}
+
+// Capture from a workstation (port-forward in k8s):
+//   go tool pprof -http=:8080 "localhost:6060/debug/pprof/profile?seconds=30"
+//   go tool pprof -http=:8080 "localhost:6060/debug/pprof/heap"
+//   curl -o now.pb localhost:6060/debug/pprof/heap   # snapshot for later diffing
+```
+
+Overhead is the perennial objection, and the honest numbers defuse it: the CPU profiler samples at **100 Hz** and typically costs low single-digit percent *while capturing* — and nothing when idle. The heap profile is sampled at allocation time (default: one sample per ~512 KB allocated) and is always on; reading it is nearly free. Mutex and block profiles are off by default (`fraction`/`rate` = 0) and cost only what your sampling rate asks for. Leaving pprof reachable on an internal port is standard practice at every Go shop that has been paged twice.
+
+## The profile menu: which one answers which question
+
+- **CPU** (`/debug/pprof/profile?seconds=30`): where do cycles go? The runtime interrupts each executing thread 100 times a second and records the stack; the profile is a statistical census of 3,000 samples over 30 s. It sees *on-CPU* time only — a service that is slow because it *waits* (locks, I/O, GC assist) can show an almost empty CPU profile.
+- **Heap** (`/debug/pprof/heap`): two views of the same data, and choosing wrong wastes an afternoon. **`inuse_space`** — bytes currently live, attributed to their allocation site: the question "what is filling memory?" — leaks, caches, retention. **`alloc_space`** — cumulative bytes ever allocated: the question "what is generating GC pressure?" — churn, the previous lessons' fmt boxing. A site can dominate alloc_space while contributing zero inuse (allocate-and-drop churn), and vice versa (one giant retained slice).
+- **Goroutine** (`/debug/pprof/goroutine`): every goroutine grouped by identical stack — the leak census from the concurrency unit.
+- **Mutex** and **block**: where contended locks and channel/select waits burn *wall time*. These answer the empty-CPU-profile riddle: the service that is slow while idle-looking. Both require opt-in sampling rates (see code above) — a mutex profile that shows nothing usually means it was never enabled, not that contention is absent.
+
+<Quiz
+  id="03-pprof-end-to-end-quiz-1"
+  lessonSlug="03-pprof-end-to-end"
+  lang="en"
+  question="Memory in a service grows steadily. You open the heap profile and the top entry by alloc_space is a JSON encoding helper at 4 TB cumulative. Is this your leak?"
+  choices={[
+    { label: "Not necessarily — alloc_space counts every byte ever allocated; for a leak you need inuse_space, which shows what is currently retained and by which allocation site", correct: true },
+    { label: "Yes — 4 TB allocated means 4 TB held; the encoder must be retaining buffers", misconception: "alloc_space is cumulative over the process lifetime: a hot path allocating 50 MB/s reaches 4 TB in a day while retaining nothing. Churn dominates alloc_space; retention only shows in inuse_space." },
+    { label: "No — JSON encoding allocates on the stack, so it cannot leak", misconception: "Encoders heap-allocate plenty (buffers, interface boxing, reflection scratch). The reason this entry is not proof of a leak is the metric, not the package: cumulative allocation says nothing about retention." },
+    { label: "Yes, but only if GC is also high — alloc_space plus GC CPU equals a leak", misconception: "High alloc_space plus GC CPU indicates churn — memory being allocated and collected, the opposite of a leak. A leak is memory the GC cannot free, which is precisely what inuse_space growth between two snapshots shows." },
+  ]}
+/>
+
+## Reading flamegraphs: width is truth, height is noise
+
+`go tool pprof -http=:8080 profile.pb` serves the interactive UI; the flamegraph view is where most reading happens. The rules: **width = inclusive cost** (that function plus everything it called), so the widest boxes are where the money is; **height is just call depth** — a tall narrow spike is a deep stack costing little, and chasing it is the classic rookie detour. Look for **wide plateaus at the top edge**: a box with no children burning width is *self time* — actual loops, memcpy, syntax-level work — and is where optimization lands. Two systematic moves beat staring: the `top` view sorted by `flat` (self) versus `cum` (inclusive) tells you whether a function is expensive itself or merely presides over expensive children; and "focus" (click, or `-focus=regex`) re-renders the graph restricted to one subtree, which turns a 60-thread service profile into a readable story. Recurring Go-specific shapes: a wide `runtime.gcBgMarkWorker` tower means GC pressure (go fix allocations, not the GC); wide `runtime.mallocgc` under your own functions is the same message delivered locally; `runtime.futex`/`runtime.semacquire` plateaus point at lock contention — confirm with the mutex profile, not the CPU one.
+
+## The leak workflow: diff, then continuous profiling
+
+The Hook's two-snapshot move is the canonical leak workflow and deserves to be mechanical reflex: capture a baseline (`curl -o base.pb …/heap`), wait for growth (an hour, a day — long enough for signal to dominate noise), capture again, and run `go tool pprof -base base.pb current.pb`. The diff subtracts the stable heap — pools, caches, steady-state buffers — and what remains is *growth attributed to allocation site*. From there the question is always "who retains this?", and the answer is usually one of: an append-only package-level structure (the Hook), a map used as cache with no eviction, goroutine leaks holding captured buffers (cross-check the goroutine profile), or subtle retention via subslicing a large array. **Continuous profiling** is this workflow productized: an agent (Grafana Pyroscope, Parca, cloud vendors' profilers) captures profiles every few minutes, stores them as a time series, and lets you diff *across a deploy boundary* or ask "what changed at 14:32?" The overhead conversation is the same as above — sampling profilers at low frequency cost ~1–2% — and the payoff is that the profile from *before* the incident exists, which an on-demand curl can never give you.
+
+<Quiz
+  id="03-pprof-end-to-end-quiz-2"
+  lessonSlug="03-pprof-end-to-end"
+  lang="en"
+  question="p99 latency tripled but the 30 s CPU profile looks almost empty — no wide frames, total samples far below 30 s × cores. Where do you look next?"
+  choices={[
+    { label: "At off-CPU time: enable and read the mutex and block profiles, and check the goroutine profile for what everything is waiting on — the service is stalling, not computing", correct: true },
+    { label: "Increase CPU sampling above 100 Hz until frames appear", misconception: "More samples sharpen the picture of on-CPU time, but the picture is honestly empty: the service is not burning cycles. Latency without CPU means waiting — locks, channels, I/O, GC assists — which CPU sampling is structurally blind to." },
+    { label: "The profiler must be broken — a slow service always shows a hot CPU profile", misconception: "Only CPU-bound slowness shows up there. A single contended mutex can serialize a 32-core service into single-file latency while CPU sits at 5% — the classic case where the CPU profile is empty and the mutex profile is a skyscraper." },
+    { label: "At the heap profile, since memory pressure is the usual cause of latency", misconception: "GC pressure does show up as latency, but it would appear in the CPU profile as gcBgMarkWorker and mallocgc towers — an empty CPU profile argues against it. Empty-CPU latency points at blocking, which the mutex/block profiles measure directly." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The pprof loop: an internal endpoint serves profiles, each profile type answers one question, and a heap diff between two snapshots turns growth into a named allocation site"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "endpoint", label: "/debug/pprof", sub: "internal port 6060" },
+    { id: "cpu", label: "CPU profile", sub: "100 Hz, on-CPU only" },
+    { id: "heap", label: "Heap profile", sub: "inuse vs alloc" },
+    { id: "wait", label: "Mutex / block", sub: "opt-in, wall time" },
+    { id: "diff", label: "pprof -base", sub: "snapshot diff" },
+    { id: "site", label: "Allocation site", sub: "the leak, named" },
+  ]}
+  edges={[
+    { from: "endpoint", to: "cpu", label: "?seconds=30" },
+    { from: "endpoint", to: "heap", label: "snapshot" },
+    { from: "endpoint", to: "wait", label: "if sampled" },
+    { from: "heap", to: "diff", label: "base + current" },
+    { from: "diff", to: "site", label: "growth only" },
+  ]}
+  caption="Choosing the profile is choosing the question: cycles → CPU, retention → heap inuse, churn → heap alloc, stalls → mutex/block, zombies → goroutine. Continuous profiling keeps the answers from before the incident."
+/>
+
+<KeyTakeaway>Expose net/http/pprof on an internal port and it becomes a standing instrument: CPU (100 Hz, on-CPU only), heap (inuse_space for retention, alloc_space for churn), goroutine, and opt-in mutex/block profiles. Read flamegraphs by width and self-time plateaus; corner leaks with `pprof -base old new`; run continuous profiling so the pre-incident profile exists. Empty CPU profile + high latency = read the mutex/block profiles.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-pprof-end-to-end-retrieval"
+  lang="en"
+  questions={[
+    { q: "Map each pprof profile type to the production question it answers, and name the two that are off by default.", a: "CPU (profile?seconds=30, 100 Hz sampling) answers where on-CPU cycles go — blind to waiting. Heap has two views: inuse_space answers what currently fills memory (leaks, caches, retention); alloc_space answers what generates GC pressure (cumulative churn — a site can lead alloc with zero retained). Goroutine answers what every goroutine is parked on — the leak census. Mutex answers which locks burn wall time under contention; block answers the same for channel ops and selects. Mutex and block are off by default: they need runtime.SetMutexProfileFraction and runtime.SetBlockProfileRate set to non-zero, and an empty mutex profile usually means nobody enabled it. Serve it all from net/http/pprof on a separate internal listener, never the public mux." },
+    { q: "Describe the two-snapshot leak workflow and why continuous profiling supersedes the on-demand version.", a: "Capture a heap baseline (curl -o base.pb …/debug/pprof/heap), wait long enough for growth to dominate noise (hours to a day), capture again, then go tool pprof -base base.pb current.pb. The diff subtracts the stable heap — pools, caches, steady buffers — leaving only growth, attributed to its allocation site; then ask who retains it (append-only globals, evictionless cache maps, leaked goroutines holding captures, subslice retention). Continuous profiling productizes this: an agent samples every few minutes at ~1–2% overhead and stores profiles as a time series, so you can diff across a deploy boundary or inspect the profile from before the incident started — which no on-demand capture can reconstruct after the fact." },
+  ]}
+/>
+
+<Recap lang="en">
+pprof is a standing instrument, not a crisis tool: import net/http/pprof, serve it on a separate internal listener (the default-mux foot-gun is a public profiler), and set mutex/block sampling rates at startup because those two profiles are silent until enabled. Each profile answers exactly one question — CPU samples on-CPU stacks at 100 Hz and cannot see waiting; heap splits into inuse_space (what is retained — the leak metric) and alloc_space (what was ever allocated — the GC-pressure metric, where churn hides); goroutine counts the parked; mutex and block measure stalls in wall time. Flamegraphs are read by width: inclusive cost in box width, self time in childless plateaus, with flat-vs-cum and focus as the systematic moves; GC towers and mallocgc width mean fix allocations, futex plateaus mean read the mutex profile. The leak workflow is two snapshots and a subtraction — pprof -base erases the stable heap and names the growing allocation site, as it did for the billing service's eight-month restart cron. Continuous profiling runs that loop permanently at 1–2% overhead, preserving the one profile on-demand capture can never give you: the one from before things went wrong. And the diagnostic riddle worth memorizing: latency up, CPU profile empty — the service is waiting, and the mutex, block, and goroutine profiles hold the answer.
+</Recap>

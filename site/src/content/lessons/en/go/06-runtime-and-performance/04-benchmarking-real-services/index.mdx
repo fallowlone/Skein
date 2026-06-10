@@ -1,0 +1,145 @@
+---
+concepts:
+- go-benchmarking
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-benchmarking-real-services"
+sources:
+- https://go.dev/blog/pprof
+- https://go.dev/doc/diagnostics
+spiral: []
+status: ready
+summary: 'Microbenchmarks do not predict service latency. Load-test open-loop at a fixed arrival rate, read p99/p999 instead of averages, beware coordinated omission, profile under load, and gate CI on benchstat deltas across many runs — a single noisy run proves nothing.'
+title: 'Benchmarking real services: percentiles, coordinated omission, and the optimization loop'
+track: "go"
+unit: "06-runtime-and-performance"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Before the launch, the load test said the new pricing endpoint was fine: 5,000 rps sustained, mean latency 9 ms, p99 a comfortable 31 ms. Launch day, support tickets: "checkout hangs for seconds." The dashboards agreed with the users, not with the load test — real p99 was 2.4 s in bursts. The load tool wasn't lying, exactly. It was a closed-loop runner with 50 virtual users, each waiting for a response before sending the next request. Every time the service paused — a GC assist storm, a connection-pool stall — the *tool slowed down with it*, politely sending fewer requests during exactly the windows where latency was worst, then recording mostly the good times in between. Coordinated omission: the measurement and the failure coordinated to hide each other. Re-run with an open-loop generator firing at a fixed 5,000 rps regardless of responses, the stalls had nowhere to hide: p99 2.1 s, right where the users were. Same service, same load — an honest clock.
+</Hook>
+
+<Crux>Benchmark services with open-loop load and percentiles, not averages. Profile under load; gate CI with benchstat, not one run.</Crux>
+
+<Explanation>
+
+## Microbenchmarks: precise answers to small questions
+
+`testing.B` is excellent at what it actually measures: the cost of a code path in a warm cache, with no neighbors, no GC pressure from the rest of the service, and no network. That makes it the right tool for comparing two implementations of the same function — and the wrong tool for predicting service latency. Even within its scope there are two classic self-deceptions. First, **dead-code elimination**: if the benchmarked result is unused, the compiler may delete the work; keep results alive (assign to a package-level sink, or use the modern `b.Loop()` pattern which keeps its body's results live). Second, **missing allocation truth**: always run with `b.ReportAllocs()` — a function that "got 10% faster" while doubling allocs/op is usually a regression in service context, where allocations are the GC tax from previous lessons.
+
+```go
+var sink int // package-level: defeats dead-code elimination
+
+func BenchmarkParsePrice(b *testing.B) {
+	data := loadFixture()
+	b.ReportAllocs()
+	for b.Loop() {           // Go 1.24+; replaces for i := 0; i < b.N; i++
+		v, _ := ParsePrice(data)
+		sink = v
+	}
+}
+
+// $ go test -bench=ParsePrice -count=10 > old.txt
+// … apply the change …
+// $ go test -bench=ParsePrice -count=10 > new.txt
+// $ benchstat old.txt new.txt
+//             │   old.txt   │            new.txt            │
+// ParsePrice    412.0n ± 2%    389.5n ± 1%   -5.46% (p=0.000 n=10)
+```
+
+The numbers a microbenchmark gives are real — for the microworld. A service adds queueing, contention, GC interference between requests, and cold caches. The bridge between worlds is the rule: *microbenchmark to choose between implementations; load-test to make latency claims.*
+
+## Load-testing honestly: percentiles and the open loop
+
+Mean latency is the most useless number in a latency report: it is dominated by the fast majority and structurally blind to the tail your users actually feel. Report **percentiles** — p50, p99, p99.9 — and respect how tails compound: a page that fans out to 100 backend calls experiences a backend's p99 on *most page loads* (the chance all 100 calls dodge the worst 1% is 0.99^100 ≈ 37%). Tail latency is not an edge case; at fan-out it is the median experience.
+
+Then there is the Hook's trap, **coordinated omission**. Closed-loop tools (a fixed pool of virtual users, each waiting for a response before the next request) measure service time but quietly stop *arriving* during stalls — precisely when arrivals would have queued and suffered. The recorded histogram omits the worst seconds in coordination with their occurrence. Open-loop tools (wrk2, vegeta, anything with a fixed arrival rate) keep firing on schedule; a request that arrives during a stall waits, and its full waiting time lands in the histogram. The distinction is not pedantry — it routinely changes p99 by 10–100×, which is the difference between shipping and paging. Rules of engagement: load the system at a *fixed rate* derived from real traffic (plus headroom), run long enough to cross several GC cycles and pool recycles (minutes, not seconds), and measure from the client side, including connection setup, the way users do.
+
+<Quiz
+  id="04-benchmarking-real-services-quiz-1"
+  lessonSlug="04-benchmarking-real-services"
+  lang="en"
+  question="A closed-loop load tool with 50 virtual users reports p99 = 31 ms, but production users see multi-second hangs. What is the most likely measurement flaw?"
+  choices={[
+    { label: "Coordinated omission: the tool only sends after receiving responses, so during stalls it sends fewer requests and the histogram omits exactly the worst periods", correct: true },
+    { label: "50 users is too few to generate meaningful percentiles, so the p99 is statistically invalid", misconception: "Sample size affects confidence intervals, not the systematic bias here. Millions of requests through a closed loop still under-measure stalls, because the sampling rate itself drops when the service degrades — the flaw is structural, not statistical." },
+    { label: "The tool measured server-side processing time instead of full round-trip time", misconception: "Client-side measurement is the norm for load tools; that is not the gap. The gap is which moments get sampled at all: a closed loop samples the stall window at a reduced rate precisely because it is waiting out the stall." },
+    { label: "Production traffic uses different payloads, so the test was simply unrepresentative", misconception: "Payload realism matters, but it cannot explain a 31 ms vs 2.4 s discrepancy that disappears when the same payloads are replayed open-loop at a fixed arrival rate. The variable that changed was the loop model, not the data." },
+  ]}
+/>
+
+## The optimization loop: measure, hypothesize, change one thing, measure
+
+Optimization without a loop degenerates into folklore. The senior workflow is mechanical: **(1) measure under realistic load** — open-loop, fixed rate, percentiles, *with profiles captured during the run* (a CPU or mutex profile from an idle service describes a different program); **(2) form a falsifiable hypothesis** — "p99 is GC assist during marking, driven by allocations in the serializer," not "it's probably the GC"; **(3) change exactly one thing** — the moment two changes ship together, the win is unattributable and the next regression undebuggable; **(4) re-measure the same way**, and let the numbers veto the narrative. Profiles under load are the hypothesis factory: the CPU profile says where cycles go at 5,000 rps, the mutex profile explains latency that CPU can't, the heap alloc profile names the GC pressure. Two honesty rules from hard experience: beware optimizations that move cost rather than remove it (a `sync.Pool` that trades alloc churn for retention; a cache that fixes p50 and poisons p999 via eviction storms), and keep the *load generator* on separate hardware — a saturated generator measures itself.
+
+## Performance regressions in CI: benchstat or it didn't happen
+
+A single benchmark run is a coin flip wearing a lab coat. Run-to-run noise on shared CI runners is routinely ±5–10% — thermal state, neighbors, frequency scaling — so a pipeline that fails on "3% slower than last run" fails randomly, and a pipeline that compares single runs misses real 10% regressions hiding in noise. The honest setup: run each benchmark with `-count=10` (or more), compare distributions with **benchstat**, which reports the delta *with a p-value* — and gate only on statistically significant changes beyond a threshold you chose deliberately (e.g., "fail on ≥5% with p < 0.05"). Pin what you can: dedicated or labeled runners, fixed CPU frequency where possible, `GOMAXPROCS` set explicitly, benchmarks isolated from parallel test jobs. For the numbers that actually page people — service p99 under load — a nightly open-loop load test against a staging deploy with archived profiles catches what per-function benchmarks structurally cannot: cross-cutting regressions in GC pressure, lock contention, and connection management. CI benchmarks guard functions; scheduled load tests guard the service.
+
+<Quiz
+  id="04-benchmarking-real-services-quiz-2"
+  lessonSlug="04-benchmarking-real-services"
+  lang="en"
+  question="A CI job runs each benchmark once and fails the build because a function is 4% slower than the previous run. What is the correct assessment?"
+  choices={[
+    { label: "The gate is meaningless: single runs on shared runners carry ±5–10% noise — compare multiple runs with benchstat and gate on statistically significant deltas", correct: true },
+    { label: "4% is a real regression and the gate is working as intended", misconception: "Without a distribution there is no way to distinguish 4% of signal from 4% of thermal-and-neighbor noise. benchstat across -count=10 runs exists precisely because single-run deltas of this size are routinely reversed on the next commit." },
+    { label: "The gate is too lax — it should fail on any slowdown at all, even 0.1%", misconception: "Tightening a noisy gate amplifies the noise: with ±5–10% run-to-run variance, a 0.1% threshold fails almost every build in both directions. The fix is statistical comparison, not a stricter threshold on a meaningless number." },
+    { label: "Benchmarks should not run in CI at all, since only production metrics matter", misconception: "Production metrics catch regressions after users feel them. CI benchmarks done correctly — multiple runs, benchstat, significance thresholds — catch per-function regressions pre-merge; the complement is a scheduled load test for service-level numbers, not abandoning the gate." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The honest performance loop: open-loop load at a fixed rate feeds percentile measurement, profiles under load generate one hypothesis, one change ships, and the same measurement votes"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "load", label: "Open-loop load", sub: "fixed arrival rate" },
+    { id: "measure", label: "Measure", sub: "p50 / p99 / p999" },
+    { id: "profile", label: "Profile under load", sub: "CPU, mutex, alloc" },
+    { id: "hypo", label: "Hypothesis", sub: "falsifiable, named" },
+    { id: "change", label: "One change", sub: "attributable" },
+    { id: "gate", label: "CI gate", sub: "benchstat, n≥10" },
+  ]}
+  edges={[
+    { from: "load", to: "measure", label: "histogram" },
+    { from: "measure", to: "profile", label: "during run" },
+    { from: "profile", to: "hypo", label: "evidence" },
+    { from: "hypo", to: "change", label: "test it" },
+    { from: "change", to: "gate", label: "re-measure" },
+  ]}
+  caption="Closed-loop tools coordinate with stalls and omit the worst seconds; averages bury the tail that fan-out amplifies. Every arrow that skips a step — changing without profiling, gating on single runs — reintroduces folklore."
+/>
+
+<KeyTakeaway>Microbenchmarks choose between implementations; only open-loop load tests at a fixed arrival rate make honest latency claims — closed loops coordinate with stalls and omit the tail (10–100× p99 errors). Report percentiles, never means; fan-out makes p99 the median experience. Optimize in a loop: profile under load, one falsifiable hypothesis, one change, re-measure. In CI, benchstat over ≥10 runs with significance thresholds — single-run deltas are noise.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-benchmarking-real-services-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain coordinated omission: the mechanism, the symptom, and the fix.", a: "Mechanism: closed-loop load tools maintain N virtual users that each wait for a response before sending the next request, so when the service stalls — GC storm, pool exhaustion, lock convoy — the tool's arrival rate drops in the same window; requests that real traffic would have queued during the stall are never sent, and their latency is never recorded. The measurement omits data in coordination with the failure. Symptom: load-test p99 looks great (tens of ms) while production users report seconds; the gap can be 10–100×. Fix: open-loop generation — a fixed arrival rate independent of responses (wrk2, vegeta) — so requests arriving during a stall wait and record their full queueing time; plus run minutes not seconds (cross several GC cycles), measure client-side, and keep the generator on separate hardware so it never measures its own saturation." },
+    { q: "Design a CI setup that catches real performance regressions without flapping on noise.", a: "Two layers. Per-function: run benchmarks with -count=10 or more, with b.ReportAllocs and a sink (or b.Loop) so dead-code elimination and allocation regressions are visible; compare old vs new with benchstat, which gives a delta with a p-value; gate only on statistically significant changes past a deliberate threshold (e.g. ≥5% slower with p < 0.05); stabilize the environment — dedicated runners, explicit GOMAXPROCS, no parallel jobs sharing the box. Single runs flap because shared-runner noise is ±5–10%. Service-level: a scheduled (e.g. nightly) open-loop load test against staging at a fixed rate derived from production traffic, gating on p99/p999 budgets, with CPU/mutex/alloc profiles archived from the run — this catches cross-cutting regressions (GC pressure, contention, connection handling) that no per-function benchmark can see." },
+  ]}
+/>
+
+<Recap lang="en">
+testing.B answers small questions precisely — which implementation is faster in a warm, isolated world — provided you defeat dead-code elimination with a sink or b.Loop and watch allocs/op via b.ReportAllocs, because an alloc regression is a service regression even when nanoseconds improve. Latency claims about services need different machinery: percentiles, since means are blind to the tail and fan-out makes p99 the median page experience (0.99^100 ≈ 37% of pages dodge a 100-call fan-out's worst 1%); and open-loop load at a fixed arrival rate, because closed-loop tools commit coordinated omission — they slow down with the service and omit exactly the stall windows, hiding 10–100× of p99, which is how the Hook's pricing endpoint passed at 31 ms and shipped at 2.4 s. Optimization is a loop, not an act: measure under load with profiles captured during the run, write a falsifiable hypothesis naming a mechanism, change one thing, re-measure identically — and distrust wins that relocate cost into retention or tail behavior. In CI, single benchmark runs are coin flips under ±5–10% runner noise: run -count=10, compare with benchstat, gate on significant deltas past a chosen threshold, and pair the per-function gate with a scheduled open-loop load test whose archived profiles guard the service-level numbers that actually page people.
+</Recap>

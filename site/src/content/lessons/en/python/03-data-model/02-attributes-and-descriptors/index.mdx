@@ -1,0 +1,169 @@
+---
+concepts:
+- python-descriptors
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-attributes-and-descriptors"
+sources:
+- https://docs.python.org/3/howto/descriptor.html
+- https://docs.python.org/3/reference/datamodel.html
+spiral: []
+status: ready
+summary: 'Attribute lookup is not instance-first: data descriptors on the type beat the instance __dict__, which beats non-data descriptors. __getattribute__ runs on every access, __getattr__ only on misses. property is a data descriptor; __set_name__ lets ORM fields learn their names.'
+title: 'Attribute lookup and descriptors: why the instance dict does not always win'
+track: "python"
+unit: "03-data-model"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The caching layer looked innocent: a `__getattr__` on the client class that lazily built expensive sub-clients on first access. It worked for a year. Then someone refactored a typo inside `__getattr__` itself — the method now touched `self._registry` before `_registry` was assigned in `__init__`. The symptom was not an AttributeError pointing at the typo. It was a `RecursionError: maximum recursion depth exceeded` with a thousand-frame traceback, in production, on instantiation. The mechanism: `self._registry` missed the instance dict, so Python called `__getattr__('_registry')`, whose body again touched `self._registry`, which missed again. Every engineer who debugged it learned the same lesson from the descriptor HOWTO that day: attribute access in Python is not "look in a dict". It is a precise algorithm with two hook methods that fire at different times, and a descriptor protocol sitting above the instance dict — the machinery that makes `property`, methods, `__slots__`, ORMs, and pydantic all work.
+</Hook>
+
+<Crux>Lookup: data descriptors on the type beat the instance dict, which beats non-data descriptors. property is just a data descriptor.</Crux>
+
+<Explanation>
+
+## The real lookup order: object.__getattribute__
+
+Every `obj.x` calls `type(obj).__getattribute__(obj, "x")`, and the default implementation runs this algorithm — order matters and is the source of most "why is my attribute ignored" mysteries:
+
+1. Walk `type(obj).__mro__` looking for `"x"` in each class `__dict__`.
+2. If found and it is a **data descriptor** (defines `__set__` or `__delete__`), call its `__get__` — **the instance dict never gets a look**.
+3. Otherwise, check `obj.__dict__` — a plain instance attribute wins here.
+4. Otherwise, if the class attribute found in step 1 is a **non-data descriptor** (only `__get__` — functions are exactly this), call its `__get__`. Plain class attributes are returned as-is.
+5. Nothing anywhere → raise `AttributeError`, which triggers `__getattr__` if defined.
+
+So "instance shadows class" is only true for non-descriptor and non-data cases. A `property` defines `__set__` (even a read-only one — its `__set__` raises `AttributeError`), making it a data descriptor: that is precisely why you cannot accidentally shadow a property by writing `self.x = 1` — the assignment itself routes through `property.__set__`. And it is why functions, being non-data descriptors, *can* be shadowed per-instance: `obj.method = lambda: ...` works. Bound methods exist because step 4 calls `function.__get__(obj, cls)`, which returns the bound method object — methods are not special syntax, they are the descriptor protocol applied to functions.
+
+## __getattr__ vs __getattribute__
+
+`__getattribute__` intercepts **every** attribute access — override it and you pay its cost on every `self.anything`, and any `self.attr` inside it recurses unless you delegate with `object.__getattribute__(self, name)`. `__getattr__` is the cheap hook: called **only after** normal lookup raised `AttributeError`. That is what makes it right for lazy loading and proxies — zero overhead on hits — and what produced the Hook's recursion: an attribute miss *inside* `__getattr__` re-enters `__getattr__`. The defensive pattern:
+
+```python
+class LazyClient:
+    def __init__(self):
+        self._cache = {}          # assigned before any miss can happen
+
+    def __getattr__(self, name):  # only called on lookup MISS
+        # reach _cache via object.__getattribute__ semantics already done;
+        # but guard against misses on internals to avoid recursion
+        if name.startswith("_"):
+            raise AttributeError(name)
+        client = expensive_build(name)
+        self._cache[name] = client
+        self.__dict__[name] = client   # next access: plain hit, __getattr__ skipped
+        return client
+```
+
+Writing the result into `self.__dict__` is the trick worth stealing: the second access is a step-3 instance-dict hit and `__getattr__` never fires again — lazy on first touch, native speed after.
+
+<Quiz
+  id="02-attributes-and-descriptors-quiz-1"
+  lessonSlug="02-attributes-and-descriptors"
+  lang="en"
+  question="A class defines `x = property(get_x)` and a careless __init__ does `self.__dict__['x'] = 5` directly. What does `obj.x` return?"
+  choices={[
+    { label: "Whatever get_x returns — property is a data descriptor, and data descriptors on the type are checked before the instance __dict__", correct: true },
+    { label: "5 — instance attributes always shadow class attributes", misconception: "That rule holds only for plain class attributes and non-data descriptors. property defines __set__ (raising for read-only), making it a data descriptor — step 2 wins before the instance dict is consulted." },
+    { label: "AttributeError — you cannot put a key in __dict__ that collides with a property", misconception: "The write itself succeeds; __dict__ is a plain dict and bypasses __set__. The entry just sits there unreachable through normal lookup, which is what makes this bug confusing." },
+    { label: "5 on first access, then get_x afterwards because the property re-installs itself", misconception: "Lookup order is deterministic per access, not stateful: every obj.x walks the same algorithm and the data descriptor wins every time. Nothing re-installs anything." },
+  ]}
+/>
+
+## Writing a descriptor: validated fields and __set_name__
+
+A descriptor is any object whose class defines `__get__`/`__set__`/`__delete__` and which lives in a **class** attribute (instance attributes are never treated as descriptors). The classic production use is a reusable validated field — write the validation once, attach it to many attributes:
+
+```python
+class Positive:
+    def __set_name__(self, owner, name):     # called at class creation
+        self.slot = "_" + name               # learns its own attribute name
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self                      # class access: Account.balance
+        return getattr(obj, self.slot)
+
+    def __set__(self, obj, value):           # __set__ makes it a DATA descriptor
+        if value <= 0:
+            raise ValueError(f"{self.slot[1:]} must be positive, got {value!r}")
+        setattr(obj, self.slot, value)
+
+class Account:
+    balance = Positive()    # one line per validated field
+    limit = Positive()
+
+    def __init__(self, balance, limit):
+        self.balance = balance   # routes through Positive.__set__
+        self.limit = limit
+```
+
+`__set_name__` (Python 3.6+) is the quiet hero: the descriptor learns which attribute it was assigned to, so you stop passing names twice (`balance = Positive("balance")`). This is exactly the machinery under Django ORM fields, SQLAlchemy columns, and pydantic-style models: a class-level field object intercepts every read and write, so `user.email = "x"` can validate, mark the instance dirty for the UPDATE statement, or coerce types — and `User.email` (note `obj is None` in `__get__`) returns the field itself so query DSLs can build `User.email == "a@b.c"` expressions. The tradeoff is honest: every attribute access becomes a Python-level call, roughly 2–5x slower than a plain instance-dict read — which is why ORMs feel slow in tight loops over a million rows and why bulk paths (`values_list`, `.model_dump`) bypass the descriptors.
+
+<Quiz
+  id="02-attributes-and-descriptors-quiz-2"
+  lessonSlug="02-attributes-and-descriptors"
+  lang="en"
+  question="Your validated-field descriptor stores the value with `self.value = value` inside __set__ (on the descriptor itself) instead of on obj. Tests with one instance pass. What breaks in production?"
+  choices={[
+    { label: "All instances of the class share one value — the descriptor is a single class-level object, so the last write wins across every instance", correct: true },
+    { label: "Nothing; descriptors are copied per-instance automatically", misconception: "Descriptors are never copied — there is exactly one descriptor object stored in the class __dict__, shared by all instances. Per-instance state must live on obj (or in a dict keyed by the instance)." },
+    { label: "RecursionError, because __set__ calls itself", misconception: "self inside __set__ is the descriptor, not the managed instance — assigning self.value hits the descriptor's own __dict__ and does not re-enter __set__. The bug is shared state, not recursion." },
+    { label: "AttributeError on read, because __get__ looks on obj", misconception: "If __get__ also reads self.value the pair is consistent and reads succeed — returning another instance's data. It fails silently with wrong values, which is far worse than raising." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="One obj.x access: type MRO scan, data descriptors short-circuit, instance dict, non-data descriptors, then the __getattr__ fallback"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "access", label: "obj.x", sub: "__getattribute__" },
+    { id: "mro", label: "Scan type MRO", sub: "class __dict__s" },
+    { id: "data", label: "Data descriptor?", sub: "__set__/__delete__" },
+    { id: "idict", label: "obj.__dict__", sub: "plain attribute" },
+    { id: "nondata", label: "Non-data desc / class attr", sub: "functions live here" },
+    { id: "fallback", label: "__getattr__", sub: "only on miss" },
+  ]}
+  edges={[
+    { from: "access", to: "mro", label: "always" },
+    { from: "mro", to: "data", label: "found in class" },
+    { from: "data", to: "idict", label: "no — check instance" },
+    { from: "idict", to: "nondata", label: "miss" },
+    { from: "nondata", to: "fallback", label: "AttributeError" },
+  ]}
+  caption="Data descriptors (property, validated fields, __slots__ slots) win before the instance dict; non-data descriptors (functions → bound methods) lose to it. __getattr__ fires only after everything else raised AttributeError."
+/>
+
+<KeyTakeaway>`obj.x` runs `__getattribute__`: data descriptors found on the type's MRO beat the instance `__dict__`, which beats non-data descriptors and plain class attributes; `__getattr__` fires only on a miss. `property` is a data descriptor (hence unshadowable), functions are non-data descriptors (hence bound methods). A custom descriptor plus `__set_name__` gives you reusable validated fields — the exact machinery of ORM columns — at the cost of a Python-level call on every access.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-attributes-and-descriptors-retrieval"
+  lang="en"
+  questions={[
+    { q: "Recite the attribute lookup order for obj.x and explain where property, plain attributes, and methods each win or lose.", a: "type(obj).__getattribute__ runs: (1) scan type(obj).__mro__ class __dict__s for x; (2) if found and it is a data descriptor — defines __set__ or __delete__ — call its __get__ and stop, the instance dict is never consulted; (3) otherwise check obj.__dict__, a plain instance attribute wins here; (4) otherwise a non-data descriptor (only __get__, i.e. functions) or plain class attribute answers; (5) total miss raises AttributeError, which triggers __getattr__ if defined. property defines __set__ even when read-only, so it is a data descriptor and cannot be shadowed by instance state — even self.__dict__['x']=5 stays unreachable. Functions are non-data descriptors: step 4's function.__get__ returns the bound method, and per-instance shadowing of methods works." },
+    { q: "Why is __getattr__ the right hook for lazy loading but a recursion hazard, and how do descriptors plus __set_name__ power ORM fields?", a: "__getattr__ runs only after normal lookup raised AttributeError — zero overhead on every hit, unlike __getattribute__ which intercepts all access. The hazard: any attribute miss inside __getattr__ re-enters __getattr__, giving RecursionError instead of a clear failure; guard internals (raise AttributeError for underscore names) and cache results into self.__dict__ so subsequent reads are plain hits. ORM fields are data descriptors stored as class attributes: __set_name__ tells the field its attribute name at class creation, __set__ validates and marks the instance dirty on every user.email = ... write, and __get__ with obj is None returns the field itself so User.email builds query expressions. Cost: each access is a Python-level call, ~2-5x a dict read, which is why bulk paths bypass descriptors." },
+  ]}
+/>
+
+<Recap lang="en">
+Attribute access is an algorithm, not a dict read. `obj.x` invokes `type(obj).__getattribute__`, which scans the type's MRO first: a data descriptor there — anything defining `__set__` or `__delete__`, like `property`, validated fields, or `__slots__` slots — answers before the instance `__dict__` is even consulted, which is why properties cannot be shadowed and why a smuggled `__dict__['x']` entry stays unreachable. Only then does the instance dict win, and below it non-data descriptors: functions define just `__get__`, so step four is where `function.__get__` manufactures bound methods, and why per-instance method overrides work. `__getattr__` is a different beast from `__getattribute__`: the latter intercepts every access (override it and delegate via `object.__getattribute__` or recurse), the former fires only after a miss — perfect for lazy loading, with the classic recursion failure when the hook's own body misses an attribute, and the cache-into-`__dict__` trick to make later reads native-speed. Writing a descriptor is four methods: `__get__` (return self on class access), `__set__` (validation — its presence makes you a data descriptor), optional `__delete__`, and `__set_name__` so the field learns its own name at class creation. That is the entire trick under Django fields, SQLAlchemy columns, and pydantic models — at an honest cost of a Python-level call per access, roughly 2–5x a plain read, which bulk APIs deliberately bypass.
+</Recap>
