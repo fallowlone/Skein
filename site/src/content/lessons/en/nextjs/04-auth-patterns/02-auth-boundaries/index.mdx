@@ -1,0 +1,153 @@
+---
+concepts:
+- nextjs-auth-boundaries
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-auth-boundaries"
+sources:
+- https://nextjs.org/docs/app/building-your-application/authentication
+- https://vercel.com/blog/postmortem-on-next-js-middleware-bypass
+spiral: []
+status: ready
+summary: 'Middleware is an optimistic redirect, not a guard — CVE-2025-29927 skipped it with one header. Layouts render independently and do not re-run on navigation, so a layout check protects nothing. The authoritative boundary is a Data Access Layer: verify the session at every read.'
+title: 'Auth boundaries: why middleware and layouts cannot protect, and the Data Access Layer that can'
+track: "nextjs"
+unit: "04-auth-patterns"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+March 2025. Security researchers publish CVE-2025-29927, severity 9.1: send a Next.js app the header `x-middleware-subrequest` with the right value, and middleware simply does not run. The header was an internal marker Next used to stop middleware from recursing into itself; nothing stripped it from external requests, so anyone could wear it. For every self-hosted app whose entire authentication was a `middleware.ts` checking a session cookie and redirecting to `/login`, every protected route was now public — admin panels, dashboards, billing pages — one curl flag away. A platform engineer reads the Vercel postmortem with detached interest, then goes cold: their own admin panel checks auth in exactly one place. Middleware. The patch (15.2.3 / 14.2.25) shipped fast, but the deeper lesson is not about one header. It is that they had built a vault whose only lock was on the lobby door — and the lobby had a service entrance.
+</Hook>
+
+<Crux>Middleware only redirects optimistically; layouts don't protect children. Real auth lives in a Data Access Layer at every read.</Crux>
+
+<Explanation>
+
+## Middleware is a doorman, not a vault
+
+Middleware runs before route resolution, on every matched request, which makes it *feel* like the natural place for auth — one file, all routes covered. But look at what it can actually do well: it executes in a constrained runtime where you should not be doing database lookups on every request, so the practical pattern is an **optimistic check** — read the session cookie, maybe verify a signature locally, and redirect unauthenticated users to `/login` before any rendering work happens. That is genuinely valuable: it is fast (sub-millisecond, no IO), it keeps logged-out users from ever seeing a flash of protected UI, and it centralizes the *redirect policy*. What it must never be is the only check.
+
+CVE-2025-29927 is the canonical proof, and its mechanism is worth knowing precisely. Next.js used the `x-middleware-subrequest` header internally to prevent infinite recursion — if middleware triggered a fetch that re-entered middleware, the header told Next "already done, skip." The trust boundary failure: external requests carrying that header were indistinguishable from internal ones, so an attacker who knew the expected value (derivable from the middleware file path, repeated to satisfy the recursion-depth check) could instruct the framework to skip your auth entirely. Vercel's hosted platform stripped the header at the edge; self-hosted deployments were exposed. The patch fixed the header, but the *class* survives: any single front-door check can be bypassed by header smuggling, proxy misrouting, a `matcher` pattern that forgot a route, or the next CVE. Defense-in-depth is not a compliance phrase here — it is the design conclusion the incident forces.
+
+<Quiz
+  id="02-auth-boundaries-quiz-1"
+  lessonSlug="02-auth-boundaries"
+  lang="en"
+  question="An app's only auth check is middleware that verifies the session cookie and redirects to /login. What is the correct lesson to draw from CVE-2025-29927 (the x-middleware-subrequest bypass)?"
+  choices={[
+    { label: "Middleware is one bypassable layer among several — keep it for optimistic redirects, but the authoritative check must sit next to the data, where no skipped front door can matter", correct: true },
+    { label: "Upgrade to the patched version and the architecture is sound again", misconception: "The patch closes one bypass, not the class. Header smuggling, proxy misconfigurations, matcher gaps, and future CVEs all attack the same single point. An architecture that is fully exposed by skipping one file was fragile before the CVE and stays fragile after the patch." },
+    { label: "Move the same check into the root layout instead, since layouts wrap every page", misconception: "That trades one bypassable boundary for a worse one: layouts do not re-render on client-side navigation and render independently of their children, so a layout check does not even reliably execute on the requests it is supposed to guard." },
+    { label: "Do full database-backed session validation inside middleware so the front door is stronger", misconception: "A stronger lock on the same single door does not fix the bypass class — the CVE skipped middleware entirely, so any logic inside it, however thorough, never ran. It also puts a DB round-trip in front of every matched request, including static assets caught by loose matchers." },
+  ]}
+/>
+
+## Layouts do not protect their children
+
+The second tempting place for auth is `layout.tsx` — it wraps every page below it, so a session check there *looks* like a perimeter. It is not, for two architectural reasons that have nothing to do with bugs. First, **layouts do not re-render on client-side navigation**: partial rendering preserves shared layouts, so navigating from `/dashboard/a` to `/dashboard/b` re-renders only the page segment. Your layout's auth check ran once, on the first load — if the session was revoked since, or the user logged out in another tab, navigation within the section never re-asks the question. Second, **layouts and pages render independently**. They are separate entries in the RSC payload, rendered in parallel server passes; a layout cannot pass props to its page, and crucially, the page's data fetches do not wait for the layout's auth check to pass. The protected data is being fetched *while* the layout is still deciding whether to redirect.
+
+There is a sharper version of the same fact: a client can request the RSC payload for a specific segment directly. Partial prerendering and per-segment requests mean the framework's unit of delivery is the segment, not the wrapped tree — so reasoning "my page is safe because something above it checks" assumes a nesting guarantee the rendering model does not give you. A `redirect()` in a layout is a UX courtesy that usually fires; it is not a security boundary that always fires. The Next.js authentication docs say this in one line — do auth checks close to the data source, not in layouts — and teams skim past it because the layout check *appears to work* in every manual test. It fails exactly in the cases nobody manually tests: revoked sessions mid-navigation, direct segment fetches, races between parallel renders.
+
+## The Data Access Layer: check at every read
+
+The boundary that survives all of the above is the one attached to the data itself. A **Data Access Layer (DAL)** is a module — the only module — through which queries for protected data flow, and every function in it starts by verifying the session. No path to the data can skip the check, because the check *is* the path. React's `cache()` makes this affordable: `verifySession` is memoized per request, so ten DAL calls in one render tree cost one session lookup, not ten.
+
+```ts
+// app/lib/dal.ts
+import 'server-only';
+import { cache } from 'react';
+import { cookies } from 'next/headers';
+import { redirect, notFound } from 'next/navigation';
+import { kv } from '~/lib/kv';
+import { db } from '~/lib/db';
+
+export const verifySession = cache(async () => {
+  const token = (await cookies()).get('__Host-session')?.value;
+  const session = token ? await kv.get(`session:${token}`) : null;
+  if (!session) redirect('/login');   // memoized: 10 calls per render = 1 lookup
+  return session;
+});
+
+export async function getInvoice(id: string) {
+  const session = await verifySession();        // runs on EVERY read — this is the boundary
+  const invoice = await db.invoice.findUnique({ where: { id } });
+  if (invoice?.ownerId !== session.userId) notFound(); // instance-level authz, not just authn
+  return { id: invoice.id, total: invoice.total };     // DTO: return fields, not rows
+}
+```
+
+Notice the second check: `ownerId !== session.userId`. Authentication ("who are you") at the top of the function, **authorization** ("may *you* see *this row*") before the return — both belong in the DAL because both are properties of the data access, not of the route. The DTO return is part of the same discipline: return the fields the UI needs, never the raw row, so a future client component receiving this object cannot leak columns nobody meant to ship. The layered result: middleware gives fast optimistic redirects (UX), pages and layouts render whatever they like (presentation), and the DAL is the single place where a security claim is actually enforced — the place a middleware bypass, a forgotten matcher entry, or a layout race cannot reach, because the request still has to come through `verifySession` to touch a row.
+
+<Inset kind="why" lang="en">
+Why does "check at every read" not blow up the latency budget? Because the expensive part is memoized and the cheap part is a comparison. verifySession behind React cache() runs once per request no matter how many DAL functions a render calls — one KV lookup, ~1-2 ms. The per-row ownership comparison is nanoseconds on data you already fetched. Compare that to the cost of the alternative: one pentest finding of the category "horizontal privilege escalation via direct object reference" is weeks of remediation, disclosure decisions, and every similar endpoint audited by hand. The DAL converts that audit from "every route, every time" to "is there a query that bypasses the DAL?" — a grep, not an investigation.
+</Inset>
+
+<Quiz
+  id="02-auth-boundaries-quiz-2"
+  lessonSlug="02-auth-boundaries"
+  lang="en"
+  question="A team puts their session check in app/dashboard/layout.tsx: no session, redirect('/login'). Pages under it fetch billing data with no checks of their own. Why is this not a security boundary?"
+  choices={[
+    { label: "Layouts persist across client-side navigation (the check does not re-run after first load) and render independently of pages (page data fetches do not wait for the layout's verdict) — so the check neither reliably re-executes nor gates the reads", correct: true },
+    { label: "It is a boundary, but only in production builds — dev mode skips layout execution", misconception: "Dev and production both execute layouts; that is not the gap. The gap is architectural: partial rendering preserves the layout across navigations and renders page segments independently, in every mode." },
+    { label: "redirect() does not work in server components, so the layout check silently no-ops", misconception: "redirect() works fine in layouts and server components — it throws a control-flow signal Next handles. The check does run on the initial load; the problem is everything after that load, and the parallel page render it never gated." },
+    { label: "The check fails because layouts cannot read cookies", misconception: "Layouts can read cookies via cookies() like any server component (it makes the route dynamic). The failure is not capability but coverage: the layout's run schedule and parallelism mean its verdict does not cover its children's data access." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Three candidate boundaries; only the one attached to the data is authoritative"
+  hue="var(--d-ai)"
+  perRow={3}
+  nodes={[
+    { id: "req", label: "Request", sub: "cookie, maybe hostile headers" },
+    { id: "mw", label: "Middleware", sub: "optimistic redirect — bypassable" },
+    { id: "layout", label: "Layout check", sub: "persists, renders in parallel" },
+    { id: "page", label: "Page render", sub: "fetches regardless" },
+    { id: "dal", label: "DAL verifySession", sub: "cache(): 1 lookup/request" },
+    { id: "data", label: "Row + authz", sub: "ownerId === session.userId" },
+  ]}
+  edges={[
+    { from: "req", to: "mw", label: "can skip (CVE)" },
+    { from: "mw", to: "layout", label: "first load only" },
+    { from: "layout", to: "page", label: "no gating" },
+    { from: "page", to: "dal", label: "every read" },
+    { from: "dal", to: "data", label: "enforced" },
+  ]}
+  caption="Middleware redirects fast but can be skipped — CVE-2025-29927 proved the class. A layout check runs once and never gates the page's parallel fetches. The Data Access Layer is unavoidable by construction: every query starts with a memoized verifySession and an instance-level ownership check."
+/>
+
+<KeyTakeaway>Middleware does optimistic redirects only — CVE-2025-29927 showed a single header could skip it entirely. Layouts persist across navigation and render independently of pages, so a layout check neither re-runs nor gates child data fetches. The authoritative boundary is the Data Access Layer: every read starts with a cache()-memoized verifySession plus per-row authorization, and no path to the data can skip it.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-auth-boundaries-retrieval"
+  lang="en"
+  questions={[
+    { q: "What exactly did CVE-2025-29927 allow, and what is the architectural conclusion beyond patching?", a: "Sending the x-middleware-subrequest header — an internal marker Next used to stop middleware recursion — made the framework skip middleware entirely on self-hosted deployments (Vercel stripped it at the edge). Apps whose only auth was a middleware cookie-check had every protected route exposed; patched in 15.2.3/14.2.25. The conclusion: the bypass class survives the patch — header smuggling, proxy misroutes, matcher gaps, future CVEs all attack a single front door. Middleware stays useful for fast optimistic redirects, but the authoritative check must sit where a skipped front door cannot matter: at the data access." },
+    { q: "Why can a layout.tsx auth check not protect the pages under it, and what replaces it?", a: "Two architectural reasons: layouts persist across client-side navigation — partial rendering means the check runs on first load and never again as the user navigates within the section, missing mid-session revocations — and layouts render independently of pages, in parallel; the page's data fetches do not wait for the layout's verdict, and segments can be requested individually. So the check neither reliably re-executes nor gates reads. The replacement is a Data Access Layer: every query function begins with a React cache()-memoized verifySession (one lookup per request regardless of call count) and checks per-row ownership before returning a DTO." },
+  ]}
+/>
+
+<Recap lang="en">
+The App Router gives you three plausible places to check auth, and they are not interchangeable layers — they are one UX optimization, one trap, and one boundary. Middleware runs before routing on every matched request, which makes it the right place for an optimistic check: read the cookie, verify locally without database IO, redirect logged-out users before any rendering. It must never be the only check, and CVE-2025-29927 is the standing proof: an internal header, x-middleware-subrequest, was trusted from external requests, so one crafted header skipped middleware entirely on self-hosted apps — every middleware-only protected route became public until 15.2.3/14.2.25. The patch closed the header; the class — header smuggling, proxy misrouting, matcher gaps, the next CVE — remains, and it indicts any architecture that dies when one front door is skipped. Layouts are the trap: a session check in layout.tsx looks like a perimeter but persists across client-side navigation (it runs on first load and never re-asks, missing revoked sessions) and renders independently of its pages — page data fetches proceed in parallel with the layout's verdict, and segments are individually addressable, so the nesting guarantee you are imagining does not exist in the rendering model. The boundary that holds is the Data Access Layer: a single module through which all protected queries flow, where every function opens with verifySession — memoized via React cache() so ten calls cost one ~1-2 ms lookup — then checks instance-level authorization (does this session own this row) and returns a DTO of needed fields rather than the raw row. Middleware for speed, DAL for truth, and nothing in between mistaken for security.
+</Recap>

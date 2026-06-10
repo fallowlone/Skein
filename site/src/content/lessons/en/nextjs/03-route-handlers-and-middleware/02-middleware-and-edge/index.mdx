@@ -1,0 +1,150 @@
+---
+concepts:
+- nextjs-middleware
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-middleware-and-edge"
+sources:
+- https://nextjs.org/docs/app/building-your-application/routing/middleware
+- https://vercel.com/blog/postmortem-on-next-js-middleware-bypass
+spiral: []
+status: ready
+summary: 'middleware.ts runs before every matched request: matcher config, rewrite/redirect/headers. It is for routing decisions — locale, A/B, redirects — not heavy auth or DB calls. CVE-2025-29927 let one header skip middleware entirely: the definitive case for defense in depth.'
+title: 'Middleware and the edge of trust: matchers, rewrites, and CVE-2025-29927'
+track: "nextjs"
+unit: "03-route-handlers-and-middleware"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+March 2025. Security researchers publish CVE-2025-29927, severity 9.1: any Next.js app that enforced authentication **only in middleware** could be fully bypassed by adding a single request header — `x-middleware-subrequest`, with a value like `middleware:middleware:middleware:middleware:middleware`. That header was Next's own internal recursion guard; the framework saw it, concluded "this request already went through middleware," and skipped it. No exploit chain, no timing attack — `curl` with one extra header walked straight past every `/admin` and `/dashboard` gate on unpatched, self-hosted deployments. Teams whose route handlers and data layer re-checked the session shrugged and patched calmly. Teams whose entire authorization story was fifteen lines in `middleware.ts` had an incident. The CVE did not reveal a weird bug so much as a category error: middleware is a routing layer that runs before every matched request — useful, fast, and by construction skippable. This lesson is about using it for what it is.
+</Hook>
+
+<Crux>Middleware runs before every matched request: rewrite, redirect, headers. It's a router hook, not your auth layer — CVE-2025-29927.</Crux>
+
+<Explanation>
+
+## One file, every request: what middleware actually is
+
+Next.js middleware is a single `middleware.ts` at the project root (or `src/`), exporting one function that runs **before the router resolves every request the matcher allows through** — pages, route handlers, prefetches, even static assets if your matcher is sloppy. It receives a `NextRequest` and can do exactly four things: let the request continue (`NextResponse.next()`), **redirect** (the browser sees a 3xx and the URL changes), **rewrite** (the URL stays, but Next internally serves a different route — the mechanism behind A/B tests and locale routing), and mutate **headers and cookies** on the request going in or the response going out.
+
+```ts
+// middleware.ts
+import { NextRequest, NextResponse } from "next/server";
+
+export function middleware(request: NextRequest) {
+  // A/B: bucket once via cookie, then rewrite — URL stays /pricing
+  const bucket = request.cookies.get("ab-pricing")?.value ?? assignBucket();
+  const response =
+    bucket === "b"
+      ? NextResponse.rewrite(new URL("/pricing-b", request.url))
+      : NextResponse.next();
+  response.cookies.set("ab-pricing", bucket, { maxAge: 60 * 60 * 24 * 30 });
+  return response;
+}
+
+export const config = {
+  // run on everything except Next internals and files with extensions
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\..*).*)"],
+};
+```
+
+The `matcher` is the throttle. It is evaluated at build time (values must be statically analyzable — no template literals from env vars) and supports path patterns with regex groups, including the negative-lookahead idiom above that every production app ends up with. Get it wrong in the permissive direction and your middleware runs on every image and font request — at which point whatever latency it adds is multiplied across the most numerous requests you serve. The distinction between redirect and rewrite is worth keeping crisp: a redirect costs a round trip and is visible to the user; a rewrite is invisible and free of extra round trips, but creates URL-vs-content mismatches you must keep in your head while debugging ("why does /pricing render the B variant?").
+
+## What belongs in middleware — and the latency math for what doesn't
+
+Middleware earns its place for decisions that are **cheap, request-shaped, and needed before routing**: locale detection from `Accept-Language` and geo headers, A/B bucket assignment, legacy-URL redirects, bot filtering, setting a request ID header, and the *optimistic* tier of auth — "no session cookie at all? bounce to /login" — where being wrong is harmless because the real check happens deeper.
+
+The anti-pattern is making it do real work. Middleware sits in front of **every matched request**, so its latency is a tax on the whole site: a 40ms session lookup against a database adds 40ms to every page, every API call, every prefetch your `<Link>` components fire as users scroll. Prefetches are the silent multiplier — a viewport of links can fire a dozen middleware executions for navigations that never happen. And historically middleware ran **only on the Edge runtime** (Node.js middleware shipped as stable in Next 15.5), so database drivers using TCP sockets, native modules, and heavyweight JWT libraries simply didn't run there — teams discovered this as cryptic bundling errors the first time they imported their ORM into `middleware.ts`. The honest pattern: middleware reads what's *in the request* (cookie presence, signed-cookie verification with web crypto at most), and anything touching storage lives in the route handler, server component, or data layer that actually serves the request.
+
+<Quiz
+  id="02-middleware-and-edge-quiz-1"
+  lessonSlug="02-middleware-and-edge"
+  lang="en"
+  question="A team adds a session lookup (one 35ms Postgres query) to middleware.ts with a matcher covering all pages. Site-wide p50 latency rises far more than 35ms worth of user-perceived slowness, and DB connections spike. What is the structural cause?"
+  choices={[
+    { label: "Middleware runs before every matched request — including API calls and every Link prefetch — so one query per page-view became a query per request, multiplying both latency tax and connection load", correct: true },
+    { label: "Middleware runs twice per request (once for the page, once for the response), doubling the query", misconception: "Middleware executes once per matched request on the way in — there is no second response-phase execution. The multiplication comes from how many requests match (prefetches, API routes, assets if the matcher is loose), not from a double run." },
+    { label: "Edge runtime executes queries more slowly than Node, which inflates the 35ms", misconception: "The runtime is not the multiplier — and on classic edge middleware a TCP Postgres driver often cannot run at all. Even with Node middleware, the cost is structural: a per-request tax in front of everything, paid most heavily by prefetches users never consume." },
+    { label: "The matcher is evaluated at runtime for each request, and the regex itself is slow", misconception: "Matchers are compiled at build time and match in microseconds — they are never the bottleneck. The expensive part is what the middleware body does on every request the matcher lets through; the fix is moving storage-touching work deeper into the stack." },
+  ]}
+/>
+
+## CVE-2025-29927: the header that turned middleware off
+
+The mechanism is almost embarrassingly simple. When middleware itself fetches a route (a rewrite, for instance), Next must prevent infinite recursion — middleware triggering middleware forever. The guard was an internal header, `x-middleware-subrequest`, carrying a count of middleware invocations; when it indicated the recursion depth was reached, Next **skipped middleware for that request**. The flaw: nothing stopped an *external* client from sending that header. A request arriving with `x-middleware-subrequest: middleware:middleware:middleware:middleware:middleware` (matching the internal depth limit of 5; older versions needed variants like `src/middleware`) was treated as having already run the gauntlet. Auth check in middleware? Skipped. Geo-block? Skipped. CSP header injection? Skipped.
+
+Patched versions — 15.2.3, 14.2.25, and backports 13.5.9 / 12.3.5 — fix it by stripping the header from external requests, and Vercel's platform filtered it at the CDN before the patch existed (the postmortem is in this lesson's sources). But the durable lesson is architectural, and it would survive even a bug-free framework: **middleware executes in front of your app, in a layer whose invariants you don't control**. CDNs, reverse proxies, framework internals — any of them can have a path that doesn't run your function. The pattern that survives this class of bug is **defense in depth**: middleware does the cheap, user-experience tier (redirect anonymous users so they never see a flash of a protected page), while the *enforcing* check — session verification, authorization against the resource — lives where the data is actually read: the route handler, the server action, the data-access layer. Teams with that structure read the CVE announcement as "patch this week"; teams without it read it as "rotate everything and audit access logs."
+
+<Inset kind="why" lang="en">
+Why does Next even have a skip-middleware mechanism rather than just running it always? Because middleware can rewrite to routes that would match middleware again — `/pricing` rewrites to `/pricing-b`, which matches the same `matcher`, which rewrites again. Some recursion guard must exist, and an in-band header is the cheapest way to carry "this is a subrequest" across the internal fetch boundary. The vulnerability wasn't the guard; it was trusting the *client-supplied* copy of an internal signal — the same trust-boundary mistake as honoring `X-Forwarded-For` from the open internet. In-band signaling between trusted components must be stripped or authenticated at the edge of trust.
+</Inset>
+
+<Quiz
+  id="02-middleware-and-edge-quiz-2"
+  lessonSlug="02-middleware-and-edge"
+  lang="en"
+  question="Post-CVE-2025-29927, a team debates where authentication belongs. Their middleware redirects users without a session cookie to /login. Which division of labor is the defensible one?"
+  choices={[
+    { label: "Keep the middleware redirect as cheap UX-tier optimistic protection, but make the enforcing check — session verification and per-resource authorization — happen in the route handlers, server actions, and data layer that serve the data", correct: true },
+    { label: "Move all auth into middleware and pin the patched Next version forever, since the header is now stripped", misconception: "The patch closes one bypass, not the category: middleware runs in a layer whose invariants (CDN behavior, proxy paths, future framework internals) you don't control. A single choke point in someone else's layer is exactly what the CVE punished." },
+    { label: "Delete the middleware check entirely — it gave a false sense of security and adds latency", misconception: "The optimistic tier is genuinely useful: anonymous users never flash protected UI, and the cost of a cookie-presence check is microseconds. The CVE's lesson is that it must not be the only tier, not that the tier is worthless." },
+    { label: "Verify the session in middleware against the database, since checking earlier is always more secure", misconception: "Earlier is not stronger when the earlier layer is skippable — that's the precise failure mode the CVE demonstrated, plus a per-request DB tax on every matched request and prefetch. Enforcement belongs where the resource is accessed." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Where middleware sits — and the two paths around it that justify defense in depth"
+  hue="var(--d-ai)"
+  perRow={3}
+  nodes={[
+    { id: "req", label: "Request", sub: "browser / curl" },
+    { id: "matcher", label: "Matcher", sub: "build-time compiled" },
+    { id: "mw", label: "middleware()", sub: "next / rewrite / redirect" },
+    { id: "route", label: "Route layer", sub: "page / route handler" },
+    { id: "dal", label: "Data layer", sub: "enforcing auth check" },
+    { id: "bypass", label: "CVE-2025-29927", sub: "header skipped mw" },
+  ]}
+  edges={[
+    { from: "req", to: "matcher", label: "every request" },
+    { from: "matcher", to: "mw", label: "matched" },
+    { from: "mw", to: "route", label: "next()/rewrite" },
+    { from: "route", to: "dal", label: "reads data" },
+    { from: "bypass", to: "route", label: "straight through" },
+  ]}
+  caption="Middleware filters every matched request before routing — but a skip path existed (one spoofed internal header) and the layer above it is not yours. The enforcing authorization check lives at the data layer, so a middleware bypass downgrades from breach to patch-this-week."
+/>
+
+<KeyTakeaway>Middleware is one function before every matched request: next, redirect, rewrite, headers — for locale, A/B, redirects, and optimistic auth UX. Its latency multiplies across all requests and prefetches, so no DB calls. CVE-2025-29927 skipped it with one header: enforce authorization at the data layer, always.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-middleware-and-edge-retrieval"
+  lang="en"
+  questions={[
+    { q: "What can middleware do, what should it do, and why is the latency math unforgiving?", a: "It can continue (NextResponse.next), redirect (visible 3xx, costs a round trip), rewrite (URL unchanged, different route served internally — the A/B and locale mechanism), and mutate request/response headers and cookies, gated by a build-time-compiled matcher (use the negative-lookahead idiom to exclude _next internals and files). It should host cheap, request-shaped, pre-routing decisions: locale, A/B bucketing, legacy redirects, request IDs, cookie-presence auth redirects. It should not touch databases or heavy crypto: it runs before every matched request including Link prefetches, so a 35ms lookup becomes a site-wide tax multiplied by requests that never become navigations — and classic edge middleware couldn't run TCP drivers or native modules at all (Node middleware only stabilized in 15.5)." },
+    { q: "Explain the mechanism of CVE-2025-29927 and the architecture that survives bugs of its class.", a: "Next used an internal header, x-middleware-subrequest, as a recursion guard for middleware-initiated subrequests; at depth limit it skipped middleware. Nothing stripped the header from external requests, so any client sending it with the right value (middleware repeated five times, or src/middleware variants on older lines) got middleware skipped entirely — auth, geo-blocks, header injection all bypassed on unpatched self-hosted apps. Fixed in 15.2.3 / 14.2.25 (backports 13.5.9, 12.3.5) by stripping the header. The surviving architecture is defense in depth: middleware as the optimistic UX tier (redirect anonymous users), with enforcing session verification and per-resource authorization at the route handler / server action / data-access layer — because middleware runs in a layer whose invariants you don't control, and client-supplied copies of internal signals must never be trusted." },
+  ]}
+/>
+
+<Recap lang="en">
+Middleware is a single function that runs before every request its matcher admits, and its whole API is four moves: continue, redirect (user-visible 3xx with a round-trip cost), rewrite (invisible internal re-route — the substrate of A/B testing and locale routing, at the price of URL-vs-content mismatch during debugging), and header/cookie mutation. The matcher is compiled at build time, must be statically analyzable, and nearly every production app converges on the negative-lookahead pattern excluding _next internals and file requests — because a permissive matcher multiplies middleware's cost across images, fonts, and the prefetch storm that Link components emit for navigations that never happen. That multiplication is why the content rule is strict: middleware hosts cheap, request-shaped, pre-routing decisions — locale, A/B buckets, redirects, request IDs, and the optimistic auth tier that bounces session-less users to /login — while anything that touches storage belongs in the layer that serves the data; classic middleware ran exclusively on the Edge runtime besides, where TCP database drivers and native modules don't load, with Node middleware arriving as stable only in 15.5. CVE-2025-29927 turned this from advice into doctrine: Next's internal recursion guard, the x-middleware-subrequest header, was honored when sent by external clients, so one spoofed header skipped middleware entirely on unpatched self-hosted deployments — every middleware-only auth gate evaporated, severity 9.1, fixed in 15.2.3/14.2.25 by stripping the header at the trust boundary. The durable lesson is structural, not version-specific: middleware executes in front of your app in a layer whose invariants you don't own, so it carries the user-experience tier of protection, and the enforcing checks — session verification, per-resource authorization — live in route handlers, server actions, and the data-access layer. With that structure, a middleware bypass is a calm patch; without it, an incident.
+</Recap>

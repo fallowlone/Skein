@@ -1,0 +1,146 @@
+---
+concepts:
+- nextjs-server-only
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-server-only-and-secrets"
+sources:
+- https://nextjs.org/docs/app/building-your-application/authentication
+- https://nextjs.org/docs/app/api-reference/functions/server-actions
+spiral: []
+status: ready
+summary: 'Secrets leak through the client module graph and serialized props, not just the network. import server-only turns a wrong import into a build error; NEXT_PUBLIC_ vars are inlined into the bundle forever; taint APIs are an experimental tripwire, not a security boundary.'
+title: 'server-only and secrets: the module graph, NEXT_PUBLIC_, and what taint APIs actually catch'
+track: "nextjs"
+unit: "04-auth-patterns"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The pentest report's first finding needs no exploit chain: "API secret present in public JavaScript bundle." The tester greps the deployed chunks under `_next/static/`, and there it is — a production API key, in plaintext, shipped to every visitor for the past three months. Git archaeology finds the moment it happened: a client component needed to call an internal API, the fetch failed with an undefined key, and a developer "fixed" it by renaming `API_SECRET` to `NEXT_PUBLIC_API_SECRET`. The fetch turned green, the PR said "fix env var not loading," review approved it in minutes. Nobody was reckless — the developer did what the error message seemed to suggest, and nothing in the build warned that `NEXT_PUBLIC_` means *inline this string into the bundle at build time, permanently*. The fix took an hour. The key rotation, the audit of three months of access logs, and the customer disclosure conversation took three weeks. This lesson is about making that rename impossible.
+</Hook>
+
+<Crux>Secrets leak through the module graph, not the network. server-only turns the wrong import into a build error instead of a leaked key.</Crux>
+
+<Explanation>
+
+## The module graph decides what ships to the browser
+
+In the App Router, "server code" and "client code" are not separate folders — they are regions of one module graph, split by the `'use client'` directive. A file with `'use client'` and **everything it imports, transitively**, must be bundleable for the browser. That transitive clause is where leaks live: you import one innocent helper from `lib/billing.ts` into a client component, and the bundler pulls the *entire module* — including the parts that touch secrets — into the client graph. The module's top-level code now executes in the browser; any string literal in it ships verbatim in a public chunk.
+
+Environment variables follow two different rules, and conflating them is the classic mistake. Plain server env vars (`process.env.STRIPE_SECRET_KEY`) are read at runtime on the server; if that code ends up in a client bundle, the value is `undefined` in the browser — a crash or a silent failure, embarrassing but not a leak. `NEXT_PUBLIC_`-prefixed vars are the opposite: they are **inlined at build time** — the bundler string-replaces `process.env.NEXT_PUBLIC_X` with the literal value everywhere it appears. Three consequences: the value is visible to anyone who opens devtools; it cannot be rotated without a rebuild and redeploy (the old value lives on in cached chunks until they expire); and the prefix is a one-way door — once a secret has shipped under `NEXT_PUBLIC_`, it is compromised, full stop, and rotation is the only remedy. The prefix is for genuinely public config: analytics ids, public API URLs. Anything you would not paste into a tweet does not get the prefix.
+
+## server-only: a build-time tripwire
+
+The defense is not vigilance — it is making the wrong import fail the build. The `server-only` package contains no runtime code; its trick is in `package.json` export conditions: when resolved in a server context it resolves to an empty module, and when a client bundle tries to include it, it resolves to a module that throws a build error. One import line at the top of any module that must never reach the browser turns "a developer imported the wrong file" from a silent leak into a red build:
+
+```ts
+// lib/billing.ts
+import 'server-only';                // client import of this module = build error
+import Stripe from 'stripe';
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+
+export async function chargeCustomer(customerId: string, amountCents: number) {
+  return stripe.charges.create({ customer: customerId, amount: amountCents, currency: 'usd' });
+}
+
+// The innocent-looking helper that tempts client imports — now safely fenced:
+export function formatAmount(cents: number) {
+  return (cents / 100).toFixed(2);
+}
+```
+
+The discipline that makes this cheap: put `import 'server-only'` in every module that reads secrets, touches the database, or wraps a privileged SDK — reflexively, the way you write types. Pure formatting helpers that clients legitimately need go in their own `lib/format.ts` with no secret-bearing siblings, so nobody is ever tempted to import across the fence. The mirror package `client-only` exists for the reverse mistake (browser-API code pulled into server rendering). The cost of the tripwire is one import line; the failure it converts is the three-week incident from the Hook into a thirty-second build error pointing at the offending import chain.
+
+<Quiz
+  id="03-server-only-and-secrets-quiz-1"
+  lessonSlug="03-server-only-and-secrets"
+  lang="en"
+  question="A fetch in a client component fails because process.env.API_SECRET is undefined in the browser. A developer renames it to NEXT_PUBLIC_API_SECRET and the fetch works. What actually happened?"
+  choices={[
+    { label: "The build inlined the secret as a string literal into the public JS bundle — it now ships to every visitor, cannot be rotated without a rebuild, and must be treated as compromised", correct: true },
+    { label: "Next.js now securely forwards the variable to the client over an encrypted channel", misconception: "There is no channel and no encryption — NEXT_PUBLIC_ is a build-time string replacement. The value is baked into static chunks as a literal, readable by anyone who views source. The prefix is a publication marker, not a transport mechanism." },
+    { label: "The variable is available only to logged-in users' browsers, so exposure is limited", misconception: "Static chunks are served to everyone identically — auth never gates them. CDNs cache them publicly; any visitor, crawler, or pentester grepping _next/static/ gets the value. Bundle content is the most public artifact your app produces." },
+    { label: "This is fine if the key has read-only scope, since the client was calling the API anyway", misconception: "The client component calling an internal API with a server secret is the design error — the call belongs in a server component, route handler, or server action that holds the secret server-side. Scoping the key narrows the blast radius but still hands every visitor a credential they were never meant to hold." },
+  ]}
+/>
+
+## Data leaks: serialized props, DTOs, and what taint actually does
+
+Code is one leak channel; **data is the other**. Every prop you pass from a server component to a client component is serialized into the RSC payload — embedded in the HTML document and in subsequent navigation responses, fully visible in view-source. The classic incident shape: `getUser()` returns the whole database row, a server component passes `user` to a client `<ProfileCard>`, and `passwordHash`, `mfaSecret`, and `stripeCustomerId` are now in the page source for anyone — no breach, no exploit, just serialization doing its job on data that should never have crossed. The structural fix is the **DTO discipline** from the auth docs: data-access functions return explicitly constructed objects with the fields the UI needs, never the raw row. The leak then requires someone to *add* a sensitive field to a DTO on purpose, instead of requiring everyone to *remember* to strip it everywhere.
+
+React's taint APIs are a second tripwire for this channel, and they deserve an honest description. `experimental_taintObjectReference(message, user)` makes React **throw at render time** if that exact object reference is passed to a client component; `experimental_taintUniqueValue(message, lifetime, secret)` does the same for a specific primitive value. The limits matter as much as the feature: both are experimental (behind the `taint` flag); object tainting tracks the *reference*, so `{ ...user }` produces an untainted copy that sails through; value tainting tracks the *exact value*, so any derivation — uppercase, base64, substring — escapes it. And both fire at runtime, not build time: a taint violation on a rarely rendered admin page is found when that page renders, not when it merges. Taint is defense-in-depth that catches the honest mistake of passing a flagged object directly; it is **not a security boundary**, and it does not replace DTOs — it backs them up.
+
+<Inset kind="why" lang="en">
+Why does the framework not just block sensitive data automatically? Because the serialization layer cannot know what is sensitive — a passwordHash and a productDescription are both strings, and only your domain model knows the difference. Hence the layered design, each layer catching what the previous one cannot: server-only fences code at build time (cheap, total, but only for modules you remembered to mark); DTOs shape data structurally (the field is absent, so it cannot leak); taint catches the residual case where a flagged object is passed directly (runtime, reference-based, experimental). Three imperfect tripwires, layered, approximate the boundary that no single mechanism can provide.
+</Inset>
+
+<Quiz
+  id="03-server-only-and-secrets-quiz-2"
+  lessonSlug="03-server-only-and-secrets"
+  lang="en"
+  question="A team taints their user object with experimental_taintObjectReference right after the DB read. A server component then passes { ...user } to a client component. What happens?"
+  choices={[
+    { label: "It renders without error — taintObjectReference tracks the exact object reference, and the spread created a new, untainted object; the data leaks despite the taint", correct: true },
+    { label: "React throws, because the copy inherits the taint from the source object", misconception: "Taint does not propagate through copies, spreads, destructuring, or serialization — it is attached to one reference. That is precisely the documented limitation that makes taint a tripwire rather than a boundary: any transformation launders the object." },
+    { label: "The build fails, because taint violations are detected during compilation", misconception: "Taint checks run at render time, not build time — a violation on a rarely rendered page surfaces only when that page renders in an environment with the flag on. This is one of the reasons taint cannot replace structural fixes like DTOs." },
+    { label: "The spread is fine because client components cannot receive object props at all", misconception: "Client components receive any serializable props, objects included — that is exactly how whole-row leaks happen. The serializer will happily embed every field of the spread user object into the RSC payload." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Two leak channels out of the server: the module graph for code and the RSC payload for data"
+  hue="var(--d-ai)"
+  perRow={3}
+  nodes={[
+    { id: "secret", label: "Secret", sub: "env var / SDK / DB row" },
+    { id: "graph", label: "Client module graph", sub: "'use client' + transitive imports" },
+    { id: "fence", label: "server-only", sub: "build error on wrong import" },
+    { id: "props", label: "Props to client", sub: "serialized into RSC payload" },
+    { id: "dto", label: "DTO + taint", sub: "shape data, tripwire the rest" },
+    { id: "browser", label: "Browser", sub: "view-source sees everything" },
+  ]}
+  edges={[
+    { from: "secret", to: "graph", label: "wrong import" },
+    { from: "graph", to: "fence", label: "caught at build" },
+    { from: "secret", to: "props", label: "whole row passed" },
+    { from: "props", to: "dto", label: "caught by shape" },
+    { from: "fence", to: "browser", label: "nothing ships" },
+  ]}
+  caption="Code leaks when a secret-bearing module is pulled into the client graph — server-only converts that into a build failure. Data leaks when over-wide objects are serialized as props — DTOs remove the fields structurally, and taint APIs throw at render if a flagged reference slips through directly."
+/>
+
+<KeyTakeaway>The 'use client' boundary splits one module graph: everything a client file imports ships to the browser. import 'server-only' makes the wrong import a build error. NEXT_PUBLIC_ vars are inlined at build time — public forever, rotation requires rebuild. Props serialize into the visible RSC payload, so return DTOs, not rows; taint APIs are an experimental render-time tripwire that copies and derivations escape — backup for DTOs, never a boundary.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-server-only-and-secrets-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the two distinct leak channels for server secrets in the App Router, and what guards each?", a: "Channel one is code: a 'use client' file and its transitive imports must bundle for the browser, so importing one helper from a secret-bearing module drags the whole module into public chunks — guarded by import 'server-only', which makes any client-graph inclusion a build error. Channel two is data: every prop crossing server-to-client is serialized into the RSC payload, visible in view-source, so passing a raw DB row leaks passwordHash-class fields with no exploit needed — guarded structurally by DTOs (return only needed fields) with taint APIs as a render-time backstop for directly passed flagged objects." },
+    { q: "What exactly do NEXT_PUBLIC_ and the taint APIs each do, and what are their hard limits?", a: "NEXT_PUBLIC_ vars are inlined at build time — the bundler string-replaces them with literals in static chunks. Limits: visible to every visitor, not rotatable without rebuild and cache expiry, and irreversible once shipped — a secret published this way is compromised and must be rotated. experimental_taintObjectReference throws at render if the exact tainted reference reaches a client component; taintUniqueValue does the same for an exact primitive value. Limits: experimental flag required, runtime not build time, reference/value-exact — a spread copy or any derivation (base64, substring) escapes. Tripwire and defense-in-depth, not a boundary." },
+  ]}
+/>
+
+<Recap lang="en">
+The App Router has no wall between server and client code — only one module graph divided by 'use client', and the bundler's rule is transitive: everything a client file imports, ships. That is the first leak channel: import one innocent helper from a module that also constructs a Stripe client, and the whole module joins the public bundle. Environment variables split into two regimes — plain server vars read at runtime (undefined in the browser; a crash, not a leak) and NEXT_PUBLIC_ vars inlined at build time as string literals: visible to all, unrotatable without a rebuild, and a one-way door — a secret shipped under the prefix is compromised by definition, as the rename-to-make-the-fetch-work incident demonstrates. The guard for the code channel is import 'server-only' in every module that touches secrets, databases, or privileged SDKs: an empty module on the server, a build error in any client graph, converting a three-week key-rotation incident into a thirty-second build failure. The second channel is data: props from server to client components serialize into the RSC payload, embedded in the page — pass a raw user row and passwordHash is in view-source with no exploit required. The structural guard is the DTO discipline: data access returns explicitly constructed objects, so leaking requires adding a field deliberately rather than forgetting to strip it. The taint APIs — experimental_taintObjectReference and taintUniqueValue — are an honest tripwire on top: they throw at render time when the exact flagged reference or value crosses the boundary, but copies, spreads, and derivations escape them, they require an experimental flag, and they fire at runtime, not build time. Fence the code, shape the data, taint as backup — in that order.
+</Recap>
