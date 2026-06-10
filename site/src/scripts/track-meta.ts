@@ -13,6 +13,7 @@ export const TRACK_ABBR: Record<Track, string> = {
   "aws": "AWS", "python": "PY",
   "ci-cd": "CICD",
   "node": "NODE", "nest": "NEST",
+  "logic": "LOGIC", "react": "RCT", "nextjs": "NEXT", "go": "GO",
 };
 
 export type TrackColor = "lilac" | "mint" | "peach" | "sky" | "rose";
