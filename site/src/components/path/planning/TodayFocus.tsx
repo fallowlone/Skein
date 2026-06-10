@@ -5,20 +5,28 @@ import type { Locale } from "~/i18n";
 import { config, content, computePath, currentPace, currentFixes, applyFix } from "~/scripts/path/path-io";
 import unitsJson from "~/content/units.json";
 
-type UnitMeta = { track: string; slug: string; firstLesson?: string };
+type UnitMeta = { track: string; slug: string; firstLesson?: string; lessonCount: number };
 const UNIT_META = new Map<string, UnitMeta>(
-  (unitsJson as Array<{ id: string; slug: string; track: string; lessons: string[] }>).map((u) => [u.id, { track: u.track, slug: u.slug, firstLesson: u.lessons?.[0] }]),
+  (unitsJson as Array<{ id: string; slug: string; track: string; lessons: string[] }>).map((u) => [u.id, { track: u.track, slug: u.slug, firstLesson: u.lessons?.[0], lessonCount: u.lessons?.length ?? 0 }]),
 );
 function startHref(lang: Locale, unitId: string): string | null {
   const m = UNIT_META.get(unitId);
   return m?.firstLesson ? `/${lang}/learn/${m.track}/${m.slug}/${m.firstLesson}` : null;
 }
 
+function ruLessons(n: number): string {
+  const mod10 = n % 10, mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return "урока"; // genitive after «из»
+  return "уроков";
+}
+
 const L = {
   en: { today: "Today", next: "Next up", start: "Start", min: (m: number) => `~${m} min`,
-    done: "Nothing due — you're on top of your plan.", behind: (d: number) => `Behind ~${d} day(s).`, apply: "Apply" },
+    done: "Nothing due — you're on top of your plan.", behind: (d: number) => `Behind ~${d} day(s).`, apply: "Apply",
+    scope: (n: number) => `This step is a unit of ${n} lesson${n === 1 ? "" : "s"} — it starts at lesson 1; the step is done when you've finished all of them.` },
   ru: { today: "Сегодня", next: "Дальше", start: "Начать", min: (m: number) => `~${m} мин`,
-    done: "На сегодня ничего — ты в графике.", behind: (d: number) => `Отстаёшь ~${d} дн.`, apply: "Применить" },
+    done: "На сегодня ничего — ты в графике.", behind: (d: number) => `Отстаёшь ~${d} дн.`, apply: "Применить",
+    scope: (n: number) => `Этот шаг — юнит из ${n} ${ruLessons(n)}: начинаешь с первого, шаг засчитан, когда пройдены все.` },
 } as const;
 
 export default function TodayFocus({ lang }: { lang: Locale }) {
@@ -46,6 +54,7 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
   if (units.length === 0) return <section class="today-card empty"><p>{t.done}</p></section>;
 
   const href = startHref(lang, units[0].unit);
+  const lessonCount = UNIT_META.get(units[0].unit)?.lessonCount ?? 0;
   const p = currentPace();
   const { fixes, combo } = currentFixes();
   // combo is empty when there's no budget deficit; fall back to the top catch-up lever so the
@@ -60,6 +69,7 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
         <span class="tc-min">{t.min(minutes)}</span>
         {href && <a class="btn btn-primary btn-sm" href={href}><span>{t.start}</span><span class="arrow">→</span></a>}
       </div>
+      {lessonCount > 0 && <p class="tc-scope">{t.scope(lessonCount)}</p>}
       {catchUp && (
         <div class="tc-catchup">
           {p?.status === "behind" && <span>{t.behind(p.behindDays)}</span>}
