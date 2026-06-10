@@ -1,0 +1,148 @@
+---
+concepts:
+- nextjs-instrumentation
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-instrumentation-and-tracing"
+sources:
+- https://nextjs.org/docs/app/api-reference/file-conventions/instrumentation
+- https://opentelemetry.io/docs/concepts/sampling/
+- https://opentelemetry.io/docs/languages/js/
+spiral: []
+status: ready
+summary: 'instrumentation.ts register() runs once per server process before any request — the only safe OTel init point, with a runtime guard for edge. Next emits render and fetch spans and propagates traceparent to backends. Sampling strategy and attribute cardinality decide the bill.'
+title: 'instrumentation.ts and tracing: one register() per process, one trace per request, and the sampling bill'
+track: "nextjs"
+unit: "07-observability-and-errors"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+A B2B SaaS team turns on tracing the easy way: `@vercel/otel`, default config, deploy on Friday. Monday morning the dashboards are glorious — every RSC render a waterfall, every fetch a span. Tuesday, the vendor usage page shows 31 million spans ingested per day. Their dashboard route makes 38 `fetch` calls per render — most of them data-cache HITs that never leave the box — and every single one emits a span, at 600 requests per minute, around the clock. Thursday, finance forwards the projection: the observability bill is tracking at roughly three times the compute bill. The team flips on head sampling at 10% to stop the bleeding — and the next week's p95 latency incident, the exact thing they bought tracing for, happens inside the 90% of traces the sampler threw away. Tracing was never the problem; un-budgeted tracing was. This lesson is the version with the budget attached.
+</Hook>
+
+<Crux>register() in instrumentation.ts runs once per process before traffic — init OTel there; sampling and attribute cardinality set the bill.</Crux>
+
+<Explanation>
+
+## register() runs once per process — everything else is a footgun
+
+`instrumentation.ts` lives at the project root (next to `app/`, or inside `src/`) and exports one function with one guarantee: Next.js calls `register()` when a **new server process bootstraps, before it serves any request**. That guarantee is exactly what an OTel SDK needs — a tracer provider must exist before the first instrumented operation, and it must exist once. Every alternative violates one half or the other. Initializing at module scope in some `lib/otel.ts` imported from a layout re-executes per route bundle (each route compiles as its own entry on serverless) and double-registers providers. Worse, `register()` itself runs in **both runtimes** your app uses — and the Node SDK imports `node:async_hooks` and friends, which do not exist in the edge runtime. The canonical shape is a runtime guard with a dynamic import:
+
+```ts
+// instrumentation.ts — the only file Next.js promises to run once per server process
+export async function register() {
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    await import('./instrumentation.node'); // NodeSDK pulls in node:async_hooks — must never load in the edge bundle
+  }
+}
+```
+
+```ts
+// instrumentation.node.ts — full control: exporter, resource, sampler
+import { NodeSDK } from '@opentelemetry/sdk-node';
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
+
+const sdk = new NodeSDK({
+  serviceName: 'storefront',
+  traceExporter: new OTLPTraceExporter({ url: process.env.OTLP_ENDPOINT }),
+});
+sdk.start();
+```
+
+If you do not need a custom pipeline, `@vercel/otel` collapses this to `registerOTel({ serviceName: 'storefront' })` inside `register()` — it is runtime-aware and picks safe internals per runtime. Two honest caveats senior engineers trip on. First, "once per process" means once per **cold start**, not once per deployment: on serverless you have many concurrent processes, so anything stateful you build in `register()` — counters, in-memory sampling decisions — exists per instance, not globally. Second, the same file also exports `onRequestError`, a hook Next.js calls for server-side errors with the request context — the natural place to ship the error digests from the previous lesson to your error tracker, instead of scraping them out of stdout.
+
+<Quiz
+  id="02-instrumentation-and-tracing-quiz-1"
+  lessonSlug="02-instrumentation-and-tracing"
+  lang="en"
+  question="A team initializes NodeSDK at module scope in lib/telemetry.ts, imported by the root layout. It works in next dev. What breaks in production on a platform with edge middleware?"
+  choices={[
+    { label: "The edge bundle pulls in node:async_hooks and fails, and on Node the module re-executes per route bundle, double-registering providers — register() with a NEXT_RUNTIME guard is the only once-per-process init point", correct: true },
+    { label: "Nothing — module scope runs once per import, which is once per server", misconception: "Per import is the problem: on serverless each route compiles as its own entry, so the module initializes once per bundle per process, and the import graph also drags Node-only APIs into the edge bundle where they do not exist." },
+    { label: "Tracing silently samples at 0% because the SDK started after the first request", misconception: "Sampling rate is configuration, not timing. The actual failures are runtime-shaped: Node-only imports crashing the edge bundle and duplicate provider registration from per-entry module init." },
+    { label: "It works but spans lack route attributes, since layouts render before routing", misconception: "Span attributes come from Next.js instrumentation, not from where the SDK was imported. The init location decides whether the SDK loads safely and exactly once — not which attributes spans carry." },
+  ]}
+/>
+
+## One request, one trace: built-in spans and propagation
+
+With a tracer registered, Next.js emits spans for its own work — no code changes: a span per route render (named like `render route (app) /dashboard`), a span per `fetch` it instruments, spans for route handler execution, each carrying attributes such as the route template (`NEXT_OTEL_VERBOSE=1` widens the set). The naming discipline matters more than it looks: a span must be named after the **route template**, never the concrete URL — `/orders/[id]`, not `/orders/9381` — because every distinct name is a new series in your backend, and a name-per-order turns a dashboard into a per-customer table.
+
+Propagation is what turns three monitoring silos into one picture. The instrumented `fetch` injects the W3C `traceparent` header — `00-<trace-id>-<span-id>-<flags>` — into outbound requests from server components, actions, and route handlers. Any backend running an OTel SDK in any language reads it and continues the **same trace**. The waterfall you see is then browser to RSC render to orders API to its database, one trace id end to end — and the on-call question "where did the 800 ms go" becomes a lookup, not a three-team Slack thread. If the backend shows up as a disconnected root span instead, the first suspect is a proxy or API gateway stripping `traceparent` on the way through.
+
+</Explanation>
+
+<SequenceDiagram
+  label="traceparent rides the RSC fetch, so render, API, and exporter all contribute to one trace"
+  hue="var(--d-ai)"
+  actors={["Browser", "Next server", "Orders API", "Collector"]}
+  messages={[
+    { from: "Browser", to: "Next server", label: "GET /dashboard" },
+    { from: "Next server", to: "Orders API", label: "fetch + traceparent" },
+    { from: "Orders API", to: "Next server", label: "200 JSON" },
+    { from: "Next server", to: "Browser", label: "HTML stream" },
+    { from: "Next server", to: "Collector", label: "render + fetch spans" },
+    { from: "Orders API", to: "Collector", label: "child spans, same id" },
+  ]}
+  caption="register() gave the Next.js process a tracer, so the route render opens a trace and the instrumented fetch stamps traceparent (00-traceId-spanId-flags) onto the outbound request. The Orders API continues that context instead of starting its own root, and both processes export spans sharing one trace id — the collector assembles a single waterfall from browser request to backend query."
+/>
+
+<Explanation>
+
+## Sampling and cardinality: the bill is a design constraint
+
+The numbers from the Hook generalize. A span serializes to roughly 300–800 bytes with ordinary attributes; 31M spans/day is on the order of 10–25 GB/day ingested, and vendors price per GB or per million spans — either way, a span per data-cache HIT is paying to record that nothing happened. The knobs, in order of leverage. **First, drop spans you will never query**: filter cache-hit fetch spans and static-asset noise in a span processor or collector before they cost anything. **Second, head sampling** — `ParentBasedSampler(TraceIdRatioBasedSampler(0.1))` — decides at the trace root and is nearly free, but it is blind: it drops error traces and slow traces at exactly the same rate as healthy ones, which is how the Hook team lost their incident. **Third, tail sampling** in a collector: buffer complete traces, then keep everything with an error, everything slower than a threshold, plus a few percent baseline. That is the policy you actually want, and its honest cost is operational — the collector holds every in-flight trace in memory for the decision window (commonly 10–30 s; at 600 rps that is thousands of buffered traces), and now you run and scale a collector.
+
+Cardinality is the quieter half of the bill. Attributes are indexed; put a user id, session id, or full URL into span attributes and your backend builds an index entry per user. The discipline that survives audits: route template, method, status, region — identifiers belong in logs (keyed by trace id), not in trace indexes. Runtime overhead, for honesty's sake, is the cheapest part of the whole story: span creation costs single-digit microseconds of CPU and the `BatchSpanProcessor` exports off the hot path, so a typical app pays 1–3% CPU for tracing. The bill and the cardinality are where tracing actually hurts — which is why sampling strategy belongs in the design review, not in the panic after the first invoice.
+
+<Inset kind="why" lang="en">
+Why sample at all instead of keeping everything and querying less? Because tracing cost scales with traffic times instrumentation density, and both grow faster than the value of the marginal healthy trace. The ten-thousandth identical 80 ms render teaches nothing the hundredth did not. Errors and outliers carry nearly all the information — which is exactly the asymmetry tail sampling encodes: keep the interesting 1%, keep a thin healthy baseline for comparison, and let the boring middle go.
+</Inset>
+
+<Quiz
+  id="02-instrumentation-and-tracing-quiz-2"
+  lessonSlug="02-instrumentation-and-tracing"
+  lang="en"
+  question="After a bill spike, a team sets head sampling to 5%. A week later a p95 incident produces almost no traces to debug. What is the structural fix?"
+  choices={[
+    { label: "Tail sampling at a collector: buffer complete traces, keep all error and slow traces plus a small healthy baseline — paying for it with collector memory over the decision window and one more component to operate", correct: true },
+    { label: "Raise head sampling back to 100% during incidents", misconception: "Sampling is decided when a trace starts — raising the rate mid-incident only captures traces that begin after the change, and the spike that pages you at 03:00 is already in the discarded 95%. The policy must keep interesting traces by default." },
+    { label: "Keep 5% but log every request fully, then reconstruct traces from logs", misconception: "Logs do not carry span timing and parent-child structure; reconstructing a waterfall from log lines is exactly the manual correlation tracing exists to eliminate — and full request logging at that volume reproduces the original cost problem in a different signal." },
+    { label: "Sample by route: 100% on important routes, 0% elsewhere", misconception: "Incidents do not respect route importance rankings — the p95 spike can come from a route nobody flagged, and 0% routes become permanently invisible. Route-based rates can complement, but cannot replace, keep-errors-and-outliers tail policy." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>instrumentation.ts register() is the one once-per-process, before-traffic hook — init the OTel SDK there, guarded by NEXT_RUNTIME so the Node SDK never loads in edge. Next then emits render and fetch spans and stamps traceparent onto outbound fetches, making browser-to-database one trace. Budget before enabling: drop cache-hit spans, prefer tail sampling (keep errors and outliers) over blind head ratios, and keep user ids out of span attributes — cost and cardinality, not CPU, are what hurt.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-instrumentation-and-tracing-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is instrumentation.ts register() the only safe place to initialize an OTel SDK in Next.js, and what guard does it still need?", a: "register() is the one hook Next.js guarantees to run once per server process, before any request — an SDK needs exactly that: exist before the first operation, exist once. Module-scope init re-executes per route bundle (each route is its own entry on serverless) and double-registers providers. The guard: register() runs in both runtimes, and the Node SDK imports node:async_hooks, which the edge runtime lacks — so check process.env.NEXT_RUNTIME === 'nodejs' and dynamically import the Node-only module. Remember once-per-process means per cold start: many concurrent instances, no global state." },
+    { q: "Walk through how one request becomes one trace across Next.js and a backend, and where the cost controls sit.", a: "register() installs the tracer; Next.js opens a render span per route and a span per instrumented fetch. Outbound fetches carry the W3C traceparent header (00-traceId-spanId-flags); the backend's OTel SDK continues that context, so its spans share the trace id and the collector assembles one waterfall. Cost controls, by leverage: filter spans you never query (cache-hit fetches) in a processor; head sampling is cheap but drops errors proportionally; tail sampling keeps errors and outliers at the price of collector memory over the decision window. Attributes stay low-cardinality — route template, not URL or user id." },
+  ]}
+/>
+
+<Recap lang="en">
+instrumentation.ts exports register(), the only function Next.js promises to run once per server process before any request — which is precisely the contract an OTel SDK needs, and precisely what module-scope init violates: on serverless each route compiles as its own entry, so a lib/telemetry.ts imported from a layout initializes once per bundle, double-registers providers, and drags node:async_hooks into the edge bundle where it does not exist. The canonical shape is a NEXT_RUNTIME guard with a dynamic import of the Node-only module — or @vercel/otel, which is runtime-aware out of the box — while remembering that once-per-process means once per cold start, so nothing built in register() is global across instances, and that the same file exports onRequestError, the right hook for shipping error digests to a tracker. With a tracer installed, Next.js emits render spans, fetch spans, and route handler spans named by route template — never concrete URLs, because every distinct name is a new series — and stamps the W3C traceparent header onto outbound fetches, so a backend running any OTel SDK continues the same trace and the latency question becomes a single waterfall lookup; a backend appearing as a disconnected root usually means a proxy stripped the header. The budget is the design constraint: spans run 300–800 bytes, span-per-cache-hit at scale is tens of gigabytes a day of recorded nothing, head sampling is cheap but drops error traces at the same ratio as healthy ones, and tail sampling keeps errors and outliers at the honest price of collector memory over the decision window plus one more component to operate. Keep attribute cardinality down — route, method, status, region; identifiers live in logs keyed by trace id — because CPU overhead is 1–3% and was never the problem; the invoice and the index are.
+</Recap>
