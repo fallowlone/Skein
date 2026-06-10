@@ -3,12 +3,14 @@ import { defineConfig } from "astro/config";
 import tailwind from "@astrojs/tailwind";
 import mdx from "@astrojs/mdx";
 import preact from "@astrojs/preact";
+import sitemap from "@astrojs/sitemap";
 // NOTE: the curriculum lint runs as a SEPARATE post-build process
 // (`bun scripts/lint-dist.mjs`, chained in package.json `build`), not as an
 // in-process astro:build:done integration — that inherited the render's ~10GB
 // heap and the lint allocations OOM-killed (SIGKILL) the CI runner mid-lint.
 
 export default defineConfig({
+  site: "https://fallowlone.com",
   output: "static",
   // Render pages serially during the static build. The site emits ~4.2k pages;
   // concurrency >1 holds multiple render contexts in heap at once and pushed the
@@ -19,6 +21,9 @@ export default defineConfig({
     tailwind({ applyBaseStyles: false }),
     mdx(),
     preact({ compat: false }),
+    sitemap({
+      filter: (page) => !page.includes("/admin"),
+    }),
   ],
   markdown: {
     shikiConfig: {

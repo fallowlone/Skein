@@ -15,15 +15,16 @@ export interface DomainFamily {
   tracks: Track[];
 }
 
-// Deterministic 8-family grouping of all 29 tracks. Hues reuse the live --d-* domain tokens
-// (global.css). The exhaustiveness test asserts every track is mapped exactly once.
+// Deterministic 8-family grouping of every track in TRACKS. Hues reuse the live
+// --d-* domain tokens (global.css). The exhaustiveness test asserts every track
+// is mapped exactly once — adding a track without updating this map fails CI.
 export const DOMAIN_FAMILIES: DomainFamily[] = [
   { key: "foundations", label: { en: "Foundations", ru: "Основы" }, hue: "--d-hardware",
-    tracks: ["math", "base-cs", "algorithms"] as Track[] },
+    tracks: ["math", "base-cs", "algorithms", "logic"] as Track[] },
   { key: "frontend", label: { en: "Frontend · runtime", ru: "Фронтенд · рантайм" }, hue: "--d-frontend",
-    tracks: ["browser", "frontend", "typescript", "js-engine"] as Track[] },
+    tracks: ["browser", "frontend", "typescript", "js-engine", "react", "nextjs"] as Track[] },
   { key: "backend", label: { en: "Backend · APIs", ru: "Бэкенд · API" }, hue: "--d-backend",
-    tracks: ["backend", "apis", "node", "nest", "python"] as Track[] },
+    tracks: ["backend", "apis", "node", "nest", "python", "go"] as Track[] },
   { key: "data", label: { en: "Databases · data", ru: "Базы · данные" }, hue: "--d-data",
     tracks: ["databases", "sql-postgres", "caching", "data-engineering"] as Track[] },
   { key: "distributed", label: { en: "Distributed · design", ru: "Распределённые · дизайн" }, hue: "--d-systems",
