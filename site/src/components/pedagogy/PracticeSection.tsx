@@ -4,6 +4,7 @@ import type { Locale } from "~/i18n";
 import type { PracticeTaskData } from "~/content.config";
 import { checkBlank } from "~/scripts/practice-grade";
 import { setTaskStatus, readProgress } from "~/scripts/practice-state";
+import { recordPracticeResult } from "~/scripts/metrics";
 import { runDebug, type DebugRunResult } from "~/scripts/debug-runner";
 import type { ExecCheck } from "~/scripts/practice-grade";
 import { cardsFromPractice } from "~/scripts/review-harvest";
@@ -171,7 +172,7 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
       }
       {
         const done = () => { setTaskStatus(lessonKey, task.id, "done"); onChange?.(); };
-        const common = { lang, setup: task.grading.setup, check: task.grading.check, onResult: (ok: boolean) => ok && done() };
+        const common = { lang, setup: task.grading.setup, check: task.grading.check, onResult: (ok: boolean) => { recordPracticeResult(lessonKey, task.id, "fix", ok); if (ok) done(); } };
         return (
           <div>
             {task.starter && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{task.starter}</pre>}
@@ -193,11 +194,11 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
       }
       if (task.runtime === "sql") {
         return <Suspense fallback={<Loading lang={lang} />}>
-          <SqlSandbox lang={lang} setup={task.setup} initialSql={task.initialCode ?? ""} check={task.expected} onResult={(ok) => ok && done()} />
+          <SqlSandbox lang={lang} setup={task.setup} initialSql={task.initialCode ?? ""} check={task.expected} onResult={(ok) => { recordPracticeResult(lessonKey, task.id, "sandbox", ok); if (ok) done(); }} />
         </Suspense>;
       }
       return <Suspense fallback={<Loading lang={lang} />}>
-        <JsSandbox lang={lang} setup={task.setup} initialCode={task.initialCode ?? ""} check={task.expected} onResult={(ok) => ok && done()} />
+        <JsSandbox lang={lang} setup={task.setup} initialCode={task.initialCode ?? ""} check={task.expected} onResult={(ok) => { recordPracticeResult(lessonKey, task.id, "sandbox", ok); if (ok) done(); }} />
       </Suspense>;
     }
     case "review":
@@ -228,6 +229,7 @@ function DebugBody({ lang, lessonKey, taskId, starter, setup, verify, check, evi
     try {
       const r = await runDebug({ setup, learnerCode: code, verify, check });
       setResult(r);
+      recordPracticeResult(lessonKey, taskId, "debug", r.status === "pass");
       if (r.status === "pass") { setTaskStatus(lessonKey, taskId, "done"); onChange?.(); }
     } finally {
       setBusy(false);
@@ -395,6 +397,7 @@ function Blanks({ lang, lessonKey, taskId, evidence, blanks, onChange }: {
       if (!ok) allOk = false;
     }
     setResult(r);
+    recordPracticeResult(lessonKey, taskId, "diagnose", allOk);
     setTaskStatus(lessonKey, taskId, allOk ? "done" : "attempted");
     onChange?.();
   };
