@@ -1,0 +1,186 @@
+---
+concepts:
+- go-deadlock-analysis
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-deadlock-postmortems"
+sources:
+- https://pkg.go.dev/net/http/pprof
+- https://pkg.go.dev/runtime/pprof
+- https://go.dev/doc/articles/race_detector
+- https://pkg.go.dev/sync
+spiral: []
+status: ready
+summary: 'Three deadlock shapes: lock-order inversion, channel send under a mutex, WaitGroup.Add racing Wait. The runtime panic fires only when every goroutine blocks; partial deadlocks show up as stack clusters in the goroutine profile. go test -race finds the racy cousins.'
+title: 'Deadlock postmortems: lock-order inversion, channel-under-mutex, and reading the goroutine dump'
+track: "go"
+unit: "10-advanced-concurrency"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The payments service did not crash. That was the problem. At 11:34 the `/charge` and `/refund` endpoints started timing out while `/health` returned 200 — the health check touched neither of the two mutexes that had just locked each other. Kubernetes saw a healthy pod and kept routing traffic into it. By 11:50 the goroutine dump told the whole story in two numbers: goroutine 412 held the account lock and waited 16 minutes for the ledger lock; goroutine 9817 held the ledger lock and waited 16 minutes for the account lock. Behind those two, a cluster of 9,412 goroutines parked in `sync.Mutex.Lock`, one per stuck request. No panic, no log line, no restart — the famous "all goroutines are asleep" error never fired because thousands of *other* goroutines were happily serving health checks. Forty minutes of failed payments, ended by a manual rollout. The dump had been one `curl` away the entire time.
+</Hook>
+
+<Crux>Deadlock is a cycle in the wait graph. The runtime panic fires only when ALL block; partial deadlocks need the goroutine profile.</Crux>
+
+<Explanation>
+
+## Shape A: lock-order inversion
+
+The Hook's shape, and the classic. Two locks, two code paths, opposite orders:
+
+```go
+func Transfer(from, to *Account) { // path 1: from → to
+	from.mu.Lock()
+	defer from.mu.Unlock()
+	to.mu.Lock() // goroutine 412 waits here, holding from.mu
+	defer to.mu.Unlock()
+	// ...
+}
+
+func Audit(a, b *Account) { // path 2 locks the same pair in reverse
+	b.mu.Lock()
+	a.mu.Lock() // goroutine 9817 waits here, holding b.mu
+	// ...
+}
+```
+
+Each goroutine holds what the other needs: a cycle of length two, frozen forever — `sync.Mutex` has no timeout and no owner tracking. The window is tiny (both must be mid-acquisition in the same microseconds), which is why this ships: it survives code review, tests, and months of production before the interleaving lands. The fix is not cleverness, it is **convention**: define one global lock order and acquire in that order on every path. For dynamic pairs like accounts, order by an intrinsic key — `if from.ID > to.ID { from, to = to, from }` before locking — and write the convention down where the next engineer will trip over it.
+
+## Shape B: a channel operation under a mutex
+
+```go
+func (s *Store) Flush() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events <- snapshot(s.data) // send while holding s.mu — the receiver...
+}
+
+func (s *Store) consume() {
+	for ev := range s.events {
+		s.mu.Lock() // ...needs s.mu before it can finish receiving the NEXT one
+		apply(ev)
+		s.mu.Unlock()
+	}
+}
+```
+
+`Flush` sends while holding the lock; the consumer needs that same lock to process. One buffered slot of slack and it works in every demo — until the buffer is full at the same moment the consumer is between receive and lock. Then `Flush` waits for the consumer, the consumer waits for the mutex, cycle closed. The rule generalizes beyond channels: **never perform a blocking operation — channel send or receive, I/O, RPC, `Wait` — while holding a mutex.** A mutex is for nanosecond-scale memory edits; anything that can park the goroutine turns the critical section into a wait-graph node other goroutines may already depend on. Copy the data under the lock, release, then send.
+
+<Quiz
+  id="04-deadlock-postmortems-quiz-1"
+  lessonSlug="04-deadlock-postmortems"
+  lang="en"
+  question="Two goroutines deadlock on a pair of mutexes inside a busy HTTP service. What does the process actually do?"
+  choices={[
+    { label: "Keeps running and serving unrelated traffic; requests touching either lock pile up as an ever-growing semacquire cluster — no panic, no log line", correct: true },
+    { label: "Crashes with fatal error: all goroutines are asleep - deadlock!", misconception: "That detector fires only when literally every goroutine in the process is blocked on runtime-visible operations. One accept loop, one ticker, one health handler — anything alive suppresses it forever. In a server it essentially never fires; it is a unit-test luxury." },
+    { label: "The runtime breaks the tie after a timeout by failing one of the Lock calls", misconception: "sync.Mutex.Lock has no timeout and no deadlock recovery — it parks the goroutine unconditionally until Unlock. Go 1.18 added TryLock, but only as an explicit opt-in you would have had to design around; nothing intervenes on a plain Lock." },
+    { label: "go test -race would have caught the cycle before the deploy", misconception: "The race detector finds unsynchronized memory access. A lock-order inversion is perfectly synchronized — every access is under a mutex — so the detector is structurally blind to it. Lock cycles need ordering discipline or runtime dump analysis, not -race." },
+  ]}
+/>
+
+## Shape C: WaitGroup misuse
+
+The third postmortem is subtler because it is a *race* that sometimes wears a deadlock costume:
+
+```go
+var wg sync.WaitGroup
+for _, job := range jobs {
+	go func() {
+		wg.Add(1) // WRONG: races with wg.Wait below
+		defer wg.Done()
+		process(job)
+	}()
+}
+wg.Wait() // may observe counter == 0 before any Add ran
+```
+
+`Add` must happen **before** `Wait` can observe the counter — which means before the `go` statement, in the spawning goroutine. Written as above, the scheduler decides the outcome: if `Wait` runs before the children get scheduled, it sees zero and returns — work silently lost, or worse, `main` exits and the children are reaped mid-write. The mirror image deadlocks instead: a child calls `wg.Wait()` (or sends to an unbuffered channel read after `Wait`) while the parent holds something the child needs. Related classics in the same family: passing a `WaitGroup` *by value* (the copy's `Done` never reaches the original — `Wait` blocks forever) and reusing a WaitGroup for a second wave before the first `Wait` returned. `go vet` catches the copy; `-race` reliably flags Add-racing-Wait.
+
+## The detection toolbox
+
+The runtime's famous `fatal error: all goroutines are asleep - deadlock!` is nearly useless in services: it fires only when **every** goroutine is blocked on runtime-visible operations — one live accept loop or ticker suppresses it. Production deadlocks are *partial*, and the instrument is the goroutine profile:
+
+```go
+import _ "net/http/pprof"
+
+// live dump with stacks and wait durations:
+//   curl localhost:6060/debug/pprof/goroutine?debug=2
+//
+// goroutine 412 [sync.Mutex.Lock, 16 minutes]:   ← held-for duration = smoking gun
+//   main.Transfer ... transfer.go:42
+// goroutine 9817 [sync.Mutex.Lock, 16 minutes]:
+//   main.Audit ... audit.go:31
+// 9412 @ ... sync.Mutex.Lock main.(*Handler).Charge   ← the victim cluster
+```
+
+Read it like a detective, in three passes. First, **cluster sizes** (`debug=1` groups identical stacks): 9,412 goroutines on one `Lock` line is the victim pile and names the contested lock. Second, **wait durations** (`debug=2`): minutes-long `semacquire` or `chan send` waits separate a deadlock from mere contention, which churns. Third, **find the holders**: the one or two goroutines blocked on a *different* lock than the cluster — they hold what the cluster wants and want what each other holds; their two stack traces are your cycle, file and line. Complete the kit with `go test -race` for the racy cousins (Shape C), `go vet` for WaitGroup copies, and the mutex profile (`runtime.SetMutexProfileFraction` + `/debug/pprof/mutex`) to watch contention *trend toward* the cliff before you fall off it.
+
+<Quiz
+  id="04-deadlock-postmortems-quiz-2"
+  lessonSlug="04-deadlock-postmortems"
+  lang="en"
+  question="In a goroutine dump you see 9,412 goroutines parked on Charge at mu.Lock, plus goroutine A holding mu and blocked 14 minutes on ledger.Lock, and goroutine B holding ledger and blocked 14 minutes on mu. What is the diagnosis?"
+  choices={[
+    { label: "A and B are a lock-order inversion cycle; the 9,412 are victims queued behind mu — the fix is one global acquisition order for mu and ledger", correct: true },
+    { label: "The 9,412-goroutine cluster is the deadlock itself, so Charge is the buggy code", misconception: "The cluster is the symptom: those goroutines wait on a single lock and would drain instantly if it were released. Deadlock is a cycle, and a cycle needs holders blocked on each other — the two lonely stacks with 14-minute waits, not the crowd." },
+    { label: "This is heavy contention; adding more buffer or CPU will clear it", misconception: "Contention churns — wait times stay bounded as the lock keeps changing hands. Fourteen-minute waits on two mutually-blocked holders mean the lock will never be released. No amount of CPU unsticks a cycle; only breaking the order inversion does." },
+    { label: "The runtime will detect this and panic shortly", misconception: "Thousands of other goroutines (health checks, metrics, the accept loop) are still runnable, and the all-goroutines-asleep detector requires literally everything to be blocked. A partial deadlock like this lives until a human reads the dump or the pod is restarted." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does the runtime not detect partial deadlocks, when it clearly has all the information? Because in general it does not have it: a mutex in Go records no owner, so the runtime sees "goroutine parked on semaphore" without knowing who would release it — building the wait-for graph would mean tracking ownership on every Lock/Unlock, a cost imposed on all programs to diagnose the broken few. The all-asleep check is free precisely because it needs no graph: if literally nothing can run, no future Unlock can exist. Everything subtler is delegated to the dump — which contains the graph implicitly, in the stacks, for a human (or a script) willing to read it.
+</Inset>
+
+## Prevention: boring rules that survive 3 a.m.
+
+Every rule below is one of the three postmortems, inverted. Keep critical sections tiny — lock, touch memory, unlock; compute and I/O happen outside. Never block under a mutex: no channel ops, no RPC, no `Wait` — copy under the lock, act after release. One documented lock order per package (or an intrinsic-key ordering for dynamic pairs), enforced in review because no tool enforces it for you. `Add` before `go`, never inside the child; pass WaitGroups by pointer; run `-race` in CI always — it catches Shape C and a hundred relatives. And keep `net/http/pprof` wired in production *before* the incident: a deadlock you can dump in one curl is a 5-minute diagnosis, and the same dump taken after the restart shows nothing at all.
+
+</Explanation>
+
+<SequenceDiagram
+  label="Lock-order inversion frame by frame: each goroutine acquires its first lock, then blocks on the lock the other holds — a wait cycle of length two"
+  hue="var(--d-backend)"
+  actors={["goroutine 1", "mutex A", "mutex B", "goroutine 2"]}
+  messages={[
+    { from: "goroutine 1", to: "mutex A", label: "Lock — acquired" },
+    { from: "goroutine 2", to: "mutex B", label: "Lock — acquired" },
+    { from: "goroutine 1", to: "mutex B", label: "Lock — parked" },
+    { from: "goroutine 2", to: "mutex A", label: "Lock — parked" },
+    { from: "mutex A", to: "mutex B", label: "cycle: frozen forever" },
+  ]}
+  caption="Neither Lock can ever return: each goroutine waits for an Unlock only the other could perform. sync.Mutex has no timeout and no owner tracking — the cycle is invisible to the runtime and lives until a restart or a human with a goroutine dump."
+/>
+
+<KeyTakeaway>Deadlocks come in shapes: lock-order inversion (fix: one global acquisition order), blocking channel ops or I/O under a mutex (fix: copy, release, then send), and WaitGroup.Add racing Wait (fix: Add before go; -race flags it). The all-asleep panic needs the entire process blocked — production deadlocks are partial, diagnosed from the goroutine dump: victim cluster sizes name the lock, minutes-long waits separate deadlock from contention, and the two holders blocked on each other are the cycle.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-deadlock-postmortems-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through reading a goroutine dump for a suspected partial deadlock: the three passes and what each one proves.", a: "Pass one: cluster sizes. debug=1 groups goroutines by identical stack; a huge cluster (thousands) parked on one mu.Lock line is the victim pile and identifies the contested lock — but not the bug, since victims would drain the moment the lock freed. Pass two: wait durations. debug=2 prints how long each goroutine has been parked; minutes-long semacquire or chan send waits distinguish a true deadlock from heavy contention, where the lock keeps changing hands and waits stay bounded. Pass three: find the holders. Look for the one or two goroutines blocked on a different lock than the crowd — they hold what the cluster wants and wait on each other; their stacks give you the cycle with file and line on both sides. The famous all-goroutines-asleep fatal error proves nothing here: it requires every goroutine in the process to be blocked, and any live accept loop or ticker suppresses it — which is why the dump, not the crash, is the production instrument." },
+    { q: "Name the three deadlock shapes from the postmortems and the prevention rule each one implies.", a: "Shape A, lock-order inversion: two goroutines acquire the same two mutexes in opposite orders and each holds what the other needs; prevented by a single documented lock order — for dynamic pairs, order by an intrinsic key like account ID before locking. Shape B, blocking under a mutex: a channel send (or any parking operation — I/O, RPC, Wait) performed while holding a lock the receiver needs; prevented by keeping critical sections to nanosecond memory edits — copy under the lock, release, then send. Shape C, WaitGroup misuse: Add called inside the spawned goroutine races with Wait, which can observe zero and return before children even start — also by-value WaitGroup copies whose Done never reaches the original; prevented by Add before the go statement, pointers always, with -race catching the race and vet the copy. All three share one property: they are invisible to the type system and to tests with friendly timing, so the rules must live in convention and CI, not in hope." },
+  ]}
+/>
+
+<Recap lang="en">
+The payments outage is the template: a partial deadlock does not crash, does not log, and keeps passing health checks while a victim cluster grows behind the frozen locks. Shape A is lock-order inversion — two paths acquiring the same mutexes in opposite orders, a two-node wait cycle that ships because the race window is microseconds wide; the fix is a documented global acquisition order, with intrinsic-key ordering for dynamic pairs like account pairs. Shape B is blocking under a mutex — a channel send held open while the receiver needs that same lock, working in every demo until the buffer fills at the wrong instant; the rule is that a mutex guards nanosecond memory edits and nothing that can park: copy under the lock, release, then send. Shape C is WaitGroup misuse — Add inside the child races Wait into returning early and losing work, by-value copies block Wait forever; Add before go, pass by pointer, and -race plus vet catch what review misses. Detection starts from an honest fact: the all-goroutines-asleep panic requires the entire process blocked, so it never fires in a server with a live accept loop. The instrument is the goroutine profile via net/http/pprof, read in three passes — cluster sizes name the contested lock, minutes-long wait durations separate deadlock from contention, and the holders blocked on each other are the cycle, file and line included. The mutex profile shows contention trending toward the cliff. Prevention is boring on purpose: tiny critical sections, no blocking ops under locks, one lock order, -race in CI, and pprof wired before the incident — because the dump taken after the restart shows nothing.
+</Recap>

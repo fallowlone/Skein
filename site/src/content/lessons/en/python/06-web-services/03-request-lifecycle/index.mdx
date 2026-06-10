@@ -1,0 +1,153 @@
+---
+concepts:
+- python-request-lifecycle
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-request-lifecycle"
+sources:
+- https://fastapi.tiangolo.com/tutorial/dependencies/dependencies-with-yield/
+- https://fastapi.tiangolo.com/advanced/events/
+- https://fastapi.tiangolo.com/tutorial/background-tasks/
+- https://asgi.readthedocs.io/en/latest/specs/lifespan.html
+spiral: []
+status: ready
+summary: 'uvicorn accepts, middleware wraps inward (last added runs first), the router matches, dependencies resolve with per-request caching, yield teardown after send. Pools live in lifespan, BackgroundTasks occupy the worker, 422/500 surface at fixed layers.'
+title: 'The request lifecycle: middleware onion, dependency resolution, lifespan, and where errors surface'
+track: "python"
+unit: "06-web-services"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The new orders service passed staging with flying colors at half a request per second. Day one of production traffic — 50 rps — it survived eleven minutes. Postgres started refusing connections with `FATAL: sorry, too many clients already`; `pg_stat_activity` showed hundreds of idle connections all owned by the orders pods; every endpoint that touched the database returned 500. The cause was four innocent lines: a dependency that did `pool = await asyncpg.create_pool(...)` and yielded it. Dependencies run **per request** — so every request paid a ~300 ms pool handshake and parked ten fresh connections, and at 50 rps the database's `max_connections = 100` ceiling was gone in roughly two seconds of sustained traffic; only connection idle-timeouts had kept staging alive. The fix was not a bigger Postgres. It was moving pool creation to where process-scoped resources belong — lifespan, once per worker — and letting the dependency do the one job it is scoped for: borrowing a connection for the duration of a request, and giving it back.
+</Hook>
+
+<Crux>A request walks the middleware onion in, deps resolve once per request, the handler runs, the onion unwinds. Pools belong to lifespan.</Crux>
+
+<Explanation>
+
+## The path in: accept, scope, onion, route
+
+uvicorn accepts the TCP connection, parses HTTP into an ASGI `scope`, and calls the outermost application. From there the request walks an onion: each middleware is an ASGI app wrapping the next one, running code on the way in, calling inward, then running code on the way out as the response passes back through. Ordering is therefore architecture, and Starlette's registration order trips people: `add_middleware` wraps the *current* stack, so **the last middleware added is the outermost — it sees the request first and the response last**:
+
+```python
+app.add_middleware(AuthMiddleware)        # added first  → inner
+app.add_middleware(RequestIdMiddleware)   # added second → OUTER, runs first
+
+# request:  RequestId → Auth → router → handler
+# response: handler → Auth → RequestId
+```
+
+The order encodes policy. Request-id and logging go outermost so every request — including ones rejected later — is observable. Whether auth or rate-limiting comes next is a real decision: a per-user rate limit needs auth to have run already (it keys on identity); a per-IP limit goes outside auth so unauthenticated floods burn no token-verification CPU. Past the onion, the router matches the path and method, and matching hands off to the most underrated stage of the pipeline: dependency resolution.
+
+## Dependencies: a per-request graph with scoped teardown
+
+FastAPI resolves the handler's dependency graph fresh for every request, with two properties that carry production weight. First, **caching**: the same dependency appearing several places in one request's graph executes once, and everyone shares the result (`use_cache=True` is the default) — `get_current_user` called by the handler, a permission check, and an audit dependency is one token verification, not three. Second, **yield dependencies are scoped resources**: code before `yield` runs on the way in, the yielded value is injected, and the code after `yield` is teardown — guaranteed to run, including when the handler raises:
+
+```python
+async def get_conn(request: Request):
+    async with request.app.state.pool.acquire() as conn:   # borrow from lifespan pool
+        async with conn.transaction():
+            yield conn                                     # handler runs here
+        # commit/rollback + release happen on unwind
+```
+
+Teardown timing has teeth: since FastAPI 0.106, yield-dependency teardown runs **after the response is sent but before background tasks execute**. A background task that reaches for the request's database session finds it closed — sessions for background work must be created by the task itself, not borrowed from a dependency that has already torn down.
+
+<Quiz
+  id="03-request-lifecycle-quiz-1"
+  lessonSlug="03-request-lifecycle"
+  lang="en"
+  question="app.add_middleware(AuthMiddleware) runs first in the source file, then app.add_middleware(RateLimitMiddleware). Which middleware sees an incoming request first?"
+  choices={[
+    { label: "RateLimitMiddleware — add_middleware wraps the existing stack, so the last one added becomes outermost and runs first on the way in", correct: true },
+    { label: "AuthMiddleware — middleware run in the order they were added", misconception: "add_middleware does not append to a list that runs top-down; it wraps the current app. Each call layers outside the previous one, so registration order and execution order are reversed." },
+    { label: "Order is irrelevant — middleware are independent filters", misconception: "The onion order is policy: this exact pair decides whether unauthenticated floods consume rate-limit budget and token-verification CPU, and whether the limiter can key on user identity at all." },
+    { label: "FastAPI orders them by type: auth always precedes rate limiting", misconception: "Neither Starlette nor FastAPI knows what a middleware is for — there is no semantic sorting. You get exactly the wrapping order you wrote, which is why this is a code-review item." },
+  ]}
+/>
+
+## Lifespan owns process resources
+
+The lifespan scope from lesson 1 is where things that live as long as the process get built: connection pools, HTTP clients, model weights, caches. They are created once per worker at startup, shared via `app.state`, and closed cleanly at shutdown:
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.pool = await asyncpg.create_pool(DSN, min_size=5, max_size=10)
+    yield                                   # the app serves requests here
+    await app.state.pool.close()
+
+app = FastAPI(lifespan=lifespan)
+```
+
+The Hook incident is the canonical inversion of this rule — a pool per request instead of per process. The arithmetic is worth keeping: pools cost a connection handshake (~hundreds of ms for TLS + auth) and hold sockets open; Postgres defaults to `max_connections = 100`. One pool of 10 per worker × 4 workers × 2 pods = 80 connections, deliberate and stable. One pool per request at 50 rps = ceiling breached within seconds, and the failure arrives as everyone else's 500s.
+
+## After the response: background tasks, streaming, and where errors surface
+
+`BackgroundTasks` runs functions **after the response is sent — on the same worker**. That is the feature and the trap: the client is unblocked, but the worker is not. A 60-second report generator attached as a background task occupies the worker after every response; at modest traffic the loop (or the threadpool, for sync tasks) is permanently busy doing non-request work, and tasks die with the process on deploy — they are in-memory, unretried, unobserved. The honest rule: background tasks are for sub-second fire-and-forget (an email enqueue, a cache poke); anything heavier goes to a real queue with retries and its own workers. For large payloads, `StreamingResponse` with an async generator sends chunks as they are produced — a 2 GB CSV export streams in constant memory instead of materializing in RAM.
+
+Errors surface at fixed layers, and knowing which layer answers is most of debugging. Validation failure happens during dependency/argument resolution — the handler never runs, the client gets a 422 with field locations. `HTTPException` raised in a handler or dependency is caught by the framework's exception middleware and rendered as its status code, and yield-dependency teardown still runs. An *unhandled* exception propagates outward through the onion — every middleware on the path sees it (your logging middleware can record it) — until the outermost server-error layer answers 500. The response is already lost at that point; what your middleware ordering decides is who gets to observe the corpse.
+
+<Quiz
+  id="03-request-lifecycle-quiz-2"
+  lessonSlug="03-request-lifecycle"
+  lang="en"
+  question="A handler attaches a 60-second report-generation function via BackgroundTasks and returns in 80 ms. What actually happens?"
+  choices={[
+    { label: "The client gets the response fast, then the task occupies that same worker for 60 s — at modest traffic workers drown in non-request work; jobs this size belong on a real queue", correct: true },
+    { label: "The task runs in a separate process, so the worker is unaffected", misconception: "BackgroundTasks execute in the same worker process after the response — async tasks on the loop, sync ones in the threadpool. There is no second process; the capacity it consumes is your request capacity." },
+    { label: "The response waits until the task completes — the client sees ~60 s", misconception: "Tasks run strictly after the response is sent; the 80 ms is real. The cost lands on the worker afterward, which is exactly why the damage is invisible in endpoint latency and visible in everything else." },
+    { label: "Tasks are persisted and survive deploys, retried on failure", misconception: "BackgroundTasks are in-memory function calls — a deploy, crash, or pod eviction loses them silently, and there is no retry or dead-letter. Durability is precisely what a real queue adds." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="One request through the stack: onion in, dependencies, handler, onion out — then teardown and background tasks after the bytes are gone"
+  hue="var(--d-systems)"
+  actors={["Client", "uvicorn", "MW stack", "Deps", "Handler"]}
+  messages={[
+    { from: "Client", to: "uvicorn", label: "GET /orders/42" },
+    { from: "uvicorn", to: "MW stack", label: "scope+receive/send" },
+    { from: "MW stack", to: "Deps", label: "route matched" },
+    { from: "Deps", to: "Handler", label: "validated args" },
+    { from: "Handler", to: "MW stack", label: "response / raise" },
+    { from: "MW stack", to: "uvicorn", label: "http.response.*" },
+    { from: "uvicorn", to: "Client", label: "status + body" },
+    { from: "MW stack", to: "Deps", label: "yield teardown" },
+    { from: "MW stack", to: "Handler", label: "bg tasks run" },
+  ]}
+  caption="Middleware ordering is wrapping order reversed: last added sees the request first. After the response is sent, yield-dependency teardown runs first (the session is already closed), then BackgroundTasks — on the same worker that could otherwise be serving requests."
+/>
+
+<KeyTakeaway>A request walks in through the middleware onion (last added = outermost = first to run), the router matches, and the dependency graph resolves once per request — cached within it, with yield dependencies tearing down after the response but before background tasks. Process resources are built once in lifespan and shared via `app.state`; a pool per request is the canonical incident. BackgroundTasks occupy the same worker after the response — queue anything heavy. Errors have fixed addresses: validation answers 422 before the handler, `HTTPException` renders its status, unhandled exceptions traverse the onion to a 500.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-request-lifecycle-retrieval"
+  lang="en"
+  questions={[
+    { q: "Trace a request end to end: middleware order semantics, dependency caching, yield-dependency teardown timing, and what runs after the response.", a: "uvicorn accepts and builds the ASGI scope, then the request walks the onion: each middleware wraps the next, and add_middleware wraps the current stack — last added is outermost, sees the request first and the response last; the order encodes policy (request-id/logging outermost, per-user rate limit after auth because it keys on identity, per-IP limit before auth to keep floods cheap). The router matches, then the dependency graph resolves fresh for the request: the same dependency at several points executes once (use_cache=True default); yield dependencies run setup before yield, inject the value, and their teardown is guaranteed — running after the response is sent and, since FastAPI 0.106, before background tasks, so a task that borrows the request's session finds it closed. The handler returns or raises; the response passes back out through the same middleware in reverse. After the bytes are gone: teardown, then BackgroundTasks on the same worker." },
+    { q: "Name the lifecycle failure modes: pool-per-request, BackgroundTasks misuse, and the three places errors surface.", a: "Pool-per-request: a dependency that creates a connection pool runs per request — each pays a ~300 ms handshake and parks connections; at 50 rps against Postgres max_connections=100, the ceiling breaches in seconds and surfaces as everyone's 500s. Pools, clients, and caches are process resources: build them in lifespan, share via app.state, close on shutdown; a dependency then borrows a connection per request. BackgroundTasks run after the response on the same worker — fine for sub-second fire-and-forget, fatal for 60-second jobs (workers drown in non-request work) and never durable: deploys kill in-memory tasks with no retry — real jobs go to a queue. Errors: validation fails during argument/dependency resolution and answers 422 with field locations before the handler runs; HTTPException from handler or dependency is rendered as its status by the exception layer, with yield teardown still honored; an unhandled exception propagates out through every middleware (observable by logging middleware) until the outermost layer answers 500." },
+  ]}
+/>
+
+<Recap lang="en">
+The lifecycle is an onion with a schedule. uvicorn turns bytes into an ASGI scope and hands it to the outermost middleware — which is the *last* one registered, because `add_middleware` wraps the current stack; that inversion is why auth-versus-rate-limit ordering is a code-review item and not a style choice. The router matches, and FastAPI resolves the dependency graph once per request: shared nodes execute once thanks to the default cache, and yield dependencies bracket the handler with setup and guaranteed teardown — teardown that fires after the response is sent and before background tasks, which is exactly why a background task must never borrow the request's database session. Process-scoped resources do not belong in that graph at all: pools and clients are built once in lifespan, live on `app.state`, and are closed at shutdown — the pool-per-request dependency is incident number one, breaching `max_connections = 100` within seconds at 50 rps while staging at half a request per second never noticed. After the response, the worker is still yours to lose: BackgroundTasks run on it, so sub-second pokes are fine and 60-second reports drown the service; durable work belongs on a queue, and 2 GB exports stream chunk by chunk in constant memory. Errors keep fixed addresses — 422 from validation before the handler, status codes from `HTTPException`, a 500 from the outermost layer for anything unhandled — and your middleware order decides who gets to witness them on the way out.
+</Recap>

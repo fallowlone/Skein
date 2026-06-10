@@ -1,0 +1,136 @@
+---
+concepts:
+- python-profiling
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-profiling-cprofile-pyspy"
+sources:
+- https://docs.python.org/3/library/profile.html
+- https://github.com/benfred/py-spy
+- https://docs.python.org/3/library/timeit.html
+spiral: []
+status: ready
+summary: 'cProfile hooks every call: 1.3-2x overhead that inflates tiny hot functions and cannot see inside C. py-spy samples stacks from outside via ptrace at ~1%: top, record flamegraphs, dump for stuck processes. timeit flatters. Profile prod-shaped workloads and re-measure p99 after.'
+title: 'Profiling with cProfile and py-spy: measure the production shape before touching code'
+track: "python"
+unit: "08-performance"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The checkout API ran p99 at 480 ms against a 200 ms SLO. cProfile on a dev box pointed at `compute_discounts` — 38% of cumulative time — so the team spent a sprint memoizing and restructuring it. The microbenchmark said 6x faster. The deploy moved p99 from 480 to 465 ms. Then someone ran `py-spy top --pid` against a live production worker: 61% of samples sat inside JSON serialization of a 2 MB response — a cost the dev profile never saw, because the dev fixture used a 2 KB synthetic payload and because cProfile's per-call hook had inflated the thousands of tiny `compute_discounts` helper calls while attributing the C serializer's work to one opaque row. A serializer swap and response trimming later, p99 was 170 ms. The sprint was lost to a profiler that was trusted, run on the wrong workload, in the wrong process.
+</Hook>
+
+<Crux>cProfile hooks every call and skews tiny hot functions 1.3-2x; py-spy samples from outside at ~1%. Profile prod-shaped work first.</Crux>
+
+<Explanation>
+
+## cProfile: deterministic tracing, and what the overhead distorts
+
+cProfile is a deterministic tracer: it registers a C-level profile hook (the `lsprof` machinery behind `sys.setprofile`) that fires on **every** function call and return, recording counts and timers per function. Nothing is missed — that is the appeal — but every call pays a fixed bookkeeping tax, so the whole program typically runs 1.3-2x slower under it. The distortion is not uniform. The fixed per-call cost is enormous relative to a 200 ns helper invoked ten million times and negligible relative to a 50 ms database query invoked twice. Tiny hot Python functions therefore look worse than they are, and the "top offenders" ranking bends toward call count rather than real cost.
+
+Reading the output is its own skill: `tottime` is self time (excluding callees), `cumtime` is inclusive. Sort by `cumtime` to find the expensive subtree, then by `tottime` inside that subtree to find where the cycles actually burn. `pstats` slices programmatically; snakeviz renders the same data as a browsable sunburst.
+
+```python
+import cProfile, pstats
+
+cProfile.run("handle_request(req)", "out.prof")
+p = pstats.Stats("out.prof")
+p.sort_stats("cumulative").print_stats(12)  # find the expensive subtree
+p.sort_stats("tottime").print_stats(12)     # find the self-cost inside it
+```
+
+Two blind spots are structural. First, **C internals are invisible**: `json.dumps` or a numpy op appears as a single opaque row — total time, zero breakdown of what happens inside. Second, **threads**: by default cProfile observes the thread it was started in; worker threads run unprofiled unless each installs its own profiler. Under asyncio, the event loop's run method swallows everything into one cumtime and per-coroutine attribution gets murky.
+
+<Quiz
+  id="01-profiling-cprofile-pyspy-quiz-1"
+  lessonSlug="01-profiling-cprofile-pyspy"
+  lang="en"
+  question="cProfile shows `validate_row` (a 15-line helper, 10 M calls) as the top tottime entry in your service profile. What is the disciplined next step?"
+  choices={[
+    { label: "Cross-check with a sampling profiler — the per-call hook tax inflates tiny, frequently-called functions most, so this ranking is biased toward call count", correct: true },
+    { label: "Optimize it immediately — cProfile is deterministic, so the number is exact", misconception: "Deterministic means no call is missed, not that timings are undistorted. The hook fires 20 M times around this one function; a large share of its measured time is the instrument, not the code." },
+    { label: "Sort by cumtime instead — tottime always misattributes time to leaf functions", misconception: "tottime correctly reports self time; that is not the flaw. The flaw is that instrumentation overhead scales with call count, so cheap-but-frequent functions absorb disproportionate measured time under either column." },
+    { label: "Ignore it — functions under a microsecond can never matter at service scale", misconception: "10 M calls x 200 ns is 2 s of real CPU; frequent tiny functions absolutely can be the bottleneck. The issue is trusting one biased measurement, not the possibility itself." },
+  ]}
+/>
+
+## py-spy: sampling from outside the process
+
+py-spy inverts the deal. It runs as a **separate process** that reads the target's memory — `process_vm_readv`/ptrace on Linux, mach APIs on macOS — locates the interpreter's thread states, and walks the frame structs to reconstruct every Python stack, about 100 times per second. No code change, no import, no restart: attach by PID to a process started long before you knew it had a problem. The target is paused for microseconds per sample, so the overhead lands around 1% — safe against production.
+
+Three subcommands cover the field workflow:
+
+- `py-spy top --pid 4137` — live htop-style view of which functions own the samples right now.
+- `py-spy record -o prof.svg --pid 4137 --duration 60` — a flamegraph; add `--native` to interleave C frames (this is how the Hook's serializer became visible), `--idle` to include blocked threads.
+- `py-spy dump --pid 4137` — a one-shot stack of every thread: the stuck-process tool. A worker at 0% CPU that stopped consuming its queue is diagnosed in seconds — you see exactly which lock acquire or socket read every thread is parked on.
+
+The honest caveat: sampling is statistical. A 5 ms spike that happens once a minute may never be sampled at 100 Hz; you need enough wall time on the behavior you are chasing, and rare-event latency needs tracing, not profiling.
+
+## timeit, and the lies of microbenchmarks
+
+`timeit` disables GC and reports the best of N repeats — by design it measures the warm-cache, turbo-boosted ideal of an isolated snippet. A real service runs the same code with cold caches, interleaved work evicting branch predictors, frequency scaling, and a fragmented allocator. A 30% timeit win can be invisible at p99. Use it to compare two implementations of the same small operation under identical lies; never to predict service latency.
+
+## The discipline
+
+Profile the production shape: real payload sizes, real concurrency, real data distributions, real cache hit rates. A synthetic loop on a dev box is a different program that happens to share source code. The working order: py-spy against production (or replayed prod traffic) to find **where**; cProfile and timeit locally to iterate on **why**; then re-measure p99 after the deploy — the profiler is evidence, the SLO metric is the verdict.
+
+<Quiz
+  id="01-profiling-cprofile-pyspy-quiz-2"
+  lessonSlug="01-profiling-cprofile-pyspy"
+  lang="en"
+  question="A production worker sits at 0% CPU, has stopped consuming its queue, and responds to nothing. First diagnostic move?"
+  choices={[
+    { label: "py-spy dump --pid: it reads every thread stack from outside, no restart, and shows exactly which lock or socket each thread is parked on", correct: true },
+    { label: "Attach cProfile and let it gather data for a few minutes", misconception: "cProfile is in-process: it must be installed by code in the target, which means a restart — destroying the stuck state you need to observe. It also measures executed calls, and a deadlocked process executes nothing." },
+    { label: "py-spy record a flamegraph for 60 seconds", misconception: "A flamegraph of CPU samples from a 0% CPU process is empty or noise. record answers where is the CPU going; this process has a where-is-it-stuck question, which is what dump answers." },
+    { label: "Restart with verbose logging enabled and wait for it to happen again", misconception: "That throws away a live reproduction you already hold. The stuck process IS the evidence; py-spy can read it non-invasively right now, while a recurrence under logging may take days." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="One py-spy sample: reading the interpreter from outside the process"
+  hue="var(--d-systems)"
+  actors={["py-spy", "kernel", "python proc"]}
+  messages={[
+    { from: "py-spy", to: "kernel", label: "ptrace attach" },
+    { from: "kernel", to: "python proc", label: "pause threads" },
+    { from: "py-spy", to: "python proc", label: "read frame structs" },
+    { from: "python proc", to: "py-spy", label: "raw stack bytes" },
+    { from: "py-spy", to: "kernel", label: "ptrace detach" },
+    { from: "kernel", to: "python proc", label: "resume (~µs pause)" },
+  ]}
+  caption="The target runs unmodified and is paused for microseconds per sample, repeated ~100x/s — roughly 1% overhead, versus the 1.3-2x in-process tax of cProfile firing a hook on every call and return."
+/>
+
+<KeyTakeaway>cProfile traces every call deterministically at a 1.3-2x cost that inflates tiny hot functions and renders C internals as one opaque row; read cumtime for the subtree, tottime for the self-cost. py-spy samples stacks from outside via ptrace at ~1% — `top` for live view, `record --native` for flamegraphs that include C frames, `dump` for stuck processes. timeit reports a warm-cache best case. Find *where* with py-spy on prod-shaped traffic, iterate on *why* locally, and let p99 after deploy be the verdict.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-profiling-cprofile-pyspy-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast cProfile and py-spy: mechanism, overhead, and what each cannot see.", a: "cProfile is an in-process deterministic tracer: a C-level hook fires on every call and return, so no call is missed, but the program runs 1.3-2x slower and the fixed per-call tax inflates tiny frequently-called functions most — the ranking bends toward call count. It cannot see inside C extensions (one opaque row per builtin) and by default observes only the starting thread. py-spy is an out-of-process sampler: it reads the target memory via ptrace/process_vm_readv, walks interpreter frame structs ~100x/s, costs ~1%, needs no code change or restart, and with --native interleaves C frames. Its blind spot is statistics: rare short events may never be sampled, and it profiles CPU placement, not memory. dump additionally snapshots all thread stacks for stuck-process diagnosis, which a tracer that requires a restart can never do." },
+    { q: "Your microbenchmark says the optimized function is 6x faster, but production p99 did not move. List the measurement mistakes that produce this outcome.", a: "First: the profile that selected the target was biased — cProfile per-call overhead made a cheap frequent function look hot, or the profile ran on synthetic dev-box data (2 KB fixture vs 2 MB prod payloads), so the real cost (e.g. C serialization) was invisible or under-weighted. Second: timeit-style measurement flatters — GC disabled, best-of-N, warm caches, no interleaved work — so the 6x is real only inside the lie. Third: the function may simply not dominate p99: tail latency can live in a different frame entirely (locks, I/O, allocator), which only sampling the live production process reveals. The discipline: py-spy on prod traffic to locate, local tools to iterate, and re-measuring the SLO metric — not the benchmark — as the definition of done." },
+  ]}
+/>
+
+<Recap lang="en">
+cProfile and py-spy answer the same question with opposite contracts. The tracer hooks every call from inside: complete, deterministic, but 1.3-2x slow, biased against tiny hot functions in proportion to their call count, blind inside C, and single-threaded by default — read it as cumtime for subtrees and tottime for self-cost, through pstats or snakeviz. The sampler reads the interpreter's frame structs from another process via ptrace: ~1% overhead, no restart, production-safe, C frames available under --native, with `top` for live attribution, `record` for flamegraphs, and `dump` as the stuck-process x-ray — its only tax is statistics, so rare events need patience or tracing. timeit measures a warm-cache best case with GC off and is honest only when comparing two snippets under identical conditions. The meta-skill outranks all three tools: profile the production shape — payloads, concurrency, data distribution — because a synthetic loop is a different program, and judge success by the SLO metric after deploy, not by the benchmark that justified the change.
+</Recap>

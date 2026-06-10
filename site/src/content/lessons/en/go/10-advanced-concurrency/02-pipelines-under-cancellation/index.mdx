@@ -1,0 +1,183 @@
+---
+concepts:
+- go-pipelines
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-pipelines-under-cancellation"
+sources:
+- https://go.dev/blog/pipelines
+- https://pkg.go.dev/context
+- https://pkg.go.dev/golang.org/x/sync/errgroup
+spiral: []
+status: ready
+summary: 'Pipeline stages connect by channels; every send must select on ctx.Done or the goroutine leaks the moment downstream stops reading. Only the sender closes; fan-in closes after a WaitGroup. Buffers absorb jitter, not imbalance. Stage depth gauges make leaks visible.'
+title: 'Pipelines under cancellation: guarded sends, closing discipline, and the canonical goroutine leak'
+track: "go"
+unit: "10-advanced-concurrency"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DiagramFrame from "~/components/diagram/DiagramFrame.astro";
+import PacketDot from "~/components/diagram/PacketDot.astro";
+
+<Hook>
+The nightly reconciliation batch had run for 14 months. Then someone added a validation step to the final stage, and on bad input it did the natural thing: logged and returned. One malformed record at 02:13, the consumer goroutine exits — and the three upstream stages do not notice, because they are not supposed to. They keep producing until each one blocks on a channel send that no one will ever receive. Per run that froze roughly 40,000 goroutines mid-send: ~160 MB of stacks plus every parsed record they held. The batch "completed" (the scheduler saw the main goroutine return), memory just never came back. Eight nights later the pod started OOMKilling at 03:00, and the goroutine profile read like a confession: one stack, `chan send`, count 312,887. The pipeline pattern is from a 2014 Go blog post; the leak is from forgetting the one rule the post is actually about — a send that cannot be abandoned is a goroutine that cannot exit.
+</Hook>
+
+<Crux>Wrap every pipeline send in select with ctx.Done: an unguarded send leaks its goroutine the moment downstream stops reading.</Crux>
+
+<Explanation>
+
+## Stages and channels — the shape
+
+A pipeline is goroutines connected by channels: each *stage* receives values upstream, transforms them, and sends downstream. The 2014 blog version used a per-pipeline `done` channel; the modern form is `context`:
+
+```go
+func parse(ctx context.Context, in <-chan []byte) <-chan Record {
+	out := make(chan Record)
+	go func() {
+		defer close(out) // this stage owns out — only the sender closes
+		for raw := range in {
+			rec, err := decode(raw)
+			if err != nil {
+				continue // or: report on an error path, below
+			}
+			select {
+			case out <- rec:
+			case <-ctx.Done():
+				return // abandon the send; defer closes out
+			}
+		}
+	}()
+	return out
+}
+```
+
+Two structural facts make the pattern composable. The stage *owns* its output channel: it creates it, it alone sends, and `defer close(out)` signals "no more values" downstream — which is what lets the next stage use a plain `for range`. And the function returns the receive-only channel immediately; the pipeline is wired before any data flows.
+
+## The canonical leak: the unguarded send
+
+Strip the `select` and the stage reads cleaner — `out <- rec` — and is wrong. A channel send blocks until a receiver is ready. The moment downstream stops reading — it crashed, returned early on bad input like the Hook, or simply decided it had enough — that send blocks **forever**. The goroutine is parked on `chan send`, the GC cannot touch it (a parked goroutine is a root, pinning its stack and every record it references), and no error surfaces anywhere. This is the single most common real-world goroutine leak, and the rule that prevents it is mechanical: **every send into a pipeline channel sits inside a `select` with a `ctx.Done()` case**. Receives in a `for range` are safe only because the sender's `defer close` is guaranteed — if a stage can exit without closing its output, downstream ranges leak the same way.
+
+<Quiz
+  id="02-pipelines-under-cancellation-quiz-1"
+  lessonSlug="02-pipelines-under-cancellation"
+  lang="en"
+  question="A three-stage pipeline has unguarded sends (a bare send into out, no select). The final consumer hits a bad record and returns early without cancelling anything. What is the steady state?"
+  choices={[
+    { label: "Each upstream stage eventually blocks forever on its send; the goroutines and everything their stacks reference stay live until the process dies", correct: true },
+    { label: "The upstream stages exit once their input channels are drained", misconception: "They never get to drain anything — they are stuck mid-send. A blocked send does not return to the loop to consume more input; the stage freezes exactly where it was when downstream vanished, holding the value it failed to deliver." },
+    { label: "The runtime detects the blocked sends and panics with a deadlock error", misconception: "The all-goroutines-asleep panic fires only when every goroutine in the process is blocked. The main goroutine returned and the rest of the program runs on, so the runtime sees nothing wrong — that is what makes this leak quiet enough to survive 14 months." },
+    { label: "The GC collects the blocked goroutines since nothing references their channels", misconception: "It is the reverse: a parked goroutine is a GC root. It references the channel and its own stack, so goroutine, channel, and the records in flight all stay reachable. The GC frees memory, never goroutines." },
+  ]}
+/>
+
+## Closing discipline and fan-in
+
+The closing rule has no exceptions: **only the sender closes a channel**, because a send on a closed channel panics and a double close panics — the receiver can never know it is safe. Single-sender stages get it for free with `defer close(out)`. Fan-in — N workers sending into one merged channel — is where discipline gets a shape: nobody may close until *all* senders are done, so you count them:
+
+```go
+func merge(ctx context.Context, ins ...<-chan Record) <-chan Record {
+	out := make(chan Record)
+	var wg sync.WaitGroup
+	for _, in := range ins {
+		wg.Add(1)
+		go func() { // one forwarder per input
+			defer wg.Done()
+			for rec := range in {
+				select {
+				case out <- rec:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	go func() { wg.Wait(); close(out) }() // WaitGroup-then-close, in its own goroutine
+	return out
+}
+```
+
+The `wg.Wait(); close(out)` pair runs in a separate goroutine so `merge` returns immediately — the close happens exactly once, exactly after the last forwarder exits, whether that exit was "input drained" or "ctx cancelled mid-send".
+
+## Drain or abandon — who unblocks whom on cancel
+
+Cancellation tears the pipeline down from both ends, and you should know which mechanism you are relying on. **Abandoning** is the default above: every sender guards its own send with `ctx.Done`, so when ctx is cancelled each stage unblocks *itself* and returns; values in flight are dropped. **Draining** is the alternative: the consumer keeps `for range`-ing until the channel closes, so upstream finishes naturally and nothing is dropped — at the cost of processing (or at least receiving) everything already produced. Draining without guarded sends is how people convince themselves the guards are optional; it holds only while *every* consumer is disciplined, which is exactly what the Hook's one early `return` broke. The robust posture: guard every send anyway, and choose draining only when the data must not be lost (then the drain loop itself needs a bound — count or deadline — or a slow producer turns shutdown into a hang).
+
+<Inset kind="why" lang="en">
+Why does the leak point at the sender rather than the receiver who left? Because in CSP-style channels the send is the *commitment*: a sender mid-send has no way to time out, check a flag, or be garbage-collected — its only exits are a receiver arriving or another select case firing. The receiver who returns early commits no crime the type system can see; it just removes the future the sender was waiting for. That asymmetry is the entire argument for the guarded-send idiom: the sender is the only party that can save itself, so the escape hatch must be compiled into the send site.
+</Inset>
+
+## Buffers: what they buy, honestly
+
+Making stage channels buffered — `make(chan Record, 1024)` — feels like a throughput fix. Be precise about what it does. A buffer absorbs *jitter*: short bursts, GC pauses, a momentarily slow consumer; producers keep moving instead of handing off in lockstep, and unbuffered handoff latency (~hundreds of nanoseconds per send-receive rendezvous) stops dominating tiny work items. What a buffer does **not** fix is *imbalance*: if a stage produces at 12k/s and the next consumes at 9k/s, a 1024-slot buffer is full after ~340 ms and the pipeline runs at exactly 9k/s — same as unbuffered, plus 1024 records of extra memory and staleness. Steady-state throughput is the slowest stage, full stop. Buffers also delay leak symptoms: an unguarded send into a big buffer fails only when the buffer fills, often minutes after the consumer died — your 02:13 bug surfaces at 02:47 with a stack that no longer points at the cause.
+
+<Quiz
+  id="02-pipelines-under-cancellation-quiz-2"
+  lessonSlug="02-pipelines-under-cancellation"
+  lang="en"
+  question="A stage produces 12k records/s; the next stage consumes 9k/s for hours. An engineer inserts a 1024-slot buffer between them. What changes?"
+  choices={[
+    { label: "About 340 ms of decoupling, then the buffer is permanently full and the pipeline runs at 9k/s — the buffer cannot fix a steady rate imbalance", correct: true },
+    { label: "Throughput rises toward 12k/s because the producer no longer waits for the consumer", misconception: "The producer only avoids waiting while the buffer has space. With a persistent 3k/s deficit the buffer gains 3,000 records every second and is full in about a third of a second; from then on every send blocks until the consumer frees a slot — lockstep again, at the consumer rate." },
+    { label: "The buffer smooths the rates so both stages settle around 10.5k/s", misconception: "A channel buffer is a queue, not a load balancer — it cannot make the consumer faster or the producer slower on average. It only stores the difference temporarily, and a bounded store of an unbounded difference must fill." },
+    { label: "Nothing changes at all, so buffers are pointless in pipelines", misconception: "Buffers genuinely help with jitter: bursts, GC pauses, and rendezvous overhead on tiny items. What they cannot do is repair a persistent throughput gap — that needs a faster stage, more parallel workers on the slow stage, or shedding." },
+  ]}
+/>
+
+## Errors and observability
+
+A stage that can fail needs an error path. Two workable designs. *Per-stage error channel*: the stage sends errors into `errc` and the orchestrator selects over it — explicit, but every consumer must drain `errc` or you have built a second leak. *errgroup-wrapped stages* — usually the better default: each stage runs as `g.Go`, returns its error, and the group ctx cancels every other stage's guarded sends; `g.Wait` gives you the first failure after the whole pipeline has unwound. For visibility, instrument the channels themselves: a periodic gauge of `len(ch)` against `cap(ch)` per stage shows where the queue sits — a buffer pinned at capacity marks the bottleneck stage, a buffer pinned at zero marks starvation upstream, and `runtime.NumGoroutine()` trending up while traffic is flat is the leak alarm from the previous lesson. Cheap numbers, and they turn "the batch is slow" into "stage 3 is the wall".
+
+</Explanation>
+
+<DiagramFrame label="Records stream through the stages; every hop is a guarded send — when ctx dies, each stage abandons its send and the dots stop instead of piling up" hue="var(--d-backend)" caption="Each stage owns and closes its output; fan-in counts senders with a WaitGroup before closing. An unguarded send at any hop is where the 40k goroutines of the Hook froze.">
+  <svg viewBox="0 0 460 150" width="460" height="150" style="display:block;margin:0 auto;max-width:100%;height:auto;">
+    <rect x="10" y="48" width="80" height="40" rx="6" fill="var(--card-2)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="50" y="65" text-anchor="middle" font-size="11" font-family="var(--font-body)" fill="var(--ink)">gen</text>
+    <text x="50" y="79" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--muted)">reads source</text>
+    <rect x="130" y="48" width="90" height="40" rx="6" fill="var(--card-2)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="175" y="65" text-anchor="middle" font-size="11" font-family="var(--font-body)" fill="var(--ink)">parse</text>
+    <text x="175" y="79" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--muted)">select + ctx</text>
+    <rect x="250" y="48" width="90" height="40" rx="6" fill="var(--card-2)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="295" y="65" text-anchor="middle" font-size="11" font-family="var(--font-body)" fill="var(--ink)">enrich</text>
+    <text x="295" y="79" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--muted)">select + ctx</text>
+    <rect x="370" y="48" width="80" height="40" rx="6" fill="var(--card-2)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="410" y="65" text-anchor="middle" font-size="11" font-family="var(--font-body)" fill="var(--ink)">sink</text>
+    <text x="410" y="79" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--muted)">consumer</text>
+    <path data-path d="M90 68 L370 68" fill="none" stroke="var(--hairline-2)" stroke-width="1.4" stroke-dasharray="4 4" />
+    <PacketDot color="var(--d-backend)" durationMs={1600} size={8} />
+    <PacketDot color="var(--d-backend)" durationMs={1600} delayMs={400} size={8} />
+    <PacketDot color="var(--d-backend)" durationMs={1600} delayMs={800} size={8} />
+    <text x="230" y="22" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="var(--muted)">every send: select with ctx.Done — or the stage freezes mid-send</text>
+    <text x="230" y="128" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="var(--muted)">only the sender closes · fan-in: WaitGroup, then close</text>
+  </svg>
+</DiagramFrame>
+
+<KeyTakeaway>A pipeline survives cancellation only if every send is a select with ctx.Done — an unguarded send freezes its goroutine the moment downstream stops reading, and the GC keeps the corpse. Stages own and close their outputs; fan-in closes after a WaitGroup counts the senders out. Buffers absorb jitter, never steady imbalance; the slowest stage sets throughput. Wrap stages in errgroup for one error path, and gauge channel depths to see where the queue lives.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-pipelines-under-cancellation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the canonical pipeline leak: the mechanism, why the runtime and GC both stay silent, and the idiom that prevents it.", a: "A channel send blocks until a receiver takes the value. When a downstream stage exits early — crash, validation return, bug — every upstream goroutine eventually blocks forever inside its send. The runtime deadlock panic stays silent because it fires only when ALL goroutines are asleep, and the rest of the process keeps running; the GC stays silent because a parked goroutine is itself a GC root, keeping its stack, the channel, and the in-flight values reachable. The prevention is the guarded send: every send into a pipeline channel is written as select with two cases — the send, and ctx.Done returning. Then cancellation lets each sender abandon its own send and exit through its defer close. Receives via for range are safe only because the sender guarantees close; a stage that can exit without closing its output recreates the same leak one hop downstream." },
+    { q: "State the closing discipline, how fan-in implements it, and the drain-vs-abandon choice on cancellation.", a: "Only the sender closes a channel — receivers can never prove a close is safe, and send-on-closed or double-close panics. A single-sender stage closes with defer close(out). Fan-in has N senders into one channel, so no individual sender may close; instead each forwarder signals a WaitGroup with defer wg.Done, and a separate goroutine runs wg.Wait then close(out) — exactly one close, after the last sender exits. On cancellation there are two teardown modes: abandon (the default) — each guarded send unblocks itself via ctx.Done and in-flight values are dropped; drain — the consumer keeps receiving until close so upstream finishes naturally and nothing is lost, at the cost of receiving everything already produced, and it needs a bound or shutdown can hang. Guard every send regardless: draining is a policy, guarded sends are the safety floor." },
+  ]}
+/>
+
+<Recap lang="en">
+The pipeline pattern is stages of goroutines connected by channels, and its modern form has context threaded through every stage. The structure that composes: each stage creates and owns its output channel, sends into it, and guarantees defer close(out) so downstream can for-range; the function returns the channel immediately and data flows after wiring. The rule that keeps it alive under failure: every send is a select with a ctx.Done case, because an unguarded send blocks forever the moment downstream stops reading — the goroutine parks on chan send, the GC treats it as a root pinning its stack and in-flight records, the runtime sees no deadlock since other goroutines still run, and 40,000 frozen senders per nightly run is what that silence buys. Closing discipline is sender-only; fan-in counts its forwarders with a WaitGroup and closes in a separate wait-then-close goroutine. Cancellation tears down either by abandoning — each sender rescues itself through Done, dropping in-flight values — or by draining, where the consumer receives to close so nothing is lost, bounded or it hangs. Buffers are jitter absorbers, not imbalance fixes: a 1024-slot buffer in front of a persistently slower stage fills in seconds and the pipeline settles at the slowest stage rate, with extra memory and delayed leak symptoms as the price. Run stages under errgroup so one failure cancels every guarded send and Wait returns the first error; export len over cap per channel and the goroutine count, and the pipeline tells you where its queue and its leaks live.
+</Recap>
