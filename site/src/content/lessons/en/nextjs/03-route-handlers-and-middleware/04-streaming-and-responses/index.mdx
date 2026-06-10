@@ -1,0 +1,175 @@
+---
+concepts:
+- nextjs-streaming
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-streaming-and-responses"
+sources:
+- https://nextjs.org/docs/app/building-your-application/routing/route-handlers
+- https://nextjs.org/docs/app/building-your-application/routing/loading-ui-and-streaming
+spiral: []
+status: ready
+summary: 'Route handlers stream via ReadableStream and SSE — the transport of LLM token UIs. Backpressure is pull-based: produce as the consumer drains. Suspense streams HTML; handlers stream data. Both break silently behind buffering proxies and compression — send no-transform.'
+title: 'Streaming responses: ReadableStream, SSE for LLM UIs, and the proxies that buffer them'
+track: "nextjs"
+unit: "03-route-handlers-and-middleware"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A team ships an AI chat feature. Locally it's beautiful: tokens flow into the UI like typing, time-to-first-token around 300ms. They deploy behind the company's nginx reverse proxy — and the demo to leadership shows a spinner for nine seconds, then the entire answer slamming in at once. Nothing errored. The handler streamed perfectly; `curl -N` against the pod proved it. The culprit was two layers up: nginx's `proxy_buffering` (on by default) was collecting the whole response before forwarding a byte, and the gzip module was doing the same thing for good measure — compression needs chunks to compress, so it waits for them. One header from the handler — `X-Accel-Buffering: no`, plus `Cache-Control: no-cache, no-transform` — restored the stream. The lesson generalizes: a stream is a contract between *every* hop from your code to the user's screen, and any single hop that buffers — proxy, compression middleware, serverless platform that collects responses — silently converts your streaming UX back into batch.
+</Hook>
+
+<Crux>Handlers stream data via ReadableStream and SSE; Suspense streams HTML. Buffering proxies and compression silently break both.</Crux>
+
+<Explanation>
+
+## Returning a stream from a route handler
+
+A route handler returns a web `Response`, and a `Response` body can be a **`ReadableStream`** — the moment you return it, Next sends headers immediately and flushes chunks as your code enqueues them. Nothing waits for the function to "finish":
+
+```ts
+// app/api/chat/route.ts — proxy an LLM, re-emitting tokens as SSE
+export async function POST(request: Request) {
+  const { prompt } = await request.json();
+  const upstream = await llm.stream(prompt);          // async iterable of tokens
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream({
+    async pull(controller) {
+      const { value, done } = await upstream.next();
+      if (done) {
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+        controller.close();
+        return;
+      }
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(value)}\n\n`));
+    },
+    cancel() {
+      upstream.return?.();   // client disconnected — stop paying the LLM
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream",
+      "cache-control": "no-cache, no-transform",
+      "x-accel-buffering": "no",                     // nginx: do not buffer
+    },
+  });
+}
+```
+
+Three details in this code carry the production weight. The **`pull` callback** is the backpressure hook — more on that below. The **`cancel` callback** runs when the client disconnects; without it, a user closing the tab mid-answer leaves your handler happily consuming (and paying for) the rest of the LLM generation. And the **headers** are the armor against the Hook's nine-second spinner.
+
+## SSE: the boring, right protocol for token streams
+
+For LLM-style UIs you need a framing convention — raw chunks have no message boundaries; a token can arrive split across two network reads. **Server-Sent Events** is the established answer: `text/event-stream` content type, messages framed as `data: <payload>\n\n`, consumed in the browser by `EventSource` (auto-reconnecting, with `Last-Event-ID` resume support) or, as every AI SDK does for POST bodies, by reading `response.body` with a parser. SSE wins over WebSockets here because token streaming is **one-directional**: no upgrade handshake, plain HTTP semantics (works through standard proxies and HTTP/2 multiplexing), trivially resumable, and a `fetch` away. WebSockets earn their complexity only when the *client* must push frequent messages over the same connection.
+
+The failure mode unique to SSE is **framing corruption**: if you emit a payload containing a raw newline without splitting it across `data:` lines, the client parser silently truncates messages — JSON-encode every payload (as above) and the problem disappears.
+
+<Quiz
+  id="04-streaming-and-responses-quiz-1"
+  lessonSlug="04-streaming-and-responses"
+  lang="en"
+  question="An LLM chat handler streams answers, and the cloud bill shows full-length generations even for users who closed the tab after two seconds. What is missing?"
+  choices={[
+    { label: "The ReadableStream has no cancel() handler that aborts the upstream LLM call — on client disconnect the runtime cancels the stream, but the upstream generation keeps running (and billing) unless the handler propagates the abort", correct: true },
+    { label: "SSE connections cannot detect disconnects, so this cost is unavoidable; switch to WebSockets", misconception: "Disconnect detection isn't the protocol's job here — the runtime does signal it by cancelling the response stream. The handler just has to act on that signal: cancel() (or an AbortSignal passed upstream) stops the generation. WebSockets would face the identical propagation question." },
+    { label: "The handler must set a Connection: close header so the stream ends when the user leaves", misconception: "Connection: close governs keep-alive reuse after a response completes — it does nothing mid-stream and cannot watch the client. The mechanism for mid-stream teardown is stream cancellation flowing into your cancel callback." },
+    { label: "Streams are kept alive by Next's cache; force-dynamic on the route fixes it", misconception: "Streaming responses aren't cached — caching is orthogonal here. Reaching for cache config when the symptom is orphaned upstream work mistakes a lifecycle problem (abort propagation) for a caching one." },
+  ]}
+/>
+
+## Backpressure: produce at the consumer's pace
+
+A stream has a producer (your LLM proxy, a database cursor, a file reader) and a consumer (the user's connection, often a slow phone on weak Wi-Fi). When the producer is faster, the difference accumulates **in your server's memory**. Web streams handle this with a **pull model**: the runtime calls your `pull(controller)` when the internal queue has room (tracked by `controller.desiredSize`, fed by the consumer draining bytes), so a correctly written source generates *only when asked*. The anti-pattern is bypassing the model — a `start()` callback with a loop that `enqueue`s an entire table scan, or piping a fast upstream into a slow client without awaiting the writer:
+
+```ts
+// WRONG: ignores backpressure — the whole cursor lands in memory
+start(controller) {
+  for await (const row of hugeCursor) controller.enqueue(encode(row));
+}
+// RIGHT: pull() reads one item per request from the consumer side
+async pull(controller) {
+  const { value, done } = await hugeCursor.next();
+  done ? controller.close() : controller.enqueue(encode(value));
+}
+```
+
+For token streams the stakes are low — tokens are tiny and humans read slowly. For data export endpoints (CSV dumps, log tails) backpressure is the difference between a 30MB-flat memory profile and an OOM-killed pod when one customer with a slow connection requests a 2GB export. If you compose transforms, `pipeThrough`/`pipeTo` propagate backpressure for you; hand-rolled loops are where it leaks.
+
+## Two streamings, one word — and the buffering gauntlet
+
+Next.js streams in two distinct senses, and conflating them muddles debugging. **Suspense streaming of pages** is the App Router rendering HTML progressively: the shell flushes immediately, `loading.tsx`/`<Suspense>` fallbacks render, and late server components arrive as out-of-order chunks that inline scripts slot into place. Its unit is *UI*; the framework owns the protocol. **Handler streaming of data** — this lesson — is you returning bytes the *client code* consumes: SSE events, NDJSON lines, CSV rows. Its unit is *data*; you own the framing, the headers, and the cancellation. They share the transport (chunked HTTP) and therefore share the enemy: **anything that buffers**.
+
+The gauntlet, hop by hop. **nginx**: `proxy_buffering on` by default — defeat it per-response with `X-Accel-Buffering: no`. **Compression**: gzip/brotli middleware accumulates input to build compression windows; `Cache-Control: no-transform` tells well-behaved intermediaries not to re-encode, and your own compression layer must exempt `text/event-stream`. **CDNs**: some buffer or even cache streamed responses unless marked `no-cache`/`private`. **Serverless platforms**: classic AWS Lambda behind API Gateway buffered the entire response by design — streaming needs explicitly streaming-capable infrastructure (Lambda response streaming, or edge/Node servers that flush). The diagnostic that cuts through all of it: `curl -N` directly against the app (streams? your code is fine), then against each layer outward until the stream stops streaming — that hop is your culprit.
+
+<Quiz
+  id="04-streaming-and-responses-quiz-2"
+  lessonSlug="04-streaming-and-responses"
+  lang="en"
+  question="A CSV export handler streams a 2GB result set. With fast clients, memory is flat. When a customer on a slow connection requests it, the pod's memory climbs until OOM. Which mechanism failed?"
+  choices={[
+    { label: "Backpressure: the producer enqueues rows without waiting for the consumer to drain (e.g. a start() loop over the whole cursor), so the speed difference between DB and slow client accumulates in the server's stream queue", correct: true },
+    { label: "The response is missing X-Accel-Buffering: no, so nginx buffers the 2GB in the pod's memory", misconception: "Proxy buffering happens in the proxy's memory or disk, not the application pod's — and its symptom is delayed delivery, not producer-side OOM. The climb tracking the slow client points inside the handler: production pace ignoring consumption pace." },
+    { label: "Streams over 1GB must be chunked into multiple responses; HTTP cannot stream that much", misconception: "Chunked transfer encoding has no size ceiling — multi-gigabyte streamed responses are routine. Inventing a protocol limit redirects attention from the real defect, which is the handler generating faster than the connection drains." },
+    { label: "The slow client holds a database connection open too long, and the DB driver buffers the result", misconception: "Holding a cursor open longer is exactly what streaming intends, and cursors fetch incrementally precisely to avoid materializing results. The buffering happens after the DB — in the handler's queue — when enqueue runs ahead of the consumer instead of being driven by pull()." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A token's path from LLM to pixel — and the three hops where streams silently die"
+  hue="var(--d-ai)"
+  perRow={3}
+  nodes={[
+    { id: "llm", label: "Upstream LLM", sub: "token iterator" },
+    { id: "handler", label: "route.ts", sub: "pull() → SSE frames" },
+    { id: "gzip", label: "Compression", sub: "buffers — exempt SSE" },
+    { id: "proxy", label: "nginx / CDN", sub: "X-Accel-Buffering: no" },
+    { id: "client", label: "Browser parser", sub: "reads response.body" },
+    { id: "cancel", label: "Tab closed", sub: "cancel() aborts LLM" },
+  ]}
+  edges={[
+    { from: "llm", to: "handler", label: "await next()" },
+    { from: "handler", to: "gzip", label: "chunked HTTP" },
+    { from: "gzip", to: "proxy", label: "no-transform" },
+    { from: "proxy", to: "client", label: "flushed live" },
+    { from: "client", to: "cancel", label: "disconnect" },
+  ]}
+  caption="Every hop must agree to stream: the handler pulls at the consumer's pace (backpressure), compression and proxies are told not to buffer (no-transform, X-Accel-Buffering), and disconnects propagate backward through cancel() so abandoned generations stop costing money."
+/>
+
+<KeyTakeaway>Return a ReadableStream and Next flushes chunks as you enqueue; frame tokens as SSE with no-cache, no-transform and X-Accel-Buffering: no. Backpressure is pull-based — produce when asked, or slow clients OOM your pod. Implement cancel() to stop upstream work. Suspense streams HTML; handlers stream data; buffering hops kill both.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-streaming-and-responses-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the three production-critical parts of a streaming SSE handler, and what breaks without each?", a: "(1) Framing and headers: text/event-stream with data: <json>\\n\\n frames — JSON-encode payloads or raw newlines corrupt the client parser; Cache-Control: no-cache, no-transform and X-Accel-Buffering: no keep compression layers, nginx, and CDNs from buffering the stream into a batch response. (2) cancel(): runs when the client disconnects; without it the upstream LLM call keeps generating and billing after the tab closes — propagate the abort. (3) pull-based production: the runtime calls pull(controller) when the queue drains (desiredSize), so the producer matches the consumer's pace; a start() loop that enqueues everything ignores backpressure and accumulates the producer/consumer speed difference in server memory — flat 30MB versus OOM on a 2GB export to a slow client. Compose with pipeThrough/pipeTo to get backpressure propagation for free." },
+    { q: "Distinguish Suspense streaming from handler streaming, and give the buffering-gauntlet diagnostic.", a: "Suspense streaming is the framework progressively rendering HTML for pages: shell first, loading.tsx fallbacks, late server components arriving as out-of-order chunks slotted in by inline scripts — the unit is UI and Next owns the protocol. Handler streaming is your route handler returning raw bytes (SSE, NDJSON, CSV) that client code parses — you own framing, headers, cancellation. Both ride chunked HTTP, so both die at any hop that buffers: nginx proxy_buffering (default on — defeat with X-Accel-Buffering: no), gzip/brotli middleware (exempt text/event-stream; send no-transform), CDNs that collect streams, and serverless platforms that buffer whole responses unless explicitly streaming-capable. Diagnostic: curl -N against the app directly, then against each layer outward — the hop where streaming stops is the culprit." },
+  ]}
+/>
+
+<Recap lang="en">
+A route handler streams by returning a Response whose body is a ReadableStream: headers go out immediately and chunks flush as you enqueue them. For LLM-style UIs the framing convention is SSE — text/event-stream, data: lines separated by blank lines, JSON-encoded payloads so embedded newlines cannot corrupt the parser — chosen over WebSockets because token flow is one-directional and plain HTTP semantics survive proxies, multiplex over HTTP/2, and resume via Last-Event-ID. Three pieces of the handler carry production weight: pull-based production, where the runtime asks for data as the consumer drains (desiredSize) so a slow phone cannot make your pod accumulate a 2GB export in memory — the difference between a flat profile and an OOM kill, with pipeThrough/pipeTo propagating backpressure automatically and hand-rolled enqueue loops leaking it; cancel(), which fires on client disconnect and must abort the upstream call, or closed tabs keep burning LLM spend to the end of every generation; and the header armor — Cache-Control: no-cache, no-transform plus X-Accel-Buffering: no. That armor exists because a stream is a contract with every hop between your code and the screen: nginx buffers by default, compression middleware accumulates windows before emitting, CDNs may collect or cache streams, and classic serverless gateways buffered entire responses — any one of them silently converts streaming into batch, which is why the nine-second-spinner demo failed while curl -N against the pod streamed fine. Keep the two streamings distinct: Suspense streaming is the framework progressively delivering page HTML with out-of-order chunks; handler streaming is your data protocol — but they share the transport, the enemies, and the same hop-by-hop curl diagnostic.
+</Recap>
