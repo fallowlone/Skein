@@ -1,0 +1,160 @@
+---
+concepts:
+- go-memory-model
+deepensInto: []
+estMin: 20
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-sync-and-races"
+sources:
+- https://go.dev/ref/mem
+- https://go.dev/blog/race-detector
+- https://go.dev/doc/articles/race_detector
+spiral: []
+status: ready
+summary: 'Go guarantees behavior only for race-free programs: happens-before comes from channels, mutexes, atomics. Any data race is undefined behavior; benign races do not exist. Run -race in CI (2–20x slower, 5–10x memory). Mutexes guard state; channels transfer ownership.'
+title: 'The Go memory model, data races, and the -race detector'
+track: "go"
+unit: "02-concurrency"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The shutdown handler set `done = true`; the worker loop checked `for !done` — a plain bool, written once, read in a loop. "It's just a flag," the review comment said, "worst case we do one extra iteration." In production the worker never stopped. The compiler, seeing a loop that never writes `done`, hoisted the load out of the loop and spun on a register forever; the deploy hung on graceful shutdown until the orchestrator sent SIGKILL mid-write, and the team spent a day blaming Kubernetes. The same quarter, a different service crashed nightly with `fatal error: concurrent map writes` — two goroutines touching a cache map, a crash the runtime only catches sometimes, when its cheap sampling happens to notice. Both bugs had passed code review with the phrase "benign race." The Go memory model has a blunt reply: a program with a data race has no defined behavior to reason about. There are no benign races — only races whose consequences you haven't met yet.
+</Hook>
+
+<Crux>No happens-before edge, no guarantee: racy programs have undefined behavior, even "harmless" flag reads. Synchronize via channels/mutexes/atomics and run -race in CI.</Crux>
+
+<Explanation>
+
+## Happens-before: the only ordering that exists
+
+The Go memory model (`go.dev/ref/mem`) defines when a read is *guaranteed* to observe a write: only when the write **happens-before** the read. Within one goroutine, program order gives you that for free. *Between* goroutines, happens-before is created exclusively by synchronization:
+
+- a **channel send** happens-before the corresponding receive completes (and for unbuffered channels, the receive happens-before the send returns);
+- the **close** of a channel happens-before a receive that returns a zero value because of it;
+- an **unlock** of a `sync.Mutex` happens-before any later `Lock` that acquires it;
+- `sync.WaitGroup.Done` happens-before the `Wait` it releases; `sync.Once`'s function happens-before any `Do` returning;
+- **atomic operations** in `sync/atomic` behave like tiny synchronized accesses — a goroutine that observes an atomic store also observes everything sequenced before that store.
+
+Nothing else creates ordering. Not `time.Sleep`, not "the write obviously happened seconds earlier," not a `print` statement that seems to fix it. Without an edge, the compiler may reorder and cache aggressively (hoisting the Hook's flag load is legal), and each CPU core may serve reads from its own store buffer. The model is explicit: if two accesses to the same location from different goroutines are not ordered by happens-before and at least one is a write, that is a **data race**, and the behavior of the whole program is undefined — Go promises sequentially consistent semantics *only* to race-free programs. Multiword values make "undefined" concrete: an interface value or slice header is two/three words, so a racy write can be observed half-updated — a type pointer from the new value with data from the old — which is memory corruption, not a stale read.
+
+## The race detector: how it works and what it costs
+
+Build or test with `-race` and the compiler instruments every memory access; the runtime (based on ThreadSanitizer) keeps **vector clocks** per goroutine and **shadow memory** recording the last accesses to each word. On every access it checks: is there a previous access to this address, from another goroutine, at least one a write, with *no happens-before path* between them? If yes, it prints both stack traces — the racing read and write, with goroutine creation sites. Two properties matter for how you use it:
+
+- **No false positives.** It detects actual unsynchronized accesses against the formal model, not heuristics. Every report is a real bug; "we know about that one" is not a triage category.
+- **Only false negatives.** It flags races that *executed*, not races that could. A race on a code path your test never runs, or an interleaving that never occurred, stays invisible. Coverage and realistic concurrency in tests are what make `-race` strong.
+
+The price: typically **2–20× slower** execution and **5–10× more memory** (goroutines also start with bigger stacks). That is too heavy for most production fleets but trivial for CI — `go test -race ./...` belongs in every pipeline, and a canary instance built with `-race` in staging traffic is the senior move for catching interleavings tests never produce.
+
+```go
+// The Hook's bug, minimally. `go test -race` reports it deterministically
+// when both goroutines run; without -race it may "work" for months.
+var done bool // shared, unsynchronized
+
+func worker() {
+	for !done { // racy read — compiler may hoist, core may cache
+		work()
+	}
+}
+
+func shutdown() { done = true } // racy write
+
+// Fix 1 (atomic flag):   var done atomic.Bool … done.Store(true) / done.Load()
+// Fix 2 (channel):       done := make(chan struct{}) … close(done) /
+//                        select { case <-done: return; default: }
+// Fix 3 (ctx):           pass a context.Context and select on ctx.Done()
+```
+
+<Quiz
+  id="03-sync-and-races-quiz-1"
+  lessonSlug="03-sync-and-races"
+  lang="en"
+  question="A goroutine loops on a plain bool flag set by another goroutine. A teammate argues the race is benign: worst case, one stale iteration. What does the memory model actually permit?"
+  choices={[
+    { label: "Anything — without a happens-before edge the compiler may hoist the load so the loop never sees the write, and the program's behavior is undefined", correct: true },
+    { label: "At most a few stale reads; bools are written atomically on all real CPUs", misconception: "Single-byte stores being indivisible in hardware is irrelevant: the compiler is allowed to assume no concurrent writer exists, cache the value in a register, and never re-read it. The race is at the language level, and the language voids the warranty entirely." },
+    { label: "It's fine if the writer runs strictly after the reader started; real time orders the accesses", misconception: "Wall-clock order creates no happens-before edge. Visibility between goroutines flows only through synchronization — channels, mutexes, atomics. A write that happened seconds ago may legitimately never become visible to a loop that has no synchronizing read." },
+    { label: "The runtime will detect it and panic, like it does for concurrent map writes", misconception: "The concurrent-map crash is a special, best-effort sampling check for maps only. Ordinary racy reads and writes are never detected at runtime in a normal build — they just produce silent, unpredictable behavior. Detection requires the -race instrumentation." },
+  ]}
+/>
+
+## Mutexes, RWMutex, atomics: guarding state
+
+`sync.Mutex` is the workhorse: `Lock`/`Unlock` create the happens-before edges that make everything done inside the critical section visible to the next locker. Go mutexes are cheap when uncontended (~tens of nanoseconds, a single atomic CAS) and unfair-but-bounded under contention (a starvation mode kicks in after ~1 ms of waiting, handing the lock to the longest waiter). They are not reentrant — locking twice from one goroutine deadlocks. Keep critical sections tiny and never hold a lock across I/O or a channel operation; the convention is to declare the mutex immediately above the fields it guards.
+
+`sync.RWMutex` allows concurrent readers and exclusive writers. The honest tradeoff: its bookkeeping is heavier than Mutex, so it wins only when read sections are *long* or readers are *many* and writes are rare; for a nanosecond-scale read of a couple of fields, a plain Mutex is usually faster, and a frequently-written RWMutex is slower than Mutex while also letting readers starve writers' arrival window. For read-mostly data that changes wholesale (config, routing tables), `atomic.Pointer[T]` — readers load a snapshot pointer, the writer builds a new immutable value and stores it — gives lock-free reads with one allocation per update. `sync/atomic` types (`atomic.Bool`, `atomic.Int64`, `atomic.Pointer`) cover flags and counters; reaching for atomics to build multi-variable invariants by hand is how lock-free bugs are born — if two fields must change together, that is a mutex's job.
+
+<Inset kind="deep-dive" lang="en">
+Why the runtime catches concurrent map writes but not your flag race: maps already carry a hash-state word the runtime touches on every operation, so it cheaply sets and checks a writing bit there — a best-effort tripwire that costs nothing and catches only some interleavings, crashing with an unrecoverable fatal error rather than a panic precisely because the map's internals may already be corrupt. Generalizing that check to every variable would be the race detector, with its 2–20× cost. The asymmetry explains production folklore: map races crash loudly (sometimes), all other races corrupt quietly (always-eventually). Neither is a synchronization strategy.
+</Inset>
+
+## Channels or mutexes — the slogan, qualified
+
+"Don't communicate by sharing memory; share memory by communicating" is design advice, not a ban. The honest decision rule: **mutexes protect state in place; channels transfer ownership of data or coordinate lifecycles.** A counter, a cache, a set of in-place fields — that is mutex territory, and forcing it through a channel-owning goroutine adds latency, an extra goroutine to manage, and an API where every read is a round-trip. A pipeline stage handing off work items, a worker pool, cancellation, "exactly one goroutine may touch this buffer now" — that is channel territory, and emulating it with mutexes and condition variables reinvents what channels already are. The codebase smell test: a struct with a mutex and twelve methods that each lock-mutate-unlock is fine; a channel used as a mutex (buffer 1, send to lock, receive to unlock) is a sign someone applied the slogan instead of the rule. Either way, both tools compile to the same memory-model currency: happens-before edges. Pick the one that makes ownership obvious to the reader.
+
+<Quiz
+  id="03-sync-and-races-quiz-2"
+  lessonSlug="03-sync-and-races"
+  lang="en"
+  question="Your CI runs go test -race ./... and it has been green for a year. A race-detector report then fires in a staging canary. What does the year of green CI actually tell you?"
+  choices={[
+    { label: "Only that no race executed during the tested interleavings — the detector has no false positives but plenty of false negatives, so the canary report is a real bug that tests never exercised", correct: true },
+    { label: "The canary report is probably a false positive, since the detector approved this code for a year", misconception: "The detector reports only accesses that genuinely violated the happens-before model during execution — it has no false positives by construction. A year of green means the racy interleaving never ran under test, not that the code is race-free." },
+    { label: "The code became racy only under staging load; race-freedom is load-dependent", misconception: "Whether a race exists is a property of the code's synchronization structure, not of load. Load changes which interleavings occur, so it changes detection probability — the race was always there, latent on a path or timing the tests never produced." },
+    { label: "CI green plus a year of stable production proves the race is benign in practice", misconception: "There is no benign category: undefined behavior includes working flawlessly until a compiler upgrade, an inlining change, or a new CPU reorders things differently. The model gives racy programs no semantics to be stable within — the report is a bug to fix, full stop." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Two goroutines access shared state: a happens-before edge from a mutex, channel, or atomic makes the write visible; no edge means a data race and undefined behavior, caught only by -race instrumentation"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "w", label: "Goroutine A", sub: "writes shared var" },
+    { id: "sync", label: "Sync edge", sub: "mutex / chan / atomic" },
+    { id: "r", label: "Goroutine B", sub: "reads shared var" },
+    { id: "hb", label: "Happens-before", sub: "write visible" },
+    { id: "race", label: "No edge: race", sub: "undefined behavior" },
+    { id: "tsan", label: "-race detector", sub: "vector clocks, 2–20x" },
+  ]}
+  edges={[
+    { from: "w", to: "sync", label: "unlock / send" },
+    { from: "sync", to: "r", label: "lock / recv" },
+    { from: "sync", to: "hb", label: "orders" },
+    { from: "w", to: "race", label: "no sync" },
+    { from: "race", to: "tsan", label: "flagged in CI" },
+  ]}
+  caption="Visibility between goroutines flows only through synchronization edges. With the edge, the read is guaranteed to see the write; without it, the compiler and CPU are free to reorder and cache, and only the instrumented build will tell you."
+/>
+
+<KeyTakeaway>Cross-goroutine visibility exists only along happens-before edges: channel send before receive, mutex unlock before next lock, atomics. Any unsynchronized read/write pair is a data race with undefined behavior — there are no benign races. Run -race in CI (2–20x slower, no false positives, only executed interleavings). Mutexes guard state in place; channels transfer ownership; atomics handle flags, counters, and snapshot pointers.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-sync-and-races-retrieval"
+  lang="en"
+  questions={[
+    { q: "What creates happens-before in Go, and why is a race on a plain bool flag not benign?", a: "Happens-before between goroutines is created only by synchronization: a channel send happens-before the matching receive completes (close happens-before the zero-value receive it causes), a mutex Unlock happens-before the next Lock, WaitGroup.Done before the Wait it releases, Once's function before any Do returns, and sync/atomic operations. Wall-clock time, sleeps, and prints create nothing. A plain bool flag read in a loop with no edge is a data race, and the model gives racy programs undefined behavior: the compiler may legally hoist the load out of the loop so the write is never observed (a shutdown that hangs forever), cores may serve stale cache, and multiword values like interfaces or slice headers can be seen half-written — actual memory corruption. Sequential consistency is promised only to race-free programs, so 'benign race' is not a category the language recognizes." },
+    { q: "How does the -race detector work, what does it cost, and what do its reports and silences mean?", a: "Compiling with -race instruments every memory access; a ThreadSanitizer-based runtime keeps vector clocks per goroutine and shadow memory recording recent accesses per word. Each access is checked against prior accesses from other goroutines: same address, at least one write, no happens-before path — that is a race, reported with both stack traces. Cost: typically 2–20x slower and 5–10x more memory, fine for CI (go test -race ./...) and for a staging canary, too heavy for most production fleets. Reports have no false positives — every one is a real violation of the memory model, never 'known and accepted.' Silence is weaker: the detector only sees races that actually executed, so untested paths and unproduced interleavings hide; a year of green CI means those interleavings never ran, not that the code is race-free. Realistic concurrent tests and canaries are what convert its precision into coverage." },
+  ]}
+/>
+
+<Recap lang="en">
+The Go memory model defines exactly one mechanism of cross-goroutine visibility: happens-before edges, created by synchronization and nothing else. Channel sends happen-before their receives complete, close happens-before the zero-value receive it causes, mutex unlocks happen-before subsequent locks, WaitGroup and Once have their analogous guarantees, and sync/atomic operations act as synchronized accesses. Real time, sleeps, and apparent obviousness create no ordering — so a plain bool shutdown flag read in a loop is a data race, and the compiler may hoist the load so the loop never observes the write, which is how a graceful shutdown hangs until SIGKILL. The model promises sequentially consistent behavior only to race-free programs; a racy program has undefined behavior, including half-written interface values and slice headers — memory corruption, not just staleness. The runtime's concurrent-map-writes crash is a cheap best-effort tripwire for maps only; everything else corrupts silently. The -race detector instruments every access and checks vector clocks against shadow memory: no false positives (every report is a real model violation), only false negatives (it sees only interleavings that ran), at 2–20x speed and 5–10x memory cost — which prices it into CI and staging canaries rather than production. For fixing races: sync.Mutex guards multi-field invariants with tiny critical sections and no I/O under the lock; RWMutex pays off only for long or numerous read sections with rare writes; atomic types handle flags and counters; atomic.Pointer snapshots serve read-mostly config. The slogan about sharing memory by communicating, honestly qualified: mutexes protect state in place, channels transfer ownership and coordinate lifecycles — both mint the same currency, happens-before, and the right choice is the one that makes ownership obvious.
+</Recap>

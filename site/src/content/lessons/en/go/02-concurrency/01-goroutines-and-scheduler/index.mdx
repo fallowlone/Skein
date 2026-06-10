@@ -1,0 +1,162 @@
+---
+concepts:
+- go-goroutines
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: middle
+order: 1
+prereqs: []
+slug: "01-goroutines-and-scheduler"
+sources:
+- https://go.dev/doc/effective_go#goroutines
+- https://pkg.go.dev/runtime
+- https://go.dev/blog/pprof
+spiral: []
+status: ready
+summary: 'Goroutines start at ~2 KB and grow on demand; the GMP scheduler multiplexes them onto OS threads with work stealing and, since 1.14, async preemption. GOMAXPROCS caps parallelism. The classic failure is the leak: goroutines blocked forever on a channel, found via pprof.'
+title: 'Goroutines and the scheduler: cheap stacks, GMP, and the leaks that outlive requests'
+track: "go"
+unit: "02-concurrency"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The API gateway had been "fine" for six weeks, then memory started climbing 40 MB an hour with flat traffic. No OOM yet, just a slope. Someone finally opened the pprof goroutine profile and the number at the top read 1,184,202. A million goroutines, every one of them parked on the same line: a channel receive inside a fan-out helper. The handler that spawned them had a 2-second timeout — it returned, the response went out, the goroutine stayed, waiting on a channel nobody would ever write to. Each leaked goroutine held ~4 KB of stack plus the request buffers it captured. The fix was three lines of context plumbing; the lesson was that goroutines are so cheap to start that nothing forces you to think about how they stop — and the runtime will happily keep a million zombies alive for you.
+</Hook>
+
+<Crux>Goroutines are ~2 KB growable stacks scheduled by Go, not the OS. GMP multiplexes them onto threads; cheap to start, easy to leak — pprof counts the zombies.</Crux>
+
+<Explanation>
+
+## Why a goroutine costs ~2 KB and a thread costs megabytes
+
+An OS thread is expensive in two ways: its stack is reserved up front (8 MB virtual by default on Linux — check `ulimit -s`), and every block/wake is a kernel context switch costing roughly 1–2 µs plus cache pollution. A goroutine starts with a **~2 KB stack** that the runtime grows and shrinks on demand: each function prologue checks for headroom, and on overflow the runtime allocates a bigger segment and *copies the stack over* (contiguous stacks, since Go 1.4 — pointers into the stack are rewritten during the copy). Switching between goroutines is a user-space register swap on the order of tens of nanoseconds, no kernel involved. That three-orders-of-magnitude gap is the whole pitch: 10,000 threads is an incident, 10,000 goroutines is a Tuesday. The honest cost: each goroutine is invisible to the OS, so OS tools (`top`, thread counts) tell you nothing about how many you have — only the runtime knows.
+
+## GMP: how the scheduler actually places work
+
+The runtime scheduler juggles three entities. **G** is a goroutine — the stack plus the saved registers. **M** is an OS thread the runtime owns. **P** is a *processor* — a scheduling token holding a local run queue of Gs; there are exactly `GOMAXPROCS` of them (default: number of CPU cores, and since Go 1.25 the default also respects cgroup CPU limits in containers — before that, a 2-CPU-quota pod on a 64-core node got `GOMAXPROCS=64` and throttled itself, the classic fix being uber's automaxprocs). An M must hold a P to run Go code. The choreography:
+
+- A new G goes into the current P's **local run queue** (256 slots); overflow spills to a global queue.
+- An idle P with an empty queue **steals half** the run queue of a random other P — work stealing keeps cores busy without a central lock.
+- When a G blocks in a **syscall**, its M is stuck in the kernel — so the runtime *hands the P to another M* (parking or spawning one) and the remaining Gs keep running. This is why one slow disk read does not stall the other 9,999 goroutines.
+- Blocking on a **channel or mutex** is cheaper still: the G is parked in the runtime (no thread blocks at all), and the M picks the next G from the queue.
+
+```go
+// Observing the machinery: a goroutine per task, bounded by GOMAXPROCS cores.
+func main() {
+	fmt.Println("GOMAXPROCS =", runtime.GOMAXPROCS(0)) // 0 = read, don't set
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100_000; i++ { // 100k goroutines: ~200 MB of stacks, fine
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			work(id) // runtime schedules these across GOMAXPROCS Ps
+		}(i)
+	}
+	wg.Wait()
+	fmt.Println("still alive:", runtime.NumGoroutine()) // should be ~1
+}
+```
+
+<Inset kind="why" lang="en">
+Why the P layer at all — why not schedule Gs straight onto Ms? Because Ms come and go (syscalls park them, the runtime spawns more), and anything cached per-thread would be lost or contended. The P is the stable home for scheduler state: the local run queue, the memory allocator cache (mcache), the defer pool. An M that returns from a syscall must re-acquire a P before running Go code; if all Ps are busy, the M parks and its G goes to the global queue. Fixing the number of Ps to GOMAXPROCS is what bounds true parallelism while letting the number of Ms float with how many goroutines are stuck in the kernel.
+</Inset>
+
+## Preemption: cooperative until 1.14, then signals
+
+Before Go 1.14 the scheduler was cooperative: a goroutine yielded only at function calls (where the stack check lives). A tight loop — `for { x++ }` — never yielded, so it could pin a P forever, starve the garbage collector's stop-the-world phase, and freeze the program. Since **Go 1.14**, the runtime's monitor thread (`sysmon`) notices a G running longer than ~10 ms and sends the M a signal (`SIGURG` on Unix); the handler interrupts the goroutine at the next safe instruction. Loops without calls can no longer wedge the runtime. The remaining sharp edge: preemption is still not instant or free — a CPU-bound goroutine gets ~10 ms slices, so 8 hot loops on `GOMAXPROCS=8` will still make every latency-sensitive goroutine wait its turn. CPU-heavy work belongs in a bounded pool, not in unbounded `go` statements.
+
+<Quiz
+  id="01-goroutines-and-scheduler-quiz-1"
+  lessonSlug="01-goroutines-and-scheduler"
+  lang="en"
+  question="A goroutine calls read() on a slow NFS mount and blocks in the kernel for 4 seconds. What happens to the other goroutines that were queued on the same P?"
+  choices={[
+    { label: "The runtime detaches the P from the blocked M and attaches it to another (possibly new) M, so the queued goroutines keep running on a different thread", correct: true },
+    { label: "They block too — the P is stuck until the syscall returns", misconception: "That would make one slow disk read stall every goroutine sharing the P, which is exactly what the M/P split prevents. The M is stuck in the kernel, but the P — and its run queue — is handed to another thread within microseconds." },
+    { label: "The scheduler preempts the syscall with SIGURG after 10 ms and reschedules the goroutine", misconception: "Async preemption interrupts goroutines running Go code in a hot loop; it cannot yank a thread out of a kernel syscall. The mechanism for syscalls is different: release the P, let another M drive it." },
+    { label: "Nothing needs to happen — goroutines never block OS threads", misconception: "Channel and mutex waits park the G without blocking a thread, but a true syscall has the M pinned in the kernel. That is precisely why the runtime must hand off the P and sometimes spawn extra Ms." },
+  ]}
+/>
+
+## The failure mode: goroutine leaks, and pprof as the census
+
+A goroutine leak is a goroutine that will never resume: blocked on a channel no one will send to, a receive no one will close, a `ctx.Done()` it never selects on, or a mutex held by a goroutine that exited. The garbage collector **cannot** collect it — a parked goroutine is a GC root, so its entire stack and everything it references stays live. Leaks accrete: one per failed request times a million requests is the Hook's slope. Detection is the goroutine profile:
+
+```go
+import _ "net/http/pprof" // exposes /debug/pprof/ on the default mux
+
+// then: go tool pprof http://localhost:6060/debug/pprof/goroutine
+// or:   curl localhost:6060/debug/pprof/goroutine?debug=1
+// The output groups goroutines by identical stack — a leak shows up as
+// one stack with an absurd count, e.g.:
+//   1184202 @ 0x43a1c5 ... chan receive
+//     github.com/acme/gw/internal/fanout.collect+0x9e
+```
+
+Read it like a histogram: thousands of goroutines parked on the *same* line means whoever spawns them never arranged their exit. The cure is structural, not cosmetic — every `go` statement should answer "how does this goroutine end?": a context it selects on, a channel that gets closed, a `WaitGroup` someone waits for. Watch `runtime.NumGoroutine()` on a dashboard; a counter that only goes up is a leak in progress. Honest numbers: a parked goroutine costs ~2–4 KB of stack plus whatever its closure captured (often the real cost — a captured 64 KB buffer turns a million leaks into 64 GB).
+
+<Quiz
+  id="01-goroutines-and-scheduler-quiz-2"
+  lessonSlug="01-goroutines-and-scheduler"
+  lang="en"
+  question="A handler spawns a goroutine that sends its result on an unbuffered channel; the handler receives with a 2 s timeout via select. When the timeout fires, the handler returns. What happens to the worker goroutine?"
+  choices={[
+    { label: "It blocks forever on the send — the only receiver is gone — and leaks, holding its stack and captured variables as GC roots", correct: true },
+    { label: "The garbage collector notices the channel is unreachable and collects the goroutine", misconception: "The GC collects memory, never goroutines. A parked goroutine is itself a GC root, so the channel it blocks on stays reachable too — the pair keeps each other alive indefinitely." },
+    { label: "The runtime kills it when the function that spawned it returns", misconception: "Goroutines have no parent-child relationship; the spawner returning changes nothing. Only main exiting tears goroutines down. Each goroutine must be given its own exit path." },
+    { label: "The send panics because the receiver disappeared", misconception: "Sends only panic on a closed channel. A channel whose receiver has lost interest is just a channel nobody reads — the send blocks silently forever, which is what makes this leak so quiet." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A new goroutine flows into a P's local run queue, an M executes it, and idle Ps steal work while syscalls hand the P to another thread"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "g", label: "G: goroutine", sub: "~2 KB stack" },
+    { id: "p", label: "P: processor", sub: "local runq, 256" },
+    { id: "m", label: "M: OS thread", sub: "runs G, needs P" },
+    { id: "global", label: "Global runq", sub: "overflow" },
+    { id: "steal", label: "Work stealing", sub: "idle P takes half" },
+    { id: "syscall", label: "Syscall", sub: "P handed to new M" },
+  ]}
+  edges={[
+    { from: "g", to: "p", label: "enqueue" },
+    { from: "p", to: "m", label: "schedule" },
+    { from: "p", to: "global", label: "spill" },
+    { from: "steal", to: "p", label: "rebalance" },
+    { from: "m", to: "syscall", label: "blocks" },
+  ]}
+  caption="GOMAXPROCS fixes the number of Ps — true parallelism. Ms float: a syscall pins an M in the kernel, so the runtime detaches its P and lets another thread drive the queue. Channel waits park the G without costing a thread at all."
+/>
+
+<KeyTakeaway>A goroutine is a ~2 KB growable stack scheduled in user space; GMP (G goroutines, M threads, P = GOMAXPROCS scheduling slots) multiplexes them with work stealing, syscall handoff, and ~10 ms signal-based preemption since 1.14. Every `go` statement needs an exit path — leaked goroutines are GC roots, and pprof's goroutine profile is how you count them.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-goroutines-and-scheduler-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through G, M, and P: what each is, why P exists, and what happens on a blocking syscall vs a channel wait.", a: "G is a goroutine: a ~2 KB growable stack plus saved registers. M is an OS thread owned by the runtime. P is a processor — a scheduling token with a local run queue (256 slots, overflow to a global queue); there are exactly GOMAXPROCS of them, and an M must hold a P to run Go code. P exists so scheduler state (run queue, allocator mcache) survives Ms coming and going, and so true parallelism is bounded by a fixed number while thread count floats. On a blocking syscall the M is pinned in the kernel, so the runtime detaches its P and hands it to another (possibly new) M — other goroutines keep running. A channel or mutex wait is cheaper: the G parks inside the runtime, no thread blocks, and the M just picks the next G. Idle Ps steal half of a random P's queue to stay busy." },
+    { q: "What is a goroutine leak, why can't the GC reclaim it, and how do you find one in production?", a: "A leak is a goroutine that will never resume: blocked on a send with no receiver, a receive on a channel never closed, or missing a ctx.Done() select. The GC cannot help because a parked goroutine is itself a GC root — its stack and everything its closure captured stay live, ~2–4 KB each plus captured buffers, accreting one per failed request. Find them with the pprof goroutine profile (/debug/pprof/goroutine): it groups goroutines by identical stack, so a leak appears as one stack with a huge count parked on the same channel-receive line. Track runtime.NumGoroutine() on a dashboard — monotonic growth under flat traffic is a leak in progress. The fix is structural: every go statement must have a defined exit (context cancellation, a closed channel, or a WaitGroup someone waits on)." },
+  ]}
+/>
+
+<Recap lang="en">
+Goroutines are cheap because the runtime owns them: a ~2 KB contiguous stack that grows by copy (pointers rewritten), user-space switches in tens of nanoseconds versus 1–2 µs kernel context switches, and megabytes of reserved thread stack avoided. The GMP scheduler maps them onto hardware: G is the goroutine, M an OS thread, P one of GOMAXPROCS scheduling slots holding a local 256-entry run queue with overflow to a global queue. Idle Ps steal half of another P's queue; a blocking syscall pins the M in the kernel so the runtime detaches the P and hands it to another thread, while channel and mutex waits park the G without blocking any thread at all. GOMAXPROCS defaults to the core count and, since Go 1.25, respects container cgroup limits — before that, pods with small CPU quotas needed automaxprocs to avoid throttling. Preemption was cooperative until Go 1.14; since then sysmon sends SIGURG to goroutines running past ~10 ms, so hot loops can no longer pin a P or stall the GC, though CPU-bound work still deserves a bounded pool. The signature failure is the goroutine leak: a goroutine parked forever on a channel or forgotten context is a GC root, holding its stack and captured buffers alive — a million of them is the memory slope from the Hook. The pprof goroutine profile groups parked goroutines by stack and exposes the leak as one absurd count; runtime.NumGoroutine() on a dashboard catches it early; and the discipline that prevents it is asking, at every go statement, how this goroutine ends.
+</Recap>
