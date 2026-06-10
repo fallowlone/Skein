@@ -1,6 +1,7 @@
 import type { UserState } from "./user-state";
 import type { PretestResult, Progression, EnglishSummary } from "./progression/types";
 import { rankToTier } from "./progression/rank-tier";
+import { mergeCapstones } from "./sync-extras";
 
 type Stamped = { lastAt: number };
 function mergeStampedMap<T extends Stamped>(
@@ -57,6 +58,11 @@ export function mergeProgress(local: UserState, server: UserState): UserState {
     history: mergeHistory(server.history, local.history),
     retrieval: mergeStampedMap(server.retrieval, local.retrieval),
     dismissedRevisit: { ...server.dismissedRevisit, ...local.dismissedRevisit },
+    // milestone done anywhere stays done — a fresh device's empty mirror must
+    // not clobber the server's record (local would otherwise win the spread)
+    capstones: (local.capstones || server.capstones)
+      ? mergeCapstones(server.capstones ?? {}, local.capstones ?? {})
+      : undefined,
   };
 }
 
@@ -82,7 +88,7 @@ export async function fetchServerProgress(): Promise<UserState | null> {
   } catch { return null; }
 }
 
-export async function pushProgress(state: UserState): Promise<boolean> {
+export async function pushProgress(state: UserState & { extras?: unknown }): Promise<boolean> {
   try {
     const r = await fetch("/api/progress", {
       method: "PUT", credentials: "same-origin",
