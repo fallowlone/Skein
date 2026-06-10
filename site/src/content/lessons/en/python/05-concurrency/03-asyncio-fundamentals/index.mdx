@@ -1,0 +1,152 @@
+---
+concepts:
+- python-asyncio-core
+deepensInto: []
+estMin: 20
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-asyncio-fundamentals"
+sources:
+- https://docs.python.org/3/library/asyncio-task.html
+- https://docs.python.org/3/library/concurrent.futures.html
+spiral: []
+status: ready
+summary: 'The event loop runs one coroutine at a time; await points are the only switch points. A coroutine does nothing until awaited or wrapped in a Task; gather runs them concurrently. One blocking call freezes every request — run_in_executor and to_thread are the escape hatch.'
+title: 'asyncio honestly: suspendable frames, await as the only switch point, and the blocking call that freezes everyone'
+track: "python"
+unit: "05-concurrency"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The async API had handled 3,000 requests per second for months. Then p99 latency went from 40 ms to 26 seconds — not gradually, in spikes, and on *every* endpoint at once, including `/health`, which did nothing but return a constant. That detail was the clue everyone missed for a day: when unrelated endpoints stall in lockstep, the event loop itself is stalled. The diff that shipped that morning added one innocent line to a single handler — a call to a teammate's helper that fetched a currency rate. The helper used `requests.get` with a 30-second timeout, not `aiohttp`. Every time the rate API got slow, that one coroutine sat in a blocking socket read while holding the only thread the process had; ten thousand other coroutines, all ready to run, waited behind it. With `PYTHONASYNCIODEBUG=1`, the loop printed the indictment in one line: `Executing <Task ...> took 26.1 seconds`. One blocking call in one handler is an outage for every handler — that is the contract asyncio makes you sign.
+</Hook>
+
+<Crux>One thread, one loop: control switches only at await. A blocking call freezes every coroutine — run_in_executor is the exit.</Crux>
+
+<Explanation>
+
+## Coroutines are suspendable frames, not threads
+
+`async def` does not define background work; it defines a function whose stack frame can be **paused and resumed**. Calling it executes nothing — it returns a coroutine object, a frozen frame holding the function's locals and instruction pointer (forget to await it and nothing runs; you get `RuntimeWarning: coroutine 'fetch' was never awaited` at GC time, the classic silently-skipped step). `await expr` does two things: runs `expr` until it either completes or *suspends*, and — on suspension — propagates the suspension up the entire await chain to the event loop. Suspension bottoms out in a `Future`: an awaitable that is not done yet. The chain matters mechanically: when `handler` awaits `fetch` which awaits `sock_recv`, all three frames freeze as one linked unit, and when the socket delivers data, the loop resumes the bottom frame and the values flow back up. There is no preemption anywhere in this story — a coroutine runs *until it chooses to await something that suspends*. That single property is asyncio's superpower (no locks needed between awaits: code between two await points is atomic with respect to other coroutines) and its loaded gun.
+
+```python
+import asyncio
+
+async def fetch(url: str) -> bytes:
+    reader, writer = await asyncio.open_connection("example.com", 80)
+    writer.write(f"GET {url} HTTP/1.0\r\nHost: example.com\r\n\r\n".encode())
+    await writer.drain()
+    body = await reader.read(-1)     # frame suspends here until data arrives
+    writer.close()
+    return body
+
+coro = fetch("/")        # nothing has run yet — just a frozen frame
+# asyncio.run(coro)      # the loop drives it to completion
+```
+
+## The loop: a ready queue, a selector, and no mercy
+
+The event loop is a small, honest piece of machinery: a queue of ready callbacks and an OS **selector** (`epoll` on Linux, `kqueue` on BSD/macOS). Each iteration it (1) runs every ready callback — and resuming a coroutine until its next await is just one callback, (2) asks the selector which sockets became ready, with a timeout equal to the nearest scheduled timer, (3) queues the wakeups. That is the whole engine, and it implies the rule that the Hook's outage violated: **step 1 must be fast**. The loop cannot poll sockets or fire timers while a callback runs, so a coroutine that computes for 2 seconds — or calls `requests.get`, `time.sleep`, a synchronous DB driver, `bcrypt.hashpw`, or reads a large file with plain `open().read()` — stops the world: every timer late, every connection unaccepted, every other request's p99 inflated by exactly that duration. The detection tools are built in: `PYTHONASYNCIODEBUG=1` (or `loop.set_debug(True)`) logs any callback exceeding 100 ms via `loop.slow_callback_duration`. The cure for blocking calls is delegation, not heroics: `await loop.run_in_executor(None, blocking_fn, arg)` runs the function in the default `ThreadPoolExecutor` and suspends the coroutine until it finishes; `asyncio.to_thread(blocking_fn, arg)` (3.9+) is the same with less ceremony. One honest footnote from the GIL lesson: a *thread* executor only helps when the blocked call releases the GIL (I/O, most C calls) — for pure-Python CPU work, pass a `ProcessPoolExecutor` as the first argument instead.
+
+```python
+import asyncio, hashlib
+from concurrent.futures import ProcessPoolExecutor
+
+async def handler(password: bytes, big_doc: bytes):
+    loop = asyncio.get_running_loop()
+    # blocking I/O or GIL-releasing C call → thread is enough
+    rate = await asyncio.to_thread(fetch_rate_sync, "EUR")
+    # pure-CPU work → process pool, or the GIL nullifies the thread
+    digest = await loop.run_in_executor(cpu_pool, hashlib.pbkdf2_hmac,
+                                        "sha256", password, b"salt", 600_000)
+    return rate, digest
+
+cpu_pool = ProcessPoolExecutor(max_workers=4)
+```
+
+<Quiz
+  id="03-asyncio-fundamentals-quiz-1"
+  lessonSlug="03-asyncio-fundamentals"
+  lang="en"
+  question="An async service's /health endpoint (which awaits nothing slow) spikes to 26 s at the same moments as every other endpoint. What does that pattern tell you?"
+  choices={[
+    { label: "Something is blocking the event loop thread itself — a synchronous call inside some coroutine — so all coroutines, including trivial ones, wait for it", correct: true },
+    { label: "The health endpoint is under-provisioned and needs its own worker pool", misconception: "A handler that awaits nothing slow cannot be slow on its own — unless it never gets scheduled. Correlated stalls across unrelated endpoints indict the shared loop, not any single handler's resources." },
+    { label: "The GIL is saturated by too many concurrent coroutines", misconception: "Coroutines are frames in one thread; ten thousand of them contend for nothing while suspended. The GIL matters between threads — here there is one thread, and something is hogging it synchronously." },
+    { label: "Too many open sockets exhausted the selector, so epoll stopped reporting readiness", misconception: "epoll handles hundreds of thousands of fds without degrading like this. Spiky, perfectly correlated latency across all endpoints is the signature of step-1 (callback execution) blocking, not selector capacity." },
+  ]}
+/>
+
+## Tasks vs coroutines: when concurrency actually starts
+
+`await some_coro()` is *sequential* — sugar for a function call that may suspend. Concurrency begins only when you hand a coroutine to the loop as an independent unit: `asyncio.create_task(coro)` wraps the frame in a **Task**, schedules it to start on the next loop iteration, and returns immediately. A Task is a Future subclass that drives its coroutine and remembers the result or exception. This is the difference that bites in code review: three sequential awaits of three HTTP calls take the *sum* of their latencies; three tasks awaited after creation take the *max*. `asyncio.gather(*coros)` packages the pattern — it wraps each argument in a Task, runs them concurrently, and returns results in argument order; with default settings the first exception propagates immediately *while the surviving tasks keep running unsupervised*, and `return_exceptions=True` instead delivers exceptions as values so you can triage per-item. Two production rules follow. First, a bare `create_task` whose reference you drop can be garbage-collected mid-flight — the loop holds only a weak reference; keep a reference or use the structured tools from the next lesson. Second, gather's keep-running-on-error behavior is a resource leak in disguise for fan-outs with side effects — also the next lesson's subject.
+
+<Quiz
+  id="03-asyncio-fundamentals-quiz-2"
+  lessonSlug="03-asyncio-fundamentals"
+  lang="en"
+  question="Code does: a = fetch(u1); b = fetch(u2); ra = await a; rb = await b — where fetch is an async def called without create_task. Each fetch takes 1 s. Total time?"
+  choices={[
+    { label: "About 2 s — calling an async def just creates frozen coroutine objects; each starts running only when awaited, so the fetches run back to back", correct: true },
+    { label: "About 1 s — the coroutines start executing the moment they are called, and the awaits just collect results", misconception: "Calling an async def runs zero bytecode of its body — it returns a suspended frame. Without create_task or gather, nothing schedules it; execution begins at the await, hence sequential." },
+    { label: "About 1 s — the event loop notices both awaits and parallelizes them automatically", misconception: "The loop never reorders your control flow; await is sequential by definition. Concurrency must be requested explicitly by making Tasks (create_task, gather, TaskGroup) before awaiting." },
+    { label: "It deadlocks — a coroutine object created before another is awaited blocks the loop", misconception: "An unawaited coroutine object is inert — it costs memory and triggers a never-awaited warning if dropped, but it cannot block anything. The code works, merely without the intended overlap." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why cooperative scheduling at all, if one rude coroutine can freeze the process? Because the absence of preemption is what makes 50k concurrent connections cheap and the code between awaits race-free. A suspended coroutine costs a few KB of frame — no OS thread, no stack reservation, no kernel switch; the selector watches all sockets in one syscall. And since switches happen only at marked points, invariants spanning multiple operations need no locks as long as no await sits between them — the read-modify-write that needed a Lock in the threads lesson is safe in a coroutine if it does not await mid-sequence. You trade safety-by-default for an explicit, auditable rule: every await is a visible yield point; everything between is atomic. The price is discipline at the boundary — one synchronous call smuggled in, and the whole bargain collapses.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="One loop iteration: run ready callbacks (coroutine steps), poll the selector, queue wakeups — a blocking call stalls the entire cycle"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "ready", label: "Ready queue", sub: "callbacks + resumed coros" },
+    { id: "run", label: "Run until await", sub: "no preemption" },
+    { id: "sel", label: "Selector poll", sub: "epoll / kqueue" },
+    { id: "io", label: "I/O ready", sub: "socket readable" },
+    { id: "block", label: "Blocking call", sub: "freezes the loop" },
+    { id: "exec", label: "run_in_executor", sub: "thread / process pool" },
+  ]}
+  edges={[
+    { from: "ready", to: "run", label: "step 1" },
+    { from: "run", to: "sel", label: "all suspended" },
+    { from: "sel", to: "io", label: "events" },
+    { from: "io", to: "ready", label: "wake task" },
+    { from: "block", to: "exec", label: "delegate" },
+  ]}
+  caption="await is the only door back to the loop. A synchronous call inside step 1 stops timers, accepts, and every other coroutine — delegate it to an executor and await the Future instead."
+/>
+
+<KeyTakeaway>A coroutine is a pausable frame: calling it runs nothing, awaiting it runs it sequentially, and only Tasks (create_task, gather, TaskGroup) create concurrency. The loop alternates running ready callbacks with one selector poll; nothing preempts a running coroutine, so code between awaits is atomic — and one blocking call (requests, time.sleep, sync DB drivers, CPU loops) stalls every request in the process. Detect with PYTHONASYNCIODEBUG's 100 ms slow-callback log; escape with asyncio.to_thread for blocking I/O and a ProcessPoolExecutor via run_in_executor for pure-CPU work.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-asyncio-fundamentals-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain mechanically why a single requests.get inside one handler inflates p99 for every endpoint of an async service, and how you would detect and fix it.", a: "The loop is one thread alternating two steps: run ready callbacks (each = resume a coroutine until its next await) and poll the selector for I/O. A synchronous socket read inside a coroutine never reaches an await, so step 1 cannot finish: no selector poll, no timer fires, no new connection is accepted, and every ready coroutine — including a trivial /health — waits exactly as long as the blocking call. Correlated spikes across unrelated endpoints are the fingerprint. Detect with PYTHONASYNCIODEBUG=1 or loop.set_debug(True), which logs callbacks exceeding loop.slow_callback_duration (100 ms default) — it prints the offending Task and duration. Fix by replacing with an async client (aiohttp/httpx) or delegating: await asyncio.to_thread(blocking_fn) for I/O-blocking calls, run_in_executor with a ProcessPoolExecutor for pure-Python CPU work (a thread won't help there — the GIL serializes it against the loop's own bytecode)." },
+    { q: "Distinguish coroutine objects, awaiting, and Tasks — and state when concurrency actually begins.", a: "Calling an async def executes nothing; it returns a coroutine object — a frozen frame with locals and an instruction pointer (dropping it unawaited yields the never-awaited RuntimeWarning). await coro drives that frame sequentially within the current coroutine: it is a function call that may suspend, propagating suspension down to a Future and up to the loop. Concurrency begins only when a coroutine becomes a Task: asyncio.create_task schedules it independently on the next loop iteration; gather wraps several and collects results in order (first exception propagates early while siblings keep running, unless return_exceptions=True). Hence sequential awaits cost the sum of latencies; tasks created first then awaited cost the max. Caveat: the loop keeps only a weak reference to tasks — a fire-and-forget create_task with no saved reference can be GC'd mid-flight." },
+  ]}
+/>
+
+<Recap lang="en">
+asyncio's model is three honest pieces. Coroutines: an `async def` call creates a suspended frame, not running work — execution happens when awaited (sequentially) or when wrapped in a Task (concurrently, starting next loop iteration); gather is the fan-out that returns results in argument order, propagating the first error early unless `return_exceptions=True`, and the loop's weak reference means an unanchored create_task can vanish mid-flight. The loop: a ready queue plus a selector (epoll/kqueue); each iteration runs every ready callback — one callback equals one coroutine step from await to await — then polls the selector with a timeout set by the nearest timer. No preemption exists: a coroutine runs until it chooses to suspend, which makes the code between two awaits atomic (the lock that guarded check-then-act in threads is unnecessary if no await splits the sequence) and makes one synchronous call catastrophic — requests.get, time.sleep, a sync driver, or a CPU loop inside any coroutine stalls timers, accepts, and every other request for its full duration; perfectly correlated p99 spikes across unrelated endpoints, /health included, are the diagnostic fingerprint, and PYTHONASYNCIODEBUG=1 names the offending Task past the 100 ms slow-callback threshold. The escape hatch: await asyncio.to_thread for blocking I/O (the thread blocks, the GIL is released, the loop runs on), and run_in_executor with a ProcessPoolExecutor for pure-Python CPU work, because a thread sharing the GIL with the loop buys nothing for bytecode-bound compute.
+</Recap>

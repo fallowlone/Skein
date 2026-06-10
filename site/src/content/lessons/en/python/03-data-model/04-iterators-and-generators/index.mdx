@@ -1,0 +1,141 @@
+---
+concepts:
+- python-iterators
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-iterators-and-generators"
+sources:
+- https://docs.python.org/3/reference/datamodel.html
+- https://docs.python.org/3/library/itertools.html
+spiral: []
+status: ready
+summary: 'for calls __iter__, then __next__ until StopIteration. A generator is a paused frame: send/throw/close drive it, yield from delegates. Lazy pipelines process gigabytes in constant memory — but a paused frame holds its resources, so a generator can hold a file open for hours.'
+title: 'Iterators and generators: paused frames, lazy pipelines, and the file handle that never closed'
+track: "python"
+unit: "03-data-model"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The exporter streamed daily CSV snapshots to S3 through an elegant generator pipeline: `read_rows(path)` opened the file and yielded parsed rows, downstream stages filtered and batched. Then the platform team capped open file descriptors at 1024, and the service started dying with `OSError: Too many open files` — but only on days with many *small* tenants. The leak hunt found nothing that forgot to call close. The culprit was control flow: for tenants with zero matching rows, a downstream stage returned early after the first batch attempt, abandoning the pipeline. The `read_rows` generator was paused at a `yield` inside `with open(path)` — the `with` block never exited because the frame never resumed. A paused generator frame is a live object holding everything in scope: the file handle, the parsed row, the buffers. Garbage collection would eventually run `close()`, but CPython only finalizes when references drop, and a registry dict kept each pipeline alive. One thousand abandoned generators, one thousand open descriptors, one page at 4 a.m.
+</Hook>
+
+<Crux>A generator is a paused stack frame: next() resumes it, StopIteration ends it. Lazy pipelines win on memory — but frames hold resources.</Crux>
+
+<Explanation>
+
+## The iterator protocol: what for actually compiles to
+
+`for x in xs:` desugars to: call `iter(xs)` — which calls `xs.__iter__()` — to get an *iterator*, then call `it.__next__()` repeatedly until it raises `StopIteration`, which the loop swallows as normal termination. Two roles, often confused: an **iterable** has `__iter__` and can be looped many times (lists, dicts, your collection classes); an **iterator** has `__next__` *and* an `__iter__` returning itself, carries position state, and is exhausted exactly once. The classic bug this distinction explains: pass an iterator (not a list) to two consumers, and the second sees nothing — iteration consumed it. A second subtlety with teeth: `StopIteration` is flow control, so a stray `StopIteration` raised *inside* a generator's body would silently end iteration instead of crashing; PEP 479 (default since 3.7) converts it to `RuntimeError` — if you see that error, somebody used `next()` without a default inside a generator.
+
+## Generators: paused frames with an API
+
+A function with `yield` does not run when called — it returns a generator object wrapping a *suspended stack frame*: locals, instruction pointer, the works. `next()` resumes the frame until the next `yield`, which suspends it again, value handed to the caller. `return` (or falling off the end) raises `StopIteration` with the return value attached. The frame's persistence is the whole feature — state machines without classes — and the Hook's whole problem: everything the frame references stays alive while it sleeps.
+
+Beyond `next()`, the full driving API: `gen.send(value)` resumes and makes the paused `yield` expression evaluate to `value` (coroutine-style protocols are built on this — it is how `asyncio`'s machinery began); `gen.throw(exc)` raises the exception *at the paused yield*, letting the generator catch it for cleanup or recovery; `gen.close()` throws `GeneratorExit` there, expecting the generator to exit — a `finally` or `with` block around the yield runs at that moment. That is the fix for the Hook: a consumer that abandons a pipeline must call `close()` (or hold the generator in a `with contextlib.closing(...)`), which resumes the frame one last time so `with open(...)` can exit. `yield from sub` delegates an entire sub-generator: values, `send`, `throw` all pass through transparently, and the sub-generator's return value becomes the expression's value — manual `for x in sub: yield x` loses send/throw passthrough and the return value.
+
+```python
+import csv
+from collections.abc import Iterator
+
+def read_rows(path: str) -> Iterator[dict]:
+    with open(path, newline="") as f:          # held open while frame is paused!
+        yield from csv.DictReader(f)           # delegation: full protocol passthrough
+
+def large_orders(rows: Iterator[dict], min_total: float) -> Iterator[dict]:
+    return (r for r in rows if float(r["total"]) >= min_total)
+
+pipeline = large_orders(read_rows("orders.csv"), 100.0)
+try:
+    for row in pipeline:
+        process(row)
+finally:
+    pipeline.close()    # resumes the paused frame so `with open` can exit
+```
+
+<Quiz
+  id="04-iterators-and-generators-quiz-1"
+  lessonSlug="04-iterators-and-generators"
+  lang="en"
+  question="A generator opens a file in a with-block and yields rows from inside it. A consumer reads 10 rows, then returns early and keeps a reference to the generator in a dict. When does the file close?"
+  choices={[
+    { label: "Not until the generator is closed or garbage-collected — the frame is paused inside the with-block, and the dict reference prevents collection, so the handle stays open indefinitely", correct: true },
+    { label: "When the consumer function returns — Python closes resources opened by callees", misconception: "Python has no notion of callee resource ownership. The with-block lives in the generator's own frame, and that frame is merely suspended — nothing about the consumer returning resumes or unwinds it." },
+    { label: "Immediately after the 10th yield — with-blocks release resources at each suspension", misconception: "Suspension is not exit. The with-block exits only when control flow leaves it — via exhaustion, an exception, or GeneratorExit from close(). A paused yield keeps the block, and the file, fully live." },
+    { label: "It closed after the first yield; generators reopen the file on each resume", misconception: "The frame preserves all locals across suspensions — including the open file object. Nothing is torn down or rebuilt between yields; that persistence is precisely what makes generators stateful and leaky." },
+  ]}
+/>
+
+## Pipelines and itertools: the vocabulary of lazy processing
+
+Chained generators give you streaming with constant memory: each stage pulls one item at a time, so a 20 GB CSV flows through filtering, transformation, and batching in a few kilobytes of working set — the alternative, materializing lists between stages, costs the full dataset per stage. The numbers are honest, though: a generator resume is a Python-level frame switch, so per-item overhead is roughly 100–200 ns versus ~30 ns for a C-level list iteration step; for million-item hot loops where everything fits in memory, a list comprehension is often faster. Laziness buys memory and time-to-first-item, not raw throughput.
+
+`itertools` is the standard vocabulary so you stop hand-writing stateful loops: `islice` (pagination over any iterator — no slicing needed), `chain` (concatenate streams), `groupby` (run-length grouping — **requires sorted input**, the most common itertools bug), `tee` (split one iterator into n — but buffers everything the slowest consumer has not read, so two consumers at different speeds silently rebuild the list in memory), `batched` (3.12+, the batching stage everyone wrote by hand for a decade), plus `count`/`cycle`/`takewhile`/`dropwhile`. These compose into pipelines that read like the data flow they implement — and they are all C-implemented, so a pipeline of itertools stages largely avoids the per-item Python frame cost.
+
+<Quiz
+  id="04-iterators-and-generators-quiz-2"
+  lessonSlug="04-iterators-and-generators"
+  lang="en"
+  question="A pipeline stage does `for x in sub(): yield x` instead of `yield from sub()`. Functionally identical for plain iteration — what did the refactor actually lose?"
+  choices={[
+    { label: "send() and throw() passthrough to the sub-generator, and the sub-generator's return value (which yield from evaluates to) — plain iteration forwards only yielded values", correct: true },
+    { label: "Nothing; yield from is pure syntax sugar for the loop", misconception: "For plain value flow they match, but yield from is a full delegation channel: send, throw, and close route to the innermost paused frame, and the StopIteration value surfaces as the expression result. The loop forwards none of that." },
+    { label: "Laziness — the for-loop version materializes sub() into a list first", misconception: "A for-loop over a generator is still lazy, pulling one item per iteration. The loss is protocol passthrough, not evaluation strategy — both versions stream items identically." },
+    { label: "Exception safety — exceptions inside sub() are swallowed by the loop version", misconception: "Exceptions raised inside sub() propagate normally through the loop. What does not propagate inward is throw() called on the outer generator — it lands at the outer yield, never reaching sub()'s frame." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A generator's lifecycle: created suspended, resumed by next/send, paused at yield, finished by return or closed by GeneratorExit"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "created", label: "Created", sub: "frame built, not run" },
+    { id: "running", label: "Running", sub: "executing body" },
+    { id: "paused", label: "Paused at yield", sub: "locals + handles live" },
+    { id: "done", label: "Exhausted", sub: "StopIteration(value)" },
+    { id: "closed", label: "Closed", sub: "GeneratorExit → finally" },
+    { id: "leak", label: "Abandoned", sub: "paused forever, holds FD" },
+  ]}
+  edges={[
+    { from: "created", to: "running", label: "next()/send()" },
+    { from: "running", to: "paused", label: "yield" },
+    { from: "paused", to: "running", label: "next()/send()" },
+    { from: "running", to: "done", label: "return" },
+    { from: "paused", to: "closed", label: "close()" },
+    { from: "paused", to: "leak", label: "consumer quits" },
+  ]}
+  caption="The dangerous edge is the last one: a consumer that stops pulling leaves the frame paused, and everything in scope — file handles, sockets, buffers — stays alive until close() or garbage collection. Explicit close() in a finally is the cure."
+/>
+
+<KeyTakeaway>`for` is `iter()` then `__next__()` until `StopIteration`; iterables restart, iterators exhaust once. A generator is a suspended frame — `send` feeds the paused yield, `throw` raises there, `close` injects `GeneratorExit` so `finally`/`with` blocks run, and `yield from` delegates the full protocol plus the return value. Pipelines stream gigabytes in constant memory at ~100–200 ns per item; the failure mode is the abandoned paused frame holding a file handle — close generators you do not exhaust.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-iterators-and-generators-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain how an abandoned generator leaks a file handle, why GC does not promptly save you, and the two-sided fix.", a: "A generator that yields inside `with open(path)` keeps the file open while suspended: the with-block only exits when control flow leaves it, and a paused frame is parked mid-block holding every local — handle, buffers, current row. If the consumer stops iterating early, nothing resumes the frame; if any reference (a registry dict, a closure) keeps the generator alive, CPython's refcounting never triggers finalization, and the descriptor stays open indefinitely — a thousand abandoned pipelines is a thousand FDs and an OSError at the ulimit. The fix: consumers close generators they may not exhaust — pipeline.close() in a finally, or contextlib.closing — which throws GeneratorExit at the paused yield, running the with/finally blocks; and producers keep resource scope tight, e.g. open inside, yield from, so close() unwinds cleanly." },
+    { q: "Compare next/send/throw/close and state precisely what yield from adds over a manual for-yield loop.", a: "next(gen) resumes the frame until the next yield. gen.send(v) does the same but the paused yield expression evaluates to v — the basis of coroutine protocols. gen.throw(exc) raises exc at the paused yield, so the generator can catch it and clean up or substitute a value. gen.close() throws GeneratorExit there and expects termination; finally and with blocks around the yield execute at that moment. yield from sub delegates the entire protocol: yielded values flow out, send and throw route to the innermost paused frame instead of stopping at the outer one, close propagates, and the sub-generator's return value (carried on StopIteration) becomes the value of the yield from expression. A manual `for x in sub: yield x` forwards only the yielded values — send lands at the outer yield, throw never reaches sub's frame, and the return value is lost." },
+  ]}
+/>
+
+<Recap lang="en">
+Iteration is two dunders: `for` calls `iter()` for an iterator, then `__next__()` until `StopIteration` — iterables (with `__iter__`) restart on every loop, iterators (with `__next__` returning themselves from `__iter__`) carry position and exhaust once, which is why sharing an iterator between consumers starves the second. PEP 479 turned stray `StopIteration` inside generator bodies into `RuntimeError`, closing a silent-truncation trap. A generator function returns a suspended frame: `next` resumes to the next `yield`, `send` makes that yield evaluate to a value, `throw` raises at it, `close` injects `GeneratorExit` so `finally` and `with` blocks finally run — and `yield from` delegates all of it, values, send, throw, close, plus the sub-generator's return value, which a hand-written for-yield loop drops. Pipelines of generators process arbitrarily large streams in constant memory and excellent time-to-first-item, at an honest ~100–200 ns per Python-level resume versus ~30 ns for C-level list steps — `itertools` (`islice`, `chain`, sorted-input `groupby`, buffer-hungry `tee`, 3.12's `batched`) supplies C-speed stages and a shared vocabulary. The production failure is the paused frame as resource holder: a consumer that abandons a pipeline mid-stream leaves `with open(...)` unexited, the descriptor alive, and the OOM-killer's quieter cousin — fd exhaustion — on the pager. Close what you do not exhaust.
+</Recap>

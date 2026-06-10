@@ -1,0 +1,147 @@
+---
+concepts:
+- go-escape-analysis
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-memory-and-escape-analysis"
+sources:
+- https://go.dev/doc/gc-guide
+- https://go.dev/doc/diagnostics
+spiral: []
+status: ready
+summary: 'Escape analysis decides stack vs heap at compile time: values that outlive their frame, feed interfaces, or get captured by reference escape. Read -gcflags=-m, know that stacks grow by copy, and remember the real cost of an allocation is GC pressure, not the ~25 ns malloc.'
+title: 'Memory and escape analysis: who decides stack vs heap, and what an allocation really costs'
+track: "go"
+unit: "06-runtime-and-performance"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The checkout service was spending 31% of its CPU in garbage collection, and the team's first instinct was to "tune the GC." Someone pulled an allocation profile instead. The top entry wasn't JSON decoding or the database driver — it was the logging wrapper, called on every request, formatting a request ID with `fmt.Sprintf("%d", id)`. One innocent line. Because `fmt` takes `...interface{}`, every integer passed to it was boxed onto the heap: a million requests an hour, three log lines each, three heap allocations per line. The compiler had been announcing this the whole time — `go build -gcflags=-m` printed `id escapes to heap` for anyone who looked. Replacing the hot-path formatting with `strconv.AppendInt` into a pooled buffer cut allocation rate by 60% and GC CPU from 31% to 9%. Nobody tuned anything. They just stopped allocating — and to stop allocating, you first have to know why the compiler decided you were.
+</Hook>
+
+<Crux>If the compiler can't prove a value dies with its frame, it goes to the heap. -gcflags=-m shows why; interfaces and fmt force escapes.</Crux>
+
+<Explanation>
+
+## Stack or heap is the compiler's decision, not your syntax
+
+In C, `malloc` means heap and a local means stack. In Go, syntax is irrelevant: `new(T)`, `&T{}`, and a plain `var t T` all mean "I need a T" — *where* it lives is decided by **escape analysis**, a compile-time proof pass. The question the compiler asks about every value is: *can this outlive the stack frame that created it?* If provably no, it goes on the stack — allocation is bumping the frame pointer (effectively free), and deallocation is the function returning (literally free). If yes, or if the compiler *can't prove* no, the value escapes to the heap, where the allocator places it (~25 ns for a small object on the `mcache` fast path) and the garbage collector must eventually find it, mark it, and sweep it.
+
+That asymmetry is the whole topic. A stack allocation costs nothing now and nothing later. A heap allocation costs a little now and — this is what allocation profiles reveal — a *recurring tax* later: every live heap byte makes the next GC cycle scan more, and every allocated byte brings that cycle closer. The compiler shows its reasoning if you ask:
+
+```go
+// $ go build -gcflags=-m ./... 2>&1 | grep -E 'escapes|moved'
+//
+// ./handler.go:14:6: moved to heap: user        ← &user outlives the frame
+// ./handler.go:22:13: id escapes to heap        ← passed to fmt (interface)
+// ./handler.go:30:12: make([]byte, n) escapes   ← size unknown at compile time
+// ./handler.go:41:9: func literal escapes       ← closure stored beyond the call
+
+func newUser(name string) *User {
+	user := User{Name: name} // "moved to heap": the pointer is returned,
+	return &user             // so the value must survive this frame
+}
+```
+
+Use `-gcflags=-m` (twice, `-m -m`, for verbose proofs) on hot packages. The output reads like a court ruling: not "this is slow," but "here is why I could not keep it on the stack."
+
+## What forces an escape — the five usual suspects
+
+Escape analysis is conservative: anything it can't *prove* local is heap-bound. In practice five patterns cause nearly all escapes in service code:
+
+1. **Returning a pointer to a local.** `return &user` — the frame dies, the value can't. This is fine and idiomatic; constructors are *supposed* to allocate. The waste is doing it per-iteration in a hot loop.
+2. **Storing into an interface.** `fmt.Println(id)`, `logger.Info("n", anyValue)` — converting a concrete value to `interface{}` usually heap-allocates the value, because the callee receives an opaque box the compiler can't see through. This is the Hook's bug, and the single most common accidental escape in Go codebases.
+3. **Closure capture by reference.** A `func(){ ... }` literal that captures a local and is itself stored, returned, or passed to `go` — the captured variable moves to the heap so both frames can share it.
+4. **Sizes unknown at compile time.** `make([]byte, n)` with a runtime `n` escapes; `make([]byte, 4096)` with a constant can stay on the stack (implicit allocations stay stack-eligible up to 64 KB). Same code shape, different proof.
+5. **Sending pointers across goroutine boundaries.** A value sent on a channel or assigned to a struct field that outlives the call has, by definition, escaped.
+
+The verdict also changes with inlining: a small function inlined into its caller may let the compiler re-prove locality and *un-escape* a value. This is why escape behavior can shift between Go versions — the proof, not your code, changed.
+
+<Quiz
+  id="01-memory-and-escape-analysis-quiz-1"
+  lessonSlug="01-memory-and-escape-analysis"
+  lang="en"
+  question="You pass a local int to fmt.Println and -gcflags=-m reports it escapes to the heap. What is the actual mechanism?"
+  choices={[
+    { label: "Converting the int to interface{} boxes it; fmt receives an opaque reference the compiler cannot prove is dropped, so the value must be heap-allocated", correct: true },
+    { label: "Variadic functions always copy their arguments to the heap", misconception: "Variadic args become a slice, and a slice of concrete values with a provably local lifetime can live on the stack. The escape comes from the interface{} conversion, not the ... syntax." },
+    { label: "fmt internally calls reflect, and any value touched by reflection is pinned to the heap permanently", misconception: "Reflection operates on the interface value it is handed; it is the conversion at the call site that forces the allocation. Reflection does not retroactively pin stack values." },
+    { label: "Integers are immutable in Go and therefore always live in a shared heap pool", misconception: "Go has no interning pool for integers (small-int caching is a Python/Java detail). A plain int is a stack value until something — like an interface conversion — forces it out." },
+  ]}
+/>
+
+## Stack growth: why 2 KB stacks don't overflow
+
+Escape analysis would be useless if stacks couldn't hold real workloads. A goroutine starts at ~2 KB, and every function prologue checks whether the frame fits. On overflow the runtime doesn't fault — it allocates a stack **twice the size, copies the old stack over, and rewrites every pointer** that pointed into it (possible because the compiler tracks exactly which words are pointers). The old segment is freed; the goroutine continues, oblivious. Stacks also *shrink*: during GC, a goroutine using a quarter of its stack gets it halved. The cost model: growth is a copy — O(stack size) — paid rarely, at amortized cost near zero; the pathological case is a call pattern oscillating across a growth boundary, repeatedly paying the copy. Deep recursion on a hot path is therefore not free in Go even though nothing crashes — each doubling from 2 KB to, say, 1 MB is ten copies. This is also why stack allocation stays cheap to promise: the runtime can always relocate a stack, but it can never relocate the heap (more on that in the GC lesson — Go's heap doesn't compact).
+
+## The honest price list
+
+Numbers worth carrying: a small heap allocation through the per-P `mcache` is roughly **20–40 ns**; a stack allocation is **~0 ns** (the frame exists anyway). So a single escape is nothing. What kills services is *rate*: at 2 GB/min of allocation, the pacer schedules GC cycles back-to-back, mark assists start taxing your allocating goroutines directly, and suddenly "the GC is slow" — when the truthful statement is "we allocate 30 million times a minute." The leverage order on a hot path is: (1) don't allocate (escape-proof the path with `-m`), (2) allocate once and reuse (`sync.Pool`, preallocated slices with capacity, `strconv.Append*` into existing buffers), (3) only then think about GC knobs. An allocation profile (`pprof -sample_index=alloc_space`) ranks exactly where the bytes come from — the Hook's team found their answer in one screen.
+
+<Quiz
+  id="01-memory-and-escape-analysis-quiz-2"
+  lessonSlug="01-memory-and-escape-analysis"
+  lang="en"
+  question="A goroutine's recursion grows past its current 2 KB stack. What does the runtime do?"
+  choices={[
+    { label: "Allocates a stack roughly twice the size, copies the old one over, and rewrites every pointer into the old stack, then frees it", correct: true },
+    { label: "Links a new 2 KB segment to the old one and keeps both, chaining frames across segments", misconception: "That is segmented stacks — abandoned by Go long ago because of the hot-split problem, where a call boundary straddling two segments paid the cost on every call. Modern Go uses contiguous stacks grown by copy." },
+    { label: "The goroutine panics with a stack overflow once it exceeds its initial allocation", misconception: "Overflow of the current segment triggers growth, not a panic. A panic happens only at the absolute cap (~1 GB by default) — recursion has to run away completely to hit it." },
+    { label: "The OS transparently extends the stack mapping via page faults, as it does for the main thread", misconception: "Goroutine stacks are ordinary heap-backed memory managed by the runtime, invisible to the OS. The kernel guard-page trick only serves real OS threads; Go's stacks move, so a fixed mapping would not even work." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Every value passes through the escape-analysis proof: stack means free release with the frame, heap means allocator work now and GC work forever after"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "value", label: "Value created", sub: "var / new / &T{}" },
+    { id: "proof", label: "Escape analysis", sub: "outlives frame?" },
+    { id: "stack", label: "Stack", sub: "freed with frame" },
+    { id: "heap", label: "Heap", sub: "mcache, ~25 ns" },
+    { id: "gc", label: "GC pressure", sub: "mark + sweep tax" },
+    { id: "grow", label: "Stack growth", sub: "copy + rewrite ptrs" },
+  ]}
+  edges={[
+    { from: "value", to: "proof", label: "compile time" },
+    { from: "proof", to: "stack", label: "provably local" },
+    { from: "proof", to: "heap", label: "escapes" },
+    { from: "heap", to: "gc", label: "recurring cost" },
+    { from: "stack", to: "grow", label: "on overflow" },
+  ]}
+  caption="The proof is conservative: interfaces, captured closures, runtime-sized makes and returned pointers all fail it. -gcflags=-m prints the ruling for every value; the allocation profile shows which rulings you pay for."
+/>
+
+<KeyTakeaway>Escape analysis is a compile-time proof: values that provably die with their frame live on the stack (free), everything else escapes to the heap (~25 ns now, GC pressure forever). Interfaces, closures, `fmt`, runtime-sized `make` and returned pointers are the classic escape triggers — read the ruling with `-gcflags=-m`, and fix hot paths by not allocating before touching any GC knob.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-memory-and-escape-analysis-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the five common patterns that force a value to escape to the heap, and the tool that shows the compiler's reasoning.", a: "Returning a pointer to a local (the value outlives the frame); converting a concrete value to an interface — fmt and loggers being the classic case, since the callee receives an opaque box; closure capture by reference when the closure outlives the call (stored, returned, or launched with go); make/new with a size unknown at compile time, or implicit allocations over 64 KB; and sending pointers across goroutine or struct boundaries that outlive the call. The tool is go build -gcflags=-m (doubled, -m -m, for full proofs): it prints 'moved to heap' and 'escapes to heap' with the line and the reason. Verdicts can change between Go versions because inlining changes what the prover can see." },
+    { q: "Why is the real cost of a heap allocation not the ~25 ns malloc, and what is the leverage order for fixing an allocation-heavy hot path?", a: "The malloc itself is cheap — a small object through the per-P mcache is 20–40 ns. The recurring cost is GC pressure: every allocated byte advances the pacer toward the next cycle, and every live byte makes marking longer; at high allocation rates the GC runs back-to-back and mark assists directly tax allocating goroutines, so allocation rate converts into CPU and latency. Leverage order: first, stop allocating — run -gcflags=-m on the hot path and remove escapes (concrete types instead of interface params, strconv.Append into buffers instead of fmt); second, reuse — sync.Pool, preallocated slices with capacity; only third, GC tuning. Confirm with the alloc_space heap profile, which ranks allocation sites by bytes." },
+  ]}
+/>
+
+<Recap lang="en">
+Go decides stack versus heap by proof, not syntax: escape analysis asks whether a value can outlive its frame, and anything it cannot prove local goes to the heap. Stack allocation is frame-pointer arithmetic, freed by returning; heap allocation costs 20–40 ns through the mcache fast path and then a recurring GC tax — more live bytes to mark, more allocated bytes pulling the next cycle closer. The five escapes that dominate real codebases: returned pointers to locals, interface conversions (fmt and structured loggers above all), closures capturing by reference beyond the call, make with runtime-determined size (constants up to 64 KB stay stack-eligible), and pointers crossing goroutine or long-lived-struct boundaries. The compiler publishes every ruling via -gcflags=-m, and inlining can flip verdicts between releases. Stacks start at ~2 KB and grow by allocate-double-copy-rewrite — contiguous stacks, chosen over segmented ones to kill the hot-split problem — and shrink at GC, so deep recursion pays copy costs even though nothing crashes. When GC CPU looks high, the honest diagnosis usually reads from the allocation profile: the Hook's team cut GC from 31% to 9% not by tuning but by deleting fmt.Sprintf from the hot path. Stop allocating, then reuse, then — rarely — tune.
+</Recap>
