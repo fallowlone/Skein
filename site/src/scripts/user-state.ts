@@ -5,6 +5,7 @@ import { ratingToRank } from "./progression/ranks";
 import { rankToTier } from "./progression/rank-tier";
 import { computeRating, confidenceOf } from "./progression/rating";
 import { mergeProgress, fetchMe, fetchServerProgress, pushProgress } from "./account-sync";
+import { collectExtras, mergeExtras, applyExtras, type SyncedExtras } from "./sync-extras";
 import { updateStreak, todayISO } from "./progression/streak";
 
 const KEY = "awesome.user-state.v1";
@@ -219,18 +220,25 @@ export async function activateSyncIfSignedIn(): Promise<void> {
   if (!me || !me.termsAccepted) { syncActive = false; return; }
 
   const server = await fetchServerProgress();
+  // The server blob carries an `extras` sidecar (practice/drill/review/capstone
+  // stores that live outside UserState). Strip it before the UserState merge,
+  // merge it per-entry against the local stores, and write the union back.
+  const serverExtras = (server as (UserState & { extras?: Partial<SyncedExtras> }) | null)?.extras;
   if (server) {
-    userState.value = mergeProgress(userState.value, server);
+    const { extras: _ignored, ...serverState } = server as UserState & { extras?: Partial<SyncedExtras> };
+    userState.value = mergeProgress(userState.value, serverState as UserState);
     save(userState.value);
   }
-  await pushProgress(userState.value);
+  const mergedExtras = mergeExtras(collectExtras(), serverExtras);
+  applyExtras(mergedExtras);
+  await pushProgress({ ...userState.value, extras: mergedExtras });
 
   // debounced push on subsequent local changes
   effect(() => {
     const snapshot = userState.value;
     if (!syncActive) return;
     if (pushTimer) clearTimeout(pushTimer);
-    pushTimer = setTimeout(() => { void pushProgress(snapshot); }, 3000);
+    pushTimer = setTimeout(() => { void pushProgress({ ...snapshot, extras: collectExtras() }); }, 3000);
   });
 }
 
