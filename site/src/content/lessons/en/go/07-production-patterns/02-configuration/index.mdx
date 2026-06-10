@@ -1,0 +1,179 @@
+---
+concepts:
+- go-configuration
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-configuration"
+sources:
+- https://pkg.go.dev/flag
+- https://pkg.go.dev/os
+- https://12factor.net/config
+spiral: []
+status: ready
+summary: 'Parse configuration once at startup into a typed, eagerly validated Config: defaults, then file, then env, then flags. Fail at boot, not at 3am request time. Secrets get a redacting String method; hot reload is complexity most services should trade for a restart.'
+title: 'Configuration without magic: env, flags, files, and a typed Config that fails at boot'
+track: "go"
+unit: "07-production-patterns"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+The deploy shipped Tuesday afternoon; the page came Saturday at 3:12 a.m. A cache client read its timeout lazily, deep inside the request path: `os.Getenv("CACHE_TIMEOUT_MS")`, `strconv.Atoi`, error ignored. Staging had the variable; production did not. `Getenv` returned an empty string, `Atoi` failed silently into zero, and in that client zero meant *no timeout*. For four days nothing happened — until a cache node died Saturday and every request began waiting on a dead TCP connection forever. Goroutines piled up at two thousand per second, memory followed, the OOM killer did the rest. The 3 a.m. fix was setting one env var. The real fix landed Monday: every config read moved to a `Load()` at boot that uses `LookupEnv`, parses into a typed struct, and returns an error on anything missing or malformed. The bad deploy would have failed its readiness probe Tuesday at 14:07, in front of an engineer with coffee, with the old pods still serving.
+</Hook>
+
+<Crux>Parse config once at boot into a typed, validated struct — flags beat env beat file beat defaults. Fail at startup, not at 3am.</Crux>
+
+<Explanation>
+
+## Three sources, one ladder
+
+Production Go services pull configuration from three places, each with a real constituency. Environment variables are the 12-factor baseline: per-deployment, no rebuild, native to every container orchestrator — but they are flat strings, invisible until you print them, and inherited by every child process. Flags serve operators: `-help` is living documentation, and a one-off override at the terminal beats editing a manifest. Files carry complex shapes — nested structures, lists, per-tenant maps — that die a thousand deaths when encoded into env strings, and they go through code review. The resolution order is a precedence ladder, most deliberate wins:
+
+<StackDiagram
+  label="The precedence ladder: each layer overrides everything below it"
+  hue="var(--d-backend)"
+  layers={[
+    { label: "Flags", note: "operator override, -help docs" },
+    { label: "Environment variables", note: "12-factor, per-deploy" },
+    { label: "Config file", note: "complex shapes, reviewed" },
+    { label: "Defaults in code", note: "compiled baseline" },
+  ]}
+  caption="Resolve the ladder exactly once at startup into one typed Config. The higher a value came from, the more deliberate the override — log each value's source at boot (sources, not secrets) so 3am-you can see what won."
+/>
+
+## Parse once, validate eagerly
+
+The discipline that prevents the Hook incident has two halves. First: configuration is read in exactly one place, at startup, into a typed struct — no `os.Getenv` below `main`. Second: validation is eager and fatal. A service that boots with garbage config fails at request time, hours or days later, under traffic; a service that refuses to boot fails inside the deploy, where rollouts halt automatically and old pods keep serving.
+
+```go
+type Config struct {
+	HTTPAddr     string
+	CacheTimeout time.Duration
+	DatabaseURL  Secret // see below
+}
+
+func Load(args []string) (Config, error) {
+	cfg := Config{HTTPAddr: ":8080", CacheTimeout: 50 * time.Millisecond} // defaults
+
+	if v, ok := os.LookupEnv("CACHE_TIMEOUT_MS"); ok { // unset and empty are different
+		ms, err := strconv.Atoi(v)
+		if err != nil || ms <= 0 {
+			return Config{}, fmt.Errorf("CACHE_TIMEOUT_MS=%q: want a positive integer", v)
+		}
+		cfg.CacheTimeout = time.Duration(ms) * time.Millisecond
+	}
+
+	fs := flag.NewFlagSet("api", flag.ContinueOnError)
+	fs.StringVar(&cfg.HTTPAddr, "http", cfg.HTTPAddr, "listen address") // flag beats env
+	if err := fs.Parse(args); err != nil {
+		return Config{}, err
+	}
+	return cfg, cfg.validate() // required fields, ranges, URL syntax — all now
+}
+```
+
+`LookupEnv` is the load-bearing detail: `Getenv` cannot distinguish *unset* from *set to empty*, which is exactly the ambiguity that turned a missing variable into a silent zero. Handlers receive `Config` — or just the sub-struct they need — through constructors, so the dependency is visible in signatures and trivial to fake in tests.
+
+<Quiz
+  id="02-configuration-quiz-1"
+  lessonSlug="02-configuration"
+  lang="en"
+  question="A deploy ships with CACHE_TIMEOUT_MS=abc. The service uses the boot-time Load() above. What happens, and what would have happened with the old lazy Getenv-in-handler code?"
+  choices={[
+    { label: "New pods fail readiness and the rollout halts with old pods still serving; the lazy version would have shipped a silent zero that misbehaved at request time", correct: true },
+    { label: "Both versions take the site down — bad config is bad config wherever you read it", misconception: "Where you read it decides who suffers. Boot-time failure is absorbed by the rolling deploy: the orchestrator keeps the previous version serving. Request-time failure reaches users, possibly days later when the bad value finally matters." },
+    { label: "Load() should fall back to the default when parsing fails, keeping the deploy green", misconception: "Silent fallback is precisely the original bug wearing a seatbelt. The operator set a value and got something else — config that is present but malformed must fail loudly, because it signals a broken deploy pipeline, not a missing preference." },
+    { label: "This belongs in CI — validate the env vars before the image ever ships", misconception: "CI cannot see production: env values are injected by the orchestrator per environment at runtime. CI can lint the manifest, but only the booting binary observes what it will actually run with." },
+  ]}
+/>
+
+## Secrets do not belong in dumps
+
+Config structs get printed: boot logs, crash reports, `%+v` in an error path, debug endpoints. Every one of those is a leak vector for the database password embedded in a DSN. Flags are worse — process arguments are world-readable in `ps` output on shared hosts. The Go-native containment is a named type whose formatting lies:
+
+```go
+type Secret string
+
+func (Secret) String() string       { return "[REDACTED]" }
+func (Secret) LogValue() slog.Value { return slog.StringValue("[REDACTED]") }
+func (s Secret) Reveal() string     { return string(s) } // explicit, greppable
+
+// fmt %v, %s, %+v and slog all hit String/LogValue. json.Marshal does NOT —
+// it reads the underlying string, so define MarshalJSON too if the struct
+// can ever reach an encoder.
+```
+
+The `Reveal()` call is the point: every place the raw secret escapes is now a deliberate, searchable act instead of an accident of formatting. Reflection-based encoders bypass `Stringer`, so the honest version also implements `MarshalJSON` — teams discover this the day a support bundle with a serialized config lands in a ticket system.
+
+## Hot reload, honestly
+
+File watching looks like an upgrade and is usually a downgrade. A restart applies config through the exact path you test on every deploy: parse, validate, refuse-or-serve. Reload creates a second path that runs rarely and under no test coverage: half-applied updates where some goroutines hold the old value, validation racing in-flight requests, fsnotify quirks around the symlink dance Kubernetes performs on ConfigMap updates, and a fleet where each pod picked up the change at a different moment. A rolling restart of a twenty-pod deployment costs a couple of minutes and zero new code paths. Reload earns its complexity in two places: fleets so large that restart storms cost real capacity, and values that change many times a day — which are feature flags, and belong in a flag service with explicit versioning and audit, not in a watched file.
+
+<Inset kind="why" lang="en">
+Why is boot failure so much cheaper than request failure? Because the deploy is the one moment a human is already watching and the system is built to roll back. A readiness probe failing on the new revision halts the rollout in about a minute with zero user traffic lost. The same bad value read lazily detonates whenever its code path first runs — Saturday, under load, with the deploy that caused it four days cold and an on-call engineer reconstructing history from dashboards.
+</Inset>
+
+## Library config is a different problem
+
+The typed-struct-at-boot pattern is for *applications*, which own `main` and can be exhaustive. Libraries face the opposite constraints: an exported API frozen by compatibility promises, callers who set two of fifteen knobs, and zero-value ambiguity — does `Timeout: 0` mean "not set, use the default" or "deliberately no timeout"? Functional options resolve all three:
+
+```go
+type Option func(*client)
+
+func WithTimeout(d time.Duration) Option { return func(c *client) { c.timeout = d } }
+
+func New(addr string, opts ...Option) (*Client, error) {
+	c := &client{timeout: 5 * time.Second} // default lives here, unambiguous
+	for _, o := range opts {
+		o(c)
+	}
+	return c.validateAndBuild()
+}
+```
+
+Unset means default because the option was never passed; new knobs never break existing call sites; validation runs at construction. Inside an application the same pattern is ceremony — a plain struct is greppable, exhaustive, and obvious.
+
+<Quiz
+  id="02-configuration-quiz-2"
+  lessonSlug="02-configuration"
+  lang="en"
+  question="You maintain a published Go client library and need to add an optional knob. Why do functional options beat adding a field to an exported Config struct?"
+  choices={[
+    { label: "Options make unset unambiguous — the default applies when the option is absent — while a struct field cannot distinguish deliberately-zero from never-set", correct: true },
+    { label: "Adding a field to an exported struct breaks compilation for every caller", misconception: "Adding a field is compile-compatible — callers using field names keep building. The breakage is semantic, not syntactic: the zero value of the new field silently becomes part of your API contract." },
+    { label: "Options are faster because they avoid copying the config struct", misconception: "Both cost nanoseconds at construction time, once per client lifetime. The argument for options is API semantics — zero-value ambiguity and defaults that can evolve — never performance." },
+    { label: "Structs cannot carry default values in Go, options can", misconception: "Defaults are easy with structs — fill them in before applying caller values. What a struct cannot do is tell you whether the caller wrote Timeout: 0 on purpose, and that ambiguity is the actual problem options solve." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Configuration resolves once at startup down a precedence ladder — defaults, file, env, flags — into a typed Config validated before the service accepts traffic, so bad values kill the rollout instead of Saturday night. LookupEnv distinguishes unset from empty; secrets hide behind String/LogValue/MarshalJSON redaction with an explicit Reveal. Restart beats hot reload for most fleets, and functional options are for libraries, not apps.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-configuration-retrieval"
+  lang="en"
+  questions={[
+    { q: "Lay out the precedence ladder, where it gets resolved, and the two failure modes that parse-once-validate-eagerly eliminates.", a: "Defaults in code, overridden by the config file, overridden by environment variables, overridden by flags — most deliberate source wins. The ladder resolves in exactly one Load() at startup into a typed Config; nothing below main reads os.Getenv. Eliminated failure mode one: request-time detonation — a lazily-read bad value misbehaves whenever its code path first runs, days after the deploy that caused it. Boot-time validation moves the failure into the rollout, where readiness probes halt it with old pods serving. Failure mode two: silent coercion — Getenv returning empty for an unset variable, Atoi error ignored into zero. LookupEnv separates unset from empty, and validation rejects present-but-malformed values loudly because they mean the deploy pipeline is broken." },
+    { q: "Why does a Secret type need three methods, and when do functional options actually earn their ceremony?", a: "String() covers fmt paths (%v, %s, %+v in logs and crash reports), LogValue() covers slog so structured logs redact at format time, and MarshalJSON covers reflection-based encoders that bypass Stringer entirely — json.Marshal reads the underlying string and leaks the DSN into any serialized dump. Reveal() makes every legitimate escape explicit and greppable. Functional options earn their keep only in libraries: a frozen exported API where new knobs must not disturb existing call sites, and zero-value ambiguity — Timeout: 0 as deliberate versus unset — that a struct cannot express. Defaults live in the constructor and apply when an option is absent. In an application that owns main, a plain struct is better: exhaustive, greppable, no indirection." },
+  ]}
+/>
+
+<Recap lang="en">
+Configuration in production Go is a discipline of one moment: everything resolves at boot, nothing is read lazily. Three sources feed a precedence ladder — compiled defaults at the bottom, then the reviewed config file for complex shapes, then 12-factor environment variables per deployment, then flags as the operator's documented override — and the ladder collapses into one typed Config inside one Load() function. LookupEnv, never Getenv, because unset and empty are different facts and conflating them is how a missing variable becomes a silent zero. Validation is eager and fatal: required fields, ranges, parseable URLs, all checked before the listener opens, so a malformed value fails the readiness probe during the rollout — a minute of halted deploy with old pods serving — instead of detonating at 3 a.m. when the bad code path finally runs. Secrets ride in a named type that redacts through String for fmt, LogValue for slog, and MarshalJSON for encoders that bypass both, with an explicit Reveal() marking every sanctioned escape; and they stay out of flags, which any ps can read. Hot reload is honestly evaluated complexity: a second, rarely-exercised application path with partial-update races and per-pod divergence, worth it only for restart-storm-scale fleets — while frequently-changing values are feature flags and belong in a flag service. Libraries flip the calculus: functional options give frozen APIs evolvable defaults and make unset unambiguous, which a config struct cannot.
+</Recap>

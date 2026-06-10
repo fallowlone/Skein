@@ -1,0 +1,171 @@
+---
+concepts:
+- go-retries
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-retries-and-resilience"
+sources:
+- https://pkg.go.dev/context
+- https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/
+- https://sre.google/sre-book/handling-overload/
+spiral: []
+status: ready
+summary: 'Retry only idempotent work, with exponential backoff plus full jitter to break synchronized herds. Cap retries with a budget or they amplify outages 3x at the worst moment. Per-attempt timeouts live under one overall deadline; circuit breakers stop hammering a downed peer.'
+title: 'Retries and resilience: jittered backoff, retry budgets, and circuit breakers'
+track: "go"
+unit: "07-production-patterns"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The catalog service never went down — it browned out. One degraded node pushed p99 to 1.2 seconds against the callers' one-second timeout, so a slice of requests started timing out. Every timed-out call retried immediately, twice. The math did the rest: within ninety seconds, offered load on the catalog tier tripled while its capacity was down fifteen percent. Healthy nodes saturated, their latency crossed the timeout too, their callers retried — and the brownout became a blackout. The postmortem graph became a company legend: capacity dipped 15%, traffic rose 300%, availability went to zero. Nobody had deployed anything; no hardware had failed beyond one slow node. The outage was manufactured entirely by the retry policy of the clients — each one locally reasonable, collectively a distributed denial-of-service against their own dependency. The fix was not fewer bugs in catalog. It was retries that respect a budget, back off with jitter, and stop entirely when the peer is drowning.
+</Hook>
+
+<Crux>Retry idempotent work only, back off with full jitter, cap attempts with a budget — unbounded retries turn brownouts into outages.</Crux>
+
+<Explanation>
+
+## Retry safety is a property of the operation
+
+A timeout is not a failure report — it is the *absence* of a report. The request may have died on the wire, or it may have succeeded after you stopped listening. Retrying is therefore only safe when running the operation twice is equivalent to running it once. GET, PUT and DELETE promise that by HTTP contract (if the handlers honor it); POST promises nothing — retrying a timed-out `POST /charge` because "it failed" is how customers get charged twice. The industry fix is the idempotency key: the client generates a unique key per logical operation, sends it with every attempt, and the server stores the result under that key, replaying the stored response for duplicates. Exactly-once delivery is a lie the network does not permit; at-least-once plus server-side deduplication is what idempotency keys actually implement. Classify every call site before writing any retry loop: idempotent by nature, idempotent via key, or not retryable at all.
+
+<Quiz
+  id="04-retries-and-resilience-quiz-1"
+  lessonSlug="04-retries-and-resilience"
+  lang="en"
+  question="A POST /charge times out after 1s. The client retries; the customer is charged twice. What exactly made the retry unsafe?"
+  choices={[
+    { label: "The timeout proved nothing — the first charge may have succeeded after the client stopped waiting, and without an idempotency key the server cannot recognize the duplicate", correct: true },
+    { label: "The client retried too fast — with proper exponential backoff the duplicate would not happen", misconception: "Backoff changes when the duplicate arrives, not whether it is a duplicate. Five minutes later, a retried non-idempotent charge is still a second charge. Timing policy and safety policy are orthogonal." },
+    { label: "POST is simply never retryable, so the client must surface the error to the user", misconception: "POST is retryable once the operation is made idempotent — a client-generated idempotency key that the server dedupes on turns retry-of-POST into replay-of-result. Payment APIs are built around exactly this." },
+    { label: "The server should have used a transaction so the second request would fail", misconception: "A transaction makes one request atomic; it says nothing about two separate requests arriving minutes apart. Deduplication needs shared state keyed by something both attempts carry — the idempotency key." },
+  ]}
+/>
+
+## Backoff with full jitter
+
+Failures synchronize clients: a downstream restart, a cache flush, a deploy — and a thousand callers fail in the same hundred milliseconds. If they all retry on the same schedule, they return as a wave, and exponential backoff alone only spaces the waves: spikes at one second, two, four, each one a thundering herd against a recovering service. Jitter is what breaks the synchronization. The AWS Architecture Blog analysis that named these strategies found *full jitter* — sleeping a uniformly random time between zero and the exponential ceiling — close to optimal: clients spread evenly across the window, the herd becomes a drizzle, and total work done by the system drops dramatically compared to unjittered backoff.
+
+```go
+const (
+	baseDelay = 100 * time.Millisecond
+	maxDelay  = 5 * time.Second
+)
+
+// Full jitter: uniform in [0, min(maxDelay, base*2^attempt)).
+func backoff(attempt int) time.Duration {
+	ceiling := baseDelay << attempt // 100ms, 200ms, 400ms, ...
+	if ceiling > maxDelay {
+		ceiling = maxDelay
+	}
+	return rand.N(ceiling) // math/rand/v2: uniform in [0, ceiling)
+}
+```
+
+## Retry budgets: the amplification cap
+
+Here is the mechanism that killed the catalog service. With three attempts per request, a downstream at 100% failure receives *three times* its normal traffic — precisely when its capacity is lowest. Stack retries across layers and they multiply: three attempts at the client and three at the gateway is up to nine arrivals downstream for one user action. The SRE-book discipline is two caps. Per request: at most three attempts, then fail upward. Per client: a *retry budget* — retries may not exceed roughly 10% of requests in a sliding window; when the budget is spent, failures return immediately without retrying. Under total downstream failure, a budgeted client sends at most 1.1x its normal load instead of 3x, and retries help with what they actually help with — transient blips — while staying harmless during real outages. And retry at *one* layer only, the one that owns the user-visible deadline; everything below should fail fast upward.
+
+<Quiz
+  id="04-retries-and-resilience-quiz-2"
+  lessonSlug="04-retries-and-resilience"
+  lang="en"
+  question="Client and gateway each retry up to 3 attempts. The downstream fails 100% for five minutes at a 1k rps baseline. Roughly what does the downstream receive, and what does a 10% retry budget at each layer change?"
+  choices={[
+    { label: "Up to ~9k rps — the two layers multiply (3x3 attempts per user action); budgets cap each layer near 1.1x, so about 1.2k rps reaches the downstream instead", correct: true },
+    { label: "About 6k rps — the layers add their retries: 3k from the client plus 3k from the gateway", misconception: "Retries compose multiplicatively, not additively: each of the gateway's 3 attempts is an incoming request the client layer may itself have retried 3 times. Layered retry math is products — which is why one layer should own retrying." },
+    { label: "Still 1k rps — failed requests die quickly, so retries replace traffic rather than adding it", misconception: "Each attempt is a real arrival the downstream must accept, parse and reject — and failing calls often burn a full timeout first. During an outage the work per request is at its most expensive, and retries add arrivals on top." },
+    { label: "The budget makes it worse — failures return to users immediately once it is spent", misconception: "Returning failures fast is the budget working as designed: during a total outage retries cannot succeed anyway, so spending 3x traffic on them only deepens the hole. The budget preserves retries for transient blips and keeps outage load near baseline." },
+  ]}
+/>
+
+## Timeouts: per attempt, under one deadline
+
+Retries and timeouts are one design problem, and the context tree from the first lesson is its skeleton. The caller-facing SLO becomes the overall deadline on `ctx`; each attempt derives a shorter per-attempt context, so a hung attempt dies quickly and the retry can land on a healthier replica; and the loop checks the parent between attempts so it never sleeps past the deadline:
+
+```go
+func callWithRetry(ctx context.Context, do func(context.Context) error) error {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		attemptCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		lastErr = do(attemptCtx)
+		cancel()
+		if lastErr == nil || !retryable(lastErr) {
+			return lastErr
+		}
+		select {
+		case <-time.After(backoff(attempt)):
+		case <-ctx.Done():
+			return errors.Join(ctx.Err(), lastErr) // deadline beats persistence
+		}
+	}
+	return lastErr
+}
+```
+
+The proportions matter: an overall 2-second deadline with 500 ms attempts leaves room for three attempts *plus* backoff; a 1-second deadline with 900 ms attempts is a retry loop in name only. Budget the deadline like money — attempts, backoff, and a reserve for the caller's own work.
+
+<FlowDiagram
+  label="Every retry passes four gates: breaker, error class, budget, deadline"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "breaker", label: "Breaker gate", sub: "open = fail fast" },
+    { id: "attempt", label: "Attempt", sub: "per-try ctx, 500ms" },
+    { id: "classify", label: "Classify error", sub: "retryable or not" },
+    { id: "budget", label: "Retry budget", sub: "~10% of requests" },
+    { id: "sleep", label: "Backoff sleep", sub: "full jitter" },
+    { id: "fail", label: "Return error", sub: "caller decides" },
+  ]}
+  edges={[
+    { from: "breaker", to: "attempt", label: "closed" },
+    { from: "breaker", to: "fail", label: "open" },
+    { from: "attempt", to: "classify", label: "error" },
+    { from: "classify", to: "budget", label: "retryable" },
+    { from: "classify", to: "fail", label: "permanent" },
+    { from: "budget", to: "sleep", label: "tokens left" },
+    { from: "budget", to: "fail", label: "spent" },
+    { from: "sleep", to: "attempt", label: "deadline permits" },
+  ]}
+  caption="Each gate exists because a retry is new offered load at the worst possible moment. The breaker stops calls to a dead peer entirely; the budget caps amplification against a degraded one; the parent deadline caps the whole dance."
+/>
+
+## Circuit breakers: when silence beats persistence
+
+A retry budget still sends its baseline share into a dependency that is fully down — and each of those calls burns a full timeout before failing. A circuit breaker adds the missing state machine. **Closed**: traffic flows, failures are counted in a window. **Open**: the failure threshold tripped; calls fail in microseconds without touching the network, and the downstream gets the one thing that actually helps it recover — silence. **Half-open**: after a cooldown, a few trial requests probe; success closes the breaker, failure reopens it. A breaker beats a budget when the dependency is binary-dead and when your own latency matters — failing fast in microseconds instead of burning 500 ms per doomed call keeps your goroutines, connection pools and callers alive. The honest costs: state per dependency, two thresholds and a cooldown to tune, false trips on low-traffic paths where three failures out of five requests is noise, and the obligation to decide what the fallback actually is when the breaker is open.
+
+<Inset kind="why" lang="en">
+What should you not hand-roll, and what should you not import? The jittered, budgeted, deadline-aware retry loop above is thirty lines — copy it, test it, own it; an external framework for that is dependency surface without leverage. The breaker is the opposite case: a concurrency-safe state machine with sliding windows and probe coordination is subtle enough that a small, battle-tested library (gobreaker-style) beats your first three attempts at writing one. The line is leverage per dependency: import mechanisms that are hard to get right, copy policies that are easy to read.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Classify before retrying: idempotent by contract, idempotent via key, or not retryable — a timeout proves nothing about failure. Back off exponentially with full jitter to dissolve synchronized herds, cap attempts per request and retries at ~10% per client, and run every attempt under a derived per-attempt context inside one overall deadline. Add a breaker where a dependency can be binary-dead. Copy the 30-line loop; import the breaker.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-retries-and-resilience-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the retry-amplification mechanism and the two caps that contain it.", a: "Each retry is a new arrival at the downstream, scheduled precisely when the downstream is least able to serve it. At 100% downstream failure, a client making three attempts per request triples offered load; layered retries multiply — three at the client times three at the gateway is up to nine arrivals per user action — so a 15% capacity dip can be converted by clients into a 300% traffic surge: the brownout-to-blackout pattern. Cap one, per request: a small fixed attempt limit (three), then fail upward. Cap two, per client: a retry budget — retries spend from a token pool capped near 10% of recent request volume; when spent, failures return without retry. Under total outage a budgeted client emits ~1.1x baseline instead of 3x, while transient blips still get retried. And only one layer retries — the one owning the user-visible deadline." },
+    { q: "Walk through full jitter, the per-attempt/overall deadline split, and the breaker state machine with its tradeoff against budgets.", a: "Full jitter: sleep uniformly in [0, min(cap, base*2^attempt)) — the exponential ceiling spaces retries while the uniform draw breaks the synchronization created by a shared failure moment; without jitter, backoff produces aligned waves hammering a recovering peer. Deadlines: the overall SLO lives on the parent ctx; each attempt derives a short per-attempt context (say 500ms under a 2s parent) so hung attempts die early and retries can reach healthier replicas; between attempts, select on ctx.Done so you never sleep past the deadline. Breaker: closed counts failures in a window; open fails calls in microseconds, giving the dead peer silence and saving your own timeouts and pools; half-open sends probes after cooldown — success closes, failure reopens. Versus a budget: the budget caps amplification against a degraded peer but still sends baseline traffic into a fully dead one, burning a timeout per call; the breaker drops to zero. Costs: thresholds to tune, false trips on low traffic, and a fallback decision you must make explicitly." },
+  ]}
+/>
+
+<Recap lang="en">
+Resilience starts with a classification, not a loop: which operations are idempotent by contract, which become idempotent through a client-generated key the server dedupes on, and which must never be retried — because a timeout is the absence of an answer, and the first attempt may have succeeded after you hung up. The double charge is what skipping that step looks like. Then the loop: exponential backoff sets the spacing, full jitter — a uniform draw between zero and the exponential ceiling — dissolves the synchronized waves that a shared failure moment creates, and math/rand/v2 makes it three lines. The budget is the piece most teams miss until their first amplification outage: three attempts per request and retries capped near ten percent of request volume per client, so a downstream at zero availability sees 1.1x load instead of 3x — or 9x when two layers both retry, which is why exactly one layer owns retrying. Timeouts complete the geometry: the user-visible SLO is the parent context deadline, each attempt derives a 500 ms child, and the loop selects on Done between attempts so backoff never outlives the request. Circuit breakers cover the case budgets cannot: a binary-dead dependency, where open-state microsecond failures protect your pools and give the peer silence to recover, at the price of thresholds, false trips on thin traffic, and an explicit fallback. Copy the thirty-line loop into your codebase; import only the breaker.
+</Recap>

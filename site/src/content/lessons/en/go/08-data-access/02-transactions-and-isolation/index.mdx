@@ -1,0 +1,186 @@
+---
+concepts:
+- go-transactions
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-transactions-and-isolation"
+sources:
+- https://pkg.go.dev/database/sql
+- https://www.postgresql.org/docs/current/transaction-iso.html
+spiral: []
+status: ready
+summary: 'A Tx pins one connection from Begin to Commit — slow work inside a transaction starves the pool. BeginTx asks for isolation; Postgres gives read committed by default, snapshots, and serializable that obliges a 40001 retry loop. Deadlocks return 40P01 — retry the victim.'
+title: 'Transactions pin connections: isolation levels from Go, and retrying 40001 and 40P01'
+track: "go"
+unit: "08-data-access"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Black Friday, 14:02. The payment provider degrades — p99 climbs from 300 ms to 9 seconds. Within a minute, every endpoint of the checkout service is timing out, including ones that never touch payments. The database dashboard shows 2% CPU; the on-call stares at a healthy Postgres while the whole service drowns. The cause is one function written a year earlier: `BeginTx`, INSERT the order, call the payment API over HTTP, UPDATE the order status, `Commit`. Tidy, atomic-looking — and lethal: each transaction pins one pool connection for the full 9 seconds of provider latency. `MaxOpenConns` is 20, so 20 in-flight checkouts hold every connection the process has, and the session lookup on the homepage queues behind them at the pool gate. The database was never the bottleneck. The transaction was holding the database hostage to someone else's outage.
+</Hook>
+
+<Crux>A Tx pins one connection from Begin to Commit; isolation is what Postgres gives, and 40001/40P01 mean retry the whole transaction.</Crux>
+
+<Explanation>
+
+## One transaction, one pinned connection
+
+Everything else in this lesson hangs off one mechanical fact: `BeginTx` checks a single connection out of the pool and pins it until `Commit` or `Rollback`. Every statement on the `*sql.Tx` rides that one connection — which is what makes the transaction see its own uncommitted writes, and what makes the pool poorer by one for the transaction's entire lifespan. The Hook's arithmetic follows directly: a 20-connection pool where each transaction encloses 9 seconds of HTTP yields a hard ceiling of about 2.2 transactions per second for the whole process, with every unrelated query queueing behind them. The rule that prevents it: between Begin and Commit, only database statements and cheap CPU — no HTTP calls, no Kafka publishes, no file I/O. If a workflow needs external calls plus atomicity, it becomes a state machine: commit a `pending` row, make the call, then a second short transaction to finalize.
+
+The canonical shape:
+
+```go
+func transfer(ctx context.Context, db *sql.DB, from, to int64, amt int64) error {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() // after a successful Commit this returns sql.ErrTxDone — a deliberate no-op
+
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE accounts SET balance = balance - $1 WHERE id = $2`, amt, from); err != nil {
+		return err // any early return: the defer rolls back and frees the pinned connection
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE accounts SET balance = balance + $1 WHERE id = $2`, amt, to); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+```
+
+`defer tx.Rollback()` immediately after `BeginTx` is the pattern worth internalizing. Rollback after a successful Commit is not a bug — the Tx is already resolved, so it returns `sql.ErrTxDone` and does nothing. That idempotence is the design: one deferred line covers every early return and every panic between Begin and Commit, and the happy path pays nothing for it. The alternative — tracking a `committed` flag, or rolling back manually on each error branch — is exactly the code that forgets a branch and leaks a pinned connection plus an open server-side transaction holding locks.
+
+<Quiz
+  id="02-transactions-and-isolation-quiz-1"
+  lessonSlug="02-transactions-and-isolation"
+  lang="en"
+  question="A function does defer tx.Rollback() right after BeginTx, then later finishes with tx.Commit(), which succeeds. What does the deferred Rollback do?"
+  choices={[
+    { label: "Nothing — the Tx is already resolved, so Rollback returns sql.ErrTxDone, which the pattern deliberately ignores", correct: true },
+    { label: "It undoes the committed transaction, losing the writes", misconception: "Commit is final: once it returns nil, the server has durably applied the transaction. A later Rollback on the same Tx cannot reach back — the handle is done, and the call is a no-op returning ErrTxDone." },
+    { label: "It panics, because Rollback on a finished Tx is a programming error", misconception: "database/sql made this case explicitly safe so the defer pattern works: Rollback after resolution returns ErrTxDone rather than panicking. That guarantee is the whole reason one deferred line can guard every exit path." },
+    { label: "It returns the connection to the pool, which Commit does not do", misconception: "Whichever of Commit or Rollback resolves the Tx first releases the pinned connection. The deferred Rollback after a successful Commit releases nothing — there is nothing left to release." },
+  ]}
+/>
+
+## Isolation: what you request vs what Postgres gives
+
+`database/sql` lets you request an isolation level portably, and the driver translates or refuses:
+
+```go
+tx, err := db.BeginTx(ctx, &sql.TxOptions{
+	Isolation: sql.LevelSerializable, // pgx issues: BEGIN ISOLATION LEVEL SERIALIZABLE
+	ReadOnly:  true,                  // lets Postgres skip write machinery; a planner hint for free
+})
+```
+
+What arrives on the other side is Postgres semantics, and they are worth knowing precisely:
+
+- **Read committed (the default).** Each *statement* sees a fresh snapshot. Two SELECTs in one transaction can disagree; a read-modify-write done as SELECT-then-UPDATE silently loses concurrent updates. The fixes live in SQL: a single atomic `UPDATE ... SET x = x + 1`, or `SELECT ... FOR UPDATE` to lock the row first.
+- **Repeatable read.** One snapshot for the whole transaction — reads are stable. But if a concurrent transaction commits a write to a row you then try to update, yours aborts with SQLSTATE `40001` (serialization_failure). Already at this level, retrying stops being optional.
+- **Serializable.** Postgres runs SSI on top of snapshots, tracking read/write dependencies between concurrent transactions. It delivers true serializability — and reserves the right to abort transactions that individually did nothing wrong with the same `40001`. The documentation is blunt about the contract: applications using this level **must be prepared to retry transactions**. Serializable without a retry loop is a latent 500 generator that fires only under concurrency, i.e. only in production.
+
+## Lock waits, deadlocks, and the retry loop
+
+Two distinct slow-transaction pathologies get conflated. A **lock wait** is silent queueing: your UPDATE blocks until the transaction holding the row lock commits — no error, just latency (bound it with `lock_timeout`; surface it with `log_lock_waits`). A **deadlock** is a cycle: transaction A holds row 1 and wants row 2, B holds row 2 and wants row 1. Postgres detects the cycle after `deadlock_timeout` (1 s by default), picks a victim, and kills it with SQLSTATE `40P01` — the survivor proceeds normally. Both `40001` and `40P01` are retryable by design: the database is saying "this interleaving lost; try again", not "this operation is wrong". Which makes the retry helper the load-bearing pattern of this unit:
+
+```go
+func withTx(ctx context.Context, db *sql.DB, opts *sql.TxOptions, fn func(tx *sql.Tx) error) error {
+	var err error
+	for attempt := 1; attempt <= 4; attempt++ {
+		err = func() error {
+			tx, err := db.BeginTx(ctx, opts)
+			if err != nil {
+				return err
+			}
+			defer tx.Rollback()
+			if err := fn(tx); err != nil {
+				return err
+			}
+			return tx.Commit()
+		}()
+		if !retryable(err) || ctx.Err() != nil {
+			return err
+		}
+		// jittered backoff: deadlock partners retrying in lockstep collide again
+		time.Sleep(time.Duration(attempt*attempt) * 25 * time.Millisecond)
+	}
+	return fmt.Errorf("transaction gave up after 4 attempts: %w", err)
+}
+
+func retryable(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		(pgErr.Code == "40001" || pgErr.Code == "40P01") // serialization_failure, deadlock_detected
+}
+```
+
+Three details carry the weight. Classification goes through `errors.As` on the driver's typed error and matches SQLSTATE codes — never substring-matching error text, which breaks across driver versions and locales. The whole closure re-runs, so `fn` must be safe to repeat: no side effects beyond the transaction itself (an email sent inside `fn` goes out once per attempt). And the backoff is jittered for a reason — two deadlock partners that retry on identical schedules meet each other again at the same rows.
+
+<Quiz
+  id="02-transactions-and-isolation-quiz-2"
+  lessonSlug="02-transactions-and-isolation"
+  lang="en"
+  question="A serializable transaction aborts with SQLSTATE 40001, but code review confirms its logic is correct. What is the right response?"
+  choices={[
+    { label: "Re-run the entire transaction in a bounded retry loop — 40001 means this interleaving lost, not that the code is wrong", correct: true },
+    { label: "Treat it as a Postgres bug, since the transaction did nothing invalid", misconception: "SSI deliberately aborts some innocent transactions: it tracks dependency patterns that could produce anomalies and errs toward aborting, because precise detection would cost more than retrying. The docs make retry an explicit application obligation at this level." },
+    { label: "Downgrade to read committed, which never raises 40001", misconception: "Read committed indeed does not throw serialization failures — it silently permits the anomalies serializable exists to prevent, like lost updates in read-modify-write. Trading a retryable error for silent corruption is a downgrade in the worst sense." },
+    { label: "Wrap only the failing UPDATE statement in a retry", misconception: "The snapshot belongs to the whole transaction: after an abort, re-running one statement would mix data from a dead snapshot with a new one. The unit of retry is the entire Begin-to-Commit closure, which is why the helper re-runs fn from scratch." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does serializable abort transactions that did nothing wrong? Because precision costs more than retries. True serializability requires knowing whether the read/write overlap between concurrent transactions could produce a cycle in the serialization graph — and answering exactly would mean tracking every dependency forever. Postgres SSI tracks an approximation (rw-antidependencies) that is cheap to maintain and never misses a real anomaly, at the price of occasional false positives. The engineering bet: aborting and retrying a few percent of transactions under contention is vastly cheaper than the locking that pessimistic serializability would impose on every transaction, contended or not. The retry loop is not a workaround — it is the agreed-upon half of the protocol.
+</Inset>
+
+</Explanation>
+
+<SequenceDiagram
+  label="A serializable transaction pins its connection through failure and retry"
+  hue="var(--d-backend)"
+  actors={["App", "Pool", "Postgres"]}
+  messages={[
+    { from: "App", to: "Pool", label: "BeginTx: pin conn" },
+    { from: "Pool", to: "Postgres", label: "BEGIN SERIALIZABLE" },
+    { from: "App", to: "Postgres", label: "UPDATE balance" },
+    { from: "App", to: "Postgres", label: "COMMIT" },
+    { from: "Postgres", to: "App", label: "ERROR 40001" },
+    { from: "App", to: "Postgres", label: "ROLLBACK, free conn" },
+    { from: "App", to: "Pool", label: "retry: rerun fn" },
+    { from: "Pool", to: "Postgres", label: "BEGIN .. COMMIT ok" },
+  ]}
+  caption="The connection stays pinned from BeginTx until Commit or Rollback resolves the Tx — every second inside that span is a second the pool is one connection poorer. 40001 aborts the attempt; the helper re-runs the whole closure on a fresh snapshot, never a single statement."
+/>
+
+<KeyTakeaway>BeginTx pins one pool connection until Commit or Rollback — so transaction bodies hold database statements and cheap CPU only, never HTTP. defer tx.Rollback() right after Begin is safe by design: after Commit it is an ErrTxDone no-op. Isolation maps to Postgres semantics — per-statement snapshots at read committed, a transaction-wide snapshot at repeatable read, SSI at serializable — and both 40001 and 40P01 carry an obligation: re-run the whole transaction, classified by SQLSTATE via errors.As, with jittered backoff.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-transactions-and-isolation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Reconstruct the Black Friday incident: why did a healthy database take the whole service down, and what is the structural fix?", a: "The checkout function enclosed an HTTP call to the payment provider inside a transaction. BeginTx pins one pool connection until Commit/Rollback, so when provider p99 degraded to 9 seconds, each in-flight checkout held its connection for 9 seconds. With MaxOpenConns at 20, twenty slow checkouts owned every connection; all other queries — including ones on unrelated endpoints — queued at the pool gate. The database sat at 2% CPU because the bottleneck was connection pinning, not query load. The structural fix is the state-machine split: a short transaction commits the order as pending, the HTTP call happens with no transaction open, and a second short transaction finalizes the status. Atomicity across an external call was an illusion anyway — the provider call is not rolled back by your ROLLBACK." },
+    { q: "Map the three isolation levels as seen from Go to what Postgres actually does, and state the retry obligations precisely.", a: "BeginTx with sql.TxOptions requests a level; the driver translates it to BEGIN ISOLATION LEVEL. Read committed, the default: every statement gets a fresh snapshot — reads within one transaction can disagree, and SELECT-then-UPDATE loses concurrent updates unless you use atomic UPDATE or FOR UPDATE. Repeatable read: one snapshot for the whole transaction; stable reads, but updating a row that a concurrent transaction changed since your snapshot aborts you with 40001 — retry needed. Serializable: SSI tracks rw-dependencies and provides true serializability, aborting some innocent transactions with 40001; the documentation makes retrying an explicit application duty. Deadlocks are orthogonal and exist at every level: Postgres detects the cycle after deadlock_timeout and kills one victim with 40P01. Both codes mean re-run the entire Begin-to-Commit closure — classified via errors.As on the typed driver error, bounded attempts, jittered backoff, and a closure free of non-database side effects." },
+  ]}
+/>
+
+<Recap lang="en">
+A transaction is a pinned connection. BeginTx checks one connection out of the pool and every statement on the Tx rides it until Commit or Rollback resolves the handle — which is why the lesson rule is mechanical: between Begin and Commit, database statements and cheap CPU only. One HTTP call inside that span multiplies into pool starvation under load, and the dashboards will show a healthy database while the service drowns. The canonical shape is defer tx.Rollback() immediately after BeginTx: Rollback after a successful Commit returns sql.ErrTxDone and does nothing, so one line covers every early return and panic. Isolation requested through sql.TxOptions arrives as Postgres semantics: read committed gives each statement its own snapshot and quietly permits lost updates in read-modify-write code; repeatable read gives the transaction one snapshot and aborts conflicting writers with 40001; serializable adds SSI dependency tracking, true serializability, and a documented obligation to retry 40001 aborts even when your logic is flawless. Deadlocks exist at every level — Postgres detects the cycle after deadlock_timeout, kills one transaction with 40P01, and lets the other proceed. The retry helper encodes the whole contract: classify by SQLSTATE with errors.As, never by error text; re-run the entire closure on a fresh snapshot, never a single statement; bound the attempts; jitter the backoff so deadlock partners desynchronize; and keep side effects out of the closure, because everything in it runs once per attempt.
+</Recap>

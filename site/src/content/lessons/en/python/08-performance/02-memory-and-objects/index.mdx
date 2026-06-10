@@ -1,0 +1,163 @@
+---
+concepts:
+- python-memory-model
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-memory-and-objects"
+sources:
+- https://docs.python.org/3/library/sys.html
+- https://docs.python.org/3/library/gc.html
+- https://docs.python.org/3/library/tracemalloc.html
+spiral: []
+status: ready
+summary: 'Every object pays a 16-byte header: int 28 B, empty dict 64 B. getsizeof is shallow — containers count pointers, not contents. Refcounting frees instantly; cycles need generational GC. tracemalloc snapshot diffs find growth sites; most leaks are reachable unbounded caches.'
+title: 'Memory and objects: why an int costs 28 bytes and where the leak actually lives'
+track: "python"
+unit: "08-performance"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+The recommendation service gained 80 MB of RSS per day until the 6 GB pod OOM-killed roughly every nine days. Ops "fixed" it with nightly restarts for a quarter — until a restart collided with peak traffic and paged everyone. The hunt assumed a leak: `gc.collect()` was wired to a debug endpoint and freed two megabytes. Nothing was leaking in the C sense; everything was reachable. A tracemalloc snapshot diff between hour 1 and hour 30 pointed at one line: `@lru_cache(maxsize=None)` on `score_user(user_id, context_key)` — and `context_key` embedded a time bucket, so nearly every call minted a fresh key. Cache hit rate: 0.4%. The "memory leak" was a cache that could never evict, appending one fat Python object graph per request, forever. One bounded `maxsize` later, RSS flatlined at 1.9 GB and the nightly restarts were deleted.
+</Hook>
+
+<Crux>Every object pays refcount + type ptr: int ~28 B, dict 64 B empty. getsizeof is shallow; tracemalloc diffs find the growth site.</Crux>
+
+<Explanation>
+
+## Why Python objects are fat
+
+Every Python object begins with a 16-byte header on 64-bit builds: an 8-byte reference count and an 8-byte pointer to its type. Payload comes after. The everyday numbers:
+
+```python
+import sys
+sys.getsizeof(1)       # 28  — header + size + one 30-bit digit
+sys.getsizeof(1.0)     # 24  — header + one C double
+sys.getsizeof("a")     # 50  — header + flags + len + ASCII buffer
+sys.getsizeof({})      # 64  — empty dict, grows in power-of-2 jumps
+sys.getsizeof([])      # 56  — empty list
+```
+
+This is the per-object price of dynamism: every value heap-allocated, typed at runtime, reference-counted on every binding. A C `double` is 8 bytes in a register; a Python float is 24 bytes on the heap plus the 8-byte pointer something holds to reach it. Multiply by ten million and the dynamism bill arrives as gigabytes.
+
+## getsizeof lies shallowly
+
+`sys.getsizeof` reports one object's own allocation — for containers, that means the pointer table, **not** the contents. A list of one million floats: `getsizeof(lst)` says about 8 MB (a million 8-byte slots plus header), while the real footprint is that 8 MB *plus* 24 MB of float objects — 32 MB minimum, more once allocator fragmentation gets a vote. Honest sizing is recursive: walk `gc.get_referents` with a seen-set, or use a heap profiler instead of arithmetic.
+
+<Quiz
+  id="02-memory-and-objects-quiz-1"
+  lessonSlug="02-memory-and-objects"
+  lang="en"
+  question="sys.getsizeof on a list holding 1 M distinct floats returns about 8 MB. How much process memory does the list actually account for?"
+  choices={[
+    { label: "About 32 MB minimum: 8 MB of pointer slots plus 1 M x 24 B float objects — getsizeof counts the container shallowly, never the referents", correct: true },
+    { label: "About 8 MB — getsizeof reports the full footprint including elements", misconception: "It reports one allocation. For containers that is the slot array; every element is its own heap object that getsizeof never visits. The 24 MB of floats is invisible to it." },
+    { label: "About 16 MB — Python stores the floats inline in the list at 16 B each", misconception: "Lists never store values inline; they store 8-byte pointers to heap objects. Inline contiguous storage is exactly what array('d') and numpy offer and lists do not." },
+    { label: "Exactly 8 MB, because CPython interns floats so the objects are shared", misconception: "CPython caches small ints (-5..256) and some strings, not floats. A million distinct floats are a million distinct 24-byte heap objects." },
+  ]}
+/>
+
+## Refcounting, and when the cycle collector earns its keep
+
+CPython frees an object the instant its refcount hits zero — deterministic, immediate, the reason file handles close promptly in well-written code. What refcounting cannot free is a **cycle**: parent and child holding references to each other never reach zero. That is the cycle GC's job: three generations, threshold-triggered (by net allocations), survivors promoted upward. Cycles build up in object graphs with back-references — trees whose nodes point at their parent, ORM rows pointing at their session, and the classic sleeper: a stored exception keeps its traceback, the traceback keeps every frame, and each frame keeps all its locals alive.
+
+`gc.collect()` is a diagnostic as much as a remedy: if you force a full collection and memory barely moves — the Hook's two megabytes — your growth is *reachable*, and no garbage collector will ever save you. The leak is a data structure doing exactly what it was told.
+
+## __slots__ revisited: the lever for object count
+
+The data-model unit established the mechanism; here is the capacity math. A five-field plain instance costs roughly 250+ bytes once its `__dict__` exists; the slotted version about 104. At 1 M objects that is ~250 MB versus ~104 MB — and at 40 M it is the difference between a pod that fits and one that OOMs. `@dataclass(slots=True)` makes it one flag. Slots are the right lever when **object count** is the problem and the field set is fixed.
+
+## Lists of objects vs array vs numpy: the order-of-magnitude table
+
+When the data is numeric and high-cardinality, the win is to stop having objects at all:
+
+| Representation (1 M float64 values) | Approx. memory |
+| --- | --- |
+| `list` of Python floats | ~32 MB (8 pointer + 24 objects) |
+| `array.array("d")` | ~8 MB, contiguous |
+| `numpy.ndarray` float64 | ~8 MB, contiguous + vectorizable |
+| 1 M 3-field plain objects | ~250 MB |
+| 1 M 3-field slotted objects | ~104 MB |
+| numpy (1 M, 3) float64 | 24 MB |
+
+A contiguous typed buffer is 4-10x smaller and cache-friendly; the pointer-chasing list is both fat and slow to traverse. This table is also the bridge to the next lesson — numpy is a C extension someone already wrote.
+
+## tracemalloc: finding the allocation site, not the symptom
+
+RSS tells you *that* memory grew; tracemalloc tells you *which line* allocated it. Start it early (the frame depth costs memory and CPU, so enable it for the hunt, not forever), snapshot twice, diff:
+
+```python
+import tracemalloc
+tracemalloc.start(25)            # keep 25 frames per allocation site
+
+s1 = tracemalloc.take_snapshot()
+# ... 30 minutes of representative traffic ...
+s2 = tracemalloc.take_snapshot()
+
+for stat in s2.compare_to(s1, "lineno")[:10]:
+    print(stat)                  # growth ranked by allocating line
+```
+
+py-spy cannot do this — it samples CPU stacks, not allocations. For native + Python allocation tracking, memray is the heavier third-party option; tracemalloc is the stdlib tool that ships everywhere.
+
+## Leak patterns that are not leaks
+
+The recurring villains are all *reachable growth*: module-level caches and registries that only ever append; `lru_cache(maxsize=None)` keyed by high-cardinality arguments; closures and stored exceptions pinning frames (and every local in them); append-only lists on long-lived singletons. True C-level leaks exist but are rare in pure Python. When RSS grows, the first question is not "what leaked" but "which data structure is doing its job too well".
+
+<Quiz
+  id="02-memory-and-objects-quiz-2"
+  lessonSlug="02-memory-and-objects"
+  lang="en"
+  question="A service grows 60 MB/hour. A forced gc.collect() frees almost nothing. What does that result tell you, and what is the next tool?"
+  choices={[
+    { label: "Growth is reachable — a cache or registry, not cyclic garbage; take tracemalloc snapshots over an interval and diff by lineno to find the allocating line", correct: true },
+    { label: "The GC is broken or its thresholds are too high; lower them so collections run more often", misconception: "gc.collect() forces a full collection regardless of thresholds. If a full pass frees nothing, there is no cyclic garbage to find — tuning collection frequency collects the same nothing more often." },
+    { label: "It is a C-extension leak, since Python-level leaks are always cycles", misconception: "Most Python memory growth is neither a cycle nor a C leak: it is live, reachable objects in an unbounded structure. A C leak is the hypothesis of last resort after tracemalloc shows no Python-side growth." },
+    { label: "Memory is fragmented, not growing; the allocator just cannot return pages to the OS", misconception: "Fragmentation can hold RSS high after a spike, but it does not produce steady 60 MB/hour climb under constant load — monotonic growth tracks accumulating live objects." },
+  ]}
+/>
+
+</Explanation>
+
+<StackDiagram
+  label="Anatomy of one float inside a Python list — 32 bytes where C stores 8"
+  hue="var(--d-systems)"
+  layers={[
+    { label: "list slot — pointer to the float object", note: "8 B" },
+    { label: "ob_refcnt — reference count", note: "8 B" },
+    { label: "ob_type — pointer to the float type", note: "8 B" },
+    { label: "ob_fval — the actual C double", note: "8 B" },
+    { label: "numpy float64 — payload only, contiguous", note: "8 B total" },
+  ]}
+  caption="Three quarters of every list-held float is plumbing: pointer, refcount, type pointer. At 1 M values that is 32 MB of pointer-chasing versus 8 MB contiguous in array or numpy — the order-of-magnitude lever for numeric data."
+/>
+
+<KeyTakeaway>Every object carries a 16-byte refcount + type-pointer header: int 28 B, float 24 B, empty dict 64 B — dynamism billed per object. `getsizeof` counts containers shallowly (pointer slots, not contents), so size recursively or profile. Refcounting frees at zero instantly; cycles need the generational collector — and if `gc.collect()` frees nothing, the growth is reachable: an unbounded cache, a registry, a pinned traceback. tracemalloc snapshot diffs name the allocating line. At high cardinality, leave objects entirely: slots halve them, array/numpy cut 4-10x.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-memory-and-objects-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the triage for a service whose RSS climbs steadily: which tool answers which question, and what do the possible results mean?", a: "Step 1: force gc.collect(). If memory drops substantially, cyclic garbage was accumulating faster than the generational collector ran — investigate back-reference-heavy object graphs. If it frees nearly nothing (the common case), the growth is reachable: live objects in some structure. Step 2: tracemalloc.start(25) and snapshot twice across a representative interval; compare_to(s1, 'lineno') ranks growth by allocating line — this names the structure. Step 3: pattern-match the suspects: lru_cache(maxsize=None) with high-cardinality keys, module-level dict registries, append-only lists on singletons, stored exceptions pinning frames and their locals. The fix is policy (bounded size, TTL, weak references), not collection. Note the tool boundaries: py-spy samples CPU and sees no allocations; getsizeof on the suspect container under-reports because it never counts referents." },
+    { q: "Give the honest memory numbers: header cost, common object sizes, and the list-vs-array-vs-numpy and plain-vs-slots comparisons at 1 M items.", a: "Header: 8 B refcount + 8 B type pointer on every object. Common sizes: int 28 B, float 24 B, short str ~50-90 B, empty dict 64 B, empty list 56 B. One float held in a list costs 32 B total — 8 B list slot pointer plus the 24 B object — so 1 M floats is ~32 MB as a list versus ~8 MB in array('d') or a numpy float64 array, both contiguous; numpy adds vectorization. For records: a 5-field plain instance runs ~250+ B with its __dict__, the slotted equivalent ~104 B — 250 MB vs 104 MB per million, while a (1M, 3) numpy float64 array holds the same numbers in 24 MB. The design rule: slots when you must keep objects but the field set is fixed; typed contiguous buffers when the data is numeric and the cardinality is high." },
+  ]}
+/>
+
+<Recap lang="en">
+Python's memory story is the per-object price of dynamism: a 16-byte refcount-plus-type header in front of every value puts an int at 28 bytes and an empty dict at 64, and every container holds pointers to heap objects rather than the values themselves — which is why `getsizeof` is shallow by design and a million-float list really costs ~32 MB against the ~8 MB it reports. Reclamation is two systems: refcounting frees deterministically at zero, and the generational cycle collector exists solely for reference cycles — back-referencing graphs, stored exceptions pinning whole frame chains. The diagnostic hinge is `gc.collect()`: if a forced full collection frees nothing, the growth is reachable and the culprit is a structure doing its job — an unbounded `lru_cache`, a module-level registry — which tracemalloc's snapshot diff will pin to an allocating line, something CPU-sampling py-spy can never do. The capacity levers scale in order of magnitude: `__slots__` roughly halves fixed-field objects (250 to 104 bytes on five fields), and stepping out of objects entirely into `array` or numpy buys 4-10x plus cache locality. The senior reflex: when RSS climbs, ask which data structure is succeeding, not what is leaking.
+</Recap>

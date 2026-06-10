@@ -1,0 +1,154 @@
+---
+concepts:
+- go-slog
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-structured-logging-slog"
+sources:
+- https://pkg.go.dev/log/slog
+- https://go.dev/blog/slog
+spiral: []
+status: ready
+summary: 'slog separates API from output: Logger feeds Records to a Handler that writes JSON or text. Typed Attrs avoid boxing, LogValuer redacts secrets, With(request_id) scopes loggers per request. Levels are a contract: Error pages someone. About 1 µs per line — hot loops pay.'
+title: 'Structured logging with slog: handlers, attrs, levels, and the price of every line'
+track: "go"
+unit: "07-production-patterns"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The Kafka consumer handled fifty thousand messages a second — until the Thursday deploy that added one line: `logger.Info("processed", "msg", msg)` inside the per-message loop. Throughput dropped forty percent within minutes; consumer lag alarms fired across three partitions. The CPU profile told the story nobody expected: a third of every core was burning in JSON formatting, reflection over the message struct, and lock contention on the single `os.Stderr` writer — the logger was the bottleneck. The incident review found a second, quieter disaster in the same line: the message struct had a `Card` field, and fifty thousand raw PANs per second had been streaming into the log pipeline for two hours. One log line, two incidents — a performance regression and a security finding. Logging is not free, and it is not innocent: every line has a CPU price tag, an ingestion bill, and a blast radius for whatever it captures.
+</Hook>
+
+<Crux>slog: Logger → Handler → io.Writer — typed attrs, honest levels, LogValuer redaction, and a real cost you must respect on hot paths.</Crux>
+
+<Explanation>
+
+## Logger, Handler, Writer
+
+`log/slog` splits logging into a thin front-end and a pluggable back-end. A `Logger` is the API your code calls; it builds a `Record` — timestamp, level, message, attributes — and hands it to a `Handler`, which decides format and destination: `JSONHandler` and `TextHandler` ship in the box, custom handlers wrap others to add sampling, redaction or fan-out. The handler writes to an `io.Writer`. This split is why slog took over: libraries log against the neutral API, applications choose the output format once.
+
+```go
+logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+	Level: slog.LevelInfo,
+}))
+slog.SetDefault(logger) // also reroutes the legacy log package through slog
+
+logger.Info("payment captured",
+	slog.String("order_id", orderID),
+	slog.Int("amount_cents", amount),
+	slog.Duration("elapsed", elapsed),
+)
+```
+
+The two calling conventions are not equivalent. Alternating key-value args — `logger.Info("msg", "key", val)` — are convenient and box every value into `any`, allocating for most non-pointer types, and a missing key produces a `!BADKEY` attr at runtime instead of a compile error. Typed constructors — `slog.String`, `slog.Int`, `slog.Duration` — store the value inside `slog.Value`, a small union type, avoiding the heap for common kinds; `LogAttrs` is the strictest, fastest form. And one trap survives all conventions: arguments evaluate *before* the level check. A `logger.Debug("x", "stats", computeStats())` with the handler at Info never emits a line, but `computeStats()` runs every single time — guard expensive expressions with `logger.Enabled(ctx, slog.LevelDebug)` or push the laziness into a `LogValuer`.
+
+<FlowDiagram
+  label="One log line through slog: call site, level gate, Record, Handler, Writer"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "call", label: "logger.Info()", sub: "args evaluate NOW" },
+    { id: "gate", label: "Enabled(level)?", sub: "handler decides" },
+    { id: "record", label: "Record", sub: "time, msg, attrs" },
+    { id: "handler", label: "JSONHandler", sub: "format, LogValue" },
+    { id: "writer", label: "io.Writer", sub: "lock + syscall" },
+    { id: "drop", label: "Dropped", sub: "args already paid" },
+  ]}
+  edges={[
+    { from: "call", to: "gate", label: "every call" },
+    { from: "gate", to: "record", label: "level passes" },
+    { from: "gate", to: "drop", label: "below level" },
+    { from: "record", to: "handler", label: "Handle(ctx, r)" },
+    { from: "handler", to: "writer", label: "one line out" },
+  ]}
+  caption="The level gate sits after argument evaluation: a disabled Debug call still pays for its arguments. With() attrs are pre-formatted once by the handler, not on every line — which is what makes per-request loggers cheap."
+/>
+
+<Quiz
+  id="03-structured-logging-slog-quiz-1"
+  lessonSlug="03-structured-logging-slog"
+  lang="en"
+  question="The handler level is Info. A hot loop calls logger.Debug(&quot;cache miss&quot;, &quot;key&quot;, k, &quot;stats&quot;, computeStats()) at 50k/s. What does this cost?"
+  choices={[
+    { label: "No lines are emitted, but computeStats() runs 50k times a second — arguments evaluate before slog ever checks the level", correct: true },
+    { label: "Nothing — disabled levels make the call free, that is the point of levels", misconception: "The level check is inside slog, but Go evaluates every argument before the call. The record is dropped cheaply; the argument expressions are not. A disabled call with expensive args is a pure CPU tax with zero output." },
+    { label: "The lines are emitted anyway because explicit Debug calls override the handler level", misconception: "Nothing overrides the handler: it owns the level decision via Enabled(). Debug below an Info threshold is always dropped — the question is only how much you paid computing arguments for the drop." },
+    { label: "It panics at runtime because Debug is disabled while arguments are passed", misconception: "slog never panics over levels — disabled records are silently discarded. The failure here is economic, not correctness: invisible CPU burn that only a profile will ever attribute to logging." },
+  ]}
+/>
+
+## Levels are a contract with the on-call
+
+Levels mean nothing until your team gives them operational semantics, and the useful semantics are about who has to act. **Debug**: off in production, switched on per-incident; assume nobody sees it. **Info**: sparse state changes worth grepping later — deploys, connections established, jobs completed; if it fires on every request, it is volume, not signal. **Warn**: something degraded and self-healed — a retry succeeded, a fallback engaged; nobody wakes up, someone reviews the aggregate tomorrow. **Error**: a human must act; this level feeds alerts and pages. The most common corruption is logging expected client failures — validation errors, 404s — at Error: the pager habituates, alert thresholds get raised to cope, and the one Error that matters drowns in the noise. If nobody should act on it, it is not an Error.
+
+## Redaction at the type, not the call site
+
+The Hook's PAN leak happens because redaction was left to call-site discipline — every engineer must remember, forever, on every line. `LogValuer` moves the rule into the type system:
+
+```go
+type CardNumber string
+
+func (CardNumber) LogValue() slog.Value {
+	return slog.StringValue("[REDACTED]")
+}
+```
+
+The handler resolves `LogValue()` at format time, so the raw value never reaches the writer — no matter who logs it, where, or inside which struct via a group. The same hook doubles as lazy evaluation: a `LogValuer` that computes an expensive summary only runs when the record actually passes the level gate, which is the clean fix for the Quiz-1 trap. Pair it with the `Stringer`-based redaction from the configuration lesson so `fmt` paths are covered too — the two interfaces protect different exits.
+
+## Per-request loggers and trace correlation
+
+A request-scoped logger turns every log line into evidence: middleware does `l := logger.With(slog.String("request_id", id))` and passes `l` down — typically through the context. `With` is cheap by design: the handler pre-formats the attached attrs once (JSONHandler renders them into a reusable byte prefix), so `request_id` costs once per request, not once per line. Carrying the logger in context technically bends the previous lesson's rule against dependencies in `context.Value` — this is the accepted, eyes-open exception in most large Go codebases, because logging is ambient and a fallback to the default logger makes the failure mode harmless. The stricter alternative: pass plain `ctx` and use `InfoContext`, with a custom handler extracting `trace_id` and `span_id` from the context at format time. Either way, the goal is the same — every record carries the ids that let you pivot from a log line to the full distributed trace and back.
+
+<Quiz
+  id="03-structured-logging-slog-quiz-2"
+  lessonSlug="03-structured-logging-slog"
+  lang="en"
+  question="A payment provider call timed out, the automatic retry succeeded, the request completed fine. Which level does this event get?"
+  choices={[
+    { label: "Warn — degraded but self-healed; nobody wakes up, but the aggregate rate is exactly what capacity reviews need to see", correct: true },
+    { label: "Error — a provider timeout is a real failure of an external dependency", misconception: "The contract for Error is that a human must act. Here the system already acted and won. Page-level severity for self-healed events habituates the on-call and buries the Errors that genuinely need hands." },
+    { label: "Info — the request succeeded, so log the success like any other", misconception: "Plain Info hides the degradation entirely: a provider drifting from 0.1% to 5% timeout-with-retry stays invisible until retries stop saving you. The half-failure is the signal; Info levels it away." },
+    { label: "Debug — retries are implementation detail, not operational signal", misconception: "Debug is off in production, so the drift to 5% timeouts would be recorded nowhere at all. Retry rates are a leading indicator of dependency failure — exactly the thing you want visible in prod aggregates." },
+  ]}
+/>
+
+## When logging is the bottleneck
+
+The numbers that should be in your head: a JSON line with a handful of attrs costs on the order of a microsecond of CPU plus the writer syscall, and the writer is a mutex — every goroutine logging to the same `os.Stderr` serializes there. At 100k lines per second you are spending ten-plus percent of a core on formatting alone, contending on the writer lock, and shipping roughly 25 GB an hour into an ingestion pipeline that bills by the gigabyte. The discipline for hot paths: log decisions and failures, not progress; sample high-volume Info (first N per key per window, or 1-in-N) while never sampling errors; and emit rates as metrics instead of log lines — a counter increments in nanoseconds and aggregates for free. The Hook's consumer kept one line per *batch* and a sampled one per thousand messages; throughput came back, and so did the ingestion budget.
+
+<Inset kind="why" lang="en">
+Why did the stdlib need a second logging API at all? Because `log.Printf` produces prose — and prose needs regexes to query, breaks when the message wording changes, and cannot be aggregated. Structured records make every field a queryable column: `level=ERROR service=checkout order_id=4711` survives rewording, joins with traces on `trace_id`, and feeds alerting without a parsing layer. The ecosystem had a dozen incompatible structured loggers; slog's actual contribution is the standard `Handler` interface they all now plug into.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>slog is a thin Logger building Records for a pluggable Handler that formats into an io.Writer. Typed Attrs and LogAttrs avoid any-boxing; arguments evaluate before the level gate, so guard expensive ones. Levels encode who acts: Warn self-healed, Error pages. LogValuer redacts at the type and lazies expensive values. A line costs about a microsecond plus writer contention — sample hot paths, never errors.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-structured-logging-slog-retrieval"
+  lang="en"
+  questions={[
+    { q: "Trace one log line through slog's architecture and name the two cost traps on the way.", a: "The call site builds arguments and invokes Logger.Info; the logger consults the handler's Enabled(level) — trap one already happened: every argument expression evaluated before this check, so a disabled Debug with computeStats() in its args burns CPU at full rate while emitting nothing (guard with Enabled or a lazy LogValuer). Passing the gate, slog assembles a Record (time, level, message, attrs) and calls Handler.Handle, which formats — resolving LogValuer values at this point — and writes one line to the io.Writer. Trap two lives there: the writer is shared and mutex-guarded, so at high line rates goroutines serialize on the lock, and formatting costs about a microsecond per line — at 100k lines/s that is ten-plus percent of a core plus roughly 25 GB/h of ingestion. With() attrs are pre-formatted once by the handler, which is why per-request loggers are cheap." },
+    { q: "Give the level contract, and explain why LogValuer beats call-site redaction for secrets.", a: "Levels encode who must act: Debug is off in prod (per-incident only), Info is sparse state changes — per-request Info is volume, not signal — Warn is degraded-but-self-healed (retry succeeded, fallback engaged; reviewed in aggregate, nobody paged), Error means a human acts, and feeding it expected client failures habituates the pager until real errors drown. LogValuer wins because redaction becomes a property of the type: the handler calls LogValue() at format time, so a CardNumber renders as [REDACTED] no matter which engineer logs it, in which package, nested in which group — call-site discipline requires everyone to remember forever, and the Hook's PAN leak is what one forgotten line looks like. The same interface doubles as lazy evaluation, since LogValue only runs for records that pass the level gate." },
+  ]}
+/>
+
+<Recap lang="en">
+slog's architecture is a deliberate split: Logger is the neutral front-end your code and your libraries call, Handler is the policy — JSON or text, which level, what destination — and io.Writer is the exit. A Record flows through: built at the call site, gated by Enabled, formatted by the handler, written under the writer's lock. The conventions around that pipe are what make it production-grade. Typed attrs (slog.String, slog.Int) keep values out of the any-boxing allocator and LogAttrs is the tightest form; alternating key-value args are fine for cold paths and produce !BADKEY at runtime when miscounted. Arguments always evaluate before the level gate — the classic invisible cost is an expensive expression feeding a disabled Debug, fixed with an Enabled guard or a lazy LogValuer. Levels are an operational contract: Debug off in prod, Info sparse, Warn for self-healed degradation whose aggregate rate is the early warning, Error only when a human acts — anything else trains the pager into noise. Secrets are redacted at the type with LogValuer, resolved at format time so the raw value never reaches the writer, complementing Stringer for fmt paths. Per-request loggers via With(request_id) are cheap because handlers pre-format attached attrs, and trace_id on every record links logs to traces. And the price list: about a microsecond per JSON line plus writer contention and ingestion bills — on hot paths log decisions, sample volume, never sample errors, and let counters carry the rates.
+</Recap>

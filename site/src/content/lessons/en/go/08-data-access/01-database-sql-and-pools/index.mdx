@@ -1,0 +1,166 @@
+---
+concepts:
+- go-database-sql
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-database-sql-and-pools"
+sources:
+- https://pkg.go.dev/database/sql
+- https://go.dev/doc/database
+spiral: []
+status: ready
+summary: 'sql.DB is a lazy connection pool: Open dials nothing, Ping verifies. Four knobs bound it, each preventing a real outage — unbounded conns melt Postgres, infinite lifetime pins dead failover targets. Size pools against max_connections across all pods, and close every Rows.'
+title: 'database/sql is a pool: knobs, sizing math, and the rows.Close leak that starves it'
+track: "go"
+unit: "08-data-access"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The failover drill was supposed to be invisible: RDS promotes the standby, the endpoint flips, thirty seconds of write errors, done. Instead the order service threw `cannot execute INSERT in a read-only transaction` for 41 minutes. The new primary was healthy. The DNS record was correct. Every fresh `psql` from a laptop hit the right node. But the service had built its pool with `sql.Open` and never set `ConnMaxLifetime` — and an established TCP connection does not re-resolve DNS. Eighty healthy-looking sockets stayed pinned to the demoted node, now a read-only replica, and the pool saw no reason to drop them: they were alive, they answered SELECTs, they only failed writes. The fix that finally worked — redeploying the service — worked for the dumbest possible reason: new processes dial new connections. One line, `db.SetConnMaxLifetime(5 * time.Minute)`, would have capped the outage at five minutes.
+</Hook>
+
+<Crux>sql.DB is a pool, not a connection: size it against max_connections, bound lifetimes, and close every Rows or the pool starves.</Crux>
+
+<Explanation>
+
+## A pool that dials lazily
+
+`sql.DB` is not a connection. It is a concurrency-safe pool of connections, meant to be created once and shared by every goroutine for the life of the process — one per database, never one per request. And it is lazy:
+
+```go
+db, err := sql.Open("pgx", dsn)
+if err != nil {
+	return err // only DSN/driver errors arrive here — nothing has been dialed yet
+}
+db.SetMaxOpenConns(25)                 // hard cap on concurrent connections
+db.SetMaxIdleConns(25)                 // how many survive between bursts
+db.SetConnMaxLifetime(5 * time.Minute) // recycle: survives failovers and LB drains
+db.SetConnMaxIdleTime(2 * time.Minute) // shrink an idle pool without dial thrash
+
+if err := db.PingContext(ctx); err != nil { // the FIRST real dial happens here
+	return err // fail fast at startup, not on the first user request
+}
+```
+
+Every query borrows a connection from the pool and follows the same path: reuse an idle one if available; dial a new one if the pool is below `MaxOpenConns`; otherwise block in a wait queue until somebody releases. Each knob exists because its absence is a specific production failure:
+
+- **`MaxOpenConns` unset means unlimited.** Every Postgres connection is a forked backend process holding several megabytes before doing any work — and `work_mem` (4 MB default) can be claimed per sort or hash node on top. A traffic spike with no cap turns into hundreds of backends, server memory pressure, and `FATAL: sorry, too many clients already` for every other service sharing the database. The cap converts overload into bounded queueing inside your process, where a context deadline can handle it.
+- **`MaxIdleConns` too low — and the default is 2.** Under a steady 25-concurrent load with 2 idle slots, the pool closes and re-dials connections constantly: TCP plus TLS plus auth is a couple of network round trips, milliseconds added to queries that should take hundreds of microseconds, and visible churn in `pg_stat_activity`. For steady services, set idle equal to open.
+- **`ConnMaxLifetime` unset is the Hook.** Established connections never re-resolve DNS, so after a failover or a load-balancer re-target they keep talking to the old node for as long as it answers. A bounded lifetime guarantees every connection redials within minutes — it also rebalances load after you scale a database behind a proxy.
+- **`ConnMaxIdleTime`** lets a pool sized for the daily peak shrink overnight instead of holding eighty server backends hostage while doing nothing.
+
+<Quiz
+  id="01-database-sql-and-pools-quiz-1"
+  lessonSlug="01-database-sql-and-pools"
+  lang="en"
+  question="A service calls sql.Open with a DSN pointing at a hostname that does not exist. When does the code find out?"
+  choices={[
+    { label: "At the first PingContext or query — Open validates arguments and builds the pool without dialing anything", correct: true },
+    { label: "Immediately: Open returns the DNS resolution error", misconception: "Open is deliberately lazy — it parses the DSN and registers the pool, performing no I/O. That is why the startup pattern is Open followed by PingContext with a timeout: you opt in to failing fast." },
+    { label: "Never, because the pool retries dials transparently until the host appears", misconception: "The pool retries nothing on your behalf. The first operation that needs a connection attempts the dial and returns the error to that caller — without a startup Ping, a config typo surfaces as a user-facing 500." },
+    { label: "At Open, but only if MaxOpenConns is set above zero", misconception: "The knobs shape how many connections may exist; they trigger no dialing by themselves. Zero connections exist until something asks to use one." },
+  ]}
+/>
+
+## The sizing arithmetic
+
+The budget is fleet-wide, and it is the database that pays. The constraint: pods × `MaxOpenConns`, plus migration jobs, cron tasks, and your colleagues running `psql`, must stay under `max_connections` minus `superuser_reserved_connections` (3 by default). Postgres ships with `max_connections = 100`; many managed defaults sit at a few hundred. Now run the spike scenario: 30 pods each capped at 25 connections may legitimately want 750 against a 200-connection server. That is not a capacity plan, it is a self-inflicted denial of service — every dial past the server cap fails with `sorry, too many clients already`, and the errors land randomly across all services sharing the database. Past roughly ten pods, do the division honestly (200 minus reserve, divided by 60 pods at the HPA max, is 3 connections each) — or accept that a server-side pooler like PgBouncer has become infrastructure, not an optimization.
+
+<Quiz
+  id="01-database-sql-and-pools-quiz-2"
+  lessonSlug="01-database-sql-and-pools"
+  lang="en"
+  question="30 pods run with MaxOpenConns=25 against a Postgres with max_connections=200. Traffic spikes and all pods get busy. What actually happens?"
+  choices={[
+    { label: "Pods collectively try to open up to 750 connections; dials beyond the server cap fail with errors that land across every client of that database", correct: true },
+    { label: "Postgres queues the excess connection attempts until slots free up", misconception: "Postgres has no connection wait queue — a dial beyond max_connections is refused immediately. Queueing under load is exactly what the client-side cap or a pooler like PgBouncer provides, which is why the cap must be sized fleet-wide." },
+    { label: "Each pool notices the server limit and lowers its own cap to a fair share", misconception: "Pools know nothing about each other or about server limits — MaxOpenConns is a purely local promise. Coordination is your job: pods times cap is the number the server sees." },
+    { label: "Nothing fails as long as queries are fast, because connections are multiplexed", misconception: "database/sql does not multiplex: one in-flight query owns one connection exclusively. Fast queries shrink how long each is held, but the spike still demands one connection per concurrent query." },
+  ]}
+/>
+
+## Rows: the leak and the half-read result
+
+`Query` returns a `*Rows` that owns a connection until you finish with it. This is the single most common way Go services exhaust their pools — one leaked iterator at a time:
+
+```go
+rows, err := db.QueryContext(ctx, `SELECT id, email FROM users WHERE org_id = $1`, org)
+if err != nil {
+	return nil, err
+}
+defer rows.Close() // returns the connection to the pool; without it, an early return leaks the conn
+
+var users []User
+for rows.Next() {
+	var u User
+	if err := rows.Scan(&u.ID, &u.Email); err != nil {
+		return nil, err
+	}
+	users = append(users, u)
+}
+return users, rows.Err() // the loop exits the same way on success and on a dropped connection
+```
+
+The leak is sneaky because `Next` auto-closes the rows when iteration reaches the natural end — so code without `defer rows.Close()` passes every test that reads all rows. Add one early `return` or `break` inside the loop, and that connection never comes back. Nothing crashes; `db.Stats().InUse` just ratchets up by one, until the day the pool hits `MaxOpenConns` and every query in the process blocks forever — or until its context deadline, if you gave it one. The pair `defer rows.Close()` plus `rows.Err()` is non-negotiable: the `for rows.Next()` loop terminates identically when the result set ends and when the connection dies mid-stream, and only `rows.Err()` tells you whether you got everything or half a result you are about to present as complete.
+
+The three verbs divide cleanly. `QueryRowContext` is for exactly-one-row reads — it defers all errors to `Scan`, where zero rows arrives as `sql.ErrNoRows` (check with `errors.Is`; it is a result, not a failure). `QueryContext` is for result sets and carries the Close/Err obligations above. `ExecContext` is for statements without result sets and returns `RowsAffected` — an UPDATE that matched zero rows is not an error, which your code usually needs to notice. For nullable columns, plain `string` will fail the Scan: use `sql.NullString` (explicit, ugly, grep-able) or `*string` (quieter, one nil-check away from a panic) — either works, but pick one convention per codebase. And use the `Context` variants everywhere: the plain forms are pre-context legacy, and a query with no deadline holds its connection for exactly as long as a slow server feels like taking.
+
+<Inset kind="why" lang="en">
+Why is Open lazy at all? Because constructors should not do I/O: `sql.Open` gets called in wiring code, init paths, and tests that never touch the database, and a dial there would make every one of those paths slow and flaky. The cost of the design is that a typo in the hostname is discovered by your first user instead of your process supervisor — unless you opt back in. The production pattern is mechanical: `Open`, set the four knobs, then `PingContext` with a short timeout in `main`, and crash the process if it fails. A pod that dies at startup gets replaced; a pod that serves 500s gets paged on.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="Every query borrows a connection: reuse idle, dial below the cap, or block in the wait queue"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "query", label: "Query call", sub: "needs a conn" },
+    { id: "idle", label: "Idle conn", sub: "reuse, no dial" },
+    { id: "dial", label: "New dial", sub: "below MaxOpen" },
+    { id: "wait", label: "Wait queue", sub: "at MaxOpen: block" },
+    { id: "pg", label: "Postgres", sub: "1 backend per conn" },
+    { id: "close", label: "rows.Close()", sub: "conn back to pool" },
+  ]}
+  edges={[
+    { from: "query", to: "idle", label: "idle available" },
+    { from: "query", to: "dial", label: "pool below cap" },
+    { from: "query", to: "wait", label: "cap reached" },
+    { from: "idle", to: "pg", label: "execute" },
+    { from: "dial", to: "pg", label: "TCP + TLS + auth" },
+    { from: "pg", to: "close", label: "after iteration" },
+  ]}
+  caption="A leaked Rows never reaches Close, so its connection never re-enters the pool: InUse ratchets up until every new query parks in the wait queue. ConnMaxLifetime forces the dial path to repeat periodically — which is what un-pins a pool from a dead failover target."
+/>
+
+<KeyTakeaway>sql.DB is a process-lifetime pool that dials lazily — Ping at startup or a config typo becomes a user-facing error. Each knob guards a real outage: MaxOpenConns against melting Postgres, idle settings against dial thrash, ConnMaxLifetime against pinning a demoted primary. Budget pods × MaxOpenConns against max_connections, defer rows.Close() on every Query, and trust no result set until rows.Err() says it was complete.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-database-sql-and-pools-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through what happens when a query needs a connection, and name the knob that shapes each branch plus the failure it prevents.", a: "The pool tries three branches in order. Reuse an idle connection — MaxIdleConns decides how many survive between bursts; too low (default 2) and a steady service pays TCP+TLS+auth round trips on hot paths. Dial a new one if total connections are below MaxOpenConns — unset means unlimited, and a spike turns into hundreds of forked Postgres backends and sorry-too-many-clients errors for everyone sharing the server; the budget is fleet-wide, pods × cap under max_connections minus reserved. Otherwise block in a wait queue until a connection is released, bounded only by the context deadline. Orthogonally, ConnMaxLifetime forces periodic redials — without it, established sockets never re-resolve DNS and stay pinned to a demoted primary after failover — and ConnMaxIdleTime lets a peak-sized pool shrink overnight." },
+    { q: "Explain how a missing rows.Close() passes every test yet exhausts the pool in production, and what rows.Err() guards against.", a: "Rows owns a connection until closed, but Next auto-closes at the natural end of iteration — so any test that reads the full result set never observes the leak. In production, an early return or break inside the loop leaves the iterator open, and that connection never returns to the pool: no error, no crash, just db.Stats().InUse ratcheting up by one per leak until the pool hits MaxOpenConns and every query in the process blocks. defer rows.Close() immediately after the error check makes early exits safe. rows.Err() guards the other silent failure: the for rows.Next() loop ends identically on a complete result and on a connection dropped mid-stream, so skipping the check means presenting half a result set as the whole answer." },
+  ]}
+/>
+
+<Recap lang="en">
+sql.DB is a lazy, concurrency-safe pool created once per database for the life of the process. Open performs no I/O — it parses the DSN and returns a handle — so the startup contract is Open, set the knobs, PingContext with a timeout, crash on failure. Each query borrows a connection: idle reuse first, a new dial while under MaxOpenConns, then a wait queue. The four knobs map one-to-one to outages: an uncapped pool turns a traffic spike into hundreds of multi-megabyte Postgres backends and refused connections for every client of that server; starved idle settings convert steady load into dial thrash; an infinite ConnMaxLifetime pins established sockets to a dead or demoted node after failover, because TCP connections never re-resolve DNS; ConnMaxIdleTime releases the overnight surplus. The sizing arithmetic is fleet-wide — pods at the HPA maximum times MaxOpenConns, plus jobs and humans, under max_connections minus the reserve — and past a handful of pods the honest answers are small per-pod caps or PgBouncer. On the wire, QueryRow defers everything to Scan where zero rows is sql.ErrNoRows, Exec reports RowsAffected, and Query hands you a Rows that owns its connection: defer rows.Close() or one early return leaks the connection forever, and check rows.Err() because a dropped connection ends the loop exactly like success. Nullable columns need sql.NullString or pointers, and the Context variants are the only ones that let you bound how long a query may hold its connection.
+</Recap>

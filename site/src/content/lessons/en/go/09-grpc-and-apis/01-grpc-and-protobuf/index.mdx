@@ -1,0 +1,163 @@
+---
+concepts:
+- go-grpc
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-grpc-and-protobuf"
+sources:
+- https://grpc.io/docs/what-is-grpc/core-concepts/
+- https://protobuf.dev/programming-guides/encoding/
+- https://grpc.io/docs/languages/go/basics/
+spiral: []
+status: ready
+summary: 'A .proto file compiles into client and server stubs; field tags, not names, are the wire contract, and tags 1-15 encode in one byte. HTTP/2 multiplexes every RPC over one connection — so an L4 balancer pins all load to one backend — and deadlines propagate across hops natively.'
+title: 'gRPC and protobuf: the compiled contract, HTTP/2 transport, and the balancer that ignored your new pods'
+track: "go"
+unit: "09-grpc-and-apis"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+At the peak of a flash sale the checkout team scaled the inventory service from three pods to ten and watched nothing change: three pods pegged at 95% CPU, seven new ones idling at 2%. The Service in front of them was a plain Kubernetes ClusterIP — a layer-4 balancer that distributes TCP *connections*. Each gRPC client had opened exactly one HTTP/2 connection at startup and was multiplexing every RPC over it, so the balancer had made its one decision per client days ago; the new pods never saw a single stream. Someone restarted a client pod to "fix" it — its fresh connection landed on a hot backend, making things worse. The actual fix was two lines: a headless Service so DNS returns every pod IP, and `round_robin` in the client's service config so the gRPC channel itself balances per call. The postmortem line that stuck: we scaled the pool, but the protocol had already decided who does the work.
+</Hook>
+
+<Crux>gRPC compiles one .proto into both ends; field tags are the contract, HTTP/2 multiplexes all RPCs over one connection.</Crux>
+
+<Explanation>
+
+## The contract compiles in both directions
+
+REST contracts live in documentation and drift; a gRPC contract is a file that compiles into both sides of the wire:
+
+```proto
+syntax = "proto3";
+package inventory.v1;
+
+service Inventory {
+  rpc GetStock(GetStockRequest) returns (StockReply);
+  rpc WatchStock(WatchRequest) returns (stream StockReply); // server streaming
+}
+
+message GetStockRequest {
+  string sku = 1;       // tag 1 — the number IS the field's identity
+  string warehouse = 2;
+}
+```
+
+Run `buf generate` (or raw `protoc` with the Go plugins) and you get two artifacts: a typed client stub whose methods serialize, dispatch, and decode for you, and a server interface — `InventoryServer` — that your code must implement. The compiler, not a wiki page, enforces that both teams agree on the shape.
+
+The detail that changes how you think about protobuf: **field names never reach the wire**. Each encoded field is a key — the tag number shifted left three bits, OR-ed with a wire type — followed by the value. Rename `sku` to `stock_unit` and the bytes are identical; change the tag from 1 to 9 and you have silently created a different field. The key is a varint, which is why tag values matter: tags 1 through 15 fit the key in a single byte, 16 through 2047 take two. On a message logged millions of times per minute, giving a hot repeated field tag 16 instead of tag 3 is a measurable storage tax. Plan tag space like you plan an API: small tags for hot fields, and leave gaps for the future.
+
+Honest numbers: protobuf payloads typically come out 2–5× smaller than the equivalent JSON and parse roughly 5–10× faster, because decoding is arithmetic on tagged binary instead of text scanning. But gzip eats much of the size advantage on large payloads — compressed JSON often lands within 1.5–2× of compressed protobuf. The wins that survive compression are parse cost, allocation behavior, and the generated types: nobody writes `json.RawMessage` archaeology against a gRPC API.
+
+<Quiz
+  id="01-grpc-and-protobuf-quiz-1"
+  lessonSlug="01-grpc-and-protobuf"
+  lang="en"
+  question="A teammate renames the protobuf field sku to stock_unit but keeps tag 1, regenerates the Go code, and deploys only the server. What happens to old clients still sending the old field?"
+  choices={[
+    { label: "Nothing breaks on the wire — names never leave the process; the server decodes tag 1 into the renamed field exactly as before", correct: true },
+    { label: "Old clients get an InvalidArgument error because the field name no longer matches the schema", misconception: "There is no name on the wire to mismatch. Encoded fields carry only the tag number and wire type — the server cannot even tell what the client called the field. Renames are wire-invisible; it is tag changes that create a different field." },
+    { label: "The server skips the field as unknown and reads sku as an empty string", misconception: "Unknown-field skipping happens when the tag is unrecognized. Tag 1 is still declared — under a new name — so it decodes normally. Only changing or deleting the tag itself would make the data unknown." },
+    { label: "It breaks JSON clients and gRPC clients equally, since both serialize the field name", misconception: "Only JSON mappings (and generated source code) care about names — that is a real cost for grpc-gateway users and a recompile for client code. The binary protobuf wire format is unaffected, which is exactly the asymmetry worth knowing." },
+  ]}
+/>
+
+## One connection, multiplexed — and what your balancer sees
+
+gRPC runs on HTTP/2: the client opens one TCP connection and every RPC becomes a *stream* on it, frames from concurrent calls interleaving freely. No new handshake per call, no connection-pool tuning, and request 2 does not wait for request 1 at the HTTP layer (packet loss still stalls all streams at the TCP layer — HTTP/2 fixed HTTP head-of-line blocking, not TCP's).
+
+That efficiency has a production consequence the Hook paid for. A layer-4 balancer — Kubernetes ClusterIP, AWS NLB — balances at connection-accept time. A gRPC client presents exactly one long-lived connection, so *all* of its RPCs pin to whichever backend accepted it. Scaling out adds pods that no existing client will ever talk to. You have three real options:
+
+- **Client-side balancing**: a headless Service (DNS returns all pod IPs) plus `"loadBalancingConfig": [{"round_robin":{}}]` — the channel maintains a sub-connection per backend and spreads calls. Caveat: DNS re-resolution is lazy; pair it with server-side `MaxConnectionAge` so connections recycle and discover new pods.
+- **An L7 proxy** (Envoy, Linkerd): the proxy speaks HTTP/2 on both sides and balances per *stream*, not per connection. This is the mesh answer and costs you a hop.
+- **Doing nothing** is also a decision — fine for two pods and fatal for autoscaling.
+
+## Four call types, deadlines that travel, and codes that lie to dashboards
+
+The `stream` keyword generalizes RPC into four shapes: **unary** (one request, one response — most calls), **server streaming** (one request, many responses: watches, feeds, paging a huge result set without buffering it), **client streaming** (many requests, one response: uploads, telemetry batching), and **bidirectional** (both at once: chat, sync protocols, live transcription). Generated Go code gives streams `Send` and `Recv` methods over the same context machinery you already know.
+
+Deadlines are where gRPC quietly beats hand-rolled HTTP conventions. Set one on the client context and it is transmitted as the `grpc-timeout` header on the call — and on every downstream call made from that context, with the *remaining* budget. A 500ms edge deadline arrives at the third hop as whatever is left, and every service fails fast together with `DeadlineExceeded`. With plain HTTP you reinvent this with custom headers and team discipline; gRPC ships it in the runtime.
+
+Two more things senior engineers get burned by. First, gRPC status codes are not HTTP status codes: the HTTP layer says 200 for nearly everything, and the real verdict — `OK`, `Unavailable`, `DeadlineExceeded`, `NotFound` — rides in the `grpc-status` trailer. A dashboard counting HTTP 200s on a gRPC service is measuring nothing. Second, cross-cutting concerns go in **interceptors** — the middleware of gRPC, client and server, unary and stream variants:
+
+```go
+func authInterceptor(ctx context.Context, req any, info *grpc.UnaryServerInfo,
+	next grpc.UnaryHandler) (any, error) {
+	if err := verifyToken(ctx); err != nil {
+		return nil, status.Error(codes.Unauthenticated, "bad token")
+	}
+	return next(ctx, req) // chain continues — same shape as http middleware
+}
+```
+
+<Inset kind="why" lang="en">
+Why does the wire format use varint keys at all, instead of fixed-width field IDs? Because protobuf was designed for messages that are mostly small integers and short strings, logged at Google scale: a one-byte key for the fifteen hottest fields beats a uniform four-byte key by 20–30% on typical payloads, and the decoder stays a tight loop of read-varint, switch-on-wire-type. The cost is the rule this whole unit orbits: the tag number is sacred, because it is the only identity a field has.
+</Inset>
+
+<Quiz
+  id="01-grpc-and-protobuf-quiz-2"
+  lessonSlug="01-grpc-and-protobuf"
+  lang="en"
+  question="An edge service calls orders with a 500ms deadline; orders spends 300ms, then calls pricing using the same ctx. What deadline does pricing observe, and via what mechanism?"
+  choices={[
+    { label: "About 200ms — the remaining budget travels in the grpc-timeout header because orders reused the deadline-carrying context", correct: true },
+    { label: "500ms — each hop restarts the deadline it was given", misconception: "The context carries an absolute point in time, not a duration to restart. The gRPC client computes what remains at call time and sends that — which is the entire point: the whole call tree shares one budget and fails together." },
+    { label: "No deadline — deadlines only apply to the first hop unless pricing sets its own", misconception: "That is how hand-rolled HTTP timeout headers usually die — someone forgets to forward them. gRPC propagates automatically as long as the downstream call uses the inbound ctx; you only lose the deadline by switching to context.Background()." },
+    { label: "200ms, but only if orders explicitly copies the X-Deadline header", misconception: "There is no manual header copying — propagation is in the runtime, keyed off the context. The failure mode is the opposite: breaking the ctx chain, not forgetting a header." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="One .proto compiles into both ends of the wire, and all RPCs share one multiplexed HTTP/2 connection"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "proto", label: ".proto file", sub: "tags are the contract" },
+    { id: "gen", label: "buf generate", sub: "protoc + Go plugins" },
+    { id: "stubs", label: "generated stubs", sub: "client + server iface" },
+    { id: "impl", label: "your service", sub: "implements the iface" },
+    { id: "conn", label: "HTTP/2 conn", sub: "streams multiplexed" },
+    { id: "lb", label: "L4 balancer", sub: "sees 1 conn, pins all" },
+  ]}
+  edges={[
+    { from: "proto", to: "gen", label: "schema in" },
+    { from: "gen", to: "stubs", label: "Go code out" },
+    { from: "stubs", to: "impl", label: "Register…Server" },
+    { from: "stubs", to: "conn", label: "ClientConn" },
+    { from: "conn", to: "lb", label: "one TCP conn" },
+  ]}
+  caption="Both teams compile the same file, so drift is a build failure instead of an incident. The transport trap: a connection-level balancer decides once per client, so per-RPC spreading needs client-side round_robin or an L7 proxy."
+/>
+
+<KeyTakeaway>A .proto file is a compiled contract: field tags — not names — are the wire identity, and small tags encode in one byte. gRPC multiplexes every RPC as a stream over one HTTP/2 connection, which defeats L4 balancers and demands client-side round_robin or an L7 proxy. Deadlines propagate the remaining budget across hops via grpc-timeout, statuses ride in trailers (HTTP says 200 regardless), and interceptors are the middleware layer.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-grpc-and-protobuf-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why renaming a protobuf field is wire-safe but changing its tag is not, down to the encoding.", a: "An encoded protobuf field is a varint key — the tag number shifted left three bits OR-ed with a wire type — followed by the value. The name exists only in the .proto and in generated source; it is never serialized. Renaming therefore produces byte-identical output (the costs are source-level: regenerated code and JSON field mappings). Changing the tag rewrites the key: old messages now carry a tag the new schema maps to a different field or to nothing, and new messages are misread by old readers the same way. Tag size also matters physically: tags 1-15 encode the key in one byte, 16-2047 in two, so hot fields earn the small numbers." },
+    { q: "A gRPC service behind a Kubernetes ClusterIP does not rebalance when you scale pods. Walk the mechanism and the two fixes.", a: "gRPC opens one long-lived HTTP/2 connection per client and multiplexes every RPC as a stream on it. A ClusterIP Service balances at TCP accept time — one decision per connection — so each client pins all its traffic to the backend that accepted its single connection, and new pods receive nothing from existing clients. Fix one: client-side balancing — a headless Service so DNS resolves to every pod IP, round_robin in the service config so the channel holds a sub-connection per backend, plus server MaxConnectionAge so connections recycle and discover new pods. Fix two: an L7 proxy such as Envoy or a mesh sidecar, which terminates HTTP/2 and balances per stream at the cost of an extra hop." },
+  ]}
+/>
+
+<Recap lang="en">
+gRPC inverts where the contract lives: instead of documentation describing an HTTP API, a .proto file compiles into the client stub and the server interface, and disagreement between teams becomes a build failure. On the wire, fields are tag-plus-wire-type keys — names are decoration that never leaves the process, which is why renames are free and tag changes are contract changes. Varint keys make tags 1 through 15 a one-byte cost, so hot fields get small numbers. Honest performance: 2–5× smaller than JSON and 5–10× faster to parse, but gzip narrows the size gap; the durable wins are parse cost and generated types. Transport is HTTP/2 with every RPC as a stream over one connection — efficient, and the direct cause of the classic incident where scaling pods changes nothing because an L4 balancer assigns whole connections; the cures are client-side round_robin over headless DNS with MaxConnectionAge, or an L7 proxy that balances per stream. The stream keyword gives four call shapes — unary, server streaming for watches and feeds, client streaming for uploads, bidi for chat-like protocols. Deadlines set on a context travel as grpc-timeout with the remaining budget at every hop, so the whole call tree fails together — the thing HTTP teams hand-roll badly. Status codes live in trailers while HTTP reports 200, so dashboards must count grpc-status, and interceptors carry the cross-cutting middleware exactly like http.Handler wrappers did.
+</Recap>

@@ -1,0 +1,161 @@
+---
+concepts:
+- go-backpressure
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-semaphores-and-backpressure"
+sources:
+- https://pkg.go.dev/golang.org/x/sync/semaphore
+- https://pkg.go.dev/golang.org/x/sync/errgroup
+- https://pkg.go.dev/net/http
+spiral: []
+status: ready
+summary: "Bound concurrency with a buffered-channel semaphore or semaphore.Weighted; when full, block or reject the producer — an unbounded queue is deferred OOM plus latency hiding. Size limits with Little's law (L = λW), align with the DB pool, prefer 503 + Retry-After to melting."
+title: 'Semaphores and backpressure: bounding work at every boundary before the queue becomes the outage'
+track: "go"
+unit: "10-advanced-concurrency"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The thumbnail service had an elegant decoupling: requests appended jobs to an in-memory queue, workers consumed at their own pace. A flash sale brought a 10x burst. The queue did its job — it absorbed everything. For nineteen minutes the dashboard showed 200s and a queue depth climbing through 2.1 million jobs at ~1.5 KB each, while the workers ground through 300 jobs a second. Do the division: a job entering the queue at minute ten would be processed two hours later — for a client that timed out after 25 seconds. The service was burning CPU on work nobody would ever receive. At 4.2 GB the pod was OOMKilled, restarted with an empty queue, and the clients — all retrying — refilled it in 40 seconds. Three OOM cycles before someone capped the queue and returned 503s. The postmortem's one-liner became team law: an unbounded queue does not absorb overload, it defers it — with interest, and a memory bill.
+</Hook>
+
+<Crux>Bound concurrency at every boundary: when full, block or reject the producer. An unbounded queue is deferred OOM plus hidden latency.</Crux>
+
+<Explanation>
+
+## Two semaphores: a channel and a Weighted
+
+The zero-dependency semaphore is a buffered channel where **acquire is a send**:
+
+```go
+sem := make(chan struct{}, 64) // capacity = max in-flight
+
+func handle(job Job) {
+	sem <- struct{}{}        // acquire: blocks when 64 are in flight
+	defer func() { <-sem }() // release
+	process(job)
+}
+```
+
+Placement is the senior detail: acquire **before** spawning a goroutine, in the producer's loop — then the semaphore bounds goroutine count *and* work. Acquire as the first line *inside* the goroutine bounds only the work: a 10x burst still spawns a goroutine per job, thousands of them parked at the acquire, each ~2–4 KB plus captured state — a slow-motion version of the Hook. The channel semaphore's limits: an acquire cannot be abandoned (no ctx case — unless you wrap it in a select, which you should), and all permits are equal.
+
+`golang.org/x/sync/semaphore.Weighted` fixes both: `Acquire(ctx, n)` returns with an error when ctx is cancelled — a caller stuck in line can leave the line — and weights let work claim its true size, the classic use being memory: `sem.Acquire(ctx, fileSize)` against a budget of bytes rather than a count of files. `TryAcquire` is the reject-fast variant. Honest cost note: Weighted is a mutex and a waiter list; the channel version is a touch cheaper and idiomatic when permits are uniform and you wrap acquires in select yourself.
+
+<Quiz
+  id="03-semaphores-and-backpressure-quiz-1"
+  lessonSlug="03-semaphores-and-backpressure"
+  lang="en"
+  question="Crawl 100k URLs with concurrency 64. Variant A acquires the channel semaphore before the go statement; variant B spawns a goroutine per URL that acquires as its first line. Under a burst, what actually differs?"
+  choices={[
+    { label: "A bounds both in-flight work and goroutine count; B still creates a goroutine per URL — thousands parked at acquire, each holding stack and captured variables", correct: true },
+    { label: "Nothing — both run at most 64 process calls at once, so they are equivalent", misconception: "The bound on running work is identical, but B converts every queued URL into a parked goroutine: 100k goroutines at ~2-4 KB each plus captures is hundreds of MB of waiting — the unbounded-queue failure wearing a semaphore costume." },
+    { label: "B is better because the producer loop never blocks", misconception: "The producer not blocking is precisely the bug: blocking the producer is how backpressure propagates upstream to the source. An unblocked producer just relocates the queue into the scheduler as parked goroutines." },
+    { label: "A deadlocks: the producer holds all permits and nobody releases them", misconception: "The producer does not hold permits — it transfers each one to the goroutine it spawns, and the goroutine releases on exit. As long as release lives in the worker (defer), acquire-before-spawn cannot self-deadlock." },
+  ]}
+/>
+
+## Backpressure: block, or reject — never queue unboundedly
+
+When a system is at capacity, there are exactly three things to do with the next unit of work: **block** the producer (the semaphore's default — pressure propagates upstream, the source slows down), **reject** it fast (TryAcquire, a 503 — the caller knows immediately and can back off), or **queue** it. The first two are honest. The third is honest only when the queue is bounded and its *latency* is accounted for: a queue defers work, and deferred work has a wait time that adds straight onto your response time. The unbounded version commits two sins at once. It hides overload from every upstream signal — producers see instant accepts while the system drowns — and it converts overload into memory growth, which ends in an OOM that loses *everything* in flight, not just the excess. The Hook's two-hour queue latency against a 25-second client timeout is the punchline: past a certain depth, every queued job is already dead, and the workers are a crematorium with perfect throughput metrics.
+
+## Where the limits live: boundaries
+
+Apply bounds where work *enters*, not where it hurts. At the HTTP edge, an in-flight limiter is a dozen lines:
+
+```go
+func limitInFlight(n int64, next http.Handler) http.Handler {
+	sem := semaphore.NewWeighted(n)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !sem.TryAcquire(1) {
+			w.Header().Set("Retry-After", "1") // tell clients when to come back
+			http.Error(w, "overloaded", http.StatusServiceUnavailable)
+			return
+		}
+		defer sem.Release(1)
+		next.ServeHTTP(w, r)
+	})
+}
+```
+
+A fast 503 with `Retry-After` beats melting: the rejected request costs microseconds, keeps latency flat for the requests you *did* accept, and gives load balancers and clients a real signal. Inside the service, size worker pools by the **constraining resource**, not by CPU count: a pool calling a downstream API is bounded by that API's rate limit; a pool writing to Postgres is bounded by the DB pool. And *align the layers*: `db.SetMaxOpenConns(10)` already is a semaphore — accepting 500 concurrent requests that all need a connection just moves the queue from the edge (where you can reject cheaply) to the connection pool (where requests have already eaten memory, deadlines, and a goroutine each). The outermost limit should be the smallest honest one the layers below can sustain.
+
+<Inset kind="why" lang="en">
+Why is blocking the producer ever better than rejecting? Because blocking composes silently through a call chain you own: the pipeline stage blocks on its send, which slows the stage above, which slows the reader at the source — flow control with zero code, the same mechanism TCP uses with its receive window. Reject when the producer is *not* yours to slow down (public clients, partner webhooks) or when the work has a deadline that waiting would blow. Block when the producer is internal and elastic. The only wrong answer is the invisible third option — accept-and-queue with no bound — because it is a block that nobody feels and a reject that arrives two hours late as an OOM.
+</Inset>
+
+## Little's law: sizing with arithmetic, not vibes
+
+The sizing tool is one line of algebra: **L = λW** — average concurrency equals arrival rate times time-in-system. It works in every direction. *Demand check*: 400 req/s at 100 ms per request means 400 × 0.1 = 40 in flight on average — a limit of 32 is undersized before the first burst, since max sustainable throughput at limit 32 is 32 / 0.1 = 320 req/s, and the missing 80 req/s must queue (growing forever) or be rejected. *Queue translation*: the Hook's 2.1M jobs at 300 jobs/s is W = L/λ = 7,000 s of queue latency — visibly absurd next to a 25 s timeout, which is exactly why queue depth belongs on a dashboard *divided by drain rate*, as seconds, not items. *Headroom*: size the limit at demand plus burst margin (40 in flight on average might warrant a limit of 64), then verify each downstream layer sustains the implied throughput. The arithmetic takes thirty seconds and would have flagged the Hook's design in review.
+
+<Quiz
+  id="03-semaphores-and-backpressure-quiz-2"
+  lessonSlug="03-semaphores-and-backpressure"
+  lang="en"
+  question="A service receives a steady 400 req/s; each request occupies a worker for 100 ms. The in-flight limit is 32. What does Little's law say happens?"
+  choices={[
+    { label: "Average demand is 400 × 0.1 = 40 in flight; limit 32 sustains at most 320 req/s, so 80 req/s must be rejected or shed — and any queue in front grows without bound", correct: true },
+    { label: "32 is enough because requests are short and finish quickly", misconception: "Short is already priced in: L = λW multiplies the rate by exactly that 100 ms. The product is 40 concurrent on average — above 32, deterministically, before considering bursts. Quick requests do not repeal arithmetic." },
+    { label: "Raising the limit to 40 makes the problem disappear", misconception: "40 is the average demand; running a limiter at exactly the average means any burst queues or rejects. You need headroom above 40 — and proof that downstream layers (DB pool, dependency rate limits) sustain the higher concurrency you just allowed." },
+    { label: "Put a queue in front so no request is ever rejected", misconception: "With arrivals persistently above service rate, the queue grows without bound: W = L/λ stretches until every queued request has outlived its client timeout, then memory ends the experiment. That is the Hook, replayed." },
+  ]}
+/>
+
+## The ladder: reject, shed, degrade
+
+Limits decide *when* you are over capacity; the ladder decides *what* to give up. **Reject** new work at the edge — 503 plus `Retry-After`, the cheapest and most honest option, first rung because it protects everything below. **Shed** by priority — keep checkout traffic, drop prefetches and background refreshes; this needs work to be classified at ingress, which is why priority tags belong in the request, not in the worker. **Degrade** the work itself — serve the cached thumbnail instead of rendering, skip the recommendation block, return a partial result with a header saying so. Most teams discover the rungs in reverse order, during incidents; design-time is cheaper. And one retry-storm guard belongs in the same review: rejected clients must back off with jitter, or your 503s synchronize them into the exact burst that refilled the Hook's queue in 40 seconds.
+
+</Explanation>
+
+<FlowDiagram
+  label="Admission control at the edge: TryAcquire decides in microseconds, accepted work flows through a bounded pool aligned with the DB pool"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "clients", label: "Clients", sub: "burst 10x" },
+    { id: "limiter", label: "Limiter", sub: "TryAcquire(1)" },
+    { id: "reject", label: "503 + Retry-After", sub: "microseconds, honest" },
+    { id: "sem", label: "Semaphore n=64", sub: "sized by L = λW" },
+    { id: "pool", label: "Workers", sub: "bounded by resource" },
+    { id: "db", label: "DB pool", sub: "MaxOpenConns 10" },
+  ]}
+  edges={[
+    { from: "clients", to: "limiter" },
+    { from: "limiter", to: "reject", label: "full" },
+    { from: "limiter", to: "sem", label: "admitted" },
+    { from: "sem", to: "pool" },
+    { from: "pool", to: "db", label: "aligned layers" },
+  ]}
+  caption="Every layer is a semaphore: the limiter, the worker bound, the connection pool. The outermost limit must be the smallest the layers below sustain — otherwise the queue just moves somewhere more expensive."
+/>
+
+<KeyTakeaway>Bound concurrency at the boundary: channel semaphore (acquire before spawning) or semaphore.Weighted for ctx-aware, sized permits. At capacity, block your own producers or reject foreign ones fast — 503 + Retry-After beats melting. Never queue unboundedly: depth divided by drain rate is latency, and past the client timeout the queue is storing corpses. Size with L = λW, then align every layer down to the DB pool.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-semaphores-and-backpressure-retrieval"
+  lang="en"
+  questions={[
+    { q: "Compare the buffered-channel semaphore and semaphore.Weighted: mechanics, the acquire-placement trap, and when each wins.", a: "The channel semaphore is make(chan struct{}, n): acquire is a send (blocks at capacity), release is a receive, usually in defer. Acquire must happen in the producer loop before the go statement — that bounds goroutine count and work together; acquiring inside the goroutine still spawns one goroutine per job, and a burst parks thousands of them at the acquire, recreating the unbounded queue as scheduler state. Weighted (x/sync/semaphore) adds two capabilities: Acquire(ctx, n) aborts when ctx is cancelled, so waiters can abandon the line, and weighted permits let work claim its real size — acquiring fileSize bytes against a memory budget instead of one slot per file. TryAcquire on both shapes the reject-fast path. The channel version wins on simplicity and uniform permits (wrap acquires in select with ctx.Done yourself); Weighted wins when waiting must be cancellable or work sizes vary." },
+    { q: "Why exactly is an unbounded queue worse than blocking or rejecting, and how does Little's law quantify it?", a: "An unbounded queue commits two failures. It severs the feedback loop: producers see instant accepts while the system is drowning, so nothing upstream slows down — blocking propagates pressure, rejecting signals it, queueing silences it. And it converts overload into memory: depth grows until an OOM kills everything in flight, including work that was healthy. Little's law makes the damage measurable: W = L/λ — queue depth divided by drain rate is queue latency. At 2.1M jobs and 300 jobs/s, W is about 7,000 seconds against a 25-second client timeout: every job past the first few thousand is already dead, the workers are processing for nobody, and the OOM-restart-retry cycle multiplies the original burst. Dashboards should therefore show queues in seconds of drain, not items, and any queue needs a cap plus a rejection policy for when the cap is hit." },
+  ]}
+/>
+
+<Recap lang="en">
+Bounded concurrency in Go has two native shapes. The buffered-channel semaphore — acquire is a send, release a deferred receive — is the zero-dependency default, with one placement rule that separates it from a disguised unbounded queue: acquire in the producer loop, before the go statement, so the bound covers goroutines as well as work. semaphore.Weighted adds cancellable waiting (Acquire takes ctx) and sized permits, the canonical case being a byte budget for memory-heavy work; TryAcquire on either gives the reject-fast path. The principle these tools serve: at capacity, block the producer or reject the work — blocking composes upstream through chains you own, like TCP flow control; rejecting with 503 plus Retry-After is the honest answer to producers you cannot slow. The one forbidden option is the unbounded queue, which hides overload from every signal while converting it into memory growth — deferred OOM plus latency hiding, and the queued work expires against client timeouts long before workers reach it. Place limits at boundaries: an in-flight limiter at the HTTP edge, worker pools sized by the constraining resource rather than CPU count, and layers aligned so the outer limit never exceeds what the DB pool — itself a semaphore — sustains. Size nothing by intuition: L = λW turns rate and latency into required concurrency, and queue depth divided by drain rate into seconds of lag a dashboard can alert on. Above the limits sits the ladder — reject, shed by priority, degrade the work — plus jittered client backoff so your rejections do not synchronize into the next burst.
+</Recap>
