@@ -1,0 +1,164 @@
+---
+concepts:
+- go-test-doubles
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-mocks-fakes-interfaces"
+sources:
+- https://pkg.go.dev/net/http/httptest
+- https://go.dev/wiki/CodeReviewComments
+- https://golang.testcontainers.org/
+spiral: []
+status: ready
+summary: 'Test doubles the Go way: consumers define small interfaces, hand-written fakes beat interaction-asserting mock frameworks, httptest covers the HTTP edge in-process or via a real listener, testcontainers earns its 1–3 s where SQL is the logic. Over-mocking tests the mock.'
+title: 'Mocks, fakes, and interfaces: test doubles without testing the double'
+track: "go"
+unit: "04-testing-and-tooling"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The order service had 96% coverage and still double-charged forty-one customers. Every dependency was a generated mock with EXPECT chains: the test pinned that ChargeCard would be called once with amount 4999, the mock dutifully returned success, and the suite was green. The bug lived in the retry wrapper — on a timeout it retried without an idempotency key, and the real payment gateway, unlike the mock, charged twice. No test could have caught it, because no test ever talked to anything that behaved like the gateway: the mocks returned whatever the test author assumed. Three months later a harmless refactor reordered two independent lookups and 214 tests went red — behavior identical, call order changed, every EXPECT chain now wrong. The team spent a sprint editing mocks to match the new implementation. That is the double failure of over-mocking: it misses real bugs because the double is too obedient, and it flags non-bugs because the assertions encode the implementation.
+</Hook>
+
+<Crux>Accept small interfaces, test with hand-written fakes. A mock that asserts calls tests your implementation, not your behavior.</Crux>
+
+<Explanation>
+
+## Accept interfaces where you consume them
+
+Go's interfaces are satisfied implicitly, which inverts the dependency habit other languages teach: the *consumer* declares the few methods it needs, in its own package, and any concrete type with those methods just fits — no implements clause, no shared interface package:
+
+```go
+// package billing — declares what billing needs, nothing more
+type OrderStore interface {
+	Get(ctx context.Context, id string) (Order, error)
+	Save(ctx context.Context, o Order) error
+}
+
+type Charger interface {
+	Charge(ctx context.Context, key string, cents int64) error
+}
+
+func New(store OrderStore, ch Charger) *Billing { /* ... */ }
+```
+
+The production wiring passes the real Postgres-backed store; the test passes a fake. Keep interfaces small — one to three methods. A 14-method `Repository` interface forces every test double to implement 14 methods and tells the reader nothing about what this code path touches; `OrderStore` with two methods documents the exact contract. The Go proverb compresses it: the bigger the interface, the weaker the abstraction. Corollary: return concrete types, accept interfaces — exporting an interface "for mockability" from the producer side recreates the Java pattern Go was designed to avoid, and freezes your API to the first consumer's needs.
+
+## Hand-written fakes over mock frameworks
+
+A **mock** (gomock, mockery) records calls and asserts *interactions*: this method, these arguments, this order, this many times. A **fake** is a small working implementation — a map behind a mutex — and the test asserts *state*:
+
+```go
+type fakeStore struct {
+	mu     sync.Mutex
+	orders map[string]Order
+}
+
+func (f *fakeStore) Get(ctx context.Context, id string) (Order, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.orders[id]
+	if !ok {
+		return Order{}, ErrNotFound // honors the real contract
+	}
+	return o, nil
+}
+
+func (f *fakeStore) Save(ctx context.Context, o Order) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.orders[o.ID] = o
+	return nil
+}
+```
+
+The trade is durability. A fake encodes the dependency's *contract* once — not-found returns ErrNotFound, Save then Get round-trips — and every test that uses it inherits that realism; refactor the code under test freely and the fake never notices, because it answers honestly no matter who calls what in which order. A mock encodes the *current call sequence* of the code under test, which is why refactors break mock-based suites wholesale. Mocks keep one legitimate niche: asserting that a side effect happened at all ("audit log written exactly once on failure"), where the interaction *is* the behavior. For everything else, a 20-line fake written once beats a generated mock configured in every test. Failure injection stays easy — add a `failNextSave error` field and set it in the test.
+
+<Quiz
+  id="03-mocks-fakes-interfaces-quiz-1"
+  lessonSlug="03-mocks-fakes-interfaces"
+  lang="en"
+  question="A refactor swaps the order of two independent reads in a service. 214 mock-based tests fail; behavior is provably unchanged. What property of mocks caused this?"
+  choices={[
+    { label: "Mocks assert interactions — method, arguments, order, count — so the tests encoded the old implementation's call sequence, not the observable behavior", correct: true },
+    { label: "The generated mocks were stale and needed regeneration against the new code", misconception: "Regeneration tracks interface signatures, which did not change. The breakage came from EXPECT chains in each test pinning the old call order — a property of how the tests assert, not of code generation." },
+    { label: "Go interfaces are order-sensitive, so swapped calls violate the interface contract", misconception: "Interfaces in Go constrain method sets only; no ordering exists at the language level. The ordering constraint was invented by the tests themselves via InOrder/ordered expectations on the mocks." },
+    { label: "This is correct behavior — call order is part of the public contract and the tests caught a regression", misconception: "The reads were independent; no observable output changed. When tests fail on equivalent implementations, they are testing the implementation. A fake asserting end state would have stayed green." },
+  ]}
+/>
+
+## httptest: the HTTP edge without the network — or with it
+
+For HTTP there is rarely a reason to hand-roll doubles; `net/http/httptest` ships two tools aimed at two different subjects. Testing a **handler**: `httptest.NewRecorder()` plus `httptest.NewRequest()` invoke it as a plain function call — no port, no goroutine, microseconds per test — and the `ResponseRecorder` captures status, headers, and body for got/want checks. Testing a **client** (retry logic, timeout handling, auth headers): `httptest.NewServer(handler)` binds a real listener on 127.0.0.1, so the production `http.Client` code runs unmodified against a URL you control; the test handler can return 503 twice then 200 to prove the retry policy, or `time.Sleep` past the client timeout to prove the deadline fires. The rule of thumb falls out of the subject under test: recorder when your code *is* the server, real server when your code *talks to* a server — a recorder cannot exercise connection reuse, timeouts, or TLS (`httptest.NewTLSServer` can).
+
+## testcontainers, honestly — and the over-mocking failure mode
+
+A repository layer whose logic *is* SQL gains nothing from a fake: faking the store tests your map, not your query. testcontainers-go starts a real Postgres in Docker — honestly, that costs 1–3 s of container startup plus image pull on cold CI, so amortize it: one container per package via `TestMain`, per-test isolation through transactions rolled back or schema-per-test, and keep the suite behind `testing.Short()` so `go test -short` stays sub-second for the inner loop. The payoff is that ON CONFLICT clauses, constraint violations, and isolation quirks are tested against the engine that will run them — sqlmock-style drivers that assert SQL strings are mocks of the worst kind, breaking on whitespace while validating nothing about semantics. The general diagnostic for over-mocking is one question: if the implementation changed but behavior stayed identical, would this test still pass? If every refactor means editing EXPECT chains, the suite is asserting *how* the code works — it tests the mock. Fakes, recorders, and real engines all answer the question with yes.
+
+<Quiz
+  id="03-mocks-fakes-interfaces-quiz-2"
+  lessonSlug="03-mocks-fakes-interfaces"
+  lang="en"
+  question="You need to test that your HTTP client retries on 503 with backoff and gives up after its 2 s overall timeout. Which httptest tool, and why?"
+  choices={[
+    { label: "httptest.NewServer — the client code under test needs a real listener so its transport, retry loop, and deadline run unmodified against responses you script", correct: true },
+    { label: "httptest.NewRecorder — it is faster and captures everything the client sends", misconception: "A recorder tests handlers: it captures what a handler writes when invoked as a function. There is no client, no connection, and no timeout in that path — the subject here is the client, which needs something to dial." },
+    { label: "Neither — replace http.Client with an interface and mock the Do method", misconception: "Wrapping Do with a mock skips the transport where deadlines, connection reuse, and body draining live — the exact machinery the retry/timeout behavior depends on. A local real server tests the truth for microseconds of cost." },
+    { label: "testcontainers with an nginx image, since only a real reverse proxy produces authentic 503s", misconception: "A 503 is just a status code; httptest.NewServer scripts it in two lines with zero container overhead. Containers earn their seconds when the dependency's engine is the logic — SQL semantics — not for canned HTTP responses." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The consumer defines a small interface; production wires the real store while tests wire a fake, httptest covers both HTTP directions, and testcontainers backs the SQL layer"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "svc", label: "Service code", sub: "consumer package" },
+    { id: "iface", label: "Small interface", sub: "1-3 methods, local" },
+    { id: "real", label: "Real impl", sub: "Postgres store" },
+    { id: "fake", label: "Hand-written fake", sub: "map + mutex" },
+    { id: "ht", label: "httptest", sub: "Recorder / NewServer" },
+    { id: "tc", label: "testcontainers", sub: "real engine, 1-3 s" },
+  ]}
+  edges={[
+    { from: "svc", to: "iface", label: "depends on" },
+    { from: "real", to: "iface", label: "satisfies (prod)" },
+    { from: "fake", to: "iface", label: "satisfies (test)" },
+    { from: "svc", to: "ht", label: "HTTP edge" },
+    { from: "real", to: "tc", label: "SQL verified" },
+  ]}
+  caption="Implicit satisfaction lets the consumer own a minimal contract; the fake asserts state and survives refactors. The HTTP edge uses recorder or real listener by subject; the repository layer tests against the actual database engine."
+/>
+
+<KeyTakeaway>Define 1–3 method interfaces in the consuming package — implicit satisfaction makes the real store and a 20-line map-backed fake equally valid implementations. Fakes assert state and survive refactors; interaction-asserting mocks encode the call sequence and shatter on equivalent implementations. Use httptest.NewRecorder for handlers, httptest.NewServer for client behavior, and a real engine via testcontainers where SQL is the logic. The over-mocking test: would this pass if the implementation changed but behavior did not?</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-mocks-fakes-interfaces-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast mocks and fakes: what each asserts, how each responds to a behavior-preserving refactor, and the one niche where a mock is the right tool.", a: "A mock (gomock/mockery) records interactions and asserts method, arguments, order, and count — it encodes the current call sequence of the code under test, so a behavior-preserving refactor that reorders independent calls turns the suite red and forces editing EXPECT chains. A fake is a small working implementation (map behind a mutex) that honors the dependency's contract — not-found returns ErrNotFound, Save/Get round-trips — and the test asserts resulting state, so equivalent implementations all pass; failure injection is a failNext field. The contract is encoded once in the fake instead of re-stated per test. The mock's legitimate niche is when the interaction is the behavior: proving a side effect happened exactly once, like an audit log write on the failure path." },
+    { q: "Lay out the doubles strategy for a service with an HTTP client to a payment gateway and a Postgres repository: which tool tests what, and what you refuse to mock.", a: "Consumer-side interfaces (1–3 methods) for the store and charger, defined in the service package. Service logic: hand-written fakes asserting end state. The HTTP client's retry/timeout behavior: httptest.NewServer scripting 503-503-200 and slow responses, so the real http.Client transport and deadlines run; handlers themselves get NewRecorder, in-process and microsecond-fast. The repository, where SQL is the logic: testcontainers Postgres — one container per package via TestMain (1–3 s amortized), transaction-rollback isolation per test, skipped under go test -short. Refuse to mock: the SQL driver (string-asserting sqlmock validates whitespace, not semantics) and http.Client.Do (skips the transport machinery the behavior depends on). The gateway's contract quirks — idempotency keys on retry — get one contract test against its sandbox." },
+  ]}
+/>
+
+<Recap lang="en">
+Go's implicit interface satisfaction sets the strategy: the consumer declares a one-to-three-method interface in its own package, production wires the concrete store, and the test wires a double — no implements clause, no interface package, and the proverb holds that the bigger the interface, the weaker the abstraction. The default double is a hand-written fake: a map behind a mutex that honors the real contract, asserts state instead of interactions, and survives any behavior-preserving refactor, with failure injection one field away. Interaction-asserting mocks earn their place only where the call itself is the behavior — audit-log-written-once — because everywhere else they encode the implementation: the Hook's 214 red tests on a harmless reorder, and the double charge that passed because every mock returned the author's assumptions instead of the gateway's behavior. At the HTTP edge, httptest splits by subject — NewRecorder invokes handlers as functions in microseconds; NewServer gives client code a real listener so transports, retries, and deadlines run unmodified. Where SQL is the logic, fake nothing: testcontainers runs the real engine for 1–3 s amortized across a package, with short-mode escape for the inner loop. The audit question for any suite: if the implementation changed and behavior did not, would the tests stay green? If not, they test the double.
+</Recap>

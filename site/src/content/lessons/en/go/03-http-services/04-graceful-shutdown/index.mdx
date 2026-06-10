@@ -1,0 +1,179 @@
+---
+concepts:
+- go-graceful-shutdown
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-graceful-shutdown"
+sources:
+- https://pkg.go.dev/net/http
+- https://pkg.go.dev/os/signal
+- https://pkg.go.dev/context
+spiral: []
+status: ready
+summary: 'Shutdown(ctx) closes listeners, stops accepting, and drains in-flight requests until the context deadline; signal.NotifyContext wires SIGTERM to it. It does not cover hijacked conns or websockets, and in k8s you flip readiness and wait out endpoint propagation before draining.'
+title: 'Graceful shutdown: Shutdown(ctx), SIGTERM wiring, and why deploys still drop requests'
+track: "go"
+unit: "03-http-services"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Every deploy produced the same graph: a 90-second spike of 502s, roughly 0.3% of traffic, then calm. The team had already done the famous fix — `signal.NotifyContext` for SIGTERM, `srv.Shutdown(ctx)` with a 30-second drain — and the spike shrank but refused to die. The remaining errors were requests that arrived *after* SIGTERM, sent by load balancers that did not yet know the pod was leaving. Kubernetes removes a terminating pod from Endpoints asynchronously; for a few seconds, kube-proxy rules and the ingress still route new connections to a server that has already closed its listener. Shutdown was working perfectly — refusing exactly the connections the cluster was still sending. The fix was embarrassing in its simplicity: flip the readiness probe to failing, sleep ~5 seconds in preStop to let endpoint propagation finish, *then* call Shutdown. The 502s went to zero. Graceful shutdown is a distributed-systems handshake, and `Shutdown(ctx)` is only your half of it.
+</Hook>
+
+<Crux>Shutdown(ctx) stops accepting and drains in-flight requests — but k8s must stop sending traffic first, and hijacked conns drain themselves.</Crux>
+
+<Explanation>
+
+## What Shutdown(ctx) actually does
+
+`srv.Shutdown(ctx)` executes a precise sequence: close all listeners (new connects get refused), close idle keep-alive connections, then wait — polling — for active requests to finish. It returns when the server is fully drained, or when the ctx expires, whichever comes first. On expiry it returns `ctx.Err()` but does *not* forcibly kill in-flight connections; pair it with `srv.Close()` if you need a hard stop after the grace period. Meanwhile the blocked `ListenAndServe` call returns immediately with `http.ErrServerClosed` — expected, not an error:
+
+```go
+srv := &http.Server{Addr: ":8080", Handler: mux}
+
+go func() {
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("listen: %v", err)
+	}
+}()
+
+<-shutdownSignal // see next section
+
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+defer cancel()
+if err := srv.Shutdown(shutdownCtx); err != nil {
+	log.Printf("drain incomplete: %v", err) // ctx expired with requests in flight
+	srv.Close()                             // hard-close the stragglers
+}
+```
+
+Two details seniors get asked about. First, ordering: `Shutdown` must run on a different goroutine than `ListenAndServe`, because the latter is blocked serving. Second, the drain deadline is a *policy* number: it must be at least your slowest legitimate request, and at most what your platform allows — Kubernetes sends SIGKILL after `terminationGracePeriodSeconds` (default 30 s), and SIGKILL is not a conversation.
+
+## Wiring the signal: signal.NotifyContext
+
+The process learns about its death from a signal — SIGTERM from Kubernetes/systemd, SIGINT from a human's Ctrl-C. Since Go 1.16 the idiomatic bridge from signal to cancellation is one line:
+
+```go
+ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+defer stop()
+
+// ... start server ...
+
+<-ctx.Done() // blocks until SIGTERM/SIGINT
+stop()       // restore default handling: a SECOND signal kills immediately
+```
+
+`NotifyContext` returns a context canceled on the first matching signal. The `stop()` after `Done()` is a deliberate operability move: it unregisters the handler, so a second Ctrl-C bypasses your drain and kills the process — the escape hatch for a shutdown that itself hangs. Without that, an impatient operator mashing Ctrl-C is held hostage by your 30-second drain. One more sharp edge: while you drain, in-flight handlers still run — if they check a global "shutting down" flag or you cancel their base context too early, you turn a graceful drain into self-inflicted 500s. Drain means *let them finish*, with their own deadlines as the bound.
+
+<Quiz
+  id="04-graceful-shutdown-quiz-1"
+  lessonSlug="04-graceful-shutdown"
+  lang="en"
+  question="srv.Shutdown(ctx) is called with a 30s context while one request is mid-flight. The request finishes in 4 seconds. When does Shutdown return, and what happened to ListenAndServe?"
+  choices={[
+    { label: "Shutdown returns at ~4s, as soon as the drain completes; ListenAndServe already returned http.ErrServerClosed when Shutdown began", correct: true },
+    { label: "Shutdown blocks the full 30 seconds — the context sets its duration", misconception: "The context is an upper bound, not a sleep. Shutdown polls active connections and returns the moment the server is drained; the deadline only matters when stragglers outlive it, in which case Shutdown returns ctx.Err() with connections still open." },
+    { label: "ListenAndServe keeps blocking until the last request finishes", misconception: "ListenAndServe returns ErrServerClosed immediately when Shutdown (or Close) is called — accepting has stopped. The in-flight request is owned by its own connection goroutine; Shutdown, not ListenAndServe, is what waits for it." },
+    { label: "Shutdown returns immediately and the in-flight request is dropped", misconception: "Immediate teardown is what srv.Close() does. Shutdown exists precisely to avoid dropping that request: listeners close at once, but active requests get until the context deadline to complete." },
+  ]}
+/>
+
+## What Shutdown does not cover
+
+`Shutdown` waits for connections in the *normal HTTP request cycle*. Two classes of traffic are explicitly outside it:
+
+- **Hijacked connections** — anything that took the raw TCP conn via `http.Hijacker`, which is every websocket. After hijack, net/http no longer tracks the connection's state; Shutdown neither waits for it nor closes it.
+- **Long-lived streams that never end on their own** — an SSE handler in a `for` loop is an active request, so a plain Shutdown will wait for it until the drain deadline, every deploy, unless you tell it to wind down.
+
+The hook for both is `srv.RegisterOnShutdown(f)`: each registered function runs (in its own goroutine) when Shutdown starts. Use it to broadcast "closing" to websocket sessions, cancel the streams' context, and give them a beat to send a close frame:
+
+```go
+srv.RegisterOnShutdown(func() {
+	hub.CloseAll(1 * time.Second) // websocket close frames, then drop
+	streamCancel()                // SSE loops select on this ctx and exit
+})
+```
+
+Without this, a deploy either snaps every websocket mid-frame (clients see abnormal closure, reconnect storms follow) or hangs the drain until SIGKILL does the snapping for you — at which point in-flight *HTTP* requests die too, the exact thing Shutdown was for.
+
+<Quiz
+  id="04-graceful-shutdown-quiz-2"
+  lessonSlug="04-graceful-shutdown"
+  lang="en"
+  question="A service has 2,000 open websockets and calls srv.Shutdown with a 30s context on deploy. What happens to the websockets?"
+  choices={[
+    { label: "Nothing — they are hijacked connections net/http stopped tracking, so Shutdown neither waits for nor closes them; SIGKILL eventually snaps them unless RegisterOnShutdown closes them deliberately", correct: true },
+    { label: "Shutdown waits up to 30s for each websocket to close, then returns", misconception: "Shutdown waits only for connections in the normal HTTP state machine. A hijack hands the raw TCP conn to your code and removes it from the server's accounting — to net/http those 2,000 sockets no longer exist." },
+    { label: "Shutdown sends each websocket a close frame as part of the drain", misconception: "net/http knows nothing about the websocket protocol — framing lives entirely in your library on top of the hijacked conn. Protocol-correct closes are your job, typically from a RegisterOnShutdown callback into your session hub." },
+    { label: "The websockets keep working after the process exits because the kernel holds the sockets", misconception: "Sockets are file descriptors owned by the process; when the process exits the kernel closes them all with a TCP reset. Clients see an abnormal closure and reconnect — all at once, into your freshly deployed pods." },
+  ]}
+/>
+
+## Kubernetes: stop the traffic before you stop the server
+
+In a cluster, `Shutdown` is the second step of the dance, and running it first causes the Hook's 502s. When a pod enters Terminating, two things happen *in parallel*: the kubelet sends SIGTERM (after preStop), and the endpoints controller starts removing the pod from Endpoints — but ingresses and kube-proxy rules converge with a lag of seconds. Close your listener during that lag and you bounce live traffic. The robust sequence:
+
+- **Fail readiness immediately** on SIGTERM (flip a flag your `/readyz` handler reads). Readiness controls *membership in load balancing*; liveness does not — failing liveness just gets you restarted.
+- **Wait out propagation** — a `preStop` hook with `sleep 5` (or an in-process sleep before Shutdown) covers typical endpoint convergence; clusters with slow ingress controllers need more.
+- **Then `Shutdown(ctx)`** with a deadline that fits inside `terminationGracePeriodSeconds` — leave headroom: grace 30 s, preStop 5 s, drain ≤ 20 s, buffer 5 s.
+
+The numbers worth memorizing: SIGKILL is unconditional at the end of the grace period; new-connection refusal during propagation shows up as 502/503 at the ingress at roughly (propagation lag × request rate) failures per deploy — at 1,000 rps and 3 s of lag, that is ~3,000 failed requests per pod, which is exactly the difference between "nobody noticed the deploy" and a postmortem.
+
+<Inset kind="why" lang="en">
+Why does Kubernetes not just remove the pod from Endpoints first and signal it after? Because the control plane is eventually consistent by design — the endpoints controller, kube-proxy on every node, and external ingresses all watch and converge independently, with no transaction spanning them. The pod is told to terminate at the same time the removal propagates. SIGTERM therefore does not mean "no more traffic is coming"; it means "traffic will stop soon, get ready". Every correctly behaving server in k8s absorbs that gap explicitly — readiness flip plus a propagation sleep — or pays for it in 502s on every single deploy.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="The shutdown handshake: SIGTERM flips readiness, propagation drains traffic, then Shutdown drains requests before the SIGKILL deadline"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "term", label: "SIGTERM", sub: "NotifyContext fires" },
+    { id: "ready", label: "Readiness fails", sub: "leave the LB pool" },
+    { id: "sleep", label: "preStop sleep", sub: "~5s propagation" },
+    { id: "drain", label: "Shutdown(ctx)", sub: "close listeners, drain" },
+    { id: "ws", label: "OnShutdown hooks", sub: "websockets, SSE" },
+    { id: "kill", label: "SIGKILL", sub: "grace period ends" },
+  ]}
+  edges={[
+    { from: "term", to: "ready", label: "flip flag" },
+    { from: "ready", to: "sleep", label: "endpoints update" },
+    { from: "sleep", to: "drain", label: "traffic stopped" },
+    { from: "drain", to: "ws", label: "parallel" },
+    { from: "drain", to: "kill", label: "if overrun" },
+  ]}
+  caption="Shutdown closes listeners, reaps idle conns, and waits for in-flight requests until the ctx deadline — hijacked conns excluded. The whole sequence must fit inside terminationGracePeriodSeconds, because SIGKILL does not negotiate."
+/>
+
+<KeyTakeaway>Shutdown(ctx) closes listeners, drops idle conns, and waits for in-flight requests until the deadline — ListenAndServe returns ErrServerClosed, and Close() is the hard stop for overruns. Wire SIGTERM with signal.NotifyContext and let a second signal kill. Hijacked conns and websockets are invisible to Shutdown: close them via RegisterOnShutdown. In k8s, fail readiness and sleep out endpoint propagation before draining, all inside terminationGracePeriodSeconds.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-graceful-shutdown-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through the exact mechanics of srv.Shutdown(ctx): what closes, what waits, what each side returns, and what is left out.", a: "Shutdown first closes all listeners so new connections are refused, then closes idle keep-alive connections, then polls until active requests complete. It returns nil once fully drained, or ctx.Err() if the deadline passes first — in which case in-flight connections are still open and srv.Close() is the hard stop. The moment Shutdown begins, the blocked ListenAndServe returns http.ErrServerClosed, which callers must treat as expected, not fatal; Shutdown must therefore run on a different goroutine. Left out entirely: hijacked connections — websockets and anything that took the raw TCP conn — which net/http stopped tracking at hijack time. Those are closed via RegisterOnShutdown callbacks that tell your session layer to send protocol-correct close frames and cancel streaming contexts." },
+    { q: "Why does a textbook Shutdown implementation still drop requests on every Kubernetes deploy, and what is the correct sequence?", a: "Because SIGTERM and endpoint removal happen in parallel, not in order. When a pod goes Terminating, the kubelet signals it while the endpoints controller, kube-proxy on every node, and external ingresses each converge on the removal independently over several seconds. A server that closes its listener on SIGTERM refuses connections the cluster is still routing to it — visible as a 502 spike sized roughly propagation-lag times request-rate, every deploy. Correct sequence: on SIGTERM immediately fail the readiness probe (readiness controls load-balancer membership; liveness does not), wait out propagation with a preStop or in-process sleep of ~5 s, then call Shutdown with a drain deadline that fits inside terminationGracePeriodSeconds with headroom, because at the end of grace SIGKILL kills unconditionally — taking any unfinished drain with it." },
+  ]}
+/>
+
+<Recap lang="en">
+Graceful shutdown in Go is one method with precise semantics and two famous gaps. Shutdown(ctx) closes the listeners, reaps idle keep-alive connections, and waits for in-flight requests, returning nil on a complete drain or ctx.Err() at the deadline with stragglers still alive — srv.Close() is the hard stop, and ListenAndServe surfaces http.ErrServerClosed the moment the process begins, an expected value to filter rather than an error to page on. The signal side is signal.NotifyContext: a context canceled on SIGTERM or SIGINT, with stop() restoring default handling so a second signal kills a hung drain instead of an operator waiting on it. Gap one: hijacked connections. Every websocket left net/http's accounting at the Hijack call, so Shutdown neither waits for nor closes them — RegisterOnShutdown is where you broadcast close frames and cancel SSE loops, or deploys end in reconnect storms and SIGKILL doing your protocol teardown. Gap two: the cluster. SIGTERM does not mean traffic has stopped; endpoint removal propagates through kube-proxy and ingresses over seconds while your pod is already being signaled. Fail readiness first, sleep out propagation in preStop, then drain — all budgeted inside terminationGracePeriodSeconds, because SIGKILL arrives on schedule regardless. The Hook's lesson holds: Shutdown(ctx) is your half of a handshake, and the other half belongs to the infrastructure routing traffic at you.
+</Recap>

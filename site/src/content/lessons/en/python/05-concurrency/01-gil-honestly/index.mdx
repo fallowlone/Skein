@@ -1,0 +1,150 @@
+---
+concepts:
+- python-gil-deep
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: middle
+order: 1
+prereqs: []
+slug: "01-gil-honestly"
+sources:
+- https://peps.python.org/pep-0703/
+- https://docs.python.org/3/whatsnew/3.13.html
+spiral: []
+status: ready
+summary: 'The GIL serializes bytecode execution, not I/O or GIL-releasing C code; it exists because refcount updates are not atomic. Threads swap every ~5 ms (sys.setswitchinterval). Free-threaded 3.13+ (PEP 703) removes it for a single-thread tax and an extension-compatibility catch.'
+title: 'The GIL, honestly: what it serializes, why refcounting needs it, and what 3.13 free-threading changes'
+track: "python"
+unit: "05-concurrency"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The team finally got budget for a 32-core machine to speed up a CPU-heavy scoring pipeline. The fix looked obvious: wrap the per-record scorer in `ThreadPoolExecutor(max_workers=32)` and watch throughput multiply. It didn't. The benchmark moved from 84 seconds to 81 — within noise — while `htop` showed thirty-two threads collectively burning about 105% of one core. Worse, the p99 of a small healthcheck endpoint in the same process jumped from 4 ms to 220 ms: the CPU-bound threads kept winning the lock the healthcheck needed to run at all. One engineer insisted Python threads were "fake"; another pointed out the same service downloaded files in 16 threads just fine, with real overlap. Both were looking at the same Global Interpreter Lock and describing different halves of it. What the GIL actually serializes — and what it deliberately does not — was the entire incident.
+</Hook>
+
+<Crux>The GIL serializes bytecode execution, not I/O or C code that releases it. It guards refcounts. 3.13+ can remove it — for a price.</Crux>
+
+<Explanation>
+
+## What the GIL actually serializes
+
+The GIL is one process-wide mutex inside CPython: a thread must hold it to **execute Python bytecode**. That is the whole rule, and both halves matter. While one thread runs `for`-loop bytecode, no other thread advances a single Python instruction — that is why 32 threads of pure-Python scoring used one core. But the lock is *released* in exactly the places people forget: every blocking I/O call in the stdlib (`socket.recv`, `file.read`, `time.sleep`, database drivers) drops the GIL before entering the kernel and reacquires it after, so 16 downloading threads genuinely overlap their waits. C extensions can do the same around long computations — NumPy releases the GIL inside large matrix operations, `hashlib` releases it when hashing buffers over 2 KB, `zlib` and `ssl` release it around compression and handshakes. So the honest classification is workload-based: pure-Python CPU work in threads buys nothing; I/O-heavy work in threads is fine; C-extension-heavy numeric work in threads can scale surprisingly well — because the bytecode interpreter is only one tenant of your CPU.
+
+```python
+import threading, time, hashlib
+
+def pure_python(n=10_000_000):
+    s = 0
+    for i in range(n):       # bytecode-bound: holds the GIL the whole time
+        s += i
+    return s
+
+def c_extension(data=b"x" * 200_000_000):
+    return hashlib.sha256(data).hexdigest()  # releases the GIL while hashing
+
+def timed(fn, threads):
+    start = time.perf_counter()
+    ts = [threading.Thread(target=fn) for _ in range(threads)]
+    for t in ts: t.start()
+    for t in ts: t.join()
+    return time.perf_counter() - start
+
+# Typical CPython 3.12 results on 4 cores:
+# pure_python  x1: ~0.45 s   x4 threads: ~1.9 s  (serialized + switching tax)
+# c_extension  x1: ~0.55 s   x4 threads: ~0.7 s  (real parallelism in C)
+```
+
+## Why it exists: refcounting is not atomic
+
+CPython manages memory by reference counting: every object carries a counter, and nearly every bytecode touches one — binding a name increments, leaving a scope decrements. `Py_INCREF` is plain `ob->ob_refcnt++`, a read-modify-write that is **not atomic**. Two threads incrementing the same counter can interleave and lose an update; a lost decrement leaks the object, a lost increment frees memory still in use — a use-after-free in the interpreter core. The brute-force fixes are bad: making every refcount operation an atomic CPU instruction historically slowed single-threaded Python by ~50% (Greg Stein tried in 1999, the patch was rejected for exactly that), and fine-grained per-object locks add deadlock risk and overhead on the hottest path in the VM. One global lock made every refcount operation safe for free, kept single-threaded code fast, and — critically — gave thousands of C extensions a simple contract: while your code runs and you haven't released the GIL, no other thread mutates anything. That contract, not nostalgia, is why removal took three decades.
+
+<Inset kind="why" lang="en">
+Why didn't CPython just switch to a tracing garbage collector and drop refcounts? Because the C API leaks the implementation: extensions call `Py_INCREF`/`Py_DECREF` directly, and refcounting gives prompt, deterministic destruction (files close when the last reference dies) that real codebases rely on. Changing it breaks the extension ecosystem — the same ecosystem that made Python win. Every serious GIL-removal attempt (Gilectomy included) stalled on this: correctness was achievable, but not without slowing single-threaded code or breaking the C API. PEP 703 finally threaded that needle with biased reference counting — fast non-atomic ops for the owning thread, atomic ones only for cross-thread access — plus immortal objects for `None`, `True`, small ints.
+</Inset>
+
+## The 5 ms heartbeat: how threads take turns
+
+Inside the eval loop, a running thread checks a flag between bytecodes; a separate mechanism requests a drop every **5 milliseconds** by default — readable and tunable via `sys.getswitchinterval()` / `sys.setswitchinterval()`. (Until Python 3.2 it was per-bytecode counting via `sys.setcheckinterval(100)`; the time-based design replaced it.) The trap is that releasing the GIL is not the same as fairly handing it over: the OS decides who wakes first, and on multi-core machines the thread that just released frequently reacquires immediately — it is already running on a hot core. That is the **convoy effect** from the Hook's incident: a CPU-bound thread keeps out-racing an I/O thread that just became ready, so the healthcheck waits tens or hundreds of milliseconds for its turn to run a few bytecodes. Shrinking the interval (`sys.setswitchinterval(0.001)`) trades throughput for latency and is a band-aid; the real fix is not running CPU-bound work on interpreter threads at all — processes (next lesson) or a free-threaded build.
+
+<Quiz
+  id="01-gil-honestly-quiz-1"
+  lessonSlug="01-gil-honestly"
+  lang="en"
+  question="One thread runs a pure-Python tight loop; another thread is downloading a 1 GB file with socket.recv. Does the GIL make the download wait for the loop?"
+  choices={[
+    { label: "No — recv releases the GIL before blocking in the kernel, so the download proceeds; only the brief Python bytecode between recv calls competes for the lock", correct: true },
+    { label: "Yes — the GIL serializes all work in the process, so the threads alternate 5 ms slices for everything including the network wait", misconception: "The GIL guards bytecode execution, not kernel waits. Every blocking stdlib I/O call drops the lock before entering the kernel — that is exactly why threaded I/O works in Python despite the GIL." },
+    { label: "No, because network I/O happens on a separate interpreter that has its own GIL", misconception: "There is no separate interpreter for I/O. It is the same interpreter and the same lock; the difference is that C code wrapping the syscall explicitly releases the GIL around the blocking section." },
+    { label: "Yes, unless the file is opened in binary mode, which bypasses the GIL", misconception: "Text versus binary mode changes decoding, not locking. GIL release is decided by the C implementation of the blocking call, and socket and file I/O release it regardless of mode." },
+  ]}
+/>
+
+## Free-threaded 3.13+: what PEP 703 changes and what it costs
+
+Python 3.13 ships an experimental **free-threaded** build (`python3.13t`, compiled with `--disable-gil`): the GIL is gone, and pure-Python threads scale across cores. The machinery replacing it: **biased reference counting** (the owning thread updates a fast local counter; other threads use atomic operations on a shared one), **immortal objects** (refcounts of `None`, `True`, small ints never change, so they need no synchronization), per-object locks for mutation of containers, and `mimalloc` to make allocation thread-safe without a global allocator lock. The honest costs, not the keynote version: in 3.13 the free-threaded build runs single-threaded code roughly **30–40% slower**, largely because the specializing adaptive interpreter had to be disabled in that build; 3.14 re-enables it and brings overhead down to single digits, closer to PEP 703's 5–8% design target. It is a *separate build* — your distro's default `python3.13` still has the GIL. And the ecosystem catch: a C extension must declare free-threading support (`Py_mod_gil` slot); importing one that doesn't **silently re-enables the GIL at runtime**, printing only a `RuntimeWarning`. Teams have deployed 3.13t, measured no scaling, and missed that one transitive dependency had quietly restored the lock. Check with `python -c "import sys; print(sys._is_gil_enabled())"` after importing your stack — and force the issue with `PYTHON_GIL=0` (extensions then fail loudly instead).
+
+<Quiz
+  id="01-gil-honestly-quiz-2"
+  lessonSlug="01-gil-honestly"
+  lang="en"
+  question="You deploy on the free-threaded 3.13t build, but CPU-bound threads still scale like one core. The logs show a RuntimeWarning at startup. Most likely cause?"
+  choices={[
+    { label: "An imported C extension was not built for free-threading, so the interpreter re-enabled the GIL at runtime — the warning announced it", correct: true },
+    { label: "The GIL cannot actually be removed; 3.13t only shortens the switch interval", misconception: "3.13t genuinely removes the GIL — biased refcounting, immortal objects, and per-object locks replace it. The scaling failure here is the documented compatibility fallback, not a fake removal." },
+    { label: "Free-threading only applies to threads created with a special API, not threading.Thread", misconception: "No special API exists; ordinary threading.Thread benefits directly. That is the point of the design — existing threaded code scales without rewrites, when the GIL stays disabled." },
+    { label: "PYTHON_GIL=0 must be exported or the build defaults to the GIL being held permanently", misconception: "The free-threaded build defaults to GIL off. PYTHON_GIL=0 is the strict mode that refuses incompatible extensions instead of silently re-enabling the lock — useful for catching exactly this, but not required for free-threading itself." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A thread's path through the GIL: acquire, run bytecode until the 5 ms drop request or a blocking call, release, repeat"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "want", label: "Thread ready", sub: "wants to run" },
+    { id: "gil", label: "Acquire GIL", sub: "one holder/process" },
+    { id: "run", label: "Run bytecode", sub: "refcounts safe" },
+    { id: "tick", label: "5 ms drop request", sub: "setswitchinterval" },
+    { id: "io", label: "Blocking I/O / C ext", sub: "releases GIL" },
+    { id: "rel", label: "Release", sub: "OS picks next" },
+  ]}
+  edges={[
+    { from: "want", to: "gil", label: "contend" },
+    { from: "gil", to: "run", label: "hold" },
+    { from: "run", to: "tick", label: "timer" },
+    { from: "run", to: "io", label: "syscall" },
+    { from: "tick", to: "rel", label: "drop" },
+    { from: "io", to: "rel", label: "drop" },
+  ]}
+  caption="I/O and GIL-releasing C extensions overlap for real; pure bytecode serializes. Free-threaded 3.13+ deletes the lock and replaces it with biased refcounting plus per-object locks."
+/>
+
+<KeyTakeaway>The GIL is one mutex over bytecode execution, there to make non-atomic refcount updates safe and to honor the C-API contract extensions rely on. I/O and well-behaved C extensions release it, so threads overlap there; pure-Python CPU work serializes, with ~5 ms turns (`sys.setswitchinterval`) and a convoy effect that punishes latency. PEP 703's free-threaded 3.13t removes it via biased refcounting and immortal objects — at a single-thread tax (~30–40% in 3.13, single digits in 3.14) and with a silent GIL re-enable when a non-ready extension loads.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-gil-honestly-retrieval"
+  lang="en"
+  questions={[
+    { q: "State precisely what the GIL serializes, what releases it, and why it exists at all.", a: "It serializes execution of Python bytecode: one thread per process may run the interpreter loop at a time. It is released around blocking stdlib I/O (sockets, files, sleep) and by C extensions doing long GIL-free computations (NumPy ops, hashlib on large buffers, zlib), so those overlap across threads for real. It exists because CPython's reference counting is a non-atomic read-modify-write on every object touch; a global lock makes all refcount updates safe without atomic instructions (historically ~50% single-thread cost) and gives C extensions a simple no-concurrent-mutation contract. Practical rule: threads are useless for pure-Python CPU work, fine for I/O, and often fine for C-extension-heavy numeric work." },
+    { q: "Your service runs on free-threaded Python 3.13t but threads do not scale. Walk the diagnosis and the costs you accepted by choosing 3.13t.", a: "First suspect the compatibility fallback: importing any C extension without the Py_mod_gil free-threading slot silently re-enables the GIL at runtime with only a RuntimeWarning. Verify with sys._is_gil_enabled() after importing the full stack; run with PYTHON_GIL=0 to make incompatible extensions fail loudly and identify the culprit. Costs accepted: 3.13t runs single-threaded code roughly 30–40% slower (the specializing interpreter is disabled in that build; 3.14 recovers most of it toward PEP 703's 5–8% target), it is a separate build to provision, and the extension ecosystem is still catching up. The replacement machinery is biased refcounting, immortal objects, per-object locks, and mimalloc." },
+  ]}
+/>
+
+<Recap lang="en">
+The GIL is a single process-wide mutex that a thread must hold to execute Python bytecode — nothing more and nothing less. The "more" people imagine: it does not serialize kernel waits or C computations, because every blocking stdlib I/O call and well-behaved C extensions (NumPy, hashlib over 2 KB, zlib, ssl) release it, which is why threaded downloads overlap and threaded NumPy can scale. The "less" people forget: 32 threads of pure-Python arithmetic share one core, often running slower than serial because of switching overhead. The lock exists because refcounting — `ob_refcnt++` on nearly every bytecode — is not atomic; atomic instructions cost ~50% single-threaded, per-object locks cost more, and the global lock also gave C extensions the no-concurrent-mutation contract the whole ecosystem was built on. Scheduling is time-based: a drop request every 5 ms (`sys.setswitchinterval`), with the convoy effect — CPU-bound threads out-racing just-woken I/O threads for reacquisition — as the classic latency failure. PEP 703's free-threaded build (3.13t, `--disable-gil`) removes the lock using biased reference counting, immortal objects, per-object locks, and mimalloc; the honest bill is ~30–40% single-thread overhead in 3.13 (specializing interpreter disabled, 3.14 brings it to single digits), a separate build, and the silent trap: importing one extension that hasn't declared free-threading support re-enables the GIL at runtime with only a warning. Check `sys._is_gil_enabled()`; use `PYTHON_GIL=0` to fail loudly.
+</Recap>

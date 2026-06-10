@@ -1,0 +1,153 @@
+---
+concepts:
+- go-generics
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: middle
+order: 1
+prereqs: []
+slug: "01-type-parameters-and-constraints"
+sources:
+- https://go.dev/blog/intro-generics
+- https://go.dev/blog/deconstructing-type-parameters
+spiral: []
+status: ready
+summary: 'Type parameters with constraints as type sets: ~T approximation, unions, comparable. Where inference works and where it stops. Instantiation via GCShape stenciling — value types get their own machine code, all pointer types share one instance plus a runtime dictionary.'
+title: 'Type parameters and constraints: type sets, inference limits, and GCShape stenciling'
+track: "go"
+unit: "05-generics-and-design"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+When Go 1.18 landed, the storage team rewrote their `interface{}`-based LRU cache as `Cache[K comparable, V any]`. Type assertions vanished from the hot path, and the design doc promised the speedup the team remembered from C++ templates: full monomorphization, everything inlined. The benchmarks came back split down the middle. `Cache[string, int64]` ran 28% faster than the old code. The instantiation production actually used — `Cache[string, *Session]` — measured within noise of the `interface{}` version. The disassembly explained why: every pointer-typed instantiation had compiled to one shared function taking a hidden dictionary argument, and the calls inside it were still indirect. Go generics are not C++ templates; they are a deliberate hybrid, and the hybrid's seam runs exactly between value types and pointer types. The team kept the generic API — it deleted a whole class of assertion panics — but the performance slide quietly disappeared from the deck.
+</Hook>
+
+<Crux>Go generics compile per GC shape, not per type: pointers share one instance plus a dictionary. Constraints are type sets, not classes.</Crux>
+
+<Explanation>
+
+## Constraints are type sets, not class hierarchies
+
+A type parameter list — `func Sum[T Number](xs []T) T` — introduces `T` as a placeholder that must satisfy its **constraint**. A constraint is an ordinary interface, but used in a new role: instead of describing what a value can *do*, it describes the **set of types** allowed. Inside that interface you can list types directly, join them with `|` into unions, and prefix them with `~` to mean "any type whose *underlying* type is this":
+
+```go
+// A constraint is an interface used as a type set.
+type Number interface {
+	~int | ~int64 | ~float64 // ~T: any type whose underlying type is T
+}
+
+func Sum[T Number](xs []T) T {
+	var total T
+	for _, x := range xs {
+		total += x // legal: every type in the set supports +
+	}
+	return total
+}
+
+type Celsius float64 // named type, underlying type float64
+
+var _ = Sum([]Celsius{20.5, 21.0}) // compiles only because of the ~
+```
+
+The `~` matters more than it looks. Go code is full of named types — `type UserID int64`, `type Port int` — and a constraint written as a bare `int64` admits *only* `int64`, not `UserID`. Without the tilde your "numeric" library rejects half the codebase's domain types, and the failure is a compile error at the caller, far from the constraint that caused it. The rule of thumb: in reusable constraints, always write `~T` unless you have a specific reason to exclude named types. Two more pieces complete the vocabulary: `comparable` is a predeclared constraint meaning "supports `==` and `!=`" (it is what `map` keys need, and it cannot be expressed as a union — the set is infinite), and constraints can also carry methods, in which case a type must both be in the set *and* have the methods. What a constraint can never do is act as an ordinary type: you cannot declare `var n Number` — type sets exist only at instantiation time.
+
+## Inference: powerful at call sites, absent everywhere else
+
+Type inference is what makes generics readable: `Sum(prices)` instead of `Sum[Celsius](prices)`. The compiler infers type arguments from the types of the function arguments, then checks them against the constraints. But inference has hard edges, and senior code review means knowing where they are:
+
+```go
+func Map[T, U any](xs []T, f func(T) U) []U { /* ... */ }
+
+ys := Map(ids, strconv.Itoa) // T=int, U=string — inferred from arguments
+
+func Zero[T any]() T { var z T; return z }
+
+v := Zero[int]() // explicit instantiation required:
+                 // T appears only in the result, inference has no input to look at
+```
+
+A type parameter that appears **only in return position** can never be inferred — there is no argument carrying the information. Untyped constants are the second trap: passing `1` to a `[T Number]` parameter infers `int` (the constant's default type), not `int64`, and if the constraint excludes `int` the call fails even though `1` is a perfectly valid `int64`. The third limit is structural: inference works at call sites only. There is no inference from assignment context, no partial specialization, no overloading on constraints. When inference fails, the fix is mechanical — write the type argument explicitly — but an API that *routinely* forces callers to write `F[concrete](...)` is a design smell worth fixing by moving a type parameter into an argument.
+
+<Quiz
+  id="01-type-parameters-and-constraints-quiz-1"
+  lessonSlug="01-type-parameters-and-constraints"
+  lang="en"
+  question="A library defines the constraint type ID interface { int64 } — no tilde. A teammate writes type UserID int64 and calls Lookup[UserID](...). What happens?"
+  choices={[
+    { label: "Compile error: without ~, the type set contains exactly int64, and UserID is a different type even though its underlying type matches", correct: true },
+    { label: "It compiles, because UserID's underlying type is int64", misconception: "That is precisely what the tilde opts into. A bare int64 in a constraint admits only int64 itself; ~int64 is the spelling that admits every type whose underlying type is int64." },
+    { label: "It compiles but panics at runtime when the constraint is checked", misconception: "Constraints are a purely compile-time mechanism — there is no runtime constraint check to panic. Type-set membership is settled at instantiation, which happens during compilation." },
+    { label: "It compiles because Go converts UserID to int64 implicitly at the call site", misconception: "Go never converts between named types implicitly, and generic instantiation does not add conversions. The caller would have to convert explicitly — at which point they lose their domain type." },
+  ]}
+/>
+
+## Instantiation: GCShape stenciling, honestly
+
+What happens when you actually call `Sum[Celsius]`? C++ would *monomorphize*: emit fresh machine code for every type argument — fast code, slow compiles, big binaries. Java erases: one copy of the code, everything boxed. Go 1.18 chose a midpoint called **GCShape stenciling with dictionaries**. The compiler groups type arguments by *GC shape*: two types share a shape if they look identical to the memory allocator and garbage collector — same size, same pointer layout. `int64`, `time.Duration`, and `Celsius`-over-`float64` are different shapes (well, `int64` and `Duration` share one); but the big collapse is this: **every pointer type is one shape**. `*User`, `*Order`, `*bytes.Buffer` — one shared instantiation. To tell them apart at runtime, the compiler passes a hidden **dictionary** argument holding the concrete type's metadata: its `runtime._type`, its method addresses, derived types. Code that calls a method on the type parameter loads the address from the dictionary and calls indirectly — which also means no inlining across that call.
+
+The honest performance consequences: value-type instantiations get dedicated code, direct calls, full inlining — real wins over `interface{}` versions that had to box and assert. Pointer-type instantiations get shared code and dictionary-indirect calls — roughly the cost profile of an interface method call, sometimes a touch worse because the dictionary adds a load. That is exactly the seam the Hook's team hit: `Cache[string, int64]` monomorphized; `Cache[string, *Session]` went through the dictionary. Stenciling is an implementation detail the spec does not promise — gc's strategy has stayed shape-based since 1.18 — but designing APIs as if generics were free monomorphization is how benchmark surprises get into production reviews.
+
+<Quiz
+  id="01-type-parameters-and-constraints-quiz-2"
+  lessonSlug="01-type-parameters-and-constraints"
+  lang="en"
+  question="You instantiate Cache[string, *User] and Cache[string, *Order]. How many copies of the cache's machine code does gc emit for the value type, and how do calls on it dispatch?"
+  choices={[
+    { label: "One shared instantiation — all pointer types have the same GC shape — and method calls on the type parameter go indirectly through a hidden dictionary argument", correct: true },
+    { label: "Two fully monomorphized copies, one per type, with direct inlinable calls", misconception: "That is the C++ model, and it is what Go does only for distinct value shapes. All pointer types collapse into a single GC shape, so *User and *Order share one instantiation and pay for a dictionary." },
+    { label: "Zero — Go erases generics at runtime and falls back to interface{} boxing like Java", misconception: "Go does generate real per-shape code; value-type instantiations are genuinely specialized and inlinable. Erasure would make Sum over []int64 box every element, which measurably does not happen." },
+    { label: "One copy per call site, regenerated wherever the cache is used", misconception: "Instantiation is per type-argument shape, not per call site. A thousand call sites with *User and *Order still share the single pointer-shape instantiation and its dictionaries." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="From a generic function to machine code: type arguments are checked against the constraint's type set, grouped by GC shape, and stenciled — value shapes get dedicated code, pointer shapes share one body plus a dictionary"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "src", label: "Generic func", sub: "Sum[T Number]" },
+    { id: "typeset", label: "Type set check", sub: "~T, unions, comparable" },
+    { id: "shape", label: "GC shape grouping", sub: "size + pointer layout" },
+    { id: "value", label: "Value shape", sub: "int64, float64…" },
+    { id: "ptr", label: "Pointer shape", sub: "*User = *Order" },
+    { id: "dict", label: "Dictionary", sub: "type metadata, indirect calls" },
+  ]}
+  edges={[
+    { from: "src", to: "typeset", label: "instantiate" },
+    { from: "typeset", to: "shape", label: "accepted" },
+    { from: "shape", to: "value", label: "dedicated code" },
+    { from: "shape", to: "ptr", label: "shared code" },
+    { from: "ptr", to: "dict", label: "+ hidden arg" },
+  ]}
+  caption="Value-shape instantiations are specialized and inlinable. Every pointer type collapses into one shape, so calls on the type parameter load addresses from the dictionary — roughly interface-call cost."
+/>
+
+<KeyTakeaway>A constraint is an interface read as a type set: `~T` admits named types by underlying type, unions enumerate alternatives, `comparable` covers `==`. Inference reads call-site arguments only — result-only type parameters must be instantiated explicitly. gc compiles generics per GC shape: value types get dedicated, inlinable code; all pointer types share one instantiation driven by a hidden dictionary, so do not expect monomorphization wins from pointer-heavy APIs.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-type-parameters-and-constraints-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain constraints as type sets: what do ~T, unions, and comparable each contribute, and why does a constraint written as bare int64 reject type UserID int64?", a: "A constraint is an interface used to describe the set of types a parameter may take. A bare type like int64 puts exactly that one type in the set, so the named type UserID — a different type that merely shares the underlying type — is excluded and the call fails to compile. ~int64 widens the set to every type whose underlying type is int64, which is what reusable constraints almost always want. Unions (A | B | C) enumerate alternatives, and an operator is usable in the generic body only if every member of the set supports it. comparable is the predeclared constraint for == and != — an infinite set that unions cannot spell. Constraints may also carry methods, and they can never be used as ordinary value types." },
+    { q: "Walk through GCShape stenciling: what gets its own machine code, what shares, what the dictionary does, and the performance consequence the team in the Hook hit.", a: "gc groups type arguments by GC shape — identical size and pointer layout. Each distinct value shape (int64, float64, a small struct…) gets its own stenciled copy of the function: direct calls, inlining, the C++-style win. All pointer types share a single shape, so *User and *Order compile to one shared body that receives a hidden dictionary argument carrying the concrete type's metadata and method addresses; calls on the type parameter become indirect loads through that dictionary and cannot be inlined. Consequently Cache[string, int64] beat the interface{} version by ~28%, while Cache[string, *Session] tied it — pointer-shape generics cost roughly an interface call, occasionally a hair more for the dictionary load." },
+  ]}
+/>
+
+<Recap lang="en">
+Generics in Go are two ideas bolted together, and both have edges. The first idea is the constraint as a type set: an interface that lists types instead of methods, where `~T` admits every type with underlying type `T` (forget the tilde and every `type UserID int64` in the codebase bounces off your library), unions enumerate alternatives, `comparable` names the infinite set of `==`-capable types, and the body of the generic function may use only the operations every member of the set supports. Constraints are compile-time-only citizens — they cannot be the type of a variable. The second idea is the compilation strategy: type inference fills in type arguments from call-site arguments and nothing else, so a parameter appearing only in results needs explicit instantiation, and untyped constants infer their default types. Instantiation then proceeds per GC shape, not per type — GCShape stenciling. Distinct value shapes get dedicated machine code with direct, inlinable calls; every pointer type collapses into a single shared instantiation parameterized by a hidden dictionary of type metadata, making calls on the type parameter indirect. That seam is the performance story to remember: generic code over value types can genuinely beat `interface{}`-based code, while generic code over pointers usually ties it, as the cache team's split benchmark showed. Use generics for type safety and API clarity everywhere they fit — but promise monomorphization speedups only where the type arguments are values.
+</Recap>

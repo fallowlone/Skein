@@ -1,0 +1,159 @@
+---
+concepts:
+- python-structured-concurrency
+deepensInto: []
+estMin: 20
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-structured-concurrency"
+sources:
+- https://docs.python.org/3/library/asyncio-task.html
+- https://docs.python.org/3/whatsnew/3.13.html
+spiral: []
+status: ready
+summary: 'TaskGroup (3.11+) scopes task lifetimes: one child fails, siblings cancel, errors arrive as ExceptionGroup for except*. asyncio.timeout converts cancellation to TimeoutError at the boundary. Discipline: re-raise CancelledError, clean up in finally, shield only what must commit.'
+title: 'Structured concurrency: TaskGroup, except*, asyncio.timeout, and why bare create_task is a leak'
+track: "python"
+unit: "05-concurrency"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The compliance team found it, not the engineers: roughly 0.3% of completed payments had no audit record. The payment service wrote audit entries "asynchronously for latency" — `asyncio.create_task(audit.write(event))`, no reference kept, fire and forget. Three separate bugs hid in that one line. Some tasks were garbage-collected mid-write, because the loop holds only a weak reference to tasks and nothing else did. Some died with exceptions nobody saw — `Task exception was never retrieved` warnings scrolling through logs at GC time, hours after the failed write, with a stack trace pointing nowhere useful. And during deploys, the service shut down with dozens of audit writes in flight; `asyncio.run` cancelled them mid-INSERT and the rows simply never landed. The fix was not a better fire-and-forget — it was admitting that a task whose lifetime no scope owns is a resource leak with a stack trace. TaskGroup made the audit write part of the request: the handler does not finish until its children do, and a failed write fails loudly, inside the request that caused it.
+</Hook>
+
+<Crux>TaskGroup scopes lifetimes: one child fails, siblings cancel, errors arrive as ExceptionGroup. A bare create_task answers to no one.</Crux>
+
+<Explanation>
+
+## The bare create_task leak
+
+`asyncio.create_task` returns a Task and walks away — and that orphan has three failure modes worth naming precisely. **Disappearance**: the event loop keeps only a *weak* reference to running tasks; if your code drops the returned Task, the garbage collector may collect it mid-execution — the docs themselves instruct you to save a reference. **Silent failure**: an exception inside a fire-and-forget task is stored on the Task object, waiting for someone to await it; nobody ever does, so it surfaces only when the Task is GC'd, as a `Task exception was never retrieved` log line minutes or hours later, disconnected from any request, trace ID, or alert. **Outliving the app**: at shutdown, `asyncio.run` cancels whatever still runs — half-finished writes, sockets mid-handshake — and the Hook's audit gap is exactly this in production clothes. The pattern's name in the structured-concurrency literature is the *go-statement problem*: any construct that lets work escape its caller's scope makes resource lifetimes, error propagation, and shutdown unanswerable questions. The structured answer: every task has a parent scope that awaits it, hears its exception, and cancels it when the scope dies.
+
+## TaskGroup: a scope that owns its children
+
+Python 3.11's `asyncio.TaskGroup` is an async context manager that owns every task spawned through it. The contract has three clauses. **No child outlives the scope**: leaving the `async with` block awaits all children — you cannot forget. **Failure is collective**: when any child raises (anything except `asyncio.CancelledError`), the group cancels all remaining children, waits for them to actually finish, and then re-raises. **Errors aggregate**: because several children can fail during the same cancellation storm, the group raises an `ExceptionGroup` containing *all* child exceptions — not just the first — handled with `except*` syntax, which matches and extracts subgroups by type. Note what `except*` changes semantically: multiple `except*` clauses can *all* run for one ExceptionGroup, each receiving the subgroup of matching exceptions, and anything unmatched re-propagates. Compare this with the previous lesson's `gather`: on failure, gather hands you the first exception while surviving siblings *keep running unsupervised* — with side effects, open connections, and no one to await them. TaskGroup's cancel-on-failure is the difference between an error and an error plus a leak.
+
+```python
+import asyncio
+
+async def enrich_order(order_id: int) -> dict:
+    try:
+        async with asyncio.TaskGroup() as tg:
+            user  = tg.create_task(fetch_user(order_id))
+            items = tg.create_task(fetch_items(order_id))
+            fraud = tg.create_task(fraud_score(order_id))
+        # here: ALL three finished OK — results are safe to read
+        return {"user": user.result(), "items": items.result(),
+                "fraud": fraud.result()}
+    except* FraudServiceError as eg:        # subgroup of matching errors
+        for exc in eg.exceptions:
+            log.warning("fraud check failed: %s", exc)
+        return await enrich_without_fraud(order_id)
+    # any other ExceptionGroup propagates to the caller intact
+```
+
+<Quiz
+  id="04-structured-concurrency-quiz-1"
+  lessonSlug="04-structured-concurrency"
+  lang="en"
+  question="Inside a TaskGroup, child A raises ValueError after 100 ms while children B and C (with cleanup in finally blocks) still run. What does the group do?"
+  choices={[
+    { label: "Cancels B and C, waits for their finally blocks to complete, then raises an ExceptionGroup containing the ValueError (plus any exceptions B or C raised while dying)", correct: true },
+    { label: "Returns immediately with the ValueError; B and C continue running in the background", misconception: "That is gather's failure mode, and the reason TaskGroup exists. A scope that lets children outlive it would reintroduce the orphan-task leak; the group always cancels and then awaits every sibling." },
+    { label: "Waits for B and C to finish normally, then raises the ValueError alone", misconception: "The group does not let siblings run to completion after a failure — it cancels them promptly. Letting a 30 s sibling finish after a 100 ms failure would make error latency unbounded." },
+    { label: "Raises the ValueError directly, since only one real error occurred", misconception: "TaskGroup always wraps child failures in an ExceptionGroup, even a single one — handlers must use except* (or inspect eg.exceptions), and code written with bare except ValueError will not match." },
+  ]}
+/>
+
+## Timeouts and cancellation: one mechanism underneath
+
+`asyncio.timeout` (3.11+) replaced the older `wait_for` with a composable context manager, and understanding it means understanding cancellation itself. Cancellation in asyncio is not a kill switch: `task.cancel()` arranges for `CancelledError` to be raised inside the task **at its next await point** — a task that never awaits is uncancellable (it is also blocking the loop, so it has bigger problems). The exception then unwinds the coroutine's stack like any other, running `finally` blocks and `async with` exits on the way. `asyncio.timeout(5)` builds on this: it schedules a timer; if the body is still running when it fires, the timer cancels the body, and the context manager — *at its own boundary* — converts that `CancelledError` into `TimeoutError`. The conversion-at-the-edge design is what makes nested timeouts compose: an inner timeout converts only the cancellations it caused; an outer cancellation passes through untouched. Two disciplines keep this machinery trustworthy. **Never swallow `CancelledError`**: a bare `except Exception` is safe (CancelledError inherits from `BaseException` precisely so it escapes that net), but `except BaseException: pass` or `except asyncio.CancelledError: continue` breaks timeouts, TaskGroup cancellation, and server shutdown in one stroke — if you must intercept it to clean up, re-raise. **Cleanup must be cancellation-safe**: code in `finally` runs while the task is being cancelled, and if that cleanup *awaits* (closing an async connection, rolling back a transaction), it can itself receive a second cancellation. For cleanup that must complete, 3.11+ offers the pattern of shielding just the critical await.
+
+```python
+async def transfer(src, dst, amount):
+    async with asyncio.timeout(5):                 # cancels body at T+5s
+        await debit(src, amount)
+        # the commit must not be torn by a timeout/cancel landing mid-flight:
+        await asyncio.shield(credit_and_commit(dst, amount))
+    # timeout fired? CancelledError became TimeoutError HERE, at the boundary
+
+async def handler():
+    try:
+        await transfer("a", "b", 100)
+    except TimeoutError:
+        ...  # the transfer either fully committed (shield) or fully debit-rolled-back
+```
+
+<Inset kind="why" lang="en">
+Why is `asyncio.shield` a scalpel and not a shrug? `shield(coro)` wraps the work in a Task and absorbs *outer* cancellation: the awaiting coroutine still gets `CancelledError` immediately, but the inner task keeps running to completion, detached. That is exactly right for a two-phase commit that must not tear — and exactly wrong as a general "don't cancel me": the shielded work is now an orphan with the same unobserved-exception problems as bare create_task, shutdown will still cancel it if the loop closes, and shielding everything makes timeouts decorative. Production rule: shield the smallest await that must be atomic, keep a path that awaits or logs its result, and treat every shield in review as a claim that needs justifying. Since 3.13, TaskGroup also handles the colliding case — external cancellation arriving while the group is already aborting — without losing either signal.
+</Inset>
+
+<Quiz
+  id="04-structured-concurrency-quiz-2"
+  lessonSlug="04-structured-concurrency"
+  lang="en"
+  question="A coroutine wraps its retry loop in `except BaseException: log_and_continue()` to survive flaky upstreams. It now runs under asyncio.timeout(5). What breaks?"
+  choices={[
+    { label: "The timeout: it works by raising CancelledError inside the body at an await point, and the handler eats that exception and keeps looping — the deadline never takes effect", correct: true },
+    { label: "Nothing — asyncio.timeout kills the task at the OS level, bypassing exception handlers", misconception: "There is no OS-level kill; cancellation IS an exception (CancelledError) delivered at an await point and unwinding the stack. Anything that catches and discards it disables cancellation entirely." },
+    { label: "The timeout still fires but raises TimeoutError inside the loop instead of at the boundary", misconception: "The CancelledError-to-TimeoutError conversion happens at the context manager's exit — but only if the CancelledError reaches it. Swallowed inside the loop, it never arrives, and no TimeoutError exists to raise." },
+    { label: "Only TaskGroup cancellation breaks; asyncio.timeout uses a separate mechanism immune to except", misconception: "Timeouts, TaskGroup sibling-cancellation, and server shutdown all ride the same single mechanism — CancelledError injection. One overbroad except breaks all three at once; that is why it must be re-raised." },
+  ]}
+/>
+
+## Migrating the fire-and-forget
+
+The Hook's audit bug has a structured rewrite with explicit tradeoffs. Inline it — `tg.create_task(audit.write(event))` inside the request's TaskGroup — and the write is supervised, retried, and visible, at the cost of its latency joining the request (often fine: an INSERT is single-digit ms). If latency genuinely cannot be spent, the structured fire-and-forget is a long-lived *worker* task owned by the application's lifespan scope, fed by a queue: handlers do `queue.put_nowait(event)` (microseconds), the worker drains it inside its own TaskGroup, and shutdown closes the scope, which drains the queue before the loop dies. Either way, every task has an owner, every exception has an address, and shutdown is a property of the structure rather than a prayer. What does not survive review: `create_task` with a comment promising someone awaits it eventually.
+
+</Explanation>
+
+<FlowDiagram
+  label="TaskGroup lifecycle: spawn children inside a scope; one failure cancels the siblings, the scope awaits them all, and errors leave as one ExceptionGroup"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "scope", label: "async with TaskGroup", sub: "scope opens" },
+    { id: "spawn", label: "tg.create_task ×N", sub: "children owned" },
+    { id: "fail", label: "Child raises", sub: "non-cancel error" },
+    { id: "cancel", label: "Cancel siblings", sub: "CancelledError at await" },
+    { id: "drain", label: "Await all children", sub: "finally blocks run" },
+    { id: "eg", label: "ExceptionGroup", sub: "handle with except*" },
+  ]}
+  edges={[
+    { from: "scope", to: "spawn", label: "spawn" },
+    { from: "spawn", to: "fail", label: "error" },
+    { from: "fail", to: "cancel", label: "abort" },
+    { from: "cancel", to: "drain", label: "unwind" },
+    { from: "drain", to: "eg", label: "aggregate" },
+  ]}
+  caption="Success path: scope exit awaits all children, results are safe after the block. Failure path: cancel, drain, aggregate. asyncio.timeout rides the same rail — cancel the body, convert to TimeoutError at the boundary."
+/>
+
+<KeyTakeaway>A task no scope owns is a leak: the loop's weak reference lets it vanish, its exception surfaces as a GC-time log line, and shutdown tears it mid-write. TaskGroup (3.11+) makes lifetime structural — children cannot outlive the scope, one failure cancels the rest, and all errors arrive as an ExceptionGroup for except*. Timeouts and cancellation are one mechanism: CancelledError injected at an await, converted to TimeoutError at asyncio.timeout's boundary — so never swallow CancelledError, make finally cleanup cancellation-safe, and shield only the smallest await that must commit.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-structured-concurrency-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the three failure modes of fire-and-forget create_task and how TaskGroup eliminates each.", a: "(1) Disappearance: the loop holds only a weak reference to tasks, so a Task whose returned reference is dropped can be garbage-collected mid-flight — TaskGroup holds strong references to its children for the life of the scope. (2) Silent failure: an unawaited task's exception sits on the Task object and surfaces only at GC as 'Task exception was never retrieved', far from any request context — TaskGroup re-raises child errors at scope exit as an ExceptionGroup, inside the calling request. (3) Outliving the app: shutdown cancels orphans mid-write (the missing-audit-rows bug) — TaskGroup guarantees no child outlives the scope, so app-lifetime work belongs to an app-lifetime scope draining a queue, and request work to the request's scope. The underlying principle: every task needs a parent that awaits it, hears its errors, and bounds its lifetime." },
+    { q: "Trace what happens, step by step, when asyncio.timeout(5) expires around a body that holds a DB transaction — and where shield and finally fit.", a: "The timer fires at T+5 and cancels the body's task: CancelledError is raised inside the coroutine at its next await point (a never-awaiting body cannot be cancelled). The exception unwinds the stack, running finally blocks and async-with exits — cleanup like transaction rollback happens here, but any await inside that cleanup runs while the task is already cancelled and can receive a second CancelledError, so cleanup must be cancellation-safe. When the unwind reaches the asyncio.timeout context manager's boundary, it converts the CancelledError it caused into TimeoutError; an outer cancellation passing through is left untouched, which is why nested timeouts compose. If a section must not tear (the commit itself), wrap that smallest await in asyncio.shield: the awaiter is still cancelled immediately, but the shielded task runs to completion — at the cost of becoming detached work someone must still observe. And the whole mechanism dies if any layer swallows CancelledError: catch it only to clean up, then re-raise." },
+  ]}
+/>
+
+<Recap lang="en">
+Unstructured concurrency fails in three specific ways: the loop's weak reference lets an unanchored Task be GC'd mid-flight; an unobserved exception waits on the Task object until garbage collection logs 'Task exception was never retrieved' hours later; and shutdown cancels orphans mid-write — the audit-gap incident in one line of create_task. TaskGroup (3.11+) makes ownership structural: children spawned via tg.create_task cannot outlive the async-with scope; the first non-cancellation failure cancels all siblings, the scope awaits their finally-block deaths, and everything raised arrives as a single ExceptionGroup handled with except* — where several clauses may each receive their matching subgroup, and unmatched errors propagate. gather, by contrast, reports the first error while siblings run on unsupervised — an error plus a leak. Cancellation is one mechanism end to end: cancel() injects CancelledError at the target's next await; it unwinds like a normal exception through finally and async-with; asyncio.timeout schedules a timer that cancels the body and converts that specific CancelledError to TimeoutError at its own boundary, which is why nesting composes. The disciplines follow from the mechanism: never swallow CancelledError (it is a BaseException so that except Exception stays safe; if caught for cleanup, re-raise), write cancellation-safe finally blocks (an awaiting cleanup can be cancelled again), and shield only the smallest await that must commit — a shield is a deliberate, reviewable orphan. Fire-and-forget migrates to either in-scope supervision or a queue drained by a lifespan-owned worker.
+</Recap>
