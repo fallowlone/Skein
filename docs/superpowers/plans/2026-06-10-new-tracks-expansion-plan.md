@@ -117,6 +117,55 @@ incident/debug/review на каждом юните, capstone-проект на �
 После волны 8: react ~50, go ~45, python ~42, nextjs ~35, logic ~21 уроков —
 каждый с практикой, scenario-слоем и (кроме logic) capstone. Это и есть zero→senior+.
 
+## Ревизия 2 (2026-06-10, вечер): волны 9–13
+
+Основание: depth-аудит (docs/audit/depth-report.md) — 6 юнитов ниже бара 3.5,
+typescript слабейший spine-трек (mean 3.61); ci-cd тонкий (26 уроков); запрос
+владельца: курсы Docker и GitHub Actions; Projects hub = 14 брифов-идей, guided
+путь только у одного (url-shortener-at-scale).
+
+**Волна 9 — ремонт существующего (без новых треков):**
+- Ре-авторинг 3 typescript-юнитов ниже бара: `01-foundations` (3.03),
+  `04-type-system-deep` (3.10), `03-generics` (3.41) — это сердце «deep-dive»
+  трека, провал именно в conditional types и дженериках.
+- Ре-авторинг 3 вводных юнитов хороших треков: `aws/01-core-model` (3.27),
+  `sql-postgres/03-aggregation` (3.30), `backend/02-middleware-di` (3.36) —
+  читатель встречает слабейший материал первым.
+- 2 niche-юнита, отмеченных аудитом: `base-cs/concurrency-theory` (потоки/процессы,
+  memory ordering, lock-free — единая теория под go/node/distributed) и
+  `engineering-practice/debugger-mastery` (breakpoints/watchpoints, core dumps,
+  отладка в проде).
+- Гейт: depth-audit --gate по всем 8 юнитам ≥3.5.
+
+**Волны 10–11 — новый трек `docker` (advanced band, ~10 юнитов / ~35 уроков):**
+deployment-трек покрывает docker применительно к деплою; этот трек — контейнеры
+как система. 01-images-and-layers (контент-адресация, OCI), 02-runtime-internals
+(namespaces, cgroups, seccomp), 03-networking, 04-storage-and-volumes,
+05-buildkit-and-cache (multi-stage, cache mounts), 06-compose-and-local-dev,
+07-security (rootless, scanning, secrets), 08-registries-and-distribution,
+09-debugging-containers, 10-production-patterns (+ capstone: own-mini-paas).
+Регистрация трека — стандартные 7 мест + bump path-io.test.
+
+**Волна 12 — курс GitHub Actions внутри ci-cd (+5 юнитов / ~17 уроков, ci-cd → ~43):**
+отдельный трек не нужен — ci-cd уже стоит на GHA; добиваем его до полного курса:
+09-workflows-deep (events, contexts, expressions), 10-actions-authoring
+(composite/JS/docker actions), 11-security-and-oidc (GITHUB_TOKEN scopes, OIDC
+в облака, injection-атаки — спираль с нашим же deploy.yml), 12-runners-and-scale
+(self-hosted, ARC, кеш-стратегии), 13-release-engineering (versioning, changelog,
+deployment environments/gates). Capstone: пайплайн этого самого репозитория как
+разбираемый кейс.
+
+**Волна 13 — практика для Projects hub:**
+14 брифов — идеи без сопровождения; guided путь только у url-shortener.
+Преобразовать 6 топ-брифов в guided capstone paths по его образцу: milestone-чеклист,
+acceptance-критерии на milestone, hint-лестницы, «что проверит ревьюер» на финале.
+По одному из каждой категории + связка с треками (react/go/python capstones из
+волны 7 переиспользуют этот же формат). Остальные брифы получают хотя бы
+acceptance-критерии.
+
+После волны 13: 0 юнитов ниже depth-бара, docker и GHA — полные курсы,
+7 guided-проектов. Только тогда кампания закрыта.
+
 ## Риски
 
 - **Билд-тайм:** +~190 страниц на волну — в пределах текущих 12-13 мин; инкрементальный кеш в CI смягчает.
