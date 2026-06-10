@@ -1,0 +1,163 @@
+---
+concepts:
+- go-context-discipline
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-context-discipline"
+sources:
+- https://pkg.go.dev/context
+- https://go.dev/blog/context
+- https://go.dev/blog/context-and-structs
+spiral: []
+status: ready
+summary: 'Context carries cancellation, deadlines and request-scoped values down every call chain: ctx first arg, derive with WithTimeout and defer cancel or you leak timers. Cancellation is cooperative — code must check ctx.Done(). Values carry metadata, never dependencies.'
+title: 'Context discipline: cancellation, deadlines, and values that flow down the call chain'
+track: "go"
+unit: "07-production-patterns"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Black Friday load test, checkout p99 blowing through its SLO. The payment provider was slow, so the team raised the payment client timeout from five seconds to ten, redeployed — and watched every call keep dying at exactly five. Three engineers, two hours of disbelief later, someone traced the request from the edge: the API gateway wrapped every inbound request in `context.WithTimeout(ctx, 5*time.Second)`, and the payment client derived its ten-second context *from that parent*. A derived context can shrink the remaining deadline, never extend it — the child asked for ten and inherited five. The one-line fix was boring. The expensive lesson was the audit that followed: four layers each set their own timeout, nobody could say which one a given request actually died under, and `go vet` found eleven `WithTimeout` calls whose `cancel` was discarded — each one quietly pinning a timer and a context in memory until the timer fired. One tree per request, and you had better know its shape.
+</Hook>
+
+<Crux>Context is the cancellation conduit: pass it first, derive per call, defer cancel — and never store it in a struct field.</Crux>
+
+<Explanation>
+
+## One tree per request
+
+A `context.Context` carries three things down a call chain: a cancellation signal, a deadline, and a small bag of request-scoped values. The convention is rigid on purpose — `ctx` is the first parameter of every function that does I/O or can block, so the conduit is never broken mid-chain:
+
+```go
+func (s *Server) handleCheckout(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context() // already cancels when the client disconnects
+
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel() // releases the timer and detaches the child from the parent
+
+	order, err := s.orders.Load(ctx, orderID) // ctx first, everywhere
+	// ...
+}
+```
+
+`WithCancel`, `WithTimeout` and `WithDeadline` do not mutate a context — they *derive* a child and register it in the parent's children set. Cancel a parent and every descendant cancels with it; a child can never cancel or outlive its parent. That tree shape is what makes the Hook incident inevitable: `WithTimeout(parent, 10*time.Second)` when the parent has five seconds left yields an effective deadline of five — the minimum along the path from the root always wins. Setting a generous timeout deep in the stack does nothing if an ancestor was stingier.
+
+Forgetting `cancel` is the quiet leak. `WithTimeout` allocates a `time.Timer` and links the child into the parent; until you call `cancel`, both stay reachable — for a ten-minute timeout on a job that finishes in 200 ms, that is ten minutes of dead weight per job, multiplied by your request rate. Derive from a long-lived parent with `WithCancel` and forget the cancel, and the leak is permanent. `defer cancel()` on the next line is the idiom, and `go vet` (the `lostcancel` check) flags the violation.
+
+<Quiz
+  id="01-context-discipline-quiz-1"
+  lessonSlug="01-context-discipline"
+  lang="en"
+  question="A gateway wraps requests in a 5s context. Deep in the stack, the payment client does context.WithTimeout(ctx, 10*time.Second) and the provider replies in 7s. What happens?"
+  choices={[
+    { label: "The call fails with context.DeadlineExceeded at the 5-second mark — a derived context can shrink the remaining deadline but never extend the parent", correct: true },
+    { label: "The call succeeds at 7s because the payment client set its own 10-second timeout closest to the call", misconception: "There is no closest-wins rule. The child registers under the parent, and when the parent's 5s timer fires, every descendant's Done channel closes — the child's later deadline never gets a chance to matter." },
+    { label: "WithTimeout panics because the requested deadline is later than the parent's", misconception: "Nothing panics — the API silently caps the effective deadline at the parent's. That silence is exactly why these bugs survive review: the code reads like it grants 10 seconds and lies." },
+    { label: "It depends on which context the provider call actually receives", misconception: "It receives the derived child, but that does not help: the child inherits the parent's earlier deadline. Whichever context in that chain you hand over, the minimum along the path to the root applies." },
+  ]}
+/>
+
+## Derive, do not store
+
+The anti-pattern that breaks cancellation scoping is storing a context in a struct field. A context represents *one call's* lifetime; a struct usually outlives many calls. Freeze a request's context into an object and every later method call inherits a dead or foreign cancellation scope — work for request B gets cancelled when request A's client disconnects, or never gets cancelled at all. The rule from the Go team is blunt: pass `ctx` as a parameter to each method that needs it; do not store it. The one sanctioned exception proves the rule — `http.Request` holds a context because a `Request` *is* a single call, created and discarded with it.
+
+## Cancellation is cooperative
+
+`cancel()` kills nothing. It closes the context's `Done` channel and makes `ctx.Err()` return `context.Canceled` (or `context.DeadlineExceeded` when a timer fired). Everything else is your code's job: blocking operations must take `ctx` and honor it — `database/sql`, `net/http`, `net.Dialer` all do — and CPU-bound loops must check `ctx.Err()` between iterations, because nothing will interrupt them. The classic production smell is the orphaned query: the handler returns 504, the client is long gone, and the SQL statement keeps grinding on the database because someone called the one method that does not accept a context. Cancellation discipline is only as strong as the least cooperative frame in the stack.
+
+<SequenceDiagram
+  label="One request, one context tree: cancellation flows down the derived chain, errors flow back up"
+  hue="var(--d-backend)"
+  actors={["Client", "Handler", "Service", "DB driver"]}
+  messages={[
+    { from: "Client", to: "Handler", label: "POST /checkout" },
+    { from: "Handler", to: "Service", label: "Charge(ctx)" },
+    { from: "Service", to: "DB driver", label: "QueryContext(ctx)" },
+    { from: "Client", to: "Handler", label: "connection drops" },
+    { from: "Handler", to: "Service", label: "Done() closes" },
+    { from: "Service", to: "DB driver", label: "cancel propagates" },
+    { from: "DB driver", to: "Service", label: "context.Canceled" },
+    { from: "Service", to: "Handler", label: "wrapped error up" },
+  ]}
+  caption="A client disconnect (or cancel(), or a deadline) closes Done() on every derived child at once. Nothing is killed — each layer must observe the signal and return. A layer that ignores ctx keeps working for a request that no longer exists."
+/>
+
+<Inset kind="why" lang="en">
+Why cooperative instead of preemptive? Killing a goroutine at an arbitrary instruction would strand held mutexes, half-written buffers and broken invariants — the exact chaos that made thread cancellation infamous in other runtimes. Go chose the honest contract: cancellation is a broadcast (a closed channel every descendant can select on), and each function decides where it is safe to stop. The price is discipline — code that never checks `ctx.Done()` is code that cannot be cancelled, and no framework can fix that from the outside.
+</Inset>
+
+## Values: metadata, not dependencies
+
+`context.Value` answers one narrow question: what request-scoped facts must cross API boundaries that were never designed to carry them? Trace id, request id, authenticated principal — data that describes *this request* and that middleware attaches for layers it cannot see. The typed-key pattern keeps it collision-free:
+
+```go
+type principalKey struct{} // unexported: no other package can collide
+
+func WithPrincipal(ctx context.Context, p Principal) context.Context {
+	return context.WithValue(ctx, principalKey{}, p)
+}
+
+func PrincipalFrom(ctx context.Context) (Principal, bool) {
+	p, ok := ctx.Value(principalKey{}).(Principal)
+	return p, ok
+}
+```
+
+What does not belong in there: dependencies. A database handle, a config struct, an API client in `context.Value` is an invisible, untyped, compile-time-unchecked parameter — the function signature claims independence while the body crashes on a nil assertion when some caller forgot the magic incantation. Dependencies go in struct fields wired at construction; the lookup is also a linked-list walk up the tree, fine for three values, wrong as a general store.
+
+## Detaching: work that must survive the request
+
+Sometimes cancelling the request must *not* cancel the work: the audit record of a payment attempt has to be written even when the client disconnects mid-flight — especially then. `context.WithoutCancel(ctx)` (Go 1.21) derives a context that keeps the parent's values — your trace id still flows into the audit record — but ignores its cancellation and deadline. Give the detached work its own bound so it cannot run forever:
+
+```go
+// The audit write survives the request but not the process: own timeout, parent's values.
+auditCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+defer cancel()
+audit.Record(auditCtx, event)
+```
+
+<Quiz
+  id="01-context-discipline-quiz-2"
+  lessonSlug="01-context-discipline"
+  lang="en"
+  question="An audit record must be written even if the client disconnects, and it must carry the request trace id. Which context do you hand the audit writer?"
+  choices={[
+    { label: "context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second) — detached from the request cancellation, values preserved, with its own bound", correct: true },
+    { label: "context.Background() with a fresh timeout", misconception: "Background survives the request, but it carries nothing — the trace id, principal and request id attached upstream are gone, so the audit record cannot be correlated with the request it documents." },
+    { label: "The original request ctx — audit writes are fast enough to finish", misconception: "The audit is most likely to be lost precisely in the interesting cases: client disconnects and timeouts cancel ctx at exactly the moments an auditor most needs the record written." },
+    { label: "No context at all — pass nil and let the writer manage itself", misconception: "Nil contexts panic in most APIs and break the conduit: no trace id, no deadline, no way for the writer to bound its own I/O. The need here is detachment from one parent, not from the mechanism." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Context is one derived tree per request: ctx goes first in every signature, children shrink deadlines but never extend them, and cancel must be deferred or timers and contexts leak. Cancellation is cooperative — it closes Done() and waits for your code to care. Values carry request metadata like trace ids; dependencies belong in struct fields. WithoutCancel detaches must-finish work while keeping the metadata.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-context-discipline-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through why a child WithTimeout(ctx, 10s) under a 5s parent fails at 5s, and what forgetting cancel() costs.", a: "Deriving never mutates the parent — WithTimeout registers a child in the parent's children set with its own timer. Cancellation flows strictly downward: when the parent's 5s timer fires, it closes Done on itself and every descendant, so the child's 10s timer is moot — the effective deadline is the minimum along the path to the root. Forgetting cancel() leaks the mechanism: the child's time.Timer and context stay reachable from the parent until the timer fires (or forever, for WithCancel under a long-lived parent). For a 10-minute timeout on 200 ms jobs that is ten minutes of pinned memory per job at production rates. defer cancel() on the next line is the idiom; go vet lostcancel catches the omission." },
+    { q: "State the rule for context.Value and for storing contexts in structs, with the failure mode each rule prevents.", a: "Value carries request-scoped metadata that must cross API boundaries not designed for it — trace id, request id, auth principal — behind unexported typed keys. Dependencies (db handles, clients, config) stay out: in ctx they become invisible untyped parameters that fail as nil assertions at runtime instead of compile errors, and lookup is a linked-list walk. Contexts do not go in struct fields: a context is one call's lifetime, a struct outlives many calls, so a stored context either cancels foreign work when its original request ends or never cancels at all. Pass ctx per call; http.Request is the exception because a Request is a single call. For work that must outlive the request, derive with WithoutCancel — values survive, cancellation does not — and add a fresh timeout." },
+  ]}
+/>
+
+<Recap lang="en">
+Every request owns one context tree. The root arrives at the edge — r.Context() already cancels on client disconnect — and each layer derives children with WithCancel, WithTimeout or WithDeadline, passing ctx as the first argument so the conduit never breaks. Derivation only shrinks: a child asking for ten seconds under a five-second parent gets five, which is why timeouts raised deep in a stack silently do nothing. Every derivation returns a cancel function that must run — defer cancel() — or the timer and child context stay pinned to the parent; vet's lostcancel check exists because production heaps kept filling with dead timerCtx values. Cancellation is cooperative: cancel() closes Done and sets Err, and code must select on Done or check Err between units of work — a layer that ignores ctx grinds on for clients that left, the orphaned-query pattern every database team eventually graphs. Contexts are parameters, never struct fields: an object outlives calls, and a frozen context drags one request's lifetime into another's. Value is for request metadata behind typed unexported keys — trace id, principal — never for dependencies, which belong in constructors where the compiler can see them. And when work must survive the request — audit records, billing events — context.WithoutCancel keeps the metadata, drops the cancellation, and deserves its own deadline so detached never becomes immortal.
+</Recap>

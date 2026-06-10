@@ -1,0 +1,152 @@
+---
+concepts:
+- python-asgi-fastapi
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-asgi-and-fastapi"
+sources:
+- https://asgi.readthedocs.io/en/latest/specs/main.html
+- https://fastapi.tiangolo.com/async/
+- https://www.uvicorn.org/
+- https://fastapi.tiangolo.com/deployment/server-workers/
+spiral: []
+status: ready
+summary: 'ASGI hands your app a scope dict plus receive/send awaitables; uvicorn runs one event loop per worker. async def runs on that loop — a single blocking call stalls every in-flight request; plain def is dispatched to a ~40-thread anyio pool. Worker math and honest req/s included.'
+title: 'ASGI and FastAPI: the scope/receive/send contract and the one blocking call that stalls a worker'
+track: "python"
+unit: "06-web-services"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+Launch Friday: the payments team shipped a tiny feature — an `async def` endpoint that asked the partner's status API one question, using `requests.get`. Under launch traffic the partner's p99 drifted from 180 ms to 6 s, and within a minute the whole service froze in lockstep: checkout, catalog, even `/health`. One uvicorn worker is one process with one event loop, and every coroutine on it was now waiting behind a single synchronous socket. Kubernetes liveness probes timed out, restarted pods that were not broken, and the restart storm flushed the warm connection pools for good measure. `py-spy dump` told the story in one line: the only thread, parked in `socket.recv`. The fix that shipped at 2 a.m. was deleting one keyword — making the handler plain `def` so FastAPI would push the call into its threadpool — and the postmortem asked exactly the right question: what does `async` actually promise the event loop?
+</Hook>
+
+<Crux>ASGI = scope dict + receive/send awaitables. async def runs on the loop — one blocking call stalls the worker; plain def gets a threadpool.</Crux>
+
+<Explanation>
+
+## The protocol under the framework
+
+ASGI is not a framework feature; it is the contract between the server (uvicorn, hypercorn) and your application. An ASGI app is one async callable with three arguments: a `scope` dict describing the connection, and two awaitables — `receive` to pull events from the server, `send` to push events back. FastAPI, Starlette, Django — at the bottom they are all this function:
+
+```python
+async def app(scope, receive, send):
+    if scope["type"] == "lifespan":          # once per process: startup/shutdown
+        while True:
+            event = await receive()
+            if event["type"] == "lifespan.startup":
+                await send({"type": "lifespan.startup.complete"})
+            elif event["type"] == "lifespan.shutdown":
+                await send({"type": "lifespan.shutdown.complete"})
+                return
+    elif scope["type"] == "http":            # one scope per request
+        await receive()                       # {'type': 'http.request', 'body': b'...'}
+        await send({"type": "http.response.start", "status": 200,
+                    "headers": [(b"content-type", b"application/json")]})
+        await send({"type": "http.response.body", "body": b'{"ok": true}'})
+```
+
+Three scope types carry the whole web: `lifespan` (one per process — where startup and shutdown live), `http` (one per request), and `websocket` (one per connection, with many `receive`/`send` events over its lifetime). Everything FastAPI does — routing, validation, dependency injection — is layered on top of this one calling convention, which is why any ASGI middleware composes with any ASGI framework: each layer is just an app that wraps another app.
+
+## One loop, cooperative scheduling, and the stall
+
+uvicorn runs one event loop per worker process. Every `async def` handler is a coroutine scheduled on that loop, and the loop switches between coroutines only at `await` points — scheduling is cooperative, not preemptive. That is the entire performance model, and the entire failure model. A coroutine that makes a blocking synchronous call — `requests.get`, `time.sleep`, a heavyweight pandas crunch, a sync DB driver — never reaches an `await`, so the loop never gets the thread back. It is not "that endpoint gets slow." It is: every in-flight request on the worker, every endpoint, every health check, stops until the call returns. A 200 ms blocking call in a hot handler caps the whole worker at ~5 req/s; a 6-second partner timeout serializes the worker into uselessness, which is exactly the Hook incident.
+
+## The dispatch rule: async def on the loop, def in the threadpool
+
+FastAPI decides where your handler runs from its signature alone — there is no runtime detection of blocking code:
+
+```python
+@app.get("/right-async")
+async def right_async():                       # coroutine on the event loop
+    async with httpx.AsyncClient() as client:  # async lib: awaits yield the loop
+        r = await client.get(PARTNER_URL)
+    return r.json()
+
+@app.get("/right-def")
+def right_def():                               # anyio threadpool (~40 threads)
+    return legacy_soap_client.fetch()          # blocking lib, loop stays free
+
+@app.get("/wrong")
+async def wrong():                             # the Hook incident in three lines
+    return requests.get(PARTNER_URL).json()   # blocks the loop: ALL requests stall
+```
+
+Plain `def` handlers are dispatched to anyio's worker threadpool, whose default capacity is 40 tokens shared across the process. That protects the loop from blocking code — and caps blocking concurrency at 40; request number 41 queues for a thread. Choosing wrongly costs you in either direction. `async def` + a blocking call is the catastrophic direction: one handler stalls the worker. `def` + work that never blocks is the wasteful direction: a handler doing 50 µs of pure-CPU dict shuffling pays a thread handoff measured in tens to hundreds of microseconds plus a token from the 40 — pure overhead. The rule of thumb is honest and short: blocking I/O goes in `def` (or behind `run_in_threadpool`), async libraries go in `async def`, and CPU-bound work belongs in neither — it goes to a process pool or a job queue, because in a thread it still fights the GIL.
+
+<Quiz
+  id="01-asgi-and-fastapi-quiz-1"
+  lessonSlug="01-asgi-and-fastapi"
+  lang="en"
+  question="An async def endpoint calls requests.get against a partner API whose p99 is ~2 s. The service runs one uvicorn worker. What do callers of OTHER endpoints observe?"
+  choices={[
+    { label: "Every in-flight request on the worker stalls until the call returns — the loop switches only at await points, and a blocked thread never reaches one", correct: true },
+    { label: "Only that endpoint slows down; the loop isolates handlers from each other", misconception: "Cooperative scheduling is the opposite of isolation: coroutines share one thread and yield only at await. A sync call holds the thread, so no other coroutine — no other endpoint — runs at all." },
+    { label: "FastAPI notices the blocking call and moves it to the threadpool automatically", misconception: "Dispatch is decided by the handler signature alone — async def runs on the loop, def goes to the pool. Nothing inspects what the body does at runtime; blocking inside async def is invisible until it stalls." },
+    { label: "uvicorn spawns an extra worker to absorb the stall", misconception: "Worker count is fixed at startup (--workers N). uvicorn has no autoscaler; a stalled loop just queues connections in the accept backlog until something times out." },
+  ]}
+/>
+
+## Workers, threads, and honest numbers
+
+The deployment unit is the worker process: `uvicorn --workers 4` forks four processes, each with its own event loop, its own ~40-thread pool, and its own memory. Capacity scales as workers × pods; within one worker, async concurrency is thousands of parked coroutines (a sleeping coroutine costs ~KBs, not a thread), while blocking concurrency is the 40 tokens. The honest throughput numbers: a trivial JSON echo on one uvicorn worker lands in the thousands of req/s — roughly 3–9k on a cloud vCPU with uvloop, machine-dependent. Add one 20 ms database query and the framework stops mattering: a 10-connection pool serving 20 ms queries ceilings at ~500 req/s no matter what you wrote the handler in, because the framework's own overhead per request is ~100–300 µs — one to two percent of a single DB round-trip. Benchmark the echo, then benchmark with the database, and size workers from the second number.
+
+<Quiz
+  id="01-asgi-and-fastapi-quiz-2"
+  lessonSlug="01-asgi-and-fastapi"
+  lang="en"
+  question="You fix the Hook endpoint by making it plain def. Now 100 concurrent requests arrive, each blocking ~2 s on the partner call. What happens?"
+  choices={[
+    { label: "About 40 run concurrently in the anyio threadpool; the rest queue for a token — the loop stays free, and other endpoints keep answering normally", correct: true },
+    { label: "All 100 run in parallel threads — Python threads are cheap", misconception: "The anyio pool defaults to 40 tokens shared process-wide. Request 41 waits for a thread, which is the def-side bottleneck you size deliberately, not an unlimited resource." },
+    { label: "Same stall as before — blocking is blocking, threads change nothing", misconception: "The stall was the event loop losing its only thread. In the pool, blocking holds a pool thread while the loop keeps scheduling every other coroutine — degradation is contained to the slow path." },
+    { label: "The GIL serializes the 40 threads, so throughput is the same as one", misconception: "Blocking I/O releases the GIL while waiting on the socket — threads are precisely the right tool for blocking I/O. The GIL penalty applies to CPU-bound threads, not parked ones." },
+  ]}
+/>
+
+</Explanation>
+
+<StackDiagram
+  label="One uvicorn worker, top to bottom: every layer is an awaitable call into the next, driven by a single event loop"
+  hue="var(--d-systems)"
+  layers={[
+    { label: "uvicorn worker", note: "1 process · 1 event loop" },
+    { label: "ASGI contract", note: "scope + receive/send" },
+    { label: "middleware stack", note: "apps wrapping apps" },
+    { label: "FastAPI router", note: "match + validate" },
+    { label: "async def handler", note: "coroutine on the loop" },
+    { label: "def handler", note: "anyio pool, ~40 threads" },
+  ]}
+  caption="Everything below the worker shares its single event loop. A blocking call anywhere on the async path freezes every layer at once; plain def handlers detour into the ~40-token anyio pool — the loop stays free, but blocking concurrency is capped and queues."
+/>
+
+<KeyTakeaway>ASGI is one calling convention — `app(scope, receive, send)` with `lifespan`, `http`, and `websocket` scopes — and FastAPI is layers on top of it. One uvicorn worker is one event loop; coroutines yield only at `await`, so a single blocking call inside `async def` stalls every request on the worker. Plain `def` handlers run in anyio's ~40-token threadpool: the loop survives, blocking concurrency caps at 40. Blocking I/O in `def`, async libs in `async def`, CPU work in neither. A JSON echo does thousands of req/s per worker; one 20 ms query makes the database pool, not the framework, the ceiling.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-asgi-and-fastapi-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the ASGI contract precisely: what is the callable, what are the three scope types, and why does this shape make middleware composable?", a: "An ASGI app is a single async callable app(scope, receive, send): scope is a dict describing the connection, receive awaits events from the server, send pushes events back. Three scope types: lifespan (one per process — startup/shutdown handshake), http (one scope per request, with http.request events in and http.response.start / http.response.body events out), and websocket (one per connection, many events over its life). Because every layer — server, middleware, framework, your handler — speaks this one convention, middleware is just an ASGI app holding a reference to the next ASGI app: it can edit the scope, wrap receive/send, or short-circuit entirely, and any ASGI middleware composes with any ASGI framework." },
+    { q: "Explain FastAPI's def vs async def dispatch rule, the failure mode in each wrong direction, and the honest numbers that govern sizing.", a: "Dispatch is by signature only: async def runs as a coroutine on the worker's single event loop; plain def is pushed to anyio's threadpool, default ~40 tokens per process. Wrong direction one: async def with a blocking call (requests.get, sync driver, time.sleep) — the loop switches only at await, so the blocked thread stalls every in-flight request on the worker, all endpoints including health checks. Wrong direction two: def for non-blocking microsecond work — pays tens-to-hundreds of µs of thread handoff and consumes one of 40 tokens, pure overhead; and request 41 queues when the pool is full. CPU-bound work fails in both places (it fights the GIL even in threads) — process pool or job queue. Numbers: JSON echo ~3–9k req/s per worker; one 20 ms query through a 10-connection pool ceilings at ~500 req/s; framework overhead ~100–300 µs is noise next to the query, so size workers × pods from the DB-bound number." },
+  ]}
+/>
+
+<Recap lang="en">
+Under FastAPI there is one small contract: an async callable receiving a `scope` dict and two awaitables, `receive` and `send`, with `lifespan`, `http`, and `websocket` scope types carrying everything a web service does. uvicorn runs that callable on one event loop per worker process, and the loop is cooperatively scheduled — it changes coroutines only at `await`, which makes one blocking synchronous call inside an `async def` handler a worker-wide outage, not a slow endpoint: checkout, catalog, and `/health` all freeze behind one parked `socket.recv`, liveness probes time out, and the restart storm finishes the job. FastAPI's dispatch rule is mechanical: `async def` runs on the loop, plain `def` is shoved into anyio's threadpool with its default 40 tokens — which protects the loop and caps blocking concurrency at 40, where excess requests queue. Choosing wrongly costs in both directions: blocking inside `async def` stalls the world; `def` around microsecond CPU work buys a pointless thread handoff. The honest envelope: thousands of echo req/s per worker, ~100–300 µs of framework overhead, and a database pool that becomes the real ceiling the moment a 20 ms query enters the path — so blocking I/O goes in `def`, async libraries in `async def`, CPU work in a process pool or queue, and capacity is workers × pods sized from the DB-bound benchmark, not the echo one.
+</Recap>

@@ -1,0 +1,176 @@
+---
+concepts:
+- go-errgroup
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-errgroup-and-structured"
+sources:
+- https://pkg.go.dev/golang.org/x/sync/errgroup
+- https://pkg.go.dev/context
+- https://go.dev/blog/context
+spiral: []
+status: ready
+summary: 'errgroup scopes goroutines to a region: Go starts children, Wait joins all and returns the first error, WithContext cancels siblings cooperatively — every child must watch ctx.Done. SetLimit adds bounded parallelism; raw WaitGroup offers neither errors nor cancellation.'
+title: 'errgroup as structured concurrency: scoped goroutines, first-error cancellation, and SetLimit'
+track: "go"
+unit: "10-advanced-concurrency"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Black Friday, 14:02. The checkout service fans out to four downstreams per order — inventory, pricing, fraud, loyalty — under an errgroup. At 14:02 the fraud provider started rejecting with a clean error in 80 ms. Failing fast should have been the cheap case. Instead p99 for *failed* checkouts hit 28 seconds and the goroutine count tripled, because one sibling — the pricing client — built its request with `context.Background()`. errgroup did exactly what it promises: the first error cancelled the group context 80 ms in. But cancellation in Go is a signal, not a kill. `Wait` blocks until every child returns, and the pricing call was not listening, so every failed checkout dragged a full 28-second client timeout behind it. The fix was one line — `http.NewRequestWithContext(ctx, ...)` — and the lesson outlived the incident: errgroup gives you a scope, and a scope is only as tight as its least cooperative member.
+</Hook>
+
+<Crux>errgroup scopes goroutines to a region: first error cancels ctx, Wait joins all — but only children that watch ctx.Done stop.</Crux>
+
+<Explanation>
+
+## A scope for goroutines
+
+A bare `go` statement is unstructured: the goroutine has no join point, its error has nowhere to go, and its lifetime is unrelated to the function that spawned it. Structured concurrency inverts that — concurrent work is bounded by a lexical region, and the region does not exit until every child has. In Go the idiom is `errgroup`:
+
+```go
+func loadOrder(ctx context.Context, id string) (*Order, error) {
+	g, ctx := errgroup.WithContext(ctx) // shadowed ctx: cancelled on first error
+
+	var inv Inventory
+	var price Pricing
+	g.Go(func() error { return fetchInventory(ctx, id, &inv) })
+	g.Go(func() error { return fetchPricing(ctx, id, &price) })
+	g.Go(func() error { return checkFraud(ctx, id) })
+
+	if err := g.Wait(); err != nil {
+		return nil, err // first error; group ctx is already cancelled
+	}
+	return assemble(inv, price), nil
+}
+```
+
+Three guarantees define the region. `Wait` returns only after **every** `g.Go` callback has returned — no child outlives the function. The error `Wait` returns is the **first** non-nil one any child produced. And with `WithContext`, the group context is cancelled as soon as that first failing callback returns — siblings get a shutdown signal without you wiring one. A quieter guarantee rides along: `Wait` is a happens-before edge, so the pattern above — each child writes its own variable, the parent reads them only after `Wait` — is race-free without a single mutex.
+
+## Cancellation is a signal, not a kill
+
+Here is the subtlety the Hook paid 28 seconds for. errgroup cancels the context *after* the failing callback returns its error — and cancelling a context does nothing by itself. No goroutine is interrupted, no connection is closed unless something is watching `ctx.Done()`. In-flight siblings keep running until *they* observe cancellation, which means the leak rule for the whole unit: **every `g.Go` body must have a return path through ctx**. Pass the group ctx into every blocking call — `http.NewRequestWithContext`, `db.QueryContext`, and every channel operation wrapped in a `select` with a `ctx.Done()` case. A child that computes a hash in a tight loop for 4 seconds is just as deaf: it should check `ctx.Err()` between chunks. The compiler will not flag a sibling that ignores ctx; your p99 will.
+
+<Quiz
+  id="01-errgroup-and-structured-quiz-1"
+  lessonSlug="01-errgroup-and-structured"
+  lang="en"
+  question="Three g.Go children are running; the fraud check returns an error after 80 ms while the other two are mid-request. What does errgroup do at that moment?"
+  choices={[
+    { label: "It cancels the group ctx right after the failing callback returns; siblings keep running until they observe ctx, and Wait blocks until all three return", correct: true },
+    { label: "It kills the two in-flight goroutines immediately", misconception: "Go has no way to kill a goroutine from outside. errgroup only cancels a context — a pure signal. A sibling that never checks ctx runs to completion, which is exactly why Wait can take 28 seconds after an 80 ms failure." },
+    { label: "Wait returns the error immediately and abandons the siblings", misconception: "Wait is a join point: it returns only after every callback has returned. Abandoning siblings would leak goroutines still holding request state — the exact unstructured mess errgroup exists to prevent." },
+    { label: "The fraud error is delivered through ctx.Err() so siblings can inspect what failed", misconception: "ctx.Err() only ever reports context.Canceled or DeadlineExceeded. The real error is stored once inside the group and surfaces solely as the return value of Wait; siblings just see a closed Done channel." },
+  ]}
+/>
+
+## First error wins — so design the failure policy
+
+Internally the group keeps one error slot guarded by `sync.Once`: the first non-nil return is stored, every later error is **discarded**. That default encodes an *all-or-nothing* policy — perfect for "assemble a page from three mandatory calls", wrong for "enrich 50 records, keep what succeeded". For best-effort fan-out, do not return errors from the callbacks at all; record them:
+
+```go
+errs := make([]error, len(parts))
+var g errgroup.Group // no WithContext: nothing should cancel the siblings
+for i, p := range parts {
+	g.Go(func() error {
+		errs[i] = process(p) // record per-slot; disjoint indices need no mutex
+		return nil           // never trip the group
+	})
+}
+_ = g.Wait()
+return errors.Join(errs...) // nil only if every part succeeded
+```
+
+`errors.Join` gives you the full picture the group would have thrown away. And even in all-or-nothing mode, wrap each child's error with identity — `fmt.Errorf("pricing: %w", err)` — because the one error that survives should at least say which of the twelve calls it came from. Choose the policy per fan-out, explicitly; the silent default has a way of becoming an accidental contract.
+
+## SetLimit: bounded parallelism built in
+
+Fan-out over 10,000 items must not mean 10,000 concurrent goroutines hammering one downstream. Since errgroup got `SetLimit`, the bound is one line:
+
+```go
+g, ctx := errgroup.WithContext(ctx)
+g.SetLimit(8) // set before any Go; changing it while children are active panics
+for _, item := range items {
+	g.Go(func() error { return convert(ctx, item) }) // blocks while 8 are in flight
+}
+err := g.Wait()
+```
+
+The mechanism matters: when the limit is reached, `g.Go` **blocks the caller**. The spawning loop itself becomes a backpressured producer — memory stays bounded by the limit, not by the item count. `TryGo` is the non-blocking variant: it returns `false` instead of waiting, for reject-instead-of-queue designs. This is the same block-or-reject choice the backpressure lesson builds on.
+
+<Quiz
+  id="01-errgroup-and-structured-quiz-2"
+  lessonSlug="01-errgroup-and-structured"
+  lang="en"
+  question="A group has SetLimit(8) and 8 children currently running. The loop calls g.Go for item 9. What happens?"
+  choices={[
+    { label: "g.Go blocks the calling goroutine until one child returns — the limit turns the spawning loop into a backpressured producer", correct: true },
+    { label: "The callback is queued inside errgroup and started later", misconception: "There is no internal queue; the caller itself is the queue. g.Go parks the calling goroutine until a slot frees, so memory is bounded by the limit rather than by the number of pending items — an internal queue would silently reintroduce unbounded buffering." },
+    { label: "g.Go returns an error so the caller can retry", misconception: "g.Go returns nothing at all — it has no return value. The variant that reports instead of waiting is TryGo, which returns false when the limit is reached." },
+    { label: "It panics, because the limit must never be exceeded", misconception: "Exceeding the limit just blocks. The panic lives elsewhere: calling SetLimit while children are active panics, because resizing a live group would corrupt its accounting." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does Wait refuse to return early, even when the answer — the first error — is already known? Because early return is exactly how unstructured leaks are born: the parent moves on, the orphaned children still hold buffers, sockets, and the request ctx, and nothing will ever join them. Structured concurrency trades latency honesty for lifetime honesty — if Wait is slow, a child is slow, and the profile points straight at it. The 28-second p99 from the Hook was not errgroup being wasteful; it was errgroup refusing to hide a sibling that could not be cancelled.
+</Inset>
+
+## WaitGroup, errgroup, or channels of results
+
+Three tools, one decision. `sync.WaitGroup` is a pure join: no errors, no cancellation — right when children genuinely cannot fail, and a known trap otherwise (errors get logged into the void and the parent reports success). `errgroup` adds first-error propagation, sibling cancellation, and a concurrency limit — the default for fan-out with a failure policy. Channels of results are the heavyweight option: each worker sends a typed result or error, the consumer ranges and decides — necessary when you need *every* outcome as data, streaming order, or partial consumption, at the price of writing the close-and-drain choreography yourself (the pipelines lesson). Overhead is honest noise: errgroup is a WaitGroup plus a mutex, a Once, and an optional limiter channel — nanoseconds next to any call worth fanning out for.
+
+</Explanation>
+
+<FlowDiagram
+  label="One fan-out region: the first error cancels the shared ctx, every sibling must notice it, Wait joins all"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "scope", label: "WithContext", sub: "g, ctx — scope opens" },
+    { id: "inv", label: "g.Go inventory", sub: "selects on ctx" },
+    { id: "fraud", label: "g.Go fraud", sub: "error at 80 ms" },
+    { id: "price", label: "g.Go pricing", sub: "ignores ctx — bug" },
+    { id: "cancel", label: "ctx cancelled", sub: "after error returns" },
+    { id: "wait", label: "g.Wait", sub: "joins all, first error" },
+  ]}
+  edges={[
+    { from: "scope", to: "inv" },
+    { from: "scope", to: "fraud" },
+    { from: "scope", to: "price" },
+    { from: "fraud", to: "cancel", label: "first error" },
+    { from: "cancel", to: "wait", label: "Done broadcast" },
+    { from: "price", to: "wait", label: "28 s later" },
+  ]}
+  caption="Cancellation is cooperative: the group cancels ctx after the failing callback returns, and Wait still blocks until the deaf sibling times out on its own. The scope is only as tight as its least cooperative member."
+/>
+
+<KeyTakeaway>errgroup turns loose goroutines into a scoped region: Go starts children, Wait joins all and returns the first error, WithContext cancels the rest — cooperatively, after the failing callback returns. Every child must select on ctx.Done or the scope is fiction. SetLimit bounds fan-out by blocking the spawner; when one error is not enough, record per-slot and errors.Join.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-errgroup-and-structured-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does errgroup.WithContext give you over a raw WaitGroup, and where exactly does cancellation happen — and not happen?", a: "A WaitGroup is a pure join: no error channel, no shutdown signal. errgroup adds three things — Wait returns the first non-nil error any child produced, WithContext derives a group context that is cancelled as soon as that first failing callback returns, and SetLimit bounds how many children run at once. The crucial nuance is that cancellation is only a signal: the group cancels ctx after the failing function returns, and nothing interrupts in-flight siblings. They stop only when they observe ctx — via NewRequestWithContext, QueryContext, or a select with ctx.Done around channel ops. A sibling that ignores ctx runs to its own timeout and Wait honestly blocks for it, because the alternative — returning early — would orphan goroutines still holding request state. Wait is also a happens-before edge, so per-child writes to disjoint variables read after Wait are race-free." },
+    { q: "Describe the first-error-wins semantics and the two fan-out failure policies it forces you to choose between.", a: "The group stores exactly one error behind a sync.Once: the first non-nil return wins, every later error is discarded, and Wait returns that single value. With WithContext this encodes all-or-nothing: one failure cancels the siblings and the caller gets one error — wrap each child with fmt.Errorf and an identity so the survivor is attributable. The alternative is best-effort: use a group without WithContext, never return errors from callbacks, record each into an indexed slice (disjoint slots, no mutex needed), then errors.Join after Wait — callers see everything that failed while successful parts survive. The trap is not choosing: the silent default is all-or-nothing, and an enrichment fan-out wired that way throws away 49 good results because one optional call failed." },
+  ]}
+/>
+
+<Recap lang="en">
+errgroup is Go's working form of structured concurrency: g.Go starts children, g.Wait joins every one of them and returns the first error, and WithContext wires a shared context that is cancelled the moment the first failing callback returns. The discipline that makes the scope real is cooperative cancellation — cancelling a ctx interrupts nothing by itself, so every child needs a return path through ctx: requests built with NewRequestWithContext, queries through QueryContext, channel operations inside select with a ctx.Done case, CPU loops checking ctx.Err between chunks. A single deaf sibling stretches Wait to that sibling's own timeout, which is the honest behavior — early return would orphan goroutines still holding buffers and sockets. Error semantics are first-wins behind a Once: later errors are discarded, so pick the failure policy deliberately — all-or-nothing with WithContext and wrapped, attributable errors, or best-effort with no group cancellation, per-slot recording, and errors.Join after Wait. SetLimit makes the group a bounded-parallelism tool: at the limit g.Go blocks the spawning loop itself, bounding memory by the limit instead of the workload, with TryGo as the reject-fast variant — and SetLimit must be set before any Go, since resizing a live group panics. Against the alternatives: WaitGroup is join-only, channels of results buy full per-result data at the cost of hand-rolled close-and-drain choreography. Every g.Go body answers one question or leaks: how does this goroutine end when the region is told to stop?
+</Recap>

@@ -1,0 +1,162 @@
+---
+concepts:
+- python-fixtures
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-fixtures-and-parametrize"
+sources:
+- https://docs.pytest.org/en/stable/how-to/fixtures.html
+- https://docs.pytest.org/en/stable/how-to/parametrize.html
+- https://docs.pytest.org/en/stable/how-to/monkeypatch.html
+spiral: []
+status: ready
+summary: 'Fixtures resolve by name and cache per scope: session scope amortizes expensive setup but shares mutable state — the order-dependent failure class. yield puts teardown beside setup and unwinds in reverse. parametrize stacks cartesian; indirect=True routes params through fixtures.'
+title: 'Fixtures and parametrize: dependency injection, scopes, and teardown order'
+track: "python"
+unit: "07-testing"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The billing suite had been green for months — until the Tuesday it failed 40 tests in CI while every one of them passed locally. `pytest tests/billing/test_invoices.py`: 22 passed. Full suite: 40 failed, all of them downstream of `test_upgrades.py` in collection order. The cause sat in a session-scoped `tenant` fixture: one provisioned tenant dict for the whole run — 8 seconds of setup paid once instead of 300 times, a deliberate and sensible optimization. A new test exercised the upgrade path with `tenant["plan"] = "enterprise"` and never put it back. Every test that resolved `tenant` afterwards inherited an enterprise tenant: quota assertions off by a tier, invoice totals wrong, 40 red tests whose tracebacks pointed nowhere near the cause. Two engineers lost a day bisecting test order — the failures vanished under `-k`, reshuffled under `-p no:randomly`, and `--lf` re-ran only the victims, which passed. The fix was three lines of teardown. The lesson was the scope contract: session scope hands every test the same object, and pytest does not police what they do to it.
+</Hook>
+
+<Crux>Fixtures are DI: resolved by name, cached per scope, teardown in reverse order. Session scope is fast but shares state across tests.</Crux>
+
+<Explanation>
+
+## Fixtures are dependency injection, resolved by name
+
+A test declares what it needs as parameter names; pytest resolves each name to a fixture — looked up in the test module first, then up the `conftest.py` chain (nearest wins), then plugins — calls it, and caches the result for the duration of its scope. Fixtures request other fixtures the same way, so what executes is a dependency graph, built per test, with each node instantiated at most once per scope unit:
+
+```python
+import pytest, sqlite3
+
+@pytest.fixture
+def db(tmp_path):                  # fixtures compose: db depends on tmp_path
+    conn = sqlite3.connect(tmp_path / "t.db")
+    yield conn                     # setup above the yield, teardown below
+    conn.close()                   # runs even if the test failed
+
+def test_insert(db):               # injected by NAME — no imports, no registry
+    db.execute("create table t (x int)")
+```
+
+This is why fixtures beat `setUp` methods structurally: a test names exactly what it uses, unused machinery is never built, and the same fixture serves one test or four hundred without inheritance gymnastics. The `request` fixture exposes the resolution context — the requesting test, its markers, `request.param` — which parametrization will need below.
+
+## Scopes: amortization versus isolation
+
+Scope is the cache key. `function` (the default) rebuilds per test — full isolation, full price. `module` and `session` build once per module or per run; `class` and `package` exist between. The arithmetic that pushes teams to broad scopes is real: a Postgres testcontainer at ~8 s of startup, 300 integration tests — function scope spends 40 minutes on setup alone, session scope spends 8 seconds. The price is the Hook: **the cache returns the same object to every consumer**, and one mutation becomes ambient state for every test that follows. That is the order-dependent failure class — green alone, red in suite, unreproducible by `--lf` because the mutating test is not in the re-run set. The standard resolution is layered: session-scoped engine or container (expensive, effectively immutable), function-scoped connection that opens a transaction and rolls back in teardown (cheap, perfectly isolated). Never hand tests a mutable session-scoped object directly; wrap it in a function-scoped view, a fresh copy, or a transaction.
+
+<Quiz
+  id="02-fixtures-and-parametrize-quiz-1"
+  lessonSlug="02-fixtures-and-parametrize"
+  lang="en"
+  question="A session-scoped fixture returns a dict of tenant config. One test mutates it. What is the observable failure pattern?"
+  choices={[
+    { label: "Tests running after the mutating one see the modified dict — failures appear only in full-suite order and vanish when files run alone, because the cache hands every test the same object", correct: true },
+    { label: "pytest detects the mutation and rebuilds the fixture for the next test", misconception: "pytest caches the returned value per scope and never inspects it. There is no copy, no freeze, no dirty-tracking — the cache is a plain reference handed out repeatedly." },
+    { label: "Each test receives a deep copy, so only the mutating test itself can fail", misconception: "Copying would defeat the point of broad scopes — you share a connection precisely because building or copying it is expensive. The same reference goes to every consumer." },
+    { label: "Session-scoped fixtures are read-only by construction, so the mutation raises immediately", misconception: "Nothing freezes the object; a dict stays a plain mutable dict regardless of fixture scope. The mutation succeeds silently — that silence is the entire problem." },
+  ]}
+/>
+
+## yield fixtures: teardown that always runs, in reverse
+
+Everything above the `yield` is setup; everything below is teardown, and it runs **even when the test fails** — fixture finalization is driven by pytest's finalizer stack, not by the test outcome. Two precise edges: if the fixture's own setup raises, its teardown never started, but fixtures that completed setup earlier still unwind; and teardown order is the **reverse of resolution order** — if the test resolved `db → schema → user`, teardown runs `user → schema → db`, like nested context managers. Dependents release before their dependencies, which is the only order that does not close a connection while something still holds it. Broader scopes do not break the rule; they defer it — a session-scoped `db` finalizes at session end, still after everything that depended on it.
+
+## Factory fixtures: per-test variation without scope games
+
+When tests need *different* objects, not the same one, return a builder instead of a value — and keep cleanup in the fixture:
+
+```python
+@pytest.fixture
+def make_user(db):
+    created = []
+    def _make(plan="free", **kw):
+        u = create_user(db, plan=plan, **kw)
+        created.append(u)
+        return u
+    yield _make
+    for u in reversed(created):     # LIFO, mirroring fixture teardown
+        delete_user(db, u)
+
+def test_upgrade(make_user):
+    u = make_user(plan="free")      # this test decides the shape
+```
+
+This is the clean answer to the Hook incident: the upgrade test calls `make_user(plan="free")` and mutates its own private user; the shared tenant stays untouched. `autouse=True` is the opposite move — a fixture injected into every test in its scope without being named. It has legitimate uses (freezing time, seeding RNG, isolating env) and one systemic cost: invisible coupling — a reader of the test cannot see why behavior differs, and a future autouse fixture taxes every test in the subtree whether or not it is relevant. Default to explicit names. `conftest.py` layering follows the same locality principle: the nearest conftest wins, so `tests/integration/conftest.py` can redefine `settings` and override the root fixture for its subtree only.
+
+## parametrize: the cartesian machine
+
+```python
+@pytest.mark.parametrize("pct", [0, 15, 100])
+@pytest.mark.parametrize("cents", [1, 1999], ids=["min", "typical"])
+def test_discount(cents, pct):       # stacked decorators multiply: 2 x 3 = 6 tests
+    ...
+```
+
+Stacked `parametrize` decorators produce the cartesian product — 6 generated tests here, each an independent item that fails alone, shows in `--lf`, and reports as `test_discount[typical-15]` thanks to `ids=`. Without ids, large parametrizations fail as `test_discount[1999-15]` and someone greps for which case that was. `indirect=True` routes a parameter *through a fixture*: the value arrives as `request.param` inside the fixture, which transforms it before the test sees it — the idiom for "run this suite against postgres and sqlite", where the param is a backend name and the fixture builds the actual engine. The same effect from the other side: `@pytest.fixture(params=["postgres", "sqlite"])` parametrizes every test that depends on the fixture, no decorator at the call site.
+
+One more injected tool earns its place here: `monkeypatch` is a function-scoped fixture with `setattr`, `setitem`, `setenv`, `delenv`, `chdir`, `syspath_prepend` — every change automatically undone at teardown, which is exactly the guarantee hand-rolled `os.environ` pokes lack. Reach for `unittest.mock` instead when you need call records, `side_effect`, or spec-checked stand-ins; `monkeypatch` replaces values, `mock` observes interactions.
+
+<Quiz
+  id="02-fixtures-and-parametrize-quiz-2"
+  lessonSlug="02-fixtures-and-parametrize"
+  lang="en"
+  question="A test uses `user`, which depends on `schema`, which depends on `db` — three function-scoped yield fixtures. The test FAILS. Which teardowns run, in what order?"
+  choices={[
+    { label: "All three run — user, then schema, then db: reverse of setup order, and a test failure does not skip finalization", correct: true },
+    { label: "None — the failure aborts the fixture stack to preserve state for debugging", misconception: "The failure is recorded as the test result; finalizers still unwind. If red tests skipped teardown, every failing run would leak connections, temp dirs, and processes." },
+    { label: "All three, in setup order: db, then schema, then user", misconception: "Teardown is LIFO — dependents release before dependencies, like nested context managers. Closing db first would tear the connection out from under schema and user mid-cleanup." },
+    { label: "Only user — fixtures lower in the dependency chain are exempt when a dependent fails", misconception: "All function-scoped fixtures finalize at test end regardless of outcome. Scope changes WHEN a fixture finalizes (end of its scope unit), never WHETHER." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="Fixture lifecycle for one failing test: setup in dependency order, teardown in reverse — failure does not skip finalization"
+  hue="var(--d-systems)"
+  actors={["pytest", "db", "schema", "user", "test"]}
+  messages={[
+    { from: "pytest", to: "db", label: "setup db" },
+    { from: "pytest", to: "schema", label: "setup (needs db)" },
+    { from: "pytest", to: "user", label: "setup (needs schema)" },
+    { from: "pytest", to: "test", label: "run test body" },
+    { from: "test", to: "pytest", label: "AssertionError" },
+    { from: "pytest", to: "user", label: "teardown user" },
+    { from: "pytest", to: "schema", label: "teardown schema" },
+    { from: "pytest", to: "db", label: "teardown db" },
+  ]}
+  caption="Resolution builds db → schema → user; finalization unwinds user → schema → db, even though the test failed. A broader-scoped db would defer its teardown to the end of its scope unit — same LIFO rule, later moment."
+/>
+
+<KeyTakeaway>Fixtures are name-resolved dependency injection with a per-scope cache: function scope isolates, session scope amortizes — and shares one object with every consumer, which is where order-dependent failures are born. `yield` fixtures run teardown even on failure, unwinding in reverse resolution order. Factory fixtures give per-test variation with centralized cleanup; autouse buys convenience with invisible coupling. `parametrize` stacks into cartesian products, `ids=` keeps reports readable, `indirect=True` routes params through fixtures; `monkeypatch` patches with guaranteed undo.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-fixtures-and-parametrize-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the fixture mechanism end to end: resolution, caching, and why a session-scoped fixture produced failures that only appeared in full-suite order.", a: "A test names its dependencies as parameters; pytest resolves each name — test module first, then the conftest chain with nearest winning, then plugins — builds the dependency graph, and caches each fixture value for its scope: per test (function), per module, per session. Session scope returns the SAME object to every consumer for the whole run. When one test mutates that shared object, every later-ordered test inherits the mutation: failures appear only in full-suite order, vanish under -k or single-file runs, and --lf cannot reproduce them because the mutating test is not in the re-run set. Mitigations: keep broad-scoped fixtures effectively immutable (engine, container), layer a function-scoped transaction-rollback fixture for data, hand out copies or factory-built objects, or restore state in teardown." },
+    { q: "State the yield-fixture teardown rules, the factory-fixture pattern, and what indirect=True does in parametrize.", a: "Yield fixtures: setup above the yield, teardown below; teardown runs even when the test fails, in reverse resolution order (LIFO) — dependents before dependencies; if setup itself raises, that fixture never tears down but previously completed fixtures still unwind; broader scopes defer finalization to scope end, same order. Factory fixtures: the fixture yields a builder function and tracks created objects in a list, deleting them in reverse after the yield — per-test variation (make_user(plan='enterprise')) without mutating shared state, cleanup centralized in one place. parametrize: stacked decorators multiply into a cartesian product; ids= names the generated items; indirect=True delivers the parameter to the fixture as request.param instead of to the test, so a backend name can become a built engine — and @pytest.fixture(params=[...]) parametrizes every dependent test from the fixture side." },
+  ]}
+/>
+
+<Recap lang="en">
+The fixture system is dependency injection with a cache, and every behavior in this lesson falls out of that sentence. Resolution is by name through the module, the conftest chain (nearest wins), and plugins; the cache key is scope. Function scope buys isolation at full price; session scope buys an 8-second container once instead of 300 times and pays in shared mutable state — the billing incident, where one `tenant["plan"] = "enterprise"` turned 40 downstream tests red in an order that `--lf` could not even reproduce. The disciplined shape layers an immutable broad-scoped core under function-scoped transactional views, or replaces sharing with factory fixtures that build per-test objects and clean them up in reverse after the `yield` — the same LIFO rule the fixture stack itself follows, dependents before dependencies, failure or not. autouse trades visibility for convenience and should be rare; conftest layering keeps overrides local. parametrize multiplies stacked decorators into cartesian products with `ids=` for readable failures, routes values through fixtures with `indirect=True` or `params=`, and `monkeypatch` covers env and attribute swaps with guaranteed undo, leaving `unittest.mock` for when you need to observe calls rather than replace values.
+</Recap>

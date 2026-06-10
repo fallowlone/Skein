@@ -1,0 +1,178 @@
+---
+concepts:
+- python-pydantic
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-pydantic-validation"
+sources:
+- https://docs.pydantic.dev/latest/concepts/models/
+- https://docs.pydantic.dev/latest/concepts/validators/
+- https://docs.pydantic.dev/latest/concepts/pydantic_settings/
+- https://fastapi.tiangolo.com/tutorial/response-model/
+spiral: []
+status: ready
+summary: 'BaseModel turns input dicts into typed objects or a 422 — parse, do not validate. The Rust core costs ns–µs per field (visible on 10k-item lists). Lax coercion masks contract drift, field/model validators carry cross-field rules, response_model stops internal-field leaks.'
+title: 'Pydantic v2: parse at the boundary, trust inside — coercion, validators, and response_model filtering'
+track: "python"
+unit: "06-web-services"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The billing service typed its money field honestly: `cents: int`. Upstream, a partner integration regressed and started serializing money as strings — `"8999"` instead of `8999`. Nothing failed. Pydantic's default lax mode coerced the digit string to an int on every request, silently, for five months: the contract had drifted and no alarm existed to notice. Then the partner localized their formatter, a European locale produced `"89,99"`, and the first hour of the biggest sale of the year became a wall of 422s on the payment path. The postmortem's sharpest line was not about the comma — it was about the five quiet months: the boundary had been accepting payloads that violated the contract, and the very feature that made integration smooth (coercion) was the thing that hid the drift. The team kept lax mode for query params, switched the payment models to strict, and added one honest sentence to the runbook: a validation layer that never rejects anything is not validating.
+</Hook>
+
+<Crux>Pydantic parses at the boundary: dict in, typed object or 422 out. Lax coercion masks contract drift; response_model stops field leaks.</Crux>
+
+<Explanation>
+
+## Parse, do not validate
+
+The pydantic philosophy is that the boundary should not *check* data — it should *consume* untyped input and *produce* a typed object, or fail loudly. After `Order.model_validate(payload)` succeeds, every consumer downstream holds an `Order` whose fields are guaranteed `int`, `str`, `datetime` — no defensive `isinstance` checks, no "what if it is None" branches in business logic. In FastAPI the parse is wired into the endpoint signature, and failure is automatic:
+
+```python
+from pydantic import BaseModel
+
+class OrderIn(BaseModel):
+    sku: str
+    quantity: int
+    cents: int
+
+@app.post("/orders")
+async def create_order(order: OrderIn):   # parsed before your code runs
+    charge(order.cents * order.quantity)  # ints, guaranteed
+```
+
+A payload that does not parse never reaches the handler — the client gets a 422 with a machine-readable error list (`loc`, `msg`, `type` per failure). The cost is honest and small: pydantic v2 validation runs in `pydantic-core`, compiled Rust, at nanoseconds-to-microseconds per field — a small model parses in ~1–2 µs. Where it becomes visible is volume: a 10k-item list of nested models is tens of milliseconds, real p99 money on a hot endpoint. Measure before blaming, but do not pretend the boundary is free.
+
+## Lax versus strict: where coercion saves you and where it lies
+
+By default pydantic validates in lax mode, applying a documented conversion table: the string `"1"` becomes the int `1`, `"true"` becomes `True`, an integral float `89.0` passes an `int` field. This is deliberate — the web is stringly typed (query params, form fields, env vars all arrive as strings) and lax mode absorbs that. The failure mode is the Hook: coercion does not just accept sloppy input, it *hides the fact that input is sloppy*. A drifted contract keeps validating until the day the drift produces something uncoercible — `"89,99"` — and then it fails at the worst possible time instead of the first possible time. The dial is per-field, per-model, or per-call:
+
+```python
+class PaymentIn(BaseModel):
+    model_config = ConfigDict(strict=True)   # ints must BE ints
+    cents: int
+    currency: str
+
+# or per call, at chosen boundaries:
+PaymentIn.model_validate(payload, strict=True)
+```
+
+The senior pattern is asymmetric strictness: lax where strings are structural (query params, headers, settings), strict where types are the contract (money, ids, anything a partner serializes). Cross-field rules live in validators — `field_validator` for one field, `model_validator(mode="after")` for invariants across fields ("refund cannot exceed original charge"). And validators have one iron rule: **no side effects**. A validator runs wherever validation runs — request parsing, `response_model` serialization, a `model_validate` call in a batch job — so a metrics increment or audit write inside one fires two or three times per request and once per replay, which is how teams end up with audit tables that disagree with reality.
+
+<Quiz
+  id="02-pydantic-validation-quiz-1"
+  lessonSlug="02-pydantic-validation"
+  lang="en"
+  question="A model declares cents: int (default config). The request body contains cents as the string '8999'. What happens, and what is the senior-grade concern?"
+  choices={[
+    { label: "It validates — lax mode coerces the digit string to 8999 — and that silence is the concern: the upstream contract has drifted and nothing will say so until an uncoercible value arrives", correct: true },
+    { label: "422 immediately: the field is typed int, so a string is rejected", misconception: "That is strict mode, which you must opt into. The default is lax, and str-to-int for a clean digit string is squarely inside its documented conversion table." },
+    { label: "It coerces but emits a warning so the drift is observable", misconception: "Lax coercion is silent by design — success produces no signal at all. If you want drift to be observable, you make the model strict and let it fail, or you instrument the boundary yourself." },
+    { label: "Any numeric-looking string passes, including '89.99'", misconception: "Lax str-to-int requires the string to parse as an integer. '89.99' fails with an int_parsing error — which is exactly how the five quiet months ended in a wall of 422s." },
+  ]}
+/>
+
+## The output boundary: response_model as a one-way valve
+
+Validation has a mirror image on the way out. A handler that returns its ORM object returns *everything on it* — which is how the classic incident happens: `User` grows a `hashed_password` column, the endpoint returns `user`, and the hash ships to every client until someone reads the JSON. `response_model` is the valve: FastAPI validates and serializes the return value through the declared model, and fields not declared on it simply do not exist in the response:
+
+```python
+class UserPublic(BaseModel):
+    id: int
+    email: str
+    model_config = ConfigDict(from_attributes=True)  # read from ORM objects
+
+@app.get("/users/{user_id}", response_model=UserPublic)
+async def get_user(user_id: int):
+    return await db.fetch_user(user_id)   # full ORM row in, two fields out
+```
+
+The filtering is structural, not advisory: it works even when the function returns a richer object, and it keeps working when next year's migration adds the next sensitive column. The same discipline applies to configuration: `pydantic-settings` parses environment variables through a typed model at startup — `DATABASE_URL: PostgresDsn`, `TOKEN_TTL: timedelta`, `API_KEY: SecretStr` — so a malformed env crashes the deploy at boot instead of the first request at 3 a.m., and secrets repr as `**********` in logs.
+
+## Polymorphic payloads: discriminated unions
+
+Webhooks and event APIs send many shapes through one door. A plain `Union[A, B, C, D]` makes pydantic try members until one fits — slow, and worse, the error for a bad payload is a confusing pile of every member's failures. A discriminated union names the tag field, and dispatch becomes a single dict lookup:
+
+```python
+class PaymentSucceeded(BaseModel):
+    type: Literal["payment.succeeded"]
+    cents: int
+
+class RefundCreated(BaseModel):
+    type: Literal["refund.created"]
+    cents: int
+    original_id: str
+
+Event = Annotated[PaymentSucceeded | RefundCreated, Field(discriminator="type")]
+```
+
+An unknown tag fails with one precise error pointing at `type`, not a four-way pileup; validation cost stays flat as the union grows. For event ingestion at any volume, the discriminator is the difference between an error a partner can act on and one they will open a ticket about.
+
+<Quiz
+  id="02-pydantic-validation-quiz-2"
+  lessonSlug="02-pydantic-validation"
+  lang="en"
+  question="A handler returns the full User ORM object (including hashed_password) from an endpoint declared with response_model=UserPublic, which has only id and email. What does the client receive?"
+  choices={[
+    { label: "Only id and email — the return value is serialized through UserPublic, and undeclared fields are dropped structurally, not by convention", correct: true },
+    { label: "The whole object: response_model only drives the OpenAPI docs", misconception: "response_model is enforcement, not documentation — FastAPI validates and filters the return value through it. The docs are generated from the same declaration, but the filtering is real and happens on every response." },
+    { label: "A 500, because the returned object has fields the model does not declare", misconception: "Extra attributes on the source object are ignored, not rejected — that is what makes the pattern safe for ORM rows that keep growing columns. The response is the model fields, nothing else, no error." },
+    { label: "It depends on whether User inherits from UserPublic", misconception: "Filtering is by the declared fields of the response_model, fed from attributes of whatever you return. Inheritance is irrelevant — a dict, an ORM row, or an unrelated class all filter identically." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The two valves of a request: parse at the input boundary, filter at the output boundary — typed and trusted in between"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "raw", label: "Raw JSON body", sub: "bytes off the wire" },
+    { id: "core", label: "pydantic-core", sub: "Rust, ns-µs per field" },
+    { id: "valid", label: "Validators", sub: "field, then model" },
+    { id: "err", label: "422 response", sub: "loc + type per error" },
+    { id: "obj", label: "Typed object", sub: "trusted downstream" },
+    { id: "resp", label: "response_model", sub: "drops undeclared fields" },
+  ]}
+  edges={[
+    { from: "raw", to: "core", label: "parse" },
+    { from: "core", to: "valid", label: "coerce (lax)" },
+    { from: "valid", to: "err", label: "invalid" },
+    { from: "valid", to: "obj", label: "valid" },
+    { from: "obj", to: "resp", label: "on the way out" },
+  ]}
+  caption="Input either becomes a typed object or a 422 with per-field locations — business code never sees half-valid data. The same machinery runs in reverse on output, where response_model structurally removes anything not declared public."
+/>
+
+<KeyTakeaway>Pydantic is a parser, not a checker: `model_validate` turns untyped input into a typed object or a 422, and code past the boundary trusts its types. Lax mode coerces `"1"` to `1` — convenient for the stringly-typed web, and the mechanism by which contract drift hides for months; use strict mode where types are the contract. Validators run wherever validation runs, so they must be pure. `response_model` filters output structurally — the leak-proofing for ORM objects that grow sensitive columns. The Rust core costs ~1–2 µs per small model; 10k-item lists make it a measurable p99 line.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-pydantic-validation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain parse-do-not-validate, lax versus strict coercion, and the billing-style failure mode lax mode enables.", a: "Parse-do-not-validate: the boundary consumes untyped input and produces a typed object (or fails with a 422 listing loc/msg/type per error) — downstream code holds guaranteed types and writes no defensive checks. Lax mode, the default, applies a documented conversion table: '1' becomes 1, 'true' becomes True, 89.0 passes an int field — built for the stringly-typed web (query params, forms, env vars). The failure mode: coercion hides contract drift. The Hook billing service accepted string money for five months because lax mode kept coercing '8999'; the drift surfaced only when a locale change produced an uncoercible '89,99' — a wall of 422s at peak instead of one alert at the first bad payload. The remedy is asymmetric strictness: strict=True (per field, model, or model_validate call) where types are the contract — money, ids, partner payloads — lax where strings are structural. Cost honesty: Rust core, ~1–2 µs per small model, tens of ms for 10k-item nested lists." },
+    { q: "Why must validators be side-effect free, what does response_model actually do, and when do you reach for a discriminated union?", a: "Validators (field_validator, model_validator) execute wherever validation executes: request parsing, response_model serialization of the return value, every explicit model_validate in jobs or tests. A side effect inside one — metrics increment, audit insert — fires multiple times per request and once per replay, producing audit tables that disagree with traffic; validators carry invariants only, side effects live in handlers or middleware. response_model is the output valve: FastAPI validates and serializes the return value through the declared model, structurally dropping undeclared fields — the defense against the hashed_password-in-response incident class, and it keeps holding as ORM models grow columns. Discriminated unions handle polymorphic payloads: Field(discriminator='type') with Literal tags turns union resolution into one dict lookup instead of trying every member, keeps cost flat as the union grows, and produces one precise error at the tag instead of a pileup of every member's failures — what a webhook partner needs to self-serve." },
+  ]}
+/>
+
+<Recap lang="en">
+The boundary parses; the inside trusts. `model_validate` (or a FastAPI signature) turns a raw dict into a typed object or a 422 whose error list names every failing field — business logic downstream never sees half-valid data, and that is the entire point. The default lax mode coerces along a documented table — `"1"` to `1`, `"true"` to `True` — which absorbs the stringly-typed web and, in the same motion, hides contract drift: the billing service that accepted string cents for five months found out via a wall of `"89,99"` 422s at peak. Strictness is a dial — per field, per model, per call — and senior usage is asymmetric: strict where a type is a promise, lax where strings are structural. Validators carry cross-field invariants and must stay pure, because they fire wherever validation fires, including on the response path and in batch jobs. On the way out, `response_model` is a structural one-way valve that drops every undeclared field from whatever object the handler returns — the standing defense against shipping `hashed_password` to the world. `pydantic-settings` applies the same parse-at-the-boundary discipline to the environment at boot, and discriminated unions give polymorphic webhooks O(1) tag dispatch with errors a partner can read. The machinery is Rust and costs microseconds — honest, small, and visible only at 10k-item volume.
+</Recap>
