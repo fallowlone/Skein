@@ -42,6 +42,11 @@ export const TRACK_BAND: Record<Track, Band> = {
   "ci-cd":                "advanced",
   "node":                 "surface",
   "nest":                 "surface",
+  // 2026-06-10 pilots
+  "logic":                "foundations",
+  "react":                "surface",
+  "nextjs":               "surface",
+  "go":                   "surface",
 };
 
 export function bandOf(slug: Track): Band {
