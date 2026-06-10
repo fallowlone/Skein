@@ -1,0 +1,189 @@
+---
+concepts:
+- go-http-timeouts
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-timeouts-and-limits"
+sources:
+- https://pkg.go.dev/net/http
+- https://pkg.go.dev/context
+spiral: []
+status: ready
+summary: 'http.Server ships with zero timeouts: ReadHeader, Read, Write, and Idle all default to infinite, so one slowloris client exhausts connections. Set them, add per-request context deadlines, configure Transport timeouts on outbound clients, and cap bodies with MaxBytesReader.'
+title: 'Timeouts and limits: the zero values that hold connections forever'
+track: "go"
+unit: "03-http-services"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The outage report read like a riddle: the API died, but CPU was 4%, memory flat, and the database idle. What was exhausted was file descriptors — 65,535 of them, nearly all in ESTABLISHED, nearly all owned by a few hundred IPs that had each opened thousands of connections and then sent one HTTP header line per minute. A textbook slowloris. The server was `http.ListenAndServe(addr, mux)` — which constructs an `http.Server` with every timeout field at its zero value, and in Go zero means *no timeout at all*. Each trickling connection held a goroutine and an FD indefinitely, the accept loop kept accepting until the kernel said no, and legitimate clients got connection refused. The fix was eight lines: a configured Server with ReadHeaderTimeout and friends. The postmortem's sharpest line: nobody had decided those timeouts should be infinite — the zero value had decided for them, two years earlier, on day one.
+</Hook>
+
+<Crux>Every Go HTTP timeout defaults to infinity. Unset Server and Transport timeouts mean one slow peer can hold connections forever.</Crux>
+
+<Explanation>
+
+## The Server timeouts nobody sets
+
+`http.ListenAndServe(addr, h)` is production-hostile for exactly one reason: you cannot set timeouts on it. The four fields that matter live on `http.Server`, and each guards a different phase of the connection:
+
+```go
+srv := &http.Server{
+	Addr:              ":8080",
+	Handler:           mux,
+	ReadHeaderTimeout: 5 * time.Second,   // request line + headers
+	ReadTimeout:       10 * time.Second,  // headers AND full body
+	WriteTimeout:      30 * time.Second,  // from end-of-headers to last response byte
+	IdleTimeout:       120 * time.Second, // keep-alive gap between requests
+}
+log.Fatal(srv.ListenAndServe())
+```
+
+- **ReadHeaderTimeout** is the slowloris killer: the peer must deliver the complete header block within it. Cheap to set tight (2–5 s) because honest clients send headers in one packet.
+- **ReadTimeout** covers headers *plus the entire body*. A tight value here breaks legitimate large uploads — which is why many services set ReadHeaderTimeout small and ReadTimeout generous, or manage body deadlines per-route.
+- **WriteTimeout** caps writing the response. Brutal detail: the deadline is absolute from when header reading ended, not per-write — a streaming endpoint that sends events for longer than WriteTimeout gets its connection closed mid-stream no matter how lively it is.
+- **IdleTimeout** bounds how long a keep-alive connection may sit between requests; unset it falls back to ReadTimeout, and if *that* is also zero, idle connections live forever. 60–120 s is conventional.
+
+One more honesty check: **WriteTimeout does not stop your handler.** When it fires, net/http closes the connection; the handler goroutine keeps computing until it finishes and its writes fail. Timeouts on the Server protect *connections and FDs*, not CPU.
+
+<Quiz
+  id="03-timeouts-and-limits-quiz-1"
+  lessonSlug="03-timeouts-and-limits"
+  lang="en"
+  question="A server sets WriteTimeout: 10s. A handler streams a long report, writing a chunk every second. At t=10s the connection dies. The handler was never idle — why did the timeout fire?"
+  choices={[
+    { label: "WriteTimeout is an absolute deadline measured from the end of header reading, not an inactivity timeout — steady writing does not extend it", correct: true },
+    { label: "The handler forgot to call Flush, so nothing counted as written", misconception: "Flushing affects when bytes reach the client, not the deadline. WriteTimeout sets one fixed deadline on the connection for the whole response; even perfectly flushed chunks die when the absolute deadline passes." },
+    { label: "WriteTimeout resets on each Write, so a chunk must have been slower than 10s", misconception: "That is the inactivity model many expect — and what SetWriteDeadline-per-write via ResponseController can build — but the Server field is a single absolute deadline for the entire response phase." },
+    { label: "The client stopped reading and TCP backpressure stalled the writes", misconception: "Backpressure can stall writes, but the scenario says the connection died exactly at the configured 10s with healthy 1s chunks — the signature of the absolute deadline, not of a slow reader." },
+  ]}
+/>
+
+## Per-request deadlines: context, and what actually cancels
+
+Server timeouts are connection plumbing; *work* is bounded per request, with the context:
+
+```go
+func handler(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+
+	row := db.QueryRowContext(ctx, query, id) // honors the deadline
+	// r.Context() is also canceled if the CLIENT disconnects —
+	// downstream work stops when nobody is waiting for the answer.
+}
+```
+
+`r.Context()` is canceled when the client goes away or the connection breaks, so passing it into every database call and downstream request is free load-shedding: work for an abandoned request stops instead of completing into the void. Layer your own `WithTimeout` on top for per-route budgets. The discipline that makes this real: *every* blocking call in the handler must accept the ctx — one `QueryRow` instead of `QueryRowContext` and your 2-second budget has a hole in it. The stdlib also offers `http.TimeoutHandler(h, 2*time.Second, "timeout")`, which returns 503 at the deadline; honest caveat — like WriteTimeout, it cannot kill the handler goroutine, it just stops waiting for it (and its ResponseWriter hides Flusher, breaking streaming inside it).
+
+## The client side: the default http.Client waits forever
+
+The same zero-value trap exists outbound, and it is worse because `http.DefaultClient` is so convenient. It has **no timeout of any kind**: a hung upstream holds your goroutine, its FD, and whatever request-scoped memory it captured, forever. Production config sets budgets at two levels:
+
+```go
+client := &http.Client{
+	Timeout: 10 * time.Second, // hard cap: dial + TLS + headers + FULL BODY READ
+	Transport: &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 2 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   3 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,  // upstream "thinking time"
+		IdleConnTimeout:       90 * time.Second, // pooled conn lifetime
+		MaxIdleConnsPerHost:   32,               // default 2 throttles fan-out
+	},
+}
+```
+
+`Client.Timeout` is the blunt instrument — it spans everything including reading the body, so it must exceed your slowest legitimate full exchange. The Transport fields cut finer: dial, TLS handshake, and time-to-first-header-byte are where hung upstreams actually hang. Two defaults bite hard in production: `MaxIdleConnsPerHost` is **2**, so a service fanning out 200 concurrent calls to one host churns 198 fresh connections (TLS handshakes, TIME_WAIT pileup); and per-request deadlines still belong to the context — `http.NewRequestWithContext(ctx, ...)` — so the caller's budget propagates instead of every hop waiting its own full 10 s.
+
+## MaxBytesReader: the limit on what you will swallow
+
+Timeouts bound *time*; you must also bound *bytes*. An unauthenticated `io.ReadAll(r.Body)` is an invitation: a 2 GB JSON body is a 2 GB allocation, and a few concurrent ones OOM the pod. The stdlib answer:
+
+```go
+func createUser(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MiB cap
+	if err := json.NewDecoder(r.Body).Decode(&u); err != nil {
+		var mbe *http.MaxBytesError
+		if errors.As(err, &mbe) {
+			http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
+			return // 413, and the server stops reading the rest
+		}
+		http.Error(w, "bad json", http.StatusBadRequest)
+		return
+	}
+}
+```
+
+`MaxBytesReader` does more than truncate: on overflow it returns `*http.MaxBytesError`, and it tells the Server to stop reading the connection so a hostile client cannot keep pumping. Set it per route — 1 MiB for JSON APIs, larger only on upload endpoints — and remember `Content-Length` is a claim, not a guarantee; the reader enforces actual bytes.
+
+<Quiz
+  id="03-timeouts-and-limits-quiz-2"
+  lessonSlug="03-timeouts-and-limits"
+  lang="en"
+  question="A service calls an upstream with http.DefaultClient. The upstream accepts TCP connections but never sends response headers. What happens to each calling goroutine?"
+  choices={[
+    { label: "It blocks indefinitely — DefaultClient has no Timeout and the default Transport sets no ResponseHeaderTimeout, so nothing ever fires", correct: true },
+    { label: "It fails after about 30 seconds when the OS gives up on the connection", misconception: "The OS connect timeout only guards the dial, and this upstream accepts the dial just fine. Once the connection is established, a peer that stays silent triggers no kernel-level error — only deadlines you set." },
+    { label: "Go's runtime detects the stuck network read and cancels it after the GC notices", misconception: "The runtime never cancels blocked I/O on your behalf — a goroutine parked in a network read is perfectly normal as far as the scheduler is concerned. Cancellation in Go is always explicit: a deadline, a timeout field, or a context." },
+    { label: "It blocks until the request's context times out, which DefaultClient sets to 30s", misconception: "DefaultClient sets no context on your request — contexts come from the caller via NewRequestWithContext. A request built with http.NewRequest carries context.Background, which never expires." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does Go default every timeout to infinity instead of shipping sane defaults? Because the stdlib cannot guess your traffic: a 5-second default ReadTimeout would break file uploads, a 30-second ResponseHeaderTimeout would break long-polling, and silently changed defaults across Go versions would be a compatibility nightmare under the Go 1 promise. Zero-as-infinite is consistent and predictable — but it transfers the obligation to you, and the cheapest way to honor it is a single newServer() / newClient() constructor in your codebase that nobody bypasses, reviewed once, used everywhere.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="Each phase of a connection is guarded by a different timeout — every unset field is a phase where a slow peer can park forever"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "accept", label: "Accept", sub: "FD + goroutine" },
+    { id: "hdr", label: "Read headers", sub: "ReadHeaderTimeout" },
+    { id: "body", label: "Read body", sub: "ReadTimeout + MaxBytes" },
+    { id: "handle", label: "Handler", sub: "ctx deadline" },
+    { id: "write", label: "Write response", sub: "WriteTimeout (absolute)" },
+    { id: "idle", label: "Keep-alive idle", sub: "IdleTimeout" },
+  ]}
+  edges={[
+    { from: "accept", to: "hdr", label: "slowloris risk" },
+    { from: "hdr", to: "body", label: "headers done" },
+    { from: "body", to: "handle", label: "request ready" },
+    { from: "handle", to: "write", label: "respond" },
+    { from: "write", to: "idle", label: "reuse" },
+  ]}
+  caption="Outbound mirrors inbound: Dialer timeout, TLSHandshakeTimeout, ResponseHeaderTimeout, IdleConnTimeout on the Transport, with Client.Timeout as the hard cap over the whole exchange including the body."
+/>
+
+<KeyTakeaway>Zero timeout means infinite in net/http — on both sides of the wire. Production servers set ReadHeaderTimeout (slowloris), ReadTimeout, WriteTimeout (absolute, kills streams), and IdleTimeout; handlers bound work with context deadlines that every blocking call must accept; clients set Client.Timeout plus Transport dial/TLS/response-header budgets and raise MaxIdleConnsPerHost from its default of 2. MaxBytesReader caps bodies with a 413. None of this fires until you write it down.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-timeouts-and-limits-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the four http.Server timeout fields, what phase each guards, and the sharp edge of WriteTimeout.", a: "ReadHeaderTimeout bounds delivery of the request line and headers — the slowloris defense, safe to set tight at 2–5 s. ReadTimeout spans headers plus the whole body, so it must accommodate the largest legitimate upload. WriteTimeout caps the response phase, measured as one absolute deadline from the end of header reading — not inactivity — so a healthy stream writing chunks every second still dies when the deadline passes, and when it fires the handler goroutine is not stopped, only the connection is closed. IdleTimeout bounds the keep-alive gap between requests on a persistent connection, falling back to ReadTimeout when unset. All four default to zero, which means infinite — http.ListenAndServe offers no way to set them, which is why production code constructs an http.Server." },
+    { q: "An outbound call must respect a 2-second budget end to end. Walk through where you enforce it and the defaults that would betray you.", a: "Build the request with http.NewRequestWithContext using a context carrying the 2 s deadline — that propagates the caller's budget through dial, write, and read, and cancels the attempt the moment the budget expires. Underneath, configure the Transport so individual phases fail fast even without a context: Dialer.Timeout for connect, TLSHandshakeTimeout, ResponseHeaderTimeout for upstream thinking time, IdleConnTimeout for pool hygiene; keep Client.Timeout as a backstop covering the full exchange including body read. The defaults that betray you: http.DefaultClient has no timeout at all, the default Transport sets no ResponseHeaderTimeout, so an upstream that accepts TCP and goes silent parks your goroutine forever; and MaxIdleConnsPerHost defaults to 2, so high fan-out to one host churns fresh TLS handshakes instead of reusing the pool." },
+  ]}
+/>
+
+<Recap lang="en">
+The Go HTTP stack treats a zero timeout as no timeout, and http.ListenAndServe gives you no way to change that — production services construct an http.Server with four fields decided on purpose. ReadHeaderTimeout closes the slowloris hole by bounding header delivery; ReadTimeout covers the full body and must fit legitimate uploads; WriteTimeout is a single absolute deadline on the response phase that kills even healthy streams and never stops the handler goroutine, only the connection; IdleTimeout reaps parked keep-alive connections and silently inherits ReadTimeout when unset. Inside the handler, time belongs to the context: r.Context() cancels when the client disconnects, per-route WithTimeout sets the work budget, and the budget only holds if every blocking call takes the ctx — one context-free query is a hole in it. http.TimeoutHandler returns a 503 at the deadline but cannot kill the goroutine behind it. Outbound is the same trap mirrored: http.DefaultClient waits forever, so real clients set Client.Timeout as the full-exchange cap and Transport budgets for dial, TLS handshake, and response headers, raise MaxIdleConnsPerHost past its fan-out-throttling default of 2, and pass per-request contexts so deadlines propagate. Bytes need bounds too: MaxBytesReader caps the body, returns MaxBytesError for a clean 413, and stops reading a hostile stream. The failure mode is never exotic — it is one unset field, holding file descriptors open until the kernel runs out.
+</Recap>

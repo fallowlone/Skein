@@ -1,0 +1,140 @@
+---
+concepts:
+- go-gc
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-gc-mechanics-and-tuning"
+sources:
+- https://go.dev/doc/gc-guide
+- https://go.dev/doc/diagnostics
+spiral: []
+status: ready
+summary: 'Go runs a concurrent tri-color mark-sweep GC with write barriers and two sub-ms STW pauses. GOGC trades heap headroom for cycle frequency; GOMEMLIMIT adds a soft ceiling that can death-spiral near the limit. No compaction, no generations — deliberate choices, not gaps.'
+title: 'GC mechanics and tuning: tri-color mark-sweep, the pacer, GOGC and GOMEMLIMIT without myths'
+track: "go"
+unit: "06-runtime-and-performance"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The recommendation service got a cost-saving ticket: the pod requested 4 GiB but the live heap was only 1.2 GiB, so someone set the memory request to 1.5 GiB and added `GOMEMLIMIT=1400MiB` "to be safe." It sailed through staging. In production, Friday's catalog refresh briefly pushed live heap to 1.3 GiB — 93% of the limit — and the service didn't OOM. It did something worse: it stayed up. The GC, cornered between a heap it couldn't shrink and a ceiling it couldn't cross, started running cycles back-to-back, burning 40%+ of CPU on marking. p99 went from 18 ms to 900 ms. Dashboards showed no crash, no OOM event — just a service quietly spending half its brain on garbage collection. The on-call engineer restarted pods for an hour before anyone graphed GC CPU. The limit wasn't wrong by much: 200 MiB of headroom was the difference between a tuned service and a death spiral.
+</Hook>
+
+<Crux>Go's GC: concurrent tri-color mark-sweep, paced by GOGC, capped softly by GOMEMLIMIT. Sub-ms pauses are paid for in CPU.</Crux>
+
+<Explanation>
+
+## Tri-color mark-sweep, running while your code runs
+
+Go's collector is a **concurrent mark-sweep**: it finds live objects and frees the rest, with almost all the work happening *while your goroutines keep running*. The mark phase is modeled as tri-color: every object is **white** (not seen yet — presumed garbage), **grey** (seen, contents not yet scanned), or **black** (seen and fully scanned). Marking starts from the roots — global variables and every goroutine stack — colors them grey, then drains the grey set: scan an object's pointer fields, grey out whatever they reference, blacken the object. When no grey remains, every reachable object is black, and everything still white is garbage. Sweeping then returns white spans to the allocator lazily, amortized into subsequent allocations.
+
+Two stop-the-world pauses bracket the cycle, both typically **under a millisecond, usually tens to hundreds of microseconds**: one to start the mark phase (enable the write barrier on every P), one to terminate it (confirm no grey work remains). That headline number is real — but it is *not* the cost of the GC. The cost is concurrent: ~25% of `GOMAXPROCS` reserved for background marking while a cycle runs, plus **mark assists** — when a goroutine allocates faster than the background workers can scan, it is conscripted to mark in proportion to its allocation. Sub-millisecond pauses are not free; they are pauses converted into throughput tax.
+
+## The write barrier: why concurrent marking doesn't lose objects
+
+Marking concurrently with mutation has a classic hazard: your code can copy a pointer to a white object into an already-black object and then erase the only other reference. The collector, done with the black object, would never revisit it — the white object gets swept while reachable. Go closes this hole with a **write barrier**: during marking, every pointer store goes through a small runtime hook. Go's hybrid barrier (since 1.8) shades the *old* pointer being overwritten (deletion/Yuasa style) and, for stack writes, the new one (insertion/Dijkstra style) — the combination guarantees no reachable object stays white, and it is what eliminated the need to re-scan goroutine stacks during termination, capping the final pause. The price: every pointer write in your program is slightly more expensive while a cycle runs. Pointer-dense data structures (linked lists, trees of small nodes, `map[string]*Thing`) are doubly taxed — more for the barrier to intercept, more for marking to chase. This is the mechanical argument for value-oriented design: `[]Item` beats `[]*Item` not by ideology but by barrier and scan economics.
+
+<Quiz
+  id="02-gc-mechanics-and-tuning-quiz-1"
+  lessonSlug="02-gc-mechanics-and-tuning"
+  lang="en"
+  question="During concurrent marking, your code stores a pointer to object W (white) into object B (already black), then deletes the only other path to W. Why doesn't the GC free W?"
+  choices={[
+    { label: "The write barrier intercepts the pointer store and shades the affected object grey, so the marker revisits it before declaring the cycle done", correct: true },
+    { label: "The GC rescans every black object at the end of the cycle to catch late writes", misconception: "Rescanning all black objects would make the final pause proportional to the heap — exactly what the concurrent design exists to avoid. The hybrid barrier is what made even stack re-scanning unnecessary." },
+    { label: "It does free it — this race is why Go programs occasionally need defensive runtime.KeepAlive calls", misconception: "KeepAlive addresses a different issue: finalizers running while a still-used object has no remaining liveness from the compiler's view. The lost-object race is fully closed by the barrier; a correct GC never frees reachable memory." },
+    { label: "Black objects are write-protected via page faults during marking, so the store blocks until the cycle ends", misconception: "Go never write-protects the heap for GC; that is a technique from some compacting collectors. Stores proceed at full speed through a few extra instructions of barrier code — blocking writers for the whole mark phase would be a multi-millisecond stall." },
+  ]}
+/>
+
+## The pacer, GOGC, and GOMEMLIMIT — two knobs, two regimes
+
+When does a cycle start? The **pacer** aims to finish marking exactly as the heap reaches its target: roughly `live heap × (1 + GOGC/100)` (plus stacks and globals in the modern formula). With the default `GOGC=100`, a service holding 1 GiB live triggers GC around 2 GiB — your memory ceiling is roughly *double* your live heap. Raise GOGC (200, 400) and cycles get rarer: less GC CPU, more RAM; lower it and you trade the other way. The pacer also self-corrects using feedback from previous cycles, and conscripts allocating goroutines via mark assists when they outrun it — which is why allocation-heavy code sees latency degrade *before* memory looks scary.
+
+`GOMEMLIMIT` (Go 1.19+) is the second regime: a **soft limit on the runtime's total memory** (heap, stacks, runtime structures — not C allocations). As usage approaches it, the GC runs more aggressively than GOGC alone would dictate, trying to stay under. Use it when the real constraint is a container: `GOMEMLIMIT` to ~90–95% of the pod limit turns "OOMKilled at 2 a.m." into "more GC under pressure." The failure mode is the Hook: **live heap near the limit leaves the GC nothing to free**, so it runs continuously. The runtime caps GC at 50% of CPU to guarantee forward progress — a designed-in choice that prevents a complete wedge but still means your service can legally spend half its CPU marking. Leave headroom: if live heap is 1.3 GiB, a 1.4 GiB limit is a trap; 2 GiB is a budget.
+
+```go
+// Observing the GC honestly in production:
+// GODEBUG=gctrace=1 prints one line per cycle to stderr —
+// gc 412 @1572.337s 2%: 0.06+312+0.04 ms clock, ...,
+//        1290->1310->1190 MB, 1400 MB goal, ...
+// read: 2% of CPU on GC since start; 0.06 ms and 0.04 ms STW around
+// 312 ms of concurrent mark; heap 1290 MB at start, 1190 MB live after;
+// goal 1400 — live is 85% of goal: this service is near the spiral.
+
+debug.SetGCPercent(200)                    // GOGC, at runtime
+debug.SetMemoryLimit(1900 << 20)           // GOMEMLIMIT, bytes
+var m runtime.MemStats
+runtime.ReadMemStats(&m)                   // m.NumGC, m.PauseNs, m.GCCPUFraction
+```
+
+## The myths: no compaction, no generations — and why
+
+Two things engineers "know" about GCs that Go's GC deliberately does not do. **No compaction:** objects never move once allocated. Fragmentation is contained instead by a size-class allocator (~70 classes; an 18-byte object lives in a 24-byte slot, in a span dedicated to that class — worst-case internal waste is bounded). Non-moving is a choice that buys cheap, stable interop (pointers handed to syscalls or cgo stay valid) and no copy phase competing for memory bandwidth. **No generations:** there is no nursery; every cycle scans the full live set. The generational hypothesis — most objects die young — is largely *pre-handled* in Go by escape analysis: the youngest, shortest-lived values never reach the heap at all, dying on stacks for free. The Go team prototyped a generational collector and found the win didn't justify the cost: generations require an even more expensive write barrier to track old-to-young pointers, complicating the concurrent design that keeps pauses sub-millisecond. These are tradeoffs, not gaps — but they mean Go's GC rewards a *small live set and a low allocation rate*, and gives you no nursery to hide a churn-heavy design behind.
+
+<Quiz
+  id="02-gc-mechanics-and-tuning-quiz-2"
+  lessonSlug="02-gc-mechanics-and-tuning"
+  lang="en"
+  question="A service with a 1.3 GiB live heap runs with GOMEMLIMIT=1400MiB. Traffic is normal, nothing leaks. What is the most likely production symptom?"
+  choices={[
+    { label: "GC cycles run nearly back-to-back trying to stay under the limit, consuming up to the runtime's 50% GC CPU cap — latency degrades badly while memory dashboards look fine", correct: true },
+    { label: "The service is OOM-killed as soon as the heap crosses 1400 MiB", misconception: "GOMEMLIMIT is soft — the runtime responds with more aggressive GC, not termination. The kernel OOM killer responds to the cgroup limit, which is exactly why the limit should sit below it with real headroom." },
+    { label: "The runtime starts compacting the heap to fit under the limit", misconception: "Go's collector never moves objects; there is no compaction to invoke under pressure. The only lever the runtime has is collecting more often — which is precisely what produces the CPU burn." },
+    { label: "Allocations start failing with nil returns once the limit is reached", misconception: "Go has no failing allocator path — allocation either succeeds or the process dies. The visible signal of memory pressure in Go is GC frequency and assist time, never a nil from new or make." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="One GC cycle: a sub-ms pause turns on write barriers, concurrent marking drains grey objects while mutators run, a second pause confirms termination, sweep is amortized into allocation"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "trigger", label: "Pacer triggers", sub: "heap ≈ live×(1+GOGC/100)" },
+    { id: "stw1", label: "STW #1", sub: "enable write barrier" },
+    { id: "mark", label: "Concurrent mark", sub: "25% CPU + assists" },
+    { id: "barrier", label: "Write barrier", sub: "shades dirty ptrs" },
+    { id: "stw2", label: "STW #2", sub: "mark termination" },
+    { id: "sweep", label: "Lazy sweep", sub: "freed on alloc" },
+  ]}
+  edges={[
+    { from: "trigger", to: "stw1", label: "start cycle" },
+    { from: "stw1", to: "mark", label: "µs pause" },
+    { from: "barrier", to: "mark", label: "feeds grey set" },
+    { from: "mark", to: "stw2", label: "grey drained" },
+    { from: "stw2", to: "sweep", label: "µs pause" },
+  ]}
+  caption="GOMEMLIMIT bends the trigger: as runtime memory nears the limit, cycles start earlier and run harder — down to back-to-back marking capped at 50% CPU. Headroom between live heap and the limit is what keeps this regime an emergency brake instead of a steady state."
+/>
+
+<KeyTakeaway>Go's GC is concurrent tri-color mark-sweep: two sub-ms pauses, the real cost paid concurrently as ~25% CPU plus mark assists, correctness under mutation guaranteed by the hybrid write barrier. GOGC sets heap headroom (default: ceiling ≈ 2× live); GOMEMLIMIT is a soft container-fitting cap that death-spirals without headroom — the runtime caps GC at 50% CPU, but half your CPU is still gone. No compaction and no generations are deliberate: escape analysis is the nursery.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-gc-mechanics-and-tuning-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through one GC cycle: the two pauses, what runs concurrently, and where the real CPU cost lives.", a: "The pacer triggers a cycle when the heap approaches live×(1+GOGC/100), adjusted by GOMEMLIMIT pressure. STW pause #1 (tens of µs) enables the write barrier on all Ps. Marking then runs concurrently: roots (globals, goroutine stacks) are greyed, dedicated workers using ~25% of GOMAXPROCS drain the grey set — scan pointers, grey referents, blacken the object — while the hybrid write barrier shades pointers overwritten or stored by running code so no reachable object stays white. Goroutines allocating faster than marking proceeds are conscripted into mark assists, which is where allocation rate becomes user-visible latency. STW pause #2 confirms no grey work remains. Sweep is lazy, amortized into subsequent allocations. The sub-ms pauses are real, but the cost is the concurrent 25%+assists — pauses were traded for throughput." },
+    { q: "When do you reach for GOGC vs GOMEMLIMIT, and what is the death-spiral case with the soft limit?", a: "GOGC tunes the frequency/memory tradeoff: default 100 means the heap ceiling is roughly double the live set; raise it to spend RAM and save GC CPU (batch jobs, plenty of memory), lower it to shrink footprint at more CPU. GOMEMLIMIT (1.19+) is for fitting a container: a soft cap on total runtime memory, set to ~90–95% of the pod limit so pressure produces more GC instead of an OOM kill. The spiral: when live heap sits near the limit, the GC has almost nothing it can free, so it runs cycles back-to-back; the runtime caps GC at 50% CPU to guarantee progress, but the service still loses up to half its CPU and latency collapses while memory graphs look healthy. Diagnosis: GODEBUG=gctrace=1 (goal vs live) or GC CPU fraction. Fix: real headroom — raise the limit, shrink the live set, or both." },
+  ]}
+/>
+
+<Recap lang="en">
+Go's collector is a concurrent tri-color mark-sweep: objects move white→grey→black as marking drains from roots, two stop-the-world pauses measured in tens to hundreds of microseconds bracket the cycle, and the hybrid write barrier — shading overwritten pointers — guarantees that concurrent mutation never hides a reachable object, which is also what removed stack re-scanning from the final pause. The honest cost is concurrent: ~25% of GOMAXPROCS during marking plus mark assists that tax allocation-heavy goroutines directly, so allocation rate turns into latency before memory looks alarming. The pacer triggers cycles near live×(1+GOGC/100) — at the default, your ceiling is about twice your live heap. GOMEMLIMIT adds a soft total-memory cap for containers; set it with headroom, because a live heap parked near the limit forces back-to-back cycles, capped at 50% CPU by design — the Hook's service spent half its brain marking while every dashboard stayed green. Pointer-dense structures pay double (barrier traffic plus scan work), which is the mechanical case for value-oriented data. And the two famous absences are choices: no compaction (size-class spans bound fragmentation; pointers stay valid for syscalls and cgo) and no generations (escape analysis already lets the young die on stacks; a prototype generational collector wasn't worth the heavier barrier). The GC rewards exactly two things: a small live set and a low allocation rate.
+</Recap>

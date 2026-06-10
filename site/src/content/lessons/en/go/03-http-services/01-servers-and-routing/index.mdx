@@ -1,0 +1,155 @@
+---
+concepts:
+- go-http-server
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: middle
+order: 1
+prereqs: []
+slug: "01-servers-and-routing"
+sources:
+- https://pkg.go.dev/net/http
+- https://go.dev/blog/routing-enhancements
+spiral: []
+status: ready
+summary: 'http.Handler is one method and HandlerFunc adapts plain functions. Since Go 1.22 ServeMux routes by method and {id} wildcards with most-specific-wins precedence and panics on conflicts at registration. For most services the stdlib mux is the framework.'
+title: 'net/http as the framework: Handler, the 1.22 ServeMux, and routing without dependencies'
+track: "go"
+unit: "03-http-services"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The dependency audit flagged it on a Friday: the router library holding up a payments API had been archived on GitHub — no maintainers, no CVE response, 47 transitive packages. The team budgeted two sprints for a migration to another framework. Then someone actually diffed what the library did for them: path parameters, method matching, a NotFound hook. That was it. The whole surface had been in the standard library since Go 1.22. The migration took one afternoon — `r.PathValue("id")` instead of the framework's params map, `GET /users/{id}` instead of chained builder calls — and deleted 47 dependencies from `go.sum`. The only real bug they hit was instructive: two old routes that had silently shadowed each other in the framework's first-match-wins order now made `ServeMux` panic at startup with a pattern conflict. The panic was the stdlib telling them about a routing ambiguity that had been shipping for two years.
+</Hook>
+
+<Crux>net/http is the framework: Handler is one method, the 1.22 ServeMux routes by method and wildcard, and most services need nothing else.</Crux>
+
+<Explanation>
+
+## One interface, one method
+
+Everything in Go's HTTP stack — routers, middleware, frameworks, your code — speaks one contract:
+
+```go
+type Handler interface {
+	ServeHTTP(w http.ResponseWriter, r *http.Request)
+}
+
+// HandlerFunc adapts a plain function to the interface —
+// it's a named function type with a ServeHTTP method that calls itself.
+type HandlerFunc func(http.ResponseWriter, *http.Request)
+
+func (f HandlerFunc) ServeHTTP(w http.ResponseWriter, r *http.Request) { f(w, r) }
+```
+
+`HandlerFunc` is the trick worth pausing on: it is a *function type* that implements the interface, so any function with the right signature converts into a Handler with zero allocation — `mux.Handle("/x", http.HandlerFunc(myFunc))`, or the shorthand `mux.HandleFunc("/x", myFunc)`. And `ServeMux` itself implements `Handler`, which means routers nest: a mux can be a handler inside another mux, a middleware wraps a mux the same way it wraps a single endpoint. This uniformity is why Go's ecosystem composes so cleanly — there is no framework-specific handler signature to bridge, just one method. The server side mirrors it: `http.Server` takes any `Handler` as its root; `http.ListenAndServe(addr, mux)` spawns **one goroutine per connection**, so your handler code is concurrent by default and must be safe for it — a plain map shared across handlers without a mutex is a data race on the second simultaneous request.
+
+## The 1.22 ServeMux: methods, wildcards, precedence
+
+Until Go 1.22 the stdlib mux matched only literal prefixes — no methods, no path params — and that gap is what third-party routers filled for a decade. The 1.22 patterns close it:
+
+```go
+mux := http.NewServeMux()
+mux.HandleFunc("GET /users/{id}", getUser)        // {id} matches one segment
+mux.HandleFunc("POST /users", createUser)          // method-specific
+mux.HandleFunc("GET /files/{path...}", serveFile)  // {path...} matches the rest
+mux.HandleFunc("GET /{$}", home)                   // {$} = exactly "/", no subtree
+
+func getUser(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id") // wildcard value, no context dance
+	// ...
+}
+```
+
+The rules that matter in production:
+
+- **Method patterns**: a pattern with a method only matches that method — except `GET`, which also matches `HEAD` (the server discards the body). A method-less pattern matches all methods. A request that matches a path but no method gets `405 Method Not Allowed` automatically.
+- **Precedence is most-specific-wins, not first-registered-wins**: `GET /users/new` beats `GET /users/{id}`, and `/users/{id}` beats `/users/`. Registration order is irrelevant — a deliberate design choice so a route's behavior never silently depends on init order.
+- **Conflicts panic at registration**: if two patterns overlap and neither is more specific (`GET /a/{x}/c` vs `GET /a/b/{y}` — both match `/a/b/c`), `Handle` panics at startup. Loud and early beats quiet and wrong.
+- A trailing-slash pattern like `/static/` matches the whole subtree and triggers a 301 redirect from `/static` to `/static/`.
+
+<Quiz
+  id="01-servers-and-routing-quiz-1"
+  lessonSlug="01-servers-and-routing"
+  lang="en"
+  question="A service registers GET /users/{id} first and GET /users/new second. A request comes in for GET /users/new. Which handler runs, and why?"
+  choices={[
+    { label: "The /users/new handler — ServeMux picks the most specific matching pattern regardless of registration order", correct: true },
+    { label: "The /users/{id} handler, because it was registered first", misconception: "First-match-wins is how many third-party routers work, but the 1.22 ServeMux deliberately ignores registration order: the literal segment new is more specific than the wildcard, so it wins even when registered last." },
+    { label: "ServeMux panics at startup because the two patterns overlap", misconception: "It panics only on genuinely ambiguous overlaps where neither pattern is more specific. Here /users/new is strictly more specific than /users/{id}, so both register fine and precedence resolves the overlap." },
+    { label: "The request gets a 405 because two methods conflict", misconception: "Both patterns declare GET, so there is no method conflict at all — 405 happens when the path matches some pattern but the method matches none." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why panic on conflict instead of just picking an order? Because first-match-wins makes route resolution depend on code layout: move a registration between files, or change init order, and an endpoint silently swaps handlers — the exact two-years-latent bug from the Hook. Most-specific-wins is order-independent: the same set of patterns always resolves identically, and the only ambiguous cases left are true ties, which fail fast at startup where a deploy pipeline catches them, not at 3 a.m. on a request.
+</Inset>
+
+## When you actually need a framework
+
+Be honest about what third-party web frameworks add on top of this: parameter binding and validation, content negotiation helpers, middleware ecosystems, route groups. None of that is routing — the 1.22 mux matches per-request in well under a microsecond, which disappears next to a single 200 µs database round trip. The costs of a framework are real and recurring: a non-standard handler signature that every middleware must adapt to, a dependency tree you audit forever, and an abstraction between you and `ResponseWriter` exactly when you need `Flusher` or `Hijacker`. The pragmatic line most Go teams draw: start with `net/http` plus a thin middleware chain; reach for a router library only when you need something the mux genuinely lacks (regex constraints, per-route middleware DSLs). What you should *not* do is hand-roll validation badly and call it framework-free — pull a focused library for the focused job instead of a framework for everything.
+
+<Quiz
+  id="01-servers-and-routing-quiz-2"
+  lessonSlug="01-servers-and-routing"
+  lang="en"
+  question="Why does http.HandlerFunc(myFunc) satisfy the http.Handler interface even though myFunc is just a plain function?"
+  choices={[
+    { label: "HandlerFunc is a function type with a ServeHTTP method defined on it that calls the function itself — the conversion adapts the function to the interface", correct: true },
+    { label: "The compiler special-cases functions whose signature matches an interface's single method", misconception: "Go has no structural function-to-interface conversion; a function never satisfies an interface by signature alone. It works only because someone defined a method on the named function type — a pattern you can reuse for your own interfaces." },
+    { label: "HandlerFunc wraps the function in a struct that holds it as a field", misconception: "No struct and no allocation is involved — HandlerFunc is literally a named function type, and the method receiver is the function value itself. That is what makes the adapter free." },
+    { label: "It works only for functions declared at package level", misconception: "Any value with the right signature converts — closures, methods bound with method values, anonymous functions. The conversion is about the type, not where the function was declared." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A request flows from the listener through the Server into ServeMux pattern matching and out to your handler"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "conn", label: "TCP conn", sub: "1 goroutine each" },
+    { id: "server", label: "http.Server", sub: "parses request" },
+    { id: "mux", label: "ServeMux", sub: "method + path match" },
+    { id: "prec", label: "Precedence", sub: "most specific wins" },
+    { id: "handler", label: "Handler", sub: "ServeHTTP(w, r)" },
+    { id: "miss", label: "404 / 405", sub: "no pattern / no method" },
+  ]}
+  edges={[
+    { from: "conn", to: "server", label: "accept" },
+    { from: "server", to: "mux", label: "ServeHTTP" },
+    { from: "mux", to: "prec", label: "overlaps" },
+    { from: "prec", to: "handler", label: "PathValue set" },
+    { from: "mux", to: "miss", label: "no match" },
+  ]}
+  caption="ServeMux is itself a Handler, so muxes nest and middleware wraps them uniformly. Conflicting patterns where neither side is more specific panic at registration — ambiguity fails at startup, not on a request."
+/>
+
+<KeyTakeaway>The entire Go HTTP ecosystem composes through one method — ServeHTTP — with HandlerFunc as the zero-cost adapter from plain functions. Since 1.22 the stdlib ServeMux routes by method and wildcards with order-independent most-specific-wins precedence, panicking on true ambiguity at startup. Each connection gets its own goroutine, so handlers are concurrent by default; frameworks now buy ergonomics, not routing.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-servers-and-routing-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain how HandlerFunc turns a plain function into an http.Handler, and why ServeMux nesting falls out of the same design.", a: "HandlerFunc is a named function type whose ServeHTTP method simply calls the receiver — the function itself. Converting a function to HandlerFunc therefore satisfies the Handler interface with no wrapper struct and no allocation. Because Handler is the only contract in the stack, anything that implements it slots in anywhere a handler is expected: ServeMux implements Handler too, so a mux can be registered inside another mux, and middleware written as func(http.Handler) http.Handler wraps a single endpoint and a whole router identically. There is no framework-specific signature to adapt to — one method is the entire integration surface." },
+    { q: "Describe the 1.22 ServeMux precedence and conflict rules, and the failure mode they were designed to kill.", a: "Patterns may declare a method (GET also matches HEAD), single-segment wildcards like {id}, a trailing {path...} rest wildcard, and {$} for exact root. When several patterns match, the most specific wins — GET /users/new beats GET /users/{id} — and registration order plays no part. If two patterns overlap with neither more specific (both matching /a/b/c, say), Handle panics at registration. This kills the first-match-wins failure mode of older routers, where moving a route registration between files silently changed which handler served an overlapping path; with ServeMux the same pattern set always resolves the same way, and genuine ambiguity dies at startup instead of misrouting production requests. A matched path with a wrong method returns 405 automatically." },
+  ]}
+/>
+
+<Recap lang="en">
+Go's HTTP stack is one interface deep: Handler's single ServeHTTP method is the contract for endpoints, routers, and middleware alike, and HandlerFunc adapts any plain function to it for free because it is a function type carrying its own ServeHTTP. The server spawns a goroutine per connection, so handler code is concurrent from the first deploy and shared state needs synchronization from day one. Since Go 1.22 the stdlib ServeMux covers what third-party routers existed for: method-qualified patterns where GET also serves HEAD, single-segment `{id}` wildcards read back with r.PathValue, `{path...}` for trailing rest, `{$}` for exact root, and automatic 405 when the path matches but the method does not. Precedence is most-specific-wins and deliberately ignores registration order — `GET /users/new` beats `GET /users/{id}` wherever it is declared — and patterns that overlap with no winner panic at registration, converting silent route shadowing into a startup failure your pipeline catches. Pattern matching costs well under a microsecond, noise next to any real handler work. Frameworks still earn their place for binding, validation, and middleware ecosystems, but that is ergonomics, not routing — and the price is a custom handler signature, a permanent dependency audit, and indirection in front of ResponseWriter exactly where Flusher and Hijacker live. Default to the stdlib; add focused libraries for focused jobs.
+</Recap>
