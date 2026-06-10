@@ -1,0 +1,171 @@
+---
+concepts:
+- go-channels
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-channels"
+sources:
+- https://go.dev/doc/effective_go#channels
+- https://go.dev/blog/pipelines
+- https://go.dev/ref/spec#Channel_types
+spiral: []
+status: ready
+summary: 'An unbuffered channel is a synchronization point; a buffered one is a bounded queue. Axioms: nil blocks forever, closed reads zero values, send on closed panics. select, fan-out/fan-in, worker pools, context through pipelines — and the deadlock from a forgotten close.'
+title: 'Channels: synchronization points, bounded queues, and the deadlocks between them'
+track: "go"
+unit: "02-concurrency"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The nightly export job died at 03:12 with the runtime's bluntest message: `fatal error: all goroutines are asleep - deadlock!` The pipeline was textbook: one producer reading rows into a channel, eight workers transforming them, one collector writing the output file. Three weeks earlier someone had added an error path to the workers — on a bad row, the worker logged and returned. That night, all eight workers hit bad rows and exited. The producer kept sending into a channel with capacity 64; sixty-four sends later it blocked forever, the collector blocked reading from workers that no longer existed, and the runtime — seeing every goroutine parked with no possible waker — killed the process. The buffer hadn't prevented the deadlock. It had only delayed it by exactly 64 rows, long enough to pass every test with ten-row fixtures.
+</Hook>
+
+<Crux>Unbuffered = rendezvous, buffered = bounded queue. Nil blocks, closed reads zeros, send-on-closed panics. Buffers delay deadlocks; only ownership and close discipline prevent them.</Crux>
+
+<Explanation>
+
+## Unbuffered is a rendezvous, buffered is a queue
+
+An **unbuffered** channel (`make(chan T)`) has no storage: a send blocks until a receiver is ready, and the value is handed directly from one goroutine's stack to the other's. That makes it a *synchronization point* — when `ch <- v` returns, you know a receiver has the value, and the send is guaranteed to happen-before the receive completes. A **buffered** channel (`make(chan T, n)`) is a bounded FIFO queue: sends complete immediately while there is capacity, block when full; receives block when empty. The semantics differ in kind, not degree: an unbuffered channel transfers *and* synchronizes; a buffered channel mostly just transfers, telling you nothing about when the other side ran.
+
+The capacity is a tuning knob with a sharp edge. Capacity 0 couples producer and consumer beat-for-beat. A small buffer (the size of a real burst) absorbs jitter and decouples their schedules. An "infinite" buffer (`make(chan T, 1_000_000)`) is how you convert visible backpressure into invisible memory growth — the producer never feels the consumer falling behind until the process OOMs. Senior rule: choose 0 unless you can say which measured burst the buffer absorbs, and treat a full buffer as *signal* (the consumer is too slow), not as an obstacle to bypass with a bigger number.
+
+## The channel axioms
+
+Four behaviors define every channel bug you will ever debug:
+
+1. **Send to a nil channel blocks forever.** Same for receive. A `var ch chan int` never made — or a map lookup that returned the zero value — produces a goroutine parked permanently. Deliberately useful inside `select`: setting a case's channel to nil *disables that case*.
+2. **Receive from a closed channel returns immediately** with the element type's zero value; the two-value form `v, ok := <-ch` reports `ok == false`. A `for range ch` loop exits when the channel is closed *and drained* — which is why `range` over a channel nobody closes hangs forever.
+3. **Send to a closed channel panics.** Always, immediately, unrecoverable in the sense that it means a protocol violation: two parties believed they owned the channel.
+4. **Close of a closed (or nil) channel panics.** Close is a one-shot broadcast, not a cleanup you sprinkle defensively.
+
+Axioms 3 and 4 dictate the ownership rule: **the sender closes, never the receiver**, and exactly one party closes. Close means "no more values will ever arrive" — it is a message *from* the producer. With multiple producers, none of them can safely close; the idiom is a `sync.WaitGroup` over the producers and one supervising goroutine that calls `close` after `wg.Wait()`.
+
+```go
+// Fan-out / fan-in with correct close discipline and cancellation.
+func process(ctx context.Context, rows <-chan Row) <-chan Result {
+	out := make(chan Result)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ { // fan-out: 8 workers share one input channel
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := range rows { // exits when rows is closed and drained
+				select {
+				case out <- transform(r):
+				case <-ctx.Done(): // unblocks the send if downstream is gone
+					return
+				}
+			}
+		}()
+	}
+	go func() { // exactly one closer, after ALL senders are done
+		wg.Wait()
+		close(out)
+	}()
+	return out // fan-in: the consumer ranges over a single merged stream
+}
+```
+
+<Quiz
+  id="02-channels-quiz-1"
+  lessonSlug="02-channels"
+  lang="en"
+  question="A for range loop reads from a channel fed by three producer goroutines. The loop never exits, even after all producers return. The most likely cause?"
+  choices={[
+    { label: "Nobody closed the channel — range only exits on close-and-drained, and with multiple producers a supervisor must close after a WaitGroup confirms all senders finished", correct: true },
+    { label: "range over channels loops forever by design; you must break manually", misconception: "range over a channel terminates cleanly — but only when the channel is closed and emptied. The construct is fine; the missing piece is the close, which with several producers no single producer can safely perform." },
+    { label: "One of the producers should call close(ch) as it returns", misconception: "With three producers, the first to close wins and the other two panic on their next send (send on closed channel). Close is a broadcast that no more values will ever arrive — only a supervisor that knows all senders finished can say that." },
+    { label: "The receiver should close the channel once it has enough values", misconception: "Receiver-side close inverts ownership: producers still running would panic on their next send. Close always belongs to the sending side; the receiver signals loss of interest via context cancellation instead." },
+  ]}
+/>
+
+## select: composing channels, and the default escape hatch
+
+`select` waits on several channel operations and runs one that is ready, choosing *uniformly at random* among ready cases — randomness is deliberate, preventing starvation of a always-also-ready case. With a `default` clause it becomes non-blocking: try the operation, fall through if it would block. That is the building block for *try-send* patterns — shed load instead of queuing it:
+
+```go
+select {
+case events <- e: // delivered
+default:
+	droppedTotal.Inc() // buffer full: drop and count, don't block the hot path
+}
+```
+
+The honest tradeoff: `default` converts blocking into data loss, which is right for metrics and wrong for money. The middle option is a timeout case (`case <-time.After(d)` — or a reusable `time.Timer` in hot loops, since `time.After` allocates a timer that lives until it fires).
+
+## Cancellation flows down the pipeline
+
+A pipeline is only as robust as its exit story. The standard contract: every stage takes a `context.Context`, and every *send* sits inside a `select` with `case <-ctx.Done()`. Cancellation flows downward from the caller; close flows forward with the data; and goroutines unblock no matter which side disappears. Skip the `select` on send and you recreate the Hook: a downstream stage that stops reading leaves every upstream sender parked forever — the leak from the previous lesson, manufactured wholesale. The runtime only declares `deadlock!` when *every* goroutine is parked; in a real server with one live HTTP listener, your deadlocked pipeline just sits there silently, indistinguishable from idle except in the goroutine profile.
+
+<Quiz
+  id="02-channels-quiz-2"
+  lessonSlug="02-channels"
+  lang="en"
+  question="A producer sends to a channel with capacity 64; its eight consumers all crashed. The producer's tests (10 items) pass, but production (millions of items) hangs. Why did the buffer not prevent the hang?"
+  choices={[
+    { label: "A buffer only delays the block: after 64 unconsumed sends the channel is full and the producer parks forever — capacity absorbs bursts, it does not survive a dead consumer", correct: true },
+    { label: "The buffer was simply too small; capacity 1,000,000 would have fixed it", misconception: "A bigger buffer moves the hang later and adds unbounded memory growth before it. No finite capacity survives a consumer that is gone permanently — the fix is an exit path (select on ctx.Done) and supervision, not a larger queue." },
+    { label: "Sends to a buffered channel never block; the hang must be elsewhere", misconception: "Buffered sends complete immediately only while there is free capacity. Once 64 values sit unconsumed, the 65th send blocks exactly like an unbuffered one — which is why small-fixture tests sailed through and production parked." },
+    { label: "The producer should have closed the channel before sending to wake the consumers", misconception: "Close signals that no more values will come, and sending after close panics. It is not a wake-up mechanism, and the consumers here had already exited — the missing piece was cancellation on the send path." },
+  ]}
+/>
+
+<Inset kind="deep-dive" lang="en">
+Worker pools are fan-out with a budget. The pool size bounds concurrent work (and therefore memory, downstream connections, and CPU contention); the input channel's capacity bounds queued work; and the two together define the system's backpressure. A pool of 8 workers over an unbuffered input means at most 8 items in flight and the producer feels every stall instantly. Adding capacity 100 lets the producer run ahead through bursts but adds up to 100 items of latency to the oldest queued item. What you must never do is grow either number reactively under load — that is how a slow database turns into a slow database plus ten thousand goroutines holding request buffers. Decide the budget when you design the pool, expose the queue depth as a metric, and shed or reject above it.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="One producer fans out to a worker pool over a channel, results fan in to a single consumer, with close after WaitGroup and cancellation flowing against the data"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "prod", label: "Producer", sub: "owns input, closes it" },
+    { id: "ch", label: "chan Row, cap 64", sub: "bounded queue" },
+    { id: "workers", label: "8 workers", sub: "range + select ctx" },
+    { id: "out", label: "chan Result", sub: "fan-in" },
+    { id: "closer", label: "Supervisor", sub: "wg.Wait then close" },
+    { id: "ctx", label: "context.Done", sub: "cancel, flows up" },
+  ]}
+  edges={[
+    { from: "prod", to: "ch", label: "send" },
+    { from: "ch", to: "workers", label: "fan-out" },
+    { from: "workers", to: "out", label: "results" },
+    { from: "closer", to: "out", label: "close" },
+    { from: "ctx", to: "workers", label: "unblocks" },
+  ]}
+  caption="Data and close move left to right; cancellation moves right to left through ctx.Done selected on every send. The supervisor — not any single worker — closes the fan-in channel, because only it knows all senders have finished."
+/>
+
+<KeyTakeaway>An unbuffered channel synchronizes (send happens-before receive completes); a buffered one is a bounded queue whose fullness is backpressure signal. Axioms: nil blocks forever, closed reads zero values with ok=false, send/close on closed panics — so the sender closes, exactly once, via a supervisor when there are many. Every send in a pipeline selects on ctx.Done, or a dead consumer parks the producer forever.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-channels-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the four channel axioms and the ownership rule they force.", a: "(1) Send or receive on a nil channel blocks forever — useful deliberately in select, where nil-ing a case's channel disables it. (2) Receive from a closed channel returns immediately with the zero value, and v, ok := <-ch yields ok == false; for range exits when the channel is closed and drained. (3) Send on a closed channel always panics. (4) Closing a closed or nil channel panics. Because 3 and 4 make close dangerous in the wrong hands, ownership follows: the sender closes, never the receiver, and exactly one party closes. With multiple producers no producer may close — a supervisor goroutine waits on a sync.WaitGroup over all senders and closes once after wg.Wait(). Close is a one-shot broadcast meaning no more values will ever arrive, not a defensive cleanup." },
+    { q: "Why does a buffered channel not protect a pipeline from a dead consumer, and what does?", a: "Capacity only defers blocking: sends complete instantly while slots remain, and the moment n values sit unconsumed the next send parks exactly like an unbuffered send. If consumers exited permanently, any finite buffer fills and the producer blocks forever — small test fixtures pass (under capacity) while production hangs, and an enormous buffer just converts the hang into unbounded memory growth first. The real protections are structural: every send sits in a select with case <-ctx.Done() so cancellation can unblock it; workers exit via range over a closed input; a supervisor closes the fan-in after a WaitGroup confirms all senders finished; and queue depth is a metric with a shedding policy (select with default for droppable data, timeouts otherwise). The runtime only reports deadlock! when every goroutine is parked — in a live server the same bug is a silent goroutine leak instead." },
+  ]}
+/>
+
+<Recap lang="en">
+Channels come in two semantically different kinds. Unbuffered channels are rendezvous points: the send blocks until a receiver takes the value hand-to-hand, so completion of the send synchronizes the two goroutines. Buffered channels are bounded FIFO queues that decouple schedules while capacity lasts; their fullness is backpressure information, and replacing a full buffer with a huge one merely trades visible blocking for invisible memory growth. Four axioms govern everything: nil channels block forever (and disable select cases on purpose), closed channels read zero values with ok false and terminate range once drained, sends on closed channels panic, and double-close panics. Those panics force the ownership rule — the sender closes, exactly once, and with multiple producers a supervisor closes after a WaitGroup confirms all of them finished. select composes channel operations, picking uniformly at random among ready cases; with default it becomes a non-blocking try-send for load shedding, and with a timeout case it bounds waits. Fan-out spreads one input channel across a worker pool whose size budgets concurrency, fan-in merges results into one stream, and cancellation flows opposite to the data: every send in every stage selects on ctx.Done, so a vanished downstream cannot park upstream senders forever. The nightly-job failure is the canonical trap — workers that exit on error while the producer keeps sending into a capacity-64 channel; the buffer delays the hang by exactly 64 rows, tests with small fixtures never reach it, and the runtime announces deadlock only when the whole process is parked, while in a real server the same bug hides as a quiet goroutine leak.
+</Recap>
