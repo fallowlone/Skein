@@ -1,20 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { DOMAIN_FAMILIES, conceptState, masteryField, topGaps, topShaky } from "./mastery-field";
+import { TRACKS } from "~/types";
 import type { Concept, KnowledgeState } from "./types";
 
-const ALL_TRACKS = [
-  "math", "algorithms", "base-cs", "networking", "browser", "frontend", "backend", "apis", "databases",
-  "caching", "queues", "distributed", "security", "observability", "deployment", "performance",
-  "data-engineering", "ai-llm", "engineering-practice", "sql-postgres", "js-engine", "typescript",
-  "system-design", "system-design-cases", "aws", "python", "ci-cd", "node", "nest",
-] as const;
-
 describe("DOMAIN_FAMILIES", () => {
-  it("covers every one of the 29 tracks exactly once", () => {
+  it("covers every track in TRACKS exactly once", () => {
     const mapped = DOMAIN_FAMILIES.flatMap((f) => f.tracks);
     expect(new Set(mapped).size).toBe(mapped.length); // no dupes
-    expect(new Set(mapped)).toEqual(new Set(ALL_TRACKS));
-    expect(mapped.length).toBe(29);
+    expect(new Set(mapped)).toEqual(new Set(TRACKS));
+    expect(mapped.length).toBe(TRACKS.length);
   });
   it("every family has en+ru label and a hue token", () => {
     for (const f of DOMAIN_FAMILIES) {
