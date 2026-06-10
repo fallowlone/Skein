@@ -1,0 +1,191 @@
+---
+concepts:
+- nextjs-server-logging
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-server-logging-and-vitals"
+sources:
+- https://nextjs.org/docs/app/api-reference/functions/use-report-web-vitals
+- https://nodejs.org/api/async_context.html
+- https://opentelemetry.io/docs/specs/otel/logs/
+spiral: []
+status: ready
+summary: 'Server component logs go to server stdout only — teams lose evidence after migrating from pages. Structured pino JSON with a middleware-minted request id on every line restores it; useReportWebVitals beacons field LCP and INP tagged with the deploy id that caused them.'
+title: 'Server logging and Web Vitals: structured logs with request ids, and beacons that name the bad deploy'
+track: "nextjs"
+unit: "07-observability-and-errors"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Three weeks after the pages-to-App-Router migration ships, the payments provider starts rejecting 4% of checkout attempts. The on-call engineer does what always worked: opens the browser console on a reproduction. Empty. The checkout logic is a server component now — its `console.log` calls have been faithfully printing to a serverless function's stdout, unstructured, where the log shipper splits each multi-line object dump into seven orphan lines, and retention is 24 hours. There is no request id, so the three interleaved checkout attempts in the surviving logs cannot be told apart. The same deploy also regressed LCP on the product page from 2.1 s to 3.4 s — CI Lighthouse stayed green, because lab and field are different things — and nobody noticed for nine days, until conversion dropped far enough for finance to ask first. Two failures, one root cause: the team migrated where the code runs without migrating where the evidence goes.
+</Hook>
+
+<Crux>RSC logs never reach the browser: one JSON line per event with a request id is your evidence; the browser beacons vitals back to you.</Crux>
+
+<Explanation>
+
+## Your logs moved — one JSON line per event, on the server
+
+The mechanism behind the "lost logs" is the rendering model itself. In the pages router, component code ran twice — server render, then browser hydration — so its `console.log` showed up in the browser console and debugging there *worked*. A server component never ships to the client: its code executes only on the server, and its logs exist only in the server process's stdout. Nothing is lost — it all moved, to a place the team was not looking, on serverless often a platform log drain with retention measured in hours. The migration checklist item nobody writes down: relocate your eyes.
+
+Once you are looking at server stdout, format becomes the next failure. `console.log(order)` prints a multi-line object dump; log shippers are line-oriented, so one event becomes seven orphan fragments, un-queryable and half-attributed. The fix is structural, not cosmetic: one JSON object per line per event — the pino model — with levels, child loggers, and redaction built in:
+
+```ts
+// lib/logger.ts
+import pino from 'pino';
+
+export const logger = pino({
+  level: process.env.LOG_LEVEL ?? 'info',
+  redact: {
+    paths: ['req.headers.authorization', 'req.headers.cookie', '*.email', '*.token'],
+    censor: '[redacted]',
+  },
+});
+```
+
+The `redact` block is the PII discipline, enforced at the logger so it cannot be forgotten at a call site. Logs are the leakiest store you operate: they outlive the database row (cold storage, vendor copies, developer laptops), they skip the access controls your tables have, and "we logged the whole request body for debugging" is how tokens and emails end up in a third-party indexer. Redact centrally; log identifiers (user id, order id), never identifying *content*.
+
+<Quiz
+  id="03-server-logging-and-vitals-quiz-1"
+  lessonSlug="03-server-logging-and-vitals"
+  lang="en"
+  question="After migrating a checkout flow from pages to App Router server components, engineers report 'our logging is gone' — the browser console is empty during failures. What actually happened?"
+  choices={[
+    { label: "Nothing is gone: server component code never ships to the browser, so console.log now prints only to server stdout — in pages, component code re-ran in the browser during hydration, which is why logs used to appear there", correct: true },
+    { label: "The build strips console.log in production; they need a logging library to restore it", misconception: "Stripping is an optional compiler setting, not the mechanism here. The logs print fine — on the server. The rendering model changed: RSC code executes once, server-side, so the browser console was never going to see it." },
+    { label: "Logs are buffered by streaming SSR and flushed only after the response completes, so they appear late", misconception: "stdout writes are not tied to the response lifecycle — they appear in the server logs as they execute. The engineers are not seeing them late; they are looking in a place (the browser) where this code no longer runs at all." },
+    { label: "An error boundary is swallowing the errors along with their logs", misconception: "Boundaries catch render errors; they do not intercept or suppress stdout. Even when error.tsx renders, every console.log that executed server-side is in the server logs — which is exactly where nobody was looking." },
+  ]}
+/>
+
+## Correlation: one request id on every line
+
+Structured logs from concurrent traffic are still a shredder without correlation: three checkouts interleave, and `payment failed` belongs to nobody. The fix is an id minted once at the first hop and attached to every line. Middleware is the first hop — accept an inbound `x-request-id` from your load balancer if present (so your id joins the LB's logs too), mint one otherwise:
+
+```ts
+// middleware.ts — every request gets an id before anything else logs
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
+
+export function middleware(req: NextRequest) {
+  const requestId = req.headers.get('x-request-id') ?? crypto.randomUUID();
+  const headers = new Headers(req.headers);
+  headers.set('x-request-id', requestId);
+  const res = NextResponse.next({ request: { headers } });
+  res.headers.set('x-request-id', requestId); // echo to the client — support tickets quote it
+  return res;
+}
+```
+
+```ts
+// In any server component, action, or route handler
+import { headers } from 'next/headers';
+import { logger } from '~/lib/logger';
+
+const log = logger.child({ reqId: (await headers()).get('x-request-id') });
+log.error({ provider: 'stripe', code: 'card_declined' }, 'payment authorization failed');
+```
+
+For deep utility code that should log without the id threaded through ten signatures, Node's `AsyncLocalStorage` carries per-request context across `await` boundaries — enter the store at the handler or action entry point and any function below can fetch the bound logger. The honest caveat: middleware can run in a separate edge isolate from your Node render process, so ALS context does **not** span the middleware-to-render gap — the header is the bridge between processes; ALS is convenience within one. Then decide *what* each layer logs, because the layers run at different frequencies: middleware runs on every request, so it earns one short line of routing or auth decisions at most; server actions log mutation intent and outcome with the actor id — that is your audit trail; server components log data-fetch *failures* only (renders are too frequent to narrate success); route handlers log a one-line request summary. And this is where the previous lesson's digest pays off: `onRequestError` ships the digest with the request id attached, so a user ticket quoting either one resolves to the full story in a single query.
+
+## Field vitals, beaconed home
+
+The server half is now solid; the client half is what the nine-day LCP regression exposes. CI Lighthouse is a *lab* number: one synthetic machine, one network profile, an empty cache. Your users are a distribution of devices and networks, and the only honest performance number is the *field* p75. Next.js hands you the collection hook — `useReportWebVitals` fires in the browser for each metric as it resolves; you forward it with `navigator.sendBeacon`, which survives page unload (a regular `fetch` would be cancelled mid-flight when the user navigates away — exactly when LCP data is finalized):
+
+```tsx
+'use client';
+// app/vitals.tsx — mounted once in the root layout
+import { useReportWebVitals } from 'next/web-vitals';
+
+export function Vitals() {
+  useReportWebVitals((m) => {
+    const body = JSON.stringify({
+      name: m.name,            // 'LCP' | 'INP' | 'CLS' | ...
+      value: m.value,
+      rating: m.rating,        // 'good' | 'needs-improvement' | 'poor'
+      route: location.pathname,
+      deploy: process.env.NEXT_PUBLIC_DEPLOY_ID, // the join key that names the bad deploy
+    });
+    if (!navigator.sendBeacon('/api/vitals', body)) {
+      fetch('/api/vitals', { method: 'POST', body, keepalive: true });
+    }
+  });
+  return null;
+}
+```
+
+The `deploy` field is the entire point. Aggregate p75 per route per deploy id, and "LCP got worse" becomes "deploy 7f3a moved product-page LCP from 2.1 s to 3.4 s" — a one-line group-by instead of nine days of drift. Judge against the standard thresholds at p75: LCP good under 2.5 s, poor past 4 s; INP good under 200 ms, poor past 500 ms; CLS good under 0.1, poor past 0.25. Then close the loop with an alerting policy that respects human attention: **alert on rates, page on user impact**. A single 500 log line is neither — error *rate* per route crossing a budget is an alert; checkout failure rate or product-page p75 crossing its threshold is a page. Paging on log lines trains the on-call to ignore the pager, which is the most expensive observability failure of all.
+
+<Inset kind="why" lang="en">
+Why p75 and not the average or p50? An average hides a bimodal reality — half your users on fast laptops, half on mid-range phones over cellular — and p50 literally describes the lucky half. p75 says: three quarters of user experiences are at least this good, which is strict enough to surface the painful tail without letting one user's broken extension page you. It is also the percentile the Core Web Vitals thresholds are defined against, so your numbers stay comparable to the ecosystem's.
+</Inset>
+
+<Quiz
+  id="03-server-logging-and-vitals-quiz-2"
+  lessonSlug="03-server-logging-and-vitals"
+  lang="en"
+  question="CI Lighthouse is green, but field LCP p75 on the product page sits at 3.4 s for nine days before anyone notices. What is the missing piece that would have caught it on day one?"
+  choices={[
+    { label: "Field vitals collection — useReportWebVitals beaconing each metric tagged with route and deploy id — aggregated to p75 per route per deploy, with an alert on the threshold crossing", correct: true },
+    { label: "Stricter Lighthouse budgets in CI, failing the build under a 2.5 s LCP", misconception: "Lab and field measure different worlds: one synthetic machine with a clean cache versus your real device-and-network distribution. CI stayed green during the entire regression — tightening a lab budget cannot observe what only users experience." },
+    { label: "Server-side render timing logs per route, since LCP is dominated by server response", misconception: "Server timing is one input among many — LCP also moves with image priority, client JS, preloads, and CDN cache state, all invisible to server logs. Only the browser knows when the largest element painted; the number must come from the field." },
+    { label: "Real-time alerting on every vitals beacon rated poor", misconception: "Single beacons are noise — one throttled phone on a train rates poor with your site at its best, and paging on it burns the on-call. The signal is the aggregate: p75 per route per deploy crossing a threshold — alert on rates, page on user impact." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Two evidence pipelines — server logs and field vitals — joined by request id and deploy id"
+  hue="var(--d-ai)"
+  perRow={3}
+  nodes={[
+    { id: "mw", label: "Middleware", sub: "mints x-request-id" },
+    { id: "server", label: "RSC / action", sub: "pino child({ reqId })" },
+    { id: "drain", label: "stdout JSON", sub: "shipper, then store" },
+    { id: "browser", label: "Browser", sub: "useReportWebVitals" },
+    { id: "beacon", label: "sendBeacon", sub: "POST /api/vitals" },
+    { id: "store", label: "Query layer", sub: "join reqId + deploy" },
+  ]}
+  edges={[
+    { from: "mw", to: "server", label: "header carries id" },
+    { from: "server", to: "drain", label: "one line per event" },
+    { from: "drain", to: "store", label: "ship" },
+    { from: "browser", to: "beacon", label: "LCP / INP / CLS" },
+    { from: "beacon", to: "store", label: "tagged with deploy" },
+  ]}
+  caption="The server pipeline: middleware mints or accepts x-request-id, every pino line carries it as a child-logger field, and structured JSON ships from stdout to the log store. The client pipeline: useReportWebVitals beacons each metric tagged with route and deploy id, surviving unload via sendBeacon. The query layer joins them — a support ticket resolves by request id, a vitals regression resolves to the deploy that caused it."
+/>
+
+<KeyTakeaway>Server component logs exist only in server stdout — after a pages migration, relocate your eyes, then your format: one pino JSON line per event, redaction at the logger, identifiers not content. Mint x-request-id in middleware and bind it to every line via child loggers; the header bridges the edge-to-node gap that AsyncLocalStorage cannot. Client-side, useReportWebVitals beacons field LCP/INP/CLS tagged with the deploy id, aggregated at p75 per route — alert on rates, page on user impact.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-server-logging-and-vitals-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does console.log in a server component never appear in the browser, and what did teams on the pages router rely on without knowing it?", a: "A server component's code never ships to the client — it executes once, on the server, and its output goes to the server process's stdout. In the pages router, component code ran on the server AND re-ran in the browser during hydration, so the same console.log appeared in the browser console; teams were debugging against the hydration re-run. After migration nothing is lost — the logs moved to server stdout, often a serverless log drain with hours of retention, unstructured. The fix is structural: one pino JSON line per event with levels and central redaction, shipped to a real log store." },
+    { q: "Walk the full correlation story: how does a support ticket become one query, and how does a vitals regression name its deploy?", a: "Middleware accepts or mints x-request-id and sets it on forwarded request headers and on the response (so the user can quote it). Every server log line binds it via logger.child({ reqId }); onRequestError ships error digests with the same id. Ticket quoting digest or request id resolves to all lines of that request in one query. Client-side, useReportWebVitals beacons each metric via sendBeacon — it survives unload — tagged with route and NEXT_PUBLIC_DEPLOY_ID; aggregating p75 per route per deploy turns 'LCP got worse' into 'deploy 7f3a regressed product LCP 2.1 to 3.4 s'. Alert on rates crossing budgets; page only on user impact." },
+  ]}
+/>
+
+<Recap lang="en">
+The migration from pages moved where component code executes, and the evidence moved with it: a server component never ships to the browser, so its console.log prints only to server stdout — in pages, hydration re-ran the same code client-side, which is the habit that made browser-console debugging feel reliable. Looking in the right place is half the fix; the other half is format and discipline: one pino JSON line per event (shippers are line-oriented — multi-line object dumps shred into orphan fragments), levels, and redaction enforced at the logger because logs outlive databases and skip their access controls — log identifiers, never identifying content. Correlation makes concurrent logs readable: middleware mints or accepts x-request-id, forwards it on request headers, echoes it on the response for support tickets, and every layer binds it through child loggers — AsyncLocalStorage carries the context within the Node process, but cannot span the edge-isolate gap from middleware, so the header is the bridge. Layers log by their frequency: middleware one short routing line, actions mutation intent and outcome as the audit trail, server components data-fetch failures only, handlers a one-line summary — and onRequestError ships error digests with the request id so a ticket is one query. Client-side, the only honest performance number is field p75: useReportWebVitals beacons each metric via sendBeacon, which survives unload, tagged with route and deploy id so p75-per-route-per-deploy names the deploy that regressed LCP — judged against the standard thresholds (LCP 2.5/4 s, INP 200/500 ms, CLS 0.1/0.25). And the alert policy that keeps the pager meaningful: alert on rates crossing budgets, page on user impact, never on a single log line.
+</Recap>

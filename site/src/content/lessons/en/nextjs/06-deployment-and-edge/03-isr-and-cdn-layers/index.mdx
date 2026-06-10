@@ -1,0 +1,137 @@
+---
+concepts:
+- nextjs-isr-cdn
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-isr-and-cdn-layers"
+sources:
+- https://nextjs.org/docs/app/building-your-application/data-fetching/incremental-static-regeneration
+- https://nextjs.org/docs/app/building-your-application/caching
+- https://nextjs.org/docs/app/api-reference/functions/revalidatePath
+spiral: []
+status: ready
+summary: 'revalidate serves stale, regenerates in the background and swaps atomically — per pod. Past one pod the default disk cache diverges: you need a shared cacheHandler and pub/sub fan-out for revalidatePath. On top, the CDN layer orders as regenerate first, purge second.'
+title: 'ISR and CDN layers: stale-while-revalidate at origin, per-pod caches, and purge ordering'
+track: "nextjs"
+unit: "06-deployment-and-edge"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+Friday, 16:40: the CMS publishes a price change, the webhook calls `revalidatePath('/pricing')`, the admin sees the new number, everyone goes home. By 17:10 support has nine tickets with the same screenshot pair: the pricing page shows the old price — refresh — the new price — refresh — the old one again. The site self-hosts on three pods behind a round-robin ALB. `revalidatePath` ran on the one pod that happened to receive the webhook; the other two kept serving their own disk caches, and the load balancer deals users a different pod per request. Worse: the page is on-demand-only — no time-based `revalidate` — so pods A and C will not heal themselves *ever*; they will serve the stale price until the next deploy replaces their filesystems. Monday opens with a legal escalation, because the advertised price and the charged price spent a weekend disagreeing — at a rate of exactly two out of every three requests.
+</Hook>
+
+<Crux>revalidate is stale-while-revalidate at origin. Past one pod the cache must be shared, and on-demand revalidation must reach every pod.</Crux>
+
+<Explanation>
+
+## ISR is stale-while-revalidate at the origin
+
+`revalidate: 60` does not mean "regenerate every 60 seconds" and it does not mean "users wait for fresh HTML". It is **stale-while-revalidate implemented at the origin**: every cached entry carries a timestamp, and the first request after the window expires is served the *stale* page immediately — single-digit milliseconds from cache — while exactly one regeneration kicks off in the background. When the render finishes, the new entry **swaps atomically**: no request ever sees a half-written page. If the regeneration throws, the swap simply does not happen — the last good page keeps serving and the next request after the window retries. The serving math is what makes ISR attractive at all: a cache hit is 1–5 ms of IO, a full regeneration is whatever your page render costs — typically 100–800 ms of data fetching and RSC work — and under ISR *nobody waits for it* except the regeneration itself.
+
+```ts
+// app/pricing/page.tsx — time-based: at most one regen per 60 s window
+export const revalidate = 60;
+
+// or per-fetch, with tags for on-demand invalidation:
+const res = await fetch('https://cms.example.com/prices', {
+  next: { revalidate: 60, tags: ['pricing'] },
+});
+
+// app/api/cms-webhook/route.ts — on-demand: invalidate now, not on a timer
+import { revalidateTag } from 'next/cache';
+export async function POST() {
+  revalidateTag('pricing'); // marks entries stale — IN THIS PROCESS ONLY
+  return Response.json({ ok: true });
+}
+```
+
+## More than one pod: the cache must be shared
+
+Everything above is true **per process**. The default ISR store is a filesystem cache under `.next/cache` plus an in-memory LRU — pod-local on both counts. One pod, one truth. Three pods, three truths: each regenerates on its own schedule, so time-based pages drift a window apart — usually tolerable. What is not tolerable is on-demand revalidation: `revalidatePath` and `revalidateTag` mutate *the local store of whichever pod ran them*. The webhook lands on pod B, pod B regenerates, pods A and C never hear about it — and a round-robin balancer turns that into the flip-flop from the hook, fresh and stale alternating per request. With no time-based fallback the stale pods never converge at all.
+
+Two production-grade fixes. The structural one: replace the store with a **shared `cacheHandler`** — `next.config.js` accepts `cacheHandler: require.resolve('./cache-handler.mjs')` plus `cacheMaxMemorySize: 0` to disable the per-pod LRU, and your handler implements get/set/revalidateTag against Redis or another shared store. Now there is one truth again; the price is ~1–3 ms of Redis RTT on every ISR hit instead of sub-millisecond local disk — the cost of consistency. The alternative keeps local caches but **fans out the invalidation**: the webhook publishes to Redis pub/sub, every pod subscribes and calls `revalidateTag` locally. Fan-out keeps hits at local-disk speed but reintroduces a distributed-systems problem — a pod that was restarting during the publish missed it, and nothing reconciles. Shared store is the boring, correct default; fan-out is the optimization you adopt with monitoring.
+
+<Quiz
+  id="03-isr-and-cdn-layers-quiz-1"
+  lessonSlug="03-isr-and-cdn-layers"
+  lang="en"
+  question="Three pods, default ISR cache, a CMS webhook calls revalidatePath on whichever pod receives it. The page has no time-based revalidate. What do users actually see?"
+  choices={[
+    { label: "Fresh and stale alternating per request: only the webhook pod regenerated, the other two serve their pod-local disk caches indefinitely — there is no time window to heal them. Fix: a shared cacheHandler, or pub/sub fan-out so every pod invalidates", correct: true },
+    { label: "A brief inconsistency that resolves itself within the next revalidate window", misconception: "There is no window — the page is on-demand-only. Time-based drift self-heals because every pod eventually re-renders; on-demand invalidation that reaches one pod leaves the others stale until a deploy replaces their filesystems." },
+    { label: "Nothing wrong: revalidatePath broadcasts the invalidation to all running instances", misconception: "revalidatePath mutates the cache of the process that calls it — the default store is pod-local disk plus a pod-local LRU. Next has no inter-pod channel; building one (shared store or pub/sub) is exactly the self-hosting work this lesson is about." },
+    { label: "Users are fine because the load balancer pins each session to one pod", misconception: "Round-robin is the default precisely because pinning is not: without explicitly configured session affinity, consecutive requests from one user land on different pods — which is what turns cache divergence into a per-request flip-flop." },
+  ]}
+/>
+
+## The CDN layer on top — and purge ordering
+
+In front of the pods sits a CDN, and ISR pages advertise themselves to it: a route with `revalidate: 300` is served with `Cache-Control: s-maxage=300, stale-while-revalidate` — the CDN may cache it for five minutes and serve stale while it refetches. A healthy content site runs **80–98% CDN hit ratio**, which means your pods see only the trickle of misses; the CDN is doing the same stale-while-revalidate dance one layer up, against your origin instead of against your render function. Two caches, same protocol, stacked.
+
+Stacked caches have an ordering theorem, and violating it is the second classic incident: **regenerate the origin first, purge the CDN second.** Run it in the wrong order and walk the timeline: purge completes, the CDN is empty, every request for the page is now a miss hitting your origin — a **thundering herd of misses** — and the origin, which has not regenerated yet, dutifully serves the *old* page under SWR semantics. The CDN caches that old page again, stamped with a fresh `s-maxage=300`, and your "urgent fix" is now pinned for another full window — you purged, and the stale content came straight back. The correct sequence: trigger `revalidateTag`/`revalidatePath` on the origin (reaching **every** pod, per the previous section), confirm the origin serves fresh, then purge the CDN so the resulting misses pull the new page. The herd still happens — that is what purges cost — but it pulls the right bytes.
+
+<Inset kind="why" lang="en">
+Why do both layers converge on stale-while-revalidate instead of serve-fresh-or-wait? Because the alternative couples user latency to regeneration cost. If expiry meant the next user waits for a 600 ms render — or for an origin fetch — every cache expiry becomes a visible latency spike, and a popular page expiring becomes a stampede of concurrent regenerations. SWR decouples the two: readers always get cache-speed responses, writers regenerate exactly once in the background, and the system trades a bounded window of staleness for flat latency. The whole stack — browser, CDN, ISR — is the same bet made three times.
+</Inset>
+
+<Quiz
+  id="03-isr-and-cdn-layers-quiz-2"
+  lessonSlug="03-isr-and-cdn-layers"
+  lang="en"
+  question="A wrong price is live. Ops purges the CDN first, then triggers on-demand revalidation at the origin. What happens in the gap between the two?"
+  choices={[
+    { label: "Every request misses to an origin that still serves the old page under SWR, so the CDN re-caches the stale price with a fresh s-maxage — the purge restored the wrong content for another full window. Correct order: regenerate origin, verify, then purge", correct: true },
+    { label: "The purge forces the origin to regenerate, so the order is just a micro-optimization", misconception: "A CDN purge deletes CDN entries; the CDN knows nothing about ISR. The resulting misses are ordinary requests, and ISR answers ordinary requests with the cached — still old — page while regenerating in the background. Nothing about a purge makes the origin fresh." },
+    { label: "The order is irrelevant because both operations complete within a few seconds", misconception: "The damage is not the gap length — it is what gets re-cached during the gap. One miss during those seconds re-pins the old page with a fresh s-maxage=300, so a two-second mistake becomes five more minutes of wrong price." },
+    { label: "Nothing bad: stale-while-revalidate at the CDN guarantees it refetches before serving", misconception: "SWR means the CDN serves stale first and refetches in the background — the opposite of a freshness guarantee. And after a purge there is no stale entry to serve: requests go straight to the origin, which is exactly how the old page gets re-cached." },
+  ]}
+/>
+
+</Explanation>
+
+<StackDiagram
+  label="The full cache topology: every layer is stale-while-revalidate over the one below it"
+  hue="var(--d-ai)"
+  layers={[
+    { label: "Browser", note: "private cache" },
+    { label: "CDN edge", note: "s-maxage + SWR · 80-98% hits" },
+    { label: "Load balancer", note: "round-robin — no affinity" },
+    { label: "Next.js pods xN", note: "ISR hit 1-5 ms · per-pod by default" },
+    { label: "Shared cache handler", note: "Redis · one truth, +1-3 ms" },
+    { label: "Origin data (DB / CMS)", note: "full regen 100-800 ms" },
+  ]}
+  caption="Requests fall through layers top to bottom; each layer answers from its own cache and revalidates against the one below. The two self-hosting traps live mid-stack: the round-robin LB exposes any per-pod divergence as per-request flip-flops, and only a shared cache handler (or pub/sub fan-out) makes revalidatePath reach all pods. Purges drain a layer — so regenerate below before purging above."
+/>
+
+<KeyTakeaway>ISR is stale-while-revalidate at the origin: serve stale in 1-5 ms, regenerate once in the background, swap atomically, keep last-good on failure. The default store is per-pod disk — behind a round-robin LB, on-demand revalidation that reaches one pod produces per-request flip-flops, so multi-pod deployments need a shared cacheHandler (Redis, +1-3 ms per hit) or pub/sub fan-out. The CDN above speaks the same protocol via s-maxage + SWR at 80-98% hit ratio, and the ordering rule is absolute: regenerate origin first, purge CDN second — or the miss herd re-caches the stale page for another full window.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-isr-and-cdn-layers-retrieval"
+  lang="en"
+  questions={[
+    { q: "Describe the exact ISR serving sequence at expiry, and what happens when regeneration fails. Why is this design called SWR at the origin?", a: "Every cached entry carries a timestamp. The first request after the revalidate window is served the stale page immediately — 1-5 ms from cache — while exactly one background regeneration starts. On success the new entry swaps atomically; no request sees a partial page. On failure the swap never happens: the last good page keeps serving and the next post-window request retries. It is stale-while-revalidate because readers never wait on regeneration — the same contract a CDN offers via Cache-Control, implemented one layer down: cache-speed reads, bounded staleness, single background writer instead of a stampede." },
+    { q: "Why does revalidatePath break on three self-hosted pods, what are the two fixes, and what does each cost?", a: "The default ISR store is pod-local: .next/cache on disk plus an in-memory LRU. revalidatePath mutates only the store of the pod that runs it, so a webhook landing on pod B leaves A and C stale — and with no time-based revalidate they stay stale until redeploy, while round-robin balancing alternates fresh and stale per request. Fix one: a shared cacheHandler in next.config (plus cacheMaxMemorySize 0) backed by Redis — one truth, costing ~1-3 ms per ISR hit instead of sub-millisecond disk. Fix two: keep local caches, fan out invalidations via pub/sub to every pod — local-speed hits, but a pod that misses the publish (restart, netsplit) never reconciles. Shared store is the correct default; fan-out is an optimization that needs monitoring." },
+  ]}
+/>
+
+<Recap lang="en">
+ISR in production is stale-while-revalidate implemented at the origin: entries carry timestamps, the first request after expiry gets the stale page in 1-5 ms while exactly one regeneration runs in the background, the finished render swaps in atomically, and a failed render changes nothing — last-good keeps serving and the next window retries. Readers never pay the 100-800 ms regeneration cost; that is the entire point. All of it is per-process, and that is where self-hosting bites: the default store is .next/cache on pod-local disk plus a pod-local LRU, so three pods are three diverging truths. Time-based pages drift a window apart and self-heal; on-demand revalidatePath and revalidateTag mutate only the pod that runs them, so a CMS webhook landing on pod B leaves A and C permanently stale on on-demand-only pages — and a round-robin balancer converts that into the per-request price flip-flop. The structural fix is a shared cacheHandler wired in next.config with cacheMaxMemorySize zero, backed by Redis, paying 1-3 ms per hit for a single truth; the optimization is pub/sub fan-out of invalidations, which keeps disk-speed hits but can silently miss a restarting pod. Above the pods, the CDN runs the same SWR protocol via s-maxage and stale-while-revalidate headers at 80-98% hit ratios — and stacked caches obey one ordering theorem: regenerate the origin first, confirm fresh, purge the CDN second. Purge-first sends a herd of misses into an origin still serving stale, re-caching the old page under a fresh s-maxage for another full window. Browser, CDN, ISR — the same bet, made three times, and it only pays if invalidation reaches every layer and every pod.
+</Recap>
