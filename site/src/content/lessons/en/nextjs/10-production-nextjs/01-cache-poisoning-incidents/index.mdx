@@ -1,0 +1,141 @@
+---
+concepts:
+- nextjs-cache-poisoning
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-cache-poisoning-incidents"
+sources:
+- https://nextjs.org/docs/app/building-your-application/caching
+- https://nextjs.org/docs/app/api-reference/functions/cookies
+- https://portswigger.net/web-security/web-cache-poisoning
+- https://owasp.org/www-community/attacks/Cache_Poisoning
+spiral: []
+status: ready
+summary: 'A cache key that omits something the response depends on serves one user to everyone: an unstable_cache closure, a CDN storing Set-Cookie, a missing Vary, X-Forwarded-Host in cached HTML. The invariant: everything the response reads is in the key, or the route is dynamic.'
+title: 'Cache poisoning incidents: when one user becomes everyone'
+track: "nextjs"
+unit: "10-production-nextjs"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Black Friday, 09:40. Support posts a screenshot: "customer says the account page shows someone else's saved card and address." Three tickets by 09:50, forty by 10:05. The week before, a perf engineer had wrapped the account summary in `unstable_cache(['account-summary'], { revalidate: 600 })` to kill a hot query — the user id came from a closure, not an argument, so the cache key never changed. The first user after every expiry became the template the next ten minutes of users received. Detection took 38 minutes and came from tickets, not monitoring; the blast radius line in the postmortem read "every logged-in user between 09:12 and 10:18"; legal spent the afternoon on breach-notification thresholds. The purge took seconds. The fix was one line. The expensive part was the discovery that nobody on the team had ever reviewed a cache key.
+</Hook>
+
+<Crux>A poisoned cache is a key that omits what the response depends on. Everything the response reads is in the key — or the route is dynamic.</Crux>
+
+<Explanation>
+
+## One invariant, four caches
+
+A cache is a map from key to response. The correctness invariant is one sentence: **everything the response depends on must be part of the key** — otherwise two requests that deserve different responses collide in one slot, and whoever renders first becomes everyone's response. That is the entire failure class. "Poisoning" sounds adversarial, but most production incidents are self-inflicted: the attacker is your own code reading something the key does not know about.
+
+Next.js gives you four caches with four different keys, and the invariant must hold in each. The **Full Route Cache** keys on the route path: a static route renders once and the HTML plus RSC payload serve everyone. The **Data Cache** keys each `fetch` on URL and options. **`unstable_cache`** keys on `keyParts` plus the serialized *arguments* of the wrapped function — and this is the trap from the Hook: values captured in a closure are invisible to the key. The **CDN** keys on URL plus whatever `Vary` names. Four layers, four chances to omit something.
+
+```ts
+// THE BUG: userId lives in the closure — the key is constant
+const getSummary = unstable_cache(
+  async () => db.account.summary(session.userId), // closure capture
+  ['account-summary'],
+  { revalidate: 600 },
+);
+
+// THE FIX: arguments are serialized into the key
+const getSummary = unstable_cache(
+  async (userId: string) => db.account.summary(userId),
+  ['account-summary'],
+  { revalidate: 600 },
+);
+await getSummary(session.userId); // per-user slot — or better: do not cache this at all
+```
+
+Next.js has a tripwire for the route-level version of this: calling `cookies()` or `headers()` during render opts the whole route out of the Full Route Cache — personalized routes go dynamic automatically. The leak happens when personalization enters **around** the tripwire. A server component fetches the user via a cached data-layer call (the closure bug above, or a fetch authorized by a module-level token) and passes `user.name` and `cart.items` as props into a client component. No `cookies()` call ever ran, so the route stayed static — and those props are serialized into the RSC payload, which *is* the Full Route Cache entry. User A's cart ships inside the cached payload to user B. The client component is innocent; the poison was baked one layer below, where the tripwire cannot see it.
+
+<Quiz
+  id="01-cache-poisoning-incidents-quiz-1"
+  lessonSlug="01-cache-poisoning-incidents"
+  lang="en"
+  question="A static product page renders a client component with a cart badge. The cart comes from a data-layer function wrapped in unstable_cache(['cart'], { revalidate: 300 }) that reads the session from a closure. Users report seeing a stranger's cart count. Why did the route not go dynamic and protect them?"
+  choices={[
+    { label: "The dynamic tripwire only fires on cookies()/headers() during render; here the session entered through a closure inside unstable_cache, so the route stayed static and one user's cart was serialized into the shared RSC payload", correct: true },
+    { label: "Client components cannot trigger dynamic rendering, so any page with a cart badge must be listed in generateStaticParams exclusions", misconception: "Dynamic rendering is decided by what the server render reads, not by component type. A server component calling cookies() flips the route dynamic regardless of which client components it renders. The bug is that nothing in this render path called the request APIs at all." },
+    { label: "revalidate: 300 is too long; with revalidate: 10 the window would be too short for users to notice", misconception: "Shortening the window shrinks how long each victim cohort lasts but changes nothing about the mechanism — every 10 seconds a new user's cart becomes everyone's cart. A wrong key is a correctness bug, not a freshness tuning problem." },
+    { label: "The CDN ignored the Vary header, so it merged per-user variants into one entry", misconception: "Vary discipline is a real failure shape, but it lives at the CDN layer. This entry was poisoned inside Next.js itself — unstable_cache keyed on a constant — and would leak even with no CDN in front." },
+  ]}
+/>
+
+## Set-Cookie at the CDN, Vary discipline, draft tokens
+
+The second Next.js-specific shape needs no application bug at all — only an ops change. A response that carries `Set-Cookie` is a session being handed to one person; a shared cache that stores it hands that session to everyone who hits the entry. CDNs refuse to cache `Set-Cookie` responses by default, which is why this incident almost always starts with a human overriding defaults: a "cache everything, ignore origin headers" page rule added at 13:40 during a traffic emergency, and at 14:02 the first "I am logged in as someone else" ticket. That is full session bleed — the victim does not see your data, they *become* you. The guard is mechanical: an edge rule that never caches a response carrying `Set-Cookie`, regardless of what other rules say, plus `Cache-Control: private, no-store` on everything personalized so the origin states its intent.
+
+Third shape: **Vary discipline**. If the app negotiates anything by request header — locale from `Accept-Language`, an A/B bucket from a header set by an upstream router — then the header is part of what the response depends on, so it must be part of the CDN key via `Vary: Accept-Language`. Omit it and the first-cached variant serves all: German homepage for everyone, or worse, treatment-group pricing cached for the control group. The honest tradeoff: `Vary` multiplies cache cardinality, and `Vary: Cookie` effectively disables caching. When cardinality matters, move the variant into the URL (`/de/…`) where the key sees it natively.
+
+Fourth: **draft mode**. `draftMode()` exists precisely to bypass caches so editors see unpublished content — the bypass cookie is the point. The leak shape is a preview URL with the bypass token shared into a channel where a caching proxy or a prefetcher sits, or a custom preview route that forgets `no-store` on its responses: unpublished content cached under a public URL. Treat preview tokens like credentials, because that is what they are.
+
+<Quiz
+  id="01-cache-poisoning-incidents-quiz-2"
+  lessonSlug="01-cache-poisoning-incidents"
+  lang="en"
+  question="Your app picks locale from Accept-Language in a server component and serves through a CDN keyed on URL only. Monday a German user reports the whole site is in French. What happened, and what is the correct class of fix?"
+  choices={[
+    { label: "A French user's render was cached first and the key omits Accept-Language; fix by adding Vary: Accept-Language or by moving locale into the URL path so the key sees it natively", correct: true },
+    { label: "The browser cached the French page; tell users to hard-refresh", misconception: "A browser cache is per-user — it cannot show one user another user's variant. Cross-user contamination is the signature of a shared cache (CDN or server-side) with an under-specified key." },
+    { label: "Next.js cached the wrong locale in the Full Route Cache; call revalidatePath on every deploy", misconception: "Purging fixes the current entry and the very next French request re-poisons it. When the key omits a dimension the response depends on, purging is incident response, not a fix — the key or the URL must change." },
+    { label: "Accept-Language is an unkeyed attacker-controlled header, so locale negotiation is inherently unsafe and must be removed", misconception: "Header negotiation is fine when the cache key includes the header — that is exactly what Vary declares. The classics become attacks only when a header influences a response and stays out of the key." },
+  ]}
+/>
+
+## The classics still work, and how to run the postmortem
+
+The pre-framework cache-poisoning literature applies to Next.js apps unchanged, because the CDN in front speaks plain HTTP. The canonical probe is the **unkeyed header**: find a header that influences the response but not the cache key. `X-Forwarded-Host` is the classic — frameworks and SEO helpers use it to build absolute URLs for canonical links, `og:image`, and password-reset emails. An attacker sends one request with `X-Forwarded-Host: evil.example`, the response is cached under the normal URL, and every user for the next TTL receives HTML whose absolute links point at the attacker's host. The PortSwigger playbook is to probe with a cache-buster query param, confirm reflection, then drop the buster; your security tests should run exactly that probe against your own stack.
+
+When the incident lands, the postmortem walk is always the same four stations. **Detection**: "I see someone else's cart" tickets are a P1 security incident, not a UI bug — route them to the on-call, and add the synthetic check you wish you had: two sessions request the same URL every minute and assert the responses do not bleed. **Blast radius**: everyone who hit the poisoned entry until purge or TTL expiry — multiply by the number of poisoned keys, and remember each expiry re-poisons with a fresh victim. **Mitigation**: purge every layer — CDN purge, `revalidatePath`/`revalidateTag` for the route and data caches, and a restart if anything was cached in process memory — *then* ship the key fix, because a purge without the fix buys you one TTL of calm. **Prevention** is a checklist, not vigilance: every cached response reviewed against "what does this read, and is all of it in the key"; `no-store` on personalized fetches; `Set-Cookie` never cacheable; a Vary audit on every header the app negotiates by; the two-session bleed probe and the unkeyed-header probe wired into CI.
+
+</Explanation>
+
+<SequenceDiagram
+  label="Poisoned entry: the first render after expiry becomes everyone's response"
+  hue="var(--d-ai)"
+  actors={["User A", "Cache", "Next.js", "User B"]}
+  messages={[
+    { from: "User A", to: "Cache", label: "GET /account" },
+    { from: "Cache", to: "Next.js", label: "MISS — render" },
+    { from: "Next.js", to: "Cache", label: "200 with A data" },
+    { from: "Cache", to: "User A", label: "store 600s, serve" },
+    { from: "User B", to: "Cache", label: "GET /account" },
+    { from: "Cache", to: "User B", label: "HIT — A data to B" },
+  ]}
+  caption="The key for /account omitted the session, so both users share one slot in the map. A renders first and becomes the template; B gets A's data on a cache HIT and no application code runs at all. Every expiry re-poisons the entry with whoever arrives next — until the key is fixed, not just purged."
+/>
+
+<KeyTakeaway>One invariant covers the whole failure class: everything a response reads must be in the cache key, or the route must be dynamic. Next.js has four keyed layers — Full Route Cache (path), Data Cache (fetch URL + options), unstable_cache (keyParts + arguments, closures invisible), CDN (URL + Vary). Set-Cookie must never be cached, personalized fetches get no-store, and CI runs the two-session bleed probe plus the unkeyed-header probe.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-cache-poisoning-incidents-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does reading the session inside an unstable_cache closure poison the cache, while passing the user id as an argument does not?", a: "The unstable_cache key is built from keyParts plus the serialized arguments of the wrapped function. A closure capture is invisible to that key, so the key stays constant while the data varies per user — the first render becomes everyone's entry until the next expiry, when the next user re-poisons it. An argument is serialized into the key, so each user gets a separate slot. The route-level tripwire (cookies()/headers() forcing dynamic) does not help, because the leak is in the data layer below it — and even on a dynamic route the shared cache entry still bleeds." },
+    { q: "Walk the four postmortem stations for a cache-poisoning incident and name the prevention artifacts.", a: "Detection: cross-user tickets are a P1 security incident; the synthetic check is two sessions hitting the same URL and asserting no bleed. Blast radius: every user who hit the poisoned entry until purge or TTL, times the number of poisoned keys, re-poisoning at every expiry. Mitigation: purge all layers — CDN, revalidatePath/revalidateTag, process restart if needed — then ship the key fix, since purge alone lasts one TTL. Prevention: a cache-key review checklist (everything the response reads is in the key or the route is dynamic), no-store on personalized fetches, an edge rule refusing to cache Set-Cookie, a Vary audit, and the unkeyed-header probe (X-Forwarded-Host reflection with a cache-buster) in security tests." },
+  ]}
+/>
+
+<Recap lang="en">
+Cache poisoning is one invariant violated in any of four places: everything the response depends on must be in the cache key, or the route must render dynamically. Next.js keys the Full Route Cache on route path, the Data Cache on fetch URL plus options, unstable_cache on keyParts plus serialized arguments — which makes closure-captured session data the classic self-inflicted poison, one constant key serving the first user's data to everyone for a revalidate window at a time — and the CDN on URL plus whatever Vary declares. The dynamic tripwire only fires on cookies() and headers() during render, so personalization that enters through a cached data layer bypasses it and gets baked into the shared RSC payload. The ops-side shapes need no app bug: a CDN rule that ignores origin headers and stores a Set-Cookie response hands one user's session to the world; a missing Vary on Accept-Language or an A/B header serves the first-cached variant to all; a leaked draft-mode token caches unpublished content publicly. The classics still apply through any CDN — an unkeyed X-Forwarded-Host reflected into canonical links or reset URLs poisons cached HTML for a full TTL. Run the postmortem in four stations: detect (cross-user tickets are P1 security; add the two-session synthetic), size the blast radius (everyone on the entry until purge, re-poisoned each expiry), mitigate (purge every layer, then fix the key — purge alone buys one TTL), prevent (key-review checklist, no-store on personalized fetches, never cache Set-Cookie, Vary audit, poisoning probes in CI).
+</Recap>

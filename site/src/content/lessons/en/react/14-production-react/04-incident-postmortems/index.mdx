@@ -1,0 +1,142 @@
+---
+concepts:
+- react-incidents
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-incident-postmortems"
+sources:
+- https://react.dev/reference/react/useEffect
+- https://react.dev/reference/react-dom/client/hydrateRoot
+- https://web.dev/articles/monitor-total-page-memory-usage
+spiral: []
+status: ready
+summary: 'Three dissected React incidents: an async render loop pinning CPU without exceptions, a hydration mismatch storm from timezone-dependent render, and a subscription leak crashing 8-hour sessions. Blameless format: detection, impact, root cause, mitigation, prevention.'
+title: 'Incident postmortems: three production React failures, dissected'
+track: "react"
+unit: "14-production-react"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The pager was silent. Support was not. Ticket #4,411: "App gets slow after lunch." Ticket #4,418: same words, different customer. The error tracker showed nothing — no exceptions, no failed requests, flat 200s. Meanwhile, in a different company that same quarter, an error tracker hit its rate limit eight minutes after a deploy as hydration errors flooded in at 40,000 per minute; and in a third, RUM long-task counts went 12× overnight while every health check stayed green. Three incidents, three different detection signals — a support-ticket pattern, an error flood, a silent RUM spike — and not one of them began with an exception in application code. That is the defining property of React production incidents: the framework rarely crashes; it degrades, loops, mismatches, and leaks, and your monitoring either names the mechanism or you spend the week rediscovering it. This lesson dissects all three in postmortem format — detection, impact, root cause, mitigation, prevention — because the format is the tool that turns a bad week into a class of bug your org never ships again.
+</Hook>
+
+<Crux>Three production React incidents, one discipline: detection signal, impact, root cause, mitigation, prevention — blameless and exact.</Crux>
+
+<Explanation>
+
+## Incident 1: the render loop that never threw
+
+**Detection.** RUM long-task counts up 12× after release 142; INP p75 on the portfolio route went from 180 ms to over 2 s; error tracker silent. Users reported fans spinning and battery drain — every open tab of the route was burning 100% of a core. **Impact.** Six hours at full blast across ~40,000 open dashboard tabs; INP through the floor; no data corruption. **Root cause.** A refactor extracted view options into `const options = { locale, tz }` in the render body. An effect listed it as a dep and set state with the result of an *async* normalize:
+
+```jsx
+const options = { locale, tz };          // new identity every render
+useEffect(() => {
+  normalize(data, options)               // async — resolves in a later task
+    .then((rows) => setRows(rows));      // setState -> render -> new options -> effect...
+}, [data, options]);
+```
+
+Each cycle: render builds a fresh `options`, effect fires, promise resolves *in a later task*, setState schedules a render, repeat forever. Crucially, React's "Maximum update depth exceeded" guard did not fire: that counter trips on *synchronous* update cascades — setState directly inside the effect body would have crashed within 50 iterations, loudly and in dev. The `.then` moved each setState into a fresh task, resetting the cascade accounting; the loop ran at the speed of microtask scheduling, silent and eternal. **Mitigation.** Rollback of release 142; INP recovered within minutes. **Prevention.** Dep stabilization as a review rule — deps must be primitives or proven-stable references (`[data, locale, tz]`, not `[data, options]`); `exhaustive-deps` stays on (it was on — it correctly listed the unstable dep; what was missing is the *stability* discipline the lint cannot check); and a RUM alert on long-task count per release ring, which is the signal that actually caught it.
+
+<Quiz
+  id="04-incident-postmortems-quiz-1"
+  lessonSlug="04-incident-postmortems"
+  lang="en"
+  question="In incident 1, the effect looped forever at 100% CPU but React never threw Maximum update depth exceeded. Why not?"
+  choices={[
+    { label: "The setState happened inside a promise callback, so each iteration started in a fresh task — the depth guard counts synchronous update cascades, and the async boundary reset the accounting; a synchronous setState in the effect body would have crashed loudly within ~50 iterations", correct: true },
+    { label: "The guard only exists in development builds, and production strips it along with other warnings", misconception: "The update-depth limit is a runtime safety valve, not a dev-only warning — production React throws it too when a synchronous cascade exceeds the limit. What differed here is the loop shape: an async boundary between render and setState keeps every iteration outside the cascade counter, in any build." },
+    { label: "Automatic batching merged each setRows into the previous render, so React saw it as one long update rather than a loop", misconception: "Batching coalesces multiple setStates within one task into one render — it cannot merge updates across separate promise resolutions, each of which is its own task and its own render. Batching reduced nothing here; the loop was one full render-commit-effect cycle per resolution." },
+    { label: "React bails out when state is set to an equivalent value, so the loop should have stopped — the bug must be in normalize", misconception: "The bailout uses Object.is, and normalize returned a new array each time, so no bailout was possible — but that is the expected behavior of any data-transforming function, not the bug. The bug is the unstable object dep retriggering the effect; stabilize the deps and the same normalize is harmless." },
+  ]}
+/>
+
+## Incident 2: the hydration mismatch storm
+
+**Detection.** Error tracker rate-limited eight minutes after deploy: tens of thousands of hydration errors via `onRecoverableError`. Secondary signal: CLS and LCP regressions as pages visibly flashed. **Impact.** Every SSR page view for 3.5 hours re-rendered client-side from scratch — server HTML discarded, content flash on every load, double render cost on exactly the devices that could least afford it; SEO snapshots captured the flash state. **Root cause.** The deploy added a "Last updated" line to the page shell: `new Date(ts).toLocaleString()` — rendered on the server in UTC with the server's locale, re-rendered on the client in the user's timezone and locale. Server HTML and first client render disagreed on text content for every user outside UTC; React 18 treats a mismatch as unrecoverable for the subtree and falls back to full client render, reporting through `onRecoverableError`. The pattern generalizes: any render input that differs across the boundary — `Date.now()`, `Math.random()`, timezone, locale, `window` reads, feature flags evaluated at different times — produces the same storm. **Mitigation.** Revert; mismatch rate back to baseline. **The non-fix that was proposed:** `suppressHydrationWarning`. It silences the diff report for one element's text and tells React to keep the server value — it is for *intentionally* divergent content (a timestamp you will correct after mount), applies one level deep, and does nothing for the structural mismatches; papering a storm with it leaves stale server values in the UI and the root cause in place. **The fix.** Render values that are a pure function of inputs both sides share: format dates after mount in an effect (accepting a deliberate, controlled placeholder), or pass the user's timezone/locale explicitly from the request so server and client compute identical strings. **Prevention.** A hydration-mismatch-rate metric per release ring wired into `onRecoverableError`, gating the deploy ramp — mismatch storms are deploy-shaped and a canary catches them in minutes; plus an e2e check running SSR pages with a non-UTC timezone and non-English locale, which is the two-line CI config that would have caught this class forever.
+
+## Incident 3: the leak that crashed the afternoon
+
+**Detection.** No alert. Support tickets converging on "slow after lunch" from back-office users; correlation analysis showed degradation tracked *session age*, not time of day. Tab crashes ("Aw, Snap") for users with 8-hour sessions. **Impact.** Daily productivity loss for the operations team for roughly three weeks before diagnosis; heap at crash ~1.5 GB. **Root cause.** A market-feed widget subscribed in an effect without cleanup:
+
+```jsx
+useEffect(() => {
+  feed.subscribe(handleTick);   // closure captures rows, filters, props
+  // no return — handler is never removed
+}, [route]);
+```
+
+Every route revisit added another handler to the feed's listener array; each handler closed over that render's props, including a 5,000-row array. The emitter kept every closure reachable, so entire unmounted component trees stayed retained — the GC was working correctly on garbage that was not garbage. Heap-snapshot triage made it legible in twenty minutes: three snapshots over an hour, sorted by retained-size delta, showed a listener array with 14,000 entries, each retaining an old render. **Mitigation.** Hotfix adding the cleanup (`return () => feed.unsubscribe(handleTick)`); guidance to reload affected tabs. **Prevention.** An effect-cleanup checklist line in code review — every subscribe-shaped effect returns an unsubscribe (StrictMode's double-invoke makes the violation visible in dev, which is exactly what it is for); and a long-session synthetic test: a headless browser replaying a 4-hour session hourly, asserting heap growth stays bounded — the test that represents the user no 90-second lab run ever models.
+
+<Inset kind="why" lang="en">
+Why insist on the blameless format? Because all three root causes are one honest sentence — an unstable dep, a timezone-dependent render, a missing cleanup — and in a blame culture that sentence never gets written. The engineer who knows what happened pads the postmortem with fog ("a complex interaction of factors"), the next team re-ships the same bug, and the org learns nothing at the price of a full incident. Blameless does not mean consequence-free; it means the unit of analysis is the system that allowed the bug — the missing lint, the absent mismatch metric, the unreviewed effect — because people repeat mistakes and systems do not have to. The test of a good postmortem is whether its prevention items are mechanisms (a metric, a gate, a test) rather than intentions ("be more careful with deps").
+</Inset>
+
+## Reading the three as one lesson
+
+Line the incidents up and the pattern is the detection column. None began with an application exception: the loop was a RUM long-task spike, the storm was an error-rate flood from React's own recovery path, the leak was a support-ticket correlation. The monitoring that names React failure modes — long tasks per ring, hydration mismatch rate per deploy, heap growth per session-hour — is what separates a twenty-minute diagnosis from a three-week one. And every prevention item that survived review was a mechanism, not a resolution: a lint that stays on, a metric that gates ramps, a synthetic that lives a long session. Write the postmortem so the next team can grep for it.
+
+<Quiz
+  id="04-incident-postmortems-quiz-2"
+  lessonSlug="04-incident-postmortems"
+  lang="en"
+  question="After the mismatch storm, a teammate proposes adding suppressHydrationWarning to the timestamp element and closing the incident. What is the precise objection?"
+  choices={[
+    { label: "It marks the divergence as intentional rather than fixing it: React keeps the server text for that one element, one level deep — the UI now shows a stale server-locale timestamp, structural mismatches elsewhere still storm, and the root cause (render depending on inputs the client and server do not share) remains shippable", correct: true },
+    { label: "suppressHydrationWarning only works in development, so production behavior would not change at all", misconception: "It is a real production attribute, not a dev flag — React genuinely skips reconciling that element's text and keeps the server value. The objection is not that it does nothing; it is that what it does (sanctioning divergence for one node) is the wrong tool for an unintended mismatch storm." },
+    { label: "The correct quick fix is disabling SSR for the affected pages, which removes the boundary where mismatches happen", misconception: "Trading SSR away to silence a mismatch surrenders first-paint and SEO to fix a one-line render-purity bug — the cost is wildly out of proportion. The boundary is not the defect; the timezone-dependent render is, and rendering stable values keeps SSR and correctness both." },
+    { label: "The storm was caused by React 18 concurrent rendering, so the fix is downgrading the hydration to legacy mode", misconception: "Concurrency does not cause mismatches — divergent render inputs do, on any React version. 18 changed the recovery strategy (client re-render plus onRecoverableError reporting), which made the storm loudly visible; the same divergence on older versions silently patched the DOM, which is worse, not better." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="Incident 1 timeline: the silent render loop from deploy to blameless review — the detection signal is RUM, not an exception"
+  hue="var(--d-frontend)"
+  actors={["Deploy", "Browser tab", "RUM pipeline", "On-call"]}
+  messages={[
+    { from: "Deploy", to: "Browser tab", label: "ship release 142" },
+    { from: "Browser tab", to: "RUM pipeline", label: "long tasks 12x" },
+    { from: "RUM pipeline", to: "On-call", label: "INP p75 page" },
+    { from: "On-call", to: "Deploy", label: "rollback to 141" },
+    { from: "Deploy", to: "Browser tab", label: "serve 141" },
+    { from: "Browser tab", to: "RUM pipeline", label: "INP recovers" },
+    { from: "RUM pipeline", to: "On-call", label: "alert resolves" },
+    { from: "On-call", to: "Deploy", label: "blameless review" },
+  ]}
+  caption="No exception ever fired: the loop crossed an async boundary, so the update-depth guard stayed silent and the error tracker stayed green. The long-task alert per release ring was the only tripwire — and rollback-then-diagnose beat diagnose-then-fix, because the release diff plus a profile named the unstable dep within the hour."
+/>
+
+<KeyTakeaway>React incidents degrade rather than crash: an async setState loop evades the update-depth guard and pins CPU silently; a timezone-dependent render storms hydration on every page view, and suppressHydrationWarning sanctions the bug instead of fixing it; a subscribe-without-cleanup effect retains whole component trees until 8-hour sessions die. Detection lives in RUM spikes, mismatch rates, and support-ticket correlation — and prevention items must be mechanisms: lints, ring-gated metrics, long-session synthetics.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-incident-postmortems-retrieval"
+  lang="en"
+  questions={[
+    { q: "Reconstruct incident 1: the loop mechanism, why no exception fired, and the prevention package.", a: "Mechanism: an object literal built in the render body (options = { locale, tz }) was listed as an effect dep; the effect ran an async normalize and called setState in the .then. Each cycle — render creates a fresh object identity, effect fires, promise resolves in a later task, setState schedules the next render — repeated forever, burning 100% of a core in every open tab. No exception because the Maximum-update-depth guard counts synchronous update cascades: a sync setState in the effect body trips it within about 50 iterations, but the promise moved each setState into a new task, resetting the accounting, so the loop was invisible to React's safety valve and to the error tracker. Detection was RUM: long-task counts 12x and INP p75 collapsing, per release ring. Mitigation: rollback. Prevention: dep-stability discipline (deps are primitives or proven-stable references — exhaustive-deps was already on and cannot check stability), plus a long-task-per-ring alert so the next loop pages someone in minutes instead of hours." },
+    { q: "For the mismatch storm and the leak: name each detection signal, root cause, the trap fix, and the mechanism-grade prevention.", a: "Mismatch storm — detection: error-tracker flood through onRecoverableError within minutes of deploy (rate limit hit at 40,000/min), with CLS/LCP regression as the visible flash. Root cause: toLocaleString rendered on the server in server timezone/locale and re-rendered differently on the client, so server HTML and first client render diverged for every non-UTC user; React 18 discards the server HTML and re-renders client-side. Trap fix: suppressHydrationWarning — it sanctions divergence for one element, keeps stale server text, and leaves the cause in place. Real fix: render values both sides can compute identically — format after mount, or pass timezone/locale from the request. Prevention: hydration-mismatch rate per release ring gating the ramp, and e2e under non-UTC timezone and non-English locale. Leak — detection: no alert; support tickets correlated with session age, tab crashes at ~1.5 GB. Root cause: feed.subscribe in an effect with no cleanup; every route revisit added a closure retaining that render's 5,000-row props via the emitter's listener array (14,000 entries in the heap snapshot). Trap fix: telling users to reload. Real fix: return the unsubscribe. Prevention: subscribe-effects-return-cleanup as a review checklist item enforced by StrictMode double-invoke in dev, plus an hourly long-session synthetic asserting bounded heap growth." },
+  ]}
+/>
+
+<Recap lang="en">
+Three production incidents, one structural insight: React fails by degrading, not by crashing, so the detection column of a postmortem matters as much as the root cause. The render loop — an unstable object dep feeding an effect whose setState lived inside a promise — pinned CPUs in every open tab while the error tracker stayed green, because the Maximum-update-depth guard counts synchronous cascades and the async boundary reset it each iteration; the tripwire that worked was a RUM long-task alert per release ring, and the durable prevention was dep-stability discipline on top of exhaustive-deps, which lists deps but cannot vouch for their identity. The hydration mismatch storm — a toLocaleString in the page shell computing different text on server and client — flooded onRecoverableError at 40,000 errors per minute and made React discard server HTML for every view; suppressHydrationWarning is the trap fix that sanctions the divergence one element deep while leaving stale values and the root cause in place, and the real fix is render purity over shared inputs: format after mount or pass timezone and locale explicitly; prevention is a mismatch-rate metric gating the ramp plus e2e under a non-UTC timezone. The subscription leak — subscribe without cleanup in a long-lived dashboard — retained 14,000 listener closures, each holding a dead render of 5,000 rows, until eight-hour sessions crashed at 1.5 GB; detection came from support-ticket correlation with session age, triage from heap-snapshot deltas, prevention from a cleanup checklist that StrictMode enforces in dev and a long-session synthetic that models the user lab runs never see. The blameless format is what makes the knowledge transferable: name the system gap, not the engineer, and ship prevention as mechanisms — lints, metrics, gates, synthetics — because intentions decay and machinery does not.
+</Recap>
