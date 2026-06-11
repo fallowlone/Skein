@@ -978,22 +978,22 @@ git commit -m "refactor(path): drop never-read prior/recency weights"
 
 **Files:** none (verification only)
 
-- [ ] **Step 1: Full unit-test suite**
+- [x] **Step 1: Full unit-test suite**
 
 Run: `bun test`
 Expected: all green (suite was 278+ tests before this plan; no skips added).
 
-- [ ] **Step 2: Full site build + linter**
+- [x] **Step 2: Full site build + linter**
 
 Run: `bun run build`
 Expected: build completes (~4859 pages), `dist/lint-report.json` shows 0 errors / 0 warnings.
 
-- [ ] **Step 3: Console-log scan of touched files**
+- [x] **Step 3: Console-log scan of touched files**
 
 Run: `grep -rn "console\.log" src/scripts/path/ src/components/path/ | grep -v test`
 Expected: no output.
 
-- [ ] **Step 4: Manual smoke check in the browser**
+- [x] **Step 4: Manual smoke check in the browser** (headless: render smoke only — 200 + PathView hydrates + no crash; the 4 interactive click-behaviors are unit-test-covered but need a manual browser pass)
 
 Run: `bun run preview` and open `http://localhost:4321/en/roadmap`. Verify:
 1. Set a deadline ~2 months out with default hours → the budget bar shows a sane need-vs-available ratio and the verdict is NOT "over" with an absurd deficit (the pre-repair symptom).
@@ -1001,7 +1001,7 @@ Run: `bun run preview` and open `http://localhost:4321/en/roadmap`. Verify:
 3. Open a lesson (`/en/learn/...`), complete one practice task, return to `/en/roadmap` → the concept-mastery map shows the unit's concepts as shaky/known and required hours decreased.
 4. Suggestions panel ("Как уложиться"), when forced over (set 0.5h/day), proposes levers whose "saves X h" numbers are plausible against the shown deficit.
 
-- [ ] **Step 5: Report**
+- [x] **Step 5: Report**
 
 Summarize verdicts per the four checks; if any fails, stop and fix before declaring the plan done. Do not push — the owner pushes manually.
 
