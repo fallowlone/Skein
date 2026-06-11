@@ -145,7 +145,7 @@ export async function checkPracticeDebug(siteSrc: string): Promise<string[]> {
 
 /** Tracks flipped to error (lesson without a 3–8 task practice file fails the build).
  *  Empty in P1 — everything is a warning. Add track slugs here as a track is filled. */
-export const PRACTICE_REQUIRED_TRACKS: string[] = ["networking", "algorithms", "observability", "performance", "base-cs", "browser", "backend", "databases", "math", "engineering-practice", "apis", "caching", "distributed", "frontend", "queues", "security", "ai-llm", "data-engineering", "deployment", "system-design", "system-design-cases"];
+export const PRACTICE_REQUIRED_TRACKS: string[] = ["networking", "algorithms", "observability", "performance", "base-cs", "browser", "backend", "databases", "math", "engineering-practice", "apis", "caching", "distributed", "frontend", "queues", "security", "ai-llm", "data-engineering", "deployment", "system-design", "system-design-cases", "react", "go", "python", "nextjs", "logic", "node", "nest", "ci-cd", "aws", "typescript", "js-engine", "sql-postgres"];
 
 /** Assessment pseudo-lessons (quiz/project/drill blocks) carry their own format,
  *  and `00-start-here` orientation lessons are roadmaps with no mechanism to drill
