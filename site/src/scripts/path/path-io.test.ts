@@ -68,8 +68,10 @@ describe("path-io pure helpers", () => {
 });
 
 describe("path-io calibration surface", () => {
-  it("exposes the diagnostics bundle for the 35 diagnosed concepts", () => {
-    expect(Object.keys(content.diagnostics).length).toBe(35);
+  it("exposes the diagnostics bundle (placement keystones + originals)", () => {
+    // floor, not exact: the bundle grows with each diagnostic campaign (35 originals + 110
+    // placement keystones here); assert it never shrinks below the shipped count.
+    expect(Object.keys(content.diagnostics).length).toBeGreaterThanOrEqual(145);
     expect(content.diagnostics["idempotency"].items.length).toBeGreaterThanOrEqual(2);
   });
   it("nextCalibrationProbe returns a diagnosed concept (cold-start)", () => {
