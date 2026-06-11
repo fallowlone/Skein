@@ -1,0 +1,150 @@
+---
+concepts:
+- python-event-loop-internals
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-event-loop-internals"
+sources:
+- https://docs.python.org/3/library/asyncio-eventloop.html
+- https://docs.python.org/3/library/asyncio-task.html
+- https://docs.python.org/3/library/asyncio-dev.html
+spiral: []
+status: ready
+summary: 'A loop iteration drains ready callbacks, polls the selector until the nearest timer, pops due timers. await yields only on real suspension — completed futures chain synchronously. One blocking call freezes the poll; debug mode flags callbacks over 100 ms.'
+title: 'One loop iteration, dissected: ready queue, selector poll, timer heap, and which awaits actually yield'
+track: "python"
+unit: "11-async-deep"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DiagramFrame from "~/components/diagram/DiagramFrame.astro";
+import PacketDot from "~/components/diagram/PacketDot.astro";
+
+<Hook>
+The gateway switched its auth provider from HS256 to RS256 tokens, and within an hour p99 latency of *every* endpoint — including `/healthz`, which does no auth at all — climbed past 230 ms under load. The verify itself was the suspect nobody believed: about 200 ms of pure-Python big-integer math per token, running inline in an async handler. There was no blocked thread pool to find, because there was no thread pool — a `py-spy dump` showed the single event-loop thread pinned inside `verify()`, sample after sample. That was the entire incident: while one coroutine grinds CPU between awaits, the loop is not a scheduler anymore, it is a stuck for-loop. The selector is not polled, accepted sockets go unread, timers do not fire, and every one of the four hundred open connections in the process waits in the same line. The fix was one line — push the verify off the loop. The two-day diagnosis was the price of treating the event loop as magic instead of reading what one iteration of it actually does.
+</Hook>
+
+<Crux>The loop is a for-loop: drain ready queue, poll selector, pop timers. Block anywhere and every connection stalls.</Crux>
+
+<Explanation>
+
+## One iteration, dissected
+
+You already run coroutines and TaskGroups daily (the concurrency unit); this lesson opens the engine. The default loop is a readable cycle around three data structures: a FIFO **ready queue** of callbacks, a **selector** (epoll/kqueue) watching file descriptors, and a **timer heap** (a `heapq` of when-sorted handles). One iteration of `BaseEventLoop._run_once`, simplified but faithfully:
+
+```python
+# the shape of one iteration, simplified from CPython asyncio
+def _run_once(self):
+    timeout = 0 if self._ready else self._next_timer_delay()  # None = block forever
+    events = self._selector.select(timeout)   # the ONLY place the loop sleeps
+    self._process_events(events)              # readiness -> callbacks onto ready
+    now = self.time()
+    while self._scheduled and self._scheduled[0].when() <= now:
+        self._ready.append(heapq.heappop(self._scheduled))    # due timers join queue
+    ntodo = len(self._ready)                  # snapshot! callbacks added DURING
+    for _ in range(ntodo):                    # the drain wait for NEXT iteration
+        self._ready.popleft()._run()
+```
+
+Read the consequences off the code. `loop.call_soon(cb)` appends to the ready queue — FIFO, fair, runs this or next iteration thanks to the `ntodo` snapshot (a callback that keeps rescheduling itself cannot starve I/O). `call_later`/`call_at` push a `TimerHandle` onto the heap; cancelled timers are only lazily purged, so a million cancelled timeouts linger until the cleanup threshold trips. And the selector timeout is the elegant part: the loop sleeps **exactly** until the nearest timer is due — zero ready callbacks and no timers means a fully blocking `select`, zero CPU burned. There is no tick, no polling interval, no scheduler thread. The loop is exactly this cycle, run on one thread, forever.
+
+## How await actually works — and which awaits do not yield
+
+A coroutine is generator machinery wearing new syntax: it suspends and resumes via the same frame mechanics, driven by `send()` and `throw()`. A `Task` owns its coroutine and drives it in steps: each step calls `coro.send(None)`, the coroutine runs until it either finishes or **yields a pending future**; the Task then attaches a done-callback to that future and returns — and that return *is* handing control to the loop, because the step itself was just a callback in the ready queue. When the future resolves, its callback does `call_soon(step)` and the cycle continues.
+
+The subtlety seniors get burned by: `await` does **not** mean "yield to the loop". Awaiting a plain coroutine is a synchronous call one frame deeper. Awaiting an **already-completed** future returns immediately without suspending. Control reaches the loop only when an await bottoms out in something genuinely pending:
+
+```python
+async def fast_path(cache, key):
+    if key in cache:
+        return cache[key]      # this branch never yields: it is a function call
+    val = await fetch(key)     # yields ONLY if fetch suspends on real I/O
+    cache[key] = val
+    return val
+
+# A 100%-cache-hit storm makes fast_path "async but never yielding":
+# each call runs start-to-finish inside one task step, and a caller
+# looping over thousands of hits starves every other task meanwhile.
+```
+
+That is the starvation subtlety: an async function with no pending await runs as one uninterruptible callback. A tight loop over such calls holds the loop for its entire duration — `await asyncio.sleep(0)` exists precisely to insert an explicit yield point into such loops, and lesson 2 will show the same fact deciding where cancellation can land.
+
+<Quiz
+  id="01-event-loop-internals-quiz-1"
+  lessonSlug="01-event-loop-internals"
+  lang="en"
+  question="An async handler awaits a helper coroutine that builds a 10k-entry dict in pure Python, with no awaits inside it. Does the loop get a chance to run other tasks during that await?"
+  choices={[
+    { label: "No — awaiting a plain coroutine chains synchronously, one frame deeper; the loop regains control only at an await that yields a pending future", correct: true },
+    { label: "Yes — every await expression suspends the current task and re-enters the loop", misconception: "await is a may-suspend point, not a must-suspend point. Plain coroutines and completed futures resolve without yielding — the whole helper runs inside the current task step." },
+    { label: "Yes — the loop preempts long-running steps every few milliseconds, like the GIL switch interval", misconception: "That 5 ms heartbeat is GIL arbitration between OS threads. The event loop is cooperative: nothing preempts a running callback; it runs until it returns or genuinely suspends." },
+    { label: "Only if the helper was wrapped in asyncio.create_task first", misconception: "create_task changes who drives the coroutine, not whether its code yields. A task step still runs the same non-suspending code start-to-finish; other tasks wait exactly as long." },
+  ]}
+/>
+
+## The one rule, with its mechanism attached
+
+Every asyncio tutorial says "never block the loop". The mechanism is now visible: a blocking call — `requests.get`, `time.sleep`, that 200 ms RS256 verify — runs *inside* the drain phase of one iteration. While it runs, the iteration never gets back to `selector.select`, so no socket readiness is observed; timers (including every `asyncio.timeout` in flight — lesson 3) sit in the heap unfired; new connections queue in the kernel accept backlog. You saw in the web-services unit that one blocked worker stalls one request; here one blocked coroutine stalls **every request in the process** — that is the multiplier that turned a 200 ms verify into a process-wide 230 ms p99 floor. The pressure valve is `loop.run_in_executor` / `asyncio.to_thread`, which move the blocking call to another thread and give the loop back its iteration — lesson 4 owns the sizing math and the GIL caveats.
+
+The detector ships in the box. **Debug mode** — `PYTHONASYNCIODEBUG=1` or `asyncio.run(main(), debug=True)` — logs every callback or task step that holds the loop longer than `loop.slow_callback_duration` (default **0.1 s**), with the coroutine name attached: `Executing took 0.213 seconds` is the Hook incident finding itself in staging. It also tracebacks never-awaited coroutines to their creation point. The overhead is real, so run it in staging load tests, not as a prod default.
+
+## uvloop, honestly
+
+`uvloop` swaps the whole loop implementation for libuv (the C library under Node.js) behind the same API: install the policy, everything else unchanged. Honest numbers: around 2–4x throughput on socket-heavy workloads — proxies, echo-style services, many small frames — shrinking toward nothing as your own handler code dominates the profile. It makes the *machinery* (polling, callback dispatch, transport reads) faster; it cannot help the Hook incident at all, because the loop was not slow — it was held hostage. If `py-spy` shows time in your Python, uvloop moves nothing.
+
+<Inset kind="why" lang="en">
+Why is await built on generator machinery at all? Lineage: generators got `send()`/`throw()` (PEP 342), `yield from` made delegation composable (PEP 380), and `async`/`await` (PEP 492) is dedicated syntax over the same frame-suspension mechanics — an awaitable exposes `__await__` returning an iterator. This is not trivia: because a Task resumes its coroutine with `send()` and injects exceptions with `throw()`, cancellation (lesson 2) is literally an exception thrown into your frame at a suspension point — the entire cancellation model falls out of this one design decision.
+</Inset>
+
+<Quiz
+  id="01-event-loop-internals-quiz-2"
+  lessonSlug="01-event-loop-internals"
+  lang="en"
+  question="The loop has no ready callbacks; the nearest timer is due in 3 seconds. What does the next iteration actually do?"
+  choices={[
+    { label: "Blocks in selector.select with a 3-second timeout — it wakes early if I/O arrives, otherwise wakes exactly when the timer is due", correct: true },
+    { label: "Spins through iterations checking the clock until the timer expires", misconception: "There is no busy-wait anywhere in the loop. The selector timeout is computed from the timer heap precisely so the loop sleeps in the kernel instead of polling the clock." },
+    { label: "Sleeps the full 3 seconds unconditionally, delaying any I/O that arrives meanwhile", misconception: "select with a timeout is interruptible by readiness: a socket becoming readable wakes the loop immediately. The timeout is an upper bound on the sleep, not a fixed delay." },
+    { label: "Hands the wait to a background timer thread and keeps draining callbacks", misconception: "There is no timer thread — timers live in a heap inside the same single-threaded cycle. With an empty ready queue there is nothing to drain; the loop thread itself blocks in select." },
+  ]}
+/>
+
+</Explanation>
+
+<DiagramFrame label="One loop iteration as a closed cycle: drain ready callbacks, poll the selector with timeout set to the nearest timer, pop due timers back into the ready queue — the dot is the iteration spinning" hue="var(--d-systems)" caption="The dot never stops while the process is healthy. A blocking call inside any callback freezes it mid-cycle: the selector goes unpolled, timers sit unfired, every connection in the process stalls — the mechanism behind the one rule of asyncio. Debug mode flags any single station holding the dot over 100 ms.">
+  <svg viewBox="0 0 360 150" width="360" height="150" style="display:block;margin:0 auto;max-width:100%;height:auto;">
+    <text x="180" y="24" text-anchor="middle" font-size="10" font-family="var(--font-body)" fill="var(--ink)">1 · drain ready callbacks (call_soon FIFO, task steps)</text>
+    <text x="180" y="79" text-anchor="middle" font-size="9.5" font-family="var(--font-mono)" fill="var(--muted)">2 · selector.select(timeout = nearest timer)</text>
+    <text x="180" y="142" text-anchor="middle" font-size="10" font-family="var(--font-body)" fill="var(--ink)">3 · pop due timers into the ready queue</text>
+    <path data-path d="M70 40 H290 A22 22 0 0 1 312 62 V88 A22 22 0 0 1 290 110 H70 A22 22 0 0 1 48 88 V62 A22 22 0 0 1 70 40 Z" fill="none" stroke="var(--hairline-2)" stroke-width="1.4" stroke-dasharray="4 4" />
+    <PacketDot color="var(--d-systems)" durationMs={2400} size={9} />
+  </svg>
+</DiagramFrame>
+
+<KeyTakeaway>One iteration: drain the ready queue (snapshot length, so self-rescheduling callbacks cannot starve I/O), `selector.select` with timeout equal to the nearest timer, pop due timers, repeat — one thread, no preemption. A Task drives its coroutine with `send`/`throw`; await yields to the loop **only** when it bottoms out in a pending future — plain coroutines and completed futures chain synchronously, which is both the fast path and the starvation trap. A blocking call freezes the selector poll and stalls every connection; debug mode (`PYTHONASYNCIODEBUG`, 100 ms threshold) is the built-in detector; uvloop buys 2–4x on socket-heavy machinery and nothing on your own CPU.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-event-loop-internals-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk one iteration of the event loop, and name the exact mechanism by which a single blocking call freezes every connection in the process.", a: "Iteration: compute the selector timeout (0 if ready callbacks exist, else time until the nearest heap timer, else block forever); selector.select(timeout) — the only place the loop sleeps; turn I/O readiness into ready-queue callbacks; pop due timers from the heap into the queue; drain the queue up to its snapshot length, running each callback (task steps included) to completion. The freeze mechanism: a blocking call runs inside the drain phase, so the iteration never returns to selector.select — no readiness is observed, no timers fire (asyncio.timeout included), accepts queue in the kernel. One coroutine holding the drain holds all of them: that is how a 200 ms CPU verify became a process-wide 230 ms p99 floor. Detector: debug mode logs any callback over loop.slow_callback_duration (0.1 s default)." },
+    { q: "Which awaits hand control back to the loop, and how does a Task actually drive its coroutine? Include the starvation corollary.", a: "A Task steps its coroutine with coro.send(None) (and injects exceptions with throw — the basis of cancellation). The step runs until the coroutine returns or yields a PENDING future; the Task hooks the future with a done-callback that call_soon-s the next step, and returns to the loop. So control reaches the loop only at awaits that bottom out in something pending: real I/O, a real sleep, an unfinished task. Awaiting a plain coroutine is a synchronous call; awaiting a completed future returns instantly. Corollary: an async function whose awaits never suspend (full cache hit, completed futures) runs start-to-finish as one uninterruptible callback — a tight loop of such calls starves the process, and await asyncio.sleep(0) is the explicit yield point you insert to break it. uvloop changes none of this: it speeds the machinery, not your code." },
+  ]}
+/>
+
+<Recap lang="en">
+The default event loop is a single-threaded cycle you can read in one screen: drain the ready callback queue (FIFO, with a length snapshot so a self-rescheduling callback cannot lock out I/O), then `selector.select` with the timeout computed as time-to-nearest-timer — the loop sleeps in the kernel, never busy-waits — then pop due `TimerHandle`s from the heap into the queue and go around again. `call_soon`, `call_later`, and `call_at` are just the three entry points into those structures. Await is generator machinery: a Task steps its coroutine via `send`, and the step ends only when the coroutine yields a *pending* future — awaiting plain coroutines or completed futures chains synchronously, so "async" code with no real suspension runs as one uninterruptible callback, which is simultaneously the zero-overhead fast path and the starvation trap that `await asyncio.sleep(0)` exists to break. From the same picture falls the one rule with its mechanism: a blocking call anywhere in the drain phase keeps the iteration from ever reaching the selector poll, so sockets go unread, timers stay unfired, and every connection in the process inherits the blocker latency — the 200 ms JWT verify that put a 230 ms floor under `/healthz`. Debug mode (`PYTHONASYNCIODEBUG=1`, slow-callback threshold 0.1 s) is the built-in detector for exactly that; `run_in_executor`/`to_thread` are the pressure valve (lesson 4); and uvloop, honestly, is a 2–4x upgrade to the polling-and-dispatch machinery on socket-heavy loads that does nothing when the profile says the time is in your own Python.
+</Recap>

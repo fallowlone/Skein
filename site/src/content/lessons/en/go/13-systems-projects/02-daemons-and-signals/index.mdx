@@ -1,0 +1,174 @@
+---
+concepts:
+- go-daemons
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-daemons-and-signals"
+sources:
+- https://pkg.go.dev/os/signal
+- https://pkg.go.dev/context
+- https://pkg.go.dev/os
+spiral: []
+status: ready
+summary: 'Modern daemons never fork: systemd or the container runtime owns the lifecycle. SIGTERM means stop accepting and drain before TimeoutStopSec becomes SIGKILL, SIGHUP means atomic config reload, signal.NotifyContext unifies shutdown, and a second signal exits immediately.'
+title: 'Daemons and signals: no fork dance, the SIGTERM contract, signal.NotifyContext as the one shutdown path'
+track: "go"
+unit: "13-systems-projects"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The queue consumer corrupted its own state file on every single deploy, and nobody noticed for a month because the recovery path papered over it — until the day it could not. The daemon drained a local disk queue, and its author had wired `signal.Notify(ch, syscall.SIGTERM)` with a goroutine that logged "shutdown requested" and then... kept going. Graceful shutdown was a TODO. Here is the cruelty of the signal API: the moment you call Notify, Go *disables* the default die-on-SIGTERM behavior — the half-finished handler did not merely fail to shut down cleanly, it made the process unkillable by anything short of SIGKILL. So every deploy, Kubernetes sent SIGTERM, the daemon logged a cheerful line and kept writing, the kubelet waited out its 30-second grace period, and then SIGKILL landed mid-write to the queue file. Torn entry, checksum mismatch, crash-loop on the next boot. The postmortem found the smoking log line — "shutdown requested" — printed thirty seconds before every corruption, a confession nobody had read.
+</Hook>
+
+<Crux>Modern daemons do not daemonize: the supervisor owns the lifecycle. Your job is the signal contract — SIGTERM drains, SIGHUP reloads.</Crux>
+
+<Explanation>
+
+## You are not the daemon — the supervisor is
+
+The classic Unix daemonization ritual — fork, `setsid` to escape the controlling terminal, fork again, chdir to `/`, close every descriptor, write a pidfile — solved a 1980s problem: surviving the logout of the admin who launched you from a shell. Go programs should never perform it, for two reasons. The practical one: a multithreaded runtime cannot safely fork without exec — after `fork` in a threaded process, only async-signal-safe operations are legal in the child, and the Go runtime is anything but. The architectural one: there is nothing left to gain. systemd with `Type=simple`, or a container runtime, *is* the daemonizer — it detaches you from any terminal, owns your process group, captures your output, restarts you on failure, and tracks your PID in its own bookkeeping. Pidfiles are legacy for the same reason: they exist so an init script could find a self-forked process; a supervisor that started you already knows exactly who you are. Your binary just runs in the foreground and logs to stderr — journald or the container log collector stamps, indexes, and rotates it.
+
+## The signal contract
+
+Signals are the supervisor's vocabulary, and each one is a promise you must keep:
+
+- **SIGTERM — graceful stop.** The contract has three clauses: stop accepting new work, drain what is in flight, exit 0 — and do all of it before the supervisor's patience runs out: `TimeoutStopSec` in systemd (default 90 s), `terminationGracePeriodSeconds` in Kubernetes (default 30 s). Past the deadline comes SIGKILL, which no process can catch, block, or delay.
+- **SIGINT — the same stop, interactively.** Ctrl-C delivers it to the foreground process group; handle it identically to SIGTERM so local runs behave like production.
+- **SIGHUP — reload configuration.** Historically "terminal hang-up", and its *default* action still terminates the process — which is why an unhandled SIGHUP kills programs when a terminal closes. Under a supervisor there is no controlling terminal, so the signal is free real estate: the convention is re-read config and apply it atomically.
+- **SIGKILL and SIGSTOP — not yours.** Uncatchable by design; the existence of SIGKILL is why the SIGTERM contract has a deadline.
+
+And the mechanism that powered the Hook: `signal.Notify` does not *observe* a signal, it **claims** it — the runtime disables the default disposition for every signal you register. A registered-but-ignored SIGTERM produces a process that cannot be stopped politely at all.
+
+<Quiz
+  id="02-daemons-and-signals-quiz-1"
+  lessonSlug="02-daemons-and-signals"
+  lang="en"
+  question="A daemon calls signal.Notify(ch, syscall.SIGTERM), but no goroutine acts on the channel beyond logging. An operator runs kill on the PID. What happens?"
+  choices={[
+    { label: "Nothing stops — Notify disabled the default terminate disposition, so the process runs until the supervisor escalates to SIGKILL", correct: true },
+    { label: "The process still terminates — Notify only lets you observe signals, the default action remains", misconception: "Notify replaces the default disposition, not supplements it. That is the entire point — and the entire danger: registering a signal you do not handle makes the process ignore it." },
+    { label: "The channel fills up and the runtime panics", misconception: "Signal delivery never blocks and never panics — if the channel buffer is full, the runtime simply drops the notification, which is why the docs tell you to buffer the channel." },
+    { label: "The Go runtime always exits on SIGTERM regardless of handlers", misconception: "The runtime honors your registration: an unregistered SIGTERM terminates, a registered one is delivered to your channel and nothing else happens. There is no override." },
+  ]}
+/>
+
+## signal.NotifyContext: shutdown is just cancellation
+
+Your whole service already speaks one cancellation language — `context`. `signal.NotifyContext` translates signals into it, which collapses "shutdown logic" into the propagation you built in the HTTP and lifecycle lessons:
+
+```go
+func main() { os.Exit(run()) }
+
+func run() int {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+
+	srv := newServer()
+	go srv.ListenAndServe()          // serves until Shutdown is called
+
+	<-ctx.Done()                     // first SIGTERM/SIGINT lands here
+	stop()                           // restore default disposition: second signal kills NOW
+
+	drainCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(drainCtx); err != nil {
+		return 1                     // drain budget blown — exit dirty, loudly
+	}
+	return 0
+}
+```
+
+Two mechanics deserve a close read. First, the **drain budget**: the `WithTimeout` value must fit inside the supervisor's deadline with margin — 25 s under a 30 s Kubernetes grace period, leaving room for the SIGTERM to even arrive after endpoint deregistration. A drain budget larger than the grace period is a polite fiction ending in SIGKILL. Second, the **double-signal discipline**: calling `stop()` immediately after the first signal unregisters your handler, so the *next* SIGTERM or ctrl-C hits the restored default disposition — instant death. That is a feature, not a bug: it is the operator's escape hatch when your drain hangs, and every well-behaved daemon ships it. One signal: graceful. Two signals: now.
+
+<Quiz
+  id="02-daemons-and-signals-quiz-2"
+  lessonSlug="02-daemons-and-signals"
+  lang="en"
+  question="In the NotifyContext pattern, why call stop() immediately after ctx.Done() fires, before starting the drain?"
+  choices={[
+    { label: "It restores the default signal disposition, so a second SIGTERM or ctrl-C kills the process instantly — the operator escape hatch if the drain hangs", correct: true },
+    { label: "stop() is what triggers the drain to begin", misconception: "stop() only unregisters the signal handler; the drain is your own code that runs after ctx.Done(). Nothing about stop() starts or accelerates work." },
+    { label: "Without stop() the canceled context keeps the process alive", misconception: "A canceled context holds nothing alive — the process exits when main returns regardless. What stop() changes is how the NEXT signal is treated." },
+    { label: "stop() sends SIGKILL to the process group after the timeout", misconception: "stop() sends nothing — it is pure bookkeeping that detaches your registration. SIGKILL only ever comes from outside: the supervisor or an operator." },
+  ]}
+/>
+
+## SIGHUP reload: re-read, validate, swap
+
+Reload is a separate channel from shutdown, and its contract is transactional: build the *entire* new config, validate it, and only then publish — with `atomic.Pointer[Config]`, the same swap pattern from the configuration lesson. Readers `Load()` the pointer per request and never see a half-applied state. The failure mode this kills: mutating the live config struct field-by-field while requests read it — a data race wearing a feature's clothes. And when the new file fails validation, the answer is to keep serving the old config and log loudly: a daemon that dies on a bad reload converts a typo into an outage.
+
+```go
+hup := make(chan os.Signal, 1)
+signal.Notify(hup, syscall.SIGHUP)
+go func() {
+	for range hup {
+		next, err := loadAndValidate(path)
+		if err != nil { log.Printf("reload rejected: %v", err); continue }
+		current.Store(next)          // atomic.Pointer[Config]: readers see old or new, whole
+	}
+}()
+```
+
+## The systemd unit, honestly
+
+```ini
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/queued
+Restart=on-failure
+TimeoutStopSec=30
+WatchdogSec=30
+```
+
+`Type=simple` says it plainly: the supervisor is the daemonizer; your process just runs. `Restart=on-failure` restarts crashes but not clean exits — `always` is for processes that should never stop on purpose. `TimeoutStopSec` is the SIGTERM deadline you drain against. `WatchdogSec` deserves the honest framing: with the go-systemd library you send `READY=1` via `sd_notify` at startup and `WATCHDOG=1` periodically; miss the interval and systemd kills and restarts you. It is **deadlock insurance** — it catches a wedged main loop, nothing more. The classic way to make it lie: pinging from a dedicated goroutine that stays healthy while the actual work loop is deadlocked. Send the ping from the loop whose liveness you actually care about, or you have bought insurance on someone else's house.
+
+<Inset kind="why" lang="en">
+Why did the fork dance exist at all, and why is it gone? A process launched from a shell belonged to that terminal's session: logout sent SIGHUP and killed it. Double-fork plus setsid created a session-less orphan adopted by init — daemonhood by escape artistry. Supervisors inverted the model: systemd starts your process already detached, already adopted, already logged. The dance now actively hurts — a self-forking service confuses the supervisor's process tracking (systemd must guess your main PID), and in Go the fork itself is unsafe under a multithreaded runtime. The correct amount of daemonization code in a modern Go service is zero lines.
+</Inset>
+
+</Explanation>
+
+<SequenceDiagram
+  label="The SIGTERM contract under a supervisor: drain inside the deadline or meet SIGKILL"
+  hue="var(--d-backend)"
+  actors={["systemd", "Go daemon", "clients"]}
+  messages={[
+    { from: "systemd", to: "Go daemon", label: "SIGTERM" },
+    { from: "Go daemon", to: "clients", label: "stop accepting" },
+    { from: "clients", to: "Go daemon", label: "in-flight drain" },
+    { from: "Go daemon", to: "systemd", label: "exit 0 in time" },
+    { from: "systemd", to: "Go daemon", label: "SIGKILL on timeout" },
+  ]}
+  caption="One signal starts the graceful path: close the listener, drain in-flight work, exit before TimeoutStopSec (systemd, 90 s default) or terminationGracePeriodSeconds (Kubernetes, 30 s default). Blow the deadline and SIGKILL ends the process mid-write — the uncatchable signal is why the drain budget must be smaller than the grace period."
+/>
+
+<KeyTakeaway>Do not daemonize — run in the foreground, log to stderr, and let systemd or the container runtime own the lifecycle. Honor the vocabulary: SIGTERM stops accepting and drains inside the supervisor deadline, SIGHUP rebuilds and atomically swaps config, and signal.Notify claims a signal outright — an empty handler makes you unkillable until SIGKILL. signal.NotifyContext turns shutdown into context cancellation, and calling stop() after the first signal gives operators the second-signal kill switch.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-daemons-and-signals-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the SIGTERM contract, its deadlines, and what an empty signal.Notify handler does to a process.", a: "SIGTERM obliges three steps: stop accepting new work, drain in-flight work, exit 0 — all inside the supervisor deadline: TimeoutStopSec in systemd (90 s default), terminationGracePeriodSeconds in Kubernetes (30 s default). Past the deadline the supervisor sends SIGKILL, which cannot be caught or delayed, so the drain budget must fit inside the grace period with margin (25 s under a 30 s grace, leaving room for delivery and endpoint deregistration). The trap: signal.Notify claims a signal — it disables the default terminate disposition for everything registered. A handler that logs and does nothing therefore produces a process that ignores polite termination entirely and only ever dies by SIGKILL, mid-write, every deploy — graceful shutdown TODO plus Notify equals corruption machine." },
+    { q: "Walk through the signal.NotifyContext pattern: drain budget, double-signal discipline, and where SIGHUP fits.", a: "NotifyContext(ctx, SIGTERM, SIGINT) returns a context canceled by the first signal — shutdown becomes ordinary context propagation through the same ctx the whole service already passes around. After ctx.Done() fires, call stop() at once: it unregisters the handler and restores default dispositions, so a second SIGTERM or ctrl-C kills instantly — the operator escape hatch when a drain hangs. Then drain under context.WithTimeout sized below the supervisor grace period and exit. SIGHUP rides a separate Notify channel because it means reload, not stop: rebuild the whole config, validate, and atomic.Pointer.Store the new value so readers see old or new but never a half-applied mix; on validation failure keep the old config and log loudly — dying on a bad reload turns a typo into an outage." },
+  ]}
+/>
+
+<Recap lang="en">
+The fork-setsid-fork ritual is dead, and Go could never perform it safely anyway: a multithreaded runtime must not fork without exec, and a supervisor — systemd Type=simple or a container runtime — already provides everything the dance bought: detachment, adoption, restart policy, log capture, PID tracking. Pidfiles are bookkeeping for a world without supervisors. What remains genuinely yours is the signal contract. SIGTERM opens a deadline — 90 seconds under systemd by default, 30 under Kubernetes — inside which you stop accepting, drain in-flight work, and exit cleanly, because what follows the deadline is uncatchable SIGKILL. SIGINT is the same promise made interactively. SIGHUP means reload: rebuild the configuration, validate it, swap it with an atomic pointer so no reader ever sees a half-applied state, and survive a bad file by keeping the old config. Remember that signal.Notify claims signals rather than observing them — a registered SIGTERM with an empty handler creates an unkillable process and a corruption story. signal.NotifyContext folds all of this into the context tree your service already has; call stop() after the first signal so the second one kills immediately, the operator escape hatch. In the unit file, Restart=on-failure handles crashes, TimeoutStopSec is the deadline you drain against, and WatchdogSec with sd_notify is honest deadlock insurance only when the liveness ping comes from the loop that actually matters. Log to stderr; journald does the rest.
+</Recap>

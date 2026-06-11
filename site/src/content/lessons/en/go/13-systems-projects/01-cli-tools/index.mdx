@@ -1,0 +1,187 @@
+---
+concepts:
+- go-cli-tools
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-cli-tools"
+sources:
+- https://pkg.go.dev/flag
+- https://pkg.go.dev/os
+- https://pkg.go.dev/os/signal
+spiral: []
+status: ready
+summary: 'The Unix contract for Go CLIs: stdout is data, stderr is diagnostics, exit codes are the machine API — 0 ok, 1 failure, 2 usage. Detect a TTY to pick human tables or --json, read stdin like a filter, clean temp files on ctrl-C via signal.NotifyContext, ship one static binary.'
+title: 'CLI tools in Go: stdout is data, stderr is diagnostics, exit codes are the API'
+track: "go"
+unit: "13-systems-projects"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The deploy broke at 2 a.m., during an incident, which is when deploys break. The pipeline was one line: `release-tool manifest --json | jq -r '.images[]'`, and it had run cleanly for a year. That week someone improved the tool — a friendly `fmt.Println("resolving 14 services...")` so humans would not stare at a silent cursor. Friendly for humans, fatal for jq: the progress line landed on stdout, in front of the JSON, and `jq` died with a parse error, which under `set -euo pipefail` killed the deploy script, which paged the on-call who was already paging someone else. The fix was eleven characters — `fmt.Fprintln(os.Stderr, ...)` — but the lesson was bigger: a CLI tool has an API surface, and that surface is not its flags. It is which bytes go to which stream, and what number the process dies with. Break either one and you break every script, cron job, and pipeline that ever trusted you, silently, at the worst possible hour.
+</Hook>
+
+<Crux>A CLI is an API: stdout carries data, stderr carries diagnostics, the exit code is the return value — break any one and pipelines break.</Crux>
+
+<Explanation>
+
+## Three channels, three meanings
+
+Every Unix process is born holding three file descriptors, and the contract over them is older than Go: **stdout (fd 1) is the product** — the bytes the next program consumes; **stderr (fd 2) is commentary** — progress, warnings, errors, anything aimed at a human; **the exit code is the verdict** — the only part a shell can branch on. A pipe connects only stdout to the next process; stderr bypasses the pipe and still reaches the terminal. That is the whole mechanism behind the Hook: anything you print to stdout becomes part of your data format, whether you meant it or not.
+
+Go's standard library is opinionated in your favor here, if you know where: the `log` package writes to **stderr** by default — `log.Printf` is pipeline-safe out of the box. `fmt.Println` writes to **stdout** — it is for results, not narration:
+
+```go
+json.NewEncoder(os.Stdout).Encode(report)            // data: the next process eats this
+fmt.Fprintf(os.Stderr, "resolved %d services\n", n)  // diagnostics: the operator reads this
+log.Printf("retrying registry fetch")                // also stderr — log is safe by default
+```
+
+Exit codes are the second half of the API. The working convention: **0** success, **1** generic failure, **2** usage error — `flag` itself exits with 2 when parsing fails, so your tool already follows that last one. The BSD `sysexits.h` table (64–78: `EX_USAGE`, `EX_NOINPUT`, `EX_TEMPFAIL`...) deserves an honest framing: it is a convention from 1980s mail software, not a standard the OS enforces — almost nothing checks those values today. What matters is that *you* pick a small table, document it in `--help`, and never change it casually: scripts branch on these numbers. Stay within 0–255 (the shell sees only the low 8 bits), and avoid 126+ — shells use 126 for not-executable, 127 for not-found, and report signal deaths as 128 plus the signal number (ctrl-C kill shows as 130).
+
+<Quiz
+  id="01-cli-tools-quiz-1"
+  lessonSlug="01-cli-tools"
+  lang="en"
+  question="A tool prints progress with fmt.Println and emits its JSON report with json.NewEncoder(os.Stdout). A deploy script pipes it into jq. What does jq see?"
+  choices={[
+    { label: "Progress lines interleaved with the JSON on one stream — jq fails to parse; the progress must move to stderr", correct: true },
+    { label: "jq skips lines that are not JSON and parses the rest", misconception: "jq parses its input stream as JSON terms, not line-by-line garbage filtering — a stray text line is a hard parse error, which is exactly how friendly progress output kills pipelines." },
+    { label: "Nothing breaks — fmt.Println writes to stderr like log.Printf does", misconception: "fmt.Println writes to stdout; it is log that defaults to stderr. Mixing the two up is the single most common way Go CLIs corrupt their own output stream." },
+    { label: "The pipe forwards only what comes after the first JSON token", misconception: "A pipe is a dumb byte stream with no framing or filtering — every byte written to stdout arrives at jq in order, progress text included." },
+  ]}
+/>
+
+## Machine mode and human mode
+
+A serious tool has two audiences and one binary, so it needs an explicit machine format — `--json` — and a way to notice which audience is present. The mechanism is a TTY check on the *output* descriptor: `term.IsTerminal(int(os.Stdout.Fd()))` (from `golang.org/x/term`). Interactive terminal: render tables, color, progress spinners. Piped or redirected: drop all of it.
+
+```go
+isTTY := term.IsTerminal(int(os.Stdout.Fd()))
+useColor := isTTY && os.Getenv("NO_COLOR") == ""   // honor the NO_COLOR convention
+```
+
+The tradeoff worth being precise about: auto-switching **decoration** (color, spinners, cursor tricks) on TTY detection is universally safe — raw ANSI escapes like `\x1b[32m` in a CI log or a grep result are pure noise. Auto-switching **format** is not: a tool that silently emits JSON when piped and a table when not will behave differently in a script than in the demo that preceded the script, and that surprise costs a debugging session. The robust contract: decoration follows the TTY, format follows an explicit flag.
+
+## flag versus cobra, honestly
+
+The stdlib `flag` package covers a one-verb tool completely: typed flags, `-h` generation, exit-2 on bad input, zero dependencies. Its edges: single-dash long flags only (`-verbose`, not `--verbose` — though it accepts two dashes on parse), no subcommands, no shell completions. You can hand-roll subcommands with `flag.NewFlagSet` per verb and a switch on `os.Args[1]` — fine for two or three verbs, miserable for twelve.
+
+That is the actual decision line for `cobra` or `urfave/cli`: not ergonomics, **surface area**. A git-style tool — nested subcommands, generated completions for three shells, man pages — is precisely what cobra automates, and paying its dependency tree (cobra pulls `pflag` and friends — a real cost you now audit forever, in a binary that exists partly to *avoid* dependency sprawl) is the honest price. A tool with one verb and six flags that imports cobra bought a framework for a function call. Start with `flag`; migrate when the subcommand switch hurts.
+
+## stdin is an input: the filter contract
+
+The tools you already trust — `grep`, `sort`, `jq` — obey the cat-pipe contract: file arguments if given, stdin otherwise. That single convention is what makes them composable, and it costs five lines:
+
+```go
+var in io.Reader = os.Stdin
+if flag.NArg() > 0 {
+	f, err := os.Open(flag.Arg(0))
+	if err != nil { fmt.Fprintln(os.Stderr, err); os.Exit(1) }
+	defer f.Close()
+	in = f
+}
+```
+
+One honest number for the scanner you will reach for next: `bufio.Scanner` caps tokens at 64 KiB by default and reports `ErrTooLong` past it — real-world log lines exceed that; call `sc.Buffer` with a bigger cap or use `bufio.Reader`. And when flags arrive from three places at once, the precedence ladder from the configuration lesson applies unchanged: **flags beat environment beats config file** — explicit and closest to the invocation wins.
+
+<Inset kind="why" lang="en">
+Why send progress to stderr even when a human is clearly watching? Because at print time you cannot know who is consuming stdout — the same invocation must work interactively today and inside a pipe tomorrow, and the byte stream has no way to retract a line. stderr is the channel that is defined as "always the human": it survives piping, it survives redirection of the data stream, and every Unix tool since the seventies has treated it that way. Printing narration to stdout is borrowing against a contract you will repay during an outage.
+</Inset>
+
+## Ctrl-C must clean up
+
+A CLI that writes temp files, holds a lock, or half-finishes an upload owes the user a clean exit on interrupt. The modern wiring is `signal.NotifyContext` plus the defer chain — and one sharp edge: **`os.Exit` does not run deferred calls.** A signal handler that calls `os.Exit` directly skips every `defer os.RemoveAll` you carefully wrote.
+
+```go
+func main() { os.Exit(run()) }   // exactly one os.Exit, at the very top
+
+func run() int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	tmp, err := os.MkdirTemp("", "release-*")
+	if err != nil { fmt.Fprintln(os.Stderr, err); return 1 }
+	defer os.RemoveAll(tmp)      // runs on normal return AND on signal-driven return
+
+	if err := build(ctx, tmp); err != nil {
+		if ctx.Err() != nil { return 130 }   // interrupted: 128 + SIGINT(2), by convention
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	return 0
+}
+```
+
+The mechanism: the first ctrl-C cancels `ctx`; your work function notices `ctx.Err()` and returns; the stack unwinds through every defer; `run` hands a code to the single `os.Exit` at the top. Cleanup is just normal control flow — no cleanup registry, no handler spaghetti.
+
+<Quiz
+  id="01-cli-tools-quiz-2"
+  lessonSlug="01-cli-tools"
+  lang="en"
+  question="A CLI creates a temp dir, defers os.RemoveAll, and a signal goroutine calls os.Exit(1) on SIGINT. Users report temp dirs piling up after ctrl-C. Why?"
+  choices={[
+    { label: "os.Exit terminates the process immediately without running deferred calls — the signal path must cancel a context and let main return instead", correct: true },
+    { label: "Deferred calls never run for directories, only for files", misconception: "defer has no idea what the function does — it runs any function on scope exit. The failure is that os.Exit never exits the scope: it halts the process mid-frame." },
+    { label: "SIGINT cannot be intercepted by a Go program", misconception: "signal.Notify and NotifyContext intercept SIGINT routinely — that is the entire graceful-cleanup mechanism. Only SIGKILL and SIGSTOP are uncatchable." },
+    { label: "The OS garbage-collects temp directories when a process dies", misconception: "The OS reclaims memory and descriptors at exit, never filesystem contents — anything under os.MkdirTemp persists until something deletes it, which is why the defer matters." },
+  ]}
+/>
+
+## Shipping it
+
+Distribution is where Go CLIs win outright: `CGO_ENABLED=0 go build` yields one static binary per platform, cross-compiled with nothing but `GOOS=linux GOARCH=arm64`. Expect 5–15 MB for a typical tool; `-ldflags="-s -w"` strips symbol tables for roughly a quarter of that back. The two delivery channels differ in audience: `go install example.com/tool@v1.4.2` builds from source on the user's machine — perfect for Go developers, useless for anyone without a toolchain and unpinnable in CI beyond the tag. Released archives (the goreleaser pattern: per-platform tarballs plus checksums on a releases page) serve everyone else and give you reproducible, signable artifacts. Mature tools do both.
+
+</Explanation>
+
+<FlowDiagram
+  label="One process, three output channels: data flows down the pipe, diagnostics reach the operator, the exit code gates the script"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "tool", label: "your CLI", sub: "one binary" },
+    { id: "stdout", label: "stdout (fd 1)", sub: "data only" },
+    { id: "stderr", label: "stderr (fd 2)", sub: "progress, errors" },
+    { id: "jq", label: "next process", sub: "jq, sort, xargs" },
+    { id: "tty", label: "terminal", sub: "operator eyes" },
+    { id: "shell", label: "shell", sub: "branches on $?" },
+  ]}
+  edges={[
+    { from: "tool", to: "stdout", label: "results" },
+    { from: "tool", to: "stderr", label: "narration" },
+    { from: "stdout", to: "jq", label: "pipe" },
+    { from: "stderr", to: "tty", label: "bypasses pipe" },
+    { from: "tool", to: "shell", label: "exit code" },
+  ]}
+  caption="A pipe connects only stdout to the next process; stderr skips the pipe and still reaches the terminal. The exit code is the one value a script can branch on — 0 ok, 1 failure, 2 usage, and 128 plus the signal number for signal deaths."
+/>
+
+<KeyTakeaway>A CLI's real API is its streams and its exit code: stdout carries nothing but data, stderr carries every human-facing byte, and the documented exit-code table (0/1/2; sysexits is convention, not law) is what scripts branch on. Decoration follows TTY detection, format follows an explicit --json flag, stdin makes a filter, and interrupts must cancel a context and unwind through defers — one os.Exit at the top, because os.Exit skips them.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-cli-tools-retrieval"
+  lang="en"
+  questions={[
+    { q: "State the three-channel Unix contract and what each half of Go's printing stdlib does to it by default.", a: "stdout (fd 1) is exclusively data — the bytes the next process in a pipe consumes; stderr (fd 2) is diagnostics — progress, warnings, errors for the operator, and it bypasses pipes to reach the terminal; the exit code is the machine-readable verdict the shell branches on: 0 success, 1 generic failure, 2 usage error (flag itself exits 2 on bad input), codes within 0–255, signal deaths reported by shells as 128 plus the signal number. In Go: fmt.Println and friends write to stdout — results only; the log package writes to stderr by default, so logging is pipeline-safe out of the box. One stray narration line on stdout becomes part of your data format and breaks every downstream parser, which is why the streams are API surface, not implementation detail." },
+    { q: "Walk through interrupt-safe cleanup in a Go CLI: the wiring, the unwind, and the os.Exit trap.", a: "Wire signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM) at the top of a run() function that returns an int code; main is the single line os.Exit(run()). Temp resources are created once and released by defers in run. On ctrl-C the context cancels, work functions observe ctx.Err() and return, the stack unwinds through every defer — temp dirs removed, locks released — and run returns 130 (128 plus SIGINT) by convention. The trap: os.Exit terminates the process immediately and runs no deferred calls, so a signal handler that calls os.Exit directly silently leaks everything the defers guarded. Keeping exactly one os.Exit at the very top of main turns cleanup into ordinary control flow." },
+  ]}
+/>
+
+<Recap lang="en">
+A command-line tool is a process with an API of three channels, and Go gives you precise control over each. stdout exists for data alone — JSON, table rows, the bytes the next pipe stage consumes — while stderr carries every human-facing byte: progress, warnings, errors; Go's log package lands there by default while fmt.Println does not, and confusing the two is how a friendly progress message kills a production deploy through a jq parse error. The exit code is the third channel: 0 success, 1 failure, 2 usage — document your table and treat sysexits.h as the historical convention it is, while staying clear of the shell-reserved values above 125. Detect a TTY on stdout to switch decoration — color, spinners, honoring NO_COLOR — but never silently switch format; that belongs to an explicit --json flag. Read stdin when no file arguments are given and your tool joins the grep-sort-jq family for five lines of code, remembering the 64 KiB default Scanner cap. Interrupts route through signal.NotifyContext into ordinary control flow: context cancels, functions return, defers clean temp files, and the single os.Exit at the top of main reports 130 — because os.Exit anywhere else skips every defer you wrote. Choose flag until subcommands and completions genuinely hurt, then pay the cobra dependency cost knowingly. Ship one static binary; offer go install for Go developers and checksummed release archives for everyone else.
+</Recap>

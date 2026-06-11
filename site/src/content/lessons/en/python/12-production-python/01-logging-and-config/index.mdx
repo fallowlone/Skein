@@ -1,0 +1,172 @@
+---
+concepts:
+- python-prod-logging
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-logging-and-config"
+sources:
+- https://docs.python.org/3/library/logging.html
+- https://docs.python.org/3/library/logging.config.html
+- https://docs.python.org/3/library/contextvars.html
+- https://docs.pydantic.dev/latest/concepts/pydantic_settings/
+spiral: []
+status: ready
+summary: 'Loggers form a dot-name tree: configure the root once via dictConfig; libraries call getLogger(__name__) and add nothing. JSON logs plus contextvars request ids are queryable; lazy %s args skip work unless emitted; typed settings fail at boot, SecretStr hides secrets.'
+title: 'Logging and config: the dot-name logger tree, JSON output, and settings that fail at boot'
+track: "python"
+unit: "12-production-python"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+The Saturday the log bill arrived, the service had been "fine" for three weeks. During an incident someone flipped the root logger to DEBUG and never flipped it back; every handler in the codebase logged its full request payload with an f-string — `logger.debug(f"req {body}")`. Two failures compounded. DEBUG-in-prod meant every one of those lines was now emitted: 40 GB of logs per hour into a pipeline priced per ingested gigabyte, and the monthly bill grew a comma in a new place. Worse: f-strings format **before** logging decides anything, so for the three weeks *prior* to the flip, every request had been serializing a multi-kilobyte payload only to throw the string away — pure hot-path CPU tax. And the payloads carried emails and bearer tokens, so the cleanup ended in a PII audit across archived log backups. The remediation list was the whole discipline of this lesson: configure the root exactly once at the entrypoint, lazy `%s` arguments everywhere, JSON output with a correlation id, and a typed settings object that turns "DEBUG in prod" into a deploy-time error instead of a Saturday discovery.
+</Hook>
+
+<Crux>Configure the root once at the entrypoint; libraries only getLogger(__name__). Lazy %s args; ERROR pages someone; config fails at boot.</Crux>
+
+<Explanation>
+
+## One tree, configured once
+
+`logging.getLogger("app.api.orders")` does not create an isolated logger — it creates (or returns, it is a registry of singletons) a node in a tree keyed by dot-name: `app.api.orders` is a child of `app.api`, which is a child of `app`, which hangs off the root. A record emitted at a node first passes that node's level gate, then **propagates up the tree and is offered to every ancestor's handlers** — ancestor *levels* are not re-checked, only their handlers fire. That asymmetry is the whole configuration contract: handlers belong at the root, configured once, at the process entrypoint; everything else just emits.
+
+```python
+# main.py — the ONLY place in the process that configures logging
+import logging.config
+
+logging.config.dictConfig({
+    "version": 1,
+    "disable_existing_loggers": False,   # keep library loggers alive
+    "formatters": {
+        "json": {"()": "pythonjsonlogger.json.JsonFormatter",
+                 "format": "%(asctime)s %(levelname)s %(name)s %(message)s"},
+    },
+    "handlers": {"stdout": {"class": "logging.StreamHandler", "formatter": "json"}},
+    "root": {"level": "INFO", "handlers": ["stdout"]},
+})
+
+# every other module — app code and libraries alike
+import logging
+logger = logging.getLogger(__name__)     # a tree node; attach NOTHING to it
+```
+
+Libraries call `getLogger(__name__)` and add **nothing** — at most a `NullHandler` to silence the "no handlers found" warning. The classic violation: a library author "helpfully" attaches a `StreamHandler` at import time. Now every record is emitted by that handler *and*, after propagation, by the root handler — every line appears twice, and ops spends a week grepping duplicates before someone reads the library source. Per-module verbosity is still cheap when you need it: set `loggers: {"app.api": {"level": "DEBUG"}}` in the same dictConfig and only that subtree gets noisy.
+
+## Structured JSON and the correlation id
+
+Prose logs can only be grepped; JSON logs can be **queried** — filter by `level`, group by `logger`, aggregate `duration_ms` percentiles, join on `request_id`. That last field is the one that turns fifty interleaved request streams into one readable story, and in async services it must come from `contextvars`, not `threading.local` — hundreds of tasks interleave on one thread, and a ContextVar is copied per task, so each request sees its own value (the same middleware seam you built in the python/06 request lifecycle):
+
+```python
+import logging
+from contextvars import ContextVar
+
+request_id: ContextVar[str] = ContextVar("request_id", default="-")
+
+class RequestIdFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.request_id = request_id.get()   # stamped onto EVERY record
+        return True
+
+# ASGI middleware sets it once per request
+async def correlation(request, call_next):
+    request_id.set(request.headers.get("x-request-id") or new_id())
+    return await call_next(request)
+```
+
+Two honest routes to JSON: `python-json-logger` is a formatter swap — five lines of dictConfig, stdlib semantics untouched. `structlog` is a second logging worldview — bound loggers carry context (`log = log.bind(user_id=...)`) through call chains without filters, which is genuinely better ergonomics, but adopting it halfway leaves two formats in one stream and a team confused about which import to use. Pick one posture and migrate whole services, not files.
+
+<Quiz
+  id="01-logging-and-config-quiz-1"
+  lessonSlug="01-logging-and-config"
+  lang="en"
+  question="Every payments-library log line appears twice in prod output. The library calls getLogger('payments') and also attaches its own StreamHandler at import. Root has the dictConfig handler. Why two lines?"
+  choices={[
+    { label: "The record is emitted once by the library handler, then propagates up the dot-name tree and is emitted again by the root handler — libraries must attach nothing (NullHandler at most)", correct: true },
+    { label: "getLogger('payments') returns a fresh logger per call, so two logger objects each emit once", misconception: "getLogger is a registry: the same name always returns the same singleton node. The duplication lives in handler count, not logger count." },
+    { label: "dictConfig registered the root handler twice because disable_existing_loggers is False", misconception: "That flag only keeps previously created loggers enabled; it never duplicates handlers. dictConfig replaces root configuration wholesale on each call." },
+    { label: "Both the library logger level and the root level pass the record, so each level emits it", misconception: "Levels are gates, not emitters — and propagation does not even re-check ancestor logger levels. Only handlers write output, and there are two of them here." },
+  ]}
+/>
+
+## Levels discipline and the lazy-formatting rule
+
+`logger.info("user %s rebalanced %d", uid, n)` is not style — it is a deferral contract. The logging call first checks `isEnabledFor(INFO)` (roughly a hundred nanoseconds); only if the record will actually be emitted are the args formatted into the template. `logger.debug(f"user {user!r}")` inverts that: the f-string evaluates *before* the call, every time, even with DEBUG disabled — and a `repr` of a fat ORM object costs microseconds to milliseconds. At a few million hot-path calls per hour that is real CPU, and it was the silent three-week tax in the Hook. The `%s` form has a second payoff: the message *template* stays constant, so a log pipeline can group by template and graph "this line started firing 100x more" — f-strings produce a unique message per call and kill that aggregation.
+
+Levels are a paging contract, not a severity vibe: **ERROR means a human should act** — if nobody should be woken, it is WARNING (degraded, self-healing, worth a morning look) or INFO (state changes: startup, config loaded, connection pool sized). Teams that log handled retries at ERROR train on-call to ignore ERROR, and the one real page drowns. DEBUG stays off in prod by default; when you need it, enable it for one dot-name subtree via dictConfig, never at root.
+
+## Settings that fail at boot
+
+The config half of the discipline has one rule: **a misconfigured service must refuse to start.** `pydantic-settings` gives the mechanism — a typed class whose fields load from the environment and validate at construction:
+
+```python
+from pydantic import PostgresDsn, SecretStr
+from pydantic_settings import BaseSettings
+
+class Settings(BaseSettings):
+    model_config = {"env_prefix": "APP_"}
+    database_url: PostgresDsn        # REQUIRED — no default, boot fails without it
+    api_key: SecretStr               # repr and logs show '**********'
+    log_level: str = "INFO"          # a default is fine when the default is the SAFE one
+
+settings = Settings()                # raises ValidationError AT BOOT, not at 3am
+```
+
+The config-drift failure this kills: a "sensible default" like `database_url = "postgres://staging-db/app"` means a prod deploy that forgets the env var **boots green and quietly runs production traffic against staging** — no crash, no page, just wrong data until an audit notices. Required fields must be required; the crash at deploy time is the feature. `SecretStr` closes the other leak: secrets never appear in `repr`, tracebacks, or the settings dump you log at startup (log the dump — it is the cheapest incident tool you will ever ship — but log it with secrets masked). One image, env-per-deployment: staging and prod differ only in environment variables, never in code paths.
+
+<Quiz
+  id="01-logging-and-config-quiz-2"
+  lessonSlug="01-logging-and-config"
+  lang="en"
+  question="Settings declares database_url: str = 'postgres://staging-db:5432/app' as a sensible default. A prod deploy forgets to set APP_DATABASE_URL. What happens?"
+  choices={[
+    { label: "The service boots green and silently runs prod traffic against staging — the fix is deleting the default so validation fails at boot; required config must be required", correct: true },
+    { label: "pydantic-settings emits a warning whenever a default is used instead of the environment", misconception: "Defaults are silent by design — that is what makes them dangerous for deployment-critical fields. No warning mechanism exists; absence of the env var is not an event." },
+    { label: "The first query fails fast because staging is unreachable from prod, so the bug surfaces in minutes", misconception: "Networks are flatter than you hope. When staging IS reachable — common in shared VPCs — you get quiet cross-environment writes instead of a crash, which is far worse." },
+    { label: "Wrap the connect in try/except and log ERROR so on-call notices the bad URL", misconception: "That converts a boot-time invariant into a runtime maybe — and the connection may succeed against the wrong database. A ValidationError at deploy is cheaper than any page." },
+  ]}
+/>
+
+</Explanation>
+
+<StackDiagram
+  label="One record through the production logging pipeline: module logger to root handler to queryable JSON"
+  hue="var(--d-systems)"
+  layers={[
+    { label: "logger app.api.orders — getLogger(__name__)", note: "level gate, no handlers" },
+    { label: "propagation up the dot-name tree", note: "ancestor handlers fire" },
+    { label: "root handler — dictConfig, entrypoint only", note: "the one attach point" },
+    { label: "JSON formatter + request_id filter", note: "contextvars stamp" },
+    { label: "stdout into the log pipeline", note: "query fields, not grep" },
+  ]}
+  caption="Records climb the dot-name tree to the root handler — the only place handlers live. A contextvars-backed filter stamps the correlation id on every record, and the JSON formatter makes the result queryable instead of greppable."
+/>
+
+<KeyTakeaway>Loggers form a dot-name tree: records propagate up to ancestor handlers, so the root is configured once via `dictConfig` at the entrypoint and libraries attach nothing — a library handler plus root handler is the duplicate-lines classic. JSON output plus a `contextvars` request id makes logs queryable per request; lazy `%s` args defer formatting until a record is actually emitted, where f-strings pay every time. ERROR pages someone — keep the contract or drown the real page. Config is typed settings that fail at boot: required fields without defaults, `SecretStr` out of every repr.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-logging-and-config-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the logger-tree contract: who configures what, how does propagation work, and what exactly goes wrong when a library attaches its own handler?", a: "getLogger(name) returns a singleton node in a tree keyed by dot-name; app.api.orders is a child of app.api. A record passes its own logger's level gate, then propagates up the tree, firing every ancestor's handlers — ancestor levels are not re-checked, only handlers run. Therefore: handlers attach at the root, configured exactly once via dictConfig at the process entrypoint; every other module (apps and libraries) calls getLogger(__name__) and attaches nothing, NullHandler at most. A library that helpfully adds a StreamHandler creates double emission: its handler fires, then propagation reaches the root handler and fires again — every line twice. Per-module verbosity belongs in the same dictConfig (loggers: app.api at DEBUG), never as scattered handler attachments." },
+    { q: "Explain the lazy-formatting rule and the boot-time config posture: why %s args over f-strings, and why must required settings have no defaults?", a: "logger.info('x %s', y) defers work: isEnabledFor runs first (~100ns), and the template is formatted only if the record will be emitted; logger.info(f'x {y}') formats before the call decides anything — a fat repr costs microseconds to milliseconds, millions of times per hour, even when the level is disabled. Constant templates also let pipelines aggregate by message shape; f-strings make every line unique. On config: pydantic-settings validates a typed Settings class at construction, so the process refuses to start on missing or invalid values. A default on a deployment-critical field (staging DSN) means a forgotten env var boots green and points prod at staging — config drift with no crash. Required fields stay default-free; SecretStr keeps secrets out of repr, tracebacks, and the startup config dump." },
+  ]}
+/>
+
+<Recap lang="en">
+Production logging is a tree you configure once. Every `getLogger(__name__)` call returns a singleton node keyed by dot-name; records pass their own level gate and then climb the tree, firing ancestor handlers without re-checking ancestor levels — which is why handlers live at the root, set up by one `dictConfig` call at the entrypoint, and why a library that attaches its own `StreamHandler` doubles every line in your output. Structure beats prose: JSON output turns grep into queries, and a `contextvars`-backed filter stamps an async-safe `request_id` on every record so fifty interleaved requests read as separate stories — `threading.local` cannot do this once tasks share a thread. Formatting is lazy by contract: `%s` args evaluate only if the record is emitted, an f-string pays its repr cost every call even at a disabled level — the silent CPU tax, and at DEBUG-in-prod the 40 GB-per-hour bill plus the PII audit from the Hook. Levels are a paging contract: ERROR wakes a human, WARNING waits for morning, and inflation trains on-call to ignore the one page that matters. Config mirrors the same fail-loud posture: a typed `Settings` validates at boot, required fields carry no defaults — a staging DSN default plus one forgotten env var is silent cross-environment traffic — and `SecretStr` keeps credentials out of reprs, tracebacks, and the startup dump you should absolutely be logging.
+</Recap>

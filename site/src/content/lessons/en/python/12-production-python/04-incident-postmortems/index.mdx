@@ -1,0 +1,149 @@
+---
+concepts:
+- python-incidents
+deepensInto: []
+estMin: 20
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-incident-postmortems"
+sources:
+- https://docs.python.org/3/library/tracemalloc.html
+- https://docs.python.org/3/library/functools.html
+- https://github.com/benfred/py-spy
+- https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+spiral: []
+status: ready
+summary: 'Three dissected incidents: an unbounded lru_cache leaks 40MB/h to OOMKill (tracemalloc diff finds it); a sync requests.get freezes the event loop (py-spy shows socket.recv); a 2-minute model load plus liveness probe equals CrashLoopBackOff. Blameless postmortems fix systems.'
+title: 'Incident postmortems: the leak, the hang, the thundering restart — and the craft of blameless analysis'
+track: "python"
+unit: "12-production-python"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+For six weeks, nobody investigated why the pricing pods restarted every thirty hours or so. Restarts were "free" — Kubernetes replaced the pod, traffic rebalanced, no page fired. Then a restart landed during the Black Friday traffic peak, the replacement pod started cold with empty caches, p99 went to four seconds, and checkout conversions dropped for eleven minutes. The postmortem graph was a perfect staircase: RSS climbing 40 MB per hour, linearly, for thirty hours, then OOMKill, then again. Every step of that staircase had been visible on a dashboard nobody was paged about. This lesson dissects three production incidents end to end — the leak (an unbounded `lru_cache` keyed on request params), the hang (one sync `requests.get` freezing an entire event loop), and the thundering restart (a two-minute model load versus a thirty-second liveness probe) — each through the same frame: detection, impact, root cause, mitigation, prevention. And then the craft itself: a postmortem that ends with "engineer will be more careful" has diagnosed nothing. The system allowed the failure; change the system.
+</Hook>
+
+<Crux>Three prod incidents: unbounded lru_cache leak, sync call freezing the loop, liveness killing slow boots. Fix the system, not the person.</Crux>
+
+<Explanation>
+
+## The leak: RSS climbs 40 MB/h, OOMKilled every ~30 hours
+
+**Detection** came late and from the wrong signal: a restart-count graph, not a memory alert. The pattern that names the bug class: RSS grows *linearly with traffic*, no plateau, until the container limit. Linear-with-traffic growth means live references accumulating per request — fragmentation plateaus, and garbage gets collected; only something *reachable* grows forever.
+
+**Root cause**: `@lru_cache(maxsize=None)` on a pricing function whose arguments included the request's filter tuple. Near-unique keys per request meant the cache almost never hit — it just grew. The worker lives for weeks; nothing ever evicts; `gc` is irrelevant because every entry is strongly referenced *by design*. The proof tool is `tracemalloc` — snapshot at two points in time, diff by line:
+
+```python
+import tracemalloc
+tracemalloc.start(25)                  # keep 25 frames per allocation
+
+snap1 = tracemalloc.take_snapshot()    # hour 1 — trigger via an admin endpoint
+# ... hours pass ...
+snap2 = tracemalloc.take_snapshot()    # hour 5
+for stat in snap2.compare_to(snap1, "lineno")[:5]:
+    print(stat)
+# pricing/cache.py:41: size=2.9 GiB (+2.7 GiB), count=38M (+36M)
+#   the lru_cache dict — keyed on (user_id, query, tuple(filters))
+```
+
+**Mitigation vs prevention**: `max_requests` recycling stops the OOMKills tonight — honestly labeled a stopgap. Prevention is structural: bounded caches (`maxsize=` a number you can defend, or a TTL cache where staleness is acceptable), an RSS-per-worker alert that fires at the *trend* (40 MB/h for 3 hours) rather than the cliff, and a review rule: `maxsize=None` plus request-shaped keys never passes.
+
+<Quiz
+  id="04-incident-postmortems-quiz-1"
+  lessonSlug="04-incident-postmortems"
+  lang="en"
+  question="RSS climbs ~40MB/h linearly and the pod is OOMKilled every ~30h. Which evidence pins an unbounded lru_cache, and why does gc not save you?"
+  choices={[
+    { label: "A tracemalloc snapshot diff between two hours attributes the growth to the cache call site; gc cannot help because every entry is strongly referenced by the cache dict — live by design, not garbage", correct: true },
+    { label: "Calling gc.collect() on a timer would reclaim the memory and confirm the leak", misconception: "The collector frees unreachable objects and cycles. Cache entries are reachable through the cache itself — collecting changes nothing, which is itself a diagnostic clue." },
+    { label: "Linear RSS growth indicates heap fragmentation, which tracemalloc cannot see anyway", misconception: "Fragmentation plateaus and does not track request uniqueness. Growth proportional to traffic with no ceiling says live references accumulate — exactly what tracemalloc attributes to a line." },
+    { label: "The max_requests recycle fixing the symptom proves the leak is in gunicorn itself", misconception: "Recycling resets the process and masks ANY leak regardless of origin — it is a mitigation that carries zero information about the cause." },
+  ]}
+/>
+
+## The hang: every async worker frozen, CPU near zero
+
+**Detection**: p99 goes vertical, every request times out, and the counterintuitive signal — CPU near *zero*. A spinning loop would burn CPU; a frozen one is parked in a syscall. The tool that turns this from speculation into evidence is `py-spy dump` — it attaches to a live pid without restarting or instrumenting:
+
+```text
+$ py-spy dump --pid 1
+Thread 0x7F4A (active): "MainThread"
+    recv (ssl.py:1233)
+    ...
+    get (requests/api.py:73)
+    fetch_rates (helpers/fx.py:12)      # three helper layers down
+    convert (handlers/checkout.py:88)   # an async def — blocking right here
+```
+
+**Root cause**: a sync `requests.get` crept into an async handler behind three layers of helpers — the author of `fetch_rates` never saw an `async def` in their file. The loop is cooperative and single-threaded: a blocking syscall never yields back to the scheduler, so *every* coroutine on that worker — hundreds in flight — waits with it (the python/11 bridging rule, now as an outage). Every worker that touches the path freezes the same way; the fleet dies one worker at a time as traffic finds the route.
+
+**Prevention**: a lint/import rule banning sync HTTP clients (`requests`, raw `urllib3`) from async modules — enforced in CI, not in review memory; the `await asyncio.to_thread(...)` escape hatch where a sync library is unavoidable; an async-native client (`httpx`) as the default; and a load test that exercises the slow upstream, because this bug is invisible at p50.
+
+## The thundering restart: a healthy binary, a full outage
+
+**Root cause chain**: a release added a 2-minute ML model load at startup. The liveness probe — `initialDelaySeconds: 30` — started failing before the load finished; Kubernetes killed the pod mid-load; the replacement began the same 2-minute load; killed again. **CrashLoopBackOff across the fleet, from a binary with zero bugs.** Detection had a signature worth memorizing: restart loops with *clean logs* — no traceback, no error, the process was killed, it did not crash — plus probe-failure events in `kubectl describe`.
+
+**Prevention**: a **startup probe** — liveness is suspended until it passes, which exists precisely for slow-boot apps; lazy or background model loading with readiness off until warm (traffic waits, nobody dies); and a boot-time budget asserted in CI — a test that fails the build when startup crosses N seconds, because boot time regressions arrive silently, one dependency at a time.
+
+## The craft: writing the postmortem
+
+The three incidents share a skeleton, and the skeleton is the craft. **Timeline with timestamps** — when did it start, when detected, when mitigated; the detection gap (six weeks, for the leak) is itself a finding. **Blameless** is not politeness, it is data quality: the engineer who flipped the flag will tell you exactly what happened only if the document cannot be used against them. **Five-whys aimed at the system**: not "why did the engineer add lru_cache" but "why did our review, our alerts, and our limits all allow unbounded growth to ship and run for six weeks". **Action items are code or config changes** with owners and deadlines — an alert created, a probe added, a lint rule merged. "Be more careful" appears in zero competent postmortems; if a human slipping causes an outage, the system was already broken.
+
+<Quiz
+  id="04-incident-postmortems-quiz-2"
+  lessonSlug="04-incident-postmortems"
+  lang="en"
+  question="All async workers stop responding; CPU is near zero. py-spy dump shows the loop thread inside socket.recv under requests.get. Why did one call freeze hundreds of in-flight requests?"
+  choices={[
+    { label: "The event loop is cooperative and single-threaded: a sync syscall never returns control to the scheduler, so every coroutine on that worker waits until recv returns — to_thread or an async client is the escape", correct: true },
+    { label: "The GIL is held during the network wait, blocking the other threads", misconception: "CPython releases the GIL around blocking I/O — other threads could run. The loop is not blocked by the GIL; its one thread is stuck in one frame, and coroutines are not threads." },
+    { label: "There are too few workers; more workers would absorb the stall", misconception: "Every worker that executes this path freezes identically — scaling multiplies frozen capacity. The fleet dies worker by worker as traffic finds the route." },
+    { label: "Near-zero CPU means the process is healthy and the real problem is the slow upstream", misconception: "A slow upstream behind await would let other coroutines keep serving. Zero CPU with total unresponsiveness means the loop itself is parked in a syscall — the smoking gun in the dump." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="The thundering restart: a 2-minute model load versus a 30-second liveness probe"
+  hue="var(--d-systems)"
+  actors={["k8s", "pod", "weights store"]}
+  messages={[
+    { from: "k8s", to: "pod", label: "start container" },
+    { from: "pod", to: "weights store", label: "load model (120s)" },
+    { from: "k8s", to: "pod", label: "liveness @30s" },
+    { from: "pod", to: "k8s", label: "no response" },
+    { from: "k8s", to: "pod", label: "kill, restart" },
+    { from: "k8s", to: "pod", label: "CrashLoopBackOff" },
+  ]}
+  caption="Liveness without a startup probe turns a slow boot into a kill loop: the pod is murdered mid-load, the replacement repeats the load, and a healthy binary produces a full outage. Startup probes suspend liveness until boot completes."
+/>
+
+<KeyTakeaway>Three signatures worth memorizing: linear RSS growth with traffic is live references accumulating — `tracemalloc` snapshot diffs name the line, and `gc` is irrelevant because cache entries are reachable by design. Frozen async workers at near-zero CPU is a blocked event loop — `py-spy dump` on the live pid shows the sync call in the stack. Restart loops with clean logs is the orchestrator killing slow boots — startup probes exist for exactly this. The postmortem: precise timeline, blameless framing, five-whys at the system, and action items that are code or config — never "be careful".</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-incident-postmortems-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the leak incident through the full frame: detection signal, root cause mechanism, the tracemalloc workflow, and the mitigation/prevention split.", a: "Detection: restart-count graph and an RSS staircase — linear growth with traffic, no plateau, OOMKill every ~30h; linearity is the clue, because fragmentation plateaus and garbage gets collected, only live references grow without bound. Root cause: lru_cache(maxsize=None) keyed on near-unique request params — almost no hits, monotonic growth, and gc cannot help because every entry is strongly referenced by the cache dict. Proof: tracemalloc.start(25), snapshot at hour 1 and hour 5, compare_to(snap1, 'lineno') — the top stat names the cache file and line with plus-gigabytes attribution. Mitigation: max_requests recycling, honestly labeled a stopgap that masks the symptom. Prevention: bounded maxsize or TTL caches, an RSS-per-worker trend alert (fires on 40MB/h sustained, not at the cliff), and a review rule against unbounded caches on request-shaped keys." },
+    { q: "Contrast the hang and the thundering restart: detection signatures, root causes, and the prevention package for each.", a: "The hang: p99 vertical, all requests time out, CPU near zero — a frozen loop parks in a syscall instead of burning CPU. py-spy dump on the live pid shows the loop thread inside socket.recv under requests.get, three helpers below an async handler. One blocking call freezes every coroutine on the worker because the loop is cooperative and single-threaded. Prevention: CI-enforced import ban on sync HTTP clients in async modules, asyncio.to_thread for unavoidable sync libraries, httpx as default, load tests that hit the slow upstream. The thundering restart: CrashLoopBackOff with CLEAN logs — killed, not crashed — plus liveness-failure events. A 2-minute model load exceeded the liveness window, so k8s killed pods mid-boot in a loop: outage from a healthy binary. Prevention: startup probe suspending liveness, lazy/background load with readiness gating traffic, and a CI boot-time budget so startup regressions fail the build." },
+  ]}
+/>
+
+<Recap lang="en">
+Three incidents, one analytical frame. The leak: an `lru_cache(maxsize=None)` keyed on request parameters turned a long-lived worker into a one-way memory valve — 40 MB per hour, linearly with traffic, OOMKill every thirty hours, invisible for six weeks because restarts felt free. The linear staircase is the class signature: live references accumulating, where `gc` is powerless by design; `tracemalloc` snapshot diffs convert the suspicion into a file and line. The hang: one sync `requests.get`, three helper layers below an `async def`, parked an entire event loop in `socket.recv` — hundreds of coroutines frozen per worker, CPU at zero, and `py-spy dump` on the live pid as the no-restart evidence tool; prevention is a CI lint rule, `to_thread` escapes, and an async-native client, because review memory does not scale. The thundering restart: a two-minute model load against a thirty-second liveness probe produced CrashLoopBackOff from a binary with no bugs — clean logs plus probe events are the signature, startup probes and readiness-gated lazy loading the fix, and a CI boot-budget the regression guard. The craft binds them: precise timelines where the detection gap is itself a finding, blameless framing because fear corrupts the data, five-whys pointed at the system that allowed the failure, and action items that compile — an alert, a probe, a lint rule — never a promise to be more careful.
+</Recap>
