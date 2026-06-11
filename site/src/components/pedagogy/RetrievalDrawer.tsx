@@ -5,15 +5,22 @@ import { cardsFromRetrieval } from "~/scripts/review-harvest";
 import { addCard } from "~/scripts/review-state";
 import { t, type Locale } from "~/i18n";
 
+// Tolerant reader: lesson MDX passes `{ q, a }` (no per-question `id`), while the
+// SRS refactor renamed the contract to `{ id, q, answer }`. Accept both keys so
+// every call site renders, regardless of which shape it was authored in.
 type Q = {
-  id: string;
+  id?: string;
   q: ComponentChildren;
-  answer: ComponentChildren;
+  answer?: ComponentChildren;
+  a?: ComponentChildren;
   hint?: ComponentChildren;
 };
 
+// Likewise the slug arrives as `id` from MDX but `pieceSlug` from the renamed
+// contract; either identifies the lesson for retrieval/SRS bookkeeping.
 type Props = {
-  pieceSlug: string;
+  pieceSlug?: string;
+  id?: string;
   lang: Locale;
   questions: Q[];
 };
@@ -39,7 +46,8 @@ const labels = {
   },
 };
 
-export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
+export default function RetrievalDrawer({ pieceSlug, id, lang, questions }: Props) {
+  const slug = pieceSlug ?? id ?? "";
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [confidence, setConfidence] = useState<Record<string, number>>({});
   const [completed, setCompleted] = useState(false);
@@ -48,7 +56,7 @@ export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
   // Lazy-seed spaced-repetition cards on first visit (string-valued Q/A only).
   useEffect(() => {
     if (typeof window === "undefined") return;
-    cardsFromRetrieval(pieceSlug, lang, questions).forEach(addCard);
+    cardsFromRetrieval(slug, lang, questions).forEach(addCard);
   }, []);
 
   return (
@@ -68,10 +76,12 @@ export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
 
       <ol class="list-none m-0 p-0 flex flex-col gap-7">
         {questions.map((q, i) => {
-          const isOpen = revealed[q.id];
-          const conf = confidence[q.id] ?? 0;
+          const key = q.id ?? `${slug}-${i}`;
+          const answer = q.answer ?? q.a;
+          const isOpen = revealed[key];
+          const conf = confidence[key] ?? 0;
           return (
-            <li key={q.id}>
+            <li key={key}>
               <div class="flex items-start gap-3">
                 <span class="font-mono text-[11px] text-muted tabular-nums shrink-0 mt-1">
                   {String(i + 1).padStart(2, "0")}
@@ -91,8 +101,8 @@ export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
                         type="button"
                         class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
                         onClick={() => {
-                          setRevealed({ ...revealed, [q.id]: true });
-                          recordRetrieval(pieceSlug);
+                          setRevealed({ ...revealed, [key]: true });
+                          recordRetrieval(slug);
                         }}
                       >
                         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -111,7 +121,7 @@ export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
                                 key={v}
                                 type="button"
                                 onClick={() =>
-                                  setConfidence({ ...confidence, [q.id]: v })
+                                  setConfidence({ ...confidence, [key]: v })
                                 }
                                 class={`w-6 h-6 font-mono text-[11px] border rounded-[1px] transition-colors ${active ? "bg-ink text-paper border-ink" : "bg-transparent text-muted border-rule-strong hover:border-ink"}`}
                                 aria-label={`confidence ${v}`}
@@ -128,7 +138,7 @@ export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
                   {isOpen && (
                     <div class="mt-4 pl-3 border-l-2 border-accent text-[13.5px] leading-relaxed text-ink-2">
                       <div class="meta mb-1.5" style="color: var(--accent);">answer</div>
-                      {q.answer}
+                      {answer}
                     </div>
                   )}
                 </div>
@@ -152,7 +162,7 @@ export default function RetrievalDrawer({ pieceSlug, lang, questions }: Props) {
           class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
           aria-label={l.snooze}
           title={l.snooze}
-          onClick={() => dismissRevisit(pieceSlug)}
+          onClick={() => dismissRevisit(slug)}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         </button>
