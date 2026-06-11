@@ -1,0 +1,159 @@
+---
+concepts:
+- nextjs-data-rsc
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-orm-and-sql-in-rsc"
+sources:
+- https://nextjs.org/docs/app/building-your-application/caching
+- https://nextjs.org/docs/app/building-your-application/rendering/server-components
+- https://www.prisma.io/docs/orm/more/under-the-hood/engines
+- https://orm.drizzle.team/docs/overview
+spiral: []
+status: ready
+summary: 'RSC query the database directly, so discipline moves to the data layer: queries live in lib/data next to the auth check, React cache() dedupes one render pass, Promise.all and preload kill waterfalls, and the tree-shaped N+1 — 50 cards, 50 queries — gets hoisted or batched.'
+title: 'ORM and SQL in server components: the data layer owns queries, memoization, and the tree-shaped N+1'
+track: "nextjs"
+unit: "09-data-layer"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The ops dashboard ships as the proudest page of the App Router migration: every widget is a self-contained server component that fetches exactly the data it shows. Revenue card, error-budget card, top-customers table, 23 widgets in all — beautifully decoupled, trivially testable, each one an `async` function that awaits its own query. Then someone opens it from the Sydney office and waits 4.6 seconds for the first byte. The trace explains why nobody saw it locally: the widgets nest inside layout sections, each section awaits before rendering its children, and the 23 queries run as a staircase — about 200 ms a step against the us-east database. Nothing is slow; everything is sequential. The team learns the App Router lesson the hard way: when components can talk to the database, the component tree becomes your query planner — and a tree planner defaults to a waterfall.
+</Hook>
+
+<Crux>Server components query the database directly — so the data layer, not the component tree, must own queries, auth checks, and batching.</Crux>
+
+<Explanation>
+
+## Queries live in lib/data, not in component bodies
+
+A server component can `await db.select()` right in its body, and that convenience is exactly the thing to ration. The discipline that survives production is a **data-access layer**: a `lib/data/` module per domain, exporting functions that components call — components never import the database client. Three reasons, in rising order of importance. Testability: a function taking ids and returning rows is unit-testable without rendering anything. Reviewability: every query in the codebase lives in a folder you can audit, instead of being smeared across the tree. And the decisive one: **the authorization check lives next to the data access**, so there is no path to the rows that bypasses it — the same boundary argument you met in the auth unit, now applied to reads.
+
+```ts
+// lib/data/orders.ts
+import 'server-only';               // build error if a client component imports this
+import { cache } from 'react';
+import { db } from '~/lib/db';
+import { requireUser } from '~/lib/auth';
+
+export const getOrder = cache(async (orderId: string) => {
+  const user = await requireUser();            // auth lives WITH the data access
+  const order = await db.query.orders.findFirst({
+    where: (o, { eq }) => eq(o.id, orderId),
+  });
+  if (!order || order.accountId !== user.accountId) return null; // ownership, in one place
+  return order;
+});
+```
+
+The `'server-only'` import makes the boundary mechanical: if this module ever lands in a client bundle, the build fails instead of your connection string leaking.
+
+## Prisma, Drizzle, raw SQL — weighed honestly
+
+In an RSC world the ORM question gains a serverless dimension. **Prisma** has the most mature generated-types story and the best relational ergonomics, but classically ships a Rust query-engine binary — on the order of 10–15 MB in the deployment package — that must spawn and connect on cold start, historically adding hundreds of milliseconds on a small lambda. Recent majors cut query overhead substantially, and the driver-adapters mode drops the engine binary entirely — real progress, still worth verifying against your own cold-start budget rather than taking on faith. **Drizzle** defines the schema in TypeScript and infers types at compile time: no codegen step, no binary, well under a megabyte of JS, and an API shaped like SQL, so the query you read is roughly the query that runs. **Raw SQL** over `postgres.js` or `pg` is the lightest and the most expressive — window functions, CTEs, no abstraction ceiling — but the type story is yours to build: interface declarations silently drift from the schema unless you add codegen or parse rows at the boundary. The senior take: the choice matters less than where the queries live — but on serverless, cold weight and connection behavior are first-class criteria, not taste.
+
+## Request memoization is one render pass, not a cache
+
+Next.js dedupes identical `fetch` calls automatically within a single render pass. Database queries get no such favor — they are not `fetch` — which is why the data layer wraps them in **React `cache()`**. Within one request, ten components calling `getOrder('o_42')` produce one query; they all share the same in-flight promise. Be precise about the boundary, because this is where teams burn themselves: `cache()` memoizes **per render pass**. It spans `generateMetadata`, the layout, the page, and every component in that one request — and then the slate is wiped. The next request runs the query again. Different arguments mean different cache entries, so it dedupes repetition, not variety. It is not the Data Cache, it shares nothing across users, and it makes nothing faster for the second visitor. Cross-request caching is a different mechanism with different invalidation problems — that is the cache-tags lesson, not this one.
+
+<Quiz
+  id="01-orm-and-sql-in-rsc-quiz-1"
+  lessonSlug="01-orm-and-sql-in-rsc"
+  lang="en"
+  question="A team wraps getProduct in React cache() and expects the second visitor to be served from memory. The function is called in generateMetadata, the layout, and the page. How many queries run for visitor one, and what does visitor two get?"
+  choices={[
+    { label: "One query for visitor one — the memo spans generateMetadata, layout, and page within a single render pass — and visitor two triggers the query again, because cache() is request-scoped, not cross-request", correct: true },
+    { label: "Three queries for visitor one (metadata, layout, page render separately), then zero for visitor two", misconception: "Backwards on both ends. generateMetadata and the page render share one request scope, so cache() collapses the three calls into one query. And nothing persists afterwards — the memo table is dropped when the render pass ends." },
+    { label: "One query total until revalidateTag is called, because cache() entries participate in the Data Cache", misconception: "cache() has no relationship to the Data Cache or to tags. It is an in-memory memo for one render pass. Tag-based invalidation applies to fetch entries and tagged cached functions — a plain cache() wrapper is invisible to revalidateTag." },
+    { label: "Wrapping a database query does nothing — memoization only applies to fetch calls", misconception: "Inverted: fetch gets automatic per-request deduplication, and React cache() exists precisely to give the same render-pass dedupe to non-fetch work like ORM queries." },
+  ]}
+/>
+
+## Parallel is your job; the tree defaults to serial
+
+An RSC tree serializes wherever a parent awaits before rendering children who also await: the waterfall depth equals the nesting depth, which is exactly the dashboard incident — 23 widgets, ~200 ms each, 4.6 s of staircase. Two structural fixes. First, **hoist and parallelize**: the parent starts every promise, then awaits them together — `Promise.all([getRevenue(), getErrors(), getCustomers()])` — and passes results down as props; total time becomes the slowest query, not the sum. Second, the **preload pattern** — call early, await late: because `cache()` shares the in-flight promise, a parent can fire `void getOrder(id)` without awaiting, render children immediately, and the child that later awaits `getOrder(id)` joins a query that has been running since the top of the tree.
+
+```ts
+// lib/data/orders.ts — alongside getOrder
+export function preloadOrder(orderId: string) {
+  void getOrder(orderId); // starts the query; whoever awaits later joins this promise
+}
+```
+
+## The tree-shaped N+1
+
+The classic N+1 came from ORMs lazy-loading relations in a loop. The App Router version is architectural: a list page renders 50 `ProductCard` components, each card — self-sufficient by design — awaits `getPrice(product.id)`, and the page issues **50 queries per request**. Siblings render concurrently, so it is not 50 round trips end-to-end, but it is 50 queries hitting the pool at once, 50 slots contended, and at a p50 of 1.5 ms each, real load multiplied by every page view. Two fixes with an honest tradeoff between them. **Hoist the query**: the list parent runs one `WHERE id IN (...50 ids)` query and passes rows down as props — cheapest and most explicit, at the cost of the parent knowing what its children need. Or **batch DataLoader-style**: a per-request batcher (built on `cache()` so it is request-scoped) collects `getPrice` calls issued during the same tick and coalesces them into one `IN` query — components stay self-sufficient, and you now own a batching layer with microtask-timing subtleties. Either way the number that matters moves from 50 to 1.
+
+<FlowDiagram
+  label="Tree-shaped N+1: 50 self-sufficient cards versus one hoisted query"
+  hue="var(--d-ai)"
+  perRow={3}
+  nodes={[
+    { id: "page", label: "List page (RSC)", sub: "renders 50 cards" },
+    { id: "cards", label: "ProductCard ×50", sub: "each awaits getPrice(id)" },
+    { id: "db-n", label: "Postgres", sub: "50 queries per request" },
+    { id: "hoist", label: "Hoisted query", sub: "one WHERE id IN (…50)" },
+    { id: "props", label: "Rows as props", sub: "cards become pure" },
+    { id: "db-1", label: "Postgres", sub: "1 query per request" },
+  ]}
+  edges={[
+    { from: "page", to: "cards", label: "N+1 path" },
+    { from: "cards", to: "db-n", label: "50 round trips" },
+    { from: "page", to: "hoist", label: "fix: lift to parent" },
+    { from: "hoist", to: "props", label: "pass down" },
+    { from: "hoist", to: "db-1", label: "1 round trip" },
+  ]}
+  caption="Each self-sufficient card costs a query: 50 cards mean 50 queries and 50 contended pool slots on every page view. Hoisting one IN query to the parent (or batching DataLoader-style behind cache()) turns the tree shape back into a single round trip."
+/>
+
+<Inset kind="why" lang="en">
+Why did the framework move the database next to the component at all, if it recreates N+1? Because the alternative it replaced was worse: an API layer whose endpoints existed only to ferry data to pages, each adding serialization, a network hop, and a second deployment to keep honest. RSC delete that middle tier — the component renders where the data lives, and a query is a function call. The price is that an architectural constraint disappeared: the API layer used to force batching at the endpoint boundary, badly but unavoidably. Now nothing forces it, so the discipline has to come from the data layer you build instead of the tier you deleted.
+</Inset>
+
+<Quiz
+  id="01-orm-and-sql-in-rsc-quiz-2"
+  lessonSlug="01-orm-and-sql-in-rsc"
+  lang="en"
+  question="A list page renders 50 ProductCards; each awaits priceFor(product.id), which is wrapped in React cache(). What actually hits the database on one request?"
+  choices={[
+    { label: "50 queries — cache() dedupes identical arguments, and the 50 ids are all different; collapsing them requires hoisting one IN query to the parent or a per-request DataLoader-style batcher", correct: true },
+    { label: "One query — cache() batches the calls into a single IN automatically", misconception: "cache() is a memo table keyed by arguments, not a batcher. It collapses repeated calls with the same id into one query; 50 distinct ids are 50 distinct entries. Coalescing different keys into one SQL statement is exactly the layer you have to build or hoist." },
+    { label: "One query — Next.js dedupes data access per render pass", misconception: "The automatic per-render dedupe applies to identical fetch calls, and React cache() extends it to non-fetch functions — but in both cases only for identical inputs. Nothing in the framework merges 50 different queries into one." },
+    { label: "50 sequential round trips, so the page takes 50 × p50 end-to-end", misconception: "Sibling components render concurrently, so the queries overlap rather than forming a strict staircase — the end-to-end cost is closer to the slowest query plus contention. The real damage is load: 50 queries and 50 pool slots per page view." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Components never import the db client: queries live in lib/data, where the auth check and 'server-only' guard sit with them. React cache() dedupes one render pass — spanning generateMetadata to leaf components — and nothing beyond it. The tree serializes by default: hoist with Promise.all or preload early, and kill the tree-shaped N+1 by lifting one IN query or batching. ORM choice on serverless is cold weight plus connection behavior, not taste.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-orm-and-sql-in-rsc-retrieval"
+  lang="en"
+  questions={[
+    { q: "What exactly does React cache() memoize, and what does it never do?", a: "It memoizes a function per render pass, keyed by arguments: within one request — spanning generateMetadata, layout, page, and every component — repeated calls with the same arguments share one in-flight promise and one query. That sharing is what makes the preload pattern work. It never persists across requests, never shares between users, never merges different arguments, and has no relationship to the Data Cache or revalidateTag. The second visitor always re-runs the query." },
+    { q: "Your page renders 50 cards that each query their own price. Name the two structural fixes and the tradeoff between them.", a: "Hoist: the list parent runs one WHERE id IN (…) query and passes rows down as props — cheapest, most explicit, but the parent now knows its children's data needs. Batch: a per-request DataLoader-style coalescer built on cache() collects the 50 getPrice calls and issues one IN query — components stay self-sufficient, but you own a batching layer with microtask-timing subtleties. Both turn 50 queries and 50 contended pool slots into 1." },
+  ]}
+/>
+
+<Recap lang="en">
+Server components turned a query into a function call, which deleted the API middle tier and with it the only structural force that ever made teams batch. The replacement discipline is the data-access layer: every query lives in lib/data behind an exported function, the authorization check sits in that function so no path to the rows bypasses it, and 'server-only' makes the boundary a build error instead of a code-review hope. On the ORM question, judge by serverless physics, not aesthetics: Prisma brings the strongest generated-type ergonomics and historically a 10–15 MB engine binary with real cold-start cost — much improved lately, and removable via driver adapters; Drizzle infers types from a TypeScript schema with no binary and almost no weight; raw SQL is lightest and most powerful with a type story you must build yourself. React cache() gives database queries the per-render dedupe that fetch gets free — one query for ten callers within a single request, spanning generateMetadata through the leaves — and nothing more: it is not a cache across requests, and different arguments are different entries. The tree serializes wherever parents await before children: hoist promises into Promise.all, or preload — call the cache-wrapped function without awaiting at the top, let descendants join the in-flight promise. And watch for the tree-shaped N+1: 50 self-sufficient cards are 50 queries per page view, fixed either by hoisting one IN query at the cost of parent-child coupling, or by a per-request DataLoader-style batcher at the cost of owning the batching layer. The component tree is a rendering plan, not a query plan — the lesson of the 4.6-second dashboard is to never let it become one by accident.
+</Recap>
