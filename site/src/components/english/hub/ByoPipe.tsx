@@ -9,7 +9,8 @@ import { tokenizeToLemmas } from "~/english/byo/tokenize";
 import { classifyLemmas, bankIndex, type Classification, type BankIndexEntry } from "~/english/byo/classify";
 import { commitByoCards } from "~/english/byo/cards";
 import { generateExercises, type GenExercises } from "~/english/byo/exercises";
-import { isKnown } from "~/english/state";
+import { suggestChunkSentences } from "~/english/byo/sentences";
+import { isKnown, addChunk } from "~/english/state";
 import { hasKey } from "~/english/byok";
 import { type Locale } from "~/i18n";
 
@@ -39,12 +40,40 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
   const [exercises, setExercises] = useState<GenExercises | null>(null);
   const [keyOn, setKeyOn] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Sentence/chunk mining: whole phrases from the source (new + out-of-bank), checked by default.
+  const [unchecked, setUnchecked] = useState<Set<number>>(new Set());
+  const [chunksMade, setChunksMade] = useState(0);
+  const [phrase, setPhrase] = useState("");
+  const [phraseSaved, setPhraseSaved] = useState(false);
 
   useEffect(() => {
     let alive = true;
     hasKey().then((v) => { if (alive) setKeyOn(v); });
     return () => { alive = false; };
   }, []);
+
+  // First sentence per new/technical lemma (capped at the methodology's "mine 5–8" window).
+  const sentences = useMemo(
+    () => (result
+      ? suggestChunkSentences(text, [...result.newWords, ...result.technical].map((w) => w.lemma)).slice(0, 8)
+      : []),
+    [result],
+  );
+  // Reset selection + saved counters whenever a fresh extract lands.
+  useEffect(() => { setUnchecked(new Set()); setChunksMade(0); }, [result]);
+
+  function saveSentenceCards() {
+    let made = 0;
+    sentences.forEach((s, i) => { if (!unchecked.has(i)) made += addChunk(s.sentence, undefined, now(), "byo") ? 1 : 0; });
+    setChunksMade(made);
+  }
+  function savePhrase() {
+    if (!phrase.trim()) return;
+    addChunk(phrase, undefined, now(), "manual");
+    setPhrase("");
+    setPhraseSaved(true);
+    setTimeout(() => setPhraseSaved(false), 1800);
+  }
 
   const L =
     lang === "en"
@@ -78,6 +107,14 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
           caption1: "Signature.",
           caption2: " One paste becomes a spaced-repetition deck, AI-written exercises, and five reuse modes — the same pipe for an RFC or a news article.",
           ex1: "RFC 9293 (TCP)", ex2: "martinfowler.com/microservices", ex3: "your last incident postmortem",
+          sentH: "Mine sentences, not just words",
+          sentNote: "The strongest cards are whole phrases from your own text — including out-of-bank ones a word deck can't hold. Pick the ones to keep:",
+          sentSave: "Save sentence cards",
+          sentMade: (n: number) => `${n} phrase card${n === 1 ? "" : "s"} added — they’ll appear in review`,
+          phraseLabel: "Or save any phrase by hand:",
+          phrasePlaceholder: "a phrase worth keeping…",
+          phraseSave: "Save phrase",
+          phraseSaved: "Saved ✓",
         }
       : {
           index: "03 · КОНВЕЙЕР",
@@ -109,6 +146,14 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
           caption1: "Сигнатура.",
           caption2: " Одна вставка превращается в колоду интервального повторения, AI-упражнения и пять режимов переиспользования — один конвейер для RFC или новостной статьи.",
           ex1: "RFC 9293 (TCP)", ex2: "martinfowler.com/microservices", ex3: "постмортем твоего инцидента",
+          sentH: "Выписывай предложения, а не только слова",
+          sentNote: "Самые сильные карточки — целые фразы из твоего текста, включая вне-словарные, которые колода слов не удержит. Отметь, что сохранить:",
+          sentSave: "Сохранить карты-предложения",
+          sentMade: (n: number) => `Добавлено карт-фраз: ${n} — появятся в повторе`,
+          phraseLabel: "Или сохрани любую фразу вручную:",
+          phrasePlaceholder: "фраза, которую стоит запомнить…",
+          phraseSave: "Сохранить фразу",
+          phraseSaved: "Сохранено ✓",
         };
 
   const examples: { label: string; fill: string }[] = [
@@ -274,6 +319,43 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
                 <div class="reuse-card is-delegate"><span class="rc-name">{L.rcImit}</span><span class="rc-mode">{L.delegate}</span></div>
               </div>
             </div>
+          </div>
+        </div>
+
+        {sentences.length > 0 ? (
+          <div class="byo-sentences" style="display:flex;flex-direction:column;gap:8px;border-top:0.5px solid var(--hairline);padding-top:var(--s-4)">
+            <span class="ps-no">{L.sentH}</span>
+            <p class="ps-desc" style="margin:0">{L.sentNote}</p>
+            <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px">
+              {sentences.map((s, i) => (
+                <li key={s.sentence} style="display:flex;align-items:flex-start;gap:8px">
+                  <input type="checkbox" checked={!unchecked.has(i)} style="margin-top:3px"
+                    onChange={() => setUnchecked((u) => { const n = new Set(u); if (n.has(i)) n.delete(i); else n.add(i); return n; })} />
+                  <label style="font-size:13px;line-height:1.4;color:var(--ink-2)">
+                    <span class="pc" style="margin-right:6px">{s.lemma}</span>{s.sentence}
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-primary btn-sm" type="button" onClick={saveSentenceCards}>
+                <span>{L.sentSave}</span><span class="arrow">→</span>
+              </button>
+              {chunksMade > 0 ? <span class="pc">{L.sentMade(chunksMade)}</span> : null}
+            </div>
+          </div>
+        ) : null}
+
+        <div class="byo-phrase" style="display:flex;flex-direction:column;gap:6px;border-top:0.5px solid var(--hairline);padding-top:var(--s-4)">
+          <span class="ps-no">{L.phraseLabel}</span>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <input type="text" value={phrase} placeholder={L.phrasePlaceholder} aria-label={L.phraseLabel}
+              onInput={(e) => setPhrase((e.target as HTMLInputElement).value)}
+              onKeyDown={(e) => { if (e.key === "Enter") savePhrase(); }}
+              style="flex:1;min-width:200px;border:0.5px solid var(--hairline-strong);border-radius:var(--r-sm);background:var(--paper);padding:8px 10px;font-size:14px;color:var(--ink)" />
+            <button class="btn btn-ext btn-sm" type="button" onClick={savePhrase} disabled={!phrase.trim() && !phraseSaved}>
+              <span>{phraseSaved ? L.phraseSaved : L.phraseSave}</span>
+            </button>
           </div>
         </div>
       </div>
