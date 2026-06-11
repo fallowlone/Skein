@@ -19,19 +19,21 @@ const step = (unit: string, estMin: number): PathStep =>
   ({ unit, track: "networking", unlocks: [], reason: "", kind: "learn", estMin });
 
 describe("schedule", () => {
-  it("studyDays enumerates only days with hours, honoring weekday mask", () => {
+  it("studyDays enumerates days with hours, deadline day inclusive", () => {
     const days = studyDays(MON_2026_06_08, MON_2026_06_08 + 7 * DAY, [2,2,2,2,2,0,0], [], 0);
-    expect(days.map((d) => d.date)).toEqual(["2026-06-08","2026-06-09","2026-06-10","2026-06-11","2026-06-12"]); // Mon..Fri, weekend skipped
+    // Mon..Fri + the deadline Monday itself; weekend skipped
+    expect(days.map((d) => d.date)).toEqual(
+      ["2026-06-08","2026-06-09","2026-06-10","2026-06-11","2026-06-12","2026-06-15"]);
     expect(days[0].minutes).toBe(120);
   });
 
   it("blackoutDates remove a day", () => {
     const days = studyDays(MON_2026_06_08, MON_2026_06_08 + 3 * DAY, [2,2,2,2,2,0,0], ["2026-06-09"], 0);
-    expect(days.map((d) => d.date)).toEqual(["2026-06-08","2026-06-10"]);
+    expect(days.map((d) => d.date)).toEqual(["2026-06-08","2026-06-10","2026-06-11"]); // Thu (deadline) included
   });
 
-  it("availableMinutes sums the week", () => {
-    expect(availableMinutes(studyDays(MON_2026_06_08, MON_2026_06_08 + 7 * DAY, [2,2,2,2,2,0,0], [], 0))).toBe(600);
+  it("availableMinutes sums the window including the deadline day", () => {
+    expect(availableMinutes(studyDays(MON_2026_06_08, MON_2026_06_08 + 7 * DAY, [2,2,2,2,2,0,0], [], 0))).toBe(720);
   });
 
   it("feasibility = fits when budget covers required", () => {
