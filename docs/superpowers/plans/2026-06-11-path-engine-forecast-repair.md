@@ -861,7 +861,7 @@ git commit -m "feat(path): set-cover unit selection + remaining-effort step cost
 - Modify: `src/scripts/path/optimize.ts:52-65` (`bestCombo`)
 - Test: `src/scripts/path/optimize.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `src/scripts/path/optimize.test.ts`:
 
@@ -880,12 +880,12 @@ Append to `src/scripts/path/optimize.test.ts`:
   });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test src/scripts/path/optimize.test.ts`
 Expected: FAIL — old greedy includes both raise-hours fixes (300 then 600).
 
-- [ ] **Step 3: Rewrite `bestCombo`**
+- [x] **Step 3: Rewrite `bestCombo`**
 
 Replace `bestCombo` (`optimize.ts:51-65`) with:
 
@@ -912,12 +912,12 @@ export function bestCombo(fixes: Fix[], deficitMin: number): Fix[] {
 }
 ```
 
-- [ ] **Step 4: Run the optimize tests**
+- [x] **Step 4: Run the optimize tests**
 
 Run: `bun test src/scripts/path/optimize.test.ts`
 Expected: PASS. If a pre-existing `bestCombo` test asserted the old smallest-first prefix (e.g. both hour variants in the combo), update it to the one-per-kind/strongest-variant semantics.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/scripts/path/optimize.ts src/scripts/path/optimize.test.ts
