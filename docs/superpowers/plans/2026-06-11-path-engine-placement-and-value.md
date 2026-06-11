@@ -605,7 +605,7 @@ Bilingual bank per keystone, exactly the shape of the 35 existing ones. Authorin
 - Create: `src/content/path/diagnostics/<concept>.json` × ~120 (subagent-authored)
 - Modify (generated): `src/content/path/diagnostics-bundle.json`, `src/content/path/diagnostics-index.json`
 
-- [ ] **Step 1: Write the validator**
+- [x] **Step 1: Write the validator**
 
 Create `scripts/path/validate-diag-banks.mjs`:
 
@@ -654,7 +654,7 @@ console.log(`validate-diag-banks: ${readdirSync(DIR).filter((x) => x.endsWith(".
 Run against the existing 35: `node scripts/path/validate-diag-banks.mjs`
 Expected: `35 banks OK` (exit 0). If an existing bank trips a rule, loosen ONLY that rule to match shipped reality (the validator gates new work; it must not condemn the shipped 35).
 
-- [ ] **Step 2: Author the banks via subagents, one batch per domain family**
+- [x] **Step 2: Author the banks via subagents, one batch per domain family** (8 parallel subagents → 110 banks, all worklist concepts covered)
 
 For each family in `/tmp/placement-keystones.json` (8 batches, ≤15 concepts each), dispatch an authoring subagent with this brief (fill `{...}` from the worklist):
 
@@ -678,7 +678,7 @@ Return: list of files written.
 
 Known subagent failure modes to check after EVERY batch (from prior campaigns): harness-tag leakage (`</output>`, `</invoke>` inside JSON strings), doubled directories, files written outside `diagnostics/`. Scan: `grep -rl "</output>\|</invoke>" src/content/path/diagnostics/` → must be empty.
 
-- [ ] **Step 3: Validate after each batch, then rebuild the bundle**
+- [x] **Step 3: Validate after each batch, then rebuild the bundle** (145 banks OK, 0 contamination/stray writes; bundle 145)
 
 Run: `node scripts/path/validate-diag-banks.mjs`
 Expected: `~155 banks OK`. Fix or regenerate failing banks before proceeding.
@@ -686,16 +686,16 @@ Expected: `~155 banks OK`. Fix or regenerate failing banks before proceeding.
 Run: `node scripts/path/build-diag-bundle.mjs`
 Expected: `build-diag-bundle: ~155 banks → bundle + index`.
 
-- [ ] **Step 4: Engine-level sanity**
+- [x] **Step 4: Engine-level sanity** (177 path tests green; path-io diagnostics-count assertion relaxed to a `>=145` floor)
 
 Run: `bun test src/scripts/path/`
 Expected: PASS (the bundle is committed content consumed by `path-io`; `diagnostic-select.test.ts` and `goals-content.test.ts` must stay green).
 
-- [ ] **Step 5: Spot-check 5 random banks by hand**
+- [x] **Step 5: Spot-check 5 random banks by hand** (pop/b-tree-index/two-generals/tcp/react-pattern — answers correct, senior-depth, blanks bilingual with variants)
 
 Read 5 banks across different families: question actually tests the concept, the marked mcq answer is correct, blanks accept realistic spellings (grading is case-insensitive exact match — `gradeBlanks` in `calibration.ts:30-31` — so include common variants in `answer`).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/content/path/diagnostics/ src/content/path/diagnostics-bundle.json src/content/path/diagnostics-index.json scripts/path/validate-diag-banks.mjs
