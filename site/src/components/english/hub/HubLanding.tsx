@@ -4,6 +4,7 @@
 // its own render body. Heavy drills live on the /english/{review,reading,grammar,writing} sub-routes.
 import type { Locale } from "~/i18n";
 import HubBar from "./HubBar";
+import DailyCycle from "./DailyCycle";
 import CoverageMeter from "./CoverageMeter";
 import HoursPanel from "./HoursPanel";
 import NextPath from "./NextPath";
@@ -18,6 +19,7 @@ export default function HubLanding({ lang }: { lang: Locale }) {
   return (
     <div class="wrap hub">
       <HubBar lang={lang} />
+      <DailyCycle lang={lang} />
       <CoverageMeter lang={lang} />
       <HoursPanel lang={lang} />
       <NextPath lang={lang} />
