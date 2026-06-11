@@ -6,6 +6,7 @@ import { resolveGoalTargets } from "./planner";
 import type { Goal, Concept } from "./types";
 
 const byId = new Map((goals as Goal[]).map((g) => [g.id, g]));
+const conceptById = new Map((concepts as Concept[]).map((c) => [c.id, c]));
 
 describe("role goal presets", () => {
   it.each(["frontend-dev", "fullstack-dev", "devops-engineer"])("%s exists with EN+RU labels and track-band rule", (id) => {
@@ -20,5 +21,12 @@ describe("role goal presets", () => {
   it.each(["frontend-dev", "fullstack-dev", "devops-engineer"])("%s resolves to a non-empty target frontier", (id) => {
     const ids = resolveGoalTargets(byId.get(id)!, concepts as Concept[]);
     expect(ids.length).toBeGreaterThan(0);
+  });
+
+  it("job-ready-junior resolves to a non-empty frontier with no advanced concepts", () => {
+    const goal = (goals as Goal[]).find((g) => g.id === "job-ready-junior")!;
+    const ids = resolveGoalTargets(goal, concepts as Concept[]);
+    expect(ids.length).toBeGreaterThan(100);
+    expect(ids.every((id) => conceptById.get(id)!.band !== "advanced")).toBe(true);
   });
 });

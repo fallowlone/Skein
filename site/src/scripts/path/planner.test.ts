@@ -152,3 +152,21 @@ describe("buildPath — partial-unit cost", () => {
     expect(ip.estMin).toBe(Math.max(5, Math.round(authored.estMin * (1 / authored.teaches.length))));
   });
 });
+
+describe("resolveGoalTargets — track-band range rule", () => {
+  const mk = (rule: string) => ({
+    id: "jr", label: { en: "", ru: "" }, target: { rule },
+    trackWeights: { networking: 1, databases: 0.7 },
+  }) as any;
+  it("targets only concepts whose band falls inside [lo, hi] in core tracks", () => {
+    const ids = resolveGoalTargets(mk("track-band=foundations..surface"), CONCEPTS);
+    // networking is the only core track (weight >= 1); databases (0.7) is support → excluded.
+    expect(ids.every((id) => byId.get(id)!.track === "networking")).toBe(true);
+    expect(ids).toContain("ip-addressing");          // foundations — inside range
+    expect(ids).not.toContain("tcp-handshake");      // middle — above the ceiling
+  });
+  it("returns [] for an unknown band token in either bound", () => {
+    expect(resolveGoalTargets(mk("track-band=surface..wizard"), CONCEPTS)).toEqual([]);
+    expect(resolveGoalTargets(mk("track-band=wizard..middle"), CONCEPTS)).toEqual([]);
+  });
+});
