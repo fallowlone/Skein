@@ -1,0 +1,148 @@
+---
+concepts:
+- ci-cd-gha-oidc
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-oidc-to-cloud"
+sources:
+- https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect
+- https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services
+spiral: []
+status: ready
+title: "OIDC to the cloud: short-lived tokens instead of long-lived AWS keys, and pinning the sub claim"
+track: "ci-cd"
+unit: "10-security-and-oidc"
+summary: "OIDC lets a job mint a short-lived (~1h) cloud token via AssumeRoleWithWebIdentity instead of storing a forever AWS key. The trust policy must pin the sub claim or any repo can assume your role."
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The leaked key was found by accident — a security researcher running a public-repo scanner pinged the team: an `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` pair sat in a fork's CI logs from a debug `env` dump committed two years prior. The key was an IAM user's static credential — no expiry, full deploy permissions — copied into GitHub Secrets because that was the obvious way to let CI push to S3 and update ECS. It had been valid the entire time. Nobody had rotated it because nobody had a reason to; static keys do not expire and rotation is manual toil. The remediation was not "rotate and move on." It was "stop storing cloud keys in CI at all." They switched to OIDC: the job now requests a fresh credential from AWS STS at runtime, scoped to one role, valid for an hour, tied cryptographically to *this repository's* workflow. There was no longer a secret to leak — and the trust policy they wrote made sure no other repo could request the same role.
+</Hook>
+
+<Crux>OIDC mints a short-lived cloud token at runtime instead of a forever key — but the trust policy must pin the sub claim to your repo.</Crux>
+
+<Explanation>
+
+## The trade: a stored key vs. a minted token
+
+The old model stores a long-lived cloud credential in GitHub Secrets. An IAM access key has no expiry: it works until someone manually rotates or deletes it. If it leaks — a log dump, a compromised Action, a screenshot — it is a standing, full-permission credential an attacker uses at leisure, and you often learn about it from a third party. Rotation is manual, so in practice these keys live for years.
+
+OIDC inverts this. GitHub Actions runs an OIDC identity provider. At runtime a job can request a signed **JSON Web Token** from GitHub that asserts facts about the run — which repo, which ref, which workflow, which environment — in its claims. The job hands that JWT to the cloud's token service; the cloud verifies GitHub's signature, checks the claims against a **trust policy** you configured, and returns a **short-lived** credential. On AWS the call is `sts:AssumeRoleWithWebIdentity`, and the returned credentials default to **one hour** (configurable, capped by the role's max session duration). There is no secret stored anywhere: the JWT is minted fresh each run and is useless after it expires.
+
+```yaml
+permissions:
+  id-token: write     # REQUIRED — lets the job request the OIDC JWT
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@<pinned-sha>
+        with:
+          role-to-assume: arn:aws:iam::123456789012:role/gha-deploy
+          aws-region: eu-central-1
+          # no aws-access-key-id / aws-secret-access-key — none exist
+```
+
+That `id-token: write` permission is the gate: without it the job cannot request the JWT, which is exactly why you scope it to only the job that deploys.
+
+<Quiz
+  id="02-oidc-to-cloud-quiz-1"
+  lessonSlug="02-oidc-to-cloud"
+  lang="en"
+  question="A team migrates from a stored AWS_SECRET_ACCESS_KEY to OIDC. What is the concrete security difference in what an attacker gains from compromising the CI?"
+  choices={[
+    { label: "With a stored key the attacker gets a non-expiring, full-permission credential usable anytime; with OIDC there is no stored secret — at most they'd get a token valid ~1h and only if they can run inside the trusted repo's workflow", correct: true },
+    { label: "No real difference — OIDC just stores the AWS key in a different secret name", misconception: "OIDC stores no cloud key at all. The JWT is minted fresh per run by GitHub's identity provider and exchanged for a short-lived credential; there is nothing static sitting in Secrets to steal, which is the entire point." },
+    { label: "OIDC tokens never expire but are encrypted, so a leak is harmless", misconception: "It is the opposite: OIDC's protection is precisely that the resulting cloud credential is short-lived (~1h), not that it is encrypted-but-eternal. Expiry, not encryption, bounds the blast radius." },
+    { label: "OIDC removes the need for a trust policy because GitHub vouches for the job", misconception: "OIDC absolutely needs a trust policy — GitHub signs the JWT, but the cloud must still decide which claims to accept. Without pinning the sub claim, any repo's GitHub-signed token would be accepted." },
+  ]}
+/>
+
+## The claim that makes or breaks it: sub
+
+GitHub signs the JWT, so the cloud knows it genuinely came from GitHub Actions. But *every* GitHub repository's workflow gets a token signed by the same issuer. If your AWS trust policy only checks "is this token from GitHub's OIDC issuer?", then **any GitHub user's workflow** can request your role and assume it. The control that scopes the trust to *your* repo is the `sub` (subject) claim, which encodes the run's identity — and you pin it in the trust policy's condition:
+
+```json
+{
+  "Effect": "Allow",
+  "Principal": { "Federated": "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com" },
+  "Action": "sts:AssumeRoleWithWebIdentity",
+  "Condition": {
+    "StringEquals": {
+      "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+    },
+    "StringLike": {
+      "token.actions.githubusercontent.com:sub": "repo:my-org/my-repo:ref:refs/heads/main"
+    }
+  }
+}
+```
+
+The `sub` string is the lock. `repo:my-org/my-repo:ref:refs/heads/main` means only that repo, only on the `main` branch, can assume the role. You can narrow further (`:environment:production`) or, for tag releases, `:ref:refs/tags/*`. The classic failure is a too-loose pattern — `repo:my-org/*` lets any repo in the org assume the role, and a wildcard like `repo:*` (or omitting the `sub` condition entirely) lets the *entire internet's* GitHub Actions assume it. Also pin `aud`: GitHub's default audience is the configured value, and checking it prevents a token minted for a different relying party from being replayed at your STS.
+
+<Inset kind="why" lang="en">
+Why is forgetting the sub condition so catastrophic, given the token is still GitHub-signed? Because the signature only proves *GitHub Actions* minted it — not *whose* Actions. The OIDC issuer is shared by all of GitHub. An attacker creates a throwaway repo, writes a one-line workflow that requests a token with `aud: sts.amazonaws.com`, and gets a perfectly valid, GitHub-signed JWT. If your role's trust policy checks only the issuer and audience, AWS accepts that token and hands the attacker your role's credentials. The sub claim is the only thing that says "this run belongs to my-org/my-repo, not someone-else/evil-repo." Pinning it is not hardening on top of OIDC — it is the part of OIDC that makes it secure at all.
+</Inset>
+
+<Quiz
+  id="02-oidc-to-cloud-quiz-2"
+  lessonSlug="02-oidc-to-cloud"
+  lang="en"
+  question="An AWS trust policy for a GitHub OIDC role checks the audience claim and that the token is from token.actions.githubusercontent.com, but its sub condition is StringLike repo:my-org/*. What is the exposure?"
+  choices={[
+    { label: "Any repo under my-org can assume the role — including a low-trust or newly created repo — so a compromise of any one org repo's CI yields the role's cloud permissions", correct: true },
+    { label: "None — restricting to the org is the recommended least-privilege pattern", misconception: "Org-wide is far broader than the deploying repo needs. Least privilege pins the exact repo (and usually a ref/environment); my-org/* trusts every current and future repo in the org, any of which becoming compromised hands over the role." },
+    { label: "The policy is invalid because sub conditions cannot use StringLike", misconception: "StringLike with wildcards is the standard and valid way to write sub conditions for refs/tags; the problem here is not the operator, it is that the wildcard is in the repo segment, widening trust across the whole org." },
+    { label: "It only matters if id-token: write is granted at the top level", misconception: "id-token: write controls whether the job can request a token at all; it does not narrow which repo the trust policy accepts. The sub pattern is what scopes acceptance, and here it is too loose regardless of where id-token is granted." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="A job exchanges a GitHub-signed OIDC JWT for a short-lived AWS credential via AssumeRoleWithWebIdentity"
+  hue="var(--d-infra)"
+  actors={["Runner", "GitHub OIDC", "AWS STS", "AWS API"]}
+  messages={[
+    { from: "Runner", to: "GitHub OIDC", label: "request JWT (aud)" },
+    { from: "GitHub OIDC", to: "Runner", label: "signed JWT (sub,ref)" },
+    { from: "Runner", to: "AWS STS", label: "AssumeRoleWithWebIdentity" },
+    { from: "AWS STS", to: "AWS STS", label: "verify sig + sub/aud" },
+    { from: "AWS STS", to: "Runner", label: "~1h credentials" },
+    { from: "Runner", to: "AWS API", label: "deploy with temp creds" },
+  ]}
+  caption="GitHub signs the JWT, but the issuer is shared by all repos — STS only scopes trust to your repo by matching the sub claim in the role's trust policy. The returned credential is short-lived (~1h), so there is no standing key to leak."
+/>
+
+<KeyTakeaway>OIDC replaces a stored, non-expiring cloud key with a token minted fresh per run: the job requests a GitHub-signed JWT (requires id-token:write), hands it to AWS STS via AssumeRoleWithWebIdentity, and gets a ~1h credential — nothing static to leak. The security hinges entirely on the trust policy pinning the sub claim to repo:my-org/my-repo:ref:... and the aud claim. A loose sub (repo:my-org/* or missing) lets other repos — up to the whole internet — assume your role, because GitHub's OIDC issuer is shared by every repository. Pinning sub is not optional hardening; it is what makes OIDC secure.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="02-oidc-to-cloud-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through the OIDC-to-AWS exchange and name the one cloud-side control that actually scopes trust to your repo.", a: "The job declares id-token: write, then requests a JWT from GitHub's OIDC identity provider for a given audience (sts.amazonaws.com). GitHub signs the JWT, embedding claims about the run — sub (repo, ref/environment), repository, workflow, aud. The job calls sts:AssumeRoleWithWebIdentity with that JWT; AWS verifies GitHub's signature and then checks the JWT's claims against the IAM role's trust policy. If the conditions pass, STS returns a short-lived credential (default ~1 hour, capped by the role's max session duration), which the job uses to deploy. The one control that scopes trust to your repo is the sub claim condition in the trust policy — e.g. StringLike token.actions.githubusercontent.com:sub = repo:my-org/my-repo:ref:refs/heads/main. The signature only proves the token came from GitHub Actions in general (the issuer is shared by all repos); the sub condition is the only thing that proves it came from your repo and ref." },
+    { q: "Why is a sub condition of repo:my-org/* or a missing sub condition dangerous, and how do you scope it correctly?", a: "GitHub's OIDC issuer signs tokens for every repository on GitHub, so a valid, GitHub-signed JWT proves only that some GitHub Actions run requested it — not which one. If the trust policy checks only issuer and aud, any attacker can create a throwaway repo, run a one-line workflow that requests a token with aud sts.amazonaws.com, and present it to assume your role. repo:my-org/* widens acceptance to every current and future repo in the org, so compromising any one org repo's CI yields the role. The correct scope pins the exact repo and usually the ref or environment: repo:my-org/my-repo:ref:refs/heads/main, or :environment:production, or :ref:refs/tags/* for releases. Also pin the aud claim so a token minted for a different relying party can't be replayed at your STS." },
+  ]}
+/>
+
+<Recap lang="en">
+OIDC removes the long-lived cloud key from CI entirely. Instead of storing a non-expiring AWS access key in GitHub Secrets — a standing, full-permission credential that leaks via log dumps or compromised Actions and lives for years because rotation is manual — a job mints a fresh credential at runtime. It declares id-token: write, requests a GitHub-signed JWT scoped to an audience, and exchanges it via sts:AssumeRoleWithWebIdentity for a short-lived (~1h) credential. There is nothing static to steal. But OIDC's safety lives or dies on the cloud trust policy. GitHub signs JWTs for every repository on GitHub from one shared issuer, so a signature alone proves only that GitHub Actions minted the token, not whose. The sub claim — repo:my-org/my-repo:ref:refs/heads/main — is the lock that scopes the role to your repo and ref; pin it in a StringLike condition, and pin aud too. A loose pattern like repo:my-org/* trusts the whole org, and a missing sub condition lets any GitHub user's throwaway workflow assume your role with a perfectly valid token. So: scope id-token: write to the one deploy job, pin sub and aud, narrow to a ref or environment, and you have a credential that cannot be leaked because it never persists and cannot be borrowed because the trust policy names you.
+</Recap>
