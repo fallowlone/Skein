@@ -139,6 +139,136 @@
         "en": "# gunicorn.conf.py — I/O tier\nworkers = 6                          # 4 cores, async I/O: 1.5x cores; loops multiplex, workers add isolation\nworker_class = \"uvicorn_worker.UvicornWorker\"\npreload_app = True                   # 800MB reference data loads once, shared CoW: ~800MB total, not 4.8GB\nmax_requests = 8_000                 # at ~30MB/h leak per worker, recycle well before RSS matters on a 6GB pod\nmax_requests_jitter = 800            # never recycle 6 workers in the same window\ngraceful_timeout = 15                # > 5s longest request, << 30s grace period\ntimeout = 30\n\ndef post_fork(server, worker):\n    from app import clients\n    clients.init()                   # DB pool + Redis born per worker — module-level init removed\n\n# CPU work: handlers submit PDF jobs to a ProcessPoolExecutor(max_workers=2)\n# created post-fork (or a separate sync-worker deployment if volume grows):\n# a 2-4s render on the loop would freeze hundreds of in-flight coroutines.\n# k8s: preStop sleep 5s; terminationGracePeriodSeconds stays 30 (5+15 fits with margin).\n\nWhy it holds: preload turns the 800MB into one shared copy — the single biggest RAM lever — but it forces the fork-safety migration: every client moves from import time to post_fork, or eight processes share sockets. Six uvicorn workers use all four cores with headroom for the executor processes; more workers would buy context switches. The process pool isolates CPU burns from the loop so PDF jobs cannot freeze I/O p99. max_requests=8000 with jitter is named a mitigation in the config comment and a tracemalloc task is filed — the recycle hides the leak from users, not from the team. Shutdown: 5s preStop covers endpoint propagation, 15s drain covers the 5s worst case, total 20s under the 30s deadline.",
         "ru": "# gunicorn.conf.py — I/O-ярус\nworkers = 6                          # 4 ядра, async I/O: 1.5 на ядро; циклы мультиплексируют, воркеры дают изоляцию\nworker_class = \"uvicorn_worker.UvicornWorker\"\npreload_app = True                   # 800 МБ справочника грузятся один раз, общие CoW: ~800 МБ всего, а не 4,8 ГБ\nmax_requests = 8_000                 # при утечке ~30 МБ/ч на воркер рециклим задолго до того, как RSS станет проблемой на 6 ГБ\nmax_requests_jitter = 800            # никогда не рециклить 6 воркеров в одном окне\ngraceful_timeout = 15                # > 5 с самого длинного запроса, << 30 с периода ожидания\ntimeout = 30\n\ndef post_fork(server, worker):\n    from app import clients\n    clients.init()                   # пул БД + Redis рождаются на воркер — модульная инициализация удалена\n\n# CPU-работа: обработчики отправляют PDF-задачи в ProcessPoolExecutor(max_workers=2),\n# созданный после форка (или в отдельный деплоймент с sync-воркерами при росте объёма):\n# рендер 2–4 с на цикле заморозил бы сотни корутин в полёте.\n# k8s: preStop sleep 5 с; terminationGracePeriodSeconds остаётся 30 (5+15 умещается с запасом).\n\nПочему это сходится: preload превращает 800 МБ в одну общую копию — самый крупный рычаг по памяти, — но вынуждает миграцию fork-безопасности: каждый клиент переезжает с импорта в post_fork, иначе восемь процессов делят сокеты. Шесть uvicorn-воркеров загружают все четыре ядра с запасом под процессы экзекутора; больше воркеров купило бы переключения контекста. Пул процессов изолирует CPU-нагрузку от цикла: PDF-задачи не могут заморозить p99 I/O-трафика. max_requests=8000 с джиттером назван смягчением прямо в комментарии конфига, и задача на tracemalloc заведена — рециклинг прячет утечку от пользователей, но не от команды. Выключение: preStop 5 с покрывает распространение эндпоинта, дренаж 15 с покрывает худшие 5 с, итого 20 с при дедлайне 30 с."
       }
+    },
+    {
+      "id": "incident-workers-fd-leak-no-drain",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "Worker pool leaks FDs and kills tasks mid-flight on reload",
+        "ru": "Пул воркеров течёт FD и убивает задачи на лету при reload"
+      },
+      "prompt": {
+        "en": "A gunicorn app with 8 sync workers and `--max-requests 1000` recycles workers all day. Two symptoms: (1) every recycle drops the worker's currently-running request, ~0.8% of traffic returns 502 at steady state; (2) `lsof -p` on the master shows open FDs climbing ~16/hour and the box hit the 65536 ulimit after 6 days, crashing all workers at once. A `multiprocessing.Pool` is created at import time in the app module. Find why FDs leak across recycles and why in-flight tasks die. Work it step by step; commit before revealing.",
+        "ru": "gunicorn-приложение с 8 sync-воркерами и `--max-requests 1000` пересоздаёт воркеров весь день. Два симптома: (1) каждое пересоздание роняет текущий запрос воркера, ~0.8% трафика отдаёт 502 в стабильном режиме; (2) `lsof -p` на мастере показывает рост открытых FD ~16/час, и машина упёрлась в ulimit 65536 через 6 дней, обрушив всех воркеров разом. `multiprocessing.Pool` создаётся на import-time в модуле приложения. Найдите, почему FD текут между пересозданиями и почему задачи на лету гибнут. Веди по шагам; сформулируй ответ до раскрытия."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · Place the pool's lifecycle",
+            "ru": "1 · Разместить жизненный цикл пула"
+          },
+          "prompt": {
+            "en": "The Pool is built at import time. Under gunicorn preload vs no-preload, who creates it and who inherits its FDs?",
+            "ru": "Pool строится на import-time. При gunicorn preload и без него — кто его создаёт и кто наследует его FD?"
+          },
+          "reveal": {
+            "en": "Module-level `Pool()` spins up child processes plus a set of pipes (FDs) the moment the module imports. Without preload, every worker re-imports and creates its OWN Pool; with preload, the master's Pool FDs are inherited by every fork. Either way nobody ever calls `pool.close()/terminate()` on worker exit, so each recycled worker leaks its pipe FDs and orphaned pool children — ~2 FDs × 8 workers per recycle round.",
+            "ru": "Module-level `Pool()` поднимает дочерние процессы и набор пайпов (FD) в момент импорта модуля. Без preload каждый воркер переимпортирует и создаёт СВОЙ Pool; с preload FD пула мастера наследуются каждым fork. В любом случае никто не зовёт `pool.close()/terminate()` при выходе воркера, поэтому каждый пересозданный воркер течёт своими пайп-FD и осиротевшими детьми пула — ~2 FD × 8 воркеров за раунд пересоздания."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · Explain the dropped requests",
+            "ru": "2 · Объяснить оборванные запросы"
+          },
+          "prompt": {
+            "en": "Why does recycling at max_requests=1000 drop the in-flight request specifically?",
+            "ru": "Почему пересоздание на max_requests=1000 роняет именно текущий запрос?"
+          },
+          "reveal": {
+            "en": "gunicorn's sync worker counts the request as done then checks max_requests; but if you trigger recycle via a custom signal or the worker is killed without a drain hook, the master sends SIGTERM and after `graceful_timeout` (default 30s) SIGKILL. If your handler doesn't stop accepting and finish the current request before exiting, the active connection is cut → 502 at the proxy. 0.8% ≈ the fraction of requests straddling a recycle boundary.",
+            "ru": "Sync-воркер gunicorn считает запрос завершённым, затем проверяет max_requests; но если пересоздание триггерится кастомным сигналом или воркер убит без drain-хука, мастер шлёт SIGTERM и после `graceful_timeout` (по умолчанию 30с) — SIGKILL. Если ваш хендлер не перестаёт принимать и не доделывает текущий запрос перед выходом, активное соединение рвётся → 502 на прокси. 0.8% ≈ доля запросов, попавших на границу пересоздания."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · Fix lifecycle and FDs",
+            "ru": "3 · Починить жизненный цикл и FD"
+          },
+          "prompt": {
+            "en": "Give the fix for both the FD leak and the mid-flight drop.",
+            "ru": "Дайте фикс и для утечки FD, и для обрыва на лету."
+          },
+          "reveal": {
+            "en": "Don't build the Pool at import: create it lazily per worker via the `post_fork` server hook and tear it down in `worker_exit` with `pool.terminate(); pool.join()`. That binds pool FDs to the worker's lifetime so recycles release them. For drains, register a SIGTERM handler (or use gunicorn's graceful path) that flips an accepting=False flag, lets the current request finish within `graceful_timeout`, then exits — so recycles cost zero dropped requests instead of 0.8%.",
+            "ru": "Не стройте Pool на импорте: создавайте лениво на воркер через серверный хук `post_fork` и сносите в `worker_exit` через `pool.terminate(); pool.join()`. Это привязывает FD пула к времени жизни воркера, и пересоздания их освобождают. Для слива зарегистрируйте SIGTERM-хендлер (или используйте graceful-путь gunicorn), который ставит accepting=False, даёт текущему запросу завершиться в пределах `graceful_timeout` и затем выходит — тогда пересоздания стоят ноль оборванных запросов вместо 0.8%."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-worker-shutdown-drain",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review: a worker bootstrap with shutdown and a shared pool",
+        "ru": "Ревью: бутстрап воркера со shutdown и общим пулом"
+      },
+      "prompt": {
+        "en": "This module bootstraps a background worker, owns a process pool, and installs a shutdown path meant to drain queued jobs before exit. Review like a senior: name the real defects, don't flag non-issues.",
+        "ru": "Этот модуль поднимает фоновый воркер, владеет пулом процессов и ставит shutdown-путь, который должен сливать очередь задач перед выходом. Ревьюй как сеньор: назови реальные дефекты, не отмечай несуществующие."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "import signal\nimport queue\nfrom multiprocessing import Pool\n\njobs = queue.Queue()\npool = Pool(processes=4)          # built at module import\n_shutting_down = False\n\ndef on_term(signum, frame):\n    global _shutting_down\n    _shutting_down = True\n\nsignal.signal(signal.SIGTERM, on_term)\n\ndef run():\n    while True:\n        if _shutting_down and jobs.empty():\n            break\n        try:\n            job = jobs.get(timeout=1)\n        except queue.Empty:\n            continue\n        pool.apply_async(handle, (job,))\n    # exit without joining outstanding async results\n\ndef handle(job):\n    return job * 2\n\nif __name__ == \"__main__\":\n    run()\n"
+      },
+      "findings": [
+        {
+          "id": "pool-never-closed",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "Pool is never close()/join()ed on shutdown — leaks children & FDs",
+            "ru": "Pool никогда не close()/join() при shutdown — течёт детьми и FD"
+          },
+          "explanation": {
+            "en": "`run()` breaks out of the loop and returns without `pool.close(); pool.join()` (or `terminate()`). The 4 pool processes and their pipe FDs are orphaned on every restart/recycle, which is exactly the FD-climb leak. Must tear the pool down in the shutdown path.",
+            "ru": "`run()` выходит из цикла и возвращается без `pool.close(); pool.join()` (или `terminate()`). 4 процесса пула и их пайп-FD осиротевают при каждом рестарте/пересоздании — это и есть рост FD. Пул нужно сносить в shutdown-пути."
+          }
+        },
+        {
+          "id": "drain-loses-inflight",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "Drain checks jobs.empty() but ignores in-flight apply_async results",
+            "ru": "Слив смотрит jobs.empty(), но игнорирует in-flight apply_async"
+          },
+          "explanation": {
+            "en": "The loop exits as soon as the input queue is empty, but jobs already dispatched via `apply_async` may still be running in the pool. Returning here lets the process exit (and the pool die) with results unfinished — mid-flight jobs are lost. Must collect the AsyncResults and wait on them before exit.",
+            "ru": "Цикл выходит, как только входная очередь пуста, но задачи, уже отправленные через `apply_async`, могут ещё выполняться в пуле. Возврат здесь даёт процессу выйти (и пулу умереть) с незавершёнными результатами — задачи на лету теряются. Нужно собирать AsyncResult и дожидаться их перед выходом."
+          }
+        },
+        {
+          "id": "pool-at-import",
+          "severity": "tradeoff",
+          "planted": true,
+          "label": {
+            "en": "Pool created at import time, before fork",
+            "ru": "Pool создаётся на import-time, до fork"
+          },
+          "explanation": {
+            "en": "Building `Pool()` at module import means under a pre-forking server the pool exists in the master and its FDs/children are inherited by every fork, multiplying leaks and risking shared-pipe corruption. Construct it lazily in a post-fork hook so each worker owns its own pool.",
+            "ru": "Создание `Pool()` на импорте означает, что при pre-forking сервере пул живёт в мастере, а его FD/дети наследуются каждым fork, умножая утечки и рискуя порчей общего пайпа. Стройте лениво в post-fork хуке, чтобы каждый воркер владел своим пулом."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "queue-get-timeout-loop",
+          "label": {
+            "en": "The 1s timeout on jobs.get() spins the loop",
+            "ru": "Таймаут 1с у jobs.get() крутит цикл"
+          },
+          "explanation": {
+            "en": "Fine. The timeout exists precisely so the loop can re-check `_shutting_down` periodically; a 1s wake is a normal cooperative-cancellation cadence, not a hot spin. Not a defect.",
+            "ru": "Нормально. Таймаут существует именно для того, чтобы цикл периодически перепроверял `_shutting_down`; пробуждение раз в 1с — нормальный такт кооперативной отмены, а не горячий спин. Не дефект."
+          }
+        }
+      ]
     }
   ]
 }

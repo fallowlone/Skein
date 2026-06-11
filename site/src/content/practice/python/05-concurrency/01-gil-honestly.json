@@ -136,6 +136,147 @@
         "en": "Both builds: stage 1 runs in ThreadPoolExecutor(max_workers≈32) — sockets release the GIL, so 500 downloads overlap; stage 4 likewise (DB driver blocks in the kernel). Stage 3 runs in a small thread pool (≈cores) on both builds because the extension releases the GIL during compute — real parallelism already on 3.12. The fork in the road is stage 2: on 3.12 those 30 s of bytecode serialize no matter how many threads you add, and running them on threads beside the I/O pools would convoy the GIL — keep parsing serial (or accept it as the critical path); on 3.13t, split parsing across ≈cores threads for near-linear speedup, paying the build's single-thread tax everywhere. Add a startup check: assert not sys._is_gil_enabled() on deployment B, so a stray non-free-threaded wheel fails the deploy instead of silently flattening stage 2 back to one core.",
         "ru": "Обе сборки: стадия 1 — в ThreadPoolExecutor(max_workers≈32): сокеты отпускают GIL, и 500 загрузок перекрываются; стадия 4 аналогично (драйвер БД блокируется в ядре). Стадия 3 — в маленьком пуле потоков (≈числу ядер) на обеих сборках, потому что расширение отпускает GIL на время счёта — настоящий параллелизм уже на 3.12. Развилка — стадия 2: на 3.12 эти 30 с байткода сериализуются при любом числе потоков, а запуск их в потоках рядом с I/O-пулами устроит конвой за GIL — парсинг оставить последовательным (или принять его как критический путь); на 3.13t — разделить парсинг на ≈число ядер потоков с почти линейным ускорением, платя однопоточный налог сборки везде. Добавить стартовую проверку: assert not sys._is_gil_enabled() на деплое B, чтобы случайный не-free-threaded wheel ронял деплой, а не тихо сплющивал стадию 2 обратно в одно ядро."
       }
+    },
+    {
+      "id": "incident-devectorized-refactor-stall",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "A readability refactor cost seven hours of night",
+        "ru": "Рефакторинг ради читаемости стоил семи часов ночи"
+      },
+      "prompt": {
+        "en": "The nightly feature-engineering job has run in 8 threads for a year, finishing in ~40 minutes on an 8-core box. A PR titled 'extract per-row scoring for testability' replaces a block of NumPy array operations with a clean per-row pure-Python function mapped over the same ThreadPoolExecutor. Tests pass; the code is genuinely nicer. The next night the job takes 4 hours 50 minutes, blowing the 06:00 freshness SLA for every downstream model, and htop shows eight threads sharing roughly one core. Work it step by step; commit to an answer before revealing each step.",
+        "ru": "Ночная джоба feature engineering год работала в 8 потоков, укладываясь в ~40 минут на 8-ядерной машине. PR с названием «вынести построчный скоринг ради тестируемости» заменяет блок операций над массивами NumPy чистой построчной pure-Python-функцией, отображаемой через тот же ThreadPoolExecutor. Тесты зелёные; код действительно стал лучше. Следующей ночью джоба идёт 4 часа 50 минут, срывая SLA свежести 06:00 для всех нижестоящих моделей, а htop показывает восемь потоков, делящих примерно одно ядро. Разбирай по шагам; формулируй ответ до раскрытия каждого шага."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · Eight threads, one core",
+            "ru": "1 · Восемь потоков, одно ядро"
+          },
+          "prompt": {
+            "en": "Thread count, pool code, and data volume are unchanged; only the body of the work function changed. CPU collapsed from ~700% to ~105%. What property of the work function did the refactor change?",
+            "ru": "Число потоков, код пула и объём данных не менялись; изменилось только тело рабочей функции. CPU рухнул с ~700% до ~105%. Какое свойство рабочей функции изменил рефакторинг?"
+          },
+          "reveal": {
+            "en": "Whether the work holds the GIL. The old body spent its time inside large NumPy array operations — C code that releases the GIL for the duration, so eight threads computed in genuine parallel (~700% CPU). The new body is pure-Python bytecode: a thread must hold the GIL to execute any of it, so at any instant exactly one of the eight threads advances. The 105% is one core of useful work plus switching overhead. The parallelism was never a property of ThreadPoolExecutor — it was a property of the C code the threads happened to call, and the refactor quietly removed it.",
+            "ru": "Держит ли работа GIL. Старое тело проводило время внутри крупных операций NumPy над массивами — C-код, отпускающий GIL на всю длительность, так что восемь потоков считали по-настоящему параллельно (~700% CPU). Новое тело — чистый Python-байткод: чтобы исполнять его, поток обязан держать GIL, и в любой момент продвигается ровно один из восьми. Эти 105% — одно ядро полезной работы плюс накладные на переключения. Параллелизм никогда не был свойством ThreadPoolExecutor — он был свойством C-кода, который потоки вызывали, и рефакторинг его тихо удалил."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · Worse than serial",
+            "ru": "2 · Хуже последовательного"
+          },
+          "prompt": {
+            "en": "The job is 7x slower, but a single-threaded run of the new code would take about 4 hours 20 — the threaded version is slower than serial. Explain the mechanism that makes 8 GIL-bound threads lose to 1.",
+            "ru": "Джоба стала в 7 раз медленнее, но однопоточный прогон нового кода занял бы около 4:20 — потоковая версия медленнее последовательной. Объясни механизм, из-за которого 8 GIL-зависимых потоков проигрывают одному."
+          },
+          "reveal": {
+            "en": "The interpreter requests a GIL drop every ~5 ms (sys.getswitchinterval), so eight CPU-bound threads constantly hand the lock around: each handoff is a release, an OS wakeup, a reacquire, and a cold-cache resume — pure overhead added to a workload that is serialized anyway. There is also no fairness guarantee: the releasing thread frequently re-wins the lock (it is hot on its core), so the handoffs that do happen buy nothing. Eight threads of pure-Python compute equal one thread of compute plus thousands of context switches — which is why measured times come in slower than serial, and why the lesson's honest classification matters: threads for I/O or GIL-releasing C work; never for bytecode-bound compute.",
+            "ru": "Интерпретатор запрашивает сброс GIL каждые ~5 мс (sys.getswitchinterval), и восемь CPU-bound потоков постоянно передают замок по кругу: каждая передача — это освобождение, пробуждение в ОС, повторный захват и возобновление на остывшем кеше — чистые накладные поверх нагрузки, которая всё равно сериализована. Справедливости тоже никто не обещал: отпустивший поток часто вновь выигрывает замок (он горяч на своём ядре), так что и состоявшиеся передачи ничего не покупают. Восемь потоков чистого Python-счёта равны одному потоку счёта плюс тысячи переключений контекста — поэтому замеры выходят медленнее последовательного, и поэтому важна честная классификация из урока: потоки — для I/O или C-работы, отпускающей GIL; никогда — для байткод-зависимого счёта."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · Fix and prevention",
+            "ru": "3 · Фикс и профилактика"
+          },
+          "prompt": {
+            "en": "The testability win is real and the team wants to keep it. Lay out the fix options with their costs, and the guardrail that catches the next de-parallelization before it ships.",
+            "ru": "Выигрыш в тестируемости реален, и команда хочет его сохранить. Изложи варианты фикса с их ценой и ограничитель, который поймает следующую де-параллелизацию до релиза."
+          },
+          "reveal": {
+            "en": "Three options. (1) Re-vectorize the hot path but keep the extracted function as the tested specification: the per-row function becomes the oracle in tests, the NumPy block the implementation — testability and GIL-free parallelism both kept; usually the right call. (2) Keep per-row Python but switch to ProcessPoolExecutor with chunked batches: true parallelism at the cost of pickle on every boundary and process startup — viable if rows serialize small. (3) A free-threaded 3.13t build would remove the GIL, but it is a separate build with a single-thread tax and an extension-compatibility minefield — not a Tuesday fix for one job. Prevention: add a scaling assertion to CI for parallel jobs — run the work function on a fixture single- and multi-threaded and fail if the speedup drops below a floor; it converts 'accidentally serialized the pipeline' from a 4 a.m. SLA page into a red PR check. And in review, any swap of vectorized-C work for pure-Python loops inside a thread pool is a performance change, not a refactor.",
+            "ru": "Три варианта. (1) Снова векторизовать горячий путь, оставив извлечённую функцию протестированной спецификацией: построчная функция становится оракулом в тестах, NumPy-блок — реализацией; сохранены и тестируемость, и параллелизм без GIL — обычно правильный выбор. (2) Оставить построчный Python, но перейти на ProcessPoolExecutor с чанкованными батчами: настоящий параллелизм ценой pickle на каждой границе и старта процессов — годится, если строки сериализуются компактно. (3) Free-threaded сборка 3.13t убрала бы GIL, но это отдельная сборка с однопоточным налогом и минным полем совместимости расширений — не фикс на вторник ради одной джобы. Профилактика: добавить в CI проверку масштабирования для параллельных джоб — прогнать рабочую функцию на фикстуре в один и в несколько потоков и падать, если ускорение ниже порога; это превращает «случайно сериализовали пайплайн» из пейджа в 4 утра в красный чек PR. И на ревью: любая замена векторизованной C-работы на pure-Python-циклы внутри пула потоков — это изменение производительности, а не рефакторинг."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-thread-scoring-band-aids",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review: threaded scoring with a latency band-aid",
+        "ru": "Ревью: потоковый скоринг с пластырем на латентность"
+      },
+      "prompt": {
+        "en": "This scores records in threads inside an API process that also serves a healthcheck. Review it like a senior: name the real defects in its GIL assumptions, and don't flag non-issues.",
+        "ru": "Этот код скорит записи в потоках внутри API-процесса, который заодно обслуживает healthcheck. Отревьюй как senior: назови реальные дефекты в его допущениях о GIL и не цепляйся к не-проблемам."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "import sys\nfrom concurrent.futures import ThreadPoolExecutor\n\nsys.setswitchinterval(0.0005)  # healthcheck was lagging behind scoring\n\n\ndef score(record: dict) -> float:\n    total = 0.0\n    for f in record[\"features\"]:  # pure-Python arithmetic, ~50k features\n        total += f * f\n    return total\n\n\ndef score_all(records: list[dict]) -> list[float]:\n    with ThreadPoolExecutor(max_workers=len(records)) as pool:\n        return list(pool.map(score, records))"
+      },
+      "findings": [
+        {
+          "id": "cpu-bound-thread-pool",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "Pure-Python CPU work in a thread pool — the GIL serializes all of it",
+            "ru": "Чистый Python-счёт в пуле потоков — GIL сериализует его целиком"
+          },
+          "explanation": {
+            "en": "score() is bytecode-bound arithmetic; a thread must hold the GIL for every instruction, so N workers deliver one core of throughput plus switching overhead — typically slower than a plain loop. The pool also keeps starving the same-process healthcheck (the convoy effect this code tries to medicate). Real fixes: vectorize the inner loop (NumPy releases the GIL) or move scoring to a ProcessPoolExecutor / separate worker process.",
+            "ru": "score() — байткод-зависимая арифметика; поток обязан держать GIL на каждой инструкции, так что N воркеров дают одно ядро пропускной способности плюс накладные на переключения — обычно медленнее простого цикла. Пул к тому же продолжает морить healthcheck того же процесса (тот самый эффект конвоя, который этот код пытается лечить). Настоящие фиксы: векторизовать внутренний цикл (NumPy отпускает GIL) или унести скоринг в ProcessPoolExecutor / отдельный воркер-процесс."
+          }
+        },
+        {
+          "id": "switchinterval-band-aid",
+          "severity": "tradeoff",
+          "planted": true,
+          "label": {
+            "en": "Global setswitchinterval(0.0005) trades process-wide throughput for a symptom",
+            "ru": "Глобальный setswitchinterval(0.0005) меняет пропускную способность всего процесса на симптом"
+          },
+          "explanation": {
+            "en": "Shrinking the switch interval 10x makes every CPU-bound thread offer the GIL far more often: latency for the healthcheck improves a little, while total throughput drops for the whole process — and the setting affects every thread, not just scoring. It is the documented band-aid; the durable fix is not running bytecode-bound work on interpreter threads at all. If kept temporarily, it needs a comment with a measurement and a removal ticket.",
+            "ru": "Сжатие интервала переключения в 10 раз заставляет каждый CPU-bound поток предлагать GIL гораздо чаще: латентность healthcheck чуть улучшается, а суммарная пропускная способность процесса падает — и настройка действует на все потоки, не только на скоринг. Это задокументированный пластырь; долговечный фикс — вообще не гонять байткод-зависимую работу на потоках интерпретатора. Если оставлять временно — нужен комментарий с измерением и тикет на удаление."
+          }
+        },
+        {
+          "id": "unbounded-workers",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "max_workers=len(records) — unbounded thread creation",
+            "ru": "max_workers=len(records) — неограниченное создание потоков"
+          },
+          "explanation": {
+            "en": "A 50k-record batch spawns 50k OS threads: ~8 MB of stack reservation each, scheduler thrash, and a likely crash on thread-creation limits — independent of the GIL question. Pool size should be a small constant tied to the resource (cores for CPU via processes, a few dozen for I/O), never the input size.",
+            "ru": "Батч в 50k записей порождает 50k OS-потоков: ~8 МБ зарезервированного стека на каждый, метание планировщика и вероятное падение на лимитах создания потоков — независимо от вопроса GIL. Размер пула должен быть малой константой, привязанной к ресурсу (ядра для CPU через процессы, пара десятков для I/O), и никогда — размером входа."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "lock-around-total",
+          "label": {
+            "en": "total needs a threading.Lock — concurrent += is a race",
+            "ru": "total нужен threading.Lock — конкурентный += это гонка"
+          },
+          "explanation": {
+            "en": "total is a local variable inside score(); each thread has its own frame and its own total. Races require shared state — there is none here. Guarding locals is cargo-cult locking.",
+            "ru": "total — локальная переменная внутри score(); у каждого потока свой фрейм и свой total. Гонкам нужно общее состояние — здесь его нет. Запирать локальные переменные — карго-культ."
+          }
+        },
+        {
+          "id": "list-defeats-laziness",
+          "label": {
+            "en": "list(pool.map(...)) materializes results and defeats laziness",
+            "ru": "list(pool.map(...)) материализует результаты и убивает ленивость"
+          },
+          "explanation": {
+            "en": "The function's contract is to return all scores; materializing the iterator inside the with-block is required anyway (leaving the block shuts the pool down). The list is correct, not wasteful.",
+            "ru": "Контракт функции — вернуть все скоры; материализовать итератор внутри with-блока всё равно необходимо (выход из блока гасит пул). list здесь корректен, а не расточителен."
+          }
+        }
+      ]
     }
   ]
 }

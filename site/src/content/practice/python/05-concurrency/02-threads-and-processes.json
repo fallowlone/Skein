@@ -134,6 +134,147 @@
         "en": "Parent: a small dispatcher thread takes jobs off the queue and submits job descriptors — (job_id, s3_input_key, s3_output_key), a few hundred bytes — to ProcessPoolExecutor(max_workers=16, mp_context=mp.get_context('spawn')). Spawn, not fork: the web process runs logging/metrics threads, so fork would clone locks held mid-flush into children (the intermittent first-log-line hang); entry point guarded with if __name__ == '__main__'. Each worker fetches its own S3 input (its boto3 calls release the GIL but more importantly stay local), renders ~8 s of pure Python on its own core — true parallelism only processes can give here — uploads the PDF itself, and returns (job_id, status, duration): the pickle bill is bytes per job instead of ~100 MB. Parent-side, an as_completed loop updates a plain dict under threading.Lock; /status reads it under the same lock — no Manager proxy (1000x slower, and another process to babysit). Memory: 16 × (80 MB input + ~50 MB render working set) ≈ 2 GB, comfortably inside 32 GB; if inputs grow, cap in-flight jobs rather than worker count.",
         "ru": "Родитель: маленький поток-диспетчер снимает задачи с очереди и отправляет дескрипторы — (job_id, s3_input_key, s3_output_key), несколько сотен байт — в ProcessPoolExecutor(max_workers=16, mp_context=mp.get_context('spawn')). Spawn, не fork: веб-процесс держит потоки logging/метрик, и fork клонировал бы замки, удерживаемые посреди flush, в детей (тот самый перемежающийся хенг на первой строчке лога); точка входа под if __name__ == '__main__'. Каждый воркер сам забирает вход из S3 (его вызовы boto3 отпускают GIL, но главное — остаются локальными), рендерит ~8 с чистого Python на своём ядре — настоящий параллелизм здесь дают только процессы, — сам заливает PDF и возвращает (job_id, status, duration): счёт за pickle — байты на задачу вместо ~100 МБ. На стороне родителя цикл as_completed обновляет обычный dict под threading.Lock; /status читает под тем же замком — никакого Manager-прокси (в 1000 раз медленнее, и лишний процесс на попечении). Память: 16 × (80 МБ входа + ~50 МБ рабочего набора рендера) ≈ 2 ГБ — свободно в 32 ГБ; если входы растут, ограничивайте число задач в полёте, а не число воркеров."
       }
+    },
+    {
+      "id": "incident-rate-limiter-lost-updates",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "The partner banned our API key; the limiter swears we behaved",
+        "ru": "Партнёр забанил наш API-ключ; лимитер клянётся, что мы вели себя хорошо"
+      },
+      "prompt": {
+        "en": "The outbound gateway enforces a partner's quota of 100 requests per second per key with `if counts[key] < 100: counts[key] += 1; send(...)` shared across 40 I/O threads. This morning the partner suspended the key for 'sustained quota violations' — their logs count up to 130 requests in some windows, while our limiter's own counter never exceeded 100. The integration is revenue-critical and re-enablement requires a root-cause writeup. The race never reproduces in the test suite on Python 3.12. Work it step by step; commit to an answer before revealing each step.",
+        "ru": "Исходящий шлюз соблюдает партнёрскую квоту 100 запросов в секунду на ключ через `if counts[key] < 100: counts[key] += 1; send(...)`, разделяемые 40 I/O-потоками. Утром партнёр приостановил ключ за «систематические нарушения квоты» — их логи насчитывают до 130 запросов в некоторых окнах, тогда как собственный счётчик нашего лимитера никогда не превышал 100. Интеграция критична для выручки, и для разблокировки требуется разбор первопричины. Гонка ни разу не воспроизводится в тестах на Python 3.12. Разбирай по шагам; формулируй ответ до раскрытия каждого шага."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · Two counters disagree",
+            "ru": "1 · Два счётчика расходятся"
+          },
+          "prompt": {
+            "en": "Our counter says ≤100; the partner counted 130 actual requests. The counter is the only gate before send(). What does 'more sends than counted increments' tell you about the increment itself?",
+            "ru": "Наш счётчик говорит ≤100; партнёр насчитал 130 реальных запросов. Счётчик — единственные ворота перед send(). О чём говорит «отправок больше, чем засчитанных инкрементов» применительно к самому инкременту?"
+          },
+          "reveal": {
+            "en": "Increments are being lost. `counts[key] += 1` compiles to load, add, store — three separate bytecodes. Two threads can both load 99, both add, both store 100: two requests went out, the counter moved by one. The check is worse: `if counts[key] < 100` and the increment together form a check-then-act window — many threads can pass the check at 99 before any of them stores. Lost updates explain both observations simultaneously: the partner sees every send (130), the counter sees only the surviving stores (≤100). The limiter is not lying; it is bleeding.",
+            "ru": "Инкременты теряются. `counts[key] += 1` компилируется в load, add, store — три отдельных байткода. Два потока могут оба загрузить 99, оба прибавить, оба сохранить 100: ушло два запроса, счётчик сдвинулся на один. Проверка ещё хуже: `if counts[key] < 100` вместе с инкрементом образуют окно check-then-act — много потоков могут пройти проверку на 99 до того, как хоть один сохранит. Потерянные обновления объясняют оба наблюдения разом: партнёр видит каждую отправку (130), счётчик — только выжившие сохранения (≤100). Лимитер не врёт; он истекает."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · But the GIL! And why tests stay green",
+            "ru": "2 · Но ведь GIL! И почему тесты зелёные"
+          },
+          "prompt": {
+            "en": "A teammate objects: 'the GIL means only one thread runs at a time — how can there be a race?' And why does the test suite never catch it on 3.12?",
+            "ru": "Коллега возражает: «GIL же гарантирует один поток за раз — откуда гонка?» И почему тесты на 3.12 её ни разу не ловят?"
+          },
+          "reveal": {
+            "en": "The GIL serializes individual bytecodes, not statements or invariants. Between the load and the store of `+= 1`, the interpreter's ~5 ms switch request can hand the GIL to another thread, which reads the stale value — the race is fully possible under the GIL, just probabilistic. Tests stay green for two compounding reasons: modern CPython (3.10+) switches only between full bytecode lines, shrinking the window enough that small tests rarely hit it; and test workloads lack the 40-thread, high-contention, I/O-interleaved timing of production. A race that fails one run in ten thousand passes every CI run and fires nightly at production volume. 'Passes under stress test' is evidence of probability, never of absence — the GIL changes how often interleavings happen, not whether they can.",
+            "ru": "GIL сериализует отдельные байткоды, а не операторы или инварианты. Между load и store в `+= 1` запрос переключения раз в ~5 мс может передать GIL другому потоку, и тот прочитает устаревшее значение — гонка полностью возможна под GIL, просто вероятностна. Тесты зелёные по двум усиливающим друг друга причинам: современный CPython (3.10+) переключается только между целыми байткод-строками, сужая окно настолько, что маленькие тесты редко в него попадают; и тестовые нагрузки лишены продакшенового тайминга — 40 потоков, высокая конкуренция, перемежение с I/O. Гонка, падающая раз на десять тысяч прогонов, проходит каждый CI и стреляет еженощно на продакшеновом объёме. «Проходит под стресс-тестом» — свидетельство вероятности, никогда не отсутствия: GIL меняет частоту перемежений, а не их возможность."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · Fix and prevention",
+            "ru": "3 · Фикс и профилактика"
+          },
+          "prompt": {
+            "en": "Write the fix, address the contention concern with 40 threads, and define the test that actually exercises the race.",
+            "ru": "Напиши фикс, разбери вопрос конкуренции при 40 потоках и определи тест, который реально проверяет гонку."
+          },
+          "reveal": {
+            "en": "Guard the whole invariant, not the increment: a threading.Lock around check-and-increment as one critical section — `with lock: if counts[key] < limit: counts[key] += 1; allowed = True` — and send() outside the lock so the slow I/O never serializes behind it. Contention: the critical section is a dict read and an int add, tens of nanoseconds; 40 threads contend trivially compared to milliseconds of network I/O — if profiling ever disagrees, shard to per-key locks. Subtle trap to call out in the writeup: the GIL-atomicity of single dict ops is why people trust this code; the invariant spans two ops, and that is the whole story. Test: N threads released by a threading.Barrier, each attempting M acquisitions against limit L; assert exactly L were allowed and the counter equals L. On the buggy code this fails within a few runs; with the lock it is deterministic. Plus the partner-facing fix: reconcile against their counted windows and include a safety margin (limit 95 of 100) since even a correct limiter and their counter sample different window boundaries.",
+            "ru": "Защити весь инвариант, а не инкремент: threading.Lock вокруг проверки-и-инкремента как одной критической секции — `with lock: if counts[key] < limit: counts[key] += 1; allowed = True` — а send() вне замка, чтобы медленный I/O никогда не выстраивался за ним. Конкуренция: критическая секция — чтение dict и сложение int, десятки наносекунд; 40 потоков соперничают пренебрежимо на фоне миллисекунд сетевого I/O — если профилирование когда-нибудь не согласится, шардируй на пер-ключевые замки. Тонкая ловушка для разбора: GIL-атомарность одиночных операций dict — причина, по которой этому коду верят; инвариант охватывает две операции, и в этом вся история. Тест: N потоков, спущенных threading.Barrier, каждый делает M попыток против лимита L; проверь, что разрешено ровно L и счётчик равен L. На багованном коде падает за несколько прогонов; с замком детерминирован. Плюс фикс для партнёра: сверка по их счётным окнам и запас прочности (лимит 95 из 100), поскольку даже корректный лимитер и их счётчик меряют разные границы окон."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-render-farm-bootstrap",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 12,
+      "title": {
+        "en": "Review: a report-rendering farm bootstrap",
+        "ru": "Ревью: бутстрап фермы рендеринга отчётов"
+      },
+      "prompt": {
+        "en": "This module parallelizes report rendering over processes; it also starts a metrics thread. Review it like a senior: name the real defects in its process model, and don't flag non-issues.",
+        "ru": "Этот модуль параллелит рендеринг отчётов по процессам и заодно стартует поток метрик. Отревьюй как senior: назови реальные дефекты его процессной модели и не цепляйся к не-проблемам."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "import threading\nfrom concurrent.futures import ProcessPoolExecutor\n\nimport pandas as pd\n\nframe = pd.read_parquet(\"events.parquet\")  # ~2 GB\n\n\ndef render(chunk: pd.DataFrame) -> bytes:\n    return chunk.to_html().encode()\n\n\ndef start_metrics() -> None:\n    t = threading.Thread(target=flush_metrics_forever, daemon=True)\n    t.start()\n\n\nstart_metrics()\npool = ProcessPoolExecutor(max_workers=8)\nparts = list(pool.map(render, [frame.iloc[i::8] for i in range(8)]))"
+      },
+      "findings": [
+        {
+          "id": "no-main-guard-bomb",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "Pool creation and map run at import top level with no __main__ guard",
+            "ru": "Создание пула и map выполняются на верхнем уровне импорта без guard'а __main__"
+          },
+          "explanation": {
+            "en": "Under the spawn start method (macOS default, Linux moving off fork), every worker starts a fresh interpreter and imports this module — which re-reads 2 GB of parquet, re-starts metrics, re-creates the pool, and re-submits work: a recursive process bomb. All executable behavior must live under `if __name__ == \"__main__\":`; module import must be side-effect free.",
+            "ru": "При старт-методе spawn (дефолт macOS; Linux уходит от fork) каждый воркер поднимает свежий интерпретатор и импортирует этот модуль — то есть заново читает 2 ГБ parquet, заново стартует метрики, заново создаёт пул и заново сабмитит работу: рекурсивная процессная бомба. Всё исполняемое поведение обязано жить под `if __name__ == \"__main__\":`; импорт модуля должен быть свободен от побочных эффектов."
+          }
+        },
+        {
+          "id": "fork-plus-metrics-thread",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "A background thread is running when workers are created, with no explicit start method",
+            "ru": "Фоновый поток уже работает при создании воркеров, а старт-метод не задан явно"
+          },
+          "explanation": {
+            "en": "On Linux with fork, each worker clones the parent at a random instant — including any lock the metrics thread happens to hold (logging's handler lock is the classic). The child inherits a locked lock with no owning thread: its first log/flush deadlocks forever, intermittently, in production only. Set mp_context=multiprocessing.get_context(\"spawn\") (or forkserver) explicitly; never rely on the platform default when the process has threads.",
+            "ru": "На Linux с fork каждый воркер клонирует родителя в случайный момент — включая любой замок, который как раз держит поток метрик (классика — замок хендлера logging). Ребёнок наследует запертый замок без потока-владельца: его первый лог/flush навсегда виснет, перемежающе и только в проде. Задай mp_context=multiprocessing.get_context(\"spawn\") (или forkserver) явно; никогда не полагайся на платформенный дефолт, когда в процессе есть потоки."
+          }
+        },
+        {
+          "id": "dataframe-pickle-tax",
+          "severity": "tradeoff",
+          "planted": true,
+          "label": {
+            "en": "2 GB of DataFrame slices are pickled to the workers",
+            "ru": "2 ГБ срезов DataFrame пиклятся в воркеры"
+          },
+          "explanation": {
+            "en": "Every argument crosses the process boundary via pickle: eight ~250 MB chunks cost seconds of serialization each way, often rivaling the render itself. Ship descriptions, not data: pass the parquet path plus row ranges and let each worker read its own slice (a local columnar read), returning small results. The pattern survives any pool size; shipping frames does not.",
+            "ru": "Каждый аргумент пересекает границу процесса через pickle: восемь чанков по ~250 МБ стоят секунд сериализации в каждую сторону, нередко соизмеримо с самим рендером. Отправляй описания, а не данные: путь к parquet плюс диапазоны строк, и пусть каждый воркер читает свой срез сам (локальное колоночное чтение), возвращая компактные результаты. Паттерн переживает любой размер пула; пересылка датафреймов — нет."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "daemon-metrics-thread",
+          "label": {
+            "en": "daemon=True on the metrics thread — it will be killed abruptly at exit",
+            "ru": "daemon=True у потока метрик — его грубо убьют на выходе"
+          },
+          "explanation": {
+            "en": "For a best-effort metrics flusher, daemon is the deliberate, common choice: it must never block process exit, and losing the final partial flush is an accepted cost. If exactly-once delivery mattered, it would not be a fire-and-forget thread at all.",
+            "ru": "Для best-effort отправщика метрик daemon — осознанный и распространённый выбор: он не должен блокировать выход процесса, а потеря последнего неполного flush — принятая цена. Если бы требовалась доставка exactly-once, это вообще не был бы fire-and-forget поток."
+          }
+        },
+        {
+          "id": "hardcoded-eight-workers",
+          "label": {
+            "en": "max_workers=8 is hard-coded instead of cpu_count()",
+            "ru": "max_workers=8 зашит вместо cpu_count()"
+          },
+          "explanation": {
+            "en": "An explicit worker count matched to the known deployment (and to the 8-way chunking) is a legitimate sizing decision; cpu_count() on a shared box can even oversubscribe. Tuning preference, not a defect.",
+            "ru": "Явное число воркеров, согласованное с известным деплоем (и с разбиением на 8 частей), — легитимное решение по размеру; cpu_count() на разделяемой машине может даже дать переподписку. Предпочтение в настройке, не дефект."
+          }
+        }
+      ]
     }
   ]
 }
