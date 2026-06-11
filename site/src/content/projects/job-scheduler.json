@@ -33,67 +33,208 @@
   ],
   "milestones": [
     {
-      "id": "durable-enqueue",
+      "id": "frame-and-durable-enqueue",
       "title": {
-        "en": "Durable enqueue",
-        "ru": "Долговечная постановка в очередь"
+        "en": "Frame the queue: data model, due-time index, durable enqueue",
+        "ru": "Очерти очередь: модель данных, индекс по времени, долговечная постановка"
       },
       "goal": {
-        "en": "Persist scheduled jobs so a restart doesn't lose them, with a claimable due-time index.",
-        "ru": "Сохраняй запланированные задачи так, чтобы рестарт их не терял, с индексом по времени запуска."
+        "en": "Before any worker loop, model the queue as a Postgres table and decide what 'durable' means. Each job carries state (pending → claimed → done → failed → dead), a run_at timestamp, an attempt count, and a payload. The whole point of using Postgres-as-queue is that state is inspectable with a SELECT — no black-box broker — but it means the due-time scan is your hottest query, so it must ride a partial index on (run_at) WHERE state = 'pending', not a sequential scan over a growing table. Size it: at 500 jobs/s enqueue with a 7-day retention you carry ~300M rows, so the index — and a partitioning or archival plan — is not optional. Enqueue must be a single committed INSERT so a crash between accept and persist loses nothing.",
+        "ru": "До любого воркер-цикла смоделируй очередь как таблицу Postgres и реши, что значит «долговечность». Каждая задача несёт состояние (pending → claimed → done → failed → dead), метку run_at, счётчик попыток и payload. Весь смысл Postgres-как-очереди в том, что состояние проверяемо через SELECT — без брокера-чёрного ящика, — но это значит, что скан по времени запуска — твой самый горячий запрос, и он обязан идти по частичному индексу на (run_at) WHERE state = 'pending', а не по sequential scan растущей таблицы. Прикинь объём: при 500 задач/с на enqueue и хранении 7 дней ты несёшь ~300M строк, так что индекс — и план партиционирования или архивации — не опциональны. Enqueue должен быть одним зафиксированным INSERT, чтобы краш между приёмом и сохранением ничего не терял."
       },
       "definitionOfDone": [
         {
-          "en": "jobs survive a process restart (persisted, not in-memory)",
-          "ru": "задачи переживают рестарт процесса (персистентны, не в памяти)"
+          "en": "Jobs survive a process restart (committed to Postgres, never in-memory), and you can show the lifecycle states a job can hold.",
+          "ru": "Задачи переживают рестарт процесса (зафиксированы в Postgres, никогда в памяти), и ты можешь показать состояния жизненного цикла задачи."
         },
         {
-          "en": "a worker can claim only jobs whose run_at has passed",
-          "ru": "воркер может забрать только задачи, чей run_at уже наступил"
+          "en": "The due-time scan uses a partial index (you confirmed with EXPLAIN it is an index scan, not a seq scan), and you stated the row-count and retention assumptions behind it.",
+          "ru": "Скан по времени запуска использует частичный индекс (ты подтвердил через EXPLAIN, что это index scan, а не seq scan), и ты сформулировал допущения по числу строк и хранению."
         }
       ],
       "feedsFrom": [
-        "queues/01-delivery-guarantees/03-consumer-dedup"
-      ]
+        "databases/02-indexes/03-partial-expression-covering",
+        "databases/02-indexes/02-leading-column-rule",
+        "queues/01-delivery-guarantees/02-failure-modes"
+      ],
+      "reviewPrompt": {
+        "en": "Show the EXPLAIN for the claim query as the table grows; a senior reviewer checks the due-time scan stays an index scan and that retention won't turn it into a seq scan in a month.",
+        "ru": "Покажи EXPLAIN запроса захвата по мере роста таблицы; senior-ревьюер проверяет, что скан по времени остаётся index scan и что хранение не превратит его в seq scan через месяц."
+      }
     },
     {
-      "id": "at-least-once-idempotent",
+      "id": "at-least-once-visibility",
       "title": {
-        "en": "At-least-once with idempotent handlers",
-        "ru": "At-least-once с идемпотентными обработчиками"
+        "en": "At-least-once: claim, visibility timeout, heartbeat",
+        "ru": "At-least-once: захват, visibility timeout, heartbeat"
       },
       "goal": {
-        "en": "Accept that a job may run more than once and make handlers idempotent with a dedup key.",
-        "ru": "Прими, что задача может выполниться больше одного раза, и сделай обработчики идемпотентными через dedup-ключ."
+        "en": "Make delivery survive a worker dying mid-job. A worker claims a due job by flipping it to 'claimed' with a lease that expires (the visibility timeout) — concurrent workers must not grab the same row, so the claim is an atomic UPDATE ... WHERE state='pending' ... RETURNING with FOR UPDATE SKIP LOCKED. If the worker crashes before finishing, the lease expires and the job becomes claimable again: that is at-least-once, and it is the only honest guarantee a durable queue can cheaply offer. Tune the timeout against your p99 job duration — too short and a slow-but-alive worker gets its job stolen and run twice; too long and a real crash leaves the job stuck for minutes. Long jobs extend the lease with a heartbeat (e.g. renew every 10s on a 30s visibility timeout) so liveness, not a fixed guess, drives reclaim.",
+        "ru": "Сделай доставку устойчивой к смерти воркера на середине задачи. Воркер захватывает наступившую задачу, переводя её в 'claimed' с истекающей арендой (visibility timeout) — параллельные воркеры не должны схватить ту же строку, поэтому захват — это атомарный UPDATE ... WHERE state='pending' ... RETURNING с FOR UPDATE SKIP LOCKED. Если воркер падает до завершения, аренда истекает и задача снова доступна для захвата: это и есть at-least-once, и это единственная честная гарантия, которую долговечная очередь даёт дёшево. Настрой таймаут под p99 длительности задачи — слишком короткий, и медленный-но-живой воркер теряет задачу, которую запустят дважды; слишком длинный, и реальный краш оставляет задачу залипшей на минуты. Длинные задачи продлевают аренду heartbeat'ом (например, обновление каждые 10с при visibility timeout 30с), чтобы reclaim управлялся живостью, а не фиксированной догадкой."
       },
       "definitionOfDone": [
         {
-          "en": "a job that runs twice produces the same effect once",
-          "ru": "задача, выполненная дважды, даёт тот же эффект один раз"
+          "en": "Two workers racing for the same due job never both run it (proven with FOR UPDATE SKIP LOCKED or an equivalent atomic claim under concurrent load).",
+          "ru": "Два воркера, гонящиеся за одной наступившей задачей, никогда не запускают её оба (доказано через FOR UPDATE SKIP LOCKED или эквивалентный атомарный захват при конкурентной нагрузке)."
         },
         {
-          "en": "a failed job moves to a dead-letter path after N attempts",
-          "ru": "упавшая задача уходит в dead-letter после N попыток"
+          "en": "A worker killed mid-job has its job reclaimed after the visibility timeout, and a long job holds its lease via heartbeat instead of being stolen.",
+          "ru": "У воркера, убитого на середине задачи, задача переисполняется после visibility timeout, а длинная задача удерживает аренду через heartbeat, а не теряется."
+        }
+      ],
+      "feedsFrom": [
+        "queues/01-delivery-guarantees/01-three-guarantees",
+        "queues/01-delivery-guarantees/02-failure-modes",
+        "backend/07-graceful-shutdown/05-in-flight-work-and-jobs"
+      ],
+      "reviewPrompt": {
+        "en": "Under at-least-once, what happens if a worker finishes the work but is killed before marking the job done? A senior reviewer checks the answer is 'it reruns — that's why the next milestone exists', not 'it's lost'.",
+        "ru": "При at-least-once что будет, если воркер закончил работу, но убит до отметки задачи как done? Senior-ревьюер проверяет, что ответ — «она перезапустится — для этого и нужен следующий этап», а не «потеряна»."
+      }
+    },
+    {
+      "id": "retries-backoff-dlq",
+      "title": {
+        "en": "Retries: exponential backoff, jitter, dead-letter queue",
+        "ru": "Ретраи: экспоненциальный backoff, jitter, dead-letter"
+      },
+      "goal": {
+        "en": "A failed job must retry — but naive retries are a self-inflicted outage. Fixed-interval retries from thousands of jobs synchronize into a thundering herd that re-saturates the dependency that just failed; exponential backoff (e.g. 1s, 2s, 4s, 8s, capped at 5min) spreads them, and full jitter (sleep = random(0, backoff)) breaks the synchronization so retries don't all fire on the same tick. Cap the attempt budget: after N attempts (commonly 5–8) the job is poison and must move to a dead-letter queue rather than retry forever and clog the lane. The DLQ is a queryable table you alert on by depth — a rising DLQ depth is your earliest signal that a downstream is broken or a payload is malformed.",
+        "ru": "Упавшая задача должна повторяться — но наивные ретраи это самонанесённый сбой. Ретраи с фиксированным интервалом от тысяч задач синхронизируются в thundering herd, который снова насыщает только что упавшую зависимость; экспоненциальный backoff (например, 1с, 2с, 4с, 8с, с потолком 5мин) их разносит, а full jitter (sleep = random(0, backoff)) ломает синхронизацию, чтобы ретраи не стреляли все в один тик. Ограничь бюджет попыток: после N попыток (обычно 5–8) задача — poison и должна уйти в dead-letter, а не повторяться вечно и забивать полосу. DLQ — это запрашиваемая таблица, по глубине которой ты алертишь: растущая глубина DLQ — твой самый ранний сигнал, что downstream сломан или payload битый."
+      },
+      "definitionOfDone": [
+        {
+          "en": "Retries use exponential backoff with full jitter and a capped delay, and you can show two failing jobs do not retry in lockstep.",
+          "ru": "Ретраи используют экспоненциальный backoff с full jitter и потолком задержки, и ты можешь показать, что две падающие задачи не повторяются в унисон."
+        },
+        {
+          "en": "A job that fails N times lands in a dead-letter table (not retried forever), and DLQ depth is queryable for alerting.",
+          "ru": "Задача, упавшая N раз, попадает в dead-letter таблицу (а не повторяется вечно), и глубина DLQ запрашиваема для алертинга."
+        }
+      ],
+      "feedsFrom": [
+        "backend/05-idempotency-retries/03-retry-strategies",
+        "queues/01-delivery-guarantees/05-sqs-dlq",
+        "distributed/07-retry-amplification/01-overview"
+      ],
+      "reviewPrompt": {
+        "en": "Show the backoff schedule and the jitter formula; a senior reviewer checks jitter is full (random(0, cap)) not fixed, and that the attempt cap routes to a DLQ instead of an infinite retry loop.",
+        "ru": "Покажи расписание backoff и формулу jitter; senior-ревьюер проверяет, что jitter полный (random(0, cap)), а не фиксированный, и что потолок попыток ведёт в DLQ, а не в бесконечный цикл ретраев."
+      }
+    },
+    {
+      "id": "cron-delayed-clock",
+      "title": {
+        "en": "Cron and delayed jobs: schedule, clock skew, double-fire",
+        "ru": "Cron и отложенные задачи: расписание, clock skew, двойной запуск"
+      },
+      "goal": {
+        "en": "Add recurring schedules and you import the hardest problem in the system: time. A cron entry (e.g. '*/5 * * * *') must materialize into concrete run_at rows, and the materializer itself runs on more than one node for availability — so two schedulers can compute the same fire time and enqueue the same minute twice. Clock skew between nodes makes 'is it due yet?' ambiguous near the boundary, and a daylight-saving jump or a leap second can skip or double a window. The fix is to make the fire deterministic and deduplicated: derive a per-occurrence key (schedule_id + the bucketed fire timestamp) and enqueue with a unique constraint so a double-compute collapses to one row. Decide your timezone and DST policy explicitly — 'run at 02:30 local' is a question, not an instant, on the night the clock springs forward.",
+        "ru": "Добавь повторяющиеся расписания — и ты импортируешь сложнейшую проблему системы: время. Запись cron (например, '*/5 * * * *') должна материализоваться в конкретные строки run_at, а сам материализатор ради доступности работает больше чем на одном узле — поэтому два планировщика могут вычислить одно и то же время запуска и поставить одну минуту дважды. Clock skew между узлами делает «уже пора?» неоднозначным у границы, а переход на летнее время или leap second может пропустить или удвоить окно. Лекарство — сделать запуск детерминированным и дедуплицированным: выведи ключ на каждое срабатывание (schedule_id + забакетированная метка запуска) и ставь в очередь с unique-ограничением, чтобы двойное вычисление схлопнулось в одну строку. Явно реши политику таймзоны и DST — «запустить в 02:30 по местному» — это вопрос, а не момент, в ночь перевода стрелок вперёд."
+      },
+      "definitionOfDone": [
+        {
+          "en": "A cron schedule materializes into run_at rows, and two scheduler instances computing the same fire time enqueue exactly one job (unique per-occurrence key, not best-effort).",
+          "ru": "Cron-расписание материализуется в строки run_at, и два экземпляра планировщика, вычислившие одно время запуска, ставят ровно одну задачу (уникальный ключ на срабатывание, а не best-effort)."
+        },
+        {
+          "en": "You documented the timezone/DST policy and can explain what your scheduler does on a spring-forward or fall-back boundary.",
+          "ru": "Ты задокументировал политику таймзоны/DST и можешь объяснить, что делает планировщик на границе перехода вперёд или назад."
+        }
+      ],
+      "feedsFrom": [
+        "distributed/05-clocks/01-overview",
+        "queues/01-delivery-guarantees/02-failure-modes",
+        "backend/05-idempotency-retries/02-server-state-machine"
+      ],
+      "reviewPrompt": {
+        "en": "Run two scheduler instances against one schedule with skewed clocks; a senior reviewer checks the per-occurrence dedup key collapses the double-fire to one row and that the DST policy is written down, not assumed.",
+        "ru": "Запусти два экземпляра планировщика на одном расписании с разведёнными часами; senior-ревьюер проверяет, что ключ дедупа на срабатывание схлопывает двойной запуск в одну строку и что политика DST записана, а не подразумевается."
+      }
+    },
+    {
+      "id": "idempotency-exactly-once-effect",
+      "title": {
+        "en": "Exactly-once effect: dedup store, transactional handlers",
+        "ru": "Эффект exactly-once: dedup-хранилище, транзакционные обработчики"
+      },
+      "goal": {
+        "en": "At-least-once delivery is settled; now make duplicate delivery harmless. You cannot get exactly-once delivery cheaply, but you can get exactly-once effect: every handler takes an idempotency key and records it in a dedup store inside the same transaction as its side-effect, so a replay is a no-op. The subtlety is the atomicity boundary — if the work and the dedup-key write are in separate commits, a crash between them either double-applies (key written after effect, but effect not idempotent) or replays forever (effect done, key not written). For effects outside Postgres (sending an email, calling a payment API) the dedup record and the local state must commit together and the external call must itself be keyed, or you fall back to the outbox pattern: commit intent locally, then deliver. Prove it: replaying any job twice produces exactly one side-effect.",
+        "ru": "Доставка at-least-once улажена; теперь сделай дублирующую доставку безвредной. Доставку exactly-once дёшево не получить, но эффект exactly-once — можно: каждый обработчик берёт ключ идемпотентности и записывает его в dedup-хранилище в той же транзакции, что и побочный эффект, так что повтор становится no-op. Тонкость — граница атомарности: если работа и запись dedup-ключа в разных коммитах, краш между ними либо применяет дважды (ключ записан после эффекта, но эффект не идемпотентен), либо повторяет вечно (эффект сделан, ключ не записан). Для эффектов вне Postgres (отправка письма, вызов платёжного API) dedup-запись и локальное состояние должны коммититься вместе, а внешний вызов сам должен быть keyed, иначе откатывайся к паттерну outbox: зафиксируй намерение локально, потом доставляй. Докажи: повтор любой задачи дважды даёт ровно один побочный эффект."
+      },
+      "definitionOfDone": [
+        {
+          "en": "Every handler is keyed by an idempotency key recorded in a dedup store in the same transaction as its effect, and replaying a job twice produces exactly one side-effect (proven by test).",
+          "ru": "Каждый обработчик keyed по ключу идемпотентности, записанному в dedup-хранилище в той же транзакции, что и эффект, и повтор задачи дважды даёт ровно один побочный эффект (доказано тестом)."
+        },
+        {
+          "en": "For a side-effect outside Postgres you can name the atomicity boundary (transactional dedup or outbox) and explain why a naive 'do work then mark done' double-applies on crash.",
+          "ru": "Для эффекта вне Postgres ты можешь назвать границу атомарности (транзакционный dedup или outbox) и объяснить, почему наивное «сделать работу, потом отметить done» применяет дважды при краше."
         }
       ],
       "feedsFrom": [
         "backend/05-idempotency-retries/01-why-idempotency",
-        "queues/01-delivery-guarantees/05-sqs-dlq"
+        "queues/01-delivery-guarantees/03-consumer-dedup",
+        "queues/05-outbox/01-overview"
       ],
       "reviewPrompt": {
-        "en": "Under at-least-once, what happens if a worker crashes after doing the work but before acking?",
-        "ru": "При at-least-once что будет, если воркер упал после работы, но до ack?"
+        "en": "Walk the crash window between doing the work and writing the dedup key; a senior reviewer checks the effect and the key commit atomically (or via outbox) so neither double-apply nor infinite-replay is possible.",
+        "ru": "Пройди окно краша между выполнением работы и записью dedup-ключа; senior-ревьюер проверяет, что эффект и ключ коммитятся атомарно (или через outbox), так что ни двойное применение, ни бесконечный повтор невозможны."
+      }
+    },
+    {
+      "id": "scale-observe-incident",
+      "title": {
+        "en": "Scale and survive: priority, fairness, observe, poison-pill incident",
+        "ru": "Масштаб и выживание: приоритет, честность, наблюдение, инцидент poison-pill"
+      },
+      "goal": {
+        "en": "Run it under load and make it legible, then break it. Many workers polling one table contend on the same hot rows, so claims must use SKIP LOCKED and you must reason about poll interval versus latency (tight polling burns DB CPU; long polling adds delay). Add priority lanes — high-priority jobs jump the queue — but a pure priority column starves low-priority work, so promote by age (weighted fair queuing or oldest-eligible-within-budget) so nothing waits forever. Instrument RED on the worker loop: claim rate, failure rate, and job duration, plus queue depth and oldest-unclaimed-age as the SLO that actually matters. Then run the incident: a poison-pill job (a payload that crashes the handler every attempt) combined with a clock change that fires a thundering herd of due jobs at once — workers crash-loop on the poison job while the herd backs up the lane. Detect it from oldest-unclaimed-age and DLQ depth, mitigate live (route the poison to DLQ fast, fairness keeps the lane moving), then write the root cause.",
+        "ru": "Запусти под нагрузкой и сделай читаемым, потом сломай. Много воркеров, опрашивающих одну таблицу, конкурируют за одни горячие строки, поэтому захваты должны использовать SKIP LOCKED, а ты должен рассудить интервал опроса против латентности (частый опрос жжёт CPU БД; редкий добавляет задержку). Добавь приоритетные полосы — высокоприоритетные задачи прыгают через очередь, — но чистый приоритетный столбец уморяет низкоприоритетную работу голодом, поэтому повышай по возрасту (взвешенная честная очередь или старейшая-подходящая-в-бюджете), чтобы ничто не ждало вечно. Сними RED на воркер-цикле: rate захватов, rate отказов и длительность задачи, плюс глубину очереди и возраст старейшей-незахваченной как SLO, который реально важен. Затем проведи инцидент: poison-pill задача (payload, крашащий обработчик каждую попытку) вместе с переводом часов, выстреливающим thundering herd наступивших задач разом — воркеры крэш-лупят на poison-задаче, пока herd забивает полосу. Обнаружь по возрасту старейшей-незахваченной и глубине DLQ, смягчи вживую (быстро уведи poison в DLQ, честность держит полосу в движении), затем напиши корневую причину."
+      },
+      "definitionOfDone": [
+        {
+          "en": "Many workers scale claim throughput without double-claiming (SKIP LOCKED), and priority lanes promote by age so low-priority jobs are not starved under sustained high-priority load.",
+          "ru": "Много воркеров масштабируют пропускную способность захвата без двойного захвата (SKIP LOCKED), а приоритетные полосы повышают по возрасту, так что низкоприоритетные задачи не голодают при устойчивой высокоприоритетной нагрузке."
+        },
+        {
+          "en": "A dashboard shows claim/failure rate, job duration, queue depth, and oldest-unclaimed-age tied to an SLO; a trace or structured log lets you localize a slow handler.",
+          "ru": "Дашборд показывает rate захвата/отказов, длительность задачи, глубину очереди и возраст старейшей-незахваченной, привязанные к SLO; трейс или структурный лог даёт локализовать медленный обработчик."
+        },
+        {
+          "en": "You reproduced a poison-pill + thundering-herd incident, mitigated it live (fast DLQ routing + fairness), and wrote a post-mortem whose root cause names the mechanism (poison crash-loop / synchronized fire), not just 'queue backed up'.",
+          "ru": "Ты воспроизвёл инцидент poison-pill + thundering-herd, смягчил его вживую (быстрый увод в DLQ + честность) и написал пост-мортем, чья корневая причина называет механизм (крэш-луп poison / синхронный запуск), а не просто «очередь забилась»."
+        }
+      ],
+      "feedsFrom": [
+        "backend/03-async-blocking/05-backpressure-and-concurrency",
+        "distributed/07-retry-amplification/01-overview",
+        "observability/04-red-use/04-golden-signals-and-dashboards",
+        "observability/05-slo-budgets/01-sli-slo-budget-basics",
+        "observability/02-structured-logging/01-why-structured-logs"
+      ],
+      "reviewPrompt": {
+        "en": "Paste the post-mortem root cause and the fairness/poison-routing fix; a senior reviewer checks oldest-unclaimed-age (not just throughput) is the SLO, that priority promotes by age, and that the poison-pill is named as the trigger — not just 'high latency'.",
+        "ru": "Вставь корневую причину пост-мортема и фикс честности/увода poison; senior-ревьюер проверяет, что SLO — это возраст старейшей-незахваченной (а не просто пропускная способность), что приоритет повышается по возрасту и что poison-pill назван триггером — а не просто «высокая латентность»."
       }
     }
   ],
   "seniorStretch": [
     {
-      "en": "Make every handler idempotent via an idempotency key stored in a deduplication table — prove with a test that replaying any job twice produces exactly one side-effect.",
-      "ru": "Сделай каждый обработчик идемпотентным через ключ идемпотентности в таблице дедупликации — докажи тестом, что повторное воспроизведение любой задачи дважды даёт ровно один побочный эффект."
+      "en": "Guarantee exactly-once effect across a non-Postgres side-effect (email/payment) via a transactional outbox: commit intent + dedup key locally, deliver from the outbox with the key, and prove a crash at any point neither double-applies nor drops the effect.",
+      "ru": "Гарантируй эффект exactly-once для эффекта вне Postgres (письмо/платёж) через транзакционный outbox: зафиксируй намерение + dedup-ключ локально, доставляй из outbox с ключом и докажи, что краш в любой точке не применяет дважды и не теряет эффект."
     },
     {
-      "en": "Add priority lanes: high-priority jobs skip over low-priority ones without starving them — implement with weighted fair queuing or a priority column + age-based promotion.",
-      "ru": "Добавь приоритетные полосы: высокоприоритетные задачи обходят низкоприоритетные, не уморяя их голодом — реализуй через взвешенную честную очередь или приоритетный столбец с повышением по возрасту."
+      "en": "Implement weighted fair queuing with age-based promotion so high-priority lanes jump the queue but low-priority jobs never starve — verify with a load test that the oldest low-priority job's wait stays bounded under sustained high-priority pressure.",
+      "ru": "Реализуй взвешенную честную очередь с повышением по возрасту, чтобы высокоприоритетные полосы прыгали через очередь, но низкоприоритетные задачи не голодали — проверь нагрузочным тестом, что ожидание старейшей низкоприоритетной задачи остаётся ограниченным при устойчивом высокоприоритетном давлении."
+    },
+    {
+      "en": "Add a rate-limited fan-out lane: a single trigger expands into thousands of child jobs delivered under a global token-bucket cap, so a fan-out can't thunder-herd a downstream — measure the downstream QPS stays under its limit.",
+      "ru": "Добавь полосу fan-out с ограничением частоты: один триггер разворачивается в тысячи дочерних задач, доставляемых под глобальным потолком token-bucket, чтобы fan-out не устроил thundering herd downstream'у — замерь, что QPS downstream остаётся под его лимитом."
+    },
+    {
+      "en": "Shard the queue table by run_at (or hash) with an archival/partition-drop policy so the due-time scan stays an index scan at 300M+ rows and retention is a cheap partition drop, not a churning DELETE.",
+      "ru": "Шардируй таблицу очереди по run_at (или хешу) с политикой архивации/удаления партиций, чтобы скан по времени оставался index scan при 300M+ строк, а хранение было дешёвым drop партиции, а не выматывающим DELETE."
     }
   ],
   "brief": {
