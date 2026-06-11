@@ -1,0 +1,163 @@
+---
+concepts:
+- python-async-timeouts
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-timeouts-and-shielding"
+sources:
+- https://docs.python.org/3/library/asyncio-task.html
+- https://docs.python.org/3/library/asyncio-exceptions.html
+spiral: []
+status: ready
+summary: 'asyncio.timeout cancels its body at expiry and converts CancelledError to TimeoutError at the boundary; cancel-count bookkeeping makes nesting compose. Propagate deadlines, not per-hop timeouts. shield blocks outer cancel but inner work runs detached — pair it with a timeout.'
+title: 'Timeouts and shielding: scoped cancel with TimeoutError conversion, deadline propagation, and shield as half a tool'
+track: "python"
+unit: "11-async-deep"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The graceful shutdown was a point of pride: on SIGTERM the metrics exporter cancelled its workers, then flushed the last buffer to the collector — and the flush was wrapped in `asyncio.shield()`, because an earlier incident had taught the team that shutdown cancellation was eating the final batch. The shield worked. Too well. One Tuesday the collector pod died first, the TCP connection became a black hole, and the shielded flush awaited a write that would never complete. Cancellation could not touch it — that was the point of the shield — so the exporter hung at full grace period, got SIGKILL, and lost the buffer anyway, now plus twenty minutes of node drain delay across the fleet. The postmortem line that stuck: *shield decides who may not interrupt the work; it says nothing about how long the work may take.* Shield without a timeout is not protection — it is an unbounded hostage situation. This lesson is about the pair: scoped cancellation that converts to TimeoutError at a boundary, deadlines that travel down call chains, and shield as exactly one half of a tool.
+</Hook>
+
+<Crux>timeout() is a scoped cancel: CancelledError turns into TimeoutError at the boundary. shield blocks outer cancel — pair with a timeout.</Crux>
+
+<Explanation>
+
+## asyncio.timeout is a scoped cancel, not a stopwatch
+
+`async with asyncio.timeout(5):` (3.11+) does three things you can now name precisely from lessons 1 and 2. It schedules a `call_at` timer on the loop heap; at expiry, that timer **cancels the current task** — an ordinary injected `CancelledError`, landing at the body's next suspension point; and at the scope's exit, if the arriving `CancelledError` was *its own doing*, it converts it to `TimeoutError`. Outside the scope you see a clean timeout; inside, the body experienced plain cancellation — so all of lesson 2 applies verbatim inside a timeout scope: `finally` blocks run, cleanup must be bounded, swallowing breaks everything.
+
+The conversion decision is the deep part: how does the scope know the cancellation was its own? **Cancel-count bookkeeping.** Each `cancel()` increments the task's cancelling count; when the scope's timer fired the cancel, the scope calls `uncancel()` on exit — if the count drops back to zero, the cancellation belonged to this scope and becomes `TimeoutError`; if it stays positive, an *outer* cancellation (or outer timeout) is also in flight, and the scope re-raises `CancelledError` untouched so the outer claim wins. This is what makes nesting compose:
+
+```python
+async with asyncio.timeout(10):        # outer budget
+    async with asyncio.timeout(2):     # inner, stricter
+        await fetch()                  # takes 5 s
+# inner scope: its timer fired, its uncancel() zeroes the count -> TimeoutError
+# outer scope: never fired, sees an ordinary exception fly through, stays armed
+```
+
+`wait_for` is the older sibling: it wraps a *single awaitable* (creating a Task for a bare coroutine), where `timeout()` scopes a *block*. Historically `wait_for` had real edge cases around the result-arrives-while-cancelling race — completed work could be dropped, or cancellation leaked; since 3.12 it is reimplemented on top of `asyncio.timeout`, inheriting the count bookkeeping. Modern code prefers the scope: it composes, it covers multiple awaits, and it does not force a Task allocation.
+
+<Quiz
+  id="03-timeouts-and-shielding-quiz-1"
+  lessonSlug="03-timeouts-and-shielding"
+  lang="en"
+  question="Nested scopes: timeout(10) outside, timeout(2) inside, and the awaited fetch takes 5 s. What surfaces, and from which boundary?"
+  choices={[
+    { label: "TimeoutError raised at the inner boundary at the 2 s mark; the outer scope sees an ordinary exception pass through and never fires", correct: true },
+    { label: "Both scopes fire; you get an ExceptionGroup with two TimeoutErrors", misconception: "Scopes are not racing collectors. Only the inner timer fires; the cancel-count handshake lets the inner scope claim its own cancellation, and the outer one simply has nothing to convert." },
+    { label: "The outer scope converts the inner cancellation, so TimeoutError appears at the 10 s boundary", misconception: "Conversion happens where the count zeroes — at the scope whose timer fired. The inner scope uncancels its own request at 2 s; by the time anything reaches the outer boundary it is already a TimeoutError, not a CancelledError to claim." },
+    { label: "The inner timeout is ignored because the outer scope owns the task and only one timer can be armed per task", misconception: "Any number of scopes can arm timers on the same task. The cancelling count exists precisely so that simultaneous and nested cancellation sources stay distinguishable." },
+  ]}
+/>
+
+## Deadlines travel; timeouts do not
+
+A constant per-hop timeout is the junior version of the idea. A request that must answer in 2 s and makes three sequential downstream calls cannot give each call 2 s — the budgets must *share* the deadline, each hop computing the remainder. This is the same pattern Go institutionalizes as context deadlines (the go track's context-discipline lesson); in asyncio you carry a deadline and derive scopes from it — `asyncio.timeout_at(when)` takes an absolute loop-clock time for exactly this:
+
+```python
+async def call_with_deadline(deadline, op):
+    loop = asyncio.get_running_loop()
+    if deadline - loop.time() <= 0:
+        raise TimeoutError("budget exhausted before the call")
+    async with asyncio.timeout_at(deadline):   # absolute, shared, shrinking
+        return await op()
+
+async def handler():
+    deadline = asyncio.get_running_loop().time() + 2.0   # client-facing budget
+    user = await call_with_deadline(deadline, fetch_user)
+    orders = await call_with_deadline(deadline, fetch_orders)  # gets the REMAINDER
+    return render(user, orders)
+```
+
+The classic misordering incident: an outer `timeout(5)` around a retry loop whose per-attempt budget is 10 s with three attempts. The outer scope always fires mid-attempt-one; the per-attempt timeout never trips; the retry loop is unreachable code wearing a straight face — metrics show `retries == 0` forever while the postmortem assumed three attempts. The rule worth pinning: budgets must nest *strictly* — per-attempt under per-request under client-facing — and the only structure that enforces it automatically is deriving every inner scope from one shrinking deadline.
+
+## shield: who may not interrupt — not how long
+
+`asyncio.shield(thing)` wraps the awaitable in a Task and gives you a guarded await on it. When outer cancellation arrives, it hits the *shield wait*, not the inner task: your `await shield(...)` raises `CancelledError` immediately, while the inner task **keeps running, detached**. That sentence contains both the feature and the failure mode. The feature: a commit already in flight, a write-behind cache flush — work whose abandonment costs more than its completion — survives the cancellation storm around it. The failure mode is the **orphan problem**: after the shield wait dies, *who awaits the inner task?* If you did not keep a reference, its result and its exceptions vanish into the task graveyard (and "Task exception was never retrieved" logs at best). And the Hook is the second failure: shield bounds *interruption*, not *duration* — shielded work awaiting a dead peer runs forever. The pair is the discipline:
+
+```python
+async def flush_on_shutdown(exporter):
+    flush = asyncio.ensure_future(exporter.flush())   # named: no orphan
+    try:
+        await asyncio.shield(flush)                   # outer cancel stops HERE
+    except asyncio.CancelledError:
+        async with asyncio.timeout(5):                # bound the protected work
+            await flush                               # let it finish - or not
+        raise                                         # then honor the cancel
+```
+
+Shielding *everything* is the abuse pattern: a service whose handlers all shield their bodies is simply unkillable — cancellation, timeouts, and graceful shutdown all degrade to SIGKILL. Shield is for the narrow class of must-complete work, always with a bound, always with a kept reference.
+
+<Inset kind="why" lang="en">
+Why did 3.11 add cancel counting at all? Because before it, nested cancellation sources could not tell their cancellations apart. wait_for-era bugs were real: a task cancelled by a timeout at the same moment its result arrived could lose the result, or convert an *external* cancellation into a TimeoutError — making a deliberate shutdown look like a slow upstream. The cancelling()/uncancel() counter gives every scope a claim check: convert only what you yourself requested. It is also why lesson 2 banned swallowing CancelledError — eat one, and some scope above you uncancels a request that was never delivered, corrupting the count for everyone outer.
+</Inset>
+
+<Quiz
+  id="03-timeouts-and-shielding-quiz-2"
+  lessonSlug="03-timeouts-and-shielding"
+  lang="en"
+  question="A request handler wraps a DB write in asyncio.shield() with no kept reference. The client disconnects and the framework cancels the handler. What happens to the write?"
+  choices={[
+    { label: "It keeps running detached; the handler's shield-await raises CancelledError, and the write's result or exception is never observed by anyone", correct: true },
+    { label: "The write is cancelled along with the handler — shield only delays it", misconception: "Blocking that propagation is shield's entire job: the cancellation kills the shield wait, not the inner task. The write genuinely continues — that is why the orphan question matters." },
+    { label: "Cancellation waits politely until the write completes, then the handler resumes", misconception: "The handler does not resume — its await raises CancelledError immediately. Shield does not pause cancellation; it splits the waiter from the work, and the waiter dies now." },
+    { label: "The transaction rolls back automatically because its awaiting scope died", misconception: "asyncio has no transactional memory of scopes. The DB write proceeds to whatever end it reaches; commit or failure happens invisibly unless a kept reference is awaited later." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The timeout scope decision: whose CancelledError is it — plus shield as the parallel guard that blocks outer cancellation from reaching the inner task"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "expiry", label: "timeout(5) expires", sub: "call_at timer fires" },
+    { id: "cancel", label: "task.cancel()", sub: "cancelling count +1" },
+    { id: "unwind", label: "CancelledError unwinds", sub: "thrown at the await" },
+    { id: "mine", label: "Scope exit: own cancel", sub: "uncancel() → TimeoutError" },
+    { id: "foreign", label: "Scope exit: foreign", sub: "re-raise CancelledError" },
+    { id: "shield", label: "shield(task)", sub: "waiter dies, task runs on" },
+  ]}
+  edges={[
+    { from: "expiry", to: "cancel", label: "schedules" },
+    { from: "cancel", to: "unwind", label: "injects" },
+    { from: "unwind", to: "mine", label: "count zeroes" },
+    { from: "unwind", to: "foreign", label: "outer cancel live" },
+    { from: "unwind", to: "shield", label: "stops at shield" },
+  ]}
+  caption="Expiry is just a timer on the loop heap firing an ordinary cancel; the scope boundary then claims or forwards it via the cancel count — own cancellation becomes TimeoutError, a foreign one passes untouched, which is why nesting composes. shield blocks the unwind from reaching the inner task: the waiter is cancelled, the work runs on detached — bounded and referenced, or it is a hang and an orphan."
+/>
+
+<KeyTakeaway>`asyncio.timeout` arms a loop timer that cancels its own body, then converts the `CancelledError` to `TimeoutError` at the boundary — but only after `uncancel()` proves the cancellation was its own, which is why nested scopes and external cancels coexist (and why `wait_for` was rebuilt on it in 3.12). Carry deadlines, not per-hop constants: derive every inner scope from one shrinking budget (`timeout_at`), and keep the hierarchy strict — per-attempt under per-request under client-facing. `shield` blocks outer cancellation from the inner task while the waiter dies immediately: keep the reference (orphan problem) and pair it with a timeout, because shield bounds interruption, never duration.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-timeouts-and-shielding-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the full mechanism of asyncio.timeout, including how the boundary decides between TimeoutError and re-raising CancelledError, and why this fixes what wait_for got wrong.", a: "Entry arms a call_at timer on the loop heap. Expiry calls task.cancel() — an ordinary injected CancelledError that lands at the body's next suspension point, so the body experiences plain lesson-2 cancellation (finally runs, cleanup discipline applies). At exit the scope calls uncancel(): if the cancelling count returns to zero, the only live cancellation was the scope's own and it raises TimeoutError; if the count stays positive, an outer cancel or outer scope also fired, and the CancelledError is re-raised untouched so the outer claim wins. This claim-check protocol is what lets scopes nest deterministically — inner fires at 2 s, converts at its own boundary, outer never trips. wait_for predates the counter and had real races (results dropped when completion and cancellation crossed; external cancels mislabeled as timeouts); 3.12 reimplemented it on asyncio.timeout." },
+    { q: "Give the shield discipline: what it actually guarantees, the two failure modes of using it alone, and the deadline pattern for multi-hop request budgets.", a: "shield(x) wraps x in a Task and guards the await: outer cancellation kills the shield-wait (CancelledError raises in the caller immediately) while the inner task keeps running detached. Guarantee: nobody outside can interrupt the work. Not guaranteed: duration (a flush to a dead peer runs forever — the SIGKILL-at-grace-period incident) and observation (no kept reference means an orphan whose result and exceptions vanish). Discipline: keep a named task, shield the await, and on cancellation await the task again under asyncio.timeout, then re-raise. Deadlines: a 2 s client budget across three sequential hops cannot be three 2 s timeouts — carry one absolute deadline (loop.time() based), derive each scope with timeout_at(deadline), fail fast when the remainder hits zero, and keep budgets strictly nested: per-attempt under per-request under client-facing — the misordered version (outer 5 s, inner 10 s x3 retries) makes the retry loop unreachable while dashboards show retries == 0." },
+  ]}
+/>
+
+<Recap lang="en">
+`asyncio.timeout` is lesson 2's cancellation wearing a budget: a `call_at` timer cancels the scope's own body, the body unwinds through ordinary `CancelledError` (cleanup rules included), and the boundary converts to `TimeoutError` only after `uncancel()` confirms the cancellation was its own — cancel-count bookkeeping that makes nested scopes compose deterministically and lets external cancellation pass through unclaimed, the precise machinery `wait_for` lacked when it raced results against cancellations (3.12 rebuilt it on the scope). Production budgets are deadlines, not constants: a client-facing 2 s shared across sequential hops means carrying one absolute deadline and deriving every inner scope from the remainder (`timeout_at`), with hierarchy kept strict — per-attempt under per-request under client-facing — because the inverted version quietly deletes your retry loop while metrics report zero retries. `shield` is the other half-tool: it splits the waiter from the work, so outer cancellation kills your await immediately while the inner task runs on detached — legitimate for commit-in-flight and write-behind flushes, but only with the reference kept (else the orphan's result and failures vanish) and only paired with a bound, because shield limits who may interrupt and says nothing about how long — the shielded flush to a dead collector that hung a fleet's drain is what the pair exists to prevent. Shield everything and you have built an unkillable service; bound everything and cancellation stays what it must be: prompt, truthful, and structured.
+</Recap>

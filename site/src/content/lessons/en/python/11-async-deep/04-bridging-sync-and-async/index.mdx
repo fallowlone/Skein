@@ -1,0 +1,151 @@
+---
+concepts:
+- python-sync-async-bridge
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-bridging-sync-and-async"
+sources:
+- https://docs.python.org/3/library/asyncio-eventloop.html
+- https://docs.python.org/3/library/asyncio-runner.html
+- https://docs.python.org/3/library/asyncio-dev.html
+spiral: []
+status: ready
+summary: 'Async to sync: to_thread moves blocking work off the loop — threads unblock I/O, the GIL still serializes CPU, processes pay pickling. Sync to async: asyncio.run for scripts, run_coroutine_threadsafe into one long-lived loop for servers — per-call loops rebuild every pool.'
+title: 'Bridging sync and async: to_thread and executors one way, a long-lived loop and run_coroutine_threadsafe the other'
+track: "python"
+unit: "11-async-deep"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The search team migrated to the vendor's new SDK — async-only, like most modern clients — but the app was a ten-year-old Django monolith on sync WSGI workers. The bridge they chose looked innocent: `asyncio.run(client.search(q))` inside the view. It worked in the demo. In production, search latency tripled, and the APM waterfall told the story in one glance: a TLS handshake span on *every single request*. `asyncio.run` builds a fresh event loop, runs the coroutine, then tears the loop down — and the SDK's connection pool, its keep-alive sockets, its TLS sessions were all bound to that loop and died with it, every request, two thousand times a minute. Connection reuse: zero percent. CPU spent on handshakes: up forty percent. The fix was not "rewrite the monolith": one event loop in a dedicated worker thread, started at process boot, and views handing coroutines across with `run_coroutine_threadsafe` — pool reuse returned, latency dropped below the old sync client. Bridging directions have exact tools, and the wrong one is invisible until you read a waterfall.
+</Hook>
+
+<Crux>Blocking work leaves the loop via to_thread. Sync code enters a long-lived loop via run_coroutine_threadsafe — never asyncio.run per call.</Crux>
+
+<Explanation>
+
+## Async to sync: getting blocking work off the loop
+
+Lesson 1 proved why the loop must never wait: one blocking call freezes the selector poll. The pressure valves are two, and choosing between them is GIL math from the concurrency unit. `await asyncio.to_thread(fn, *args)` (3.9+) runs `fn` in the loop's default `ThreadPoolExecutor` and propagates `contextvars`; `loop.run_in_executor(pool, fn)` is the older, pool-explicit form. For **blocking I/O** — a sync DB driver, `requests`, file reads — a thread is the full answer: the thread parks in a syscall holding nothing, the loop runs free. For **CPU-bound work**, the GIL still serializes Python bytecode across threads: `to_thread` keeps the loop *responsive-ish* (the GIL changes hands every ~5 ms, so the loop progresses between slices) but buys zero throughput and degrades loop latency under contention. Real CPU parallelism means `ProcessPoolExecutor` — paying the pickling tax both ways and process startup, worth it from tens of milliseconds of CPU per item.
+
+The sizing trap is the default executor: `min(32, cpu_count + 4)` threads. Forty concurrent `to_thread(requests.get, ...)` calls on an 8-core box means 12 threads working and 28 calls *queued invisibly* — your "async" endpoint now has a hidden thread-pool wait in its p99. The same shape you met in the web-services unit, where the framework offloads sync endpoints to a default 40-thread pool: every bridge has a width, and an unmeasured width is a latency cliff. Size an explicit executor to the dependency it protects (a 10-connection DB needs ~10 threads, not 32).
+
+```python
+pool = concurrent.futures.ThreadPoolExecutor(max_workers=10, thread_name_prefix="db")
+
+async def get_user(uid):
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(pool, db.fetch_user, uid)   # bounded bridge
+```
+
+<Quiz
+  id="04-bridging-sync-and-async-quiz-1"
+  lessonSlug="04-bridging-sync-and-async"
+  lang="en"
+  question="You move a 300 ms pure-Python report renderer from inline code to asyncio.to_thread. Does the loop stay responsive, and does report throughput improve?"
+  choices={[
+    { label: "The loop stops freezing (the GIL swaps every ~5 ms so other tasks progress), but throughput does not improve — pure-Python CPU still serializes under the GIL; a process pool is the real fix", correct: true },
+    { label: "Both — threads run Python in parallel once the work is off the loop", misconception: "Moving work off the loop changes who waits, not the GIL. Two threads of pure-Python CPU still execute bytecode one at a time; throughput stays flat while context switching adds a little overhead." },
+    { label: "Neither — to_thread only works for I/O, CPU work stays on the loop thread", misconception: "to_thread happily runs CPU work in a thread; the loop genuinely stops blocking for 300 ms straight. What it cannot do is make that CPU work concurrent with other Python bytecode." },
+    { label: "The loop stays responsive only if the renderer calls await internally", misconception: "Code inside to_thread is sync by definition — it never awaits. Responsiveness comes from the loop thread no longer executing the renderer at all, just GIL-sharing with the worker thread." },
+  ]}
+/>
+
+## Sync to async: three tools, three situations
+
+The reverse direction has a tool per situation, and confusing them is the Hook incident. `asyncio.run(coro)` creates a fresh loop, runs to completion, closes the loop — correct exactly once per process lifetime-ish: scripts, `main()`, tests. Everything loop-bound — connection pools, sessions, transports — dies with the loop, which is why per-request `asyncio.run` rebuilt the SDK's world two thousand times a minute. `asyncio.run_coroutine_threadsafe(coro, loop)` submits a coroutine **into a running loop from another thread** and returns a `concurrent.futures.Future` — the sync kind, whose `.result(timeout)` blocks the calling thread, not the loop. That is the server-grade bridge: one long-lived loop in a dedicated thread, every sync caller handing coroutines across:
+
+```python
+class AsyncBridge:
+    def __init__(self):
+        self.loop = asyncio.new_event_loop()
+        threading.Thread(target=self.loop.run_forever, daemon=True, name="bridge").start()
+
+    def call(self, coro, timeout=None):
+        fut = asyncio.run_coroutine_threadsafe(coro, self.loop)   # thread-safe handoff
+        return fut.result(timeout)        # blocks THIS thread; the loop runs free
+
+bridge = AsyncBridge()                    # one loop, one connection pool, per process
+def view(request):                        # sync WSGI view, unchanged framework
+    return bridge.call(client.search(request.GET["q"]), timeout=5)
+```
+
+The third situation is the error you will meet first: calling `asyncio.run` (or `loop.run_until_complete`) **while a loop is already running** raises `RuntimeError: asyncio.run() cannot be called from a running event loop` — the loop is not re-entrant by design; a nested run would have to pause the iteration mid-drain. Jupyter is the classic collision (the notebook itself runs a loop — that is why top-level `await` works there). `nest_asyncio`, honestly: it monkeypatches the loop to allow re-entrant `run_until_complete`, which works in a notebook and violates the loop's invariants everywhere else — a diagnostic clue in prod ("someone is fighting the architecture"), not a fix.
+
+## Contagion management and the boundary rules
+
+Async is contagious upward — every caller of a coroutine must itself await or bridge — and each bridge crossing costs a thread hop, future bookkeeping, and a wake of the target thread: tens of microseconds at best, plus pool-width queueing at worst. The architecture rule: **one boundary**. Keep a sync core with an async edge (the Django bridge above), or an async core with sync leaf-calls via `to_thread` — and refuse mid-stack sprinkling, where layer three is async, layer four sync, layer five async again, each transition a bridge with its own width, timeout, and failure mode.
+
+At the boundary itself, thread safety is absolute: loop objects are not thread-safe, and the *only* legal entries from a foreign thread are `loop.call_soon_threadsafe(cb)` and `run_coroutine_threadsafe`. The mechanism closes lesson 1's circle: the loop may be parked in `selector.select(timeout)` — asleep in the kernel. `call_soon_threadsafe` appends the callback *and writes a byte to a self-pipe* the selector watches, waking the loop immediately. Plain `call_soon` from a foreign thread skips the wake-up: the callback sits unnoticed until the next natural wakeup — or corrupts internal state outright. Never call `task.cancel()`, `future.set_result()`, or any loop method directly from another thread; wrap it in `call_soon_threadsafe`.
+
+<Inset kind="why" lang="en">
+Why is the loop not just made re-entrant, killing the RuntimeError class? Because the loop's invariant — one iteration at a time, callbacks strictly sequential — is the very thing that makes asyncio code safe without locks. Re-entrant running would mean a callback can be suspended mid-execution while another drain runs inside it: the single-threaded atomicity guarantee from lesson 2 (code between awaits is uninterruptible) would silently vanish. nest_asyncio does exactly this, which is why it is acceptable in a notebook exploring data and a footgun in a server holding invariants.
+</Inset>
+
+<Quiz
+  id="04-bridging-sync-and-async-quiz-2"
+  lessonSlug="04-bridging-sync-and-async"
+  lang="en"
+  question="A coroutine running ON the loop thread calls run_coroutine_threadsafe(other(), loop) and then fut.result(5). What happens?"
+  choices={[
+    { label: "Deadlock until the 5 s timeout: .result() blocks the loop thread, and the loop it blocks is the only one that could run other() — the call is for FOREIGN threads only", correct: true },
+    { label: "It works — the future resolves as soon as other() completes", misconception: "other() can never complete: it needs loop iterations, and the thread that runs those iterations is standing still inside .result(). From the loop thread the correct form is simply await other()." },
+    { label: "RuntimeError: run_coroutine_threadsafe refuses calls from the loop thread", misconception: "No such guard exists — the call submits happily and returns a Future. The hang comes one line later, at .result(), which is what makes this bug quietly survive code review." },
+    { label: "The loop detects the blocked callback and runs other() in the default executor", misconception: "Loops do not reschedule coroutines onto threads; coroutines only run on the loop. Nothing detects the self-wait — only the timeout (or a watchdog) ends it." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Choosing the bridge: which side you are on and what the work is decides the tool — and the per-call asyncio.run edge is the war-story arrow"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "asyncside", label: "Async code, blocking work", sub: "the loop must not wait" },
+    { id: "tothread", label: "asyncio.to_thread", sub: "I/O: solved · CPU: GIL math" },
+    { id: "procpool", label: "ProcessPoolExecutor", sub: "real CPU, pickling tax" },
+    { id: "syncside", label: "Sync code, coroutine", sub: "who owns a loop?" },
+    { id: "runonce", label: "asyncio.run", sub: "script main: fresh loop" },
+    { id: "rct", label: "run_coroutine_threadsafe", sub: "into a living loop" },
+  ]}
+  edges={[
+    { from: "asyncside", to: "tothread", label: "blocking I/O" },
+    { from: "asyncside", to: "procpool", label: "pure CPU" },
+    { from: "syncside", to: "runonce", label: "one-shot process" },
+    { from: "syncside", to: "rct", label: "server: shared loop" },
+    { from: "runonce", to: "rct", label: "per call? use this" },
+  ]}
+  caption="Left half: work leaves the loop — threads fully solve blocking I/O, the GIL halves the win for CPU, processes buy parallelism for a pickling tax and a sized pool. Right half: sync code reaches a coroutine — a fresh loop per process is fine, a fresh loop per call rebuilds every pool and TLS session (the 3x-latency incident); servers keep one loop alive in a thread and hand coroutines across. All foreign-thread contact goes through the threadsafe entry points."
+/>
+
+<KeyTakeaway>Async to sync: `to_thread`/`run_in_executor` move blocking work off the loop — full win for I/O, GIL-bounded for CPU (process pool for real parallelism, pickling tax included), and the default executor is `min(32, cpu+4)` wide: size explicit pools to the dependency. Sync to async: `asyncio.run` once per process (everything loop-bound dies with its loop — per-call use rebuilds pools), `run_coroutine_threadsafe` into one long-lived loop thread for servers, `.result()` never on the loop thread itself. Foreign threads touch a loop only via `call_soon_threadsafe`/`run_coroutine_threadsafe` — they wake the sleeping selector; everything else corrupts. One boundary per stack, not sprinkles.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-bridging-sync-and-async-retrieval"
+  lang="en"
+  questions={[
+    { q: "Lay out both bridge directions with their exact tools, and the GIL-aware decision between thread and process for the async-to-sync side.", a: "Async to sync (work off the loop): asyncio.to_thread (3.9+, default executor, contextvars propagated) or loop.run_in_executor with an explicit pool. Blocking I/O: a thread is the complete fix — it parks in a syscall, the loop runs free. Pure-Python CPU: a thread only keeps the loop responsive-ish (GIL swaps ~5 ms) with zero throughput gain; ProcessPoolExecutor gives real parallelism for a pickling tax. Default executor width is min(32, cpu+4) — unmeasured bridges queue invisibly, so size explicit pools to the protected dependency. Sync to async: asyncio.run for one-shot processes (scripts, main, tests) — the loop and everything bound to it dies at the end; run_coroutine_threadsafe(coro, loop) from a foreign thread into a long-lived loop, returning a concurrent.futures.Future whose .result(timeout) blocks the caller — the server pattern; and the RuntimeError class: asyncio.run inside a running loop refuses by design (Jupyter collisions; nest_asyncio is a notebook hack that breaks loop invariants, not a prod fix)." },
+    { q: "Why did per-request asyncio.run triple latency in the Django incident, what is the correct architecture, and what are the thread-safety rules at the boundary?", a: "asyncio.run builds a fresh loop and destroys it after the coroutine: the SDK's connection pool, keep-alive sockets, and TLS sessions were loop-bound and died per request — 0% reuse, a TLS handshake on every call, +40% CPU. Fix: one loop in a dedicated daemon thread started at boot; sync views submit work with run_coroutine_threadsafe and block on .result(timeout) — pool reuse returns and the framework stays untouched. Architecture rule: one sync/async boundary per stack (sync core + async edge or the inverse), because each crossing costs a thread hop plus pool-width queueing, and mid-stack sprinkling multiplies failure modes. Boundary rules: loop objects are not thread-safe; from foreign threads only call_soon_threadsafe and run_coroutine_threadsafe are legal — they write the self-pipe byte that wakes a selector parked in select(); plain call_soon from another thread leaves the callback unnoticed or corrupts state; and never call .result() on the loop thread itself — that is a self-deadlock until timeout." },
+  ]}
+/>
+
+<Recap lang="en">
+The two bridge directions have exact tools, and every incident in this lesson is someone using the right tool in the wrong direction or width. Async to sync: `to_thread` (or `run_in_executor` with an explicit pool) moves blocking work off the loop — a complete fix for blocking I/O, where the thread parks in a syscall; a half-fix for pure-Python CPU, where the GIL still serializes bytecode and only a `ProcessPoolExecutor` buys real parallelism at the price of pickling and process startup. The default executor is `min(32, cpu+4)` threads wide, and an oversubscribed bridge queues invisibly inside your p99 — size explicit pools to the dependency they protect, the same width discipline as the web-framework's 40-thread offload pool. Sync to async: `asyncio.run` is for one-shot processes, because the loop and everything bound to it — pools, sessions, transports — dies at teardown; per-request use is the Django incident, 0% connection reuse and a TLS handshake per call. Servers keep one loop alive in a dedicated thread and cross with `run_coroutine_threadsafe`, blocking on the returned concurrent Future with a timeout — never from the loop thread itself, which is a self-deadlock. The `RuntimeError` for nested `asyncio.run` is the loop defending its invariants (nest_asyncio trades them for notebook convenience). And the boundary is where lesson 1 closes: `call_soon_threadsafe` exists because the loop may be asleep in `selector.select` — it writes the wake-up byte; everything else from a foreign thread is corruption waiting. One boundary per stack; measure its width; bound its waits.
+</Recap>
