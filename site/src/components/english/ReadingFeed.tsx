@@ -35,6 +35,10 @@ export default function ReadingFeed({ lang }: Props) {
     back: lang === "en" ? "← All texts" : "← Все тексты",
     read: lang === "en" ? "read" : "прочитано",
     empty: lang === "en" ? "No texts at your level yet." : "Пока нет текстов твоего уровня.",
+    b2Banner: lang === "en"
+      ? "You're at B2 — your input should now be native. These texts are the on-ramp; from here the real curriculum is authentic sources."
+      : "Ты на B2 — ввод теперь должен быть нативным. Эти тексты — разгонная полоса; дальше программа — это настоящие источники.",
+    b2Link: lang === "en" ? "Open the curated library →" : "Открыть отобранную библиотеку →",
   };
 
   const open = openId ? readingUnits.find((u) => u.id === openId) : null;
@@ -51,6 +55,12 @@ export default function ReadingFeed({ lang }: Props) {
 
   return (
     <div class="max-w-[620px] mx-auto">
+      {band === "B2" ? (
+        <div class="mb-6 border-l-2 border-accent bg-card rounded-[2px] px-4 py-3">
+          <p class="text-[13px] text-ink m-0">{L.b2Banner}</p>
+          <a href={`/${lang}/english#curated`} class="inline-block mt-2 text-[12px] font-mono text-accent underline underline-offset-2">{L.b2Link}</a>
+        </div>
+      ) : null}
       <div class="flex gap-1 mb-6">
         {(["engineering", "general"] as const).map((s) => (
           <button
