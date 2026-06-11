@@ -1,0 +1,127 @@
+---
+concepts:
+- nextjs-serverless-pooling
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-pooling-on-serverless"
+sources:
+- https://www.prisma.io/docs/orm/prisma-client/setup-and-configuration/databases-connections
+- https://www.pgbouncer.org/features.html
+- https://www.postgresql.org/docs/current/runtime-config-connection.html
+spiral: []
+status: ready
+summary: 'Every lambda owns a pool: 100 invocations times pool 5 is 500 connections against max_connections 100 — FATAL: too many clients. Per-instance pools shrink to 1-2; the fix ladder: pgbouncer transaction mode with its costs, RDS Proxy, HTTP drivers. Cold starts dial in herds.'
+title: 'Pooling on serverless: the multiplication problem, pgbouncer transaction mode, and per-lambda sizing'
+track: "nextjs"
+unit: "09-data-layer"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+Launch morning. The 09:00 marketing email lands and traffic jumps fortyfold — which is exactly what the team sized for: serverless scales out, the database is a comfortable two sizes up, load tests passed. At 09:02 the error tracker floods with a sentence nobody on the team has seen before: `FATAL: sorry, too many clients already`. The dashboard makes it stranger — Postgres CPU is at 8 percent. The database is not overloaded; it is *full*. Each function instance dutifully created its own connection pool of five, the platform scaled to a hundred-and-some concurrent instances, and 500 connection attempts marched into a `max_connections` of 100. Retries doubled the herd. The fix that morning was not a bigger database — it was understanding that on serverless, every instinct you have about pool sizing is multiplied by a number you do not control.
+</Hook>
+
+<Crux>Every lambda instance owns its own pool, so concurrency multiplies connections. Size per-instance pools at 1-2 and pool centrally instead.</Crux>
+
+<Explanation>
+
+## The multiplication problem
+
+On a serverful deployment, pooling wisdom is settled: three app servers with a pool of 20 each hold 60 warm connections, stable for years. Serverless breaks the assumption hiding inside that math — that the number of pool owners is small and fixed. A lambda-style instance handles **one request at a time**, and the platform scales by adding instances; the pool is per-process, and processes cannot share sockets. So a pool of 5 per instance buys almost nothing — one request can rarely use five connections at once — while every instance holds five slots anyway. The arithmetic to write on the whiteboard: **peak concurrent instances × per-instance pool size must stay under max_connections minus the reserved slots**. With Postgres defaults that ceiling is 100, minus `superuser_reserved_connections` (3) and whatever your migrations, cron jobs, and dashboards hold. 100 concurrent invocations × pool 5 = 500 demanded; the launch-day incident is not bad luck, it is multiplication.
+
+Why not just raise `max_connections` to 5000? Because Postgres connections are expensive by design: each one is a forked backend **process**, with per-backend memory (`work_mem` is per sort/hash operation, multiplying with complexity) and scheduler overhead. Past a few hundred active backends, throughput degrades even when most sit idle. That is why the wisdom inverts: **on serverless the per-instance pool should be 1–2**. Prisma's default pool size is `num_physical_cpus × 2 + 1` — sized for a server, wrong for a lambda; set `connection_limit=1` in the connection string and let concurrency come from instances, not from threads inside one.
+
+## The fixes ladder
+
+Rung one: an **external pooler — pgbouncer in transaction mode**. Clients connect to pgbouncer, which is cheap per connection (kilobytes of state, no forked process), and pgbouncer maintains a small pool of real server connections — say `default_pool_size = 20`. In transaction mode, a server connection is assigned to a client only for the duration of one transaction, then returned; 500 client connections multiplex over 20 backends, and Postgres never feels the herd. The costs are real and specific. Anything that lives on a *session* breaks: `SET` settings silently apply to whichever backend you get next, session-level advisory locks and temp tables evaporate, `LISTEN/NOTIFY` does not work. And **protocol-level prepared statements** break by default — a statement prepared on one backend does not exist on the next — which is the classic ORM landmine: Prisma needs `?pgbouncer=true` in the URL to stop relying on them, `postgres.js` needs `prepare: false`. (Newer pgbouncer, 1.21+, can track prepared statements in transaction mode via `max_prepared_statements` — check before assuming either way.)
+
+Rung two: **managed proxies** — RDS Proxy and friends. Same multiplexing idea, run as a service, with IAM auth and failover handling. The catch to know: session state causes *pinning* — a connection that runs `SET` or other session-y things gets pinned to one client, quietly turning your multiplexer back into a 1:1 mapper under exactly the workloads that misbehave.
+
+Rung three: **HTTP/WebSocket serverless drivers** — the Neon and PlanetScale style. The driver speaks HTTP or WebSocket to a provider-side gateway that owns the real pool; your function never holds a TCP connection to the database at all. This sidesteps the multiplication entirely and works in edge runtimes where raw TCP is unavailable. The tradeoffs: per-query gateway latency, provider coupling, and interactive transactions need the WebSocket flavor — a plain HTTP round trip per statement cannot hold a transaction open.
+
+<Quiz
+  id="02-pooling-on-serverless-quiz-1"
+  lessonSlug="02-pooling-on-serverless"
+  lang="en"
+  question="Functions run with pool size 5; traffic peaks at 100 concurrent invocations; Postgres has max_connections=100. Ops responds to the incident by raising max_connections to 200. What happens at the next peak?"
+  choices={[
+    { label: "It falls over again — demand is 100 × 5 = 500, and raising the ceiling also raises per-backend memory and scheduler cost; the fix is shrinking per-instance pools to 1-2 and multiplexing through a pooler, not a higher ceiling", correct: true },
+    { label: "200 is enough, because instances share the pool once the limit allows it", misconception: "Pools are per-process. A hundred isolated instances cannot share sockets with each other no matter what the server allows — each holds its own 5. The multiplication is on the client side; no server setting undoes it." },
+    { label: "Postgres queues the excess connection attempts until slots free up", misconception: "Postgres refuses over-limit connections with FATAL immediately — there is no built-in queue. Queueing excess clients is precisely the service a pooler like pgbouncer adds in front." },
+    { label: "Warm instance reuse keeps real concurrency far below 100, so 200 slots are safe", misconception: "Warm reuse helps steady state, but bursts, scale-out, and deploys create fleets of fresh instances at once — peak concurrency is the number you sized for elsewhere, and it is exactly when the multiplication bites." },
+  ]}
+/>
+
+## Sizing arithmetic, with the herd included
+
+Run the numbers the way you would in a design review. Managed Postgres, `max_connections = 100`, 3 reserved: 97 usable, and other consumers — migrations, a cron worker, an analytics reader — realistically hold 10–15, leaving ~85 for the app. Direct connections with `connection_limit=1` cap you at 85 concurrent invocations before FATAL; with the default pool of 5 the cap is 17. Through pgbouncer in transaction mode the same database serves thousands of client connections over `default_pool_size = 20` backends, and your real limit becomes transaction throughput — 20 backends at 5 ms per transaction is roughly 4,000 transactions a second, far past the original wall.
+
+<SequenceDiagram
+  label="Direct dial herd versus pgbouncer transaction-mode multiplexing"
+  hue="var(--d-ai)"
+  actors={["Lambda ×100", "PgBouncer tx", "Postgres"]}
+  messages={[
+    { from: "Lambda ×100", to: "Postgres", label: "500 direct dials" },
+    { from: "Postgres", to: "Lambda ×100", label: "FATAL: too many" },
+    { from: "Lambda ×100", to: "PgBouncer tx", label: "500 client conns" },
+    { from: "PgBouncer tx", to: "Postgres", label: "pool of 20 backends" },
+    { from: "Lambda ×100", to: "PgBouncer tx", label: "BEGIN ... COMMIT" },
+    { from: "PgBouncer tx", to: "Postgres", label: "backend for one tx" },
+    { from: "Postgres", to: "PgBouncer tx", label: "rows" },
+    { from: "PgBouncer tx", to: "Lambda ×100", label: "rows; conn freed" },
+  ]}
+  caption="Direct: 100 instances × pool 5 dial 500 connections into max_connections 100 and get FATAL. Through pgbouncer in transaction mode, client connections are cheap kilobytes; a backend is borrowed per transaction and returned at COMMIT — 500 clients multiplex over 20 real connections. The price: no session state, no LISTEN/NOTIFY, and prepared statements need explicit support or ORM flags."
+/>
+
+Now add the failure mode that sizing tables miss: **cold-start herds**. A deploy replaces every instance at once; the next minute of traffic is served entirely by cold starts, and each one dials TCP + TLS + auth simultaneously. Direct to Postgres, that is a connection storm into a fixed ceiling — transient FATALs even when steady-state math was fine. Behind a pooler, the storm lands on pgbouncer, which absorbs it as a queue (latency blip, not errors). The other serverless wrinkle: a frozen instance holds its connection without sending keepalives until the platform thaws or reaps it, so the database accumulates idle connections owned by processes that may never wake — set aggressive idle timeouts on both sides, and prefer poolers or HTTP drivers that make instance death invisible.
+
+<Inset kind="why" lang="en">
+Why does pgbouncer transaction mode break prepared statements at all? Because protocol-level prepared statements are named objects living in one backend's memory: the client says PREPARE s0 once, then EXECUTE s0 cheaply. That contract assumes the client keeps talking to the same backend. Transaction mode deliberately breaks that assumption — it hands you whichever backend is free at each BEGIN — so s0 exists on the backend that prepared it and nowhere else. The ORM flags (pgbouncer=true, prepare: false) switch clients to sending full statements each time; pgbouncer 1.21+ instead tracks and replays the PREPAREs per backend. Same root cause as the LISTEN/NOTIFY and SET breakage: anything whose lifetime is a session cannot survive a pooler whose unit of lease is a transaction.
+</Inset>
+
+<Quiz
+  id="02-pooling-on-serverless-quiz-2"
+  lessonSlug="02-pooling-on-serverless"
+  lang="en"
+  question="After pointing DATABASE_URL at pgbouncer in transaction mode, Prisma queries start failing with: prepared statement 's0' does not exist. What broke?"
+  choices={[
+    { label: "Transaction mode hands a different backend per transaction, and protocol-level prepared statements live in one backend's memory — s0 was prepared on a backend the next transaction never sees; fix with ?pgbouncer=true (or pgbouncer 1.21+ prepared-statement tracking)", correct: true },
+    { label: "The pool is too small — raising default_pool_size gives every client its own backend again", misconception: "Pool size has nothing to do with statement affinity; even a huge pool reassigns backends per transaction. And sizing the pool to give 1:1 mapping just recreates the multiplication problem the pooler was installed to solve." },
+    { label: "Prisma requires session mode because it uses transactions", misconception: "Interactive transactions work fine in transaction mode — a transaction is exactly the unit pgbouncer leases a backend for. Session mode is needed for session-lifetime features: LISTEN/NOTIFY, session advisory locks, persistent SET — not for transactions." },
+    { label: "A Postgres version mismatch between pgbouncer and the server invalidated the statement cache", misconception: "The error is not about versions — s0 genuinely does not exist on the backend executing the request, because a different backend prepared it. The same setup works perfectly when the client stops using named statements." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The serverless connection equation: peak concurrent instances × per-instance pool ≤ max_connections minus reserved. Pools are per-process and instances cannot share them, so per-lambda pool size is 1-2 — then multiplex centrally: pgbouncer transaction mode (no session state, prepared statements need flags), a managed proxy (watch pinning), or an HTTP/WebSocket driver. Deploys create cold-start dial herds; a pooler turns that storm into a queue instead of FATALs.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-pooling-on-serverless-retrieval"
+  lang="en"
+  questions={[
+    { q: "Write the serverless connection arithmetic and explain why raising max_connections is not the fix.", a: "Demand is peak concurrent instances × per-instance pool size; it must stay under max_connections minus reserved slots (superuser_reserved_connections, migrations, cron, dashboards). 100 invocations × pool 5 = 500 against a default ceiling of 100 — FATAL. Raising the ceiling scales the cost too: every Postgres connection is a forked backend process with per-backend memory and scheduler overhead, so hundreds of mostly-idle backends degrade throughput. The fix is shrinking the per-instance pool to 1-2 and multiplexing through a pooler, where client connections cost kilobytes." },
+    { q: "What exactly does pgbouncer transaction mode cost you, and where do ORMs trip on it?", a: "A backend is leased per transaction, so anything with session lifetime breaks: SET applies to a random future backend, session advisory locks and temp tables evaporate, LISTEN/NOTIFY does not work, and protocol-level prepared statements fail — s0 lives on the backend that prepared it. ORM flags exist for exactly this: Prisma ?pgbouncer=true, postgres.js prepare: false; pgbouncer 1.21+ can instead track prepared statements via max_prepared_statements. Managed proxies have the related trap of pinning: session state quietly turns the multiplexer into a 1:1 mapper." },
+  ]}
+/>
+
+<Recap lang="en">
+Serverless inverts pool sizing because it multiplies pool owners: each instance serves one request at a time and owns its own per-process pool, so peak concurrent instances times per-instance pool size is your real connection demand, and it must clear max_connections minus reserved slots. The launch-day FATAL with the database at 8 percent CPU is that multiplication, not load — and raising max_connections mostly relocates the wall, because each Postgres connection is a forked backend process with real memory and scheduling cost. Per-instance pools shrink to 1–2 (override Prisma's server-shaped default with connection_limit=1), and pooling moves to a layer that all instances share. The ladder: pgbouncer in transaction mode multiplexes hundreds of cheap client connections over a small backend pool, at the price of everything session-shaped — SET, session advisory locks, temp tables, LISTEN/NOTIFY — and of protocol-level prepared statements, the classic ORM landmine fixed by pgbouncer=true or prepare: false, or natively by pgbouncer 1.21+ statement tracking. Managed proxies buy the same multiplexing as a service but pin connections when session state appears. HTTP/WebSocket drivers remove the client-side connection entirely and work on edge runtimes, trading per-query gateway latency and provider coupling, with interactive transactions needing the WebSocket path. Finally, size for the herd, not just steady state: a deploy means every instance dials cold at once, and frozen instances hold idle connections the platform may never thaw — a pooler converts the storm into a queue, idle timeouts clean up the zombies, and the whiteboard arithmetic — instances × pool versus ceiling — is the one-line review that prevents the whole incident class.
+</Recap>

@@ -1,0 +1,166 @@
+---
+concepts:
+- nextjs-cache-tags
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-cache-tags-by-domain"
+sources:
+- https://nextjs.org/docs/app/api-reference/functions/revalidateTag
+- https://nextjs.org/docs/app/building-your-application/caching
+- https://nextjs.org/docs/app/building-your-application/data-fetching/incremental-static-regeneration
+spiral: []
+status: ready
+summary: 'revalidateTag is only as strong as your tag taxonomy: entity tags, collection tags, prefixes per bounded context. One global tag turns every CMS edit into a site-wide purge storm; a missing collection tag leaves stale prices for hours. The webhook-to-tags mapping table is code.'
+title: 'Cache tags by domain: invalidation taxonomy, webhook wiring, and the over-invalidation storm'
+track: "nextjs"
+unit: "09-data-layer"
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The storefront migration ships with one cache rule, written in a hurry: every fetch carries the tag `cms`, "so we never serve stale content." The webhook from the CMS calls `revalidateTag('cms')` on any edit. It works in the demo. Three weeks later an editor fixes a typo in the footer at 11:40, and the dashboard turns red: cache hit ratio drops from 96 percent to 4, every page on the site regenerates at once, the CMS API rate-limits at 50 rps and starts returning 429s, and p99 TTFB climbs to eight seconds — for a typo. Editors make about sixty edits a day, so this is not an incident, it is the new weather. The sister team made the opposite bet: only fine-grained per-product tags. Their price import updated product pages instantly — while category listings showed the old price for six more hours, until the time-based revalidate happened to expire. Both teams had working code and a broken *language*: nobody designed what the tags mean.
+</Hook>
+
+<Crux>Tags are your invalidation language: entity and collection tags per bounded context decide whether one edit purges a page or the whole site.</Crux>
+
+<Explanation>
+
+## revalidateTag mechanics: invalidation by meaning, not by URL
+
+A tag is attached when the cache entry is written — `fetch(url, { next: { tags: ['catalog:product:42'] } })` — and `revalidateTag('catalog:product:42')` marks **every entry carrying that tag** stale, wherever it was used: product page, search result, home carousel. That is the power over `revalidatePath`: you invalidate by domain meaning, not by enumerating URLs that might embed the data. The semantics are worth stating precisely. revalidateTag does not regenerate anything eagerly — it marks entries stale, and the next request for an affected page re-fetches and rebuilds (with the stampede characteristics you met in the ISR lesson: many concurrent misses hit the origin together). Called inside a Server Action, it additionally refreshes the client's router view on completion; called from a route handler — the webhook case — pages refresh on their next visit. One more boundary: tags ride on the Data Cache, so they apply to `fetch` entries and to functions you explicitly cache with tags (`unstable_cache` today) — a raw ORM query with no caching wrapper is invisible to the whole mechanism.
+
+```ts
+// lib/data/products.ts
+export async function getProduct(id: string) {
+  const res = await fetch(`${CMS_URL}/products/${id}`, {
+    next: { tags: [`catalog:product:${id}`, 'catalog:products'] },
+  });
+  return res.json();
+}
+```
+
+## Taxonomy: entity, collection, bounded context
+
+Three tag species cover almost everything. An **entity tag** — `catalog:product:42` — names one row's truth; it belongs on every fetch that returns that entity's data. A **collection tag** — `catalog:products` — names membership and ordering: any fetch whose result would change when a product is created, deleted, or re-ranked carries it. And **composite pages carry several**: the home page might hold `catalog:products`, `cms:page:home`, and `pricing:campaign:summer`. The prefix is not decoration — it is the bounded context, and the naming convention is architecture: `catalog:`, `cart:`, `cms:`, `pricing:` mirror team ownership, make collisions impossible, and make `grep` answer "who can purge what." The design test for any tag is one question: *when X changes, exactly which surfaces must re-render?* If you cannot answer it, the tag is not designed yet.
+
+The two failure modes are symmetric. **Over-invalidation** — the Hook's global `cms` tag — means every edit purges everything: hit ratio collapses, regeneration storms hammer origins precisely when traffic is present, and rate-limited upstreams turn a purge into an outage. **Under-invalidation** — entity tags only — means correctness bugs with business consequences: the price changed, the product page says so, and the category listing quotes the old number for hours. Wrong prices have refund and legal weight, not just aesthetic weight. The working heuristic: detail surfaces get the entity tag, every list-shaped fetch gets a collection tag, and write paths that change membership-relevant fields must emit both.
+
+<Quiz
+  id="03-cache-tags-by-domain-quiz-1"
+  lessonSlug="03-cache-tags-by-domain"
+  lang="en"
+  question="Every fetch on the site carries the single tag cms, and the CMS webhook calls revalidateTag('cms') on any edit. An editor fixes a footer typo. What actually happens?"
+  choices={[
+    { label: "Every cached entry on the site is marked stale at once; the following requests regenerate the whole site against the origin — a purge storm per edit, repeated sixty times a day, exactly when traffic is present", correct: true },
+    { label: "Only pages that render the footer regenerate — Next.js tracks which components consumed the edited data", misconception: "Tags are the only granularity the cache has. Nothing diffs component data usage against the edit; revalidateTag stales every entry carrying the tag, and with one global tag that is the entire site." },
+    { label: "Nothing changes until each page's time-based revalidate window expires", misconception: "Overriding the time window is revalidateTag's entire purpose — it marks entries stale immediately. The time-based interval is the fallback for changes no tag captured, not a gate on tag invalidation." },
+    { label: "The site regenerates gradually in the background, so origin load is smoothed automatically", misconception: "Regeneration is demand-driven: each stale page rebuilds when next requested, and concurrent misses on a busy site arrive together — a stampede against the origin and its rate limits, not a polite background queue." },
+  ]}
+/>
+
+## Webhooks → tags: the mapping table is code
+
+The CMS does not speak tags; it speaks events. The translation lives in one route handler, and writing it as a literal mapping table is the difference between an invalidation policy you can review and one you reverse-engineer during incidents. Two non-negotiables around it: **verify the webhook signature** — an unauthenticated revalidate endpoint is a free denial-of-service lever, one curl loop from a cold cache — and make unknown event types loud (log and alert) instead of silently dropping or, worse, falling back to a global purge.
+
+```ts
+// app/api/webhooks/cms/route.ts
+import { revalidateTag } from 'next/cache';
+import { NextResponse } from 'next/server';
+import { verifySignature } from '~/lib/webhooks';
+
+const TAG_MAP: Record<string, (p: Record<string, string>) => string[]> = {
+  'product.updated': (p) => [`catalog:product:${p.id}`],
+  'product.priced':  (p) => [`catalog:product:${p.id}`, 'catalog:products'],
+  'product.created': ()  => ['catalog:products'],
+  'page.published':  (p) => [`cms:page:${p.slug}`],
+};
+
+export async function POST(req: Request) {
+  const event = await verifySignature(req); // 401 on failure — purge is a privilege
+  const toTags = TAG_MAP[event.type];
+  if (!toTags) return NextResponse.json({ error: 'unmapped event' }, { status: 422 });
+  const tags = toTags(event.payload);
+  tags.forEach((t) => revalidateTag(t));
+  return NextResponse.json({ revalidated: tags });
+}
+```
+
+Read the table as policy: a content edit touches one entity; a price change touches the entity *and* the collections that display prices; a creation touches only collections (no entity page is cached yet). When the nightly price import updates 2,000 products, the mapping emits 2,000 entity tags plus one collection tag — detail pages refresh lazily as visited, listings refresh once. That is the storm-free shape.
+
+<FlowDiagram
+  label="One price edit travels the tag taxonomy to exactly the right pages"
+  hue="var(--d-ai)"
+  perRow={3}
+  nodes={[
+    { id: "edit", label: "CMS: price edit", sub: "product 42" },
+    { id: "hook", label: "Webhook route", sub: "verify signature" },
+    { id: "map", label: "TAG_MAP", sub: "event type → tags[]" },
+    { id: "ent", label: "catalog:product:42", sub: "entity tag" },
+    { id: "coll", label: "catalog:products", sub: "collection tag" },
+    { id: "pdp", label: "Product page", sub: "stale → next visit" },
+    { id: "plp", label: "Category listing", sub: "stale → next visit" },
+    { id: "ctrl", label: "cms:page:about", sub: "untouched — control" },
+  ]}
+  edges={[
+    { from: "edit", to: "hook", label: "signed POST" },
+    { from: "hook", to: "map", label: "product.priced" },
+    { from: "map", to: "ent", label: "emit" },
+    { from: "map", to: "coll", label: "emit" },
+    { from: "ent", to: "pdp", label: "marks stale" },
+    { from: "coll", to: "plp", label: "marks stale" },
+  ]}
+  caption="The mapping table is the policy: product.priced emits the entity tag and the collection tag, so the product page and every listing regenerate on next visit — and the about page, which carries neither tag, stays cached. The untouched control node is what your staging checklist asserts."
+/>
+
+## The newer model, and how to test the one you have
+
+A newer direction exists and deserves an honest label: the `'use cache'` directive with `cacheTag()` and `cacheLife()` lets any function or component become a cached, taggable unit — DB queries included, no `fetch` required. As of now it sits behind experimental flags on canary builds; learn its shape, but build on the stable path — `fetch` tags plus `unstable_cache` for non-fetch reads — and isolate tagging inside your data layer so the migration later is a wrapper swap, not a rewrite.
+
+Whatever the mechanism, **invalidation is testable**, and the test is a staging checklist with both assertions: after firing a `product.priced` fixture webhook, the product page MUST change, the category listing MUST change — and the about page MUST NOT (watch the cache-status response header flip MISS/STALE on the first two and stay HIT on the third). The must-not-change control is the assertion teams forget, and it is the only automated detector of over-invalidation: hit ratio graphs tell you a week later; the control page tells you in CI.
+
+<Quiz
+  id="03-cache-tags-by-domain-quiz-2"
+  lessonSlug="03-cache-tags-by-domain"
+  lang="en"
+  question="The nightly price import fires product.updated events, mapped to entity tags only. Next morning, product pages show new prices but category listings quote yesterday's numbers for hours. What is the actual defect?"
+  choices={[
+    { label: "The listing fetches carry only the collection tag, and nothing emitted it: entity tags do not cascade to collections — the mapping must emit catalog:products (or a price-specific event) alongside the entity tag for price changes", correct: true },
+    { label: "Tag invalidation propagates eventually; the listings will catch up within minutes", misconception: "There is no propagation between tags at all — a tag stales exactly the entries that carry it, immediately, and never touches neighbors. The listings refreshed hours later only because their time-based revalidate expired." },
+    { label: "It is client-side router-cache staleness; the server already serves fresh listings", misconception: "New visitors with no router cache see the old prices too — the staleness is in the server-side Data Cache, where the listing entry was never marked. Router-cache staleness would not persist for hours across users." },
+    { label: "The import raced the webhook: events fired before the database commit", misconception: "A race would produce listings stale by one import cycle that fix themselves on the next regeneration. These listings stayed stale until time-based revalidate — the signature of an entry whose tag was never invalidated, not of a timing race." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Design tags as a language: entity tags for one row's truth, collection tags for membership and ordering, prefixes per bounded context — and composite pages carry several. revalidateTag stales every carrying entry immediately; regeneration is demand-driven. One global tag is a purge storm per edit; entity-only tags are stale listings for hours. The webhook mapping table is reviewable policy, and the staging checklist must assert both MUST-change and MUST-NOT-change pages.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-cache-tags-by-domain-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the two invalidation failure modes and the heuristic that avoids both.", a: "Over-invalidation: a coarse or global tag means every edit purges far more than it changed — hit ratio collapses and demand-driven regeneration stampedes the origin, which is an outage when the origin rate-limits. Under-invalidation: entity-only tags leave list surfaces stale for hours, a correctness bug with business weight when the stale value is a price. Heuristic: detail surfaces carry the entity tag, every list-shaped fetch carries a collection tag, and any write changing membership-relevant fields emits both — encoded in a reviewable webhook mapping table." },
+    { q: "What exactly happens when revalidateTag fires, and what does it never do?", a: "Every cache entry carrying the tag is marked stale immediately — across all pages that used the data. Nothing regenerates eagerly: the next request per page re-fetches and rebuilds, so concurrent misses stampede. In a Server Action it also refreshes the caller's router view; from a route handler, pages update on next visit. It never cascades between tags, never touches entries without the tag, and never sees data that bypassed the Data Cache — untagged ORM reads are invisible to it." },
+  ]}
+/>
+
+<Recap lang="en">
+Cache tags are the vocabulary your system uses to say what changed, and both storefront teams failed by skipping the vocabulary design: one global tag turned every footer typo into a site-wide purge storm against a rate-limited CMS, and entity-only tags left category listings quoting yesterday's prices for hours. The mechanics are small: tags attach when a Data Cache entry is written, revalidateTag marks every carrying entry stale immediately, regeneration happens on the next demand per page — stampedes included — and a Server Action additionally refreshes the calling client while a route handler leaves refresh to the next visit. Raw ORM reads outside the Data Cache are invisible to all of it, which is why tagging belongs in the data layer. The taxonomy that works has three species: entity tags for one row's truth, collection tags for membership and ordering, and composite pages carrying several — all namespaced by bounded context, catalog: and cart: and cms:, so ownership, collision-safety, and grep-ability come from the naming convention itself. The webhook handler is where events become tags, and writing it as a literal mapping table makes invalidation policy reviewable: price events emit entity plus collection, creations emit collection only, unknown events fail loudly, and the signature check keeps the purge lever from being a public DoS endpoint. The use cache and cacheTag direction will eventually make any function taggable, but it is experimental — build on fetch tags and unstable_cache, isolated behind your data layer. And test invalidation like behavior: fire the fixture webhook in staging, assert the pages that must change, and — the forgotten half — assert the control page that must not.
+</Recap>
