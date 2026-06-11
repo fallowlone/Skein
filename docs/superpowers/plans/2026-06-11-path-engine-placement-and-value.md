@@ -894,15 +894,15 @@ git commit -m "feat(path): stratified general placement test over domain familie
 
 ### Task G: full verification gate
 
-- [ ] **Step 1:** `bun test` — all green.
-- [ ] **Step 2:** `bun run build` — completes, `dist/lint-report.json` 0 errors / 0 warnings.
-- [ ] **Step 3:** `grep -rn "console\.log" src/scripts/path/ src/components/path/ | grep -v test` — empty.
-- [ ] **Step 4: End-to-end persona run (the plan's acceptance test).** Fresh browser profile, `bun run preview`:
+- [x] **Step 1:** `bun test` — all green. (820 passed)
+- [x] **Step 2:** `bun run build` — completes, `dist/lint-report.json` 0 errors / 0 warnings. (5353 pages; lint initially caught the duplicated lint validator out of sync with the new range rule → fixed in `src/lint/rules/path.ts`, re-lint clean 0/0)
+- [x] **Step 3:** `grep -rn "console\.log" src/scripts/path/ src/components/path/ | grep -v test` — empty.
+- [x] **Step 4: End-to-end persona run (the plan's acceptance test).** (headless: render smoke only — `/en/calibrate?mode=placement` 200 + CalibrationFlow hydrates; the 4 interactive persona checks below need the owner's browser) Fresh browser profile, `bun run preview`:
   1. `/en/calibrate` → self-place: typescript/react = "Worked with it", node/databases = "Basics" (a strong-junior profile).
   2. `/en/calibrate?mode=placement` → complete the general test (~16 probes).
   3. `/en/roadmap` → goal "Get job-ready (junior → middle)", deadline 6 months out, realistic weekday hours.
   4. Verify: the path starts from the persona's actual gaps (not math/01-numbers), contains no advanced-band frontier units, and when hours are set too low the "over" suggestions cut recognizably low-value units (check `feasibility.dropped` against the path — they should be peripheral, not core typescript/node).
-- [ ] **Step 5:** Report results per check. Do not push — the owner pushes manually.
+- [x] **Step 5:** Report results per check. Do not push — the owner pushes manually.
 
 ---
 
