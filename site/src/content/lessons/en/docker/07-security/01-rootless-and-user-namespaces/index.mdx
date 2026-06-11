@@ -1,0 +1,122 @@
+---
+concepts:
+- docker-rootless
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-rootless-and-user-namespaces"
+sources:
+- https://docs.docker.com/engine/security/rootless/
+- https://docs.docker.com/engine/security/userns-remap/
+- https://man7.org/linux/man-pages/man7/user_namespaces.7.html
+spiral: []
+status: ready
+summary: 'By default container UID 0 is host UID 0, so a bind-mount escape writes host files as root. User namespaces remap container root to an unprivileged /etc/subuid range; rootless Docker runs the daemon unprivileged, trading ~20-30% slirp4netns throughput for a smaller blast radius.'
+title: 'Rootless Docker and user namespaces: why container root is host root, and how to break the link'
+track: "docker"
+unit: "07-security"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The incident started with a one-line convenience in a Compose file: a developer had bind-mounted the host's `/var/www` into a container so edits showed up live, and the container — like almost every container — ran its process as root. Months later that image picked up a vulnerable dependency, an attacker got a shell inside the container, and `whoami` returned `root`. They `chmod 777`'d the mounted directory, dropped a web shell, then walked up the mount: every file the container wrote to `/var/www` landed on the host owned by UID 0, because container UID 0 *is* host UID 0. The mount namespace had isolated which paths the process could see, not who it was. Nothing in Docker's defaults had said "this container's root is the same root that owns your server." The fix the team shipped that week was not a patched dependency — it was a userns remap that made the container's root a powerless host UID in the 100000-range, so the same escape would have written files owned by a user that owns nothing.
+</Hook>
+
+<Crux>Container UID 0 is host UID 0 by default; user namespaces remap it so an escape lands powerless, and rootless drops the root daemon.</Crux>
+
+<Explanation>
+
+## The default nobody warns you about: root is shared
+
+A Linux container is just a process with namespaces and cgroups, not a VM. By default the user namespace is *not* one of those namespaces, which means there is no UID translation: the `root` (UID 0) inside the container is literally the same UID 0 the kernel uses on the host. The PID, mount, and network namespaces isolate *what the process sees* — its process tree, its filesystem view, its interfaces — but they do not change *who it is*. So the moment a container process touches something shared with the host, identity matters more than visibility. The classic channel is a bind mount: `-v /var/www:/data` gives the container a view of a real host directory, and any file the container's root writes there is owned by host root. Drop a vulnerable image into that setup and a container compromise becomes a host-filesystem write with root ownership — no kernel exploit required, just the default that container root equals host root.
+
+The kernel-level fix is the user namespace. It introduces a per-namespace UID/GID mapping so that UID 0 inside the namespace maps to some unprivileged UID on the host. The mapping is configured from `/etc/subuid` and `/etc/subgid`, which allocate each user a contiguous range — conventionally **65536 consecutive subordinate UIDs** starting at a high base like 100000. With userns-remap enabled, container UID 0 becomes host UID 100000, container UID 1 becomes 100001, and so on across the whole 65536-wide range. A process that escapes the container as "root" is now host UID 100000, which owns nothing and has no host privileges. The blast radius of a full container compromise shrinks from "root on the host" to "an account that can't even read other users' files."
+
+<Quiz
+  id="01-rootless-and-user-namespaces-quiz-1"
+  lessonSlug="01-rootless-and-user-namespaces"
+  lang="en"
+  question="A container runs its process as root and bind-mounts a host directory. With Docker's default settings (no userns-remap), an attacker gets a shell and writes a file into the mounted directory. Who owns that file on the host?"
+  choices={[
+    { label: "Host root (UID 0) — without a user namespace, container UID 0 is the same UID 0 the kernel uses on the host", correct: true },
+    { label: "An unprivileged user, because the container is namespaced from the host", misconception: "The PID, mount, and network namespaces isolate what the process sees, not its UID. Without the user namespace there is no UID remapping, so container root writes host files as host root." },
+    { label: "The nobody user (UID 65534), which Docker assigns to all containers", misconception: "Docker does not default to nobody; the container runs as whatever USER the image declares, which is root unless changed. Mapping root to an unprivileged UID is exactly what userns-remap adds, and it is off by default." },
+    { label: "It fails — the kernel blocks a container from writing a host-mounted path", misconception: "Bind mounts are read-write by default and the write succeeds. The danger is precisely that it succeeds with host-root ownership." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why is userns-remap off by default if it is this useful? Because the UID shift breaks assumptions. Files in a bind mount must be readable by the remapped range, so existing host files owned by UID 1000 are invisible to a container whose root is now host UID 100000 — you re-chown or accept the friction. Some workloads that genuinely need host UID identity (certain storage drivers, host-networked agents) stop working. Docker chose a permissive default that "just works" with mounts over a safe default that surprises people, and left remap as an opt-in. That trade is the whole reason this lesson exists: the convenient default is the insecure one.
+</Inset>
+
+## Rootless Docker: no privileged daemon at all
+
+User-namespace remap still runs the Docker *daemon* as host root — it only remaps the containers. Rootless Docker goes further: the entire daemon and all containers run inside a single user's user namespace, started with no root privilege anywhere. There is no root-owned `dockerd`, no root-owned socket, so even a daemon compromise lands as an unprivileged user. This closes the largest remaining target — historically a writable `/var/run/docker.sock` is an instant root-on-host primitive, because anyone who can talk to the daemon can start a container that mounts the host — and rootless makes that socket powerless.
+
+The cost is paid mostly in networking. Without root, rootless Docker cannot create the usual `veth`/bridge plumbing, so it routes container traffic through a userspace TCP/IP stack — **slirp4netns** — which copies packets in and out of userspace and imposes a throughput penalty commonly measured around **20-30%** versus the rootful bridge (mitigated by `slirp4netns` with `sandbox=false` or by `pasta`, but not eliminated). Binding privileged ports below 1024 also needs extra setup since the daemon lacks `CAP_NET_BIND_SERVICE` on the host. For a CI runner or a multi-tenant build host, paying a fifth of network throughput to delete "container escape equals host root" from the threat model is usually the right trade; for a throughput-bound network appliance it may not be.
+
+<Quiz
+  id="01-rootless-and-user-namespaces-quiz-2"
+  lessonSlug="01-rootless-and-user-namespaces"
+  lang="en"
+  question="What is the main runtime cost a team accepts when moving from rootful Docker to rootless Docker, and why?"
+  choices={[
+    { label: "Reduced network throughput (~20-30%), because container traffic is routed through the userspace slirp4netns stack instead of a root-created bridge", correct: true },
+    { label: "Containers can no longer use any capabilities, so most images stop working", misconception: "Capabilities still work inside the container's user namespace; cap-drop/cap-add behave normally. The real cost is in host networking, where the lack of root forces a userspace network stack." },
+    { label: "Images must be rebuilt because rootless uses a different image format", misconception: "Rootless uses the same OCI images and the same registries. Nothing about the image format changes — only how the daemon and its networking run on the host." },
+    { label: "CPU performance drops because every syscall is emulated in userspace", misconception: "Syscalls run natively; rootless is not an emulator like gVisor. Only the network path goes through userspace (slirp4netns), so the measurable penalty is network throughput, not CPU." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="User-namespace remap translates container UID 0 to an unprivileged host UID range allocated in /etc/subuid"
+  hue="var(--d-security)"
+  perRow={3}
+  nodes={[
+    { id: "cuid", label: "Container UID 0", sub: "process thinks it is root" },
+    { id: "subuid", label: "/etc/subuid", sub: "65536-wide range" },
+    { id: "map", label: "UID mapping", sub: "0 -> 100000" },
+    { id: "hostuid", label: "Host UID 100000", sub: "owns nothing" },
+    { id: "mount", label: "Bind-mount write", sub: "owned by 100000" },
+    { id: "escape", label: "Escape lands", sub: "as powerless user" },
+  ]}
+  edges={[
+    { from: "cuid", to: "subuid", label: "remap" },
+    { from: "subuid", to: "map", label: "allocate" },
+    { from: "map", to: "hostuid", label: "0 to 100000" },
+    { from: "hostuid", to: "mount", label: "writes" },
+    { from: "hostuid", to: "escape", label: "contained" },
+  ]}
+  caption="Without the user namespace this whole chain collapses: container UID 0 is host UID 0, so the bind-mount write and any escape land as host root. The remap is what turns 'root' into a powerless host account."
+/>
+
+<KeyTakeaway>By default a container shares the host's UID space, so container root is host root: a bind-mount escape writes host files as UID 0 with no kernel bug needed. User-namespace remap maps container UID 0 to an unprivileged host UID from a 65536-wide /etc/subuid range, so an escape lands as a powerless account. Rootless Docker removes the privileged daemon entirely, paying ~20-30% network throughput via the userspace slirp4netns stack to delete 'escape equals host root' from the threat model.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="01-rootless-and-user-namespaces-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why a container running as root with a bind mount is dangerous on default Docker, and exactly what userns-remap changes about it.", a: "By default Docker does not enable the user namespace, so there is no UID translation between container and host: container UID 0 is the same UID 0 the kernel enforces on the host. The PID, mount, and network namespaces isolate what the process can see, not its identity. A bind mount like -v /var/www:/data exposes a real host directory, so any file the container's root writes there is owned by host root — and a compromised container becomes a host-filesystem write with root ownership, no kernel exploit required. Userns-remap turns on a per-namespace UID/GID mapping configured from /etc/subuid (conventionally a 65536-wide range from a base like 100000): container UID 0 maps to host UID 100000, which owns nothing and holds no host privilege. The same escape now writes files owned by a powerless account, shrinking the blast radius from host root to a user that cannot even read other users' files." },
+    { q: "What does rootless Docker add over userns-remap, and what is the concrete cost?", a: "Userns-remap still runs the Docker daemon itself as host root and only remaps containers; a daemon or docker.sock compromise is still root-on-host. Rootless Docker runs the entire daemon and all containers inside one unprivileged user's user namespace, with no root-owned dockerd or socket anywhere — so even a daemon compromise lands as an unprivileged user, and the classic 'writable docker.sock equals instant host root' primitive becomes powerless. The cost is paid in networking: without root the daemon cannot create the normal veth/bridge plumbing, so container traffic goes through the userspace slirp4netns stack, which copies packets through userspace and imposes a throughput penalty commonly around 20-30% versus the rootful bridge. Privileged ports below 1024 also need extra host setup. For CI runners and multi-tenant build hosts the trade is usually worth it; for throughput-bound network workloads it may not be." },
+  ]}
+/>
+
+<Recap lang="en">
+A container is a namespaced, cgroup-limited process, not a VM, and by default the user namespace is not among its namespaces — so there is no UID remapping and container UID 0 is host UID 0. The PID, mount, and network namespaces isolate what the process sees, not who it is, which is why a bind mount turns a container compromise into a host-filesystem write owned by root: identity, not visibility, is what leaks across a shared path. The kernel fix is the user namespace, configured from /etc/subuid and /etc/subgid, which allocate each user a contiguous range conventionally 65536 UIDs wide from a high base like 100000; with userns-remap on, container UID 0 maps to host UID 100000 and an escape lands as an account that owns nothing. Rootless Docker goes further and runs the whole daemon and its containers inside one unprivileged user namespace, so there is no root-owned dockerd or docker.sock to compromise — closing the writable-socket-equals-host-root primitive. The price is mostly networking: rootless cannot build the normal bridge, so traffic routes through the userspace slirp4netns stack at roughly a 20-30% throughput penalty, and privileged ports need extra setup. The defaults are convenient and unsafe by design — userns-remap is opt-in because the UID shift breaks bind-mount assumptions — so the senior move is to choose the safe configuration deliberately and pay its known, bounded cost.
+</Recap>
