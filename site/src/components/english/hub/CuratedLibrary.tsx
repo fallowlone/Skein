@@ -36,6 +36,7 @@ export default function CuratedLibrary({ lang }: { lang: Locale }) {
           htIntV: "Short clips at or just below your level. Rewatch with captions, mine 5–8 new words into your deck.",
           htExtK: "Extensive — bathe in it",
           htExtV: "Longer, easier audio for volume. Listen once, no pausing — fluency comes from quantity of input.",
+          ceiling: "From B2 your input should be native — these external sources ARE the curriculum at that level, our texts are the on-ramp.",
         }
       : {
           index: "06",
@@ -49,12 +50,13 @@ export default function CuratedLibrary({ lang }: { lang: Locale }) {
           htIntV: "Короткие клипы на твоём уровне или чуть ниже. Пересматривай с субтитрами, выписывай 5–8 новых слов в колоду.",
           htExtK: "Экстенсивно — погружайся",
           htExtV: "Более длинное и лёгкое аудио для объёма. Слушай раз, без пауз — беглость рождается из количества ввода.",
+          ceiling: "С B2 ввод должен быть нативным — на этом уровне внешние источники И ЕСТЬ программа, наши тексты — разгонная полоса.",
         };
 
   const kindLabel = (k: ListenItem["kind"]) => (k === "audio" ? L.kindAudio : L.kindVideo);
 
   return (
-    <section class="hub-section" aria-labelledby="cur-h">
+    <section id="curated" class="hub-section" aria-labelledby="cur-h">
       <div class="sec-head">
         <span class="sec-index">{L.index}</span>
         <h2 id="cur-h">{L.h}</h2>
@@ -83,6 +85,7 @@ export default function CuratedLibrary({ lang }: { lang: Locale }) {
           <div class="ht"><div class="ht-k">{L.htIntK}</div><div class="ht-v">{L.htIntV}</div></div>
           <div class="ht"><div class="ht-k">{L.htExtK}</div><div class="ht-v">{L.htExtV}</div></div>
         </div>
+        <p class="cite" style="margin-top:var(--s-3)">{L.ceiling}</p>
       </div>
     </section>
   );

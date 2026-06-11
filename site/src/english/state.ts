@@ -9,6 +9,7 @@ import { fsrsScheduler } from "./scheduler/fsrs";
 import type { CardState, Grade } from "./scheduler/types";
 import { recordActiveDay } from "~/scripts/user-state";
 import type { Band } from "~/english/types";
+import { appendHours, type HourEntry, type HourKind } from "./hours";
 
 const KEY = "awesome.english.v2"; // v2: scheduler-backed (v1 Leitner is discarded)
 const scheduler = fsrsScheduler();
@@ -39,6 +40,8 @@ export type EnglishState = {
   outputAttempts: Record<string, { at: number; scoreBand?: string }>;
   grammarDone: Record<string, true>;
   collocationDone: Record<string, true>;
+  hoursLog: HourEntry[];
+  chunks: Record<string, { text: string; note?: string; src?: string; addedAt: number; card: CardState }>;
 };
 
 const DEFAULT_NEW_PER_DAY = 20;
@@ -47,6 +50,8 @@ const defaults: EnglishState = {
   settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY, gradingModel: "claude-haiku-4-5" },
   readUnits: {}, outputAttempts: {},
   grammarDone: {}, collocationDone: {},
+  hoursLog: [],
+  chunks: {},
 };
 
 function load(): EnglishState {
@@ -76,6 +81,8 @@ function load(): EnglishState {
       outputAttempts: parsed.outputAttempts ?? {},
       grammarDone: parsed.grammarDone ?? {},
       collocationDone: parsed.collocationDone ?? {},
+      hoursLog: Array.isArray(parsed.hoursLog) ? parsed.hoursLog : [],
+      chunks: parsed.chunks && typeof parsed.chunks === "object" ? parsed.chunks : {},
     };
   } catch {
     return defaults;
@@ -158,6 +165,8 @@ export function resetEnglish() {
     settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY, gradingModel: "claude-haiku-4-5" },
     readUnits: {}, outputAttempts: {},
     grammarDone: {}, collocationDone: {},
+    hoursLog: [],
+    chunks: {},
   };
   if (typeof window !== "undefined") localStorage.removeItem(KEY);
 }
@@ -286,4 +295,48 @@ export function markCollocationDone(id: string) {
     collocationDone: { ...englishState.value.collocationDone, [id]: true },
   };
   if (typeof window !== "undefined") recordActiveDay();
+}
+
+/** Log minutes of input/srs/output against today (the methodology's primary metric). */
+export function logMinutes(kind: HourKind, min: number, src?: string): void {
+  const date = new Date().toISOString().slice(0, 10);
+  englishState.value = {
+    ...englishState.value,
+    hoursLog: appendHours(englishState.value.hoursLog, { date, min, kind, src }),
+  };
+}
+
+// Chunk cards — sentence-grain mining (the methodology's SRS feed after the frequency core):
+// whole phrases from the learner's own content, including out-of-bank ones word-cards can't hold.
+// Reuses the FSRS `scheduler` instance above; `card.due` is epoch ms.
+const normChunk = (t: string) => t.toLowerCase().replace(/[…]/g, "...").replace(/\s+/g, " ").trim();
+
+export function addChunk(text: string, note: string | undefined, now: number, src?: string): string {
+  const norm = normChunk(text);
+  if (norm.length < 3) return "";
+  const existing = Object.entries(englishState.value.chunks).find(([, c]) => normChunk(c.text) === norm);
+  if (existing) return existing[0];
+  const id = `chunk:${now.toString(36)}:${norm.slice(0, 24).replace(/\W+/g, "-")}`;
+  englishState.value = {
+    ...englishState.value,
+    chunks: { ...englishState.value.chunks, [id]: { text: text.trim(), note, src, addedAt: now, card: scheduler.newCard(now) } },
+  };
+  return id;
+}
+
+export function gradeChunk(id: string, grade: Grade, now: number): void {
+  const c = englishState.value.chunks[id];
+  if (!c) return;
+  englishState.value = {
+    ...englishState.value,
+    chunks: { ...englishState.value.chunks, [id]: { ...c, card: scheduler.review(c.card, grade, now) } },
+  };
+  if (typeof window !== "undefined") recordActiveDay();
+}
+
+export function dueChunks(now: number): string[] {
+  return Object.entries(englishState.value.chunks)
+    .filter(([, c]) => c.card.due <= now)
+    .sort((a, b) => a[1].card.due - b[1].card.due)
+    .map(([id]) => id);
 }
