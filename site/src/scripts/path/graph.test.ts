@@ -34,7 +34,7 @@ describe("graph", () => {
   });
 
   it("descendants returns transitive dependents", () => {
-    expect(descendants(g, "tcp-handshake")).toEqual(new Set(["tls", "replication", "consensus"]));
+    expect(descendants(g, "tcp-handshake")).toEqual(new Set(["tls", "replication", "consensus", "leaf-x"]));
   });
 
   it("applies addEdges / removeEdges overrides", () => {

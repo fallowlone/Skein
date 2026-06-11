@@ -353,7 +353,7 @@ git commit -m "feat(path): per-track self-placement (batch declare up to a band)
 - Modify: `src/scripts/path/schedule.ts` (`dropUnits` roi — post-repair form)
 - Test: `src/scripts/path/planner.test.ts`, `src/scripts/path/schedule.test.ts`
 
-- [ ] **Step 1: Write the failing planner test**
+- [x] **Step 1: Write the failing planner test**
 
 Append to `src/scripts/path/planner.test.ts`:
 
@@ -386,12 +386,12 @@ describe("buildPath — triage value", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test src/scripts/path/planner.test.ts`
 Expected: FAIL — `s.value` is `undefined`.
 
-- [ ] **Step 3: Add `value` to `PathStep` and compute it in `buildPath`**
+- [x] **Step 3: Add `value` to `PathStep` and compute it in `buildPath`**
 
 `src/scripts/path/types.ts` — extend `PathStep`:
 
@@ -438,7 +438,7 @@ and replace the post-repair learn-mapping with:
 
 (`goalTrackWeight`, `SENIOR_WEIGHT`, `normalizeRanks` are already defined/imported in this file.)
 
-- [ ] **Step 4: Use value/cost in schedule triage**
+- [x] **Step 4: Use value/cost in schedule triage**
 
 In `src/scripts/path/schedule.ts` (post-repair form), make ALL steps droppable — the triage's `dropped` list is a SUGGESTION of what to cut, not a placement fact — and rank by value density:
 
@@ -467,12 +467,12 @@ Append a test to `src/scripts/path/schedule.test.ts`:
   });
 ```
 
-- [ ] **Step 5: Run the path suite**
+- [x] **Step 5: Run the path suite**
 
 Run: `bun test src/scripts/path/`
 Expected: PASS. The repair plan's Task 1 test `"over verdict reports the honest total deficit"` asserts `dropped: ["u5"]` with equal-value steps — with all-steps droppable and uniform value, ROI ties break by id (`feasibility` sorts `roi || id.localeCompare`), so `u0` is dropped first; update that assertion to `expect(s.feasibility.dropped).toEqual(["u0"])` and its comment ("triage suggests the cheapest-value cut; with uniform value/cost the tie breaks by id").
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/scripts/path/types.ts src/scripts/path/planner.ts src/scripts/path/planner.test.ts src/scripts/path/schedule.ts src/scripts/path/schedule.test.ts

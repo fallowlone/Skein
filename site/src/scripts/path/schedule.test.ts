@@ -81,12 +81,13 @@ describe("schedule", () => {
   });
 
   it("over verdict reports the honest total deficit and drops only the true overflow", () => {
-    // 6 × 120 = 720 required > 600 available → exactly the last unit fails to place.
+    // 6 × 120 = 720 required > 600 available → 120 over budget, one unit's worth to cut.
     const path = { steps: Array.from({ length: 6 }, (_, i) => step(`u${i}`, 120)) };
     const s = schedulePlan(path, cfg(), MON_2026_06_08);
     expect(s.feasibility.verdict).toBe("over");
     expect(s.feasibility.deltaMin).toBe(120);          // required − available, not sum-of-dropped
-    expect(s.feasibility.dropped).toEqual(["u5"]);
+    // triage suggests the cheapest-value cut; with uniform value/cost the tie breaks by id
+    expect(s.feasibility.dropped).toEqual(["u0"]);
   });
 });
 
@@ -107,4 +108,16 @@ describe("schedulePlan — tier scales required minutes", () => {
     expect(def.feasibility).toEqual(mid.feasibility);
   });
 
+});
+
+describe("schedule — value-based triage", () => {
+  it("over-budget triage suggests cutting the lowest value-density step, not the longest", () => {
+    const vstep = (unit: string, estMin: number, value: number): PathStep =>
+      ({ unit, track: "networking", unlocks: [], reason: "", kind: "learn", estMin, value });
+    // 700 required > 600 available; "cheap-junk" has the worst value/min despite being shortest.
+    const path = { steps: [vstep("long-core", 400, 8), vstep("mid-core", 200, 4), vstep("cheap-junk", 100, 0.1)] };
+    const s = schedulePlan(path, cfg(), MON_2026_06_08);
+    expect(s.feasibility.verdict).toBe("over");
+    expect(s.feasibility.dropped[0]).toBe("cheap-junk");
+  });
 });

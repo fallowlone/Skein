@@ -61,6 +61,7 @@ export interface PathConfig {
 export type StepKind = "learn" | "review" | "check";
 export interface PathStep {
   unit: string; track: Track; unlocks: string[]; reason: string; kind: StepKind; estMin: number;
+  value?: number; // triage weight (goal × band × unlocking power); learn steps only
 }
 export interface Path { steps: PathStep[]; }
 
