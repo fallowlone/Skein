@@ -19,7 +19,7 @@ const cfg = (over: Partial<PathConfig> = {}): PathConfig => ({ ...DEFAULT_CONFIG
 describe("planner", () => {
   it("resolveGoalTargets expands a band>=middle rule", () => {
     const t = resolveGoalTargets(GOALS[0], CONCEPTS);
-    expect(new Set(t)).toEqual(new Set(["tcp-handshake", "tls", "indexing", "mvcc", "replication", "consensus"]));
+    expect(new Set(t)).toEqual(new Set(["tcp-handshake", "tls", "indexing", "mvcc", "replication", "consensus", "leaf-x"]));
   });
 
   it("resolveGoalTargets uses explicit concept lists", () => {
@@ -89,8 +89,8 @@ describe("resolveGoalTargets — track-band>= rule", () => {
 
   it("targets only middle+ concepts in CORE tracks (weight >= 1), excluding support tracks", () => {
     const ids = resolveGoalTargets(frontendDev, CONCEPTS);
-    // core track networking middle+: tcp-handshake, tls. databases is support (0.7) → excluded.
-    expect(ids.sort()).toEqual(["tcp-handshake", "tls"]);
+    // core track networking middle+: leaf-x, tcp-handshake, tls. databases is support (0.7) → excluded.
+    expect(ids.sort()).toEqual(["leaf-x", "tcp-handshake", "tls"]);
   });
 
   it("ignores foundations/surface bands even in a core track", () => {
@@ -168,5 +168,19 @@ describe("resolveGoalTargets — track-band range rule", () => {
   it("returns [] for an unknown band token in either bound", () => {
     expect(resolveGoalTargets(mk("track-band=surface..wizard"), CONCEPTS)).toEqual([]);
     expect(resolveGoalTargets(mk("track-band=wizard..middle"), CONCEPTS)).toEqual([]);
+  });
+});
+
+describe("buildPath — triage value", () => {
+  it("same band: a unit with missing downstream dependents outvalues a terminal unit", () => {
+    const path = buildPath({
+      state: emptyState(), goals: [GOALS[0]], config: cfg({ pace: { stepsAhead: 50, srsAggressiveness: 0 } }),
+      content: { concepts: CONCEPTS, units: UNITS, goalById }, srsDue: [], now: 0, trackOrder: TRACK_ORDER,
+    });
+    for (const s of path.steps) expect(s.value).toBeGreaterThan(0);
+    // tcp-handshake (middle) has missing dependents (tls, leaf-x, …); leaf-x (middle) has none.
+    const hub = path.steps.find((s) => s.unit === "networking/02-tcp")!;
+    const leaf = path.steps.find((s) => s.unit === "networking/03-leaf")!;
+    expect(hub.value!).toBeGreaterThan(leaf.value!);
   });
 });

@@ -12,6 +12,7 @@ export const CONCEPTS: Concept[] = [
   { id: "mvcc",            label: { en: "MVCC", ru: "MVCC" },                       track: "databases",  band: "advanced",    requires: ["indexing"] },
   { id: "replication",     label: { en: "Replication", ru: "Репликация" },         track: "distributed",band: "middle",      requires: ["mvcc", "tcp-handshake"] },
   { id: "consensus",       label: { en: "Consensus", ru: "Консенсус" },            track: "distributed",band: "advanced",    requires: ["replication"] },
+  { id: "leaf-x",          label: { en: "Leaf X", ru: "Лист X" },                  track: "networking", band: "middle",      requires: ["tcp-handshake"] },
 ];
 
 export const UNITS: UnitConcepts[] = [
@@ -23,6 +24,7 @@ export const UNITS: UnitConcepts[] = [
   { unit: "databases/03-mvcc",       track: "databases",   teaches: ["mvcc"],                           requires: ["indexing"],                estMin: 60 },
   { unit: "distributed/01-repl",     track: "distributed", teaches: ["replication"],                    requires: ["mvcc", "tcp-handshake"],   estMin: 55 },
   { unit: "distributed/02-consensus",track: "distributed", teaches: ["consensus"],                      requires: ["replication"],             estMin: 70 },
+  { unit: "networking/03-leaf",      track: "networking",  teaches: ["leaf-x"],                         requires: ["tcp-handshake"],           estMin: 30 },
 ];
 
 export const GOALS: Goal[] = [
