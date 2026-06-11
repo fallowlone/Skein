@@ -740,7 +740,7 @@ git commit -m "feat(path): wire time decay as a read-model; decayFloor below the
 - Modify: `src/scripts/path/planner.ts:70-73` (`conceptsToUnits`) and `:173-177` (the `learn` mapping in `buildPath`)
 - Test: `src/scripts/path/planner.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `src/scripts/path/planner.test.ts`:
 
@@ -783,12 +783,12 @@ Add `applySelfDeclare` to the test file's existing import from `./knowledge`.
 
 Before running: open `src/scripts/path/__fixtures__/mini-graph.ts` and confirm `networking/01-ip` teaches exactly `["ip-addressing", "ports-sockets"]` (adjust the test's concept names to the fixture if they differ — keep the structure: self-declare one of the unit's two taught concepts known, assert half cost). If the fixture path is longer than `stepsAhead` 5 and `networking/01-ip` falls outside the slice, pass `cfg({ pace: { stepsAhead: 10, srsAggressiveness: 0 } })`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test src/scripts/path/planner.test.ts`
 Expected: FAIL — set-cover tests (both units returned) and partial-cost test (full estMin).
 
-- [ ] **Step 3: Implement set cover and partial cost**
+- [x] **Step 3: Implement set cover and partial cost**
 
 Replace `conceptsToUnits` (`planner.ts:70-73`) with:
 
@@ -839,12 +839,12 @@ Replace the `learn` mapping in `buildPath` (`planner.ts:173-177`) with:
   });
 ```
 
-- [ ] **Step 4: Run the planner tests, then the full path suite**
+- [x] **Step 4: Run the planner tests, then the full path suite**
 
 Run: `bun test src/scripts/path/planner.test.ts && bun test src/scripts/path/`
 Expected: PASS. If an existing test asserts a unit list that the cover now legitimately trims (a fixture concept taught by two units), update its expectation and note why in the assertion comment. `engine.integration.test.ts` may assert exact step lists — re-derive expectations under cover semantics, don't weaken assertions to `toContain`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/scripts/path/planner.ts src/scripts/path/planner.test.ts
