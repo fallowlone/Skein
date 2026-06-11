@@ -230,7 +230,7 @@ git commit -m "fix(path): include the deadline day in the study-day budget"
 - Modify: `src/scripts/path/path-io.ts:369-377` (`currentPace`)
 - Test: `src/scripts/path/pace.test.ts` (full rewrite below)
 
-- [ ] **Step 1: Rewrite `pace.test.ts`**
+- [x] **Step 1: Rewrite `pace.test.ts`**
 
 Replace the entire file content with:
 
@@ -296,12 +296,12 @@ describe("pace", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test src/scripts/path/pace.test.ts`
 Expected: FAIL — `pace` is called with one object argument but currently takes five positional ones (TypeScript error or runtime NaN assertions).
 
-- [ ] **Step 3: Rewrite `pace.ts`**
+- [x] **Step 3: Rewrite `pace.ts`**
 
 Replace the entire file content with:
 
@@ -375,7 +375,7 @@ export function pace(inp: PaceInputs): Pace {
 
 Note: the `Pace` result interface is unchanged on purpose — `DeadlineSection.tsx` and `TodayFocus.tsx` consume `doneMin`/`projectedFinishMs`/`behindDays`/`status` and need no edits. `projectedFinishMs` is the UTC midnight of a civil study-day date while `targetMs` is a local midnight; `behindDays` uses `ceil`, so the ≤24 h skew can shift the count by at most one day — acceptable for a "~N days behind" label.
 
-- [ ] **Step 4: Update `currentPace()` in `path-io.ts`**
+- [x] **Step 4: Update `currentPace()` in `path-io.ts`**
 
 Replace the `currentPace` function (`path-io.ts:369-377`) with:
 
@@ -407,12 +407,12 @@ export function currentPace(): Pace | null {
 
 (`studyDays` and `availableMinutes` are already imported in `path-io.ts:114`.)
 
-- [ ] **Step 5: Run tests and typecheck**
+- [x] **Step 5: Run tests and typecheck**
 
 Run: `bun test src/scripts/path/ && bunx astro check 2>&1 | tail -5`
 Expected: tests PASS; no new type errors (pre-existing astro-check noise, if any, is unchanged).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/scripts/path/pace.ts src/scripts/path/pace.test.ts src/scripts/path/path-io.ts
