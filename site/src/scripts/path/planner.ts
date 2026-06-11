@@ -28,6 +28,22 @@ export function resolveGoalTargets(goal: Goal, concepts: Concept[]): string[] {
     return concepts.filter((c) => core.has(c.track) && BAND_RANK[c.band] >= min).map((c) => c.id);
   }
 
+  // track-band=<lo>..<hi>: concepts in this goal's CORE tracks whose band falls inside the
+  // inclusive range. Horizon-bounded goals (junior → middle) need the UPPER bound —
+  // "track-band>=surface" would target advanced too. Core/support semantics match track-band>=.
+  const tbr = rule.match(/^track-band=(\w+)\.\.(\w+)$/);
+  if (tbr) {
+    const lo = BAND_RANK[tbr[1] as Band];
+    const hi = BAND_RANK[tbr[2] as Band];
+    if (lo === undefined || hi === undefined) return [];
+    const core = new Set(
+      Object.entries(goal.trackWeights).filter(([, w]) => (w ?? 0) >= 1).map(([t]) => t),
+    );
+    return concepts
+      .filter((c) => core.has(c.track) && BAND_RANK[c.band] >= lo && BAND_RANK[c.band] <= hi)
+      .map((c) => c.id);
+  }
+
   const m = rule.match(/^band>=(\w+)$/);
   if (m) {
     const min = BAND_RANK[m[1] as Band];
