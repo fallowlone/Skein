@@ -373,7 +373,21 @@ export function currentPace(): Pace | null {
   const { path } = computePath();
   const tier = tierOf(cfg);
   const required = path.steps.reduce((n, s) => n + Math.round(s.estMin * tierEffort(tier)), 0);
-  return pace(dl.baselineRequiredMin, required, dl.startedAtMs, Date.now(), dl.targetDateMs);
+  // Scope growth (content updates re-adding units) must never read as regress: when required
+  // exceeds the stored baseline, the baseline is effectively the new required.
+  const baseline = Math.max(dl.baselineRequiredMin, required);
+  const now = Date.now();
+  const sd = (a: number, b: number) => studyDays(a, b, dl.perWeekdayHours, dl.blackoutDates ?? [], dl.tzOffsetMin);
+  const HORIZON_MS = 365 * 86_400_000;
+  return pace({
+    baselineMin: baseline,
+    currentRequiredMin: required,
+    elapsedAvailMin: availableMinutes(sd(dl.startedAtMs, Math.min(now, dl.targetDateMs))),
+    totalAvailMin: availableMinutes(sd(dl.startedAtMs, dl.targetDateMs)),
+    futureDays: sd(now, dl.targetDateMs + HORIZON_MS),
+    targetMs: dl.targetDateMs,
+    nowMs: now,
+  });
 }
 
 // Build the LeverInputs from the live schedule + what-if deltas, then suggest fixes.
