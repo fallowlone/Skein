@@ -5,7 +5,7 @@
 // (0..100) per domain family — labelled honestly as competence, NOT a per-domain Elo.
 // The polygon/axes are SVG; the side bars use block-div fills (never inline-span width).
 import type { Locale } from "~/i18n";
-import { knowledge, config, content } from "~/scripts/path/path-io";
+import { effectiveKnowledge, config, content } from "~/scripts/path/path-io";
 import { domainRatings } from "~/scripts/progression/domain-ratings";
 
 const L = {
@@ -27,7 +27,7 @@ const L = {
 
 export default function DomainRadar({ lang }: { lang: Locale }) {
   const t = L[lang];
-  const state = knowledge.value;            // subscribe
+  const state = effectiveKnowledge();            // subscribe
   const threshold = config.value.weights.masteryThreshold; // subscribe
   const domains = domainRatings(state, content.concepts, threshold);
 

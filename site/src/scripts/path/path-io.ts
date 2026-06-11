@@ -112,7 +112,7 @@ export function deserializeKnowledge(arr: [string, ConceptMastery][]): Knowledge
 // ── (Task 2 appends the content bundle + signals + mutations below this line) ──
 import { buildPath } from "./planner";
 import { schedulePlan, studyDays, availableMinutes } from "./schedule";
-import { emptyState, applySelfDeclare, applyDiagnostic, applyStudyEvidence } from "./knowledge";
+import { emptyState, applySelfDeclare, applyDiagnostic, applyStudyEvidence, decay } from "./knowledge";
 import { mergeConfig, clampConfig } from "./config";
 import type { DeadlineConfig } from "./types";
 import { tierEffort } from "./tier-effort";
@@ -292,13 +292,20 @@ function effectiveContent(): { concepts: Concept[]; units: UnitConcepts[]; dropp
   return result;
 }
 
+// Read-model: knowledge with time decay applied (stale confidence erodes toward decayFloor and
+// re-enters the path). Always computed from the RAW signal — decay is never persisted, so it
+// cannot compound across loads. Reading `knowledge.value` inside keeps signal subscriptions alive.
+export function effectiveKnowledge(): KnowledgeState {
+  return decay(knowledge.value, graph, Date.now(), config.value.weights.decayFloor);
+}
+
 export function computePath(): { path: Path; schedule?: Schedule; droppedLocal: boolean } {
   const cfg = config.value;
   const now = Date.now();
   const goalObjs = cfg.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
   const { concepts: eff, units: effUnits, droppedLocal } = effectiveContent();
   const raw = buildPath({
-    state: knowledge.value, goals: goalObjs, config: cfg,
+    state: effectiveKnowledge(), goals: goalObjs, config: cfg,
     content: { concepts: eff, units: effUnits, goalById }, srsDue: [], now, trackOrder,
   });
   const path: Path = { steps: applyViewOrder(raw.steps, cfg.view.order) };
@@ -311,7 +318,7 @@ function buildInputFor(cfg: StoredPathConfig) {
   const { concepts: eff, units: effUnits } = effectiveContent();
   const goalObjs = cfg.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
   return {
-    state: knowledge.value, goals: goalObjs, config: cfg,
+    state: effectiveKnowledge(), goals: goalObjs, config: cfg,
     content: { concepts: eff, units: effUnits, goalById }, srsDue: [], now: Date.now(), trackOrder,
   };
 }
@@ -431,7 +438,7 @@ export function applyDiagnosticResult(concept: string, correctFrac: number): voi
 }
 export function nextCalibrationProbe(): string | null {
   const frontier = targetFrontier(activeGoals(), config.value, concepts);
-  return pickProbe(knowledge.value, graph, frontier, diagnosedConcepts, config.value.weights.masteryThreshold);
+  return pickProbe(effectiveKnowledge(), graph, frontier, diagnosedConcepts, config.value.weights.masteryThreshold);
 }
 export function unitProbeConcepts(unitId: string): string[] {
   return (teachesByUnit.get(unitId) ?? []).filter((c) => diagnosedConcepts.has(c));

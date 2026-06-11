@@ -6,7 +6,7 @@
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
-  knowledge, config, content, computePath,
+  effectiveKnowledge, config, content, computePath,
   skipUnit, pinUnit, moveUnit, isPinned, loosenUnit, reorderPath,
 } from "~/scripts/path/path-io";
 import { masteryOf } from "~/scripts/path/knowledge";
@@ -40,7 +40,7 @@ function startHrefFor(lang: Locale, unitId: string): string | null {
 
 export default function NextPath({ lang, onQuickCheck }: { lang: Locale; onQuickCheck: (unitId: string) => void }) {
   const t = L[lang];
-  const state = knowledge.value; // subscribe to knowledge (drives prereq readiness)
+  const state = effectiveKnowledge(); // subscribe to knowledge (drives prereq readiness)
   const threshold = config.value.weights.masteryThreshold; // subscribe to config (pins/reorder/goals/knobs)
   const { path } = computePath(); // subscribe
   const [dragUnit, setDragUnit] = useState<string | null>(null);

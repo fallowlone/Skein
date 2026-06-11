@@ -55,7 +55,7 @@ export default function PathConfigDrawer({ lang, onClose }: { lang: Locale; onCl
                 onInput={(e) => setKnob({ weights: { ...cfg.weights, masteryThreshold: num(e) } })} />
             </label>
             <label class="block text-sm">{t.decay}: {cfg.weights.decayFloor}
-              <input type="range" min={0} max={1} step={0.05} value={cfg.weights.decayFloor} class="mt-1 block w-full"
+              <input type="range" min={0} max={0.5} step={0.05} value={cfg.weights.decayFloor} class="mt-1 block w-full"
                 onInput={(e) => setKnob({ weights: { ...cfg.weights, decayFloor: num(e) } })} />
             </label>
           </div>
