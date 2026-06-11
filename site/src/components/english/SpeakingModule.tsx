@@ -1,7 +1,8 @@
 // src/components/english/SpeakingModule.tsx
-import { useState, useRef } from "preact/hooks";
+import { useState, useRef, useEffect } from "preact/hooks";
 import { WebSpeechRecognizer, webSpeechAvailable, type SpeechRecognizer } from "~/english/speech/recognizer";
 import { WhisperRecognizer, whisperReady, type DownloadState } from "~/english/speech/whisper";
+import { logMinutes } from "~/english/state";
 import ShadowExercise from "./ShadowExercise";
 import SpeakExercise from "./SpeakExercise";
 import TalkSession from "./TalkSession";
@@ -27,6 +28,15 @@ const COPY = {
 
 export default function SpeakingModule({ lang }: { lang: Locale }) {
   const L = COPY[lang];
+
+  // Auto-log speaking output (the methodology's output block) — one log on exit for time spent in
+  // any speaking mode (shadow/speak/talk), only if at least a full minute was spent here.
+  const startedAt = useRef(Date.now());
+  useEffect(() => () => {
+    const min = Math.round((Date.now() - startedAt.current) / 60_000);
+    if (min >= 1) logMinutes("output", min, "speaking");
+  }, []);
+
   const [mode, setMode] = useState<Mode>("shadow");
   const [prefer, setPrefer] = useState<Prefer>("auto");
   const [dl, setDl] = useState<DownloadState>({ status: whisperReady() ? "ready" : "idle", pct: whisperReady() ? 100 : 0 });

@@ -4,13 +4,13 @@
 // it into an actual flashcard pass over the FSRS-due words — the review half of
 // the loop VocabModule starts. The due ids are snapshotted by the caller, so the
 // list does not shrink under us as each grade reschedules its card.
-import { useMemo, useState } from "preact/hooks";
+import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { vocabA2 } from "~/english/data/vocab-a2";
 import { vocabB1 } from "~/english/data/vocab-b1";
 import { vocabB2 } from "~/english/data/vocab-b2";
 import type { VocabEntry } from "~/english/types";
 import type { Grade } from "~/english/scheduler/types";
-import { gradeWord } from "~/english/state";
+import { gradeWord, logMinutes } from "~/english/state";
 import { speak, ttsAvailable } from "~/english/speech/tts";
 import { type Locale } from "~/i18n";
 
@@ -31,6 +31,13 @@ export default function ReviewSession({ lang, ids }: Props) {
   const [reveal, setReveal] = useState(false);
   const canSpeak = ttsAvailable();
 
+  // Auto-log SRS minutes (the methodology's primary metric); time on this screen, logged on exit.
+  const startedAt = useRef(now());
+  const graded = useRef(false);
+  useEffect(() => () => {
+    if (graded.current) logMinutes("srs", Math.max(1, Math.round((now() - startedAt.current) / 60_000)), "review");
+  }, []);
+
   const L = {
     show: lang === "en" ? "Show meaning" : "Показать значение",
     again: lang === "en" ? "Again" : "Снова",
@@ -49,6 +56,7 @@ export default function ReviewSession({ lang, ids }: Props) {
 
   function grade(g: Grade) {
     gradeWord(e.id, g, now());
+    graded.current = true;
     setReveal(false);
     setI((n) => n + 1);
   }

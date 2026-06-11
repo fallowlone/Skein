@@ -5,6 +5,7 @@
 import type { Locale } from "~/i18n";
 import HubBar from "./HubBar";
 import CoverageMeter from "./CoverageMeter";
+import HoursPanel from "./HoursPanel";
 import NextPath from "./NextPath";
 import ByoPipe from "./ByoPipe";
 import OwnedModules from "./OwnedModules";
@@ -17,6 +18,7 @@ export default function HubLanding({ lang }: { lang: Locale }) {
     <div class="wrap hub">
       <HubBar lang={lang} />
       <CoverageMeter lang={lang} />
+      <HoursPanel lang={lang} />
       <NextPath lang={lang} />
       <ByoPipe lang={lang} />
       <OwnedModules lang={lang} />
