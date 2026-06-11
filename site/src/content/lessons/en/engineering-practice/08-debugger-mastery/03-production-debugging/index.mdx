@@ -1,0 +1,124 @@
+---
+concepts:
+- ep-debugger-prod
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-production-debugging"
+sources:
+- https://www.brendangregg.com/perf.html
+- https://github.com/iovisor/bpftrace/blob/master/README.md
+- https://github.com/async-profiler/async-profiler
+spiral: []
+status: ready
+summary: 'A wedged prod process has no repro and you cannot stop it. Sampling tools — perf, eBPF/bpftrace, async-profiler — observe at 1-5% overhead without halting; a ptrace attach stops the process. USDT probes and flame graphs locate the hot path on a live, untouched service.'
+title: 'Production debugging with no repro: perf, eBPF, flame graphs, and why ptrace stops the world'
+track: "engineering-practice"
+unit: "08-debugger-mastery"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+One pod was pinned at 100% CPU, serving requests but slowly, and it had been that way for an hour. The on-call engineer's instinct was to attach gdb and get a stack — and a senior stopped his hand. "That `ptrace` attach stops the process. It is taking traffic; you will freeze a live server and the load balancer will pile a thousand requests onto its siblings while you read one stack." Instead they ran `perf record -F 99 -p <pid>` for ten seconds — sampling the running process 99 times a second at roughly 2% overhead, never halting it — and folded the result into a flame graph. The wide plateau at the top was unmistakable: 80% of CPU in a regex compile, called per-request because a cache key had been computed wrong and the compiled pattern was never reused. They never stopped the process, never dropped a request, and had the answer in under a minute. The lesson the junior took away: in production the first question is not "what is the bug" but "can I observe this without stopping the world".
+</Hook>
+
+<Crux>A wedged prod process can be sampled at 1-5% overhead, but a ptrace attach stops it dead — in production you watch without halting.</Crux>
+
+<Explanation>
+
+## The production constraint: you cannot stop the world
+
+Every debugger technique from the previous lessons assumes you can halt the process. In production that assumption inverts. The classic interactive debugger attaches via `ptrace`, and a `ptrace` attach (`PTRACE_ATTACH`, what gdb and Delve do) **stops every thread of the target** until you detach. On a live server taking traffic that is catastrophic: requests queue or time out, health checks fail, the load balancer ejects the instance and dog-piles its siblings, and an autoscaler may kill the "unhealthy" pod you were debugging — destroying the live state you attached to read. So the production toolkit is built on a different principle: *observe without stopping*. You sample or trace the process as it runs, paying a few percent overhead, and you reconstruct what it is doing from those samples rather than freezing it to inspect.
+
+There is a second reason `ptrace` is the wrong default in prod: it is single-target and intrusive, while the questions are usually statistical — "where does CPU go", "what syscall is slow", "which path allocates" — answered far better by aggregating thousands of cheap samples than by one frozen snapshot.
+
+## Sampling vs instrumenting: perf, eBPF, async-profiler
+
+The low-overhead toolkit splits along *sampling* versus *instrumenting*. **Sampling** interrupts the process at a fixed frequency — `perf record -F 99` takes 99 stack samples per second per CPU — and infers where time goes from the distribution; overhead is roughly 1-5% because most cycles run untouched and only the periodic interrupt costs anything. **Instrumenting** attaches to specific events — a function entry, a syscall, a tracepoint — and runs on every occurrence; cheap per-event but costly if the event is hot. `perf`, the kernel's sampler, profiles CPU with hardware performance counters. **eBPF** (driven by `bpftrace`) runs a verified, sandboxed program in the kernel on chosen events, aggregating in-kernel so even per-event tracing stays cheap — `bpftrace -e 'tracepoint:syscalls:sys_enter_read { @[comm] = count(); }'` counts reads by process with negligible cost, no process stop, no kernel module. For managed runtimes, **async-profiler** samples the JVM (or similar) using a signal-based or perf-events mechanism that, unlike naive JVMTI stack-walking, does not suffer safepoint bias — it can sample threads at arbitrary points, not just where the runtime parks them, so the flame graph reflects real hot paths rather than safepoint locations.
+
+<Quiz
+  id="03-production-debugging-quiz-1"
+  lessonSlug="03-production-debugging"
+  lang="en"
+  question="A pod is pinned at 100% CPU and serving live traffic. The on-call wants to gdb-attach to grab a stack. Why is that the wrong first move, and what is better?"
+  choices={[
+    { label: "gdb attaches via ptrace, which stops every thread of the target — freezing a live server drops traffic; instead sample with perf at ~1-5% overhead without halting it", correct: true },
+    { label: "gdb cannot attach to a process already at 100% CPU, so it would fail anyway", misconception: "gdb attaches fine regardless of CPU usage; the problem is not failure to attach but that ptrace stops the whole process. The CPU level is unrelated to whether the attach succeeds." },
+    { label: "perf also stops the process but produces a nicer flame graph", misconception: "perf samples the running process at a fixed frequency without stopping it — that non-intrusiveness is the entire point. Only the ptrace-based interactive debuggers halt the target." },
+    { label: "Attaching is fine; the real issue is gdb needs the source tree present in prod", misconception: "The danger has nothing to do with source availability — it is that the ptrace attach halts a server taking traffic, causing timeouts and ejection. Source presence would not make freezing a live process safe." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does sampling at 99 Hz reveal a hot path so reliably when it looks at the process only ~99 times a second? Because hotness is statistical. If 80% of CPU time is spent in one function, then across thousands of samples roughly 80% will catch the stack inside that function — the wide plateau in the flame graph. You are not trying to see every instruction; you are estimating a distribution, and a distribution converges fast with cheap samples. The odd 99 (not 100) avoids lock-step with timers that tick at round frequencies, which would systematically miss or over-count periodic work. Cheap, slightly-irrational sampling beats expensive exhaustive tracing for the "where does time go" question.
+</Inset>
+
+## USDT probes and flame graphs: locating the path live
+
+Two pieces turn samples into an answer. **Flame graphs** aggregate thousands of stack samples into a single picture: each box is a function, width is the share of samples (time), stacked by call depth. A wide box near the top is where CPU actually goes — the regex-compile plateau from the Hook reads off in one glance, no stepping required. **USDT probes** (userland statically-defined tracing) are zero-overhead-when-disabled markers compiled into a binary (databases, language runtimes, your own service) that eBPF/`perf` can attach to at named, semantically meaningful points — "transaction commit", "query start" — giving you stable instrumentation without modifying or stopping the process. Together they let you answer "what is this wedged process doing right now" on a live, untouched service: sample it, fold into a flame graph, read the hot path, and confirm with a USDT or kernel tracepoint that the suspect path is the one firing. The whole investigation costs a few percent CPU and zero downtime, which is the only kind of debugging a production SLA allows.
+
+<Quiz
+  id="03-production-debugging-quiz-2"
+  lessonSlug="03-production-debugging"
+  lang="en"
+  question="You want to count how often a specific syscall fires across all processes on a busy prod node, with minimal overhead and no process stops. Which approach fits, and why?"
+  choices={[
+    { label: "An eBPF/bpftrace program on the syscall tracepoint that aggregates counts in-kernel — per-event but cheap because it sums in the kernel and never stops a process", correct: true },
+    { label: "Attach gdb to each process and set a breakpoint on the syscall", misconception: "gdb breakpoints stop each target on every hit via ptrace, which on a busy node would halt processes and crush throughput. eBPF aggregates in-kernel without stopping anything, which is exactly the production-safe path." },
+    { label: "perf record -F 99 sampling, because sampling always counts events exactly", misconception: "Sampling estimates a distribution, it does not count every occurrence — perfect for 'where does time go' but not for an exact event count. For counting a specific syscall, in-kernel eBPF aggregation on the tracepoint is the right tool." },
+    { label: "A core dump, then count the syscall occurrences in the frozen image", misconception: "A core is a single frozen instant with no event history — it cannot count how often a syscall fired over time. Live event counting needs in-kernel tracing like eBPF, not a static snapshot." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Debugging a wedged live process without stopping it"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "wedge", label: "Wedged pod", sub: "100% CPU, taking traffic" },
+    { id: "ptrace", label: "ptrace attach", sub: "STOPS the world" },
+    { id: "sample", label: "perf -F 99", sub: "~2% overhead, no stop" },
+    { id: "ebpf", label: "eBPF / USDT", sub: "in-kernel, per-event cheap" },
+    { id: "flame", label: "Flame graph", sub: "width = time share" },
+    { id: "hot", label: "Hot path", sub: "wide top plateau" },
+  ]}
+  edges={[
+    { from: "wedge", to: "ptrace", label: "DON'T" },
+    { from: "wedge", to: "sample", label: "DO" },
+    { from: "sample", to: "flame", label: "fold stacks" },
+    { from: "ebpf", to: "flame", label: "confirm path" },
+    { from: "flame", to: "hot", label: "read plateau" },
+  ]}
+  caption="A ptrace attach halts a live server and triggers ejection; sampling and in-kernel eBPF observe at a few percent overhead without stopping. Fold samples into a flame graph and the hot path is the wide plateau."
+/>
+
+<KeyTakeaway>In production you usually cannot stop the world: a ptrace attach (gdb/Delve) halts every thread of a live server, causing timeouts, ejection, and an autoscaler killing the very pod you wanted to read. The production toolkit observes without halting — perf samples at 99 Hz for ~1-5% overhead, eBPF/bpftrace aggregates per-event in-kernel, and async-profiler samples managed runtimes without safepoint bias. Sampling estimates where time goes; instrumenting counts specific events. Fold stack samples into a flame graph and the hot path is the widest top plateau; USDT probes mark stable points to confirm it — all on a live, untouched service at zero downtime.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-production-debugging-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why is a ptrace/gdb attach the wrong default in production, and what replaces it?", a: "PTRACE_ATTACH — what gdb and Delve use — stops every thread of the target until you detach. On a live server taking traffic that is catastrophic: requests queue or time out, health checks fail, the load balancer ejects the instance and dog-piles its siblings, and an autoscaler may kill the unhealthy pod, destroying the live state you attached to read. It is also single-target and intrusive when the real questions are statistical. The replacement is observe-without-stopping: sample or trace the running process at a few percent overhead and reconstruct behavior from samples. perf samples CPU at a fixed frequency (e.g. -F 99) at ~1-5% overhead; eBPF via bpftrace runs verified sandboxed programs on kernel events, aggregating in-kernel so even per-event tracing stays cheap and stops nothing; async-profiler samples the JVM without safepoint bias." },
+    { q: "Distinguish sampling from instrumenting, and explain how a flame graph and USDT probes locate a hot path live.", a: "Sampling interrupts the process at a fixed frequency and infers the time distribution from where the stacks land — overhead ~1-5% because most cycles run untouched and only the periodic interrupt costs; ideal for 'where does CPU go'. Instrumenting attaches to specific events (function entry, syscall, tracepoint) and runs on every occurrence — cheap per-event, costly if the event is hot, and exact for counting a specific event, which sampling cannot do. A flame graph folds thousands of stack samples into one picture: each box a function, width its share of samples (time), stacked by depth, so the widest top box is where CPU actually goes — the regex-compile plateau read in one glance. USDT probes are zero-cost-when-disabled markers compiled into binaries at semantically meaningful points (transaction commit, query start) that eBPF/perf attach to, giving stable instrumentation to confirm the suspect path — all without modifying or stopping the live process." },
+  ]}
+/>
+
+<Recap lang="en">
+Production debugging inverts the core assumption of an interactive debugger: you cannot stop the world. A ptrace attach — PTRACE_ATTACH, what gdb and Delve perform — halts every thread of the target until detach, and on a live server taking traffic that means queued requests, failed health checks, the load balancer ejecting the instance and dog-piling its siblings, and an autoscaler potentially killing the very pod whose live state you attached to read. ptrace is also single-target and intrusive when the real production questions are statistical: where does CPU go, which syscall is slow, which path allocates. So the production toolkit observes without halting. Sampling interrupts the process at a fixed frequency — perf record -F 99 takes 99 stack samples per second — at roughly 1-5% overhead, because most cycles run untouched and only the periodic interrupt costs; it estimates a distribution, which converges fast, and the odd 99 avoids lock-step with round-frequency timers. Instrumenting attaches to specific events and runs on each, exact for counting but costly on hot events; eBPF driven by bpftrace runs verified sandboxed programs on kernel events and aggregates in-kernel, so even per-event tracing stays cheap, stops nothing, and needs no kernel module. async-profiler samples managed runtimes like the JVM without safepoint bias, so flame graphs reflect real hot paths, not safepoint locations. Two pieces turn samples into an answer: flame graphs fold thousands of stacks into one picture where box width is time share, so the widest top plateau is where CPU goes — the Hook's per-request regex compile read off in a glance; and USDT probes, zero-cost-when-disabled markers compiled at meaningful points, let eBPF/perf confirm the suspect path on a live, untouched service. The whole investigation costs a few percent CPU and zero downtime — the only debugging a production SLA permits, and the reason the first prod question is not what is the bug but can I observe this without stopping the world.
+</Recap>
