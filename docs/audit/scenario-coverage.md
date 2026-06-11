@@ -1,6 +1,6 @@
 # Scenario coverage (teaching spine lessons)
 
-Lessons: 798
+Lessons: 981
 
 Candidates remaining — incident: 0, debug: 0, review: 0
 
@@ -19,14 +19,18 @@ Candidates remaining — incident: 0, debug: 0, review: 0
 | distributed | 13 | 69% | 15% | 15% |
 | engineering-practice | 24 | 50% | 25% | 38% |
 | frontend | 13 | 46% | 0% | 8% |
+| go | 45 | 100% | 0% | 100% |
 | js-engine | 39 | 90% | 100% | 64% |
+| logic | 19 | 0% | 0% | 100% |
 | nest | 37 | 100% | 0% | 3% |
 | networking | 76 | 97% | 7% | 38% |
+| nextjs | 32 | 100% | 0% | 100% |
 | node | 52 | 85% | 0% | 4% |
 | observability | 54 | 87% | 13% | 39% |
 | performance | 52 | 67% | 23% | 29% |
-| python | 8 | 50% | 0% | 13% |
+| python | 44 | 91% | 0% | 84% |
 | queues | 13 | 62% | 8% | 8% |
+| react | 51 | 100% | 0% | 100% |
 | security | 13 | 77% | 0% | 0% |
 | sql-postgres | 45 | 98% | 98% | 93% |
 | system-design | 34 | 100% | 0% | 94% |

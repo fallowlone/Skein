@@ -130,6 +130,147 @@
         "en": "Row is a plain value type: 8 small fields, built once, passed and returned by value; copying ~100 bytes is cheaper than the aliasing risk of sharing pointers, and immutability falls out of value semantics for free. Aggregator is the opposite pole: it holds a sync.Mutex and mutable maps, so every method takes *Aggregator, the doc comment says 'must not be copied after first use' (same wording the sync package uses), and copylocks enforces it in CI. The zero value of Aggregator is made usable: Add lazily initializes the internal map on first call (nil map reads are safe, writes panic — so init before the first write), meaning callers can embed Aggregator in their own structs without a constructor. TopN is where ownership is decided: it locks, selects the top n rows, and returns append([]Row(nil), top...) — a detached copy. Returning an internal subslice would be two bugs in one: the caller's slice would alias a buffer that concurrent appends may write in place (visible corruption seconds later), and its 24-byte header would pin the 500 MB burst buffer against garbage collection for as long as the dashboard holds the result. The copy costs n times the row size — kilobytes — to make both impossible. The general contract worth writing in the package doc: data crossing the API boundary is always owned by the receiver of the return value; internal buffers never escape.",
         "ru": "Row — простой тип-значение: 8 маленьких полей, строится один раз, передаётся и возвращается по значению; копирование ~100 байт дешевле риска алиасинга при разделяемых указателях, а неизменяемость достаётся бесплатно из семантики значений. Aggregator — противоположный полюс: он держит sync.Mutex и изменяемые map, поэтому каждый метод берёт *Aggregator, док-комментарий гласит «нельзя копировать после первого использования» (формулировка пакета sync), а copylocks закрепляет это в CI. Нулевое значение Aggregator сделано полезным: Add лениво инициализирует внутренний map при первом вызове (чтения nil-map безопасны, записи паникуют — поэтому init до первой записи), и вызывающие могут встраивать Aggregator в свои структуры без конструктора. TopN — место, где решается владение: он лочит, выбирает топ-n строк и возвращает append([]Row(nil), top...) — отвязанную копию. Возврат внутреннего подсреза был бы двумя багами сразу: срез вызывающего алиасил бы буфер, в который конкурентные append могут писать на месте (видимая порча данных секундами позже), а его 24-байтовый заголовок пиннил бы 500-мегабайтный буфер всплеска от сборки мусора, пока дашборд держит результат. Копия стоит n размеров строки — килобайты — и делает невозможным и то и другое. Общий контракт, который стоит записать в док пакета: данные, пересекающие границу API, всегда принадлежат получателю возвращаемого значения; внутренние буферы наружу не утекают."
       }
+    },
+    {
+      "id": "incident-subslice-pins-heap",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "A 6 MB cache that holds 40 GB of heap",
+        "ru": "Кэш на 6 МБ, который держит 40 ГБ кучи"
+      },
+      "prompt": {
+        "en": "A log-ingest service reads 64 MB batch buffers, parses out small tokens (~80 bytes each — request IDs, user agents) and keeps 75k of them in an in-process cache; expected footprint ~6 MB. After a traffic migration, RSS climbs to 40 GB, the GC runs back to back, and the pod has been OOMKilled twice during peak. The heap profile (inuse_space) attributes almost everything to the batch-read allocation site — yet the code drops every batch right after parsing. Work it step by step; commit before revealing.",
+        "ru": "Сервис приёма логов читает батчи по 64 МБ, выпарсивает из них маленькие токены (~80 байт каждый — request ID, user agent) и держит 75 тысяч штук в кэше внутри процесса; ожидаемый след — ~6 МБ. После миграции трафика RSS вырастает до 40 ГБ, GC работает без пауз, под дважды убит OOM-киллером в пике. Профиль кучи (inuse_space) приписывает почти всё точке аллокации при чтении батча — хотя код выбрасывает каждый батч сразу после парсинга. Веди по шагам; сформулируй ответ до раскрытия."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · Metric vs profile",
+            "ru": "1 · Метрика против профиля"
+          },
+          "prompt": {
+            "en": "The cache metric says 75k entries ≈ 6 MB; the heap profile pins 40 GB to the read site, and RSS agrees with the profile. Which signal is lying, and what bug class does the disagreement point to?",
+            "ru": "Метрика кэша говорит: 75 тысяч записей ≈ 6 МБ; профиль кучи вешает 40 ГБ на точку чтения, и RSS согласен с профилем. Какой из сигналов врёт и на какой класс багов указывает расхождение?"
+          },
+          "reveal": {
+            "en": "Neither lies — they count different things. The metric sums the lengths of cached tokens; the profile counts reachable allocations, and the GC keeps allocations alive as whole objects. A tiny logical size coexisting with huge reachable allocations is the signature of aliasing retention: something small holds a pointer into something big. In Go the usual suspect is a subslice (or substring) of a large buffer stored past the buffer's intended lifetime.",
+            "ru": "Не врёт никто — они считают разное. Метрика суммирует длины закэшированных токенов; профиль считает достижимые аллокации, а GC держит аллокации живыми целиком. Крошечный логический размер при огромных достижимых аллокациях — почерк удержания через алиасинг: что-то маленькое держит указатель внутрь чего-то большого. В Go главный подозреваемый — подсрез (или подстрока) большого буфера, сохранённый дольше задуманной жизни буфера."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · 24 bytes pin 64 MB",
+            "ru": "2 · 24 байта пиннят 64 МБ"
+          },
+          "prompt": {
+            "en": "Mechanically, how does an 80-byte token keep a 64 MB batch alive — and why doesn't the GC reclaim the unused 63.99 MB?",
+            "ru": "Механически: как 80-байтовый токен держит живым батч на 64 МБ — и почему GC не забирает неиспользуемые 63,99 МБ?"
+          },
+          "reveal": {
+            "en": "tok := buf[i:j] allocates nothing: it builds a 24-byte slice header (ptr, len, cap) whose pointer aims into the batch's backing array. GC liveness is per-allocation, not per-byte: the backing array is one object, and any pointer into it keeps the whole object reachable — partial collection does not exist. With ~600 batches each pinned by at least one cached token, 600 × 64 MB ≈ 38–40 GB of 'discarded' buffers stay live — exactly what the profile attributes to the read site.",
+            "ru": "tok := buf[i:j] ничего не аллоцирует: он строит 24-байтовый заголовок среза (ptr, len, cap), указатель которого смотрит внутрь бэкинг-массива батча. Живость для GC считается на аллокацию, а не на байт: бэкинг-массив — один объект, и любой указатель внутрь держит достижимым весь объект — частичной сборки не существует. При ~600 батчах, каждый из которых запиннен хотя бы одним токеном из кэша, 600 × 64 МБ ≈ 38–40 ГБ «выброшенных» буферов остаются живыми — ровно то, что профиль приписывает точке чтения."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · Detach and prevent",
+            "ru": "3 · Отвязка и профилактика"
+          },
+          "prompt": {
+            "en": "What is the fix at the ownership boundary, why does the three-index slice NOT solve this, and which guardrails catch the next case before production?",
+            "ru": "Каков фикс на границе владения, почему трёхиндексный срез это НЕ решает и какие ограждения поймают следующий такой случай до прода?"
+          },
+          "reveal": {
+            "en": "Copy when data crosses the cache boundary: append([]byte(nil), tok...) / slices.Clone, or string(tok) — converting to string also copies. That costs 75k × 80 B ≈ 6 MB once, and the batches become collectable. The three-index slice buf[i:j:j] only pins capacity so a later append must reallocate — the header still points into the batch, so retention is untouched; only a copy detaches memory. Prevention: write the ownership contract into the package doc ('anything stored beyond the call gets copied'), diff inuse_space profiles in a canary, and alert when RSS diverges from the logical cache size by more than a small factor.",
+            "ru": "Копируй, когда данные пересекают границу кэша: append([]byte(nil), tok...) / slices.Clone или string(tok) — конвертация в строку тоже копирует. Это стоит 75k × 80 Б ≈ 6 МБ один раз, и батчи становятся собираемыми. Трёхиндексный срез buf[i:j:j] лишь фиксирует ёмкость, чтобы поздний append переаллоцировал, — заголовок всё ещё указывает в батч, удержание не меняется; память отвязывает только копия. Профилактика: пропиши контракт владения в доке пакета («всё, что хранится дольше вызова, — копируется»), сравнивай профили inuse_space в канарейке и алерть, когда RSS расходится с логическим размером кэша больше чем в несколько раз."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-metrics-registry-aliasing",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review an in-memory metrics registry",
+        "ru": "Отревьюй in-memory реестр метрик"
+      },
+      "prompt": {
+        "en": "This registry collects samples from concurrent producers and hands snapshots to a dashboard. Review it like a senior: name the real defects — value semantics and slice ownership included — and don't flag the non-issues.",
+        "ru": "Этот реестр собирает сэмплы от конкурентных продюсеров и отдаёт снапшоты дашборду. Отревьюй как senior: назови реальные дефекты — включая семантику значений и владение срезами — и не цепляйся к не-проблемам."
+      },
+      "diff": {
+        "lang": "go",
+        "code": "package metrics\n\nimport \"sync\"\n\ntype Sample struct {\n\tName  string\n\tValue float64\n}\n\ntype Registry struct {\n\tmu      sync.Mutex\n\tsamples []Sample\n\tbyName  map[string]int\n}\n\nfunc NewRegistry() *Registry {\n\treturn &Registry{}\n}\n\nfunc (r *Registry) Add(s Sample) {\n\tr.mu.Lock()\n\tdefer r.mu.Unlock()\n\tr.samples = append(r.samples, s)\n\tr.byName[s.Name]++\n}\n\nfunc (r *Registry) Scale(f float64) {\n\tr.mu.Lock()\n\tdefer r.mu.Unlock()\n\tfor _, s := range r.samples {\n\t\ts.Value *= f\n\t}\n}\n\nfunc (r *Registry) Snapshot() []Sample {\n\tr.mu.Lock()\n\tdefer r.mu.Unlock()\n\treturn r.samples\n}"
+      },
+      "findings": [
+        {
+          "id": "nil-map-write-panic",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "First Add panics: write to a nil map",
+            "ru": "Первый Add паникует: запись в nil-map"
+          },
+          "explanation": {
+            "en": "NewRegistry returns &Registry{}, so byName is a nil map. Reads from a nil map return zeros, but byName[s.Name]++ is a write — it panics with 'assignment to entry in nil map' on the very first Add. Either make() the map in the constructor or lazy-init it under the lock, keeping the zero value usable.",
+            "ru": "NewRegistry возвращает &Registry{}, так что byName — nil-map. Чтения из nil-map дают нули, но byName[s.Name]++ — запись: первый же Add паникует с «assignment to entry in nil map». Либо делай make() в конструкторе, либо лениво инициализируй под локом, сохраняя полезное нулевое значение."
+          }
+        },
+        {
+          "id": "snapshot-returns-live-slice",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "Snapshot returns the live internal slice",
+            "ru": "Snapshot возвращает живой внутренний срез"
+          },
+          "explanation": {
+            "en": "The returned header aliases the registry's buffer. After the unlock, concurrent Adds keep appending: while spare capacity lasts they write in place into the very array the dashboard is iterating — a data race plus a visibly mutating 'snapshot'. Return a detached copy under the lock: append([]Sample(nil), r.samples...).",
+            "ru": "Возвращённый заголовок алиасит буфер реестра. После анлока конкурентные Add продолжают дописывать: пока хватает ёмкости, они пишут на месте в тот самый массив, по которому идёт дашборд, — гонка данных плюс видимо мутирующий «снапшот». Возвращай отвязанную копию под локом: append([]Sample(nil), r.samples...)."
+          }
+        },
+        {
+          "id": "range-copy-discards-scale",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "Scale mutates the loop copy — a silent no-op",
+            "ru": "Scale мутирует копию из цикла — тихий no-op"
+          },
+          "explanation": {
+            "en": "range yields a copy of each Sample; s.Value *= f writes into that copy, and the registry's data never changes — the method silently does nothing. Index into the slice instead: for i := range r.samples { r.samples[i].Value *= f }.",
+            "ru": "range выдаёт копию каждого Sample; s.Value *= f пишет в эту копию, и данные реестра не меняются — метод тихо не делает ничего. Индексируйся в срез: for i := range r.samples { r.samples[i].Value *= f }."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "zero-value-mutex",
+          "label": {
+            "en": "The sync.Mutex is never initialized",
+            "ru": "sync.Mutex нигде не инициализируется"
+          },
+          "explanation": {
+            "en": "The zero value of sync.Mutex is an unlocked, ready-to-use lock — that is the stdlib's zero-value contract. No constructor or init step is needed.",
+            "ru": "Нулевое значение sync.Mutex — незаблокированный, готовый к работе лок: таков контракт нулевых значений в stdlib. Конструктор или init не нужны."
+          }
+        },
+        {
+          "id": "pointer-receivers-everywhere",
+          "label": {
+            "en": "Snapshot takes a pointer receiver though it only reads",
+            "ru": "У Snapshot получатель-указатель, хотя он только читает"
+          },
+          "explanation": {
+            "en": "Correct, not a defect: the struct holds a sync.Mutex, so a value receiver would copy the lock (go vet copylocks) and lock a throwaway copy. Types holding a mutex use pointer receivers on every method, read-only ones included.",
+            "ru": "Верно и не дефект: структура держит sync.Mutex, и получатель-значение скопировал бы лок (go vet copylocks) и лочил одноразовую копию. Типы с мьютексом используют получатели-указатели во всех методах, включая читающие."
+          }
+        }
+      ]
     }
   ]
 }
