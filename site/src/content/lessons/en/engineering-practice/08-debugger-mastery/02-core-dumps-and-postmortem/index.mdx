@@ -1,0 +1,126 @@
+---
+concepts:
+- ep-debugger-coredumps
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-core-dumps-and-postmortem"
+sources:
+- https://man7.org/linux/man-pages/man5/core.5.html
+- https://www.freedesktop.org/software/systemd/man/latest/coredumpctl.html
+- https://sourceware.org/gdb/current/onlinedocs/gdb/Core-Files.html
+spiral: []
+status: ready
+summary: 'A core dump freezes a crashed process for offline autopsy, but only if ulimit -c and core_pattern allow it. Dumps reach gigabytes. gdb matches the dump to symbols by build-id; a mismatched build gives a garbage stack — the classic works-in-dev, cores-in-prod trap.'
+title: 'Core dumps and post-mortem: ulimit, core_pattern, build-id matching, and unwinding a SIGSEGV after the fact'
+track: "engineering-practice"
+unit: "08-debugger-mastery"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A payments service crashed once a week with a `SIGSEGV` no one could reproduce, and for two months the team had nothing but a one-line log. The first fix was not in the code — it was discovering that `ulimit -c` was `0` in the container, so the kernel had been throwing every core dump away. They set it, and the next crash dropped a 6 GB core. gdb opened it and printed a stack that was pure garbage: `??` frames, addresses with no symbols, a backtrace that pointed nowhere. The cause was the second trap: the binary in the running container had been rebuilt and redeployed since the engineer's local copy, so the build-ids did not match, and gdb was unwinding the dump against the wrong symbol table. Once they pulled the exact binary by its build-id from the registry, the same 6 GB of frozen memory unwound into a clean stack ending in a use-after-free in the retry path — the bug that had been invisible for two months, sitting in the dump the whole time.
+</Hook>
+
+<Crux>A core dump is a frozen process image for autopsy — only if ulimit and core_pattern allow it, read only via build-id-matched symbols.</Crux>
+
+<Explanation>
+
+## Generating a core: ulimit, core_pattern, coredumpctl
+
+A core dump is the kernel writing the crashing process's memory image — address space, registers, the stack of every thread — to a file so you can autopsy it after the process is gone. But three gates decide whether you get one. First, the per-process resource limit `ulimit -c`: if it is `0` (the default in many container base images and systemd units), the kernel silently discards the dump. Second, `/proc/sys/kernel/core_pattern` decides where it goes — a literal path template like `core.%p.%e`, or, if it starts with `|`, a pipe to a handler program. On modern systemd hosts `core_pattern` pipes to `systemd-coredump`, and you retrieve dumps with `coredumpctl list` and `coredumpctl gdb <pid>` instead of hunting for a file. Third, in containers the limit and pattern live on the *host* kernel namespace, so a core_pattern that pipes to a handler not present in the container's mount namespace fails — a common reason "I set ulimit and still got nothing."
+
+The size is not small. A core contains all writable mapped memory, so a service holding a few gigabytes of heap produces a multi-gigabyte core — the Hook's 6 GB is ordinary. That has operational weight: dumps can fill a disk and take seconds to write while the process is dead, so production setups cap them, route them to dedicated storage, and sometimes strip unneeded mappings. You want the dump, but you plan for its size.
+
+<Quiz
+  id="02-core-dumps-and-postmortem-quiz-1"
+  lessonSlug="02-core-dumps-and-postmortem"
+  lang="en"
+  question="A containerized service crashes with SIGSEGV but no core file ever appears, even after the developer added 'ulimit -c unlimited' to the entrypoint. What is the most likely remaining cause?"
+  choices={[
+    { label: "The host's /proc/sys/kernel/core_pattern pipes to a handler (e.g. systemd-coredump) that the container's namespace cannot reach, so the dump is generated but not captured where expected", correct: true },
+    { label: "SIGSEGV never produces a core dump; only SIGABRT does", misconception: "SIGSEGV is one of the signals whose default action includes dumping core, alongside SIGABRT, SIGBUS, and others. The missing dump is about the ulimit/core_pattern gates and the container/host namespace split, not the signal type." },
+    { label: "Core dumps require the binary to be built with -g, and a stripped binary suppresses them", misconception: "Debug symbols affect whether you can read the dump, not whether the kernel writes one. A stripped binary still cores; you just need matching symbols to unwind it. The capture failure is environmental." },
+    { label: "ulimit -c only takes effect after a reboot", misconception: "ulimit is a per-process limit applied immediately to the shell and its children, no reboot involved. The real gap is core_pattern routing the dump through a host handler the container cannot see." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does the core_pattern handler live on the host even for a containerized crash? Because dumping core is a kernel action, and `core_pattern` is a single host-global kernel setting — there is no per-container core_pattern. When a process in a container segfaults, the host kernel evaluates the host's core_pattern and runs the host's handler. So a perfectly correct `ulimit -c unlimited` inside the container still routes the dump through whatever the node's core_pattern says, which on a Kubernetes node is often a path or handler your container never sees. The lesson: configure core capture at the node level, not just the image.
+</Inset>
+
+## Symbols, build-id, and the dev-vs-prod mismatch
+
+A core dump is raw memory and register values — it has no idea what function `0x4a3f10` is. To turn addresses into function names and line numbers you need the matching debug symbols, and "matching" is precise: every ELF binary carries a **build-id**, a hash baked in at link time, and the dump records the build-ids of the binary and shared libraries that were loaded. gdb (or `debuginfod`) uses that build-id to fetch the exact `.debug` file. If you point gdb at a binary that was recompiled — even from the same source with a different timestamp or compiler flag — the build-ids differ, the symbol table no longer lines up with the addresses in the dump, and you get the Hook's garbage stack: `??` frames and meaningless line numbers. This is the "works in dev, cores in prod" trap: your local rebuild is *not* the prod binary even if the source is identical.
+
+The professional setup separates concerns: ship a stripped binary to production (small, no `.debug`), keep the full debug info as a separate `.debug` file matched by build-id, and let `debuginfod` or your symbol server serve it on demand. Then a core from prod unwinds against the exact symbols even though the running binary carried none. Verify the match explicitly — `readelf -n core` and `readelf -n binary` show the build-ids; if they differ, stop, because every frame gdb prints is a lie.
+
+## Unwinding a SIGSEGV after the fact
+
+With a matched core and symbols, the autopsy is mechanical. `bt` walks the saved stack frames from the crash inward, using DWARF CFI (call-frame information) to find each caller's frame even with a custom frame layout. The top frame is where the fault hit; `info registers` shows the faulting address (on x86 the accessed address is in a register the kernel records), and a `SIGSEGV` at address `0x0` screams null-deref while a wild high address suggests a corrupted pointer or use-after-free. You can `frame N` into any caller, `print` locals (subject to the optimization caveats from the previous lesson), and read the `_exit` code: a `SIGABRT` core usually means an assertion or a libc-detected heap corruption (`free(): invalid pointer`), pointing you at the allocator's own diagnosis rather than the raw fault. The dump is a single frozen instant — no replay, no stepping — so you reconstruct the story from the frozen stack, the registers, and the heap, which is exactly why a use-after-free that only sometimes crashes becomes findable: the one captured instant is enough.
+
+<Quiz
+  id="02-core-dumps-and-postmortem-quiz-2"
+  lessonSlug="02-core-dumps-and-postmortem"
+  lang="en"
+  question="gdb opens a 6 GB prod core but the backtrace is all '??' frames with no symbol names, while the same gdb shows a clean stack on a core from your laptop. Most likely cause?"
+  choices={[
+    { label: "The binary you gave gdb has a different build-id than the one that produced the prod core, so the symbol table does not align with the dump's addresses", correct: true },
+    { label: "A 6 GB core is too large for gdb to unwind, so it gives up and prints ??", misconception: "gdb unwinds large cores fine; size is an I/O and disk concern, not a cause of ?? frames. The ?? means missing or mismatched symbols, which here is a build-id mismatch between your binary and the one that crashed." },
+    { label: "Production cores never contain stack data, only heap", misconception: "A core includes every thread's stack along with registers and writable memory — that is precisely what makes unwinding possible. The empty backtrace is a symbol-matching failure, not missing stack data." },
+    { label: "The core was written by SIGSEGV, which omits symbols that SIGABRT would include", misconception: "The faulting signal does not change what symbols a core has — cores carry no symbols at all; symbols come from the matched binary/.debug. The fix is fetching the build-id-matched binary, not changing the signal." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="From crash to a readable stack: the gates and the build-id join"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "crash", label: "SIGSEGV", sub: "process faults" },
+    { id: "gate", label: "ulimit + core_pattern", sub: "host-level gates" },
+    { id: "core", label: "Core dump", sub: "GBs, frozen memory" },
+    { id: "match", label: "build-id match", sub: "binary + .debug" },
+    { id: "unwind", label: "Unwind", sub: "bt via DWARF CFI" },
+    { id: "garbage", label: "?? frames", sub: "mismatched symbols" },
+  ]}
+  edges={[
+    { from: "crash", to: "gate", label: "kernel" },
+    { from: "gate", to: "core", label: "allowed" },
+    { from: "core", to: "match", label: "open in gdb" },
+    { from: "match", to: "unwind", label: "ids agree" },
+    { from: "match", to: "garbage", label: "ids differ" },
+  ]}
+  caption="ulimit and core_pattern are host-global gates; pass them and you get a multi-GB frozen image. The build-id is the join key between the dump and its symbols — mismatch it and every frame gdb prints is fiction."
+/>
+
+<KeyTakeaway>A core dump is the crashed process's frozen memory and registers, written only if ulimit -c is non-zero and the host's core_pattern routes it somewhere reachable — a gate that lives on the node, not in the container image. Dumps run to gigabytes because they hold the whole heap. To read one you need symbols matched by build-id: point gdb at a recompiled binary and the stack unwinds into garbage ?? frames, which is the works-in-dev, cores-in-prod trap. Ship stripped, serve build-id-matched .debug via debuginfod, verify the ids before trusting a single frame, then unwind the SIGSEGV from the frozen instant.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="02-core-dumps-and-postmortem-retrieval"
+  lang="en"
+  questions={[
+    { q: "What three gates decide whether a crashing containerized process produces a usable core dump?", a: "First, ulimit -c (RLIMIT_CORE): if zero, the kernel discards the dump silently — and zero is the default in many container images and systemd units. Second, /proc/sys/kernel/core_pattern: a path template like core.%p.%e, or a pipe (leading |) to a handler such as systemd-coredump, retrieved via coredumpctl. Third, the container/host split: core_pattern is a single host-global kernel setting with no per-container override, so a dump from a container is routed by the node's core_pattern through the node's handler — a perfectly correct ulimit -c unlimited inside the container still fails if the host handler or path is unreachable from the container's namespace. Configure capture at the node level. Also plan for size: a core holds all writable memory, so multi-gigabyte dumps are normal and can fill disks." },
+    { q: "Why does a prod core sometimes unwind into ?? frames, and how does build-id fix it?", a: "A core is raw memory and registers with no symbols of its own; addresses become names only against matching debug info. Every ELF binary carries a build-id hash baked in at link time, and the dump records the build-ids of the loaded binary and libraries. gdb (or debuginfod) uses the build-id to fetch the exact .debug. If you point gdb at a binary recompiled even from identical source, the build-ids differ, the symbol table no longer aligns with the dump's addresses, and bt prints ?? frames and garbage line numbers — the works-in-dev, cores-in-prod trap, because a local rebuild is not the prod binary. Fix: ship stripped binaries, keep the full .debug matched by build-id, serve it via debuginfod or a symbol server, and verify with readelf -n that the core's and binary's build-ids agree before trusting any frame." },
+  ]}
+/>
+
+<Recap lang="en">
+A core dump is the kernel's snapshot of a dying process — its address space, every thread's stack, and the registers — written so you can perform the autopsy after the process is gone, turning an unreproducible crash into a frozen instant you can examine at leisure. But capture is gated. ulimit -c must be non-zero, and it defaults to zero in many container images and systemd units, so the very first crash often produces nothing. /proc/sys/kernel/core_pattern decides destination: a path template or a pipe to a handler like systemd-coredump, retrieved with coredumpctl. Critically, core_pattern is a single host-global kernel setting with no per-container override, so a container crash is routed by the node's pattern through the node's handler — which is why a correct ulimit inside the container still yields nothing if capture is not configured at the node. Plan for size, too: a core holds all writable memory, so multi-gigabyte dumps like the Hook's 6 GB are ordinary and can fill disks. Reading a core needs symbols matched by build-id, the link-time hash recorded for the binary and every loaded library. Aim gdb at a recompiled binary — even from identical source — and the build-ids diverge, the symbol table no longer aligns with the dump's addresses, and bt unwinds into ?? garbage. That is the works-in-dev, cores-in-prod trap: your local rebuild is not the prod binary. The professional path ships stripped binaries, keeps full .debug matched by build-id, serves it via debuginfod, and verifies the ids with readelf -n before trusting a frame. With a matched core, the autopsy is mechanical: bt walks the frames via DWARF CFI, info registers gives the faulting address (0x0 means null-deref, a wild address suggests use-after-free or corruption), frame and print read the caller chain, and a SIGABRT core points at an assertion or libc's own heap-corruption diagnosis — all from one frozen instant, no replay, which is exactly enough to find a bug that only sometimes crashes.
+</Recap>
