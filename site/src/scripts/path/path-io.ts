@@ -103,6 +103,14 @@ export function masteryByTrack(state: KnowledgeState, concepts: Concept[], thres
     .sort((a, b) => a.track.localeCompare(b.track));
 }
 
+const BAND_ORDER: Record<string, number> = { foundations: 0, surface: 1, middle: 2, advanced: 3 };
+
+// Pure (exported for tests): ids of a track's concepts whose band is at or below the ceiling.
+export function conceptsUpToBand(all: Concept[], track: string, upTo: string): string[] {
+  const cap = BAND_ORDER[upTo] ?? 0;
+  return all.filter((c) => c.track === track && (BAND_ORDER[c.band] ?? 0) <= cap).map((c) => c.id);
+}
+
 export function serializeKnowledge(state: KnowledgeState): [string, ConceptMastery][] {
   return [...state.entries()];
 }
@@ -334,6 +342,28 @@ export function declareKnown(concept: string, known: boolean): void {
 export function skipUnit(unitId: string): void {
   let next = knowledge.value;
   for (const c of teachesByUnit.get(unitId) ?? []) next = applySelfDeclare(next, c, true, Date.now());
+  knowledge.value = next;
+}
+
+// Batch self-placement: declare every concept of `track` up to `upTo` band as known. Replaces
+// dozens of per-concept declares for a learner who already worked with the stack; a later direct
+// diagnostic still overrides any individual concept. Undo (known=false) REMOVES the declared
+// entries instead of declaring them unknown — a declared-false entry is STRONG evidence that
+// would block future study-evidence and propagation lifts, which is not what "never mind" means.
+export function declareTrackUpTo(track: string, upTo: string, known = true): void {
+  const ids = conceptsUpToBand(concepts, track, upTo);
+  if (known) {
+    let next = knowledge.value;
+    const now = Date.now();
+    for (const id of ids) next = applySelfDeclare(next, id, true, now);
+    knowledge.value = next;
+    return;
+  }
+  const next = new Map(knowledge.value);
+  for (const id of ids) {
+    const m = next.get(id);
+    if (m?.source === "declared") next.delete(id); // never wipe diagnostic/activity evidence
+  }
   knowledge.value = next;
 }
 export function pinUnit(unitId: string): void { setCfg({ view: { order: togglePin(config.value.view.order, unitId) } }); }
