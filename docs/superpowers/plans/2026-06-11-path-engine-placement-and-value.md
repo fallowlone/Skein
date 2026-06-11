@@ -167,7 +167,7 @@ One click declares all concepts of a track up to a chosen band as known — 3 mi
 - Modify: `src/components/path/CalibrationFlow.tsx` (render in intro phase)
 - Test: `src/scripts/path/path-io.test.ts`
 
-- [ ] **Step 1: Write the failing test for the pure helper**
+- [x] **Step 1: Write the failing test for the pure helper**
 
 Append to `src/scripts/path/path-io.test.ts`:
 
@@ -190,12 +190,12 @@ describe("conceptsUpToBand", () => {
 
 Add `conceptsUpToBand` to the test file's import from `./path-io`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test src/scripts/path/path-io.test.ts`
 Expected: FAIL — not exported.
 
-- [ ] **Step 3: Implement helper + mutator in `path-io.ts`**
+- [x] **Step 3: Implement helper + mutator in `path-io.ts`**
 
 Insert next to the other pure helpers (after `masteryByTrack`, around `path-io.ts:104`):
 
@@ -235,12 +235,12 @@ export function declareTrackUpTo(track: string, upTo: string, known = true): voi
 }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `bun test src/scripts/path/path-io.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Create the `SelfPlacement` island**
+- [x] **Step 5: Create the `SelfPlacement` island**
 
 Create `src/components/path/SelfPlacement.tsx`:
 
@@ -313,7 +313,7 @@ export default function SelfPlacement({ lang }: { lang: Locale }) {
 }
 ```
 
-- [ ] **Step 6: Render it in the calibration intro**
+- [x] **Step 6: Render it in the calibration intro**
 
 In `src/components/path/CalibrationFlow.tsx`, add the import:
 
@@ -329,12 +329,12 @@ and inside the `phase === "intro"` return block, insert `<SelfPlacement lang={la
         <div class="flex gap-3">
 ```
 
-- [ ] **Step 7: Typecheck + manual check**
+- [x] **Step 7: Typecheck + manual check** (typecheck clean — SelfPlacement/CalibrationFlow/path-io no new errors; interactive declare/undo check is the owner's)
 
 Run: `bunx astro check 2>&1 | tail -5` — no new errors.
 Run: `bun run preview`, open `/en/calibrate`: expand "Self-placement", mark a track "Used in production", open `/en/roadmap` → that track's units left the path and the mastery map shows them known. Mark back to "Never touched" → they return (undo works).
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/scripts/path/path-io.ts src/scripts/path/path-io.test.ts src/components/path/SelfPlacement.tsx src/components/path/CalibrationFlow.tsx
