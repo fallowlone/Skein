@@ -47,6 +47,8 @@ export const TRACK_BAND: Record<Track, Band> = {
   "react":                "surface",
   "nextjs":               "surface",
   "go":                   "surface",
+  // containers as a system
+  "docker":               "advanced",
 };
 
 export function bandOf(slug: Track): Band {
