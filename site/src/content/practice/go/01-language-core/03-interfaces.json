@@ -136,6 +136,147 @@
         "en": "The domain package defines the seam it consumes: type Storage interface { Get(ctx, key) ([]byte, error); Put(ctx, key, data) error; Exists(ctx, key) (bool, error) } — three methods, named for the domain's needs, not the provider's catalog. Packages storage/s3 and storage/disk implement it without importing the domain at all; implicit satisfaction wires them at the composition root (main), so tests construct disk.Store directly and there is no cycle to break. Each implementation file carries var _ domain.Storage = (*Store)(nil) — actually placed in the main/composition package if implementations must stay domain-agnostic — failing the build the day a signature drifts. The error rule is written in the interface's doc comment: methods return the error interface; implementations never declare concrete error pointer returns internally where they could leak into an interface, and success paths return literal nil — that single convention is what the *S3Error health-check incident was missing; %#v in the runbook is the diagnostic. The old 14-method interface dissolves: callers that only read take a one-method Getter (interfaces compose later if a caller genuinely needs more), so a test fake is three lines, not fourteen. The indexing pipeline crosses the interface exactly once per document — data, err := store.Get(ctx, key) — and then tokenizes the []byte with concrete functions: func tokenize([]byte) []Token, no io.Reader per token, no interface{} accumulator, because at millions of documents the boxed-value allocations and lost inlining are the profiler's reported pressure. If multiple tokenizer variants are needed, a generic function or a switch chosen once per run keeps dispatch out of the loop. Net: dynamic dispatch at the architectural seam (cheap, per-document), structural typing for testability (no cycles, tiny fakes), concrete code where the profiler says the elements are.",
         "ru": "Доменный пакет определяет шов, который потребляет: type Storage interface { Get(ctx, key) ([]byte, error); Put(ctx, key, data) error; Exists(ctx, key) (bool, error) } — три метода, названные по нуждам домена, а не по каталогу провайдера. Пакеты storage/s3 и storage/disk реализуют его, вообще не импортируя домен; неявное удовлетворение связывает их в корне композиции (main), так что тесты конструируют disk.Store напрямую, и ломать нечего — цикла нет. Каждая реализация сопровождается var _ domain.Storage = (*Store)(nil) — размещённым в пакете main/композиции, если реализации должны остаться домен-агностичными, — и сборка падает в день, когда сигнатура уползёт. Правило ошибок записано в док-комментарии интерфейса: методы возвращают интерфейс error; реализации не объявляют конкретных указательных возвратов ошибок там, где они могут утечь в интерфейс, а успешные пути возвращают литеральный nil — именно этой единственной конвенции не хватало инциденту health check с *S3Error; %#v в ранбуке — диагностика. Старый 14-методный интерфейс растворяется: вызывающие, которые только читают, берут однометодный Getter (интерфейсы скомпонуются позже, если кому-то правда нужно больше), и тестовая подделка — три строки, а не четырнадцать. Индексирующий пайплайн пересекает интерфейс ровно один раз на документ — data, err := store.Get(ctx, key) — и дальше токенизирует []byte конкретными функциями: func tokenize([]byte) []Token, без io.Reader на токен, без аккумулятора interface{}, потому что на миллионах документов аллокации упакованных значений и потерянный инлайнинг — это и есть давление, о котором сообщает профилировщик. Если нужны несколько вариантов токенизатора — дженериковая функция или switch, выбираемый раз на прогон, держит диспетчеризацию вне цикла. Итог: динамическая диспетчеризация на архитектурном шве (дёшево, на-документ), структурная типизация ради тестируемости (без циклов, крошечные подделки), конкретный код там, где профилировщик видит элементы."
       }
+    },
+    {
+      "id": "incident-boxing-in-decode-hot-loop",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "The pluggable recorder that fed 35% of CPU to the GC",
+        "ru": "Подключаемый рекордер, скормивший GC 35% CPU"
+      },
+      "prompt": {
+        "en": "A market-data pipeline decodes ~40M events per minute. A PR added per-field instrumentation: every decoded value now passes through a Recorder interface — Record(v any) — so different sinks can be plugged in. Post-deploy: throughput is down 40%, GC CPU went from 6% to 35%, and p99 ingest lag is breaching SLO. The CPU profile is dominated by runtime.mallocgc and runtime.convT64; the alloc profile points at the recorder.Record call sites. Work it step by step; commit before revealing.",
+        "ru": "Пайплайн рыночных данных декодирует ~40 млн событий в минуту. PR добавил пофилдовую инструментацию: каждое декодированное значение теперь проходит через интерфейс Recorder — Record(v any), — чтобы можно было подключать разные приёмники. После деплоя: пропускная способность −40%, CPU на GC вырос с 6% до 35%, p99 лага инжеста пробивает SLO. В профиле CPU доминируют runtime.mallocgc и runtime.convT64; профиль аллокаций показывает на вызовы recorder.Record. Веди по шагам; сформулируй ответ до раскрытия."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · Reading convT64",
+            "ru": "1 · Читаем convT64"
+          },
+          "prompt": {
+            "en": "The call sites 'just pass an int64'. What do runtime.convT64 plus runtime.mallocgc at those sites tell you is actually happening on every call?",
+            "ru": "В точках вызова «просто передаётся int64». Что runtime.convT64 вместе с runtime.mallocgc в этих точках говорят о том, что на самом деле происходит при каждом вызове?"
+          },
+          "reveal": {
+            "en": "Boxing. An interface value is a (type, data) pair where the data word is a pointer — so storing an int64 into `any` forces the value onto the heap, and runtime.convT64 IS that allocation. 40M events × several fields means hundreds of millions of tiny heap allocations per minute; each is garbage one call later. The GC isn't misbehaving — it is faithfully collecting the garbage the interface conversion manufactures. The dispatch cost (~2–4 ns) is irrelevant; the allocation plus GC pressure is the bill.",
+            "ru": "Боксинг. Значение интерфейса — пара (тип, данные), где слово данных — указатель, поэтому помещение int64 в `any` выталкивает значение в кучу, и runtime.convT64 — и есть эта аллокация. 40 млн событий × несколько полей — это сотни миллионов крошечных аллокаций в минуту; каждая становится мусором через вызов. GC не сходит с ума — он честно собирает мусор, который производит конверсия в интерфейс. Стоимость диспетчеризации (~2–4 нс) ни при чём; счёт выставляют аллокация и давление на GC."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · Why 40%, not 2 ns",
+            "ru": "2 · Почему 40%, а не 2 нс"
+          },
+          "prompt": {
+            "en": "Interface dispatch is famously 'a couple of nanoseconds'. Walk the second-order costs that turn a free getter into a 40% throughput collapse at 40M events/min.",
+            "ru": "Диспетчеризация интерфейса — «пара наносекунд», как известно. Разбери второпорядковые издержки, которые превращают бесплатный геттер в обвал пропускной способности на 40% при 40 млн событий/мин."
+          },
+          "reveal": {
+            "en": "Two compounding effects. First, the heap escape: each boxed scalar is an allocation (~25–50 ns with GC amortization) where the direct call had zero. Second, blocked inlining: the compiler cannot inline a callee it cannot identify, so the one-line record path stays a real call and everything inlining unlocks — constant folding, dead-code elimination, registers — is off. Per-element hot paths multiply nanoseconds by 10^8: ~30 ns of new cost × ~200M field-records/min ≈ 6 CPU-seconds per minute of pure overhead, plus whole GC cycles. That is the documented 10–30× hot-loop regression — and it would be noise at per-request frequency.",
+            "ru": "Два усиливающих друг друга эффекта. Первый — побег в кучу: каждый упакованный скаляр — аллокация (~25–50 нс с амортизацией GC) там, где прямой вызов стоил ноль. Второй — заблокированный инлайнинг: компилятор не может встроить вызов, который не может идентифицировать, так что однострочный путь записи остаётся настоящим вызовом, и всё, что открывает инлайнинг — свёртка констант, выкидывание мёртвого кода, регистры, — выключено. Поэлементные горячие пути умножают наносекунды на 10^8: ~30 нс новой цены × ~200 млн записей полей/мин ≈ 6 CPU-секунд чистых накладных в минуту, плюс целые циклы GC. Это и есть документированная регрессия 10–30× в горячем цикле — на частоте per-request она была бы шумом."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · Keep the seam, move it",
+            "ru": "3 · Сохрани шов, передвинь его"
+          },
+          "prompt": {
+            "en": "The team still wants pluggable sinks. How do you keep the abstraction without paying per element, and what gate stops the next hot-loop interface from shipping?",
+            "ru": "Команда всё ещё хочет подключаемые приёмники. Как сохранить абстракцию, не платя за каждый элемент, и какой гейт не даст следующему интерфейсу в горячем цикле уехать в прод?"
+          },
+          "reveal": {
+            "en": "Move the interface from per-element to per-batch: the hot loop fills a concrete (or generic) typed buffer — RecordInt64(int64) / Record[T constraints] — and ONE interface call per event or per batch hands it to the sink. Scalars never touch `any`. PGO (Go 1.21+) can devirtualize hot sites from production profiles, but don't bet an SLO on it across package boundaries. The gate: a benchmark with allocs/op asserted in CI for the decode path (benchstat in review) — a getter that suddenly allocates fails the build instead of the SLO. Design rule worth writing down: interfaces at architectural seams where calls are per-request; concrete or generic code where calls are per-element.",
+            "ru": "Передвинь интерфейс с поэлементного уровня на побатчевый: горячий цикл наполняет конкретный (или дженерик) типизированный буфер — RecordInt64(int64) / Record[T constraints], — и ОДИН вызов интерфейса на событие или на батч отдаёт его приёмнику. Скаляры вообще не касаются `any`. PGO (Go 1.21+) умеет девиртуализировать горячие точки по продакшен-профилям, но не ставь SLO на это через границы пакетов. Гейт: бенчмарк с проверкой allocs/op в CI для пути декодирования (benchstat на ревью) — геттер, внезапно начавший аллоцировать, валит сборку, а не SLO. Правило дизайна, которое стоит записать: интерфейсы — на архитектурных швах с частотой per-request; конкретный или дженерик код — там, где вызовы поэлементные."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-notifier-typed-nil",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review a pluggable notifier's construction",
+        "ru": "Отревьюй конструирование подключаемого нотификатора"
+      },
+      "prompt": {
+        "en": "Notifications are optional: with no Slack hook configured, the service should silently skip them. Review it like a senior: name the real defects, and don't flag the non-issues.",
+        "ru": "Уведомления опциональны: без настроенного Slack-хука сервис должен молча их пропускать. Отревьюй как senior: назови реальные дефекты и не цепляйся к не-проблемам."
+      },
+      "diff": {
+        "lang": "go",
+        "code": "type Event struct {\n\tKind string\n\tMsg  string\n}\n\ntype Notifier interface {\n\tNotify(ctx context.Context, ev Event) error\n}\n\ntype SlackNotifier struct{ hook string }\n\nfunc (s *SlackNotifier) Notify(ctx context.Context, ev Event) error {\n\treturn post(ctx, s.hook, ev)\n}\n\nfunc NewNotifier(cfg Config) Notifier {\n\tvar s *SlackNotifier\n\tif cfg.SlackHook != \"\" {\n\t\ts = &SlackNotifier{hook: cfg.SlackHook}\n\t}\n\treturn s\n}\n\nfunc Dispatch(ctx context.Context, n Notifier, ev Event) {\n\tif n == nil {\n\t\treturn\n\t}\n\tif err := n.Notify(ctx, ev); err != nil {\n\t\tslog.Error(\"notify failed\", \"err\", err)\n\t}\n}"
+      },
+      "findings": [
+        {
+          "id": "typed-nil-escapes-guard",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "NewNotifier returns a typed nil that defeats the n == nil guard",
+            "ru": "NewNotifier возвращает типизированный nil, обходящий проверку n == nil"
+          },
+          "explanation": {
+            "en": "On the disabled path, `return s` stores a nil *SlackNotifier into the Notifier interface: the type word is set, the data word is nil — and an interface is nil only when BOTH are. Dispatch's n == nil is false, Notify runs on a nil receiver, and post(ctx, s.hook, ev) panics dereferencing s. Fix: return a literal nil from the disabled branch (if cfg.SlackHook == \"\" { return nil }) — never a possibly-nil concrete variable.",
+            "ru": "На отключённом пути `return s` кладёт nil *SlackNotifier в интерфейс Notifier: слово типа заполнено, слово данных — nil, а интерфейс равен nil, только когда пусты ОБА. Проверка n == nil в Dispatch даёт false, Notify выполняется на nil-получателе, и post(ctx, s.hook, ev) паникует на разыменовании s. Фикс: возвращай литеральный nil из отключённой ветки (if cfg.SlackHook == \"\" { return nil }) — и никогда возможно-nil конкретную переменную."
+          }
+        },
+        {
+          "id": "constructor-returns-interface",
+          "severity": "tradeoff",
+          "planted": true,
+          "label": {
+            "en": "The constructor returns the interface, not the struct",
+            "ru": "Конструктор возвращает интерфейс, а не структуру"
+          },
+          "explanation": {
+            "en": "Accept interfaces, return structs: returning Notifier hides the concrete *SlackNotifier method set, freezes the API around today's abstraction — and is precisely what created the typed-nil hazard, because the concrete-typed nil had to pass through an interface conversion. Returning *SlackNotifier (callers assign it to their own Notifier) keeps flexibility and makes the nil flow explicit. The known exception is `error`; this isn't it.",
+            "ru": "Принимай интерфейсы, возвращай структуры: возврат Notifier прячет набор методов конкретного *SlackNotifier, замораживает API вокруг сегодняшней абстракции — и именно он создал ловушку типизированного nil, потому что nil конкретного типа прошёл через конверсию в интерфейс. Возврат *SlackNotifier (вызывающий сам присвоит его своему Notifier) сохраняет гибкость и делает поток nil явным. Известное исключение — `error`; это не тот случай."
+          }
+        },
+        {
+          "id": "no-disabled-config-test",
+          "severity": "missing-test",
+          "planted": true,
+          "label": {
+            "en": "No test exercises the disabled-config path",
+            "ru": "Нет теста на путь с отключённым конфигом"
+          },
+          "explanation": {
+            "en": "The panic lives exactly on the path tests skip: empty SlackHook. A table test constructing NewNotifier with an empty config and asserting Dispatch is a no-op (no panic, no call) would catch the typed nil deterministically — it's the cheapest regression net for every future Notifier implementation.",
+            "ru": "Паника живёт ровно на том пути, который тесты пропускают: пустой SlackHook. Табличный тест, конструирующий NewNotifier с пустым конфигом и проверяющий, что Dispatch — no-op (ни паники, ни вызова), детерминированно поймал бы типизированный nil — это самая дешёвая страховка для каждой будущей реализации Notifier."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "no-implements-declaration",
+          "label": {
+            "en": "SlackNotifier never declares that it implements Notifier",
+            "ru": "SlackNotifier нигде не объявляет, что реализует Notifier"
+          },
+          "explanation": {
+            "en": "Go satisfaction is implicit and structural: having the method IS the contract. The optional compile-time assertion var _ Notifier = (*SlackNotifier)(nil) documents intent, but its absence is not a defect.",
+            "ru": "Удовлетворение интерфейса в Go неявное и структурное: наличие метода И ЕСТЬ контракт. Опциональная компайл-тайм проверка var _ Notifier = (*SlackNotifier)(nil) документирует намерение, но её отсутствие — не дефект."
+          }
+        },
+        {
+          "id": "one-method-interface",
+          "label": {
+            "en": "Notifier has only one method — too thin an abstraction",
+            "ru": "У Notifier всего один метод — слишком тонкая абстракция"
+          },
+          "explanation": {
+            "en": "One-method interfaces are the idiom (io.Reader, fmt.Stringer): satisfiable by many types, composable by embedding. The bigger the interface, the weaker the abstraction — thin is the feature here.",
+            "ru": "Интерфейсы с одним методом — идиома (io.Reader, fmt.Stringer): их удовлетворяют многие типы, они композируются встраиванием. Чем больше интерфейс, тем слабее абстракция — тонкость здесь и есть достоинство."
+          }
+        }
+      ]
     }
   ]
 }

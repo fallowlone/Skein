@@ -139,6 +139,136 @@
         "en": "import asyncio, contextlib\n\nasync def worker(q):\n    while True:\n        job = await q.get()                      # cancellation point: nothing in flight\n        try:\n            await handle(job)                    # idempotent: dedup key = job.id\n            await q.ack(job)\n        except asyncio.CancelledError:\n            with contextlib.suppress(TimeoutError, ConnectionError):\n                async with asyncio.timeout(2):   # broker may be dead: 2 s, not forever\n                    await q.nack(job)            # release fast; redelivery will retry\n            raise                                # the canceller is owed the unwind\n        except Exception:\n            log.exception(\"job failed\")\n            await q.nack(job)\n\nasync def main():\n    async with asyncio.TaskGroup() as tg:        # structure owns the lifetimes\n        for _ in range(32):\n            tg.create_task(worker(q))\n        await sigterm_event.wait()\n        raise ShutdownRequested                  # one failure cancels all siblings\n\nWhy it holds the budget: cancel lands either in q.get() (nothing in flight, unwind is instant) or inside handle() at its next await — the nack branch then spends at most 2 s. Worst case is bounded by the longest uncancellable stretch inside handle(), so handle() must keep real awaits in its long phases. Idempotency is the partner decision: cancel-then-nack plus at-least-once means some job WILL run twice; the dedup key turns that from incident into noise. The bare-except clause never appears: job errors and cancellation have different contracts, and the code spells both.",
         "ru": "# Протокол: TaskGroup владеет жизнями, ветка отмены ограничена, re-raise обязателен, обработчики идемпотентны\nimport asyncio, contextlib\n\nasync def worker(q):\n    while True:\n        job = await q.get()                      # точка отмены: в полёте ничего\n        try:\n            await handle(job)                    # идемпотентно: ключ дедупа = job.id\n            await q.ack(job)\n        except asyncio.CancelledError:\n            with contextlib.suppress(TimeoutError, ConnectionError):\n                async with asyncio.timeout(2):   # брокер может быть мёртв: 2 с, не вечность\n                    await q.nack(job)            # освободить быстро; передоставка дотянет\n            raise                                # отменяющему причитается размотка\n        except Exception:\n            log.exception(\"джоб упал\")\n            await q.nack(job)\n\nasync def main():\n    async with asyncio.TaskGroup() as tg:        # структура владеет временами жизни\n        for _ in range(32):\n            tg.create_task(worker(q))\n        await sigterm_event.wait()\n        raise ShutdownRequested                  # один сбой отменяет всех соседей\n\nПочему бюджет держится: отмена приземляется либо в q.get() (в полёте ничего, размотка мгновенна), либо внутри handle() на его ближайшем await — ветка nack тратит максимум 2 с. Худший случай ограничен самым длинным неотменяемым отрезком внутри handle(), поэтому handle() обязан держать настоящие await в длинных фазах. Идемпотентность — парное решение: отмена-затем-nack плюс at-least-once означает, что какой-то джоб ТОЧНО выполнится дважды; ключ дедупа превращает это из инцидента в шум. Голый except не появляется нигде: у ошибок джобов и у отмены разные контракты, и код проговаривает оба."
       }
+    },
+    {
+      "id": "incident-timeout-swallowed",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 13,
+      "title": {
+        "en": "Incident: timeouts log but never fire, connections pile to 8000",
+        "ru": "Инцидент: таймауты логируются, но не срабатывают, коннекты растут до 8000"
+      },
+      "prompt": {
+        "en": "An API gateway wraps each upstream call in `asyncio.timeout(2)`. During an upstream slowdown, open connections climb from 200 to 8000 over 6 minutes and the pod OOMs, even though the access log shows 'upstream slow, aborting' for thousands of requests. The `timeout` block fires, the handler logs the abort, returns 504 — but the upstream coroutine keeps running and holding its socket. The retry helper inside the call wraps its body in `try/except Exception`. Find why `asyncio.timeout` cannot actually stop the work and what one change restores cancellation. Work it step by step; commit before revealing.",
+        "ru": "API-гейтвей оборачивает каждый вызов апстрима в `asyncio.timeout(2)`. Во время замедления апстрима открытые коннекты растут с 200 до 8000 за 6 минут, и под падает по OOM, хотя access-лог показывает 'upstream slow, aborting' для тысяч запросов. Блок `timeout` срабатывает, хэндлер логирует прерывание, возвращает 504 — но корутина апстрима продолжает работать и держит свой сокет. Хелпер ретраев внутри вызова оборачивает тело в `try/except Exception`. Найдите, почему `asyncio.timeout` на деле не может остановить работу и какое одно изменение возвращает отмену. Веди по шагам; сформулируй ответ до раскрытия."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · how timeout stops work",
+            "ru": "1 · как таймаут останавливает работу"
+          },
+          "prompt": {
+            "en": "State the mechanism `asyncio.timeout` uses to abort the wrapped block. What exception does it inject, into what, and what must happen to that exception for the block to actually end?",
+            "ru": "Сформулируйте механизм, которым `asyncio.timeout` прерывает обёрнутый блок. Какое исключение он инъецирует, во что и что должно произойти с этим исключением, чтобы блок реально завершился?"
+          },
+          "reveal": {
+            "en": "`asyncio.timeout` does not magically kill code. On expiry it cancels the task running the block, which injects a `CancelledError` at the task's current `await`. That `CancelledError` must propagate up and out of the block for the timeout to take effect — `timeout` catches it at its boundary and re-raises it as `TimeoutError`. Cancellation is cooperative: the only way to stop the inner work is to let the injected exception unwind through it.",
+            "ru": "`asyncio.timeout` не убивает код магически. По истечении он отменяет задачу, выполняющую блок, что инъецирует `CancelledError` в текущий `await` задачи. Этот `CancelledError` должен подняться и выйти из блока, чтобы таймаут сработал — `timeout` ловит его на своей границе и пере-бросает как `TimeoutError`. Отмена кооперативна: единственный способ остановить внутреннюю работу — дать инъецированному исключению размотаться сквозь неё."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · where the abort dies",
+            "ru": "2 · где гибнет прерывание"
+          },
+          "prompt": {
+            "en": "The retry helper inside the upstream call uses `except Exception`. Trace the injected CancelledError through it. Why does `timeout` still report a TimeoutError to the caller while the upstream coroutine keeps running and holding its socket?",
+            "ru": "Хелпер ретраев внутри вызова апстрима использует `except Exception`. Проследите инъецированный CancelledError сквозь него. Почему `timeout` всё же сообщает вызывающему TimeoutError, пока корутина апстрима продолжает работать и держать сокет?"
+          },
+          "reveal": {
+            "en": "In Python 3.8+ `CancelledError` is a `BaseException`, NOT an `Exception` — but a retry loop that does `except Exception: ... ; continue` would normally let it pass. The trap here is subtler: the retry body catches its own real errors with `except Exception`, retries, and on the retry's next `await` a SECOND injection or a swallowed-then-suppressed path can occur — but the load-bearing bug is that the helper wraps the await in `try/except Exception` AND on catching, sleeps and loops without re-checking cancellation, so the task's cancellation request is consumed by the retry's own error handling and the loop keeps issuing fresh upstream awaits. `timeout` sees its deadline pass and raises TimeoutError at its boundary, so the caller gets a 504 — but the inner retry coroutine was never actually unwound; it keeps looping on a live socket. The 504 is a lie: the work outlived its own timeout.",
+            "ru": "В Python 3.8+ `CancelledError` — это `BaseException`, а НЕ `Exception` — но цикл ретраев с `except Exception: ... ; continue` обычно дал бы ему пройти. Ловушка тоньше: тело ретрая ловит свои настоящие ошибки через `except Exception`, ретраит, и на ближайшем `await` ретрая может произойти ВТОРАЯ инъекция или путь «поймал-и-подавил» — но несущий баг в том, что хелпер оборачивает await в `try/except Exception` И, поймав, спит и крутит цикл без перепроверки отмены, так что запрос отмены задачи поглощается собственной обработкой ошибок ретрая, а цикл продолжает выдавать свежие awaitы апстрима. `timeout` видит, что дедлайн прошёл, и бросает TimeoutError на своей границе, так что вызывающий получает 504 — но внутренняя корутина ретрая никогда не была размотана; она крутится на живом сокете. 504 — ложь: работа пережила собственный таймаут."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · restore propagation",
+            "ru": "3 · вернуть распространение"
+          },
+          "prompt": {
+            "en": "Name the exact change to the retry helper that makes cancellation propagate, and why connections then drain. What is the general rule for any broad except that lives inside a cancellable scope?",
+            "ru": "Назовите точное изменение в хелпере ретраев, делающее отмену распространяющейся, и почему коннекты тогда сливаются. Каково общее правило для любого широкого except внутри отменяемой области?"
+          },
+          "reveal": {
+            "en": "Make the retry helper catch `asyncio.CancelledError` explicitly and re-raise it before its `except Exception` (or, on 3.11+, simply ensure the broad clause never sits between the await and the cancel boundary). Since `CancelledError` is a `BaseException`, `except Exception` already does not catch it — so the real fix is removing whatever swallows it: a bare `except:`, an `except BaseException:`, or a retry loop that re-enters `await` after consuming the cancellation without re-checking. Once the injected `CancelledError` is allowed to unwind, the upstream coroutine stops at its current await, releases its socket via `finally`/context-manager close, and `timeout` raises `TimeoutError` truthfully. Connections drain because aborted requests actually end. General rule: never let a broad handler stand between a cancellable await and the cancellation boundary — catch `CancelledError` first and re-raise, keeping any cleanup bounded.",
+            "ru": "Заставьте хелпер ретраев ловить `asyncio.CancelledError` явно и пере-бросать его до `except Exception` (или, на 3.11+, просто гарантируйте, что широкий клозет не сидит между await и границей отмены). Так как `CancelledError` — это `BaseException`, `except Exception` его уже не ловит — поэтому реальный фикс в том, чтобы убрать то, что его проглатывает: голый `except:`, `except BaseException:` или цикл ретраев, заново входящий в `await` после поглощения отмены без перепроверки. Как только инъецированному `CancelledError` дают размотаться, корутина апстрима останавливается на текущем await, освобождает сокет через `finally`/закрытие контекст-менеджера, а `timeout` честно бросает `TimeoutError`. Коннекты сливаются, потому что прерванные запросы реально завершаются. Общее правило: никогда не давайте широкому обработчику стоять между отменяемым await и границей отмены — ловите `CancelledError` первым и пере-бросайте, держа любую уборку ограниченной."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-cancellable-fetch",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review: a cancellable fetch-with-cleanup helper",
+        "ru": "Ревью: отменяемый fetch-хелпер с уборкой"
+      },
+      "prompt": {
+        "en": "A teammate writes a helper that fetches from an upstream with a temp file and a lease, meant to be safe under `asyncio.timeout`. They claim cancellation 'cleans up properly'. Review like a senior: name the real defects, don't flag non-issues.",
+        "ru": "Коллега пишет хелпер, тянущий данные из апстрима с временным файлом и лизом, рассчитанный быть безопасным под `asyncio.timeout`. Он утверждает, что отмена «убирается как надо». Ревьюй как сеньор: назови реальные дефекты, не отмечай несуществующие."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "import asyncio, os\n\n\nasync def fetch_to_tmp(client, url, lease):\n    path = f\"/tmp/{url.split('/')[-1]}\"\n    await lease.acquire()\n    try:\n        resp = await client.get(url)\n        with open(path, \"wb\") as f:\n            f.write(resp.content)\n        return path\n    except BaseException:\n        # best-effort cleanup on any failure\n        if os.path.exists(path):\n            os.remove(path)\n        await lease.release()\n        return None"
+      },
+      "findings": [
+        {
+          "id": "except-baseexception-swallows-cancel",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "except BaseException swallows CancelledError",
+            "ru": "except BaseException проглатывает CancelledError"
+          },
+          "explanation": {
+            "en": "`except BaseException` catches `CancelledError` and the function `return None`s instead of re-raising. The cancellation never propagates, so any enclosing `asyncio.timeout` cannot raise its `TimeoutError` and any `gather`/`TaskGroup` awaiting this coroutine sees a normal completion — the task that was cancelled lies about it. The handler must catch `asyncio.CancelledError` (or let it through) and `raise` after cleanup, reserving the broad branch for real errors via `except Exception`.",
+            "ru": "`except BaseException` ловит `CancelledError`, и функция делает `return None` вместо пере-броса. Отмена не распространяется, поэтому объемлющий `asyncio.timeout` не может бросить свой `TimeoutError`, а любой `gather`/`TaskGroup`, ожидающий эту корутину, видит нормальное завершение — отменённая задача об этом лжёт. Обработчик обязан ловить `asyncio.CancelledError` (или пропускать его) и делать `raise` после уборки, оставив широкую ветку для настоящих ошибок через `except Exception`."
+          }
+        },
+        {
+          "id": "unbounded-cleanup-await",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "Unbounded await in the cleanup path",
+            "ru": "Неограниченный await на пути уборки"
+          },
+          "explanation": {
+            "en": "`await lease.release()` in the cancellation path is unbounded and itself awaitable, so a second cancel (or the same timeout deadline already passed) can land inside it and abort cleanup mid-way, leaking the lease. Cleanup that runs during cancellation must be shielded and bounded — wrap the release in `asyncio.timeout(~2)` with the timeout suppressed, or `asyncio.shield` it, so a double-cancel cannot strand the lease.",
+            "ru": "`await lease.release()` на пути отмены неограничен и сам является awaitable, поэтому вторая отмена (или уже прошедший дедлайн того же таймаута) может приземлиться внутрь него и оборвать уборку на полпути, утекая лиз. Уборка во время отмены обязана быть защищённой и ограниченной — оберните release в `asyncio.timeout(~2)` с подавлением таймаута или `asyncio.shield`, чтобы двойная отмена не бросила лиз."
+          }
+        },
+        {
+          "id": "lease-not-released-on-success",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "Lease released only on failure, leaked on success",
+            "ru": "Лиз освобождается только при сбое, утекает при успехе"
+          },
+          "explanation": {
+            "en": "The lease is acquired in the `try`, but `release()` lives only in the `except` branch. On the normal success path the function returns the path without ever releasing the lease, so every successful fetch permanently leaks one lease — the pool exhausts under normal load, not just under cancellation. The acquire/release pair belongs in `finally` (or an `async with` lease context), not in the error branch.",
+            "ru": "Лиз берётся в `try`, но `release()` живёт только в ветке `except`. На нормальном успешном пути функция возвращает путь, ни разу не освободив лиз, так что каждый успешный fetch навсегда утекает один лиз — пул исчерпывается под обычной нагрузкой, а не только при отмене. Пара acquire/release — дело `finally` (или контекста `async with` для лиза), а не ветки ошибок."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "predictable-tmp-path",
+          "label": {
+            "en": "/tmp path built from the URL tail",
+            "ru": "Путь /tmp из хвоста URL"
+          },
+          "explanation": {
+            "en": "The temp filename derives from the URL's last path segment, which looks like a collision or traversal risk, but within this review's scope it is a functional defect at most, not the cancellation bug under test — and for the stated trusted-internal upstreams it does not corrupt cancellation behavior. It is plausible to flag for hardening, but it is not one of the cancellation-correctness defects this diff is about; don't conflate it with the swallowed-cancel bug.",
+            "ru": "Имя временного файла берётся из последнего сегмента пути URL, что выглядит как риск коллизии или обхода, но в рамках этого ревью это в худшем случае функциональный дефект, а не тестируемый баг отмены — и для заявленных доверенных внутренних апстримов он не ломает поведение отмены. Отметить для упрочнения правдоподобно, но это не один из дефектов корректности отмены, о которых этот дифф; не путайте его с багом проглоченной отмены."
+          }
+        }
+      ]
     }
   ]
 }
