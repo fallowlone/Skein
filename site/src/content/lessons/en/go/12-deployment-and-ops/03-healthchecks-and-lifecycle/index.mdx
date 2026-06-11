@@ -1,0 +1,168 @@
+---
+concepts:
+- go-healthchecks
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-healthchecks-and-lifecycle"
+sources:
+- https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+- https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/
+- https://pkg.go.dev/net/http
+spiral: []
+status: ready
+summary: 'Liveness restarts, readiness routes, startup grants boot grace — checking dependencies in liveness turns a DB blip into a restart storm. Real readiness pings what the service needs, flips off first on SIGTERM, and the whole drain fits inside terminationGracePeriodSeconds.'
+title: 'Healthchecks and lifecycle: liveness vs readiness vs startup, and the shutdown sequence that drops zero requests'
+track: "go"
+unit: "12-deployment-and-ops"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The database failover took 28 seconds. The outage it caused lasted 40 minutes. Every pod in the fleet ran a liveness probe against /health — a handler someone had once *improved* to ping the database, because more checking sounded safer. When the failover began, two hundred perfectly healthy pods started failing liveness together; three misses later, the kubelets killed them all. Now the incident had a second act: hundreds of restarting processes with cold caches reconnecting simultaneously to a database that had just recovered — a connection stampede that knocked it over again, which failed liveness again, which restarted the fleet again. A 28-second blip, looped into 40 minutes by the very probes meant to add safety. The postmortem fit in one sentence: liveness answers should I be restarted, readiness answers should I receive traffic, and the DB check had been wired to the question where restarting is the response. A different team that quarter had the mirror-image bug — no startup probe, a 90-second schema migration on boot, liveness armed at thirty seconds: CrashLoopBackOff, forever, on every deploy. Kubernetes faithfully executes whichever mistake you encode.
+</Hook>
+
+<Crux>Liveness means restart me, readiness means route to me — confuse them and a DB blip restarts the fleet. Fail readiness first on drain.</Crux>
+
+<Explanation>
+
+## Three probes, three different questions
+
+Liveness asks: is this process broken beyond self-repair — deadlocked, wedged, corrupted? Failure means the kubelet restarts the container, so the handler must test *only* conditions a restart fixes: the event loop responds, period. It must never check dependencies, because a restart does not repair a database — it just converts every dependency outage into a fleet-wide restart storm, exactly the Hook. Readiness asks: should this pod receive traffic *right now*? Failure removes the pod from Service endpoints — reversible, cheap, exactly what you want during a dependency outage, an overload, or a drain. This is where dependency checks belong. Startup asks: has the process finished booting? Until it succeeds, liveness and readiness are suspended — the grace budget for migrations and cache warms is failureThreshold times periodSeconds, and without it liveness kills a slow boot at its threshold and loops forever.
+
+```yaml
+livenessProbe:
+  httpGet: { path: /healthz, port: 8080 }
+  periodSeconds: 10
+  failureThreshold: 3        # 30 s of true wedge before restart
+readinessProbe:
+  httpGet: { path: /readyz, port: 8080 }
+  periodSeconds: 5
+  failureThreshold: 2        # out of rotation within ~10 s
+startupProbe:
+  httpGet: { path: /healthz, port: 8080 }
+  periodSeconds: 5
+  failureThreshold: 36       # up to 180 s to boot before liveness arms
+```
+
+<Quiz
+  id="03-healthchecks-quiz-1"
+  lessonSlug="03-healthchecks-and-lifecycle"
+  lang="en"
+  question="Your liveness probe calls a handler that pings the database. The DB has a 30-second failover. What happens to the fleet?"
+  choices={[
+    { label: "Every pod fails liveness together, the kubelets restart healthy processes en masse, and the blip becomes a restart storm with cold caches and a reconnect stampede", correct: true },
+    { label: "Nothing — failureThreshold absorbs a 30-second blip", misconception: "With the common 3 x 10 s settings, a 30-second outage sits exactly at the kill line: a slice of the fleet restarts, the restarts add reconnect load that extends the blip for the rest, and the storm feeds itself. Thresholds buy seconds, not immunity from the category error." },
+    { label: "Pods are removed from the load balancer until the DB recovers, then return", misconception: "That is readiness semantics — and it is the behavior you actually want here. Liveness failure does not touch endpoints; it restarts the container. The whole bug is wiring a dependency check to the probe whose response is a restart." },
+    { label: "The kubelet sees the failure is dependency-shaped and retries with backoff instead of restarting", misconception: "The kubelet has no idea what your handler checks — a failed probe is a failed probe. After failureThreshold consecutive misses it restarts the container regardless of why, which is precisely what makes dependency checks in liveness dangerous." },
+  ]}
+/>
+
+## Wiring real readiness in Go
+
+A readiness handler that returns 200 unconditionally is theater — it tells Kubernetes a pod is serviceable when the pod has no idea. Real readiness checks what the service actually needs to serve *every* request, with a timeout, and carries a drain flag:
+
+```go
+var ready atomic.Bool // set true once boot completes
+
+mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK) // liveness: process alive — nothing else
+})
+
+mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+	if !ready.Load() {
+		http.Error(w, "draining", http.StatusServiceUnavailable)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 1*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil { // the dependency every request needs
+		http.Error(w, "db unreachable", http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+})
+```
+
+Discipline cuts both ways: only *hard* dependencies belong here — the ones whose absence fails every request. Wiring an optional cache or a non-critical downstream into readiness means one flaky sidecar removes your whole fleet from rotation; optional dependencies degrade responses, they do not unready pods. And keep the endpoint taxonomy straight: /healthz is trivial and for the kubelet, /readyz checks dependencies and gates traffic, /debug/pprof is for engineers and *never* public — importing net/http/pprof registers handlers on DefaultServeMux as a side effect, which is how profilers end up internet-facing; serve it on a separate localhost or cluster-internal listener.
+
+<Inset kind="why" lang="en">
+Why does readiness get the dependency checks and liveness never? Because the two responses differ in reversibility. Unready is a no-op state change: the pod stays warm, keeps its caches and connections, and rejoins the instant the dependency returns. A restart destroys process state and adds reconnect load at exactly the moment the dependency is weakest — it converts a partial failure into a bigger one. Check dependencies where the remedy is to wait, not where the remedy is to kill.
+</Inset>
+
+## The shutdown sequence and the grace budget
+
+Termination is a distributed handshake, and the probes are half of it. On SIGTERM, endpoint removal propagates asynchronously — load balancers keep sending new requests for several seconds. A server that stops accepting immediately serves connection-refused to live traffic on every deploy. The correct order: fail readiness first, wait out propagation, then drain — this spirals straight into the go/03 graceful-shutdown lesson, now with the cluster choreography attached:
+
+```go
+<-ctx.Done()                 // SIGTERM from the kubelet
+ready.Store(false)           // 1. /readyz now 503 — endpoint removal begins
+time.Sleep(5 * time.Second)  // 2. absorb endpoint propagation lag
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+defer cancel()
+_ = srv.Shutdown(shutdownCtx) // 3. drain in-flight requests
+```
+
+The arithmetic is non-negotiable: terminationGracePeriodSeconds (default 30) must cover the propagation sleep plus the drain deadline plus headroom, because when it expires SIGKILL arrives unconditionally and takes the unfinished drain with it. Five plus twenty leaves five seconds of headroom inside the default — and if your slowest legitimate request runs 25 seconds, the default budget is already broken: raise the grace period to 40, do not shave the sleep. Probe timing folds into the same arithmetic from the other side: readiness flips within failureThreshold times periodSeconds, so 2 x 5 s means the LB *starts* removing you about ten seconds after the flip in the worst case — the sleep covers the controller-to-dataplane lag, the probe cadence covers detection.
+
+<Quiz
+  id="03-healthchecks-quiz-2"
+  lessonSlug="03-healthchecks-and-lifecycle"
+  lang="en"
+  question="On SIGTERM, why must the readiness flip happen before srv.Shutdown, with a sleep between them?"
+  choices={[
+    { label: "Endpoint removal propagates asynchronously — the flip starts it, the sleep absorbs the lag, and only then is it safe to stop accepting connections", correct: true },
+    { label: "Shutdown already refuses new connections, so the ordering is cosmetic", misconception: "Shutdown closes listeners immediately — that is the problem, not the solution: load balancers keep routing for seconds after SIGTERM, and a closed listener turns that stale traffic into connection-refused errors on every single deploy." },
+    { label: "The sleep gives in-flight requests time to finish before the drain", misconception: "Draining in-flight requests is Shutdown's own job, bounded by its context deadline. The sleep covers a different gap entirely: the seconds the cluster needs to stop sending new traffic to a pod that has already decided to leave." },
+    { label: "Failing readiness tells the kubelet to skip the SIGKILL deadline", misconception: "Nothing skips SIGKILL. When terminationGracePeriodSeconds expires it arrives unconditionally — which is exactly why flip-plus-sleep-plus-drain must be budgeted to fit inside it with headroom." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="The probe lifecycle in time: startup grace, readiness gating, then the SIGTERM handshake with propagation lag"
+  hue="var(--d-backend)"
+  actors={["kubelet", "Pod", "Endpoints"]}
+  messages={[
+    { from: "kubelet", to: "Pod", label: "startup /healthz" },
+    { from: "Pod", to: "kubelet", label: "200 after boot" },
+    { from: "kubelet", to: "Pod", label: "readyz: deps ok?" },
+    { from: "Pod", to: "kubelet", label: "200, pool pinged" },
+    { from: "kubelet", to: "Endpoints", label: "pod added" },
+    { from: "kubelet", to: "Pod", label: "SIGTERM" },
+    { from: "Pod", to: "kubelet", label: "readyz 503 first" },
+    { from: "kubelet", to: "Endpoints", label: "removal spreads" },
+    { from: "Endpoints", to: "Pod", label: "stale traffic ~5 s" },
+  ]}
+  caption="Startup suspends the other probes while boot work runs; readiness gates endpoint membership on real dependencies. On SIGTERM the readiness flip leads, the propagation sleep absorbs the stale-traffic window, and Shutdown drains — all inside terminationGracePeriodSeconds, because SIGKILL does not negotiate."
+/>
+
+<KeyTakeaway>Liveness restarts, readiness routes, startup grants boot grace — and dependency checks belong only in readiness, where the response is reversible removal instead of a restart that amplifies the outage. Real readiness pings hard dependencies with a timeout and doubles as the drain flag: on SIGTERM flip it to 503, sleep out endpoint propagation, then Shutdown — with the whole sequence budgeted inside terminationGracePeriodSeconds. Keep /healthz trivial, /readyz honest, and /debug/pprof off the public listener.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-healthchecks-retrieval"
+  lang="en"
+  questions={[
+    { q: "Give the exact semantics of the three probes and the production failure story behind each wiring rule.", a: "Liveness: failure restarts the container, so it may only test what a restart repairs — a wedged or deadlocked process — and never dependencies; a DB check in liveness turned a 28-second failover into a 40-minute restart storm, because two hundred healthy pods were killed together and their cold-cache reconnect stampede re-broke the recovering database. Readiness: failure removes the pod from Service endpoints — reversible and warm — so this is where hard-dependency checks live, with timeouts; it also flips off during overload and drain. Startup: suspends both other probes until first success, with failureThreshold times periodSeconds as the boot budget; without it, a 90-second migration meets a 30-second liveness threshold and the pod CrashLoopBackOffs on every deploy, forever. The kubelet never knows why a probe failed — semantics live entirely in what you wire to each question." },
+    { q: "Walk the SIGTERM-to-exit sequence with the grace-budget arithmetic for a service whose slowest legitimate request takes 20 seconds.", a: "On SIGTERM: first store ready=false so /readyz returns 503 — endpoint removal begins, but detection takes failureThreshold times periodSeconds and dataplane propagation takes seconds more. Second, sleep about 5 seconds to absorb that lag; skipping it means connection-refused for traffic the LB is still sending. Third, call srv.Shutdown with a context deadline of at least the slowest request — 20 seconds here — to drain in-flight work; then exit. Budget: 5 propagation + 20 drain + 5 headroom = 30, exactly the default terminationGracePeriodSeconds with zero margin for a busy node — so raise it to 35-40 rather than shaving the sleep or the drain, because at expiry SIGKILL arrives unconditionally and discards everything still in flight." },
+  ]}
+/>
+
+<Recap lang="en">
+The three probes are three different questions, and every production story in this lesson comes from answering the wrong one. Liveness asks whether a restart would help: keep its handler trivial — a 200 that proves the process schedules requests — because the kubelet's only response is a kill, and a kill does not fix a database; wired to a dependency, liveness converts a 28-second blip into a self-feeding fleet restart storm. Readiness asks whether to send traffic now: this is where the DB pool ping with a one-second timeout belongs, because the response — removal from endpoints — is reversible, keeps the process warm, and is exactly right during outages, overload, and drains; restrict it to hard dependencies or one flaky optional sidecar will unready your fleet. Startup asks whether boot has finished, suspending the other probes within its failureThreshold-times-period budget — the missing piece in every slow-migration CrashLoopBackOff. Endpoint taxonomy follows the questions: /healthz trivial, /readyz honest, /debug/pprof never public — pprof self-registers on DefaultServeMux. Termination is the readiness flag doing double duty: SIGTERM, flip /readyz to 503, sleep roughly five seconds while endpoint removal propagates through detection cadence and dataplane lag, then srv.Shutdown bounded by your slowest legitimate request — the go/03 graceful-shutdown choreography, now cluster-aware. Sum the sequence against terminationGracePeriodSeconds with headroom, and raise the grace period rather than shaving steps: SIGKILL arrives on schedule and does not negotiate.
+</Recap>

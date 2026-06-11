@@ -1,0 +1,167 @@
+---
+concepts:
+- go-static-linking
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-static-binaries-and-cross-compilation"
+sources:
+- https://pkg.go.dev/cmd/cgo
+- https://pkg.go.dev/net
+- https://pkg.go.dev/cmd/link
+- https://pkg.go.dev/cmd/go
+spiral: []
+status: ready
+summary: 'CGO_ENABLED=0 removes libc: no ld-linux interpreter, pure-Go DNS resolver, scratch-safe binary. GOOS/GOARCH cross-compiles without a C toolchain until cgo enters. -trimpath makes builds reproducible, -X injects versions, go version -m audits the provenance of any binary.'
+title: 'Static binaries and cross-compilation: CGO_ENABLED=0, the missing ld-linux mystery, and build-flag discipline'
+track: "go"
+unit: "12-deployment-and-ops"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The deploy hit the new scratch image at six in the evening and the pod died instantly: `exec /server: no such file or directory`. The binary was right there — a debug container showed it, 9.1 MB, executable bit set. The team chased phantom COPY bugs for an hour before someone ran `file` on it: *dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2*. The error had never been about the binary. execve found the file, read its ELF header, and went looking for the interpreter the header named — and scratch contains nothing, ld-linux included. The dependency came from a default nobody had questioned: plain `go build` on the glibc CI runner had CGO_ENABLED=1, and importing net was enough to link libc for DNS. `CGO_ENABLED=0` shipped that night. Two weeks later, act two: a hostname that had always resolved stopped resolving — the old image had been honoring an nsswitch.conf with LDAP-backed hosts via the libc resolver; the pure-Go resolver reads /etc/hosts and resolv.conf, period. Static linking is not a packaging detail. It swaps your DNS resolver.
+</Hook>
+
+<Crux>CGO_ENABLED=0 swaps libc for pure Go — resolver included. Cross-compiling is two env vars; go version -m audits any binary.</Crux>
+
+<Explanation>
+
+## The fork in every build: CGO_ENABLED
+
+```bash
+$ CGO_ENABLED=1 go build -o server-cgo .     # default when building natively with a C toolchain
+$ CGO_ENABLED=0 go build -o server-static .  # pure Go, no C anywhere
+
+$ file server-cgo
+server-cgo: ELF 64-bit LSB executable, dynamically linked,
+            interpreter /lib64/ld-linux-x86-64.so.2 ...
+$ file server-static
+server-static: ELF 64-bit LSB executable, statically linked ...
+
+$ ldd server-cgo
+        libc.so.6 => /lib/x86_64-linux-gnu/libc.so.6
+```
+
+Why does a language with its own runtime link libc at all? Two stdlib packages reach into C when cgo is available: net (hostname resolution via getaddrinfo) and os/user (account lookups). With CGO_ENABLED=1 — the default whenever you build natively and a C compiler is present — those paths compile in, and the linker records a dynamic interpreter in the ELF header. That is the whole anatomy of the Hook mystery: execve opens the binary, reads PT_INTERP, and tries to load `/lib64/ld-linux-x86-64.so.2` — a file that does not exist in scratch. The ENOENT it returns names the binary you ran, not the interpreter it failed to find, which is why the error reads like a lie. The Alpine flavor is the same bug with different paint: a glibc-built binary asks for the glibc loader, but musl ships `/lib/ld-musl-x86_64.so.1`.
+
+The resolver swap is the subtler half. With cgo compiled in, Go decides *per lookup* whether to call getaddrinfo or its own DNS client, based on what it finds in /etc/nsswitch.conf and /etc/resolv.conf plus a few env vars — anything Go cannot emulate (mdns or nis modules, exotic resolv options) routes through libc. CGO_ENABLED=0 removes the choice: always the pure resolver, which reads /etc/hosts and /etc/resolv.conf and speaks DNS itself. In scratch there is no nsswitch.conf at all, so the Go resolver assumes the standard files-then-dns ordering — fine, until your infra silently depended on an nsswitch plugin: LDAP-backed hosts, mDNS, nscd caching all vanish without an error message. When the decision itself is the suspect, `GODEBUG=netdns=go+1` forces the pure resolver and logs the choice; `netdns=cgo+1` forces the other branch.
+
+<Quiz
+  id="01-static-binaries-quiz-1"
+  lessonSlug="01-static-binaries-and-cross-compilation"
+  lang="en"
+  question="A Go service is copied into a scratch image. At startup the container dies with exec /server: no such file or directory — yet the file is present and executable. What actually failed?"
+  choices={[
+    { label: "execve found the binary but not its ELF interpreter — the build linked libc dynamically, and ld-linux does not exist in scratch", correct: true },
+    { label: "The COPY step silently failed, so the path inside the image is wrong", misconception: "If the path were wrong the error would at least be honest. The binary is there; the ENOENT refers to the PT_INTERP entry in its ELF header — file(1) shows interpreter /lib64/ld-linux-x86-64.so.2, which scratch does not contain." },
+    { label: "The binary was built for the wrong architecture", misconception: "A wrong GOARCH produces exec format error — a different errno with a different message. No-such-file on a binary that visibly exists is the signature of a missing dynamic loader, not a wrong ISA." },
+    { label: "scratch lacks a shell, so nothing can be executed in it", misconception: "No shell is needed to exec a binary — the kernel loads ELF directly. Shell-less images run static Go binaries every day; the missing piece here is the dynamic interpreter, not sh." },
+  ]}
+/>
+
+## When you cannot drop cgo — and the cross-compile matrix
+
+The honest exceptions list is short. mattn/go-sqlite3 wraps the C library — modernc.org/sqlite is the pure-Go escape hatch, at a real (benchmark-it-yourself, often 1.5-2x) speed cost. The race detector is built on the C++ ThreadSanitizer runtime, so `-race` builds require cgo — which is fine, because that is a CI and test artifact, never the release binary. Some corporate DNS environments genuinely need nsswitch modules, which means the cgo resolver. And the plugin package. The working pattern: cgo where the C dependency actually lives, CGO_ENABLED=0 for the deploy artifact.
+
+Cross-compilation is where Go collects the payoff for all of this:
+
+```bash
+$ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o server-arm64 ./cmd/server
+$ go tool dist list | wc -l   # the supported GOOS/GOARCH matrix
+      44
+```
+
+Two env vars from any dev machine — a Mac laptop emits Linux ARM binaries with no extra installation, because the Go toolchain ships code generation for every target and the pure runtime makes syscalls directly, with no per-target libc to find. Contrast the C world: a cross toolchain, a sysroot, and a build system that respects both, per target. The moment cgo enters, you inherit exactly that zoo — cross-compiling cgo code needs a real C cross-compiler (`CC=aarch64-linux-gnu-gcc`, or the modern `zig cc` trick) and every transitively linked C library built for the target.
+
+<Inset kind="why" lang="en">
+Why can Go cross-compile so casually when C cannot? Because the hard part of cross-compilation was never code generation — compilers have emitted foreign instruction sets forever. The hard part is the *target userland*: headers, libc, the link-time environment. Pure Go carries its own runtime, performs syscalls itself, and links statically, so there is no target userland to reproduce. CGO_ENABLED=1 reintroduces the C userland, and with it the entire problem Go had deleted.
+</Inset>
+
+## Flag discipline and provenance
+
+```bash
+$ go build -trimpath \
+    -ldflags="-s -w -X main.version=v1.42.0" \
+    -o server ./cmd/server
+
+$ go version -m server
+server: go1.25.4
+        path    example.com/api/cmd/server
+        mod     example.com/api v1.42.0
+        dep     github.com/jackc/pgx/v5 v5.7.1 h1:...
+        build   -trimpath=true
+        build   CGO_ENABLED=0
+        build   vcs.revision=9f3c2e1a...
+        build   vcs.modified=false
+```
+
+`-trimpath` strips the build machine paths from the binary, so the same source and toolchain produce a bit-identical artifact on any machine — the precondition for reproducible builds and for trusting that a binary corresponds to a commit. `-ldflags="-s -w"` drops the ELF symbol table and DWARF debug info, typically a 25-30% size cut (a 9 MB service lands near 6.5 MB). The honest accounting: panic stack traces *still symbolize*, because the runtime keeps its own pclntab — what you lose is DWARF, meaning delve against the production binary, gdb, and external symbolization tools. The senior move is to stop treating it as a tradeoff: build stripped for deploy and archive the unstripped twin (or upload symbols to your error tracker), so you get the small image and the debuggable artifact. `-X importpath.var=value` injects the human-facing version into a string variable at link time; since Go 1.18 the toolchain embeds vcs.revision, vcs.time, and vcs.modified automatically, so the commit is recorded even when nobody passed -X.
+
+The audit superpower is the last line: `go version -m` works on *any* Go binary — including one copied out of a production container — and prints its module, full dependency list with hashes, and build settings. The 3 a.m. question of what exactly is running stops being archaeology and becomes one command.
+
+<Quiz
+  id="01-static-binaries-quiz-2"
+  lessonSlug="01-static-binaries-and-cross-compilation"
+  lang="en"
+  question="You ship release binaries built with -ldflags=-s -w to cut size. A production panic comes in. What does the stack trace look like?"
+  choices={[
+    { label: "Fully symbolized — panic traces use the runtime pclntab, which -s -w does not remove; what you lost is DWARF for debuggers like delve", correct: true },
+    { label: "Raw hex addresses only — stripping removed all symbol information", misconception: "Go keeps the pclntab in every binary because panics, runtime.Caller, and CPU profiles depend on it. -s -w drops the ELF symbol table and DWARF — debugger food — not the runtime symbolization data." },
+    { label: "The binary refuses to print stack traces at all", misconception: "Stack printing is runtime behavior, not a debug-info feature: a stripped Go binary panics with the same goroutine dump as an unstripped one. Stripping changes what external tools can see, not what the runtime does." },
+    { label: "Traces work only if the build also passed -trimpath", misconception: "-trimpath only rewrites recorded source paths for reproducibility; it neither adds nor removes symbolization. The two flags solve unrelated problems and are usually combined for release builds." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="One env var forks the artifact: dynamic libc with a per-lookup resolver choice, or one static file that scratch can run"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "build", label: "go build", sub: "GOOS/GOARCH matrix" },
+    { id: "cgo", label: "CGO_ENABLED?", sub: "the fork in the road" },
+    { id: "dyn", label: "dynamic: libc", sub: "needs ld-linux + glibc" },
+    { id: "static", label: "static: pure Go", sub: "one file, scratch-safe" },
+    { id: "flags", label: "-trimpath -s -w -X", sub: "repro + version stamp" },
+    { id: "audit", label: "go version -m", sub: "provenance readout" },
+  ]}
+  edges={[
+    { from: "build", to: "cgo", label: "net, os/user" },
+    { from: "cgo", to: "dyn", label: "=1: getaddrinfo" },
+    { from: "cgo", to: "static", label: "=0: Go resolver" },
+    { from: "static", to: "flags", label: "release build" },
+    { from: "flags", to: "audit", label: "any binary" },
+  ]}
+  caption="The dynamic branch carries two hidden dependencies into the image: the ELF interpreter (the no-such-file mystery) and the libc resolver with its nsswitch.conf behavior. The static branch trades them for the pure-Go resolver — different, not magically identical. go version -m reads build info off either."
+/>
+
+<KeyTakeaway>CGO_ENABLED=0 is the deploy default: no ld-linux interpreter to go missing in scratch, one predictable pure-Go resolver instead of a per-lookup libc decision, and free cross-compilation across the GOOS/GOARCH matrix. Keep cgo only where the C dependency genuinely lives — sqlite, -race CI builds. Release discipline: -trimpath always, -X for the version stamp, strip with -s -w only if you archive the unstripped twin, and audit any binary with go version -m.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-static-binaries-retrieval"
+  lang="en"
+  questions={[
+    { q: "Dissect the exec /server: no such file or directory failure in scratch — what did execve actually look for, and which default created the dependency?", a: "execve found the binary, read its ELF header, and tried to load the dynamic interpreter named in PT_INTERP — /lib64/ld-linux-x86-64.so.2 — which scratch does not contain; the errno names the binary, which is why the message misleads. The interpreter dependency exists because native builds default to CGO_ENABLED=1 when a C toolchain is present, and importing net is enough to link libc for getaddrinfo-based DNS. Verification is file(1) — dynamically linked plus an interpreter path — or ldd. The fix, CGO_ENABLED=0, has a second-order effect: it also pins DNS to the pure-Go resolver, which reads /etc/hosts and resolv.conf directly, so any behavior the libc resolver got from nsswitch plugins — LDAP hosts, mDNS, nscd caching — silently disappears and must be re-provided or accepted." },
+    { q: "What is the release build-flags discipline for a Go service, and what does each flag honestly cost?", a: "-trimpath removes builder filesystem paths so identical source and toolchain yield bit-identical binaries — costs nothing, enables reproducibility, always on. -ldflags -s -w drops the ELF symbol table and DWARF for roughly 25-30% size; panic traces still symbolize because the runtime pclntab survives, but delve, gdb, and external symbolizers go blind — so strip only if you archive the unstripped twin or upload symbols. -X injects the human version into a string var at link time, complementing the automatic vcs.revision embedding since Go 1.18. The audit half: go version -m on any binary — including one pulled from a running container — prints module path, dependency versions with hashes, CGO_ENABLED, and VCS data, making what-is-actually-deployed a one-command question." },
+  ]}
+/>
+
+<Recap lang="en">
+Every Go build forks on CGO_ENABLED. With cgo on — the native default — net and os/user link libc, the ELF header records a dynamic interpreter, and your image must supply ld-linux and glibc or die at execve with an ENOENT that names the wrong file. With CGO_ENABLED=0 the binary is genuinely static: one file, scratch-safe, and the DNS resolver is the pure-Go one that reads /etc/hosts and resolv.conf instead of consulting nsswitch.conf through getaddrinfo — a behavioral change, not just a linking change, and the reason DNS can differ between your old debian image and your new scratch one. GODEBUG=netdns settles per-lookup resolver questions. Cgo stays where C genuinely lives: sqlite via mattn (or pay the pure-Go speed tax with modernc), race-detector builds in CI, nsswitch-dependent environments. Cross-compilation is the dividend: GOOS and GOARCH select from about forty targets with no extra toolchain, because pure Go carries its runtime and syscalls with it — until cgo re-imports the C userland and its cross-toolchain zoo. Release flags are a discipline, not folklore: -trimpath for reproducible, provenance-grade builds; -X for the semver humans read; -s -w for a quarter to a third off the binary, paid for in DWARF — panics still symbolize via pclntab, but keep an unstripped twin if you ever attach a debugger. And go version -m reads module, deps, hashes, and the embedded VCS revision off any binary you can copy out of a container — the audit tool you want on the worst day.
+</Recap>

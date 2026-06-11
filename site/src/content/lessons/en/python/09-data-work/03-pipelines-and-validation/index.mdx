@@ -1,0 +1,147 @@
+---
+concepts:
+- python-data-pipelines
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-pipelines-and-validation"
+sources:
+- https://pandas.pydata.org/docs/
+- https://docs.pola.rs/
+spiral: []
+status: ready
+summary: 'A pipeline is stages with contracts: validate at boundaries with pandera-style schemas, write idempotently (overwrite partitions, never blind append), process incrementally with watermarks, and log row counts per stage — the cheap detector for silently vanishing rows.'
+title: 'Pipelines and validation: contracts at boundaries, idempotent writes, and the rows that silently vanish'
+track: "python"
+unit: "09-data-work"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The revenue pipeline ran green for six days while quietly dropping 12% of its rows. An upstream team had changed their export; the currency column now arrived empty for one source system, parsed as NaN. The enrichment stage inner-joined orders to the currency dimension — and rows whose key was NaN matched nothing, so the join simply did not emit them. No exception, no warning, exit code 0, dashboards rendered. Finance noticed on day six because a regional total looked thin; the postmortem took two engineers three days, most of it spent proving where the rows went, because no stage logged how many rows it received and how many it produced. The fix that would have caught it on day one was almost insulting: a pandera schema on the input declaring the join key non-nullable — one line — or a logged rows-in/rows-out pair per stage with an alert on the delta. Pipelines do not fail like services. Services crash; pipelines keep succeeding while the data goes wrong, and the only defense is contracts checked at the boundaries.
+</Hook>
+
+<Crux>Validate at boundaries, not inside every function. Idempotent writes, watermarks, and per-stage row counts catch silent data loss.</Crux>
+
+<Explanation>
+
+## Contracts at boundaries, not checks everywhere
+
+A pipeline is stages connected by data, and the engineering question is where the trust boundaries are. Validate at every **boundary** — files arriving from other teams, API pulls, anything crossing an ownership line, and your own output before it is written — and keep the interior clean: once a frame has passed the entry contract, internal functions trust it. Sprinkling defensive checks inside every transform buries the real contract in noise and still misses the entry, which is where surprises originate (the Hook was an upstream change, not a local bug).
+
+Schema-as-code is the tool. pandera expresses DataFrame contracts declaratively — column types, nullability, ranges, uniqueness — and produces a readable failure report instead of a NaN propagating four stages before becoming visible:
+
+```python
+import pandera as pa
+
+orders_schema = pa.DataFrameSchema(
+    {
+        "order_id": pa.Column(int, unique=True, nullable=False),
+        "currency": pa.Column(str, nullable=False),     # the Hook, one line
+        "amount": pa.Column(float, pa.Check.ge(0)),
+    },
+    strict=True,            # unexpected columns are an error, not a shrug
+)
+
+orders = orders_schema.validate(orders, lazy=True)      # lazy: report ALL failures at once
+```
+
+`lazy=True` matters operationally: it collects every violation into one report, so the on-call sees "currency: 12.1% null, order_id: 3 duplicates" in a single failed run instead of fixing failures one rerun at a time. pydantic plays the same role for row-shaped and config data at API boundaries; pandera (which also speaks polars) is the DataFrame-native variant. Either way the principle is identical: the contract is code, versioned next to the pipeline, failing fast with names — not an assertion three joins downstream.
+
+<Quiz
+  id="03-pipelines-and-validation-quiz-1"
+  lessonSlug="03-pipelines-and-validation"
+  lang="en"
+  question="An upstream change makes 12% of join-key values NaN. The pipeline inner-joins on that key, with no validation anywhere. What actually happens?"
+  choices={[
+    { label: "Those rows silently vanish from the join output; the job exits 0 and dashboards just show less revenue — only a boundary schema or per-stage row counts would surface it", correct: true },
+    { label: "The join raises on encountering NaN keys", misconception: "Joins do not raise on NaN — an inner join emits only matched rows, and a NaN key against a NaN-free dimension matches nothing. The silence is the entire failure mode." },
+    { label: "NaN acts as a wildcard and matches every dimension row, exploding the output", misconception: "NaN matches nothing on a NaN-free other side. (Beware the reverse trap though: pandas does pair NaN keys with each other when both sides contain them — unlike SQL NULL.)" },
+    { label: "pandas emits a warning about unmatched rows being dropped", misconception: "No such warning exists. Dropping unmatched rows is an inner join doing its job correctly — which is exactly why correctness here must be asserted by your contract, not the library." },
+  ]}
+/>
+
+## Idempotency: re-running must not duplicate
+
+Retries are not exceptional — schedulers retry, pods die mid-write, humans rerun yesterday. The discipline: re-running a stage for the same input window must produce the same state, not more rows. **Blind append is the anti-pattern**; the two safe write shapes are *overwrite-partition* — output keyed by the processing window, replaced wholesale on rerun:
+
+```python
+out = f"s3://lake/revenue/dt={ds}/"        # ds = the day being processed
+result.write_parquet(out)                  # rerun replaces the partition, never adds to it
+```
+
+— or *merge on a business key* (upsert) when the sink is a table. The same key-by-window structure gives you **incremental processing**: a watermark records the last fully processed window, each run processes only newer partitions, and **backfill stops being an emergency** — it is the same code invoked with an explicit historical date range, not a hand-edited script with `now()` baked in. The litmus test for the whole design is one question: what happens if every stage runs twice?
+
+## Observability: row counts are the cheapest alarm you will ever buy
+
+Log rows-in and rows-out for every stage, every run, as numbers a machine can compare — and the Hook becomes a day-one page: enrichment received 1,204,000 rows and emitted 1,060,000, a 12% drop against a historical delta near zero. Extend the same habit into data-quality metrics as time series — null rates on key columns, distinct counts, min/max of amounts — and you catch the failures that keep row counts intact: a duplicated dimension entry doubling revenue, a unit change shifting every amount by 100x. Joins deserve one explicit assertion of their own, because the join is where cardinality surprises live: `merge(..., validate="many_to_one")` makes pandas raise the moment the dimension side stops being unique — the many-to-many explosion caught at the join instead of in the totals. And timestamps: a join between timezone-naive and tz-aware columns is at best a hard dtype error, at worst — both naive, one UTC and one local wall clock — a join that matches almost nothing during the hours the offsets diverge, with no error possible because the dtypes agree.
+
+<Quiz
+  id="03-pipelines-and-validation-quiz-2"
+  lessonSlug="03-pipelines-and-validation"
+  lang="en"
+  question="A stage that appends its output crashed mid-write and was retried by the scheduler. Row counts for the day doubled. What is the structural fix?"
+  choices={[
+    { label: "Make the write idempotent: key the output by processing window and overwrite the partition (or merge on a business key) — a retry then replaces state instead of adding to it", correct: true },
+    { label: "Catch the failure and deduplicate the sink before retrying", misconception: "Dedupe-after-the-fact has to reconstruct exactly which rows the failed attempt wrote — fragile forensics. Overwrite semantics make the question unaskable: the rerun replaces the whole window." },
+    { label: "Disable scheduler retries for this stage", misconception: "Retries are the correct response to transient failure; removing them trades duplicate data for missing data. The bug is the non-idempotent append, not the retry policy." },
+    { label: "Wrap the append in a database transaction", misconception: "Sound when the sink is transactional — but object stores and file sinks have no transactions to offer. Partition-overwrite is the portable idempotency contract that works on a bucket of Parquet files." },
+  ]}
+/>
+
+## Orchestration, honestly
+
+A daily job with three stages needs cron, a makefile, and the disciplines above — adopting a workflow platform for that is overhead without payoff. Airflow, Dagster, or Prefect earn their complexity when you genuinely have DAGs of dependent jobs, per-stage retries with backoff, backfills over date ranges as a managed operation, and a team that needs to see run history in one place. The honest framing: orchestrators schedule and observe your stages; they do not validate, deduplicate, or version anything. Contracts, idempotency, and counts are your code either way — a pipeline that is wrong under cron is exactly as wrong under Airflow, with better dashboards.
+
+</Explanation>
+
+<FlowDiagram
+  label="A pipeline as stages with contracts: validation at boundaries, idempotent write, counts as a side channel"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "extract", label: "extract", sub: "raw dt= partition" },
+    { id: "valin", label: "validate input", sub: "pandera, lazy=True" },
+    { id: "transform", label: "transform", sub: "joins, validate= cardinality" },
+    { id: "valout", label: "validate output", sub: "counts + ranges" },
+    { id: "load", label: "load", sub: "overwrite dt= partition" },
+    { id: "metrics", label: "metrics", sub: "rows in/out, null rates" },
+  ]}
+  edges={[
+    { from: "extract", to: "valin", label: "fail fast" },
+    { from: "valin", to: "transform", label: "trusted frame" },
+    { from: "transform", to: "valout", label: "assert contract" },
+    { from: "valout", to: "load", label: "idempotent write" },
+    { from: "valout", to: "metrics", label: "time series" },
+  ]}
+  caption="Contracts sit at the boundaries — entry and exit — so the interior stays clean and trusted. The write is keyed by window and overwritten on rerun. Every stage reports rows in and out to a metrics channel: the 12%-of-rows-vanished class of failure becomes a same-day alert instead of a six-day silent loss."
+/>
+
+<KeyTakeaway>Pipelines fail by succeeding: exit 0 with wrong data. Defend at boundaries — pandera/pydantic schemas (types, nullability, ranges, uniqueness) with lazy validation for one full report — and keep the interior trusting. Writes must be idempotent: overwrite window-keyed partitions or merge on a key; blind append plus retry equals duplicates. Watermarks make processing incremental and backfill a first-class mode. Log rows-in/out per stage — the cheapest detector for vanishing rows — and assert join cardinality with validate=. Orchestrators add scheduling and visibility, not correctness.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-pipelines-and-validation-retrieval"
+  lang="en"
+  questions={[
+    { q: "Where does validation belong in a pipeline, with what tools, and why not inside every function?", a: "At trust boundaries: data arriving from other teams or systems (files, API pulls) and your own output before the write. Interior functions trust frames that passed the entry contract — defensive checks everywhere bury the real contract in noise and still miss the entry point, where upstream changes actually land. Tools: pandera for DataFrame contracts (column types, nullable=False, Check ranges, unique=True, strict=True against unexpected columns; it also supports polars), pydantic for row-shaped/config data at API edges. Run validation with lazy=True so one failed run reports every violation at once — operationally this is the difference between one incident review and five reruns. The contract is code, versioned with the pipeline, and it converts the silent failure class (NaN join key dropping 12% of rows for six days) into a loud day-one failure with column names in the error." },
+    { q: "Explain the idempotency-watermark-observability triad: what each one prevents, with the concrete write and logging shapes.", a: "Idempotency: re-running a stage must reproduce state, not extend it — schedulers retry and humans rerun. Shapes: overwrite a partition keyed by the processing window (write to dt=YYYY-MM-DD/ and replace it wholesale) or merge/upsert on a business key for table sinks; blind append is the anti-pattern that turns every retry into duplicate rows. Watermarks: record the last fully processed window and process only newer partitions — incremental by default, and backfill becomes the same code with an explicit historical range rather than an emergency script. Observability: log rows-in/rows-out per stage as comparable numbers with an alert on the delta — the cheapest detector for silently vanishing rows — plus data-quality time series (null rates on keys, distinct counts, min/max) for failures that preserve row counts. Joins get an explicit cardinality assertion (merge validate='many_to_one' raises on the many-to-many explosion), and timestamp columns are normalized to UTC-aware before any join, because naive-vs-aware is either a dtype error or a join that silently matches nothing." },
+  ]}
+/>
+
+<Recap lang="en">
+Services crash; pipelines keep exiting 0 while the data rots — the revenue job dropped 12% of its rows for six days because a NaN join key matches nothing in an inner join and nothing in the stack considers that an error. The defense is structural. Contracts at boundaries: pandera or pydantic schemas — types, nullability, ranges, uniqueness, strict columns — validated with lazy=True at every ownership line and before every write, so upstream surprises fail loudly with column names while the pipeline interior stays clean and trusting. Idempotent writes: output keyed by processing window and overwritten, or merged on a business key — never blind append — so scheduler retries and human reruns replace state instead of duplicating it; watermarks then make runs incremental and turn backfill into a parameter, not an incident. Observability: rows-in and rows-out logged per stage with delta alerts (the one line that converts six silent days into a day-one page), data-quality metrics as time series, join cardinality asserted with validate= so many-to-many explosions die at the join, timestamps normalized to UTC-aware before comparison. Orchestrators — Airflow, Dagster, Prefect — earn their keep at real DAG-and-backfill scale, but they schedule and display; the correctness is these three disciplines, and they are yours to write under cron or under anything else.
+</Recap>

@@ -1,0 +1,147 @@
+---
+concepts:
+- python-cancellation
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-cancellation-semantics"
+sources:
+- https://docs.python.org/3/library/asyncio-task.html
+- https://docs.python.org/3/library/asyncio-exceptions.html
+spiral: []
+status: ready
+summary: 'task.cancel() throws CancelledError at the next suspending await; between awaits code is uninterruptible. except Exception misses it, bare except swallows it — immortal tasks. Clean up in finally, bound cleanup awaits, re-raise. TaskGroup cancels siblings on first failure.'
+title: 'Cancellation semantics: an injected CancelledError, the bare-except immortality bug, and cleanup that must re-raise'
+track: "python"
+unit: "11-async-deep"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The deploy should have taken ninety seconds. The consumer service got SIGTERM, logged "shutting down, cancelling 32 workers" — and then nothing, for ten minutes, until the orchestrator lost patience and sent SIGKILL. The postmortem found the worker loop wrapped in a bare `except:` written years earlier under the comment "workers must survive anything". It was surviving cancellation. Every `task.cancel()` dutifully threw `CancelledError` into the worker at its next await; the bare except caught it, logged `worker recovered: CancelledError()`, and went right back to `queue.get()`. Thirty-two immortal tasks, a `gather()` that could never return, and — the expensive part — thirty-two in-flight jobs that were never acked, redelivered by the broker after restart and processed twice. Customer emails went out in duplicate. The fix was three lines of exception discipline. The lesson was the model itself: cancellation in asyncio is not a kill switch, it is an exception your code is trusted to let through — and that trust is exactly where it breaks.
+</Hook>
+
+<Crux>cancel() does not stop a task — it throws CancelledError at the next await. Swallow it and the task is immortal; re-raise after cleanup.</Crux>
+
+<Explanation>
+
+## Cancellation is an injected exception, not a flag
+
+`task.cancel()` does not stop anything. It arranges for the loop to **throw `CancelledError` into the coroutine at its next suspension point** — mechanically, the Task resumes its coroutine with `coro.throw(CancelledError())` instead of `send()` (lesson 1's machinery, weaponized). Two consequences define the whole model. First, *code between awaits is uninterruptible*: a guarantee — your dict update or two-step state change can never be torn in half by cancellation — and a trap — a 30-second pure-CPU stretch is uncancellable for its full duration, because there is no suspension point for the throw to land on. Second, cancellation is **only** deliverable at awaits that actually suspend: the lesson-1 distinction returns with teeth. An await on a completed future or a synchronously-chaining coroutine is not a cancellation point. For long CPU sections that must stay responsive to cancel, the honest workaround is a periodic `await asyncio.sleep(0)` — it inserts a real suspension where the throw can land, at the cost of a loop round-trip per check.
+
+## The swallowing bug, precisely
+
+Since Python 3.8, `CancelledError` inherits from `BaseException`, not `Exception` — a deliberate breaking change made so that the most common defensive pattern stays safe:
+
+```python
+async def worker(q):
+    while True:
+        job = await q.get()
+        try:
+            await handle(job)
+        except Exception:        # does NOT catch CancelledError (3.8+): good
+            log.exception("job failed, continuing")
+        # except:                # catches BaseException: cancellation dies here
+        # except BaseException:  # same bug, spelled honestly
+```
+
+`except Exception` lets cancellation fly through — the task unwinds and ends in the cancelled state, exactly as the canceller intended. A **bare `except`** (or `except BaseException`) catches it, and if the handler then continues the loop, the task is immortal: `cancel()` returns True, the exception is delivered, and nothing dies. That was the Hook bug, and it predates 3.8 in spirit — before 3.8, even `except Exception` swallowed cancellation, which is why old codebases are minefields. The discipline when you *do* need to observe cancellation: catch it, clean up, **re-raise**:
+
+```python
+        except asyncio.CancelledError:
+            await q.nack(job)    # release the in-flight job (bound this! see below)
+            raise                # ALWAYS - the canceller is owed the unwind
+```
+
+Swallowing without re-raising has a second cost beyond immortality: `await task` then returns normally, `task.cancelled()` is False, and every piece of framework machinery that checks "did my cancel work" — TaskGroup, timeout scopes — is now lied to.
+
+<Quiz
+  id="02-cancellation-semantics-quiz-1"
+  lessonSlug="02-cancellation-semantics"
+  lang="en"
+  question="Code review: a worker wraps its job handling in `try: await handle(job)` / `except: log('retrying')` and continues its while-True loop. What happens when shutdown calls task.cancel()?"
+  choices={[
+    { label: "The bare except catches CancelledError (a BaseException), logs 'retrying', and the loop continues — the task never dies and shutdown hangs on awaiting it", correct: true },
+    { label: "Nothing different from except Exception — bare except is just its shorthand", misconception: "Bare except catches BaseException, which since 3.8 includes CancelledError precisely so that except Exception stays cancellation-safe. The two spellings differ exactly here, and the difference is an immortal task." },
+    { label: "cancel() force-kills the task regardless of what handlers do", misconception: "There is no force-kill. cancel() only schedules a throw at the next await; what happens next is ordinary exception propagation, and a handler that catches and continues defeats it completely." },
+    { label: "CancelledError cannot be caught by user code at all", misconception: "It is an ordinary exception object and any matching handler catches it — that is the entire hazard. The discipline is not that you cannot catch it, but that you must re-raise after cleanup." },
+  ]}
+/>
+
+## await in finally: the double-cancel trap
+
+Cleanup that itself awaits is where correct-looking code hangs. A cancelled task runs its `finally` blocks as the exception unwinds — but an `await` inside `finally` is a new suspension point, and a *second* `cancel()` (an impatient shutdown loop, a timeout scope expiring around you) lands exactly there, abandoning the rest of the cleanup. Worse, the cleanup await itself can block forever — a `nack()` to a dead broker — and now the task is unkillable-by-politeness. The discipline: **bound every await in a cancellation path**. Wrap cleanup in `asyncio.timeout(...)` (next lesson dissects it), or shield genuinely-must-finish work; never let cleanup wait on the same conditions that caused the cancellation.
+
+```python
+finally:
+    with contextlib.suppress(TimeoutError):
+        async with asyncio.timeout(2):   # cleanup gets 2 s, not forever
+            await q.nack(job)
+```
+
+## TaskGroup: structured cancellation, and whose cancel it was
+
+You know TaskGroup behavior from the concurrency unit: first child failure cancels the siblings, results arrive as an `ExceptionGroup`. The deep detail is how it tells **internal** cancellation (the group cancelling its own children) from **external** (someone cancelled the whole group from outside): each task keeps a *cancellation count* — `cancel()` increments it, `uncancel()` decrements. When a TaskGroup or timeout scope cancels the body for its own reasons, it later calls `uncancel()` to consume that request and decide: count back to zero means the cancel was mine, so report the sibling failure (or TimeoutError); still positive means an outer cancel is also in flight and must keep propagating. Honestly: `uncancel()` is framework machinery — application code almost never calls it — but knowing it exists explains why swallowing a `CancelledError` inside a TaskGroup or timeout scope corrupts their bookkeeping, and why the re-raise rule is not etiquette but a protocol.
+
+<Inset kind="why" lang="en">
+Why an injected exception instead of a kill switch? Because cancellation must compose with cleanup. A hard kill (the thread-killing fantasy) can land between any two instructions — mid-commit, holding a lock, half-written state. An exception thrown only at awaits guarantees your invariants hold at every cancellation point, rides the existing try/finally and async-with machinery for free, and makes cleanup expressible in the language you already know. The price is cooperation: code that catches without re-raising, or never awaits, opts out of being cancellable — which is why the discipline in this lesson exists.
+</Inset>
+
+<Quiz
+  id="02-cancellation-semantics-quiz-2"
+  lessonSlug="02-cancellation-semantics"
+  lang="en"
+  question="A task is 1 second into a 30-second pure-Python CPU section (no awaits inside). task.cancel() is called now. When does the task actually stop?"
+  choices={[
+    { label: "Only when the CPU section finishes and execution reaches the next suspending await — that is where the loop can throw CancelledError into the coroutine", correct: true },
+    { label: "Immediately — cancel() interrupts the running coroutine like a signal", misconception: "There is no preemption. cancel() only marks the task and schedules a throw at the next suspension point; until the code suspends, nothing can be delivered." },
+    { label: "Within ~5 ms, at the next GIL switch", misconception: "GIL switches arbitrate OS threads, not coroutines. The loop thread keeps running this callback; cancellation rides the await machinery, which this section never enters." },
+    { label: "Never — CPU-bound tasks cannot be cancelled in asyncio", misconception: "It stops at the next real await after the section. And the section itself can be made cancellable by sprinkling await asyncio.sleep(0) — each one is a suspension where the throw can land." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="Cancellation as a protocol: the throw at the next await, the cleanup suspension in finally, the second cancel landing inside it, and the re-raise the canceller is owed"
+  hue="var(--d-systems)"
+  actors={["caller", "event loop", "task body"]}
+  messages={[
+    { from: "caller", to: "event loop", label: "task.cancel()" },
+    { from: "event loop", to: "task body", label: "throw at next await" },
+    { from: "task body", to: "event loop", label: "finally: await nack" },
+    { from: "caller", to: "event loop", label: "cancel() again" },
+    { from: "event loop", to: "task body", label: "thrown in finally" },
+    { from: "task body", to: "caller", label: "CancelledError out" },
+  ]}
+  caption="cancel() is a request routed through the loop, deliverable only where the coroutine suspends. Cleanup that awaits reopens the door: a second cancel lands inside finally and abandons the rest — bound cleanup with a timeout. The final arrow is the contract: after cleanup, CancelledError propagates out, so the canceller and every scope above see a truthfully-cancelled task."
+/>
+
+<KeyTakeaway>Cancellation is `coro.throw(CancelledError)` at the next *suspending* await — code between awaits is atomic by guarantee and uncancellable by the same token (`await asyncio.sleep(0)` to add landing points). `except Exception` is safe since 3.8; bare `except` / `except BaseException` swallow cancellation and mint immortal tasks. Observe-clean-re-raise is the only correct handler shape; bound every cleanup await because a second cancel lands inside `finally`. TaskGroup and timeout scopes track whose cancel it was via the cancel count — swallowing breaks their protocol, not just style.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-cancellation-semantics-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain mechanically what task.cancel() does, where the exception can and cannot land, and the two-sided consequence of awaits being the only delivery points.", a: "cancel() schedules the loop to resume the coroutine with throw(CancelledError) instead of send() at its next suspension point. It can land only at awaits that genuinely suspend — pending futures, real sleeps; awaits on completed futures or synchronously-chaining coroutines are not cancellation points, and code between awaits can never be interrupted. The guarantee side: multi-step state changes between awaits are atomic with respect to cancellation. The trap side: a long pure-CPU stretch is uncancellable until it reaches a real await — the honest fix for must-stay-responsive sections is a periodic await asyncio.sleep(0), each one a deliberately inserted landing point, each costing a loop round-trip." },
+    { q: "State the exception-handling discipline for cancellation and what each violation costs: except Exception, bare except, catching without re-raise, unbounded awaits in finally.", a: "except Exception is safe — CancelledError is a BaseException since 3.8 and flies through (pre-3.8 code: not safe). Bare except or except BaseException catch it; if the handler continues a loop, the task is immortal: shutdown gathers hang until SIGKILL and in-flight work double-processes after redelivery. Catching CancelledError is legitimate only as observe-cleanup-re-raise; swallowing makes await task return normally, task.cancelled() report False, and corrupts the cancel-count bookkeeping TaskGroup and asyncio.timeout use to tell internal from external cancellation (uncancel is their machinery, not yours). Awaits in finally are new suspension points: a second cancel lands there and abandons the rest of cleanup, and the cleanup itself can hang on a dead dependency — so bound every cancellation-path await with asyncio.timeout (or shield true must-finish work, paired with a bound)." },
+  ]}
+/>
+
+<Recap lang="en">
+asyncio cancellation is an injected exception riding the generator machinery from lesson 1: `cancel()` asks the loop to resume the target with `throw(CancelledError)` at its next genuinely-suspending await, which makes code between awaits atomic — a real guarantee your two-step state changes silently rely on — and makes long CPU sections uncancellable until they reach a landing point, with periodic `await asyncio.sleep(0)` as the honest, latency-priced workaround. The exception-handling rules follow from one fact: since 3.8 `CancelledError` is a `BaseException`, so `except Exception` stays safe while bare `except` and `except BaseException` swallow cancellation — the Hook incident, where thirty-two workers logged "recovered" from their own death sentence, shutdown hung ten minutes to SIGKILL, and unacked jobs double-processed after redelivery. Legitimate handling is observe, clean up, re-raise: anything less lies to `await task`, to `task.cancelled()`, and to the cancel-count protocol (`cancelling`/`uncancel`) by which TaskGroup distinguishes a sibling-failure cancellation it owns from an external one it must propagate — machinery you rarely call but constantly depend on. Cleanup itself is the last trap: an await inside `finally` is a fresh suspension point where a second cancel lands, and an unbounded cleanup await can hang on the same dead dependency that caused the cancellation — bound it with `asyncio.timeout`, which is exactly where the next lesson picks up.
+</Recap>

@@ -1,0 +1,135 @@
+---
+concepts:
+- go-containers-ops
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-containers-for-go"
+sources:
+- https://pkg.go.dev/runtime
+- https://go.dev/doc/gc-guide
+- https://go.dev/doc/go1.25
+- https://docs.docker.com/build/building/multi-stage/
+spiral: []
+status: ready
+summary: 'The runtime defaults to host CPU count, so a 2-CPU-limit pod with GOMAXPROCS=64 throttles itself into p99 collapse; GOMEMLIMIT trades GC pressure for OOM-kills. Multi-stage builds with go mod download as its own layer turn the static binary into a tiny, cache-friendly image.'
+title: 'Containers for Go: GOMAXPROCS vs CPU quota, GOMEMLIMIT vs OOM, and the multi-stage Dockerfile that caches right'
+track: "go"
+unit: "12-deployment-and-ops"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+The migration to the big shared nodes was supposed to be invisible — until the latency dashboards loaded. Every Go service moved from 4-core VMs to 64-core Kubernetes nodes with `limits.cpu: 2`, and p99 went from 40 ms to 320 ms while the CPU graphs insisted the pods were merely at their limit. Nobody had set GOMAXPROCS. The runtime asked the machine — sixty-four cores — and ran 64-way parallelism inside a cgroup allowed 200 ms of CPU per 100 ms window. Sixty-four busy threads burn that allowance in about three milliseconds; the kernel then freezes every one of them for the remaining ninety-seven. The service was not slow. It was *parked*, ten times a second, mid-request. `cpu.stat` told the real story: nr_throttled covering 96% of periods. The fix was one environment variable — GOMAXPROCS=2 (the fleet later adopted automaxprocs, then Go 1.25 made it the default) — and p99 fell 8x back to 41 ms. The bill for ignoring the difference between the machine and the cgroup: a quarter of fleet capacity, burned for months, invisibly.
+</Hook>
+
+<Crux>Go sees host CPUs, not the cgroup quota: align GOMAXPROCS and GOMEMLIMIT with container limits — or pay in throttling and OOM kills.</Crux>
+
+<Explanation>
+
+## The CPU lie: GOMAXPROCS vs the CFS quota
+
+GOMAXPROCS defaults to the number of CPUs the OS reports — and in a container that is the *host*, because a cgroup CPU limit is not a number of cores. `limits.cpu: 2` becomes `cpu.max: 200000 100000`: 200 ms of CPU time per 100 ms accounting period, summed across all threads. The two numbers live in different units, and the runtime historically read only the wrong one. The failure mechanics on a 64-core node: GOMAXPROCS=64 means up to 64 OS threads executing goroutines in parallel, plus GC background workers sized at a quarter of GOMAXPROCS — 16 more threads that wake *together* during collection. Under load they exhaust the 200 ms quota a few milliseconds into each period, and the scheduler hard-stops the entire cgroup until the next one. Latency does not degrade smoothly; it quantizes into multiples of the throttle window, which is exactly the 8x p99 cliff from the Hook. Diagnosis is two reads: `/sys/fs/cgroup/cpu.stat` (nr_throttled climbing against nr_periods, throttled_usec enormous) and the runtime metric for GOMAXPROCS showing the host core count.
+
+The fix ladder, oldest to newest: set the GOMAXPROCS env var in the pod spec next to the CPU limit so they move together; or import `go.uber.org/automaxprocs`, which reads the cgroup quota at startup; or run Go 1.25+, where the runtime finally does it itself — on Linux the default GOMAXPROCS now respects the cgroup CPU bandwidth limit (rounded up, never below 2, still capped by host CPU count) and the runtime even re-checks it as limits change. The honest caveats: only *limits* count — CPU requests set cpu.weight, which is a contention ratio, not a quota, and no GOMAXPROCS value can be derived from it; an explicit env var or runtime call always wins; and pods that deliberately run limit-less still default to host CPUs, which is the correct behavior for them.
+
+<Quiz
+  id="02-containers-for-go-quiz-1"
+  lessonSlug="02-containers-for-go"
+  lang="en"
+  question="A pod has limits.cpu: 2 on a 64-core node, Go 1.24, GOMAXPROCS unset. Under load, p99 explodes while average CPU stays near the limit. What is the mechanism?"
+  choices={[
+    { label: "GOMAXPROCS defaulted to 64; the threads exhaust the 200 ms-per-100 ms CFS quota in a few milliseconds, and the kernel freezes the whole cgroup for the rest of each period", correct: true },
+    { label: "The cgroup limit caps the runtime to 2 threads, so the other 62 queue up behind them", misconception: "A CPU limit caps time, not thread count. The kernel happily schedules all 64 threads in parallel — that is the problem: they collectively burn the period quota almost instantly and then every one of them is frozen, mid-request, until the next period." },
+    { label: "Average CPU near the limit means the service is simply undersized — throttling is not involved", misconception: "CFS enforces per-period windows, not averages: a pod can sit at 95% throttled periods while its average utilization graph looks merely busy. nr_throttled in cpu.stat is the ground truth; the average CPU graph cannot show parking." },
+    { label: "The GC is leaking heap, and the extra marking work slows every request", misconception: "Nothing here points at memory. The GC does make CPU throttling worse — background workers are sized at a quarter of GOMAXPROCS, so 16 extra threads wake together — but the root cause is the quota exhaustion, which one env var fixes." },
+  ]}
+/>
+
+## Memory: the OOM-kill vs GC-pressure tradeoff
+
+The memory limit has the same shape: the kernel enforces `limits.memory` by OOM-killing the container, and the Go heap grows by a policy that has never heard of cgroups. With default GOGC=100, peak heap reaches roughly twice the live set — a service with 600 MiB live in a 1 GiB pod is not close to its limit, it is *past* it at the next GC cycle boundary. GOMEMLIMIT (Go 1.19+) closes the loop: set it to about 90% of the container limit and the GC pacer treats it as a soft ceiling for all runtime-managed memory — heap, stacks, runtime structures. The mechanism is the part worth keeping: as usage approaches the limit, the pacer schedules collections increasingly aggressively, *converting memory pressure into GC CPU time instead of a SIGKILL*. The tradeoff is explicit and usually correct — a service that burns 30% CPU in GC during a peak is degraded; a service the kernel killed is down, and it lost every in-flight request on the way out.
+
+Two design details keep this honest. The limit is deliberately *soft*: the runtime caps GC CPU at roughly 50%, so when live heap genuinely will not fit, Go exceeds the limit (and may then be OOM-killed) rather than livelocking in back-to-back collections — the death-spiral guard. And the 90% headroom is not superstition: cgo allocations, mmap regions, and kernel memory charged to the cgroup are all invisible to the runtime, so GOMEMLIMIT=limit means the pod dies while Go believes it is fine. Set it as an env var in the deployment, next to the memory limit, so the two numbers are reviewed and changed together — env-driven config is the contract here, the same spiral as the configuration lesson in go/07.
+
+<Inset kind="why" lang="en">
+Why a soft limit instead of a hard one? Because Go has no allocation-failure path — make and append cannot return out-of-memory — so a hard cap could only manifest as either a panic in arbitrary code or a GC livelock as the runtime tries to collect its way under an impossible ceiling. The pacer-plus-50%-cap design picks the least-bad failure mode: degrade first (more GC CPU), and if the live set truly does not fit, let the kernel kill — which the orchestrator at least knows how to handle.
+</Inset>
+
+<Quiz
+  id="02-containers-for-go-quiz-2"
+  lessonSlug="02-containers-for-go"
+  lang="en"
+  question="A service in a 1 GiB-limit pod gets OOM-killed at traffic peaks. You set GOMEMLIMIT=900MiB. What actually changes?"
+  choices={[
+    { label: "The GC pacer treats 900 MiB as a soft ceiling for all runtime-managed memory and collects more and more aggressively as usage approaches it — trading GC CPU for staying alive", correct: true },
+    { label: "Go now hard-caps allocations at 900 MiB and returns errors beyond it", misconception: "Go has no allocation-error path, and the limit is deliberately soft: GC CPU is capped near 50% so the runtime exceeds the limit rather than livelocking. GOMEMLIMIT changes GC pacing, not allocation semantics." },
+    { label: "Better to set it to exactly 1 GiB — the closer to the cgroup limit, the more memory you can use", misconception: "The runtime cannot see cgo memory, mmap regions, or kernel accounting charged to the cgroup. At 100% the kernel kills the pod while Go believes it has headroom — the ~90% convention exists to cover exactly that invisible remainder." },
+    { label: "GOMEMLIMIT replaces GOGC, which stops having any effect", misconception: "They compose: GOGC still sets the steady-state growth ratio and the limit adds a ceiling. The GOGC=off plus GOMEMLIMIT combination is a deliberate pattern for memory-bound batch work, not the default behavior." },
+  ]}
+/>
+
+## The Dockerfile that caches right
+
+The static binary turns the container story into a packaging exercise — the deploy artifact is one file, and the image exists to deliver it plus a TLS trust store:
+
+```dockerfile
+FROM golang:1.25 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download            # its own layer: busts only when deps change
+COPY . .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /out/api /api
+ENTRYPOINT ["/api"]
+```
+
+The layer order *is* the caching strategy. A layer rebuilds when its inputs change, and every layer after it rebuilds too — so the question for each instruction is how often its inputs change. go.mod and go.sum change rarely; source changes every commit. Copying only the module manifests, downloading, and *then* copying source means an ordinary commit replays the download layer from cache (0 s) and pays only for the compile; invert the order — `COPY . .` first — and every commit re-downloads the entire module graph (30-90 s on a real dependency tree, every build, forever). BuildKit cache mounts go one step further (`RUN --mount=type=cache,target=/go/pkg/mod go mod download` keeps the module cache across builds even when go.mod changes), but the COPY ordering is the part people get wrong.
+
+The runtime stage choice is a real decision. scratch is the minimum — the image is literally your binary — but you inherit the missing pieces: no CA certificates (first HTTPS call fails), no tzdata, no /etc/passwd to run as non-root, no shell for debugging. distroless/static costs about 2 MiB extra and ships exactly those: CA roots, tzdata, a nonroot user — still no shell, which is a security feature and a debugging tradeoff you cover with ephemeral debug containers. Either way the final image lands around 10-15 MiB against the builder image at roughly 850 MiB — which must never ship. Numbers worth keeping: binary ~7-9 MiB stripped, distroless/static base ~2 MiB, pull time effectively the registry round trip.
+
+</Explanation>
+
+<StackDiagram
+  label="Dockerfile layers as a cache ladder: a change invalidates its layer and everything above it"
+  hue="var(--d-backend)"
+  layers={[
+    { label: "RUN go build", note: "busts every commit" },
+    { label: "COPY . .", note: "any source change" },
+    { label: "RUN go mod download", note: "cached until deps change" },
+    { label: "COPY go.mod go.sum", note: "manifests only" },
+    { label: "FROM golang:1.25 AS build", note: "rarest change" },
+  ]}
+  caption="Bottom-up is Dockerfile order; volatility grows toward the top. The expensive go mod download sits below COPY . . so an ordinary commit replays it from cache and pays only for the compile — invert the two and every build re-downloads the module graph."
+/>
+
+<KeyTakeaway>A container lies to the runtime twice: GOMAXPROCS defaults to host CPUs while the cgroup enforces a time quota (64 threads on a 2-CPU limit = parked 97 ms per period), and the heap grows GOGC-style while the kernel enforces the memory limit by SIGKILL. Align both: GOMAXPROCS to the quota — automaxprocs, or the Go 1.25 default — and GOMEMLIMIT to ~90% of the memory limit so pressure becomes GC CPU instead of an OOM-kill. Package with a multi-stage build, go mod download as its own layer, distroless/static unless you have a reason for scratch.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-containers-for-go-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the GOMAXPROCS-in-a-container failure end to end: the default, the CFS mechanics, the symptom signature, and the fixes by Go version.", a: "GOMAXPROCS defaults to the OS-reported CPU count, which in a container is the host. The cgroup CPU limit is a bandwidth quota — limits.cpu 2 means 200 ms of CPU per 100 ms period across all threads — so 64 runtime threads (plus GC workers at a quarter of GOMAXPROCS) exhaust it milliseconds into each period and the kernel freezes the whole cgroup for the remainder. The signature: p99 quantized around multiples of the throttle window while average CPU looks merely at-limit, and cpu.stat shows nr_throttled rising with nr_periods. Fixes: set GOMAXPROCS explicitly next to the limit, import go.uber.org/automaxprocs to read the quota at startup, or Go 1.25+ where the runtime derives the default from the cgroup limit (rounded up, minimum 2, capped by host cores) and tracks changes. Requests do not participate — cpu.weight is a contention ratio, not a quota." },
+    { q: "How do GOMEMLIMIT and the container memory limit interact, and why is ~90% the convention rather than 100%?", a: "The kernel enforces the container limit by OOM-killing; the Go heap by default grows to roughly twice the live set (GOGC=100) with no knowledge of that boundary, so a 600 MiB live set in a 1 GiB pod dies at a GC cycle boundary. GOMEMLIMIT gives the pacer a soft ceiling over all runtime-managed memory: as usage approaches it, collections run increasingly often, converting memory pressure into GC CPU instead of a SIGKILL. It is soft by design — GC CPU is capped near 50%, so an impossible live set overflows the limit rather than livelocking (the death-spiral guard), and the kernel remains the final arbiter. The ~10% headroom covers what the runtime cannot see: cgo allocations, mmap regions, and kernel memory charged to the cgroup. Set both numbers in the same deployment manifest so they are reviewed together." },
+  ]}
+/>
+
+<Recap lang="en">
+A container gives the Go runtime two numbers it historically could not see, and both defaults are wrong on shared nodes. CPU first: GOMAXPROCS defaults to host cores, but limits.cpu is a CFS bandwidth quota — time per period, not a core count. Sixty-four threads against a 200 ms-per-100 ms allowance burn it in milliseconds and then the kernel parks the entire cgroup; latency quantizes into throttle-window multiples and p99 collapses while the average CPU graph shows nothing unusual. Read cpu.stat for the truth, then align: an explicit GOMAXPROCS beside the limit, automaxprocs at startup, or Go 1.25+ where the runtime derives it from the cgroup (limits only — requests are a weight, not a quota — rounded up, never below 2, and re-checked as limits change). Memory second: the kernel enforces limits.memory by SIGKILL, and GOGC=100 happily doubles your live set on the way there. GOMEMLIMIT at about 90% of the limit hands the pacer a soft ceiling over all runtime-managed memory, so approaching the boundary buys aggressive GC instead of death; the limit is soft and GC CPU caps near 50% precisely so an impossible live set overflows rather than livelocks, and the headroom covers the cgo, mmap, and kernel memory the runtime cannot count. Packaging is the easy third: multi-stage build, manifests copied and go mod download cached as its own layer before the source COPY, CGO_ENABLED=0 compile, and a distroless/static (or deliberately bare scratch) runtime stage — a 10-15 MiB image whose env vars, per the go/07 configuration spiral, carry GOMAXPROCS and GOMEMLIMIT next to the limits they mirror.
+</Recap>

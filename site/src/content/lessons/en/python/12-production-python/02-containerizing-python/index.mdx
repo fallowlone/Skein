@@ -1,0 +1,141 @@
+---
+concepts:
+- python-containers
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-containerizing-python"
+sources:
+- https://docs.docker.com/reference/dockerfile/
+- https://docs.astral.sh/uv/
+- https://docs.python.org/3/using/cmdline.html
+spiral: []
+status: ready
+summary: 'python:3.x-slim over alpine (musl breaks manylinux wheels); multi-stage: uv sync a venv in the builder, copy into slim — ~1GB to ~80MB. Lockfile COPY before code keeps deps cached. PYTHONUNBUFFERED=1 or logs go silent; exec-form CMD or PID 1 is a shell and SIGTERM dies there.'
+title: 'Containerizing Python: slim plus multi-stage uv builds, cache-ordered layers, and signals that reach PID 1'
+track: "python"
+unit: "12-production-python"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+For months, every deploy "randomly" dropped a handful of requests, and everyone blamed the load balancer. The graphs were maddening: 502s in a tight burst, exactly at rollout, never reproducible in staging. The actual bug was one line long and three years old: `CMD gunicorn app.main:app` — shell form. Docker wraps that string in `/bin/sh -c`, so PID 1 inside the container was a shell, with gunicorn as its child. When Kubernetes started a rollout it sent SIGTERM to PID 1 — and `sh` does not forward signals to children. Gunicorn never heard a thing, kept serving, and ten seconds later the kernel delivered SIGKILL to the whole process group: workers died mid-request, connections reset, 502s sprayed. The fix was punctuation: `CMD ["gunicorn", "app.main:app"]` — exec form, gunicorn *is* PID 1, SIGTERM lands, workers drain, deploys went silent. A container image is a small operating-system decision: who is PID 1, whether stdout flushes, which layers rebuild, what ships in the final stage. Python has sharp specifics on all four, and this lesson is the checklist.
+</Hook>
+
+<Crux>Slim base, uv-built venv copied into a clean final stage, lockfile layer before code, PYTHONUNBUFFERED=1, exec-form CMD so SIGTERM lands.</Crux>
+
+<Explanation>
+
+## The base image, honestly
+
+Default to `python:3.12-slim` — Debian-based, glibc, around 150 MB. The full `python:3.12` image is near a gigabyte of compilers and dev headers you should not ship. The tempting one is `alpine`, and the warning matters: Alpine uses musl libc, and most prebuilt wheels on PyPI are `manylinux` — built against **glibc**. On musl, pip often cannot use them and falls back to compiling from source: builds that took seconds take minutes, you must install gcc and headers (there goes the size win), and you inherit musl's subtle behavioral differences — smaller default thread stacks, different DNS resolution — that surface as production-only bugs. The `musllinux` wheel tag exists, but coverage across your dependency tree is the exception, not the rule. Distroless Python images (no shell, no package manager) are the hardening end-state: smallest attack surface, but debugging means ephemeral containers, and the tag tracks a distro Python — adopt deliberately, not by default.
+
+The honest size shapes: full `python:3.12` ≈ 1 GB, naive single-stage slim ≈ 300-400 MB with build deps, multi-stage slim final ≈ 80-150 MB depending on your wheels.
+
+## Multi-stage with uv, and the layer-cache mechanics
+
+Two stages: a builder that may install compilers, and a final stage that gets only the finished virtualenv. `uv` makes the builder fast and deterministic — `uv sync --frozen` installs exactly the lockfile:
+
+```dockerfile
+# --- builder: may contain compilers; never ships ---
+FROM python:3.12-slim AS builder
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project   # deps layer: cached until the lock changes
+COPY src/ src/
+RUN uv sync --frozen --no-dev                        # project layer: cheap
+
+# --- final: slim, no compilers, nonroot ---
+FROM python:3.12-slim
+ENV PYTHONUNBUFFERED=1 PATH="/app/.venv/bin:$PATH"
+RUN useradd --create-home appuser
+WORKDIR /app
+COPY --from=builder /app/.venv .venv/
+COPY src/ src/
+USER appuser
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "app.main:app"]
+```
+
+The COPY *ordering* is the cache mechanics: each instruction is a layer, its cache key includes the checksums of the files it copies, and **everything after the first changed layer rebuilds**. Lockfile first, `uv sync` second, app code last — a code commit re-runs only the cheap final COPY; the dependency install (the slow layer) stays cached until `uv.lock` actually changes. Invert the order — `COPY . .` before the install — and every one-line change reinstalls every dependency in CI. The companion file is `.dockerignore`: without it, `COPY . .` drags in `.git` (often hundreds of MB), the host `.venv` (which can shadow the built one), and `__pycache__` — the classic image-bloat-by-default.
+
+<Quiz
+  id="02-containerizing-python-quiz-1"
+  lessonSlug="02-containerizing-python"
+  lang="en"
+  question="Your Dockerfile does COPY . . and then RUN uv sync --frozen. CI rebuilds the image on every commit. What does a one-line code change cost?"
+  choices={[
+    { label: "A full dependency reinstall: the COPY layer checksum changed, and every layer after a changed one rebuilds — move the lockfile COPY and uv sync above the code COPY", correct: true },
+    { label: "Nothing extra — Docker caches RUN by command text, and the uv sync command did not change", misconception: "The cache key chains: a RUN layer is reused only if every parent layer matched too. Identical command text after a busted COPY still re-executes from scratch." },
+    { label: "Only the changed file is re-copied, so the install layer above survives", misconception: "Layer caching is all-or-nothing per instruction — one changed file changes the COPY checksum, invalidating that layer and the entire chain after it." },
+    { label: "It is free because uv keeps its own download cache between builds", misconception: "Inside a fresh layer there is no persistent uv cache unless you mount one explicitly (--mount=type=cache). A cold CI runner downloads and links the whole tree again." },
+  ]}
+/>
+
+## Runtime flags, nonroot, and a real healthcheck
+
+`PYTHONUNBUFFERED=1` is non-negotiable. When stdout is not a TTY — and in a container it never is — CPython block-buffers it: log lines sit in a process-local buffer until kilobytes accumulate. The symptom is the silent-container classic: the service is running, `kubectl logs` shows nothing for minutes, and when a pod crashes the buffered tail — the lines explaining the crash — is lost forever. `PYTHONDONTWRITEBYTECODE=1` is more honest as a tidiness flag: it skips writing `.pyc` files (friendlier to read-only filesystems, no `__pycache__` litter in layers) at the cost of recompiling bytecode each boot — measurable but small; precompiling in the builder is the have-both option.
+
+Run as a nonroot `USER` — container escapes and writable-filesystem exploits all get cheaper as root, and admission policies in hardened clusters will reject root images anyway. Wire the orchestrator's probe to a **real readiness endpoint** — the one from your python/06 lifespan work that checks the DB pool and downstream clients — not to "the process exists". Note that Kubernetes ignores the Dockerfile `HEALTHCHECK` instruction entirely; probes are configured on the pod spec, so the endpoint is the contract, not the instruction.
+
+## PID 1 and the signal path
+
+The Hook's bug generalizes. `CMD gunicorn app:app` (shell form) makes `/bin/sh -c` PID 1; `CMD ["gunicorn", "app:app"]` (exec form) makes gunicorn PID 1. Signals are delivered to PID 1 — and a non-interactive `sh` neither forwards SIGTERM nor exits on it, so graceful shutdown never begins and the grace period always expires into SIGKILL: the 10-seconds-then-corpse deploy patterns. Exec form is the rule; if you genuinely need shell features in the command, end the script with `exec gunicorn ...` so the server replaces the shell. PID 1 also inherits the orphan-reaping duty: gunicorn handles its own children, but if your entrypoint spawns sidecars, an init shim (`tini`, or the runtime's init flag) prevents zombie accumulation.
+
+<Quiz
+  id="02-containerizing-python-quiz-2"
+  lessonSlug="02-containerizing-python"
+  lang="en"
+  question="Deploys cause a burst of 502s: k8s sends SIGTERM, waits the grace period, then SIGKILLs. The Dockerfile ends with CMD gunicorn app:app (shell form). What did gunicorn actually experience?"
+  choices={[
+    { label: "Nothing — PID 1 is /bin/sh -c, which does not forward SIGTERM; gunicorn never began draining and died by SIGKILL mid-request. Exec-form CMD puts gunicorn at PID 1 so the signal lands", correct: true },
+    { label: "Gunicorn received SIGTERM but the grace period was too short to drain in-flight requests", misconception: "A drain that ran out of time leaves graceful-shutdown log lines and partial draining. With shell form there are none — the master never learned a shutdown was requested." },
+    { label: "This is normal: Kubernetes always ends pods with SIGKILL and some loss is expected", misconception: "SIGKILL is the fallback after the grace period, not the protocol. A correctly signaled server drains and exits on SIGTERM; rollouts should drop zero requests." },
+    { label: "The fix is a bash entrypoint that traps SIGTERM and kills gunicorn", misconception: "Trap-and-forward scripts work but are fragile — you must forward every signal and reap children. exec gunicorn in the script (or plain exec-form CMD) is the boring, correct fix." },
+  ]}
+/>
+
+</Explanation>
+
+<StackDiagram
+  label="Image layers ordered for the cache: stable layers at the base, volatile layers last"
+  hue="var(--d-systems)"
+  layers={[
+    { label: "FROM python:3.12-slim", note: "glibc wheels, ~150MB" },
+    { label: "ENV PYTHONUNBUFFERED=1", note: "changes never" },
+    { label: "COPY pyproject.toml uv.lock", note: "changes rarely" },
+    { label: "RUN uv sync --frozen", note: "cached until lock moves" },
+    { label: "COPY src/ + USER appuser", note: "busts every commit" },
+    { label: "CMD exec form, not shell", note: "PID 1 gets SIGTERM" },
+  ]}
+  caption="Layer cache is a prefix property: everything after the first changed instruction rebuilds. Order layers by change frequency — a code commit then re-runs only the final COPY, never the dependency install."
+/>
+
+<KeyTakeaway>Base on `python:3.x-slim`: alpine's musl breaks `manylinux` wheels into source compiles and subtle bugs. Multi-stage: `uv sync --frozen` builds the venv in a builder, the final slim stage copies only `.venv` — roughly 1 GB full to ~80-150 MB shapes. Copy the lockfile and install *before* copying code, or every commit reinstalls everything. `PYTHONUNBUFFERED=1` or container logs buffer and vanish on crash. Exec-form CMD makes your server PID 1 so SIGTERM actually arrives — shell form is the every-deploy-SIGKILL bug.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-containerizing-python-retrieval"
+  lang="en"
+  questions={[
+    { q: "Defend the base-image choice and the multi-stage layout: why slim over alpine and over the full image, and what exactly does each stage contribute?", a: "python:3.x-slim is Debian and glibc, so manylinux wheels from PyPI install as-is; the full image ships ~1GB of compilers you must not ship, and alpine's musl libc disqualifies most prebuilt wheels — pip silently compiles from source, requiring gcc in the image (negating the size win), slowing builds from seconds to minutes, and importing musl behaviors (thread stack size, DNS) as production-only bugs. The builder stage may hold uv and compilers: uv sync --frozen materializes the lockfile into a venv. The final stage starts from clean slim and copies only the venv and source: no toolchain, no package manager caches — multi-stage finals land around 80-150MB versus ~1GB. Distroless goes further (no shell), best for hardened targets once you can debug via ephemeral containers." },
+    { q: "Name the three runtime traps — buffering, layer order, PID 1 — with mechanism and fix for each.", a: "Buffering: stdout in a container is not a TTY, so CPython block-buffers it; logs appear minutes late and a crash loses the buffered tail — the exact lines you need. Fix: PYTHONUNBUFFERED=1. Layer order: each instruction is a layer keyed by copied-file checksums, and everything after the first changed layer rebuilds; COPY . . before the install means every commit reinstalls all dependencies. Fix: COPY lockfile, install, then COPY code — plus .dockerignore so .git and the host .venv never enter the context. PID 1: shell-form CMD makes /bin/sh PID 1, and sh does not forward SIGTERM, so graceful shutdown never starts and the grace period expires into SIGKILL mid-request. Fix: exec-form CMD (or exec in the entrypoint script); add an init like tini only if your entrypoint spawns extra children." },
+  ]}
+/>
+
+<Recap lang="en">
+A Python container is four operating-system decisions disguised as a Dockerfile. The base: `python:3.x-slim`, because PyPI wheels are `manylinux` — glibc — and alpine's musl turns wheel installs into source compiles with their own toolchain bloat and behavioral drift; the full image ships a gigabyte of compilers nobody should run in prod. The build: two stages — uv resolves `uv.lock` into a venv where compilers are allowed, and the final slim stage receives only `.venv` and source, landing at 80-150 MB instead of a gigabyte. The cache: layers are a prefix — the lockfile COPY and `uv sync` go above the code COPY, so a commit rebuilds the cheap layer, not the dependency install, and `.dockerignore` keeps `.git` and the host `.venv` out of the context entirely. The runtime: `PYTHONUNBUFFERED=1` because block-buffered stdout is the silent container whose dying words vanish with the crash; a nonroot user because root containers fail hardened admission and cheapen exploits; readiness wired to the lifespan endpoint that actually checks dependencies, because Kubernetes ignores Dockerfile HEALTHCHECK. And PID 1: exec-form CMD so SIGTERM reaches gunicorn instead of dying in a shell that forwards nothing — the months of "random" rollout 502s in the Hook were one pair of square brackets away from never existing.
+</Recap>
