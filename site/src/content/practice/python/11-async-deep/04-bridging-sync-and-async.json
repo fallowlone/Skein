@@ -139,6 +139,123 @@
         "en": "import asyncio, threading, atexit\n\nclass Bridge:\n    def __init__(self):\n        self.loop = asyncio.new_event_loop()\n        self._thread = threading.Thread(\n            target=self.loop.run_forever, daemon=True, name=\"sdk-bridge\")\n        self._thread.start()\n        self.client = self.call(self._bootstrap(), timeout=10)   # built IN the loop\n        atexit.register(self.close)\n\n    async def _bootstrap(self):\n        self._gate = asyncio.Semaphore(16)        # backpressure lives loop-side\n        return await SearchClient.create(pool_size=20)\n\n    async def _guarded(self, coro):\n        async with self._gate:                    # 8 threads cannot pile past 16\n            return await coro\n\n    def call(self, coro, timeout=0.075):          # 75 ms of the 80 ms budget\n        fut = asyncio.run_coroutine_threadsafe(self._guarded(coro), self.loop)\n        return fut.result(timeout)                # blocks the WSGI thread only\n\n    def close(self):\n        self.loop.call_soon_threadsafe(self.loop.stop)   # the legal wake-up\n        self._thread.join(timeout=5)\n\nbridge = Bridge()                                  # exactly one, module singleton\n\ndef search_view(request):                          # sync facade, framework untouched\n    return JsonResponse(bridge.call(bridge.client.search(request.GET[\"q\"])))\n\nWhy it holds: the client and its pool live exactly as long as the loop — one TLS handshake per connection per process, not per request. The semaphore sits inside the loop because that is the only thread-safe home for shared async state; the WSGI threads feel backpressure as slightly longer .result() waits instead of the loop melting. The timeout is budget-derived and applies at every crossing, so a dead vendor degrades to fast errors, not stuck workers. Shutdown crosses the boundary the only legal way — call_soon_threadsafe — and the atexit hook keeps worker recycles clean. The policy line for review: any new asyncio.run in a request path is a rejected diff, with the waterfall from the incident attached as the reason.",
         "ru": "# Один цикл на процесс, клиент строится в цикле, семафор-шлюз, таймаут из бюджета, чистый shutdown\nimport asyncio, threading, atexit\n\nclass Bridge:\n    def __init__(self):\n        self.loop = asyncio.new_event_loop()\n        self._thread = threading.Thread(\n            target=self.loop.run_forever, daemon=True, name=\"sdk-bridge\")\n        self._thread.start()\n        self.client = self.call(self._bootstrap(), timeout=10)   # построен В цикле\n        atexit.register(self.close)\n\n    async def _bootstrap(self):\n        self._gate = asyncio.Semaphore(16)        # backpressure живёт на стороне цикла\n        return await SearchClient.create(pool_size=20)\n\n    async def _guarded(self, coro):\n        async with self._gate:                    # 8 потоков не навалят больше 16\n            return await coro\n\n    def call(self, coro, timeout=0.075):          # 75 мс из бюджета в 80 мс\n        fut = asyncio.run_coroutine_threadsafe(self._guarded(coro), self.loop)\n        return fut.result(timeout)                # блокирует только WSGI-поток\n\n    def close(self):\n        self.loop.call_soon_threadsafe(self.loop.stop)   # законная побудка\n        self._thread.join(timeout=5)\n\nbridge = Bridge()                                  # ровно один, синглтон модуля\n\ndef search_view(request):                          # синхронный фасад, фреймворк не тронут\n    return JsonResponse(bridge.call(bridge.client.search(request.GET[\"q\"])))\n\nПочему держится: клиент и его пул живут ровно столько, сколько цикл, — один TLS-хендшейк на соединение на процесс, а не на запрос. Семафор сидит внутри цикла, потому что это единственный потокобезопасный дом для общего асинхронного состояния; WSGI-потоки чувствуют backpressure как чуть более долгие ожидания .result() вместо плавящегося цикла. Таймаут выведен из бюджета и стоит на каждом пересечении, так что мёртвый вендор деградирует в быстрые ошибки, а не в застрявших воркеров. Остановка пересекает границу единственным законным способом — call_soon_threadsafe, — а atexit-хук держит пересоздание воркеров чистым. Строка политики для ревью: любой новый asyncio.run на пути запроса — отклонённый дифф, с приложенным waterfall из инцидента в качестве причины."
       }
+    },
+    {
+      "id": "incident-run-until-complete-deadlock",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "A sync helper deadlocks the running event loop",
+        "ru": "Синхронный хелпер вешает работающий цикл событий"
+      },
+      "prompt": {
+        "en": "An async FastAPI handler calls a legacy sync helper fetch_user_sync(uid), which internally does loop.run_until_complete(fetch_user_async(uid)) by grabbing asyncio.get_event_loop(). In tests it passes; in production every request that hits this path hangs forever and after 30s the worker is killed by the timeout, dropping ~200 in-flight requests per worker. The traceback shows RuntimeError: This event loop is already running on some hosts and a silent hang on others. Explain the deadlock and the correct bridge. Work it step by step; commit before revealing.",
+        "ru": "Асинхронный обработчик FastAPI вызывает легаси синхронный хелпер fetch_user_sync(uid), который внутри делает loop.run_until_complete(fetch_user_async(uid)), взяв asyncio.get_event_loop(). В тестах проходит; в проде каждый запрос на этом пути зависает навсегда, и через 30с воркер убивается таймаутом, теряя ~200 запросов в полёте на воркер. Трейсбек показывает RuntimeError: This event loop is already running на части хостов и тихое зависание на остальных. Объясните взаимоблокировку и правильный мост. Веди по шагам; сформулируй ответ до раскрытия."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · Why the loop cannot run itself",
+            "ru": "1 · Почему цикл не может запустить сам себя"
+          },
+          "prompt": {
+            "en": "The handler already runs on the event loop. What happens when the sync helper calls run_until_complete on that same loop?",
+            "ru": "Обработчик уже выполняется в цикле событий. Что происходит, когда синхронный хелпер вызывает run_until_complete на этом же цикле?"
+          },
+          "reveal": {
+            "en": "run_until_complete drives the loop until a future completes — but the loop is already being driven (it is mid-await of your handler). A loop cannot re-enter itself. On Python 3.10+ get_event_loop returns the running loop and run_until_complete raises RuntimeError('This event loop is already running'). Where code instead spins up or reuses a loop in a way that blocks the thread, the loop thread is now blocked waiting for a coroutine that only that same thread could ever schedule — a self-deadlock.",
+            "ru": "run_until_complete крутит цикл до завершения future — но цикл уже крутится (он в середине await вашего обработчика). Цикл не может войти в себя повторно. На Python 3.10+ get_event_loop возвращает работающий цикл, и run_until_complete бросает RuntimeError('This event loop is already running'). Там, где код вместо этого поднимает или переиспользует цикл так, что блокирует поток, поток цикла оказывается заблокирован в ожидании корутины, запланировать которую может только этот же поток — самоблокировка."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · Why tests passed but prod hangs",
+            "ru": "2 · Почему тесты прошли, а прод висит"
+          },
+          "prompt": {
+            "en": "Why did the unit test of fetch_user_sync pass while production deadlocks?",
+            "ru": "Почему юнит-тест fetch_user_sync прошёл, а прод встаёт в дедлок?"
+          },
+          "reveal": {
+            "en": "The test called fetch_user_sync from a plain synchronous test function with no running loop, so get_event_loop created/returned an idle loop and run_until_complete legitimately drove it to completion. Production calls it from inside an already-running loop (the ASGI handler), which is the one context where this is illegal. The bug is invisible until the sync helper is invoked under a live loop — exactly the production topology the test never reproduced.",
+            "ru": "Тест вызывал fetch_user_sync из обычной синхронной тест-функции без работающего цикла, поэтому get_event_loop создал/вернул простаивающий цикл, и run_until_complete законно докрутил его. Прод вызывает его изнутри уже работающего цикла (ASGI-обработчик) — единственный контекст, где это недопустимо. Баг невидим, пока синхронный хелпер не вызван под живым циклом — именно та продовая топология, которую тест не воспроизводил."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · The correct bridge",
+            "ru": "3 · Правильный мост"
+          },
+          "prompt": {
+            "en": "How do you call the sync helper from async (or the async work from sync) without deadlocking?",
+            "ru": "Как вызвать синхронный хелпер из async (или async-работу из sync) без дедлока?"
+          },
+          "reveal": {
+            "en": "Pick the right direction. If the helper is genuinely blocking, call it from async via await asyncio.to_thread(fetch_user_sync, uid) so it runs on a worker thread and the loop stays free. If the helper only wraps async work, delete the sync shim and await fetch_user_async directly. If a true sync caller must run async work, use asyncio.run in a context with no running loop, or asyncio.run_coroutine_threadsafe(coro, loop).result() from a DIFFERENT thread than the loop. The rule: never call run_until_complete / asyncio.run on a loop that is already running, and never block the loop thread on its own coroutine.",
+            "ru": "Выберите верное направление. Если хелпер действительно блокирующий, вызывайте его из async через await asyncio.to_thread(fetch_user_sync, uid), чтобы он шёл в рабочем потоке, а цикл оставался свободным. Если хелпер лишь оборачивает async-работу, удалите синхронную прослойку и await-айте fetch_user_async напрямую. Если настоящему синхронному вызову нужна async-работа, используйте asyncio.run в контексте без работающего цикла или asyncio.run_coroutine_threadsafe(coro, loop).result() из ДРУГОГО потока, не из потока цикла. Правило: никогда не вызывайте run_until_complete / asyncio.run на уже работающем цикле и не блокируйте поток цикла на его же корутине."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-sync-bridge-blocks-loop",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review: a sync-to-async bridge utility",
+        "ru": "Ревью: утилита моста sync→async"
+      },
+      "prompt": {
+        "en": "A teammate added a 'call async from anywhere' helper used inside request handlers. Review like a senior: name the real defects, don't flag non-issues.",
+        "ru": "Коллега добавил хелпер «вызвать async откуда угодно», используемый внутри обработчиков запросов. Ревьюй как сеньор: назови реальные дефекты, не отмечай несуществующие."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "import asyncio\n\n\ndef call_async(coro):\n    \"\"\"Run an async coroutine from synchronous code and return its result.\"\"\"\n    loop = asyncio.get_event_loop()\n    return loop.run_until_complete(coro)\n\n\nasync def fetch_user_async(uid):\n    await asyncio.sleep(0.1)\n    return {\"id\": uid, \"name\": \"ada\"}\n\n\ndef fetch_user_sync(uid):\n    # legacy callers expect a blocking function\n    return call_async(fetch_user_async(uid))\n\n\nasync def handle_request(uid):\n    # async handler reuses the legacy sync path for consistency\n    user = fetch_user_sync(uid)\n    return {\"status\": 200, \"user\": user}\n"
+      },
+      "findings": [
+        {
+          "id": "run-until-complete-on-running-loop",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "run_until_complete called on the already-running loop",
+            "ru": "run_until_complete вызван на уже работающем цикле"
+          },
+          "explanation": {
+            "en": "handle_request runs on the event loop, then calls fetch_user_sync -> call_async -> loop.run_until_complete on that same loop. A running loop cannot be re-entered: this raises RuntimeError('This event loop is already running') or, with a misconfigured loop, blocks the loop thread on a coroutine only it can schedule — a deadlock. From async, await the coroutine directly or use asyncio.to_thread for blocking work.",
+            "ru": "handle_request выполняется в цикле событий, затем вызывает fetch_user_sync -> call_async -> loop.run_until_complete на этом же цикле. В работающий цикл нельзя войти повторно: это бросает RuntimeError('This event loop is already running') или, при неверно настроенном цикле, блокирует поток цикла на корутине, которую только он и может запланировать — дедлок. Из async await-айте корутину напрямую или используйте asyncio.to_thread для блокирующей работы."
+          }
+        },
+        {
+          "id": "get-event-loop-deprecated-no-loop",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "get_event_loop with no running loop is deprecated and brittle",
+            "ru": "get_event_loop без работающего цикла устарел и хрупок"
+          },
+          "explanation": {
+            "en": "When call_async is invoked from a truly synchronous context with no running loop, asyncio.get_event_loop is deprecated (3.10+) and emits a DeprecationWarning; in 3.12+ it may raise if no current loop is set. A correct sync entry point should use asyncio.run(coro), which creates and closes a fresh loop. This helper conflates two incompatible contexts.",
+            "ru": "Когда call_async вызывается из действительно синхронного контекста без работающего цикла, asyncio.get_event_loop устарел (3.10+) и выдаёт DeprecationWarning; в 3.12+ может бросить, если текущий цикл не установлен. Корректная синхронная точка входа должна использовать asyncio.run(coro), которая создаёт и закрывает свежий цикл. Этот хелпер смешивает два несовместимых контекста."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "sleep-as-fake-io",
+          "label": {
+            "en": "asyncio.sleep(0.1) stands in for a real DB call",
+            "ru": "asyncio.sleep(0.1) заменяет реальный вызов БД"
+          },
+          "explanation": {
+            "en": "Not a defect. The sleep is an obvious placeholder for I/O in an example; awaiting sleep is correct async style and isn't the source of the hang. The bug is the bridge, not the simulated I/O.",
+            "ru": "Не дефект. sleep — очевидная заглушка для I/O в примере; await sleep — корректный async-стиль и не источник зависания. Баг в мосте, а не в имитации I/O."
+          }
+        }
+      ]
     }
   ]
 }
