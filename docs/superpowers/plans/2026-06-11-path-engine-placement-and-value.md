@@ -714,7 +714,7 @@ A time-boxed general test: walk the 8 domain families, 2 probes per family, ~16 
 - Modify: `src/components/path/CalibrationFlow.tsx` (placement mode)
 - Test: `src/scripts/path/calibration.test.ts`
 
-- [ ] **Step 1: Write the failing `placementPlan` test**
+- [x] **Step 1: Write the failing `placementPlan` test**
 
 Append to `src/scripts/path/calibration.test.ts`:
 
@@ -742,12 +742,12 @@ describe("placementPlan", () => {
 
 Add `placementPlan` to the import from `./calibration`, and `emptyState`, `applyDiagnostic`, `buildConceptGraph`, fixture `CONCEPTS` mirroring the imports at the top of `knowledge.test.ts` (the file already builds `g` if it tests `pickProbe` — reuse; otherwise add `const g = buildConceptGraph(CONCEPTS);`).
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test src/scripts/path/calibration.test.ts`
 Expected: FAIL — `placementPlan` is not exported.
 
-- [ ] **Step 3: Implement `placementPlan`**
+- [x] **Step 3: Implement `placementPlan`**
 
 Append to `src/scripts/path/calibration.ts`:
 
@@ -788,12 +788,12 @@ export function placementPlan(
 }
 ```
 
-- [ ] **Step 4: Run calibration tests**
+- [x] **Step 4: Run calibration tests**
 
 Run: `bun test src/scripts/path/calibration.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Adapter glue in `path-io.ts`**
+- [x] **Step 5: Adapter glue in `path-io.ts`**
 
 Add the import at the top of the calibration import line (`path-io.ts:22`): `import { pickProbe, placementPlan, type DiagItem } from "./calibration";` and add next to `nextCalibrationProbe`:
 
@@ -810,7 +810,7 @@ export function placementBatches(exclude: Set<string>, perFamily = 2): { family:
 
 (`effectiveKnowledge` exists after the forecast-repair plan; if running this plan standalone, use `knowledge.value`.)
 
-- [ ] **Step 6: Placement mode in `CalibrationFlow.tsx`**
+- [x] **Step 6: Placement mode in `CalibrationFlow.tsx`**
 
 Extend the component: a `?mode=placement` URL flag runs family batches sequentially instead of single greedy probes. Apply this diff:
 
@@ -866,7 +866,7 @@ In the intro/run headers, use `placement ? t.placementTitle : t.title` and `plac
 
 Termination: `nextPlacementBatch` returns null once every family has no unsettled diagnosable concepts left (the `placementPlan` filters + `probed` exclusion guarantee monotone progress — each served concept lands in `probed.current` via the existing `onConcept`).
 
-- [ ] **Step 7: Entry point**
+- [x] **Step 7: Entry point**
 
 Add a link to the placement mode wherever calibration is offered: in `CalibrationFlow`'s intro phase (non-placement, non-unit), add under the buttons:
 
@@ -876,14 +876,14 @@ Add a link to the placement mode wherever calibration is offered: in `Calibratio
         )}
 ```
 
-- [ ] **Step 8: Typecheck, full suite, manual run**
+- [x] **Step 8: Typecheck, full suite, manual run** (typecheck clean for touched files; full suite 820 green; interactive placement run is the owner's)
 
 Run: `bunx astro check 2>&1 | tail -5 && bun test`
 Expected: clean / all green.
 
 Run: `bun run preview`, open `/en/calibrate?mode=placement`: intro shows the placement copy; the run serves family-labeled batches; finishing all families lands on "done"; `/en/roadmap` mastery map is visibly re-colored across families; the RU flow mirrors it at `/ru/calibrate?mode=placement`.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/scripts/path/calibration.ts src/scripts/path/calibration.test.ts src/scripts/path/path-io.ts src/components/path/CalibrationFlow.tsx
