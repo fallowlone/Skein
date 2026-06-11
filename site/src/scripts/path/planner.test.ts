@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { CONCEPTS, UNITS, GOALS, TRACK_ORDER } from "./__fixtures__/mini-graph";
 import { buildConceptGraph } from "./graph";
 import { DEFAULT_CONFIG } from "./config";
-import { emptyState, applyDiagnostic } from "./knowledge";
+import { emptyState, applyDiagnostic, applySelfDeclare } from "./knowledge";
 import {
   resolveGoalTargets, targetFrontier, missingConcepts, conceptsToUnits, orderUnits, buildPath,
   goalTrackWeight,
@@ -117,5 +117,38 @@ describe("goalTrackWeight — rank inverts into weight", () => {
   it("floors at 0.5 for an untargeted track", () => {
     const ranks = new Map([["g-net", 1]]);
     expect(goalTrackWeight("frontend" as any, [goals[0]], ranks)).toBe(0.5);
+  });
+});
+
+describe("conceptsToUnits — greedy set cover", () => {
+  const u = (unit: string, teaches: string[], estMin: number) =>
+    ({ unit, track: unit.split("/")[0], teaches, requires: [], estMin }) as any;
+  it("picks one unit per concept when several teach it", () => {
+    const units = [u("a/01", ["x", "y"], 60), u("b/01", ["x"], 30)];
+    expect(conceptsToUnits(["x", "y"], units).map((q) => q.unit)).toEqual(["a/01"]); // covers both
+  });
+  it("breaks coverage ties by smaller estMin, then unit id", () => {
+    const units = [u("a/01", ["x"], 60), u("b/01", ["x"], 30)];
+    expect(conceptsToUnits(["x"], units).map((q) => q.unit)).toEqual(["b/01"]);
+  });
+  it("leaves concepts taught by no unit uncovered without looping", () => {
+    expect(conceptsToUnits(["ghost"], [u("a/01", ["x"], 60)])).toEqual([]);
+  });
+});
+
+describe("buildPath — partial-unit cost", () => {
+  it("scales a step's estMin by the missing share of its teaches", () => {
+    // networking/01-ip teaches ip-addressing + ports-sockets (see mini-graph fixture).
+    // Self-declare ports-sockets known (declare does NOT propagate to its prereqs, so
+    // ip-addressing stays missing) → 1 of 2 concepts missing → half the authored estMin.
+    const s = applySelfDeclare(emptyState(), "ports-sockets", true, 0);
+    const path = buildPath({
+      state: s, goals: [GOALS[0]], config: cfg(), content: { concepts: CONCEPTS, units: UNITS, goalById },
+      srsDue: [], now: 0, trackOrder: TRACK_ORDER,
+    });
+    const ip = path.steps.find((st) => st.unit === "networking/01-ip")!;
+    const authored = UNITS.find((x) => x.unit === "networking/01-ip")!;
+    expect(ip.unlocks).toEqual(["ip-addressing"]);
+    expect(ip.estMin).toBe(Math.max(5, Math.round(authored.estMin * (1 / authored.teaches.length))));
   });
 });
