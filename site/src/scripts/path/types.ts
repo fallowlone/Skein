@@ -41,7 +41,7 @@ export interface DeadlineConfig {
 }
 
 export interface PathWeights {
-  prior: number; lessons: number; practice: number; recency: number;
+  lessons: number; practice: number;       // study-evidence blend (applyStudyEvidence)
   masteryThreshold: number; // concept "known" cutoff
   decayFloor: number;       // base confidence floor after decay
 }
