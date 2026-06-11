@@ -164,7 +164,7 @@ The user picks "finish by June 30" — June 30 itself must be available for stud
 - Modify: `src/scripts/path/schedule.ts:34`
 - Test: `src/scripts/path/schedule.test.ts`
 
-- [ ] **Step 1: Update the three direct `studyDays` tests to expect the inclusive end day**
+- [x] **Step 1: Update the three direct `studyDays` tests to expect the inclusive end day**
 
 In `src/scripts/path/schedule.test.ts`:
 
@@ -187,12 +187,12 @@ it("availableMinutes sums the window including the deadline day", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test src/scripts/path/schedule.test.ts`
 Expected: FAIL — 3 tests (missing the end-day entry / 600 vs 720).
 
-- [ ] **Step 3: Make the loop inclusive**
+- [x] **Step 3: Make the loop inclusive**
 
 In `src/scripts/path/schedule.ts` line 34, change:
 
@@ -207,12 +207,12 @@ to:
   for (let d = startDay; d <= endDay; d++) {
 ```
 
-- [ ] **Step 4: Run the path suite**
+- [x] **Step 4: Run the path suite**
 
 Run: `bun test src/scripts/path/`
 Expected: PASS. The `schedulePlan` tests are unaffected because the Task 1 fixture targets a 0-hour Sunday. If any other test counts days from `studyDays`, adjust it for the one extra (inclusive) day.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/scripts/path/schedule.ts src/scripts/path/schedule.test.ts
