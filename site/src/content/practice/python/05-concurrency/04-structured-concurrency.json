@@ -136,6 +136,147 @@
         "en": "async def close_deal(deal): async with asyncio.timeout(10): row = await asyncio.shield(commit_deal(deal)) — shield because a cancellation landing mid-INSERT must not tear the commit; the shield is the smallest possible scope, and we still await it so its exception has an address (if the outer scope is cancelled, log the shielded task's outcome via add_done_callback). Then: async with TaskGroup() as tg: for svc in services: tg.create_task(notify(svc, row)). Each notify catches its expected failures internally — except (HTTPError, ConnectionError) as e: log.warning(...); return NotifyResult(svc, failed=True) — so routine failures return values instead of exceptions and never abort siblings. AuthError is left to escape: the group cancels the other notifies (correct: the token is dead) and raises ExceptionGroup; the caller does except* AuthError to refresh the token / alert. CancelledError is never caught anywhere in the children, so the timeout's cancellation sweeps through cleanly and converts to TimeoutError at the asyncio.timeout boundary. Failure matrix: notify failure → logged, others continue; AuthError → all notifies cancelled, request fails loudly; timeout at 10 s → caller gets TimeoutError, commit either completed (shield) or never started.",
         "ru": "async def close_deal(deal): async with asyncio.timeout(10): row = await asyncio.shield(commit_deal(deal)) — shield, потому что отмена, прилетевшая посреди INSERT, не должна порвать коммит; shield — минимально возможный скоуп, и мы всё равно await-им его, чтобы у исключения был адрес (если внешний скоуп отменили — логируем исход экранированной задачи через add_done_callback). Затем: async with TaskGroup() as tg: for svc in services: tg.create_task(notify(svc, row)). Каждый notify ловит свои ожидаемые отказы внутри — except (HTTPError, ConnectionError) as e: log.warning(...); return NotifyResult(svc, failed=True) — так рутинные отказы возвращают значения вместо исключений и не прерывают соседей. AuthError оставлен вырываться: группа отменяет остальные notify (корректно: токен мёртв) и кидает ExceptionGroup; вызывающий делает except* AuthError для обновления токена/алерта. CancelledError нигде в детях не ловится, поэтому отмена таймаута проходит насквозь чисто и превращается в TimeoutError на границе asyncio.timeout. Матрица отказов: упало уведомление → залогировано, остальные продолжают; AuthError → все notify отменены, запрос падает громко; таймаут на 10 с → вызывающий получает TimeoutError, коммит либо завершён (shield), либо не начинался."
       }
+    },
+    {
+      "id": "incident-shutdown-hang-swallowed-cancel",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "Every deploy now ends in SIGKILL and torn transfers",
+        "ru": "Каждый деплой теперь кончается SIGKILL и порванными переводами"
+      },
+      "prompt": {
+        "en": "Since last week, rolling deploys of the payments worker hang: pods ignore SIGTERM, burn the full 30-second grace period, and get SIGKILLed. Reconciliation then finds torn transfers — debits whose matching credits never landed. The recent diff added a resilience wrapper for a flaky upstream: `while True: try: return await call() except BaseException: log.warning('retrying'); await asyncio.sleep(1)`. Ops wants to raise the grace period to five minutes; you suspect that would change nothing. Work it step by step; commit to an answer before revealing each step.",
+        "ru": "С прошлой недели катящиеся деплои платёжного воркера виснут: поды игнорируют SIGTERM, сжигают весь 30-секундный грейс-период и получают SIGKILL. Сверка затем находит порванные переводы — дебеты, чьи парные кредиты так и не легли. Недавний дифф добавил обёртку устойчивости для нестабильного апстрима: `while True: try: return await call() except BaseException: log.warning('retrying'); await asyncio.sleep(1)`. Ops хочет поднять грейс-период до пяти минут; ты подозреваешь, что это ничего не изменит. Разбирай по шагам; формулируй ответ до раскрытия каждого шага."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · Why graceful shutdown stopped working",
+            "ru": "1 · Почему мягкое выключение перестало работать"
+          },
+          "prompt": {
+            "en": "On SIGTERM the app cancels its tasks and awaits them; that worked for a year. Now tasks never finish cancelling. Trace what cancellation actually delivers to a task and where the new wrapper intercepts it.",
+            "ru": "По SIGTERM приложение отменяет свои задачи и ожидает их; это год работало. Теперь задачи никогда не завершают отмену. Проследи, что отмена реально доставляет задаче и где новая обёртка это перехватывает."
+          },
+          "reveal": {
+            "en": "Cancellation is not a kill switch — task.cancel() arranges for CancelledError to be raised inside the task at its next await point, and the task ends by letting that exception unwind it. The wrapper's `except BaseException` catches CancelledError (it IS a BaseException), logs 'retrying', sleeps, and loops — at which point the next await can receive another CancelledError, which is swallowed again. The task is now uncancellable by construction: shutdown sends the signal, the wrapper digests it forever, asyncio.run waits, and Kubernetes escalates to SIGKILL. A five-minute grace period just means five minutes of digestion before the same SIGKILL — the suspicion is right.",
+            "ru": "Отмена — не рубильник: task.cancel() устраивает поднятие CancelledError внутри задачи на её следующей точке await, и задача завершается, позволяя исключению размотать себя. `except BaseException` обёртки ловит CancelledError (это И ЕСТЬ BaseException), логирует «retrying», спит и зацикливается — а на следующем await может прилететь новый CancelledError, который снова глотается. Задача теперь неотменяема по построению: выключение шлёт сигнал, обёртка вечно его переваривает, asyncio.run ждёт, и Kubernetes эскалирует до SIGKILL. Пятиминутный грейс-период означает лишь пять минут переваривания перед тем же SIGKILL — подозрение верно."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · One mechanism, three casualties",
+            "ru": "2 · Один механизм, три жертвы"
+          },
+          "prompt": {
+            "en": "The torn transfers predate any SIGKILL — they appear even in deploys that 'succeeded'. Explain why swallowing CancelledError breaks more than shutdown, and why CancelledError inherits from BaseException in the first place.",
+            "ru": "Порванные переводы появились раньше любых SIGKILL — они есть даже в «успешных» деплоях. Объясни, почему проглатывание CancelledError ломает больше, чем выключение, и почему CancelledError вообще наследует от BaseException."
+          },
+          "reveal": {
+            "en": "Timeouts, TaskGroup sibling-cancellation, and shutdown all ride the same rail: CancelledError injected at an await. So the wrapper also disables every asyncio.timeout around it (the timer fires, cancels the body, the wrapper eats it — the deadline never takes effect) and every TaskGroup abort passing through it (a failed sibling cannot tear this branch down). The torn transfers come from the SIGKILL endgame: hard kill at a random instruction boundary, mid-transfer, after the debit committed and before the credit — the exact tear that cooperative cancellation, with finally blocks and async-with exits running during unwind, exists to prevent. CancelledError subclasses BaseException, not Exception, precisely so that ordinary `except Exception` resilience code stays safe — the wrapper had to reach past the designed guardrail to cause this.",
+            "ru": "Таймауты, отмена сиблингов в TaskGroup и выключение едут по одному рельсу: CancelledError, впрыснутый на await. Значит, обёртка отключает и каждый asyncio.timeout вокруг себя (таймер срабатывает, отменяет тело, обёртка съедает — дедлайн никогда не наступает), и каждый разрыв TaskGroup, проходящий через неё (упавший сиблинг не может свернуть эту ветку). Порванные переводы — из эндшпиля SIGKILL: жёсткое убийство на случайной границе инструкции, посреди перевода, после коммита дебета и до кредита — ровно тот разрыв, который кооперативная отмена с finally-блоками и выходами async-with во время размотки и существует, чтобы предотвращать. CancelledError наследует BaseException, а не Exception, именно затем, чтобы обычный устойчивый код с `except Exception` оставался безопасным — обёртке пришлось перелезть через спроектированное ограждение, чтобы это устроить."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · Fix and prevention",
+            "ru": "3 · Фикс и профилактика"
+          },
+          "prompt": {
+            "en": "Rewrite the wrapper's contract, protect the commit that must not tear, and name the tests and review rules that keep cancellation trustworthy.",
+            "ru": "Перепиши контракт обёртки, защити коммит, который не должен рваться, и назови тесты и правила ревью, сохраняющие отмене доверие."
+          },
+          "reveal": {
+            "en": "Wrapper: retry on Exception, never BaseException — `except Exception: log; await asyncio.sleep(1)`. If CancelledError must be intercepted for cleanup, re-raise it after: `except asyncio.CancelledError: await rollback(); raise`. The credit-after-debit section that must not tear gets asyncio.shield around the smallest committing await, with the result still observed — a shield is a deliberate, reviewable orphan, not a general 'don't cancel me'. Cleanup in finally must itself be cancellation-safe (an awaiting rollback can receive a second CancelledError). Tests: a unit test that cancels the wrapped task and asserts it finishes within a bound (fails on the buggy wrapper in one second); an integration test that SIGTERMs the worker mid-load and asserts clean exit plus zero torn transfers. Review rules: every `except BaseException` and every bare `except asyncio.CancelledError` without a re-raise is a blocker; every shield requires a written justification. One overbroad except disabled timeouts, structured concurrency, and graceful shutdown at once — that is the blast radius to teach.",
+            "ru": "Обёртка: ретрай по Exception, никогда по BaseException — `except Exception: log; await asyncio.sleep(1)`. Если CancelledError надо перехватить ради уборки — переподними после: `except asyncio.CancelledError: await rollback(); raise`. Секция кредита-после-дебета, которая не должна рваться, получает asyncio.shield вокруг наименьшего коммитящего await, с обязательным наблюдением результата — shield это осознанная, ревьюируемая сирота, а не общее «не отменяйте меня». Уборка в finally сама обязана быть отменобезопасной (ожидающий rollback может получить второй CancelledError). Тесты: юнит-тест, отменяющий обёрнутую задачу и проверяющий завершение в пределах лимита (падает на багованной обёртке за секунду); интеграционный тест, шлющий SIGTERM воркеру под нагрузкой и проверяющий чистый выход плюс ноль порванных переводов. Правила ревью: каждый `except BaseException` и каждый голый `except asyncio.CancelledError` без переподнятия — блокер; каждый shield требует письменного обоснования. Один слишком широкий except разом отключил таймауты, структурную конкурентность и мягкое выключение — вот радиус поражения, которому надо учить."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-checkout-cancellation-discipline",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 12,
+      "title": {
+        "en": "Review: a checkout flow under a 3-second deadline",
+        "ru": "Ревью: флоу оформления заказа под дедлайном 3 секунды"
+      },
+      "prompt": {
+        "en": "This checkout path runs under asyncio with a hard latency budget. Review it like a senior: name the real defects in its cancellation discipline, and don't flag non-issues.",
+        "ru": "Этот путь оформления заказа работает под asyncio с жёстким бюджетом латентности. Отревьюй как senior: назови реальные дефекты в его дисциплине отмены и не цепляйся к не-проблемам."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "import asyncio\n\n\nasync def fetch_all(urls: list[str]) -> list[bytes]:\n    tasks = [asyncio.create_task(fetch(u)) for u in urls]\n    return await asyncio.gather(*tasks)\n\n\nasync def safe_step(coro):\n    try:\n        return await coro\n    except asyncio.CancelledError:\n        log.warning(\"step cancelled, continuing\")\n        return None\n\n\nasync def checkout(order) -> dict:\n    async with asyncio.timeout(3):\n        inventory = await safe_step(reserve(order))\n        payment = await asyncio.shield(charge(order))\n        return await finalize(order, inventory, payment)"
+      },
+      "findings": [
+        {
+          "id": "swallowed-cancellederror",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "safe_step swallows CancelledError and returns None — the timeout never fires",
+            "ru": "safe_step глотает CancelledError и возвращает None — таймаут никогда не срабатывает"
+          },
+          "explanation": {
+            "en": "asyncio.timeout works by cancelling the body and converting that CancelledError to TimeoutError at its own boundary — but only if the exception reaches it. safe_step catches it, logs, and hands back None: the 3-second deadline is decorative, checkout proceeds with inventory=None, and the same hole breaks TaskGroup aborts and shutdown for anything using this helper. Intercept only to clean up, then re-raise.",
+            "ru": "asyncio.timeout работает, отменяя тело и конвертируя этот CancelledError в TimeoutError на собственной границе — но только если исключение до неё доходит. safe_step ловит его, логирует и отдаёт None: трёхсекундный дедлайн декоративен, checkout продолжается с inventory=None, и та же дыра ломает разрывы TaskGroup и выключение для всего, что использует этот хелпер. Перехватывай только ради уборки — и переподнимай."
+          }
+        },
+        {
+          "id": "shield-unobserved-charge",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "shield(charge(order)) detaches a money movement nobody observes on timeout",
+            "ru": "shield(charge(order)) отвязывает движение денег, которое при таймауте никто не наблюдает"
+          },
+          "explanation": {
+            "en": "When the deadline cancels checkout, the awaiting coroutine gets CancelledError immediately but the shielded charge keeps running detached: the customer can be charged while finalize never runs — money moved, order not placed, and the charge task's exceptions are unobserved (the bare-create_task problem in disguise). Shield only a commit that must not tear, keep a reference, and observe its result on the timeout path (refund/reconcile). As written, the broad shield plus swallowed cancellation makes the deadline both ineffective and dangerous.",
+            "ru": "Когда дедлайн отменяет checkout, ожидающая корутина немедленно получает CancelledError, но заэкранированный charge продолжает работать отвязанным: клиента могут списать, а finalize не выполнится — деньги ушли, заказ не создан, и исключения задачи charge никто не наблюдает (замаскированная проблема голого create_task). Экранируй только коммит, который не должен рваться, храни ссылку и наблюдай результат на пути таймаута (возврат/сверка). В текущем виде широкий shield плюс проглоченная отмена делают дедлайн одновременно неэффективным и опасным."
+          }
+        },
+        {
+          "id": "gather-leaves-siblings-running",
+          "severity": "tradeoff",
+          "planted": true,
+          "label": {
+            "en": "gather propagates the first error while surviving fetches keep running unsupervised",
+            "ru": "gather пробрасывает первую ошибку, пока выжившие запросы работают без надзора"
+          },
+          "explanation": {
+            "en": "With default return_exceptions=False, the first failed fetch raises out of fetch_all while its siblings continue in the background — holding connections, completing side effects, reporting exceptions to no one. A TaskGroup cancels siblings on first failure and aggregates errors as an ExceptionGroup; that is the structured replacement for this fan-out. Acceptable only if siblings are side-effect-free and cheap — worth an explicit comment if so.",
+            "ru": "С дефолтным return_exceptions=False первый упавший fetch выбрасывается из fetch_all, пока его сиблинги продолжают в фоне — держат соединения, доводят побочные эффекты, отчитываются об исключениях никому. TaskGroup отменяет сиблингов при первом сбое и агрегирует ошибки в ExceptionGroup; это структурная замена такого fan-out. Приемлемо, только если сиблинги без побочных эффектов и дёшевы — тогда это стоит явного комментария."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "create-task-then-gather",
+          "label": {
+            "en": "Wrapping coroutines in create_task before gather is redundant",
+            "ru": "Оборачивать корутины в create_task перед gather избыточно"
+          },
+          "explanation": {
+            "en": "gather wraps bare coroutines in Tasks itself, so the explicit create_task list is equivalent — and arguably clearer about when work starts. Style, not defect.",
+            "ru": "gather сам оборачивает голые корутины в Task, так что явный список create_task эквивалентен — и, пожалуй, яснее показывает, когда стартует работа. Стиль, не дефект."
+          }
+        },
+        {
+          "id": "timeout-vs-wait-for",
+          "label": {
+            "en": "asyncio.timeout should be asyncio.wait_for for reliability",
+            "ru": "asyncio.timeout следовало заменить на asyncio.wait_for ради надёжности"
+          },
+          "explanation": {
+            "en": "asyncio.timeout (3.11+) is the modern, composable context-manager replacement for wait_for — nested timeouts convert only the cancellations they caused. Using it is correct; the defects are in what the body does with the cancellation.",
+            "ru": "asyncio.timeout (3.11+) — современная композируемая замена wait_for в виде контекст-менеджера: вложенные таймауты конвертируют только вызванные ими отмены. Его использование корректно; дефекты — в том, что тело делает с отменой."
+          }
+        }
+      ]
     }
   ]
 }

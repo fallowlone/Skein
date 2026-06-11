@@ -139,6 +139,147 @@
         "en": "import pytest\n\n@pytest.fixture(scope=\"session\")\ndef pg_container():\n    c = start_postgres()            # 8 s, once per run\n    yield c\n    c.stop()\n\n@pytest.fixture(scope=\"session\", params=[\"postgres\", \"sqlite\"])\ndef engine(request, pg_container):\n    if request.param == \"sqlite\":\n        yield make_engine(\"sqlite:///:memory:\")\n    else:\n        yield make_engine(pg_container.dsn)   # matrix: every dependent test runs twice\n\n@pytest.fixture\ndef db(engine):\n    conn = engine.connect()\n    tx = conn.begin()\n    yield conn                      # tests see ONE isolated transaction\n    tx.rollback()                   # teardown runs even on failure\n    conn.close()\n\n@pytest.fixture\ndef make_user(db):\n    created = []\n    def _make(plan=\"free\", **kw):\n        u = insert_user(db, plan=plan, **kw)\n        created.append(u)\n        return u\n    yield _make\n    # rollback already isolates; explicit reversed-cleanup kept for non-tx resources\n\nThe budget math drives the scopes: container and engine are session-scoped (8 s once, not 53 min), and isolation comes from the function-scoped db fixture whose transaction rolls back in teardown — every test sees a pristine database for the cost of begin/rollback, single-digit milliseconds. The invariant making this safe is that nothing mutable and session-scoped is ever handed to a test: engine is shared but treated as immutable; all writes happen inside the per-test transaction. The backend matrix lives in params= on the engine fixture, so all 400 tests run against both backends with no duplicated code — reported as test_x[postgres] / test_x[sqlite]. Plan variation goes through the make_user factory, not through mutating a shared tenant — the order-dependence class from the lesson. The only autouse fixture is environment hygiene (monkeypatch already auto-undoes; an autouse fixture that snapshots os.environ guards against tests using os.environ directly), justified because cross-cutting isolation is the one concern where invisibility beats explicitness.",
         "ru": "# Стек: session-контейнер + session-движок (params) → function-транзакция → фабрика\nimport pytest\n\n@pytest.fixture(scope=\"session\")\ndef pg_container():\n    c = start_postgres()            # 8 с, один раз на прогон\n    yield c\n    c.stop()\n\n@pytest.fixture(scope=\"session\", params=[\"postgres\", \"sqlite\"])\ndef engine(request, pg_container):\n    if request.param == \"sqlite\":\n        yield make_engine(\"sqlite:///:memory:\")\n    else:\n        yield make_engine(pg_container.dsn)   # матрица: каждый зависящий тест бежит дважды\n\n@pytest.fixture\ndef db(engine):\n    conn = engine.connect()\n    tx = conn.begin()\n    yield conn                      # тесты видят ОДНУ изолированную транзакцию\n    tx.rollback()                   # teardown выполняется и при провале\n    conn.close()\n\n@pytest.fixture\ndef make_user(db):\n    created = []\n    def _make(plan=\"free\", **kw):\n        u = insert_user(db, plan=plan, **kw)\n        created.append(u)\n        return u\n    yield _make\n    # rollback уже изолирует; явная обратная очистка остаётся для не-транзакционных ресурсов\n\nСкоупы диктует арифметика бюджета: контейнер и движок — session (8 с один раз, а не 53 минуты), а изоляцию даёт function-скоупная фикстура db, чья транзакция откатывается в teardown — каждый тест видит чистую базу по цене begin/rollback, единицы миллисекунд. Инвариант, делающий это безопасным: ничто изменяемое и session-скоупное никогда не попадает в тест напрямую — engine общий, но трактуется как неизменяемый; все записи происходят в потестовой транзакции. Матрица бэкендов живёт в params= фикстуры engine, так что все 400 тестов бегут против обоих бэкендов без дублирования кода — отчёт как test_x[postgres] / test_x[sqlite]. Вариативность тарифов идёт через фабрику make_user, а не через мутацию общего арендатора — тот самый класс отказов от порядка из урока. Единственная autouse-фикстура — гигиена окружения (monkeypatch и так автооткатывается; autouse-фикстура со снимком os.environ страхует от тестов, лезущих в os.environ напрямую) — обоснованно: сквозная изоляция — единственная забота, где невидимость лучше явности."
       }
+    },
+    {
+      "id": "incident-session-fixture-leaks-across-tests",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "Incident: a test mutates data and the next test sees it",
+        "ru": "Инцидент: тест мутирует данные, и следующий тест их видит"
+      },
+      "prompt": {
+        "en": "An integration suite uses a `db` fixture. After splitting it to scope='session' to speed CI from 9 min to 3 min, ~12 tests now fail intermittently with 'row already exists' or stale-balance assertions. The tests themselves did not change. Work it step by step; commit before revealing.",
+        "ru": "Интеграционный набор использует фикстуру `db`. После перевода её на scope='session' ради ускорения CI с 9 до 3 минут ~12 тестов теперь периодически падают с 'row already exists' или проверками на устаревший баланс. Сами тесты не менялись. Веди по шагам; сформулируй ответ до раскрытия."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · Trace the scope change",
+            "ru": "1 · Проследи смену scope"
+          },
+          "prompt": {
+            "en": "What did session scope change about when the fixture is created and torn down?",
+            "ru": "Что scope='session' изменил в том, когда фикстура создаётся и разрушается?"
+          },
+          "reveal": {
+            "en": "A session-scoped fixture is built once and shared by every test in the session; its teardown runs only at the very end. So all tests now hit the SAME database/connection/transaction with accumulated state. Anything a test writes persists into the next test unless explicitly rolled back — the per-test isolation a function-scoped fixture gave is gone.",
+            "ru": "Session-scoped фикстура создаётся один раз и делится всеми тестами сессии; её teardown идёт только в самом конце. Поэтому все тесты теперь бьют в ОДНУ базу/соединение/транзакцию с накопленным состоянием. Всё, что тест пишет, остаётся для следующего теста, пока явно не откатано — поэлементная изоляция, которую давала function-scoped фикстура, исчезла."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · Explain the intermittency",
+            "ru": "2 · Объясни периодичность"
+          },
+          "prompt": {
+            "en": "Why is the failure intermittent rather than a hard, repeatable break?",
+            "ru": "Почему падение периодическое, а не жёсткое и стабильное?"
+          },
+          "reveal": {
+            "en": "Test order is not fully deterministic (collection order across files, xdist sharding, any randomization). A test that inserts user 42 only breaks the 'create user 42' test if it ran first AND landed before it AND on the same worker. Different shard/order each run flips which collision surfaces — classic order-dependent flake born from lost isolation.",
+            "ru": "Порядок тестов не полностью детерминирован (порядок сбора по файлам, шардинг xdist, любая рандомизация). Тест, вставляющий user 42, ломает тест «создать user 42» только если шёл первым И раньше него И на том же воркере. Иной шард/порядок каждый прогон меняет, какая коллизия всплывёт — классический флак от потери изоляции."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · Keep speed, restore isolation",
+            "ru": "3 · Сохрани скорость, верни изоляцию"
+          },
+          "prompt": {
+            "en": "Give the fix that keeps the speed win without sacrificing isolation.",
+            "ru": "Дай фикс, сохраняющий выигрыш в скорости без потери изоляции."
+          },
+          "reveal": {
+            "en": "Split the concerns: a session-scoped fixture for the EXPENSIVE, immutable setup (engine, connection, schema/migrations), and a function-scoped fixture that opens a transaction and ROLLS IT BACK in teardown (or truncates) for per-test isolation. SQLAlchemy: connect once per session, begin a nested SAVEPOINT per test, roll back after. You keep the 3-min startup win and restore clean state for every test.",
+            "ru": "Раздели заботы: session-scoped фикстура для ДОРОГОЙ неизменной настройки (engine, соединение, схема/миграции) и function-scoped фикстура, открывающая транзакцию и ОТКАТЫВАЮЩАЯ её в teardown (или truncate) ради поэлементной изоляции. SQLAlchemy: соединиться раз на сессию, на каждый тест начинать вложенный SAVEPOINT, откатывать после. Так выигрыш в 3 минуты остаётся, а чистое состояние для каждого теста восстановлено."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-fixture-scope-and-parametrize",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review: a conftest with scoped fixtures",
+        "ru": "Ревью: conftest со скоупленными фикстурами"
+      },
+      "prompt": {
+        "en": "This conftest backs an integration suite. Review like a senior: name the real defects, don't flag non-issues.",
+        "ru": "Этот conftest обслуживает интеграционный набор. Ревьюй как сеньор: назови реальные дефекты, не отмечай несуществующие."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "import pytest\nfrom app.db import make_engine\n\n@pytest.fixture(scope=\"session\")\ndef client():\n    c = AppClient(token=\"t\")\n    yield c\n    # no close\n\n@pytest.fixture(scope=\"session\")\ndef seeded_user(client):\n    return client.create_user(email=\"a@b.com\")\n\n@pytest.fixture\ndef engine():\n    e = make_engine()\n    yield e\n    e.dispose()\n\n@pytest.mark.parametrize(\"role\", [\"admin\", \"viewer\", \"editor\"])\ndef test_permissions(seeded_user, role):\n    seeded_user.role = role\n    assert can_edit(seeded_user) == (role in (\"admin\", \"editor\"))"
+      },
+      "findings": [
+        {
+          "id": "session-fixture-mutated-in-parametrized-test",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "test_permissions mutates the session-scoped seeded_user across parametrize cases",
+            "ru": "test_permissions мутирует session-scoped seeded_user между кейсами parametrize"
+          },
+          "explanation": {
+            "en": "seeded_user is shared for the whole session, but each parametrize case sets .role on it; cases are not isolated and a later read could see a prior role. Make seeded_user function-scoped, or build a fresh user per case.",
+            "ru": "seeded_user общий на всю сессию, но каждый кейс parametrize ставит ему .role; кейсы не изолированы, и поздняя проверка может увидеть прежнюю роль. Сделай seeded_user function-scoped или создавай свежего пользователя на кейс."
+          }
+        },
+        {
+          "id": "client-fixture-no-teardown",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "client is never closed — leaked connection/session for the whole run",
+            "ru": "client никогда не закрывается — утёкшее соединение/сессия на весь прогон"
+          },
+          "explanation": {
+            "en": "The yield has no close()/teardown, so the AppClient (and any socket it holds) lingers until interpreter exit; in xdist that is per worker. Add c.close() after yield.",
+            "ru": "После yield нет close()/teardown, поэтому AppClient (и любой удерживаемый им сокет) живёт до выхода интерпретатора; в xdist — на каждый воркер. Добавь c.close() после yield."
+          }
+        },
+        {
+          "id": "engine-scope-mismatch",
+          "severity": "tradeoff",
+          "planted": true,
+          "label": {
+            "en": "engine is function-scoped, recreated per test — expensive and likely unintended",
+            "ru": "engine function-scoped, пересоздаётся на каждый тест — дорого и вероятно непреднамеренно"
+          },
+          "explanation": {
+            "en": "make_engine + dispose every test rebuilds the connection pool hundreds of times, slowing the suite; engines are meant to be long-lived. Promote to session scope and isolate per-test via transactions instead.",
+            "ru": "make_engine + dispose на каждый тест пересоздаёт пул соединений сотни раз, замедляя набор; engine рассчитан на долгую жизнь. Подними до session scope, а изоляцию на тест делай транзакциями."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "hardcoded-email",
+          "label": {
+            "en": "seeded_user uses a hardcoded email a@b.com",
+            "ru": "seeded_user использует захардкоженный email a@b.com"
+          },
+          "explanation": {
+            "en": "Looks wrong, is fine for a single seeded fixture in a clean DB; uniqueness matters only if many users are created, which this fixture does not do.",
+            "ru": "Выглядит неправильно, но нормально для одной seed-фикстуры в чистой БД; уникальность важна, только если создаётся много пользователей, чего эта фикстура не делает."
+          }
+        },
+        {
+          "id": "parametrize-order-list",
+          "label": {
+            "en": "parametrize roles should be a tuple, not a list",
+            "ru": "роли в parametrize должны быть кортежем, не списком"
+          },
+          "explanation": {
+            "en": "Looks wrong, is fine: pytest accepts any iterable for parametrize values; list vs tuple is irrelevant to correctness.",
+            "ru": "Выглядит неправильно, но нормально: pytest принимает любой итерируемый для значений parametrize; list или tuple — не влияет на корректность."
+          }
+        }
+      ]
     }
   ]
 }
