@@ -8,7 +8,7 @@
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
-  knowledge, config, content, computePath,
+  effectiveKnowledge, config, content, computePath,
   unitProbeConcepts, applyDiagnosticResult,
 } from "~/scripts/path/path-io";
 import { currentXp } from "~/scripts/progression/current";
@@ -55,7 +55,7 @@ export default function PathView({ lang }: { lang: Locale }) {
   const [modal, setModal] = useState<null | "config">(null);
   const [quickUnit, setQuickUnit] = useState<string | null>(null);
 
-  const k = knowledge.value;        // subscribe
+  const k = effectiveKnowledge();        // subscribe
   const cfg = config.value;         // subscribe
   const { droppedLocal } = computePath();
   const isColdStart = k.size === 0;

@@ -644,7 +644,7 @@ git commit -m "feat(path): graded practice progress feeds concept knowledge (app
 - Modify: `src/components/path/PathConfigDrawer.tsx:57-58` (slider max 0.5)
 - Test: `src/scripts/path/config.test.ts`
 
-- [ ] **Step 1: Write the failing config test**
+- [x] **Step 1: Write the failing config test**
 
 In `src/scripts/path/config.test.ts`, add (and update any existing assertion that expects `decayFloor: 0.85` as the default):
 
@@ -656,12 +656,12 @@ In `src/scripts/path/config.test.ts`, add (and update any existing assertion tha
   });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test src/scripts/path/config.test.ts`
 Expected: FAIL (default is 0.85; clamp allows 0.85).
 
-- [ ] **Step 3: Change the default and the clamp in `config.ts`**
+- [x] **Step 3: Change the default and the clamp in `config.ts`**
 
 Line 15: `decayFloor: 0.85` → `decayFloor: 0.3`.
 Line 37: `decayFloor: clamp(c.weights.decayFloor, 0, 1)` → with a constraint comment:
@@ -672,12 +672,12 @@ Line 37: `decayFloor: clamp(c.weights.decayFloor, 0, 1)` → with a constraint c
       decayFloor: clamp(c.weights.decayFloor, 0, 0.5),
 ```
 
-- [ ] **Step 4: Run config tests**
+- [x] **Step 4: Run config tests**
 
 Run: `bun test src/scripts/path/config.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Add `effectiveKnowledge()` to `path-io.ts` and route readers through it**
+- [x] **Step 5: Add `effectiveKnowledge()` to `path-io.ts` and route readers through it**
 
 Extend the knowledge import (from Task 4) with `decay`:
 
@@ -703,7 +703,7 @@ Then switch the three in-file read sites from raw to effective:
 
 Mutators (`declareKnown`, `skipUnit`, `applyDiagnosticResult`, `importState`, `refreshStudyEvidence`) keep reading/writing the RAW signal — they must compare against stored evidence, not the decayed view.
 
-- [ ] **Step 6: Route the five display components through `effectiveKnowledge()`**
+- [x] **Step 6: Route the five display components through `effectiveKnowledge()`**
 
 In each file, add `effectiveKnowledge` to the existing `~/scripts/path/path-io` import and replace the raw read (the `// subscribe` comments stay accurate — `effectiveKnowledge()` reads `knowledge.value` during render):
 - `src/components/path/PathView.tsx:58`: `const k = knowledge.value;` → `const k = effectiveKnowledge();`
@@ -714,16 +714,16 @@ In each file, add `effectiveKnowledge` to the existing `~/scripts/path/path-io` 
 
 Leave `CalibrationFlow.tsx:71` as is (it only displays `knowledge.value.size`). If a replaced component no longer references `knowledge` directly, drop it from that file's import list.
 
-- [ ] **Step 7: Update the decay slider bounds**
+- [x] **Step 7: Update the decay slider bounds**
 
 `src/components/path/PathConfigDrawer.tsx:58`: change the range input to `min={0} max={0.5} step={0.05}` (was `max={1}`).
 
-- [ ] **Step 8: Run the full path suite + typecheck**
+- [x] **Step 8: Run the full path suite + typecheck**
 
 Run: `bun test src/scripts/path/ && bunx astro check 2>&1 | tail -5`
 Expected: tests PASS; no new type errors. The pure `decay()` tests in `knowledge.test.ts` pass floor values as arguments and stay valid.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/scripts/path/config.ts src/scripts/path/config.test.ts src/scripts/path/path-io.ts src/components/path/PathView.tsx src/components/path/planning/NextPath.tsx src/components/path/planning/ConceptMasteryMap.tsx src/components/progression/DomainRadar.tsx src/components/progression/MissionsList.tsx src/components/path/PathConfigDrawer.tsx
