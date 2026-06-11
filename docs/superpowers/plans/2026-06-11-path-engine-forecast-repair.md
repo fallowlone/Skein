@@ -935,7 +935,7 @@ Verified by grep: only `types.ts:44` and `config.ts:15,32,35` reference them (pl
 - Modify: `src/scripts/path/config.ts:15,30-38`
 - Test: `src/scripts/path/config.test.ts`
 
-- [ ] **Step 1: Remove the fields**
+- [x] **Step 1: Remove the fields**
 
 `types.ts` — `PathWeights` becomes:
 
@@ -955,17 +955,17 @@ export interface PathWeights {
 
 `config.ts` clamp block — delete the `prior:` and `recency:` lines.
 
-- [ ] **Step 2: Fix compile fallout in tests**
+- [x] **Step 2: Fix compile fallout in tests**
 
 Run: `bun test src/scripts/path/ 2>&1 | head -30`
 Expected: only `config.test.ts` (and possibly a fixture) referencing `prior`/`recency` fails to compile or assert. Remove those references; everything else passes.
 
-- [ ] **Step 3: Typecheck the site**
+- [x] **Step 3: Typecheck the site**
 
 Run: `bunx astro check 2>&1 | tail -5`
 Expected: no new errors (verifies no component constructed a full `PathWeights` literal with the removed keys).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/scripts/path/types.ts src/scripts/path/config.ts src/scripts/path/config.test.ts
