@@ -31,7 +31,8 @@ export function studyDays(
   const endDay = Math.floor((targetMs + off) / DAY);
   const black = new Set(blackouts);
   const out: { date: string; minutes: number }[] = [];
-  for (let d = startDay; d < endDay; d++) {
+  // Inclusive: the deadline day itself is a study day ("finish BY June 30" includes June 30).
+  for (let d = startDay; d <= endDay; d++) {
     const date = civilFromDays(d);
     if (black.has(date)) continue;
     const hours = perWeekdayHours[weekdayMon0(d)] ?? 0;
