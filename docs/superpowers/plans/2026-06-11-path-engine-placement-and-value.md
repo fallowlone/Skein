@@ -488,7 +488,7 @@ git commit -m "feat(path): value-per-minute triage for over-budget cuts"
 **Files:**
 - Create: `scripts/path/extract-placement-keystones.mjs`
 
-- [ ] **Step 1: Write the script**
+- [x] **Step 1: Write the script**
 
 Create `scripts/path/extract-placement-keystones.mjs`:
 
@@ -582,12 +582,12 @@ for (const c of out) byFam[c.family] = (byFam[c.family] ?? 0) + 1;
 console.log(JSON.stringify({ total: out.length, byFamily: byFam, minGain: Math.min(...out.map((c) => c.gain)) }, null, 2));
 ```
 
-- [ ] **Step 2: Run it and eyeball the shortlist**
+- [x] **Step 2: Run it and eyeball the shortlist** (110 keystones, 8 families, every entry ≥2 teaching units, real concept ids)
 
 Run: `node scripts/path/extract-placement-keystones.mjs && node -e "const k=require('/tmp/placement-keystones.json'); console.log(k.slice(0,10).map(c=>c.family+' '+c.band+' '+c.id+' gain='+c.gain).join('\n'))"`
 Expected: total ≈ 100–120 (cells can come up short — the `ai` family has one track), every entry has non-empty `units`, top entries are recognizable gateway concepts (event-loop-, index-, container-grade ids), not long-tail junk. If junk leaks through, tighten `clean` (mirror `searchConcepts`' filter in `path-io.ts:65-77`) before proceeding.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add scripts/path/extract-placement-keystones.mjs
