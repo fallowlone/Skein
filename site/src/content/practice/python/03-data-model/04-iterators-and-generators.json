@@ -139,6 +139,147 @@
         "en": "import csv\nfrom itertools import batched, islice\n\ndef parse(f):                       # stage 1: C-speed csv parsing, lazy\n    yield from csv.DictReader(f)\n\ndef paid(rows):                     # stage 2: filter generator\n    return (r for r in rows if r[\"status\"] == \"paid\")\n\ndef enrich(rows, rates):            # stage 3: per-row transform\n    for r in rows:\n        r[\"amount_usd\"] = float(r[\"amount\"]) * rates[r[\"currency\"]]\n        yield r\n\ndef run(path, rates, wh):\n    with open(path, newline=\"\") as f:        # OUTERMOST with: ownership is the driver's\n        rows = enrich(paid(parse(f)), rates)\n        for batch in batched(rows, 500):     # stdlib batching, C-implemented\n            wh.insert(batch)                 # raises on batch 7000? with still unwinds\n\nWhy this shape: ownership of the file sits in run()'s with-block, not inside a generator — when wh.insert raises, the exception unwinds run()'s frame directly and `with open` closes the handle before propagation; no reliance on GC finalizing abandoned generators (the lesson's leak). The generator stages between are stateless conduits, safe to abandon. Memory bound: one 500-row batch (~hundreds of KB) plus iterator state — independent of file size. Performance: each Python-level stage adds ~100-200 ns/item, three stages ≈ 0.5 µs/row, while a warehouse INSERT costs milliseconds per batch — the lazy overhead is four orders of magnitude below the I/O; csv parsing and batching run at C speed. Smoke-test trick: islice(rows, 1000) exercises the full pipeline on a prefix without a code change. If a teammate proposes tee() to also compute stats: reject or bound it — tee buffers everything the slower consumer has not read, silently rebuilding the dataset in memory.",
         "ru": "# Конвейер: владение файлом у драйвера, ленивые стадии, batched из stdlib\nimport csv\nfrom itertools import batched, islice\n\ndef parse(f):                       # стадия 1: C-скорость csv-парсинга, лениво\n    yield from csv.DictReader(f)\n\ndef paid(rows):                     # стадия 2: фильтр-генератор\n    return (r for r in rows if r[\"status\"] == \"paid\")\n\ndef enrich(rows, rates):            # стадия 3: построчная трансформация\n    for r in rows:\n        r[\"amount_usd\"] = float(r[\"amount\"]) * rates[r[\"currency\"]]\n        yield r\n\ndef run(path, rates, wh):\n    with open(path, newline=\"\") as f:        # ВНЕШНИЙ with: владение у драйвера\n        rows = enrich(paid(parse(f)), rates)\n        for batch in batched(rows, 500):     # батчинг stdlib, реализован на C\n            wh.insert(batch)                 # упал на батче 7000? with всё равно размотается\n\nПочему такая форма: владение файлом — в with-блоке run(), а не внутри генератора: когда wh.insert поднимает исключение, оно разматывает кадр run() напрямую, и `with open` закрывает хендл до распространения; никакой надежды на GC, финализирующий брошенные генераторы (утечка из урока). Промежуточные генераторные стадии — конвейеры без ресурсов, их бросать безопасно. Граница памяти: один батч в 500 строк (~сотни КБ) плюс состояние итераторов — независимо от размера файла. Производительность: каждая Python-стадия добавляет ~100–200 нс/элемент, три стадии ≈ 0,5 мкс/строка, а INSERT в хранилище стоит миллисекунды на батч — ленивые накладные расходы на четыре порядка ниже I/O; csv-парсинг и батчинг идут на C-скорости. Трюк для smoke-теста: islice(rows, 1000) прогоняет весь конвейер по префиксу без изменения кода. Если коллега предложит tee() для параллельного подсчёта статистики — отклонить или ограничить: tee буферизует всё, что не прочитал медленный потребитель, тихо пересобирая датасет в памяти."
       }
+    },
+    {
+      "id": "incident-groupby-unsorted-undercount",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "The revenue report disagrees with the ledger",
+        "ru": "Отчёт о выручке расходится с гроссбухом"
+      },
+      "prompt": {
+        "en": "Finance flags a discrepancy: the daily per-customer revenue report undercounts against the ledger by up to 14%, and the gap is worst on the busiest days. The report builds totals with `{cust: sum(t.amount for t in txs) for cust, txs in groupby(transactions, key=lambda t: t.customer_id)}` over a stream ordered by timestamp. Quarterly invoicing runs off this report in 48 hours, and finance wants to know if past invoices under-billed. Work it step by step; commit to an answer before revealing each step.",
+        "ru": "Финансовый отдел фиксирует расхождение: ежедневный отчёт выручки по клиентам недосчитывает относительно гроссбуха до 14%, и разрыв хуже всего в самые загруженные дни. Отчёт строит суммы через `{cust: sum(t.amount for t in txs) for cust, txs in groupby(transactions, key=lambda t: t.customer_id)}` по потоку, упорядоченному по времени. Через 48 часов с этого отчёта выставляются квартальные счета, и финансы спрашивают, не занижали ли прошлые инвойсы. Разбирай по шагам; формулируй ответ до раскрытия каждого шага."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · Why busy days are worse",
+            "ru": "1 · Почему загруженные дни хуже"
+          },
+          "prompt": {
+            "en": "The undercount scales with traffic: nearly correct on quiet days, badly wrong on busy ones. The input is ordered by timestamp, not customer. What property of busy-day data makes this code lose money?",
+            "ru": "Недосчёт растёт с трафиком: почти точен в тихие дни, сильно неверен в загруженные. Вход упорядочен по времени, а не по клиенту. Какое свойство данных загруженного дня заставляет этот код терять деньги?"
+          },
+          "reveal": {
+            "en": "Interleaving. On a quiet day one customer's transactions tend to sit in consecutive runs — A A A B B — so grouping by adjacency happens to match grouping by key. On a busy day customers interleave heavily — A B A C A B — and any adjacency-based grouping splits one customer into many fragments. The undercount tracking traffic is the fingerprint: the bug's magnitude is a function of how interleaved the stream is, which is why tests on small, tidy fixtures passed and why the error is data-dependent rather than constant.",
+            "ru": "Перемежение. В тихий день транзакции одного клиента обычно лежат подряд — A A A B B — и группировка по смежности случайно совпадает с группировкой по ключу. В загруженный день клиенты сильно перемежаются — A B A C A B — и любая группировка по смежности рвёт одного клиента на много фрагментов. Недосчёт, следующий за трафиком, — отпечаток бага: его величина — функция перемешанности потока, поэтому тесты на маленьких аккуратных фикстурах были зелёными, а ошибка зависит от данных, а не константна."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · groupby plus dict: the double loss",
+            "ru": "2 · groupby плюс dict: двойная потеря"
+          },
+          "prompt": {
+            "en": "Explain mechanically what itertools.groupby produces on unsorted input, and what the dict comprehension then does with those fragments — where exactly does the money go?",
+            "ru": "Объясни механически, что itertools.groupby выдаёт на неотсортированном входе, и что dict comprehension делает с этими фрагментами — куда именно уходят деньги?"
+          },
+          "reveal": {
+            "en": "groupby groups consecutive runs only — it emits a new (key, group) pair every time the key changes, so customer A interleaved three times yields three separate groups for A. That alone is not data loss; the dict comprehension makes it loss: `{cust: total for ...}` assigns each fragment's sum to the same key, and each later fragment overwrites the earlier — last write wins. The report therefore holds only each customer's final run of the day, discarding every earlier fragment. The docs' requirement that groupby needs sorted input is exactly this: it is a run-length grouper, not a hash aggregator, and feeding it timestamp order silently changes its meaning.",
+            "ru": "groupby группирует только последовательные серии — он выдаёт новую пару (key, group) при каждой смене ключа, так что клиент A, перемежённый трижды, даёт три отдельные группы для A. Само по себе это ещё не потеря данных; потерей её делает dict comprehension: `{cust: total for ...}` присваивает сумму каждого фрагмента одному и тому же ключу, и каждый поздний фрагмент перезаписывает ранний — побеждает последняя запись. Отчёт держит лишь последнюю за день серию каждого клиента, отбрасывая все ранние фрагменты. Требование документации о сортированном входе groupby — ровно об этом: это группировщик серий, а не хеш-агрегатор, и подача порядка по времени молча меняет его смысл."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · Fix, backfill, prevention",
+            "ru": "3 · Фикс, пересчёт, профилактика"
+          },
+          "prompt": {
+            "en": "Give the fix (with its cost), what to tell finance about past invoices, and a test that makes this class of bug impossible to ship.",
+            "ru": "Дай фикс (с его ценой), что сказать финансам о прошлых инвойсах, и тест, делающий этот класс багов невозможным к выпуску."
+          },
+          "reveal": {
+            "en": "Two correct shapes: sort first — `groupby(sorted(transactions, key=keyfn), key=keyfn)` — paying O(n log n) and materializing the stream (fine for a daily batch); or keep it single-pass and streaming with a defaultdict accumulator: `totals[t.customer_id] += t.amount` — O(n), constant order-independence, the right choice if the stream is too big to sort. For finance: yes, every past report built from interleaved data undercounted; re-run the corrected aggregation over the ledger to quantify per-invoice deltas. Prevention: a conservation property test — the sum of per-customer totals must equal the sum of all transaction amounts on any input, including a shuffled one. That invariant fails instantly on the buggy code under shuffle, and it guards the aggregation no matter how it is implemented. Review rule: every itertools.groupby gets the question 'who guarantees this input is sorted by this key?'",
+            "ru": "Две корректные формы: сначала сортировать — `groupby(sorted(transactions, key=keyfn), key=keyfn)` — заплатив O(n log n) и материализацию потока (нормально для дневного батча); либо остаться однопроходным и потоковым с аккумулятором defaultdict: `totals[t.customer_id] += t.amount` — O(n), независимость от порядка, правильный выбор, если поток слишком велик для сортировки. Финансам: да, каждый прошлый отчёт на перемежённых данных недосчитывал; прогнать исправленную агрегацию по гроссбуху и оценить дельты по инвойсам. Профилактика: property-тест сохранения — сумма итогов по клиентам обязана равняться сумме всех транзакций на любом входе, включая перемешанный. Этот инвариант мгновенно падает на багованном коде при перемешивании и защищает агрегацию независимо от реализации. Правило ревью: каждому itertools.groupby — вопрос «кто гарантирует, что вход отсортирован по этому ключу?»"
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-tee-buffer-and-bare-next",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review: a streaming stats pass over a large export",
+        "ru": "Ревью: потоковый расчёт статистики по большому экспорту"
+      },
+      "prompt": {
+        "en": "This is meant to compute stats over a multi-gigabyte transaction export in one streaming pass. Review it like a senior: name the real defects in its iterator usage, and don't flag non-issues.",
+        "ru": "Этот код должен считать статистику по многогигабайтному экспорту транзакций одним потоковым проходом. Отревьюй как senior: назови реальные дефекты в работе с итераторами и не цепляйся к не-проблемам."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "from itertools import tee\n\n\ndef read_rows(path):\n    with open(path, newline=\"\") as f:\n        for line in f:\n            yield parse(line)\n\n\ndef stats(rows):\n    # rows can be a multi-GB stream; keep it constant-memory\n    a, b = tee(rows)\n    total = sum(r[\"amount\"] for r in a)\n    big = [r for r in b if r[\"amount\"] > total / 100]\n    return total, big\n\n\ndef first_big(rows):\n    # used by the alerting generator pipeline\n    return next(r for r in rows if r[\"amount\"] > 1_000)\n\n\ndef report(path):\n    rows = read_rows(path)\n    total, big = stats(rows)\n    return {\"total\": total, \"big\": big}"
+      },
+      "findings": [
+        {
+          "id": "tee-buffers-whole-stream",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "tee with one consumer fully drained first buffers the entire stream",
+            "ru": "tee при полном осушении одного потребителя первым буферизует весь поток"
+          },
+          "explanation": {
+            "en": "tee keeps every item the slowest consumer has not read yet. Here `a` is drained completely by sum() before `b` reads anything, so tee's internal buffer silently materializes the whole multi-GB export in memory — the constant-memory promise in the comment is false, and the process OOMs on real data. Since the second pass needs `total` first, two passes are inherent: either re-open the source for pass two, or accept one explicit list() and say so — but tee here is a hidden list with extra steps.",
+            "ru": "tee хранит каждый элемент, который ещё не прочитал самый медленный потребитель. Здесь `a` полностью осушается sum() прежде, чем `b` прочитает хоть что-то, так что внутренний буфер tee молча материализует весь многогигабайтный экспорт в памяти — обещание константной памяти в комментарии ложно, и процесс ловит OOM на реальных данных. Раз второму проходу нужен `total`, два прохода неизбежны: либо переоткрыть источник для второго прохода, либо честно взять один явный list() и сказать об этом — а tee здесь это скрытый list с лишними шагами."
+          }
+        },
+        {
+          "id": "bare-next-stopiteration",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "Bare next() — StopIteration escapes into the calling generator",
+            "ru": "Голый next() — StopIteration утекает в вызывающий генератор"
+          },
+          "explanation": {
+            "en": "When no row exceeds 1,000, next() on the exhausted generator expression raises StopIteration. Called from the 'alerting generator pipeline', that exception hits PEP 479: inside a generator it becomes RuntimeError ('generator raised StopIteration') — a crash with a confusing traceback; in plain code it can silently terminate an enclosing loop that swallows StopIteration. Use next(gen, None) with an explicit no-match contract, or raise a domain exception.",
+            "ru": "Когда ни одна строка не превышает 1 000, next() на исчерпанном генераторном выражении поднимает StopIteration. Вызванное из «алертингового генераторного пайплайна», это исключение попадает под PEP 479: внутри генератора оно становится RuntimeError («generator raised StopIteration») — падение с путаным трейсбеком; в обычном коде оно может тихо оборвать внешний цикл, глотающий StopIteration. Используй next(gen, None) с явным контрактом «нет совпадений» или поднимай доменное исключение."
+          }
+        },
+        {
+          "id": "no-empty-or-memory-test",
+          "severity": "missing-test",
+          "planted": true,
+          "label": {
+            "en": "No test for the empty stream or for single-pass memory",
+            "ru": "Нет теста на пустой поток и на память одного прохода"
+          },
+          "explanation": {
+            "en": "Both defects live on untested paths: an empty/quiet export (first_big crashing, stats on zero rows) and a large input (tee ballooning). Tests must cover a zero-row stream end to end and assert bounded memory on a synthetic large stream — e.g. feeding a counting generator and asserting items are not retained. Tidy small fixtures keep both bugs green.",
+            "ru": "Оба дефекта живут на непротестированных путях: пустой/тихий экспорт (падение first_big, stats на нуле строк) и большой вход (раздувание tee). Тесты должны прогнать поток из нуля строк насквозь и проверить ограниченность памяти на синтетическом большом потоке — например, скормив считающий генератор и проверив, что элементы не удерживаются. Аккуратные маленькие фикстуры оставляют оба бага зелёными."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "yield-inside-with",
+          "label": {
+            "en": "read_rows yields inside the with-block, holding the file open during iteration",
+            "ru": "read_rows делает yield внутри with-блока, держа файл открытым во время итерации"
+          },
+          "explanation": {
+            "en": "That is the correct shape for a streaming reader: the file must be open while rows are being read, and the with-block guarantees closure on exhaustion, exception, or close(). The caller-side discipline (close what you don't exhaust) is a consumer concern, not a defect of this producer.",
+            "ru": "Это правильная форма потокового читателя: файл обязан быть открыт, пока читаются строки, а with-блок гарантирует закрытие при исчерпании, исключении или close(). Дисциплина на стороне вызывающего (закрывай, что не исчерпал) — забота потребителя, а не дефект этого продюсера."
+          }
+        },
+        {
+          "id": "consuming-argument",
+          "label": {
+            "en": "stats() consumes the iterator it was given — callers lose their data",
+            "ru": "stats() потребляет переданный итератор — вызывающие теряют данные"
+          },
+          "explanation": {
+            "en": "Consuming an iterator argument is the normal contract of stream-processing functions — the same contract sum() and max() have. Callers who need the data twice own that decision; the function documenting itself as a pass over a stream is fine.",
+            "ru": "Потребление итератора-аргумента — нормальный контракт функций потоковой обработки, тот же, что у sum() и max(). Вызывающий, которому данные нужны дважды, сам владеет этим решением; функция, документированная как проход по потоку, в порядке."
+          }
+        }
+      ]
     }
   ]
 }
