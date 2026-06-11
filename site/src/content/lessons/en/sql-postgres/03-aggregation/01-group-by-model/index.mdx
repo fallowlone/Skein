@@ -122,6 +122,14 @@ GROUP BY u.id;               -- not u.id, u.name, u.email — the PK is enough
 
 This is part of the SQL standard (the SQL:1999 functional-dependency rule), and Postgres implements it for primary keys and other not-null unique constraints. It saves you from padding `GROUP BY` with a dozen columns just to print them.
 
+## How the collapse actually runs
+
+The bucketing is not free — and the planner has two ways to do it. On a 12M-row `orders` table, `GROUP BY user_id` into ~2M buckets shows up in `EXPLAIN ANALYZE` as one of two nodes. **HashAggregate** builds an in-memory hash table keyed by `user_id`, one entry per bucket holding the running aggregate state — no sorted input needed, but it must hold every distinct key in memory at once. **GroupAggregate** needs its input *already sorted* by `user_id` (usually via a preceding `Sort` or an index scan), then streams one bucket at a time, emitting and discarding each before the next — near-constant memory, but it pays for the sort. The planner picks HashAggregate when it estimates the hash table fits in `work_mem`, and switches to sort-based GroupAggregate when it doesn't.
+
+<Inset kind="why" lang="en">
+Concrete shapes from `EXPLAIN (ANALYZE, BUFFERS)` on that 12M-row table. With `work_mem = 4MB` (the default) and ~2M distinct `user_id` groups, the hash table needs far more than 4MB, so PG14+ shows `HashAggregate ... Disk Usage: 320000 kB` (it spills hash partitions to a temp file) or the planner falls back to `Sort` + `GroupAggregate` with `Sort Method: external merge Disk: 285000 kB` — both meaning the aggregation went to disk and the node jumped from ~900ms to ~4–6s. Raise `SET work_mem = '256MB'` and the same query reports `HashAggregate ... Batches: 1 Memory Usage: 210000 kB` with no Disk line, dropping back to ~1.1s. Rule of thumb: roughly `distinct_groups × ~50–100 bytes` of per-group state must fit in `work_mem` or you spill. A query grouping into 50 buckets never spills; one grouping into millions almost always does on the 4MB default.
+</Inset>
+
 <Inset kind="edgecase" lang="en">
 The dependency must be one Postgres can *prove* from a constraint. Grouping by `u.id` works because it's the declared primary key. Grouping by a column that merely happens to be unique in your data, but has no `UNIQUE`/`PRIMARY KEY` constraint, is still rejected — the planner can't trust runtime uniqueness, only declared constraints. And the dependency is per-table: grouping by `users.id` lets you select other `users` columns ungrouped, but not raw `orders` columns, since one user can own many orders.
 </Inset>
