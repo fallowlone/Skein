@@ -1,0 +1,143 @@
+---
+concepts:
+- docker-namespaces
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-namespaces"
+sources:
+- https://man7.org/linux/man-pages/man7/namespaces.7.html
+- https://man7.org/linux/man-pages/man2/clone.2.html
+- https://github.com/opencontainers/runtime-spec/blob/main/config-linux.md
+spiral: []
+status: ready
+summary: "A container is a normal process whose kernel-side view is fenced by namespaces. There are 8 types; runc unshares them via clone() flags. PID, mount, and network namespaces do the visible isolation work — and a forgotten PID namespace means nobody reaps zombies."
+title: "Namespaces: the kernel view a container is allowed to see"
+track: "docker"
+unit: "02-runtime-internals"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The on-call page said the node was out of PIDs. A worker pod ran a shell script that shelled out to `curl` thousands of times an hour, and every `curl` left a zombie behind: `<defunct>` entries piling up in `ps`, the kernel PID table filling, new forks failing with `EAGAIN`. The author swore the script reaped its children. It did — in the version that ran under systemd. In the container, the script ran as PID 1. And PID 1 has a kernel-special job inherited from the boot init: it must `wait()` on orphaned processes, or their entries never get cleared. A plain shell does not do that. The fix was three bytes in the Dockerfile — adding `--init` so a tiny reaper ran as PID 1 instead. The lesson underneath: the container had a PID namespace, the namespace re-numbered the script to 1, and PID 1 carries kernel responsibilities the author never signed up for.
+</Hook>
+
+<Crux>A namespace is a per-process kernel view of one global resource. A container is a normal process with those views swapped — not a VM.</Crux>
+
+<Explanation>
+
+## Eight views, one process
+
+A namespace wraps a single global kernel resource so that processes inside it see their own instance of it. There are **8 namespace types** on a modern kernel, and a container is simply a process placed into a fresh set of them:
+
+- **PID** — process IDs; the first process becomes PID 1.
+- **mount** (`mnt`) — the filesystem tree; this is what makes the container's `/` its own root.
+- **network** (`net`) — interfaces, routing tables, the loopback, iptables.
+- **UTS** — hostname and domainname (so `hostname` inside differs from the host).
+- **IPC** — System V IPC and POSIX message queues.
+- **user** — UID/GID maps; lets root-in-container (UID 0) map to an unprivileged host UID.
+- **cgroup** — what view of the cgroup tree the process sees.
+- **time** — boot/monotonic clock offsets (added in kernel 5.6).
+
+The critical mental shift: the container process is **the same kind of object as any host process**. `ps` on the host shows it directly, scheduled by the same scheduler, in the same kernel. There is no guest kernel, no hypervisor trap. Isolation is just: when this process asks "what PIDs exist?", the kernel answers from its PID namespace, not the global one.
+
+```c
+// Roughly what a runtime does to create a container's first process.
+// CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET | CLONE_NEWUTS |
+// CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWCGROUP  — one flag per namespace.
+int flags = CLONE_NEWPID | CLONE_NEWNS | CLONE_NEWNET |
+            CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWUSER | CLONE_NEWCGROUP;
+pid_t pid = clone(child_fn, stack_top, flags | SIGCHLD, arg);
+// child_fn now runs as PID 1 in a brand-new namespace set.
+```
+
+`runc` — the OCI runtime Docker and containerd call — reads the `linux.namespaces` array from the container's `config.json` and `unshare(2)`s / `clone(2)`s exactly those. Namespaces are orthogonal: you can take a network namespace but share the host's PID namespace, which is exactly what `docker run --pid=host` does, and what makes a debugging sidecar able to `ps` the target container.
+
+<Quiz
+  id="01-namespaces-quiz-1"
+  lessonSlug="01-namespaces"
+  lang="en"
+  question="A container's main process exits cleanly but a worker pod slowly accumulates <defunct> (zombie) processes until forks fail with EAGAIN. The image runs a shell script as its entrypoint. What is the root cause?"
+  choices={[
+    { label: "The script runs as PID 1 in the container's PID namespace, and a plain shell does not wait() on orphaned children, so their process-table entries are never reaped", correct: true },
+    { label: "A memory leak in the script is filling RAM and the kernel is OOM-killing forks", misconception: "EAGAIN on fork from too many <defunct> entries is PID-table exhaustion from unreaped zombies, not memory pressure — an OOM-kill produces SIGKILL and 137 exits, not accumulating defunct entries." },
+    { label: "The container is missing a network namespace so DNS lookups in curl hang and leak processes", misconception: "Zombies are already-exited processes awaiting a wait() call; they hold a PID slot but no resources and are unrelated to networking. The cause is who is PID 1, not the net namespace." },
+    { label: "cgroup pids.max is set too low and the kernel marks excess processes as defunct", misconception: "A pids.max limit blocks new forks with EAGAIN but never creates <defunct> entries — defunct means exited-but-unreaped, which only PID 1's missing wait() explains." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does PID 1 carry this duty? When a process's parent dies, the orphan is re-parented — in a PID namespace, to PID 1 of that namespace, not to the host's init. The kernel hands every orphan's corpse to PID 1 and expects PID 1 to `wait()` it. The host's `/sbin/init` was written to do this; your `entrypoint.sh` was not. `docker run --init` (or a `tini`/`dumb-init` entrypoint) inserts a 10-KB reaper as PID 1 that forwards signals and reaps orphans, restoring the contract the namespace silently imposed.
+</Inset>
+
+## Mount and network: the visible isolation
+
+Two namespaces do most of the work you *see*. The **mount namespace** gives the container its own filesystem tree: the runtime `pivot_root`s into the unpacked image, so the container's `/` is the image's root, and host paths simply do not exist in its view unless explicitly bind-mounted. The **network namespace** gives it its own loopback, its own interfaces, its own routing and firewall tables — which is why a fresh container has only `lo` until the runtime moves one end of a `veth` pair into it and wires the other end to a bridge on the host. A namespace persists as long as a process is in it *or* a file descriptor or bind-mount pins it; this is how `ip netns` and `docker exec` re-enter an existing container's namespaces via `setns(2)` rather than creating new ones.
+
+The **user namespace** is the security keystone and the one most often left off: with `userns-remap`, UID 0 inside the container maps to an unprivileged host UID (say 100000), so a container "root" who escapes a mount has the host privileges of nobody. Without it, root-in-container is root-on-host the instant any other barrier (a bad bind-mount, a capability you forgot to drop) gives way.
+
+<Quiz
+  id="01-namespaces-quiz-2"
+  lessonSlug="01-namespaces"
+  lang="en"
+  question="Why can a debugging sidecar started with --pid=host run ps and see the target container's processes, even though the target has its own mount and network namespaces?"
+  choices={[
+    { label: "Namespaces are orthogonal and selected per-type; sharing the host PID namespace makes all processes visible while mount and network stay isolated", correct: true },
+    { label: "ps reads /proc over the network, and the sidecar shares the host network namespace by default", misconception: "ps reads the local /proc filesystem, not the network. Visibility comes from sharing the PID namespace, which is what --pid=host selects; the network namespace is independent." },
+    { label: "--pid=host disables all namespacing for the sidecar, putting it fully on the host", misconception: "It shares only the PID namespace; the sidecar keeps its own mount, network, UTS, and other namespaces. Namespaces are joined or isolated one type at a time, not all-or-nothing." },
+    { label: "The sidecar runs as root, and root can read any process's namespace regardless of membership", misconception: "Being root does not let a process see PIDs in a namespace it is not a member of — the kernel answers /proc queries from the caller's PID namespace. Membership, granted here by --pid=host, is what matters." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A normal process becomes a container when the runtime unshares a fresh set of namespaces around it"
+  hue="var(--d-infra)"
+  perRow={3}
+  nodes={[
+    { id: "proc", label: "Normal process", sub: "host PID, host /" },
+    { id: "clone", label: "clone() / unshare()", sub: "CLONE_NEW* flags" },
+    { id: "pid", label: "PID ns", sub: "becomes PID 1" },
+    { id: "mnt", label: "mount ns", sub: "pivot_root to image" },
+    { id: "net", label: "net ns", sub: "own lo + veth" },
+    { id: "userns", label: "user ns", sub: "root → host nobody" },
+  ]}
+  edges={[
+    { from: "proc", to: "clone", label: "runc applies config.json" },
+    { from: "clone", to: "pid", label: "CLONE_NEWPID" },
+    { from: "clone", to: "mnt", label: "CLONE_NEWNS" },
+    { from: "clone", to: "net", label: "CLONE_NEWNET" },
+    { from: "clone", to: "userns", label: "CLONE_NEWUSER" },
+  ]}
+  caption="Same kernel, same scheduler — only the views are swapped. Namespaces are orthogonal, so each can be isolated or shared independently (--pid=host shares one, isolates the rest)."
+/>
+
+<KeyTakeaway>A container is a normal Linux process with its kernel-side views replaced: 8 namespace types, each wrapping one global resource, applied by runc via clone()/unshare() flags from the OCI config. PID renumbers the entrypoint to 1 (and burdens it with reaping orphans), mount gives it the image as its root, network gives it an isolated stack, and the user namespace remaps root to an unprivileged host UID. There is no guest kernel — isolation is the kernel answering each query from the caller's namespace.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="01-namespaces-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the 8 namespace types and, for PID, mount, network, and user, say what global resource each fences and one concrete consequence of it.", a: "The 8 are PID, mount (mnt), network (net), UTS, IPC, user, cgroup, and time. PID fences process IDs: the entrypoint becomes PID 1 and inherits the duty to wait() on orphaned children, so a plain shell entrypoint leaks zombies until forks fail with EAGAIN. Mount fences the filesystem tree: the runtime pivot_roots into the image, so the container's / is the image root and host paths are invisible unless bind-mounted. Network fences interfaces/routes/firewall: a fresh container has only lo until a veth pair wires it to a host bridge. User fences UID/GID maps: with userns-remap, container UID 0 maps to an unprivileged host UID, so an escape lands as nobody rather than host root." },
+    { q: "Explain why namespaces being orthogonal matters operationally, using --pid=host and setns as examples.", a: "Each namespace type is selected independently, so a process can isolate some and share others. docker run --pid=host gives a container the host's PID namespace while keeping its own mount and network namespaces — which is exactly how a debugging sidecar runs ps against a target container, because /proc queries are answered from the shared PID namespace. The same orthogonality lets docker exec and ip netns re-enter an existing container by calling setns(2) on a pinned namespace file descriptor rather than creating new namespaces, joining only the types they need." },
+  ]}
+/>
+
+<Recap lang="en">
+A container is not a small virtual machine; it is an ordinary process the kernel schedules like any other, distinguished only by which namespaced views it holds. A namespace wraps one global resource so its members see a private instance, and a modern kernel offers 8 of them: PID, mount, network, UTS, IPC, user, cgroup, and time. The OCI runtime runc reads the namespaces array from config.json and applies the matching CLONE_NEW* flags through clone() or unshare(). The PID namespace renumbers the entrypoint to 1, which silently hands it init's job of reaping orphaned children — skip a reaper like --init or tini and zombies accumulate until the PID table is exhausted and forks return EAGAIN. The mount namespace pivot_roots into the unpacked image so the container's root is the image and host paths vanish from view. The network namespace starts with only loopback until a veth pair bridges it to the host. The user namespace is the security keystone: remapping container root to an unprivileged host UID turns an escape into a non-event. Because namespaces are orthogonal, each can be shared or isolated alone — --pid=host shares exactly one so a sidecar can ps the target, and setns lets exec re-enter a pinned namespace rather than build a new one. Same kernel throughout; only the views are swapped.
+</Recap>

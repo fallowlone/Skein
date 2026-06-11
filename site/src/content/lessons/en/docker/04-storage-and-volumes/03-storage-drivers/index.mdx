@@ -1,0 +1,126 @@
+---
+concepts:
+- docker-storage-drivers
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-storage-drivers"
+sources:
+- https://docs.docker.com/engine/storage/drivers/select-storage-driver/
+- https://docs.docker.com/engine/storage/drivers/overlayfs-driver/
+- https://www.kernel.org/doc/html/latest/filesystems/overlayfs.html
+spiral: []
+status: ready
+summary: "The storage driver decides how image layers stack and how the writable layer copies up. overlay2 is the default; its file-level copy-up, inode pressure, and page-cache sharing are what let you diagnose a node whose disk reads full but du reads empty."
+title: "Storage drivers: overlay2, copy-up granularity, and the inode trap"
+track: "docker"
+unit: "04-storage-and-volumes"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+The CI fleet started failing builds with `no space left on device` — but `df -h` showed `/var/lib/docker` at 38% used. The on-call engineer spent an hour chasing a phantom disk-full before someone ran `df -i`: **inodes** were at 100%. The build images bundled a `node_modules` tree with 180,000 tiny files, every CI container copied a chunk of it up into its writable layer, and a few hundred concurrent builds had exhausted the filesystem's inode table while leaving 60% of the *blocks* free. The disk had plenty of space for bytes and none for files. The storage driver — overlay2, working at file granularity — was the mechanism, and the only durable fix was understanding what the driver does under load instead of trusting a single `df -h` that measured the wrong resource.
+</Hook>
+
+<Crux>The storage driver governs how layers stack and copy up; overlay2 is the default, and its file-level granularity makes inodes the limit.</Crux>
+
+<Explanation>
+
+## What a storage driver is, and why overlay2 won
+
+The storage driver is the engine subsystem that implements the layered filesystem: how read-only image layers are stacked, how the writable layer is materialized, and what copy-on-write does on write. Docker has shipped several over the years — `aufs`, `devicemapper`, `btrfs`, `zfs`, `vfs` — but the answer for virtually every modern Linux host is **overlay2**, the default. It is built on the kernel's OverlayFS, requires no special block-device setup, works on `ext4` and `xfs` (xfs needs `ftype=1`), and is the only driver actively recommended. The others are legacy: `devicemapper` is removed, `aufs` is gone from modern kernels, and `vfs` exists only as a no-CoW fallback that copies every layer in full (used inside containers or for debugging, never for performance).
+
+```bash
+$ docker info --format '{{ .Driver }}'
+overlay2
+
+$ docker info --format '{{ json .DriverStatus }}'
+[["Backing Filesystem","extfs"],["Supports d_type","true"],["Using metacopy","false"]]
+```
+
+Choosing a driver is mostly a non-decision today — take overlay2 — but knowing *which* you have matters when diagnosing, because each driver's copy-up unit and overhead differ. `vfs` has no copy-up cost because it has no sharing (it duplicates everything, so a 10-layer image takes 10x the disk). `btrfs` and `zfs` copy up at block granularity and offer snapshots, but demand a dedicated filesystem and bring their own operational weight. overlay2's tradeoff — file-level copy-up, page-cache sharing, no special setup — is what makes it the pragmatic universal default.
+
+## overlay2's granularity: the double-edged file-level copy-up
+
+overlay2 works at the **file level, not the block level**. This single fact drives both its best and worst behaviors. On the good side, it enables **page-cache sharing**: when ten containers from the same image read the same file out of the shared lowerdir, the kernel keeps **one page-cache entry**, not ten — so a node running 200 copies of an image does not pay 200x the memory for shared pages. That is why overlay2 is the recommended driver for high-density, PaaS-style hosts.
+
+On the bad side, file-level granularity means the copy-up unit is the whole file. Modify one byte of a large file and the entire file is copied to upperdir first (covered in the writable-layer lesson) — but the subtler cost is **inode and metadata pressure**. Every file copied up consumes a fresh inode in the writable layer; an image with hundreds of thousands of small files (a `node_modules`, a Python `site-packages`, a sprawling asset tree) can exhaust the host filesystem's inode table long before it exhausts blocks. `df -h` measures blocks and reads fine; `df -i` measures inodes and reads 100%. This is the failure in the Hook, and it is invisible to anyone who only watches byte-level disk usage.
+
+<Quiz
+  id="03-storage-drivers-quiz-1"
+  lessonSlug="03-storage-drivers"
+  lang="en"
+  question="A CI host reports 'no space left on device' while df -h shows /var/lib/docker at 38% used. The images bundle huge node_modules trees. What is the most likely cause?"
+  choices={[
+    { label: "Inode exhaustion — overlay2's file-level copy-up consumes one inode per copied-up file, and hundreds of thousands of tiny files filled the inode table while blocks stayed free", correct: true },
+    { label: "df -h is simply wrong and the disk is actually full of blocks", misconception: "df -h is accurate for what it measures — blocks — and it reads 38%. The error is measuring the wrong resource: a filesystem can run out of inodes (the table of file entries) with most of its block space free, which df -i reveals and df -h cannot." },
+    { label: "overlay2 leaked the page cache and consumed all the RAM, not the disk", misconception: "Page-cache sharing is a memory optimization and an out-of-disk error is about the filesystem, not RAM. Page cache is reclaimable under pressure and would not produce 'no space left on device' — that message is about blocks or inodes." },
+    { label: "The writable layer was committed back to the image and doubled the disk usage", misconception: "Writable layers are never auto-committed to images. And even if disk had doubled, df -h would show it; the tell here is that bytes are fine and the limit is the inode count overlay2 burns through with many small files." },
+  ]}
+/>
+
+<StackDiagram
+  label="overlay2's two faces: file-level granularity buys shared page cache but burns inodes on small files"
+  hue="var(--d-infra)"
+  layers={[
+    { label: "Shared page cache — one entry per file across containers", note: "win: high density, low RAM" },
+    { label: "File-level copy-up — whole file copied on first write", note: "cost: large-file stalls" },
+    { label: "One inode per copied-up file in upperdir", note: "trap: df -i fills before df -h" },
+    { label: "OverlayFS in-kernel, no block device setup", note: "why overlay2 is the default" },
+  ]}
+  caption="overlay2 trades block-level CoW for file-level CoW plus page-cache sharing. The same granularity that makes 200 containers cheap on memory is what exhausts inodes under many-small-file images."
+/>
+
+## Diagnosing and avoiding driver-level trouble
+
+The senior moves follow from the mechanism. First, **measure both resources**: a node alert for disk should check `df -h` *and* `df -i`; an inode-exhaustion incident looks identical to a block-full incident at the application layer but has a different cure. Second, **keep large mutable files and many-small-file churn out of the writable layer** — volumes bypass the driver entirely, so a database on a volume pays no copy-up and burns no overlay2 inodes. Third, **reclaim aggressively**: stopped containers, dangling images, and build cache accumulate layers and inodes; `docker system df` shows the breakdown and `docker system prune` reclaims it, but on a busy CI host this must be scheduled, not hoped for. Fourth, on `xfs` backing filesystems, confirm `ftype=1` (overlay2 refuses to run without it) and remember that some xfs setups have a fixed inode allocation that a file-heavy workload can outgrow.
+
+The thing to internalize is that the storage driver is not a tuning knob to twiddle — overlay2 is the answer — but a mechanism whose behavior you must be able to reason about. Most "Docker disk" incidents are really overlay2's file-level copy-up meeting either a large file (block waste, copy-up stalls) or a multitude of small files (inode exhaustion), and the volume is the escape hatch for both because it sidesteps the driver completely.
+
+<Quiz
+  id="03-storage-drivers-quiz-2"
+  lessonSlug="03-storage-drivers"
+  lang="en"
+  question="Why does running 200 containers from one image on an overlay2 host not cost 200x the memory for the files they share?"
+  choices={[
+    { label: "overlay2 supports page-cache sharing: containers read shared files from the same read-only lowerdir, so the kernel keeps one page-cache entry per file across all of them", correct: true },
+    { label: "overlay2 deduplicates RAM by hashing every page across containers at runtime", misconception: "There is no runtime content-hashing deduplication in overlay2. The sharing is structural: all the containers literally read the same file from the same shared lowerdir path, so the page cache naturally has one entry — no hashing pass is involved." },
+    { label: "Each container gets its own full copy but the kernel swaps the duplicates out", misconception: "Swapping does not make duplicates free — and there are no duplicates here. The whole point is that shared lower-layer files are not copied per container; they exist once and are cached once until something writes and triggers copy-up." },
+    { label: "The vfs driver compresses identical layers, which overlay2 inherits", misconception: "vfs is a separate driver that does the opposite — it fully duplicates every layer with no sharing at all. overlay2 does not inherit anything from it; its memory efficiency comes from page-cache sharing over a shared lowerdir." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why did the ecosystem converge on a file-level driver when block-level CoW (btrfs, zfs) is finer-grained and avoids whole-file copy-up? Because overlay2 needs no special storage setup — it runs on a normal ext4 or xfs root with an in-kernel module — while block-level drivers demand a dedicated filesystem, snapshot management, and their own operational expertise. For the overwhelmingly common case (read-mostly image layers, state pushed to volumes) file-level copy-up is rarely on the hot path, and the page-cache sharing it enables is worth more than the block-level precision you would gain. The right answer to "which driver" is almost always "overlay2, and put your writes in a volume."
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>The storage driver implements the layered filesystem; overlay2 is the universal default — in-kernel, no block-device setup, the only recommended choice. Its file-level copy-up granularity is double-edged: it enables page-cache sharing (200 containers from one image share one cache entry per file, cheap on memory) but consumes one inode per copied-up file, so many-small-file images exhaust the inode table while blocks stay free — df -h reads fine, df -i reads 100%. Diagnose with both, keep churn out of the writable layer, and let volumes bypass the driver entirely.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-storage-drivers-retrieval"
+  lang="en"
+  questions={[
+    { q: "What does a storage driver do, why is overlay2 the default, and how do the alternatives differ?", a: "The storage driver implements the container's layered filesystem: stacking read-only image layers, materializing the writable layer, and defining copy-on-write semantics on write. overlay2 is the default and the only actively recommended driver because it runs on a normal ext4 or xfs root (xfs needs ftype=1) using the in-kernel OverlayFS, needs no dedicated block device, and balances file-level copy-up against page-cache sharing. The alternatives are legacy or niche: devicemapper has been removed, aufs is gone from modern kernels, vfs does no sharing and copies every layer in full (so a 10-layer image takes 10x disk — used only as a debugging or in-container fallback), and btrfs/zfs offer block-level copy-up and snapshots but require a dedicated filesystem and their own operational overhead. In practice choosing a driver is a non-decision: take overlay2 and push writes to volumes." },
+    { q: "Explain overlay2's file-level granularity as a tradeoff: what it buys and what it costs, with the inode failure mode.", a: "overlay2 operates at file granularity rather than block granularity. The benefit is page-cache sharing: many containers reading the same file from the shared read-only lowerdir share a single page-cache entry, so running hundreds of copies of an image does not multiply memory for shared pages — that is what makes overlay2 ideal for high-density hosts. The cost has two shapes. Large files: modifying one byte copies the entire file up, stalling on big files and wasting blocks. Many small files: every copied-up file consumes a fresh inode in the writable layer, so an image with hundreds of thousands of tiny files (node_modules, site-packages) can exhaust the filesystem's inode table while leaving most blocks free — 'no space left on device' with df -h at 38% and df -i at 100%. The cure is to measure both df -h and df -i, prune stopped containers and dangling layers, and keep mutable or file-heavy data on volumes, which bypass the driver and neither copy up nor consume overlay2 inodes." },
+  ]}
+/>
+
+<Recap lang="en">
+The storage driver is the engine subsystem that turns image layers into a working root filesystem: it stacks the read-only layers, materializes the writable layer, and defines what copy-on-write does. Across a decade of drivers — aufs, devicemapper, btrfs, zfs, vfs — the modern answer is overlay2, the default and the only one actively recommended. It runs on an ordinary ext4 or xfs root (xfs needs ftype=1) through the in-kernel OverlayFS with no dedicated block device, while the alternatives are legacy (devicemapper removed, aufs gone), a no-sharing debugging fallback (vfs duplicates every layer in full), or heavier block-level options (btrfs, zfs) that demand their own filesystem. The one fact that explains overlay2's whole personality is that it copies up at file granularity, not block granularity. That granularity buys page-cache sharing: many containers reading the same file from the shared lowerdir share a single page-cache entry, so a node can run hundreds of copies of an image without multiplying memory — the reason overlay2 suits high-density hosts. The same granularity is the cost: modifying one byte of a large file copies the entire file up, and every copied-up file burns a fresh inode, so a many-small-file image can exhaust the inode table while blocks sit mostly free. That is the classic phantom disk-full — df -h reads fine, df -i reads 100% — and the only way to see it is to measure both. The senior posture is not to tune the driver but to reason about it: overlay2 is the answer, large mutable files and file-heavy churn belong on volumes that bypass it entirely, and disk incidents on Docker hosts are usually file-level copy-up meeting either one big file or a million small ones.
+</Recap>

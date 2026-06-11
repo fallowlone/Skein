@@ -1,0 +1,140 @@
+---
+concepts:
+- docker-seccomp
+deepensInto: []
+estMin: 17
+lang: ru
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-capabilities-and-seccomp"
+sources:
+- https://man7.org/linux/man-pages/man7/capabilities.7.html
+- https://man7.org/linux/man-pages/man2/seccomp.2.html
+- https://github.com/moby/moby/blob/master/oci/caps/defaults.go
+spiral: []
+status: ready
+summary: "Root контейнера — не root хоста. Capabilities дробят власть root на ~40 флагов — Docker держит ~14 и сбрасывает остальные. Seccomp фильтрует таблицу syscall, блокируя ~44 из 350+ по умолчанию. --privileged выбрасывает оба — так и случаются побеги."
+title: "Capabilities и seccomp: почему root контейнера — это root с вырванными когтями"
+track: "docker"
+unit: "02-runtime-internals"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+В run-команде Dockerfile стоял `--privileged`, а комментарий рядом гласил `# нужно, чтобы health check мог пинговать`. Кто-то годы назад поймал «operation not permitted» при вызове `ping`, погуглил, нашёл ответ на Stack Overflow «добавь --privileged», и заработало. Что ему на самом деле требовалось — одна capability: `CAP_NET_RAW`, чтобы открыть сырой ICMP-сокет. Что `--privileged` *дал* — всё: каждую capability, полное дерево устройств хоста в `/dev`, никакого seccomp-фильтра, запись в `/sys`. Пентест позже доказал цену: из этого контейнера тестер примонтировал корневую ФС хоста (`CAP_SYS_ADMIN` + видимые блочные устройства) и записал cron-задачу на ноду. Одну отсутствующую capability «починили», убрав каждый барьер, что был у контейнера. Двухстрочный правильный фикс — сбросить все capabilities, добавить обратно `CAP_NET_RAW` — дал `ping` ровно то, что нужно, а атакующему — ничего.
+</Hook>
+
+<Crux>Root контейнера — не root хоста: capabilities нарезают власть root на флаги (Docker их сбрасывает), а seccomp блокирует опасные syscall.</Crux>
+
+<Explanation>
+
+## Capabilities: root, поделённый
+
+В традиционном Unix было бинарно: UID 0 мог всё, остальных проверяли. Linux-**capabilities** дробят эту монолитную власть root на ~40 отдельных привилегий, каждая выдаётся независимо. Несколько важных:
+
+- **CAP_SYS_ADMIN** — «новый root», мешок включающий `mount`, создание namespace и десятки операций; самая опасная для выдачи.
+- **CAP_NET_RAW** — открывать сырые и packet-сокеты (что реально нужно `ping`).
+- **CAP_NET_BIND_SERVICE** — биндиться на порты ниже 1024.
+- **CAP_SYS_PTRACE** — трассировать/цепляться к другим процессам (отладчик; и способ читать память другого процесса).
+- **CAP_DAC_OVERRIDE** — обходить проверки прав на чтение/запись/исполнение файлов.
+- **CAP_SYS_MODULE** — грузить модули ядра (прямой путь к захвату ядра).
+
+Когда контейнер работает как «root» (UID 0), он **не** получает все из них. Docker стартует контейнер с **дефолтным allow-листом примерно из 14 capabilities** и сбрасывает остальные — так что процесс-root контейнера, вызвавший `mount`, получает `EPERM`, ведь `CAP_SYS_ADMIN` нет в наборе. Поэтому «root контейнера» — это root с вырванными когтями: у него личность UID 0, но доля его властей ядра. Правильная поза для укреплённого сервиса — `--cap-drop=ALL`, а затем `--cap-add` только одной-двух, что доказуемо нужны, — least privilege в бетоне.
+
+```text
+# По умолчанию сброшены (НЕ выданы) Docker — среди прочих:
+CAP_SYS_ADMIN  CAP_SYS_MODULE  CAP_SYS_PTRACE  CAP_SYS_TIME
+CAP_NET_ADMIN  CAP_SYS_RAWIO   CAP_DAC_READ_SEARCH  CAP_SYSLOG ...
+
+# Укреплённый сервис:
+docker run --cap-drop=ALL --cap-add=CAP_NET_BIND_SERVICE myapp
+```
+
+## Seccomp: фильтрация таблицы syscall
+
+Capabilities гейтят *привилегированные* операции; **seccomp** (secure computing) фильтрует сам *интерфейс* syscall — BPF-программу, которую ядро прогоняет на каждом syscall, решая allow / errno / kill. Docker поставляет **дефолтный seccomp-профиль, блокирующий примерно 44 из 350+ syscall** на x86-64, выбранных потому, что они опасны и редко нужны в контейнерах: `keyctl` (kernel keyring, история container-breakout), `ptrace` (пока не ослаблен), `mount`/`umount2`, `reboot`, `swapon`, `kexec_load`, `bpf`, `clock_settime`, `init_module` и другие. Фильтр — defense-in-depth, дополняющий capabilities: даже процесс с `CAP_SYS_ADMIN` всё равно заблокирован от `mount`, если seccomp-профиль отказывает этому syscall. Дефолтный профиль настроен так, что подавляющее большинство реальных нагрузок его не замечают, — а syscall, что он блокирует, ровно те, к которым тянется побег.
+
+<Quiz
+  id="03-capabilities-and-seccomp-quiz-1"
+  lessonSlug="03-capabilities-and-seccomp"
+  lang="ru"
+  question="Контейнер, работающий как root, вызывает mount() и получает EPERM, хотя он UID 0. Почему root контейнера не может смонтировать, и какова единственная самая чистая причина?"
+  choices={[
+    { label: "Дефолтный набор capabilities Docker сбрасывает CAP_SYS_ADMIN, которую требует mount — один UID 0 её не даёт, ведь власть root поделена на независимо выдаваемые capabilities", correct: true },
+    { label: "mount невозможен внутри любого контейнера, ведь mount namespace его целиком запрещает", misconception: "Mount namespace изолирует дерево монтирований, но не запрещает монтирование; контейнер с CAP_SYS_ADMIN (или --privileged) может монтировать. Блок тут — отсутствующая capability, а не namespace." },
+    { label: "Файловая система контейнера read-only, поэтому mount падает", misconception: "Read-only корневая ФС влияет на запись файлов, а не на проверку прав syscall mount. mount() возвращает EPERM, потому что вызывающему процессу не хватает CAP_SYS_ADMIN, независимо от режима ФС." },
+    { label: "Seccomp убил процесс за вызов запрещённого syscall", misconception: "Если бы seccomp блокировал, типичный итог — настроенный errno или убийство процесса, но самая чистая единственная причина EPERM на mount под UID 0 — сброшенный CAP_SYS_ADMIN: проверка capability срабатывает и отказывает первой." },
+  ]}
+/>
+
+<Inset kind="why" lang="ru">
+Зачем два механизма вместо одного? Capabilities отвечают на «дозволено ли этому процессу выполнить эту привилегированную операцию?», а seccomp — на «дозволено ли этому процессу вообще сделать этот syscall?» — разные слои. Capability бывает слишком грубой: `CAP_SYS_ADMIN` отпирает десятки операций, так что выдача её ради одной нужды обнажает остальные, и вот где seccomp зарабатывает своё место, сужая поверхность syscall даже при наличии широкой capability. Вместе с user namespace (ремаппинг root) и cgroups (лимит ресурсов) это независимые слои: поражение одного — скажем, баг ядра, обходящий seccomp, — всё равно оставляет остальные стоять. `--privileged` опасен именно потому, что схлопывает несколько слоёв разом.
+</Inset>
+
+## --privileged: рубильник, выключающий всё
+
+`--privileged` — это не «чуть больше доступа», это одновременное снятие почти каждой границы безопасности контейнера. Он выдаёт **все capabilities**, **отключает seccomp-фильтр**, открывает **все хостовые устройства** под `/dev` и даёт запись в `/sys` и части `/proc`. Со всеми capabilities (`CAP_SYS_ADMIN`) и видимыми хостовыми блочными устройствами процесс может смонтировать корневую ФС хоста и писать в неё — побег с cron-задачей из Hook. Легитимные применения узки (Docker-in-Docker, некоторые драйверные и storage-нагрузки), и даже им обычно нужна *конкретная* capability и устройство, а не общий рубильник. Рефлекс тянуться к `--privileged`, когда что-то вернуло `EPERM`, — самый частый способ превратить контейнер в вектор захвата хоста. Дисциплинированный шаг — прочесть, какая capability или syscall были отказаны, и выдать ровно их.
+
+<Quiz
+  id="03-capabilities-and-seccomp-quiz-2"
+  lessonSlug="03-capabilities-and-seccomp"
+  lang="ru"
+  question="Команда добавляет --privileged, потому что ping вернул «operation not permitted». Пентестер затем монтирует корневую ФС хоста изнутри контейнера. Что изменил --privileged, что позволило смонтировать ФС хоста?"
+  choices={[
+    { label: "Он выдал все capabilities (включая CAP_SYS_ADMIN) и открыл хостовые блочные устройства, поэтому контейнер смог смонтировать диск хоста и писать в него — куда больше единственной CAP_NET_RAW, что нужна была ping", correct: true },
+    { label: "Он лишь добавил CAP_NET_RAW для ping; mount был возможен и так в любом контейнере", misconception: "Дефолтный контейнер не может смонтировать корень хоста: ему не хватает CAP_SYS_ADMIN, seccomp блокирует mount, а хостовые блочные устройства не открыты. --privileged убрал все три — ping нужна была лишь CAP_NET_RAW." },
+    { label: "Он сменил маппинг user namespace, так что root контейнера стал root хоста", misconception: "--privileged не включает и не меняет userns-remap; это отдельная настройка. Mount стал возможен из-за всех capabilities плюс видимых хостовых устройств плюс отсутствия seccomp, а не из-за ремапа UID." },
+    { label: "Он поднял лимит памяти контейнера, дав буферизовать весь диск", misconception: "Монтирование ФС — операция привилегии/доступа к устройству, а не упирающаяся в память. --privileged выдаёт capabilities, устройства и снимает seccomp — лимиты ресурсов это несвязанная забота cgroup." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Syscall контейнера проходит слоистые проверки; --privileged убирает привилегированные разом"
+  hue="var(--d-security)"
+  perRow={3}
+  nodes={[
+    { id: "call", label: "Syscall контейнера", sub: "напр. mount()" },
+    { id: "seccomp", label: "Seccomp-фильтр", sub: "~44 блокировано по умолч." },
+    { id: "cap", label: "Проверка capability", sub: "~14 оставлено, прочие сброшены" },
+    { id: "userns", label: "User namespace", sub: "root → хостовый nobody" },
+    { id: "allow", label: "Разрешено", sub: "операция идёт" },
+    { id: "deny", label: "Отказано", sub: "EPERM / убит" },
+  ]}
+  edges={[
+    { from: "call", to: "seccomp", label: "каждый syscall" },
+    { from: "seccomp", to: "cap", label: "syscall дозволен" },
+    { from: "cap", to: "userns", label: "capability есть" },
+    { from: "cap", to: "deny", label: "capability сброшена" },
+    { from: "userns", to: "allow", label: "маппинг uid ок" },
+  ]}
+  caption="Независимые слои: seccomp гейтит syscall, capabilities гейтят привилегированную операцию, user namespace ограничивает радиус поражения. --privileged убирает лимиты capabilities, seccomp и изоляцию устройств вместе."
+/>
+
+<KeyTakeaway>Root контейнера — это root с вырванными когтями. Capabilities дробят власть UID 0 на ~40 флагов; Docker держит дефолтные ~14 и сбрасывает остальные, так что root контейнера не может смонтировать или загрузить модуль. Seccomp добавляет второй, ортогональный слой, блокируя ~44 из 350+ syscall по умолчанию — те, к которым тянется побег. Укреплённая поза — --cap-drop=ALL плюс одна capability, что доказуемо нужна. --privileged схлопывает всё разом — все capabilities, нет seccomp, хостовые устройства — поэтому EPERM, «починенный» через --privileged, превращает контейнер в путь к захвату хоста.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-capabilities-and-seccomp-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Объясни, как capabilities и seccomp — два разных слоя, на конкретном примере, где оба участвуют в отказе mount().", a: "Capabilities отвечают на «можно ли этому процессу выполнить эту привилегированную операцию?» — власть root поделена на ~40 флагов, и дефолтный набор Docker из ~14 опускает CAP_SYS_ADMIN, которую требует mount, так что UID-0 процесс контейнера, вызвавший mount(), получает EPERM от проверки capability. Seccomp отвечает на другой вопрос: «можно ли этому процессу вообще сделать этот syscall?» — BPF-фильтр на интерфейсе syscall, и дефолтный профиль Docker блокирует ~44 из 350+ syscall, включая mount/umount2. Так что mount() может быть отказан двумя независимыми путями: seccomp-фильтр может отклонить syscall до его исполнения, и даже если syscall дозволен, проверка capability отказывает операции без CAP_SYS_ADMIN. Это defense in depth — процесс с CAP_SYS_ADMIN всё равно заблокирован seccomp, если профиль отказывает mount, и наоборот." },
+    { q: "Опиши, что именно убирает --privileged и почему EPERM, «починенный» им, опасен, на примере ping.", a: "--privileged одновременно выдаёт все ~40 capabilities (включая CAP_SYS_ADMIN), отключает seccomp-фильтр, открывает все хостовые устройства под /dev и даёт запись в /sys. ping, возвращающий «operation not permitted», нуждается ровно в одной capability — CAP_NET_RAW, чтобы открыть сырой ICMP-сокет. Тянуться к --privileged ради этого одного EPERM отдаёт контейнеру и всё остальное: с CAP_SYS_ADMIN, видимыми хостовыми блочными устройствами и без seccomp процесс может смонтировать корневую ФС хоста и писать в неё — полный захват хоста. Дисциплинированный фикс — --cap-drop=ALL --cap-add=CAP_NET_RAW, дающий ping нужное, а атакующему ничего; прочесть, какая capability или syscall были отказаны, и выдать ровно их — вот правило." },
+  ]}
+/>
+
+<Recap lang="ru">
+Работать как root внутри контейнера — не то же, что быть root на хосте, и это навязывают два механизма ядра. Capabilities ломают старую власть UID-0 «всё-или-ничего» на около 40 независимо выдаваемых привилегий — CAP_SYS_ADMIN (mount и куда больше), CAP_NET_RAW (сырые сокеты для ping), CAP_SYS_PTRACE, CAP_SYS_MODULE и прочие. Docker выдаёт контейнеру лишь дефолтный набор примерно из 14 и сбрасывает остальные, так что root контейнера, вызвавший mount или пытающийся загрузить модуль, получает EPERM; укреплённая поза — --cap-drop=ALL плюс --cap-add только одной-двух, что сервису доказуемо нужны. Seccomp — второй, ортогональный слой: BPF-фильтр на интерфейсе syscall, и дефолтный профиль Docker блокирует около 44 из 350-с-лишним syscall — keyctl, ptrace, mount, reboot, kexec_load, init_module и прочие побего-уровневые вызовы — оставляя обычные нагрузки нетронутыми. Эти двое дополняют друг друга, и вместе с user namespace и cgroups образуют независимые слои, так что взлом одного оставляет остальные стоять. --privileged — антипаттерн: он выдаёт каждую capability, выключает seccomp, открывает все хостовые устройства и распахивает /sys на запись — схлопывая несколько границ разом. Поэтому контейнер, поймавший единственный EPERM (нужна была лишь CAP_NET_RAW для ping) и «починенный» через --privileged, стал путём для тестера смонтировать корневую ФС хоста и подсадить cron-задачу. Прочти отказанную capability или syscall и выдай ровно их; никогда не меняй каждый барьер на одно отсутствующее разрешение.
+</Recap>
