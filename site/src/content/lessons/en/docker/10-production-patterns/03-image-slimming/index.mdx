@@ -1,0 +1,146 @@
+---
+concepts:
+- docker-image-slimming
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-image-slimming"
+sources:
+- https://docs.docker.com/build/building/multi-stage/
+- https://github.com/GoogleContainerTools/distroless
+- https://docs.docker.com/build/cache/
+spiral: []
+status: ready
+summary: 'A 1.2 GB image slows every pull, every deploy and every scaler scale-up, and ships a full shell as attack surface. Multi-stage builds plus a distroless or scratch final stage cut it to ~25 MB, shrink the CVE count, and order layers so a code change rebuilds in seconds.'
+title: 'Image slimming: multi-stage, distroless, and layers that pull in seconds'
+track: "docker"
+unit: "10-production-patterns"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The autoscaler was the bottleneck nobody had measured. Traffic spiked, the orchestrator scheduled new pods, and they sat in ContainerCreating for 90 seconds — pulling a 1.2 GB image onto cold nodes — while the queue backed up and the existing pods fell over under the load they were scaling to relieve. The image was a Go service: a single 15 MB static binary buried under a full Ubuntu base, the entire Go toolchain, build caches, apt lists, and a compiler. The rewrite was a multi-stage Dockerfile — build in a toolchain stage, copy *only* the binary into a distroless base — and the image went from 1.2 GB to 23 MB. Cold pulls dropped from 90 seconds to under 2. As a bonus the security scan that used to flag 180 CVEs in the OS packages flagged zero, because there were no OS packages left: no shell, no package manager, no libc utilities for an attacker to pivot through. The fat image had been three problems wearing one trench coat — slow deploys, slow scaling, and a wide attack surface.
+</Hook>
+
+<Crux>A fat image taxes every pull, deploy and scale-up and widens attack surface; multi-stage to distroless cuts 1.2 GB to ~25 MB.</Crux>
+
+<Explanation>
+
+## Multi-stage: build heavy, ship light
+
+The core technique is the multi-stage build: one stage holds the heavyweight toolchain, the final stage holds only the artifact. Only the last stage becomes the image; everything in the build stage — compilers, caches, dev dependencies — is discarded.
+
+```dockerfile
+# ---- build stage: heavy, never shipped ----
+FROM golang:1.23 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download                 # cached unless go.mod/go.sum change
+COPY . .
+RUN CGO_ENABLED=0 go build -o /app ./cmd/server
+
+# ---- final stage: tiny, shipped ----
+FROM gcr.io/distroless/static-debian12   # ~2 MB base: no shell, no package manager
+COPY --from=build /app /app
+USER nonroot:nonroot
+ENTRYPOINT ["/app"]
+```
+
+The final image is the distroless base (~2 MB) plus the binary — for a static Go binary, ~25 MB total versus 1.2 GB for the naive single-stage build off `golang:1.23`. That size is not a vanity metric; it is paid back on every operation. A pull on a cold node drops from ~90 s to ~2 s, which directly shortens autoscaler reaction time and rollout duration. The registry stores and transfers a fraction of the bytes. And the attack surface collapses: **distroless ships no shell, no package manager, and no OS utilities**, so a compromised process cannot `sh`, `curl`, `apt-get`, or pivot through libc tools — and the CVE scanner reports near-zero findings because there are almost no OS packages to have vulnerabilities. For a truly static binary you can even use `FROM scratch` (empty base), shipping literally just the binary; distroless is the pragmatic middle ground because it adds CA certificates, `/etc/passwd`, and timezone data that `scratch` lacks.
+
+<Quiz
+  id="03-image-slimming-quiz-1"
+  lessonSlug="03-image-slimming"
+  lang="en"
+  question="Beyond saving registry storage, what is the most direct production cost of shipping a 1.2 GB image instead of a 25 MB one?"
+  choices={[
+    { label: "Every cold-node pull is slow (~90 s vs ~2 s), which lengthens autoscaler reaction time and rollout duration — and the fat base ships a shell and package manager as attack surface", correct: true },
+    { label: "The container uses more RAM at runtime because the image is larger on disk", misconception: "Image size on disk is not resident memory; a 1.2 GB image does not consume 1.2 GB of RAM. The runtime cost is pull/transfer latency on every scheduling event, plus the attack surface of the extra packages — not memory." },
+    { label: "Larger images run slower because the kernel has more layers to traverse", misconception: "Layer count affects pull and extraction, not steady-state execution speed; a running process performs identically regardless of how many layers its image had. The real cost is the time to get those layers onto a cold node." },
+    { label: "Docker charges per gigabyte of image size", misconception: "There is no per-gigabyte runtime charge; the costs are operational — slow cold pulls delaying scale-up and rollouts, more registry bandwidth, and the security exposure of a full OS with a shell and package manager." },
+  ]}
+/>
+
+## Layer ordering: cache the slow steps
+
+Image layers are content-addressed and cached: a layer is reused only if its instruction and all preceding layers are unchanged. Order instructions from least- to most-frequently-changing so a one-line code edit doesn't bust the dependency-install layer. The single highest-leverage rule is **copy and install dependencies before copying source code**.
+
+```dockerfile
+# GOOD — dependency layer survives source edits
+COPY package.json package-lock.json ./
+RUN npm ci                # cached until package files change
+COPY . .                  # source changes invalidate only from here down
+RUN npm run build
+
+# BAD — every source edit re-runs npm ci (minutes)
+COPY . .
+RUN npm ci                # any file change busts this; full reinstall every build
+```
+
+In the bad order, `COPY . .` lands before `npm ci`, so editing one line of source changes the build context, invalidates that COPY layer, and forces a full dependency reinstall — turning a 5-second incremental build into a multi-minute one. In the good order the dependency install sits on a stable layer keyed only by the lockfiles, so it is reused across every source-only change. Two more layer disciplines matter: a `.dockerignore` that excludes `node_modules`, `.git`, and test fixtures keeps junk out of the build context (smaller, faster, and it prevents a stale local `node_modules` from leaking in); and combining related `RUN` steps with cleanup in the *same* layer (`apt-get install ... && rm -rf /var/lib/apt/lists/*`) matters because removing files in a *later* layer does not shrink the image — the bytes are already committed in the earlier layer and only masked, not deleted. Layer count is also a real number: each layer is a separate tar fetched and extracted, so dozens of tiny `RUN` lines slow pulls; consolidate, but not so aggressively that you destroy cache reuse.
+
+<Quiz
+  id="03-image-slimming-quiz-2"
+  lessonSlug="03-image-slimming"
+  lang="en"
+  question="A Dockerfile installs a package in one RUN layer and deletes the cache in a later RUN layer, yet the image is no smaller. Why?"
+  choices={[
+    { label: "Each instruction commits a layer; files added in an earlier layer stay in that layer's tar even when a later layer deletes them — the deletion only masks the bytes, so cleanup must happen in the same RUN that created them", correct: true },
+    { label: "The delete command silently failed because the path was wrong", misconception: "Even a successful delete in a later layer cannot shrink the image: layers are immutable and additive, so the bytes committed in the earlier layer remain in the final image regardless of a later removal. The fix is same-layer cleanup, not a corrected path." },
+    { label: "Docker re-downloads the package on each build, re-adding the cache", misconception: "Re-downloading is a cache-reuse concern, not why the image stays large. The size comes from the deleted files still living in the earlier layer's tar; you must remove them in the same RUN that created them." },
+    { label: "The final image always includes all build stages", misconception: "Only the final stage ships in a multi-stage build. Here there is one stage; the issue is layer immutability within it — an earlier layer's bytes survive a later layer's delete." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A multi-stage build runs a heavy toolchain stage that is discarded, copying only the artifact into a tiny distroless final image"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "deps", label: "Copy deps first", sub: "stable cached layer" },
+    { id: "build", label: "Build stage", sub: "toolchain ~1.2 GB" },
+    { id: "artifact", label: "Artifact", sub: "static binary ~15 MB" },
+    { id: "distroless", label: "Distroless base", sub: "~2 MB, no shell" },
+    { id: "final", label: "Final image", sub: "~25 MB, near-zero CVEs" },
+    { id: "pull", label: "Cold pull", sub: "~2 s vs ~90 s" },
+  ]}
+  edges={[
+    { from: "deps", to: "build", label: "cache survives edits" },
+    { from: "build", to: "artifact", label: "compile" },
+    { from: "artifact", to: "distroless", label: "COPY --from" },
+    { from: "distroless", to: "final", label: "discard toolchain" },
+    { from: "final", to: "pull", label: "fast scale-up" },
+  ]}
+  caption="Only the final stage ships, so the toolchain is discarded. Dependencies copied before source keep the slow install on a cached layer; the distroless base ships no shell or package manager, cutting both size and attack surface."
+/>
+
+<KeyTakeaway>A fat image is three problems in one: slow cold pulls that delay every autoscaler scale-up and rollout, more registry bandwidth, and a full OS shell and package manager an attacker can pivot through. A multi-stage build compiles in a heavyweight toolchain stage and copies only the artifact into a distroless (or scratch) final stage, cutting 1.2 GB to ~25 MB, dropping cold pulls from ~90 s to ~2 s, and reducing the CVE count to near zero because there are no OS packages left. Order layers least- to most-frequently-changing — copy and install dependencies before source so a code edit doesn't bust the install layer — and clean up in the same RUN that created files, because a later layer's delete only masks bytes already committed in an earlier layer.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-image-slimming-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain how a multi-stage build with a distroless final stage takes a 1.2 GB image to ~25 MB, and name the three production costs that shrinking pays back.", a: "A multi-stage build declares a build stage on a heavyweight base (e.g. golang:1.23 with the full toolchain) that compiles the artifact, and a final stage on a tiny base (distroless ~2 MB) into which only the artifact is COPY --from'd. Only the last stage becomes the image, so the compiler, caches, and dev dependencies are discarded — a static Go binary on distroless is ~25 MB versus ~1.2 GB single-stage. The three costs paid back: (1) deploy/scale latency — cold-node pulls drop from ~90 s to ~2 s, shortening autoscaler reaction and rollout time; (2) registry bandwidth and storage — a fraction of the bytes transferred and kept; (3) attack surface — distroless ships no shell, package manager, or OS utilities, so a compromised process cannot sh/curl/apt or pivot through libc tools, and the CVE scanner reports near-zero because there are almost no OS packages. FROM scratch goes further for a fully static binary, but distroless adds CA certs, /etc/passwd, and timezone data scratch lacks." },
+    { q: "Why does copying source before installing dependencies wreck build times, and why does deleting files in a later layer not shrink the image?", a: "Layers are content-addressed and cached: a layer is reused only if its instruction and every preceding layer are unchanged. If COPY . . (source) comes before RUN npm ci, then any one-line source edit changes the build context, invalidates that COPY layer, and forces a full dependency reinstall on every build — minutes instead of seconds. Copying the lockfiles and installing dependencies first puts the slow install on a layer keyed only by the lockfiles, so it survives all source-only changes. Separately, layers are immutable and additive: files added in an earlier layer remain in that layer's tar even when a later RUN deletes them — the deletion only masks the bytes in the final filesystem view, it does not remove them from the committed layer. So cleanup (e.g. rm -rf /var/lib/apt/lists/*) must happen in the same RUN that created the files to actually shrink the image." },
+  ]}
+/>
+
+<Recap lang="en">
+A fat image is a tax paid on every operation, not a one-time storage cost. A 1.2 GB image pulls in ~90 seconds onto a cold node, so it lengthens autoscaler reaction time and rollout duration exactly when you need to scale, it burns registry bandwidth on every transfer, and it ships a full OS — shell, package manager, libc utilities — as attack surface a compromised process can pivot through. The cure is a multi-stage build: a heavyweight stage compiles the artifact, and the final stage copies only that artifact into a tiny base. Because only the last stage becomes the image, the toolchain and caches are discarded, taking a static Go binary from 1.2 GB to ~25 MB on a distroless base, dropping cold pulls to ~2 s and the OS-package CVE count to near zero, since distroless ships no shell or package manager — FROM scratch goes further for a fully static binary, while distroless is the pragmatic middle that adds CA certs, /etc/passwd, and timezone data. Layer ordering is the other half: layers are content-addressed and cached, reused only if the instruction and all preceding layers are unchanged, so copy and install dependencies before source — otherwise a one-line edit invalidates the COPY layer and forces a full reinstall every build. A .dockerignore keeps junk like node_modules and .git out of the context, and cleanup must happen in the same RUN that created the files, because layers are additive: a later delete only masks bytes already committed in an earlier layer, it does not remove them. Slim images are simultaneously faster to deploy, faster to scale, cheaper to store, and smaller to attack.
+</Recap>

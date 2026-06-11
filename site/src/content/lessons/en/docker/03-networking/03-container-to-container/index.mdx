@@ -1,0 +1,134 @@
+---
+concepts:
+- docker-net-c2c
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-container-to-container"
+sources:
+- https://docs.docker.com/engine/network/
+- https://github.com/containernetworking/cni/blob/main/SPEC.md
+- https://man7.org/linux/man-pages/man8/iptables.8.html
+spiral: []
+status: ready
+title: "Container-to-container: same host, cross host, and the overlay illusion"
+track: "docker"
+unit: "03-networking"
+summary: "Containers on one user-defined bridge talk directly at L2; the default bridge lacks DNS. Across hosts, an overlay builds a virtual L2 over VXLAN with a distributed control plane — and the leaks (DNS scope, MTU overhead, hairpin NAT) are where multi-host networking actually fails."
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+It passed every test on a single node and fell over the moment they scaled to three. The app discovered its database peer by container name, and on one machine `redis` resolved instantly. Move the cache to a different host in the same swarm overlay and resolution still worked — but a slow trickle of requests timed out under load, never reproducibly. The team blamed the database, then the app, then the load balancer. The actual culprit was MTU. The overlay wrapped every packet in a VXLAN header, shrinking the usable payload from 1500 to **1450 bytes**, but the application's containers were still advertising a 1500-byte MSS. Small requests fit and succeeded; any response larger than 1450 bytes needed fragmentation that the path didn't allow, so it silently stalled. The "intermittent database problem" was a 50-byte header tax on a virtual L2 network pretending to be a flat LAN. Container-to-container networking is easy on one host and full of leaky abstractions across hosts — and knowing where the abstraction leaks is the whole job.
+</Hook>
+
+<Crux>Same-host containers on a user-defined bridge talk at L2 directly; cross-host uses a VXLAN overlay that leaks at its MTU tax and DNS scope.</Crux>
+
+<Explanation>
+
+## Same host: bridge isolation is the default
+
+Two containers on the *same* user-defined bridge network reach each other directly: their host-side veths share one bridge, so a frame from one is switched straight to the other at L2 — no routing, no NAT, no published port needed. You connect to `http://other-container:port` and the embedded DNS resolves the name to the peer's bridge IP. This is the happy path, and it is genuinely simple.
+
+The trap is the **default bridge** (`docker0`), which behaves differently from networks you create:
+
+- On the **default bridge**, containers get *no* DNS-based service discovery (only legacy `--link`, deprecated), and historically inter-container communication is governed by the daemon's `icc` (inter-container communication) setting. The default bridge is for one-off `docker run`, not for an application's service mesh.
+- On a **user-defined bridge** (`docker network create app`, or any Compose service network), you get embedded DNS, automatic name resolution, and — critically — **network-scoped isolation**: a container only reaches containers on a network it is attached to. Put your database on a back-end network the public-facing proxy can't join, and the database is unreachable from the proxy at L3 — segmentation enforced by which bridge you attach to, not a firewall rule you might forget.
+
+The senior pattern is one network per trust boundary: a front-end network for the proxy and API, a back-end network for the API and database, with the database never on the front-end network. The API straddles both (a container can attach to multiple networks, getting one veth and one IP per network); nothing else crosses the boundary. This is real segmentation built from the bridge primitive, and it is free.
+
+<Quiz
+  id="03-container-to-container-quiz-1"
+  lessonSlug="03-container-to-container"
+  lang="en"
+  question="You put 'db' on a back-end network and the API on both front-end and back-end. The public proxy is on front-end only. Why can't the proxy reach 'db' even though all three run on one host?"
+  choices={[
+    { label: "Network-scoped isolation: a container only reaches peers on a network it is attached to, and the proxy shares no network with db, so there is no L2/L3 path between them", correct: true },
+    { label: "The host firewall blocks proxy-to-db traffic", misconception: "No firewall rule is involved; the isolation comes from the bridge topology itself — the proxy has no veth on the back-end bridge, so it has no link to db at all, which is stronger than a firewall rule that could be misconfigured." },
+    { label: "db's published port isn't exposed to the proxy", misconception: "Container-to-container traffic on a shared bridge needs no published port; the issue is the opposite — proxy and db share no bridge, so there is no path to publish or block, and adding a published port wouldn't connect two unconnected networks." },
+    { label: "The embedded DNS refuses to resolve db for the proxy, but a direct IP would work", misconception: "DNS scope and reachability move together here: the proxy can't resolve db's name and also couldn't reach its IP, because they share no network — there is no L2 path, so even a hardcoded IP fails." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why prefer multiple user-defined networks over the simpler 'everything on one network with firewall rules'? Because the bridge topology is the firewall — and it's a firewall you can't forget to apply. A container with no veth on the database's network has no possible path to it; there is no rule to misconfigure, no ordering to get wrong, nothing to drift. Firewall rules are an allow/deny list layered on top of full connectivity; network segmentation removes the connectivity itself. The former fails open when a rule is missing; the latter fails closed by construction.
+</Inset>
+
+## Across hosts: the overlay and its leaks
+
+A single bridge lives on one host; containers on different hosts can't share it. The **overlay** driver builds a virtual L2 network spanning hosts by encapsulating container Ethernet frames in **VXLAN** (UDP, default port **4789**) and tunneling them between host IPs. To the containers it looks like one flat LAN — they keep talking to peers by name and IP as if local. A distributed control plane (Swarm's built-in store, or an external KV like etcd/Consul in plain Docker) shares which container IP lives on which host so the data plane knows where to send each tunneled frame.
+
+The abstraction is convincing, and that is the danger — here is where it leaks:
+
+- **MTU overhead.** The VXLAN header costs **50 bytes**, so the overlay's effective MTU is **1450**, not 1500. If containers advertise 1500-byte MSS and the path can't fragment, large packets stall — the Hook bug. Set the overlay MTU correctly and the tax becomes invisible; ignore it and you get the worst kind of failure, the intermittent one keyed to payload size.
+- **DNS scope is still per-network.** The overlay does not flatten name resolution globally — a container only resolves names on overlay networks it shares. Cross-host does not mean cross-network.
+- **Underlay must allow VXLAN.** UDP 4789 between host IPs has to be open; a security group or firewall that blocks it leaves the control plane healthy (containers appear attached, names resolve) while the data plane silently drops — connectivity that looks configured but never carries a packet.
+- **Encapsulation has a cost.** Every cross-host packet is wrapped and unwrapped; without NIC offload this is measurable CPU and latency versus same-host L2, which is one reason latency-sensitive peers are worth co-locating.
+
+Then there is **hairpin NAT** (NAT loopback): a container trying to reach *itself* via its own published `host-IP:port` — common when an app uses one externally-routable URL for everything. The packet must leave to the host, get DNATed, and come back to the origin container, and whether that round trip works depends on the userland-proxy and hairpin routing being in place. It's the classic "every other container can reach my published port, but I can't reach my own" puzzle, and the fix is to use the internal name/IP for self-reference, not the published host port.
+
+<Quiz
+  id="03-container-to-container-quiz-2"
+  lessonSlug="03-container-to-container"
+  lang="en"
+  question="On a Swarm overlay, container names resolve across hosts and 'docker network inspect' shows every container attached, but cross-host traffic never arrives. Same-host traffic is fine. What is the most likely cause?"
+  choices={[
+    { label: "The underlay blocks VXLAN (UDP 4789) between hosts: the control plane (attachment, DNS) is healthy but the data plane that tunnels frames can't pass, so cross-host packets are dropped", correct: true },
+    { label: "The embedded DNS is returning wrong IPs across hosts", misconception: "If DNS returned wrong IPs, names wouldn't resolve to attached containers consistently; here inspect shows correct attachment and same-host works, pointing at the data-plane tunnel (VXLAN transport) rather than name resolution." },
+    { label: "The overlay MTU is misconfigured", misconception: "An MTU mismatch causes intermittent, payload-size-keyed stalls (small packets succeed), not a total cross-host blackout with same-host working — the symptom here is all-or-nothing on the cross-host path, which fits a blocked VXLAN transport." },
+    { label: "The containers share no overlay network", misconception: "If they shared no network, names would not resolve and inspect would not show them co-attached; both are healthy here, so the failure is the transport carrying frames between hosts, not network membership." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A cross-host container frame is encapsulated in VXLAN, tunneled host-to-host over UDP 4789, and decapsulated to the peer's overlay interface"
+  hue="var(--d-infra)"
+  perRow={3}
+  nodes={[
+    { id: "src", label: "Container A", sub: "host 1, overlay IP" },
+    { id: "enc", label: "VXLAN encap", sub: "+50B header, MTU 1450" },
+    { id: "udp", label: "UDP 4789", sub: "host1 IP -> host2 IP" },
+    { id: "dec", label: "VXLAN decap", sub: "on host 2" },
+    { id: "dst", label: "Container B", sub: "host 2, same overlay" },
+    { id: "cp", label: "Control plane", sub: "maps IP -> host" },
+  ]}
+  edges={[
+    { from: "src", to: "enc", label: "send" },
+    { from: "enc", to: "udp", label: "wrap" },
+    { from: "udp", to: "dec", label: "tunnel" },
+    { from: "dec", to: "dst", label: "deliver" },
+    { from: "cp", to: "udp", label: "where is B?" },
+  ]}
+  caption="The overlay fakes a flat L2 across hosts. It leaks where the abstraction meets reality: the 50-byte VXLAN tax (effective MTU 1450), per-network DNS scope, the underlay needing UDP 4789 open, and encapsulation CPU cost. Diagnose at the leak, not the app."
+/>
+
+<KeyTakeaway>Container-to-container is two different worlds. Same host: containers on one user-defined bridge talk directly at L2 with embedded DNS, and network membership is itself segmentation — a container with no veth on the database's network simply cannot reach it, a firewall you can't forget. The default bridge lacks DNS and is for throwaway runs, not architecture. Cross host: an overlay encapsulates frames in VXLAN (UDP 4789) to fake a flat L2, but leaks at the seams — a 50-byte header drops effective MTU to 1450 (payload-size-keyed stalls), DNS stays per-network, the underlay must allow UDP 4789, and hairpin self-connection via the published port needs special routing. Master the leaks and multi-host networking stops being mysterious.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-container-to-container-retrieval"
+  lang="en"
+  questions={[
+    { q: "Contrast the default bridge, a user-defined bridge, and an overlay for container-to-container communication.", a: "Default bridge (docker0): containers reach each other by IP only — no DNS service discovery (only the deprecated --link) — and it's meant for one-off docker run, not an application topology. User-defined bridge (docker network create / Compose service network, single host): embedded DNS resolves container names, and crucially it is network-scoped — a container only reaches peers on a network it's attached to, so putting a database on a back-end network the proxy never joins makes it unreachable by construction; that is real segmentation with no firewall rule to forget, and a container can attach to several networks (one veth/IP each) to straddle trust boundaries. Overlay (multi-host): builds a virtual L2 across hosts by encapsulating frames in VXLAN tunneled over UDP 4789 between host IPs, with a distributed control plane mapping which container IP lives on which host; containers keep using names and IPs as if local, but the flat-LAN illusion is leaky." },
+    { q: "List the four ways an overlay leaks and the diagnosis for each.", a: "MTU overhead: the 50-byte VXLAN header drops effective MTU to 1450; if containers advertise 1500-byte MSS and the path can't fragment, responses over 1450 bytes stall intermittently keyed to payload size — set the overlay MTU. DNS scope: resolution stays per-network even across hosts, so cross-host is not cross-network — share a network to resolve. Underlay transport: UDP 4789 must be open between host IPs; if a security group blocks it the control plane looks healthy (containers attached, names resolve) but the data plane silently drops every cross-host packet — test raw UDP 4789 between hosts. Hairpin NAT: a container reaching itself via its own published host-IP:port needs the packet to leave, get DNATed, and loop back, depending on userland-proxy/hairpin routing — fix by self-referencing the internal name/IP instead of the published host port. Plus encapsulation CPU cost without NIC offload, a reason to co-locate latency-sensitive peers." },
+  ]}
+/>
+
+<Recap lang="en">
+Container-to-container networking splits cleanly into same-host (simple, with one powerful trick) and cross-host (an illusion with well-known leaks). On a single host, two containers on the same user-defined bridge talk directly at Layer 2 — their host-side veths share a bridge, so frames switch peer-to-peer with no NAT and no published port, and the embedded DNS resolves names to bridge IPs. The default bridge docker0 is the exception: no DNS service discovery and meant for throwaway runs, not application architecture. The senior move on one host is network-scoped isolation: because a container only reaches peers on a network it's attached to, you put the database on a back-end network the public proxy never joins, let the API straddle front-end and back-end with one veth and IP per network, and get firewall-grade segmentation from the topology itself — there is no rule to forget and no connectivity to misconfigure, because the unconnected container has no path at all. Across hosts the overlay driver fakes a flat L2 by encapsulating container frames in VXLAN tunneled over UDP 4789 between host IPs, with a distributed control plane tracking which container IP lives on which host. The illusion is convincing and that is the hazard, because it leaks at four predictable seams: the 50-byte VXLAN header cuts effective MTU to 1450, causing intermittent payload-size-keyed stalls when containers still advertise 1500-byte MSS; DNS scope stays per-network, so cross-host is not cross-network; the underlay must actually allow UDP 4789, or the control plane looks healthy while the data plane drops every frame; and hairpin self-connection through a published host port needs special routing that internal-name self-reference avoids entirely. Multi-host networking is not magic and not mysterious once you debug at the leak instead of the application.
+</Recap>

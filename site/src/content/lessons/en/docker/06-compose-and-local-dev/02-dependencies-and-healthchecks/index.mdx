@@ -1,0 +1,150 @@
+---
+concepts:
+- docker-compose-health
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-dependencies-and-healthchecks"
+sources:
+- https://docs.docker.com/compose/how-tos/startup-order/
+- https://docs.docker.com/reference/compose-file/services/#depends_on
+- https://docs.docker.com/reference/dockerfile/#healthcheck
+spiral: []
+status: ready
+summary: 'depends_on without a healthcheck orders container starts, not readiness — the API races a database still replaying WAL. condition: service_healthy plus a healthcheck (interval, timeout, retries, start_period) gates on readiness; restart policy decides if a crash heals or hides.'
+title: 'Startup order is not readiness: depends_on, healthchecks, and restart policies'
+track: "docker"
+unit: "06-compose-and-local-dev"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The CI pipeline was flaky in a maddening way: the integration test suite passed locally and passed on a re-run, but failed maybe one run in four on the first attempt, always with the same error — the API could not connect to Postgres. The compose file looked correct; it had `depends_on: [db]` right there. Someone finally watched the container logs in the order they actually happened: the `db` container started, and a few milliseconds later the `api` container started and immediately fired its first query — while Postgres was still replaying its write-ahead log and had not yet opened its listening socket. `depends_on` had done exactly what it promised, which was nothing the team thought it did: it waited for the database *container to start*, not for the *database to be ready to accept connections*. The container starting and the service being ready are separated by anywhere from 200 milliseconds to several seconds of initialization, and on a slow CI runner that gap was wide enough to lose a race a quarter of the time. The fix was four lines: a healthcheck on `db` that actually runs `pg_isready`, and `condition: service_healthy` on the dependency. The flakiness vanished because the API now waited for readiness, not for a process to exist.
+</Hook>
+
+<Crux>depends_on orders container starts, not readiness. Only condition: service_healthy plus a real healthcheck gates on accepting traffic.</Crux>
+
+<Explanation>
+
+## depends_on orders starts, not readiness
+
+Plain `depends_on: [db]` makes Compose start `db` *before* `api` and stop it after — that is the entire guarantee. It does **not** wait for the process inside `db` to be ready; the moment the container is created and its entrypoint launched, the dependency is considered satisfied and `api` starts. For anything stateful this is a race, because container-start and service-ready are different events separated by real initialization time: Postgres replays WAL and opens its socket, Kafka elects a controller, a JVM app warms up — anywhere from a couple hundred milliseconds to many seconds. The dependent fires its first request into that gap and gets connection-refused. The correct form makes the dependency conditional on **health**:
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: secret
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s          # how often to probe once started
+      timeout: 3s           # a probe slower than this counts as a failure
+      retries: 5            # consecutive failures before "unhealthy"
+      start_period: 30s     # grace window: failures here don't count toward retries
+  api:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy   # wait until db's healthcheck passes
+```
+
+Now `api` is held until the `db` healthcheck reports **healthy**, i.e. `pg_isready` has actually succeeded against a listening, accepting Postgres. The available conditions are `service_started` (the weak default-equivalent — container is up), `service_healthy` (the healthcheck passes — the one you want for stateful deps), and `service_completed_successfully` (the dependency ran to exit 0, for one-shot init/seed/migration jobs).
+
+## The healthcheck knobs are a real protocol
+
+A healthcheck is a command Docker runs inside the container on a schedule, and its exit code is the verdict: `0` healthy, `1` unhealthy. The four timing knobs are not decoration:
+
+- **`interval`** (default 30s) — how often the probe runs once the container is up. Tighter intervals (5s) detect readiness and failure faster but cost more probe executions.
+- **`timeout`** (default 30s) — a single probe slower than this is a failure. Set it below `interval` so a hung probe cannot overlap the next one.
+- **`retries`** (default 3) — how many *consecutive* failures flip the status to `unhealthy`. One transient failure does not mark the service unhealthy.
+- **`start_period`** (default 0s) — a startup grace window during which failing probes do **not** count toward `retries` and do not mark the container unhealthy. This is the knob people miss: a database that takes 25 seconds to initialize will fail its first few probes; without a `start_period` long enough to cover initialization, those failures burn through `retries` and the container is declared `unhealthy` and never becomes a satisfied dependency — the stack deadlocks on a service that is merely still booting. Size `start_period` to the worst-case cold-start, generously.
+
+The most common broken healthcheck is one that tests the wrong thing — `test: ["CMD", "true"]` or pinging the container's own TCP port — which reports healthy while the application is not actually serving. A real healthcheck exercises the readiness path the dependents use: `pg_isready` for Postgres, an HTTP `GET /healthz` for a web service, `redis-cli ping` for Redis.
+
+<Quiz
+  id="02-dependencies-and-healthchecks-quiz-1"
+  lessonSlug="02-dependencies-and-healthchecks"
+  lang="en"
+  question="An integration test intermittently fails because the API queries Postgres before it accepts connections, even though the compose file has depends_on: [db]. What is the minimal correct fix?"
+  choices={[
+    { label: "Add a healthcheck to db (e.g. pg_isready) and change api's dependency to depends_on: db: condition: service_healthy", correct: true },
+    { label: "Nothing is needed — depends_on already waits for db to be ready to accept connections", misconception: "Plain depends_on only orders container starts; it considers the dependency satisfied the instant db's container launches, not when Postgres opens its socket. That gap is exactly the race the test is losing. You need condition: service_healthy backed by a real healthcheck." },
+    { label: "Add a sleep 10 to the API's entrypoint before it connects", misconception: "A fixed sleep is a guess: too short and it still races on a slow runner, too long and it wastes time on every fast boot. A healthcheck with condition: service_healthy waits exactly as long as needed and no longer, and it adapts to slow and fast environments alike." },
+    { label: "Set restart: always on the api so it retries until db is up", misconception: "Restarting the API on crash can paper over the race but turns a clean dependency into a crash loop, hides genuine startup errors, and adds latency. Gating readiness with service_healthy fixes the cause instead of retrying through the symptom." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why is `start_period` the knob that quietly deadlocks stacks? Because the failure is invisible until the slow path. On a warm machine the database initializes in 2 seconds, the first probe passes, and a missing `start_period` never bites. On a cold CI runner or a laptop under load the same database takes 25 seconds; with `interval: 5s` and `retries: 5` that is five failing probes in the first 25 seconds — exactly enough to exhaust retries and mark the container `unhealthy` before it ever finished booting. The dependent then waits forever for a `healthy` that will never come. The lesson is to separate two questions the timing knobs answer: "how long may startup legitimately take?" is `start_period`; "how many failures after startup mean it's broken?" is `retries`. Conflating them is the bug.
+</Inset>
+
+## Restart policy: heal or hide
+
+`restart:` decides what happens when a container exits. The options are `no` (default — never restart), `on-failure` (restart only on non-zero exit, optionally capped: `on-failure:5`), `unless-stopped` (restart on any exit unless you explicitly stopped it), and `always` (restart on any exit, even after a manual stop once the daemon restarts). The senior trap is that an aggressive restart policy **hides crashes**: a service that crashes on a real configuration bug but has `restart: always` enters a tight crash-restart loop, and from the outside the stack "looks up" — the container exists and keeps getting recreated — while it serves nothing and floods the logs. Docker dampens this with exponential backoff between restarts (starting around 100ms and doubling), but backoff slows the loop, it does not surface the bug. The interaction with healthchecks matters too: a container can be *running and restarting* yet never *healthy*, so a dependent gated on `service_healthy` correctly refuses to start against a crash-looping dependency rather than racing it. Use `on-failure` with a cap in dev so a genuinely broken service stops and shows you the error, and reserve `always`/`unless-stopped` for services you trust to be transiently flaky, not chronically broken.
+
+<Quiz
+  id="02-dependencies-and-healthchecks-quiz-2"
+  lessonSlug="02-dependencies-and-healthchecks"
+  lang="en"
+  question="A database container takes ~25s to initialize on a slow runner. Its healthcheck uses interval: 5s, retries: 5, and no start_period. What happens, and which knob fixes it?"
+  choices={[
+    { label: "The first ~5 probes fail during the 25s init, exhaust retries, and the container is marked unhealthy so dependents deadlock; set start_period to cover the cold-start (e.g. 30s)", correct: true },
+    { label: "It works fine — failing probes during startup never count, so retries is irrelevant until the service is up", misconception: "Failing probes are ignored during startup only inside a start_period window. With no start_period (default 0s), the very first probes count immediately, and five failures in the first 25 seconds flip the container to unhealthy before it finishes booting." },
+    { label: "The container becomes healthy after 25s regardless, because timeout resets the retry counter", misconception: "timeout governs how long a single probe may take before it counts as a failure; it does not reset the retry counter. Without a start_period, the consecutive failures during init accumulate and trip the unhealthy threshold." },
+    { label: "Increasing retries to 100 is the right fix because it tolerates more startup failures", misconception: "Bloating retries also makes real post-startup failures take far longer to detect — you would tolerate 100 consecutive failures of a running service before reacting. start_period is the correct knob: it answers 'how long may startup take' separately from 'how many failures mean broken'." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A dependent gated on health: container start, healthcheck probing through start_period, then healthy unblocks the dependent"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "start", label: "db starts", sub: "container up" },
+    { id: "grace", label: "start_period", sub: "30s grace" },
+    { id: "probe", label: "healthcheck", sub: "pg_isready 5s" },
+    { id: "healthy", label: "healthy", sub: "probe exit 0" },
+    { id: "api", label: "api starts", sub: "service_healthy" },
+    { id: "unhealthy", label: "unhealthy", sub: "5 fails → deadlock" },
+  ]}
+  edges={[
+    { from: "start", to: "grace", label: "enter" },
+    { from: "grace", to: "probe", label: "after grace" },
+    { from: "probe", to: "healthy", label: "exit 0" },
+    { from: "healthy", to: "api", label: "unblock" },
+    { from: "probe", to: "unhealthy", label: "retries spent" },
+  ]}
+  caption="During start_period, failing probes don't count toward retries. condition: service_healthy holds the dependent until healthy; a crash-looping dependency never reaches healthy, so the dependent refuses to race it."
+/>
+
+<KeyTakeaway>depends_on alone orders container starts, not readiness — a dependent races a database still initializing. Gate on readiness with condition: service_healthy plus a real healthcheck that exercises the actual readiness path (pg_isready, GET /healthz). Size the four knobs deliberately: interval/timeout for probe cadence, retries for consecutive post-startup failures, and start_period to cover worst-case cold-start so init failures don't deadlock the stack. Restart policies heal transient flakiness but hide real crashes — use on-failure with a cap in dev so genuine bugs stop and surface.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="02-dependencies-and-healthchecks-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does depends_on without a condition cause intermittent connection failures, and what exactly fixes it?", a: "Plain depends_on only guarantees ordering: Compose starts the dependency's container before the dependent and stops it after. It considers the dependency satisfied the instant the container launches — not when the process inside is ready to accept connections. Container-start and service-ready are different events separated by real initialization (WAL replay, socket open, JVM warmup), so the dependent fires its first request into that gap and gets connection-refused, intermittently, depending on how slow the host is. The fix is to add a healthcheck to the dependency that exercises its real readiness path (pg_isready for Postgres, GET /healthz for a web app) and declare depends_on with condition: service_healthy, which holds the dependent until the healthcheck actually passes. service_started is the weak default-equivalent; service_completed_successfully is for one-shot init/migration jobs." },
+    { q: "Explain each healthcheck timing knob and the deadlock that a missing start_period causes.", a: "interval is how often the probe runs once the container is up (default 30s); timeout is the max a single probe may take before counting as a failure (set below interval); retries is how many consecutive failures flip the status to unhealthy (default 3); start_period is a startup grace window during which failing probes do NOT count toward retries. The deadlock: a service that legitimately takes, say, 25 seconds to initialize will fail its first several probes. With no start_period, those failures count immediately and can exhaust retries, marking the container unhealthy before it ever finished booting — and a dependent gated on service_healthy then waits forever for a healthy that never comes. The fix is to size start_period to the worst-case cold-start. The conceptual split: start_period answers 'how long may startup legitimately take', retries answers 'how many failures after startup mean broken' — conflating them is the bug." },
+  ]}
+/>
+
+<Recap lang="en">
+The core mistake is reading depends_on as 'wait until ready' when it only means 'start in this order.' Compose starts a dependency's container before the dependent and considers the dependency satisfied the instant that container launches, not when the process inside opens its socket — so a stateful dependency like Postgres, still replaying WAL, loses a race against an eager dependent and returns connection-refused intermittently, worse on slow CI. The fix is to gate on readiness: add a healthcheck that exercises the real readiness path (pg_isready, GET /healthz, redis-cli ping) and depend with condition: service_healthy, which holds the dependent until the probe actually passes; service_completed_successfully covers one-shot init and migration jobs. The four timing knobs are a protocol, not decoration: interval and timeout set probe cadence, retries counts consecutive post-startup failures, and start_period is the grace window that must cover worst-case cold-start — omit it and a slow but healthy boot burns retries, flips the container to unhealthy, and deadlocks every dependent waiting on it. Finally, restart policy decides whether a crash heals or hides: always/unless-stopped restart through transient flakiness but turn a real config bug into a backoff-dampened crash loop that looks up while serving nothing, so dev should prefer on-failure with a cap that lets a genuinely broken service stop and show its error.
+</Recap>

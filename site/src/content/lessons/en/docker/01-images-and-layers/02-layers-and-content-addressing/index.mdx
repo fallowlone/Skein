@@ -1,0 +1,129 @@
+---
+concepts:
+- docker-layer-addressing
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-layers-and-content-addressing"
+sources:
+- https://github.com/opencontainers/image-spec/blob/main/layer.md
+- https://github.com/opencontainers/image-spec/blob/main/descriptor.md
+- https://docs.docker.com/build/cache/
+spiral: []
+status: ready
+summary: 'A layer has two sha256 identities — the diff_id over the uncompressed tar (drives chain_id and overlay dedup) and the descriptor digest over the compressed blob (drives pull). Confuse them and gzip non-determinism stores identical layers twice and shreds cross-runner cache.'
+title: 'Layers and content-addressing: diff_id vs descriptor digest, chain_id, and the gzip non-determinism trap'
+track: "docker"
+unit: "01-images-and-layers"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+The CI cache hit rate fell off a cliff — 92% down to 31% — the week the team moved builders from one cloud to another. Nothing in the Dockerfiles had changed. The `vendor/` layer was byte-identical: same go.mod, same go.sum, same source. Yet every build re-pushed a fresh ~180 MB dependency layer and every downstream image saw a cache miss on it. The registry, which had been storing that layer once, now held two copies under two different digests. The difference was invisible until someone unpacked both layers and diffed the *tar* inside: identical, every byte. The difference was in the gzip wrapper. The old builders ran one zlib version at compression level 6; the new managed builders ran a different zlib at level 9. Same bytes in, different compressed bytes out, different sha256 over the compressed blob — and the registry content-addresses on exactly that compressed digest. Two layers the daemon would happily have shared on disk were, to the registry, two unrelated blobs. The fix was pinning the compressor in the build image; the lesson was that a layer has more than one identity, and you have to know which one each subsystem keys on.
+</Hook>
+
+<Crux>A layer has two digests: diff_id over the uncompressed tar (dedup, chain_id) and the descriptor digest over the compressed blob (pull).</Crux>
+
+<Explanation>
+
+## One layer, two hashes
+
+A layer is a tar archive of filesystem changes. It gets hashed twice, at two different stages, and the two hashes serve different subsystems:
+
+- The **diff_id** is `sha256` of the **uncompressed** tar. It is what appears in the config's `rootfs.diff_ids`, and it is the identity the *runtime* cares about — overlay2 keys its on-disk layer store and its stacking on diff_ids.
+- The **descriptor digest** is `sha256` of the **compressed** blob (the `tar+gzip` you actually transfer). It is what appears in the manifest's `layers` array, and it is the identity the *registry and pull path* care about — the URL of a blob is its compressed digest.
+
+```bash
+$ docker inspect --format '{{json .RootFS.Layers}}' myapp:1 | jq .
+[
+  "sha256:1f3e...",   # diff_id of base layer (uncompressed)
+  "sha256:8a2c...",   # diff_id of vendor layer
+  "sha256:b91d..."    # diff_id of app layer
+]
+# but the manifest's layer digests are DIFFERENT hashes — over the gzipped blobs:
+$ docker manifest inspect myapp:1 | jq '.layers[].digest'
+"sha256:9d77..."      # descriptor digest of base (compressed)
+"sha256:c4e0..."      # descriptor digest of vendor (compressed)
+```
+
+So one physical layer carries two sha256 values. Pull a blob, decompress it, and the daemon verifies the result against the diff_id; the registry only ever saw the descriptor digest. This is normally invisible — until the compressed digest moves while the uncompressed one does not, which is exactly the Hook.
+
+<Quiz
+  id="02-layers-and-content-addressing-quiz-1"
+  lessonSlug="02-layers-and-content-addressing"
+  lang="en"
+  question="Two builders produce a byte-identical tar for the vendor layer but gzip it with different zlib versions. What does the registry see, and does the runtime still dedup it on disk after pull?"
+  choices={[
+    { label: "The registry sees two different descriptor digests and stores two blobs; once pulled and decompressed, both yield the same diff_id, so overlay2 can dedup on disk — the duplication is registry-side", correct: true },
+    { label: "The registry sees one digest because content-addressing hashes the tar contents, so there is no duplication anywhere", misconception: "The registry content-addresses the COMPRESSED blob, not the uncompressed tar. Different gzip output means different compressed bytes means a different descriptor digest — two blobs stored. The tar being identical only matters after decompression, for the diff_id." },
+    { label: "Both digests change, so the runtime also stores two separate layers on disk", misconception: "Only the descriptor (compressed) digest changes. The diff_id is sha256 of the uncompressed tar, which is identical, so after pull and decompress overlay2 sees the same diff_id and can share the layer on disk. The waste is in the registry and in transfer, not the local layer store." },
+    { label: "The pull fails a digest verification because the two hashes disagree", misconception: "Nothing fails: each blob is internally consistent — its descriptor digest matches its own compressed bytes, and its decompressed content matches its own diff_id. They are simply two valid blobs that happen to decompress to the same tar." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why hash twice instead of once? Because compression is a transport concern and the filesystem is a runtime concern, and they want different guarantees. The registry needs to address and verify exactly the bytes it stores and ships, which are compressed — so it hashes those. The runtime needs to verify and stack the actual filesystem content regardless of how it was shipped — so it hashes the uncompressed tar. Collapsing them to one hash would force the transport format into the runtime's identity, meaning a re-compression (a new gzip level, a switch to zstd) would needlessly invalidate every on-disk layer. The two-hash design lets the same filesystem layer travel under different compressions while staying one layer on disk — and it is precisely why pinning the compressor matters for cross-runner cache, even though correctness never breaks.
+</Inset>
+
+## chain_id: position is part of identity
+
+A diff_id identifies a layer's *contents*, but overlay2 does not stack contents in isolation — a layer means something only on top of the specific layers beneath it. So the runtime computes a **chain_id**: a cumulative hash folding each diff_id together with the chain_id of everything below it. Roughly, `chain_id(n) = sha256(chain_id(n-1) + " " + diff_id(n))`, with `chain_id(0) = diff_id(0)`. The consequence is sharp: the *same* tar layer placed at a *different* stack position gets a different chain_id, so overlay2 treats it as a different on-disk layer and will not share it.
+
+This is why "just reorder the Dockerfile for clarity" can quietly cost you disk and cache. Move a `COPY` so the layers below it differ, and every layer above gets a new chain_id even if its own diff_id is unchanged — the contents are shared-eligible, but the *stack context* is not. Two images sharing a 640 MB base only dedup that base on disk when the base sits at the same position with the same lineage beneath it; break the lineage and you re-materialize layers you thought were shared.
+
+<Quiz
+  id="02-layers-and-content-addressing-quiz-2"
+  lessonSlug="02-layers-and-content-addressing"
+  lang="en"
+  question="Image A is [base, deps, app]. Image B is [base, telemetry, deps, app] — same deps and app tars, but a telemetry layer inserted under deps. Does overlay2 share the deps and app layers on disk between A and B?"
+  choices={[
+    { label: "No — inserting telemetry under deps changes the chain_id of deps and of app, so despite identical diff_ids overlay2 materializes them as new on-disk layers for B", correct: true },
+    { label: "Yes — the deps and app diff_ids are identical, and overlay2 dedups on diff_id, so they are shared", misconception: "overlay2 stacks on chain_id, not bare diff_id. chain_id folds in everything beneath a layer, so the inserted telemetry layer changes the cumulative hash for deps and app — identical contents, different stack lineage, no on-disk sharing." },
+    { label: "Only the app layer is shared, because it is on top", misconception: "Being on top makes it worse, not better: app sits above the changed lineage, so its chain_id changed too. Neither deps nor app share with A — both have a new chain_id because the layers beneath them differ." },
+    { label: "They share in the registry but not on disk", misconception: "It is the reverse-ish: the compressed blobs (descriptor digests) for deps and app are identical, so the registry CAN dedup those blobs. It is the on-disk overlay2 store that cannot, because chain_id — not the blob digest — keys the local layer." },
+  ]}
+/>
+
+</Explanation>
+
+<StackDiagram
+  label="A layer carries a diff_id over its uncompressed tar and a descriptor digest over its compressed blob; chain_id folds in everything beneath it"
+  hue="var(--d-backend)"
+  layers={[
+    { label: "App layer", note: "diff_id b91d · chain_id depends on base+deps" },
+    { label: "Vendor / deps layer", note: "diff_id 8a2c · ~180 MB" },
+    { label: "Base userland", note: "diff_id 1f3e · chain_id == diff_id" },
+    { label: "Compressed blob (per layer)", note: "descriptor digest 9d77 — registry key" },
+    { label: "Uncompressed tar (per layer)", note: "diff_id — runtime + overlay key" },
+  ]}
+  caption="The registry content-addresses the compressed blob, so a different gzip output stores the same filesystem layer twice. The runtime stacks on chain_id, a cumulative hash, so the same tar at a different stack position is a different on-disk layer. Pin the compressor and keep lineage stable to keep both kinds of sharing."
+/>
+
+<KeyTakeaway>Every layer has two sha256 identities: the diff_id over the uncompressed tar — which lives in rootfs.diff_ids and which the runtime and overlay2 key on — and the descriptor digest over the compressed blob, which lives in the manifest and which the registry and pull path key on. Because the registry content-addresses the compressed bytes, two builders that gzip a byte-identical tar differently produce two descriptor digests and store the layer twice, shredding cross-runner cache even though the tars match; pin the compressor to fix it. Overlay2 stacks on chain_id, a cumulative hash of a layer plus everything beneath it, so the same tar at a different stack position is a different on-disk layer — reorder a Dockerfile and you can lose sharing you assumed.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="02-layers-and-content-addressing-retrieval"
+  lang="en"
+  questions={[
+    { q: "Distinguish a layer's diff_id from its descriptor digest: what is each hashed over, where does each appear, and which subsystem keys on it?", a: "The diff_id is sha256 of the uncompressed tar of a layer. It appears in the image config under rootfs.diff_ids, and it is the identity the runtime and overlay2 use — they verify a decompressed layer against its diff_id and key the on-disk layer store (via chain_id, built from diff_ids) on it. The descriptor digest is sha256 of the compressed blob (the tar+gzip actually transferred). It appears in the manifest's layers array as each layer's digest, and it is what the registry and pull path content-address: a blob's address is its compressed digest. One physical layer therefore has both hashes. The split matters because the registry dedups and verifies the compressed bytes while the runtime dedups and verifies the filesystem bytes — so re-compressing a byte-identical tar changes the descriptor digest (registry sees a new blob) without changing the diff_id (runtime can still share it)." },
+    { q: "Explain chain_id and why reordering or inserting a layer can cost on-disk sharing even when diff_ids are unchanged.", a: "chain_id is a cumulative hash the runtime computes to identify a layer in the context of the stack beneath it: chain_id(0) = diff_id(0), and chain_id(n) = sha256(chain_id(n-1) + ' ' + diff_id(n)). overlay2 keys its on-disk layers on chain_id, not on bare diff_id, because a layer's filesystem only makes sense atop a specific lineage. So if you insert a new layer below an existing one, or reorder layers, every layer above the change gets a new chain_id even though its own diff_id (its contents) is identical — and overlay2 materializes it as a fresh on-disk layer instead of sharing the existing one. Two images dedup a shared base on disk only when that base sits at the same position with the same layers beneath it. Identical contents are necessary but not sufficient for on-disk sharing; identical stack lineage is the other half." },
+  ]}
+/>
+
+<Recap lang="en">
+A layer is a tar of filesystem changes, and it carries two sha256 identities for two subsystems. The diff_id is the hash of the uncompressed tar; it lives in the config's rootfs.diff_ids and is what the runtime and overlay2 verify and stack on. The descriptor digest is the hash of the compressed tar+gzip blob; it lives in the manifest's layers array and is what the registry and the pull path content-address. One physical layer, two hashes — and the split is deliberate, because transport (compressed) and filesystem (uncompressed) want independent identities. That independence is also the trap: the registry addresses the compressed bytes, so two builders that gzip a byte-identical tar with different zlib versions or levels produce different descriptor digests, the registry stores the layer twice, and every downstream image takes a cache miss on a layer whose actual contents never changed — the 92%-to-31% collapse in the Hook, fixed by pinning the compressor in the build image. The second identity, chain_id, is a cumulative hash folding each diff_id with the chain_id of everything below it, and overlay2 keys its on-disk layers on chain_id rather than bare diff_id. So the same tar at a different stack position — reorder a Dockerfile, insert a telemetry layer under your deps — gets a new chain_id and is re-materialized on disk, costing sharing you assumed was free. Identical contents earn registry-blob dedup; identical contents plus identical lineage earn on-disk dedup. Know which digest each subsystem keys on, and the cache behaves; confuse them, and it silently doubles your bytes.
+</Recap>

@@ -1,0 +1,135 @@
+---
+concepts:
+- docker-debug-distroless
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-debugging-distroless"
+sources:
+- https://docs.docker.com/reference/cli/docker/debug/
+- https://kubernetes.io/docs/tasks/debug/debug-application/debug-running-pod/
+- https://github.com/GoogleContainerTools/distroless
+spiral: []
+status: ready
+summary: 'A distroless image has no shell, so docker exec sh fails — nothing to exec into. Debug it from outside: an ephemeral debug container (docker debug / kubectl debug) sharing the target''s namespaces with its own tools, or read the filesystem at /proc/PID/root.'
+title: 'Debugging distroless: no shell, no exec — bringing your own tools into another container''s namespaces'
+track: "docker"
+unit: "09-debugging-containers"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The service shipped on `gcr.io/distroless/static` — 2 MB, no shell, no package manager, a clean security scan, everyone happy. Until it started returning truncated responses under load, and the on-call reached for the reflex: `docker exec -it svc sh`. `OCI runtime exec failed: exec: "sh": executable file not found in $PATH`. No `sh`. No `bash`. No `ls`, no `cat`, no `curl` — the image was *just the binary*. The instinct that has worked for a decade — get a shell inside and look around — hit a wall that the image was deliberately built to be. Worse, when the binary segfaulted ten minutes later, the container was *gone*, and with it any chance to inspect the filesystem it left behind. The team's first reaction was to rebuild on a debug base and redeploy — which would have destroyed the very state they were trying to capture. The actual move was the opposite of going *in*: you bring your tools to the container from *outside*, joining its namespaces from a separate image that has a shell, without ever modifying the thing you are debugging.
+</Hook>
+
+<Crux>A distroless image has no shell to exec into. Debug from outside: an ephemeral container shares its namespaces and brings tools.</Crux>
+
+<Explanation>
+
+## Why exec fails: the shell was never there to find
+
+`docker exec sh` does not summon a shell; it executes a binary that must already exist in the container's filesystem. Distroless images (and `scratch`-based, and most well-hardened images) contain only the application binary and its runtime libraries — no `/bin/sh`, no busybox, no coreutils. That absence is the security feature: an attacker who achieves RCE finds no shell to pivot with, no `curl` to exfiltrate with, a near-empty attack surface. So `exec: "sh": executable file not found` is not a bug — it is the image working as designed, and the tool you reach for must respect that the *running* container stays unmodified.
+
+The right primitive brings the tools instead of finding them. `docker debug` (Docker Desktop / Pro) attaches an ephemeral toolbox to a running container, giving you a shell-with-utilities *in the target's namespaces* without changing its image or filesystem. In Kubernetes the same idea is `kubectl debug -it <pod> --image=busybox --target=<container>`: it spins up an **ephemeral container** in the pod that shares the target's PID and network namespaces, so your busybox `ps`/`curl`/`nc` see the distroless process and its sockets directly. The `--target` is the part that matters — it joins the *process* namespace of the specific container, so `ps` shows the app's PID 1, not just your debug shell. Nothing in the application image changes; you attach, look, detach, and the ephemeral container is discarded.
+
+```bash
+# Kubernetes: attach a busybox that shares the distroless container's namespaces
+kubectl debug -it payments-xyz --image=busybox:1.36 \
+  --target=payments        # join THIS container's PID + net namespace
+
+# Inside: now you have tools the distroless image lacks
+ps -ef                      # see the app's PID 1, shared PID namespace
+wget -qO- localhost:8080/health   # hit the app's port, shared net namespace
+```
+
+<Quiz
+  id="03-debugging-distroless-quiz-1"
+  lessonSlug="03-debugging-distroless"
+  lang="en"
+  question="docker exec -it svc sh on a distroless container returns 'exec: sh: executable file not found in $PATH'. What is the correct interpretation and next move?"
+  choices={[
+    { label: "The image has no shell by design — bring tools from outside via an ephemeral debug container (docker debug / kubectl debug --target) that shares the running container's namespaces, without modifying it", correct: true },
+    { label: "The container is corrupted; rebuild it on a base image with a shell and redeploy", misconception: "Rebuilding and redeploying destroys the running container's state — the exact thing you are trying to inspect — and treats a deliberate hardening feature as corruption. The missing shell is the image working as designed; debug from outside instead." },
+    { label: "Set the PATH environment variable so docker can find sh", misconception: "sh is genuinely absent from the filesystem, not merely off the PATH — there is no /bin/sh to point to. No env var conjures a binary that the image never included." },
+    { label: "Use docker exec with a different shell like bash", misconception: "Distroless ships neither sh nor bash nor any coreutils — there is no shell binary of any name to exec. The fix is not a different shell name but a different approach: attach tools from a separate image." },
+  ]}
+/>
+
+## When the container is already dead: copy a static busybox, or read /proc/PID/root
+
+Ephemeral debug containers need a *running* target to share namespaces with. If the distroless binary has already crashed, there is nothing left to attach to — the process and its namespaces are gone. Two senior moves cover the gaps:
+
+- **For a still-running container with no debug tooling available**: copy a self-contained static binary in and run it, e.g. `docker cp busybox <ctr>:/busybox && docker exec <ctr> /busybox sh`. Because busybox is statically linked, it needs no libraries from the distroless image — it carries everything. This *does* touch the container's writable layer, so it is a deliberate, last-resort modification, not the clean ephemeral-container path.
+- **To reach a container's filesystem from the host**: every running container's root is mounted at `/proc/<host-PID>/root` on the host. With `PID=$(docker inspect --format '{{.State.Pid}}' svc)`, `sudo ls /proc/$PID/root/app` lets you read the distroless filesystem — config, the binary, written files — using the *host's* tools, with no shell in the container at all. This is how you inspect a shell-less image's files without entering it.
+
+For a crash itself, debugging shifts left and out: capture the **core dump** (set `--ulimit core=...` and a host `core_pattern`, or have the runtime write the dump to a mounted volume) so a segfault leaves an artifact you analyze offline, and lean on the engine's record — `docker inspect` State and `docker events` — since the dead container can no longer be entered by any means.
+
+<Quiz
+  id="03-debugging-distroless-quiz-2"
+  lessonSlug="03-debugging-distroless"
+  lang="en"
+  question="A distroless container has already crashed and is gone. Why won't an ephemeral debug container (kubectl debug --target) help here, and what does?"
+  choices={[
+    { label: "Ephemeral debug containers share a *running* target's namespaces — with the process gone there is nothing to join; you instead rely on captured core dumps, docker inspect State, and events from the engine's record", correct: true },
+    { label: "It still works — kubectl debug can attach to a dead container's namespaces", misconception: "Namespaces exist only while the process holds them open; when the distroless binary exits, its PID and net namespaces are torn down, so --target has nothing to join. Post-mortem requires artifacts captured before death." },
+    { label: "You just need to copy a static busybox into the dead container", misconception: "docker cp and docker exec both need a live container; you cannot exec into a process that no longer exists. A static busybox helps a *running* shell-less container, not a crashed one." },
+    { label: "Read /proc/PID/root of the dead container from the host", misconception: "/proc/<host-PID>/root only exists while the process is alive — once the container exits the PID is gone and that path disappears. It is a tool for live shell-less containers, not for a container that has already crashed." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why is "bring tools from outside" the correct mental model rather than "get a shell in"? Because a hardened image's whole value is that there are no tools inside it to find — for you or for an attacker. The debugging primitive that scales is therefore separation: the tools live in a throwaway image, the namespaces are shared so those tools see the real process and sockets, and the application image stays byte-for-byte unchanged. You never trade your security posture for your debuggability; you keep both by keeping them in different containers.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="A decision tree for a shell-less image: is the target still running, and can you attach tools from outside?"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "no-shell", label: "exec sh fails", sub: "distroless, no shell" },
+    { id: "running", label: "Still running?", sub: "namespaces exist" },
+    { id: "ephemeral", label: "Ephemeral debug ctr", sub: "docker/kubectl debug --target" },
+    { id: "proc", label: "/proc/PID/root", sub: "read fs from host" },
+    { id: "dead", label: "Already crashed?", sub: "namespaces gone" },
+    { id: "postmortem", label: "Core dump + inspect + events", sub: "engine's record" },
+  ]}
+  edges={[
+    { from: "no-shell", to: "running", label: "check state" },
+    { from: "running", to: "ephemeral", label: "share namespaces" },
+    { from: "running", to: "proc", label: "read files" },
+    { from: "no-shell", to: "dead", label: "exited" },
+    { from: "dead", to: "postmortem", label: "no shell to enter" },
+  ]}
+  caption="A distroless image has no shell to exec into. Running: attach an ephemeral debug container sharing its namespaces, or read /proc/PID/root from the host — never rebuild the running image. Crashed: namespaces are gone, so only pre-captured core dumps and the engine's inspect/events remain."
+/>
+
+<KeyTakeaway>A distroless image has no shell because that absence is the security feature — so docker exec sh fails by design, not by fault. Debug it from outside without touching the running image: an ephemeral debug container (docker debug, kubectl debug --target) that shares the target's PID and net namespaces and brings its own tools, or read the filesystem at /proc/PID/root from the host; a static busybox copied in is a last resort that modifies the container. Once the container has crashed its namespaces are gone — nothing can enter it — so post-mortem lives entirely in pre-captured core dumps plus docker inspect and events. Never rebuild on a debug base to investigate: it destroys the state you are chasing.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-debugging-distroless-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does docker exec sh fail on a distroless image, and what is the correct way to get debugging tools against a running one?", a: "docker exec runs a binary that must already exist in the container's filesystem; distroless (and scratch-based) images ship only the application binary and its runtime libraries — no /bin/sh, no busybox, no coreutils — so there is literally no sh to execute. That absence is the security feature: an attacker with RCE finds no shell to pivot with. The correct move brings tools from outside without modifying the running image: an ephemeral debug container — docker debug, or kubectl debug -it <pod> --image=busybox --target=<container> — spins up a throwaway image that shares the target's PID and network namespaces, so its busybox ps/curl/nc see the distroless process's PID 1 and sockets directly. The --target is essential: it joins the specific container's process namespace. You attach, inspect, detach, and the ephemeral container is discarded; the application image stays byte-for-byte unchanged, preserving both security posture and the state you are debugging." },
+    { q: "How do you inspect a shell-less container's filesystem from the host, and what changes once it has crashed?", a: "Every running container's root filesystem is mounted on the host at /proc/<host-PID>/root, where the host PID comes from docker inspect --format '{{.State.Pid}}'. So sudo ls /proc/$PID/root/app reads the distroless filesystem — config, binary, written files — using the host's own tools, with no shell inside the container at all. As a deliberate last resort on a running container you can also docker cp a statically linked busybox in and docker exec /busybox sh, since a static binary needs no libraries from the image (this touches the writable layer). All of this requires the process to be alive: namespaces and /proc/<PID>/root exist only while the process holds them open. Once the distroless container crashes, the PID and namespaces are torn down — nothing can attach or read /proc — so post-mortem depends entirely on artifacts captured before death: a core dump (via --ulimit core and a host core_pattern, or a dump written to a mounted volume) plus the engine's record in docker inspect State and docker events." },
+  ]}
+/>
+
+<Recap lang="en">
+A distroless image ships only the application binary and its runtime libraries — no /bin/sh, no busybox, no coreutils — so docker exec sh fails with 'executable file not found' because there is genuinely no shell to execute, and that absence is the point: an attacker with RCE finds nothing to pivot with. The correct debugging model is to bring tools from outside rather than find them inside, and never to rebuild the running image on a debug base, which would destroy the very state you are investigating. Against a running container, an ephemeral debug container — docker debug, or kubectl debug --image=busybox --target=&lt;container&gt; — attaches a throwaway toolbox that shares the target's PID and network namespaces, so its tools see the distroless process's PID 1 and sockets directly while the application image stays byte-for-byte unchanged. To read the filesystem without entering at all, every running container's root is mounted on the host at /proc/&lt;host-PID&gt;/root, with the PID from docker inspect's State.Pid. As a deliberate last resort you can docker cp a statically linked busybox into a running container and exec it, since a static binary needs nothing from the image — but this touches the writable layer. Everything above needs a live process: namespaces and /proc/&lt;PID&gt;/root exist only while the process holds them open. The moment a distroless container crashes, its namespaces are torn down and nothing can enter it, so post-mortem lives entirely in artifacts captured before death — a core dump from --ulimit core plus a host core_pattern or a dump on a mounted volume — and the engine's own record in docker inspect State and docker events. You keep security and debuggability at once by keeping them in different containers.
+</Recap>

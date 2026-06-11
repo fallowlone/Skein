@@ -1,0 +1,126 @@
+---
+concepts:
+- docker-net-ports-dns
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-port-publishing-and-dns"
+sources:
+- https://docs.docker.com/engine/network/
+- https://docs.docker.com/engine/network/drivers/bridge/
+- https://man7.org/linux/man-pages/man8/iptables.8.html
+spiral: []
+status: ready
+title: "Publishing ports and the embedded DNS: DNAT, bind addresses, and 127.0.0.11"
+track: "docker"
+unit: "03-networking"
+summary: "Publishing a port installs an iptables DNAT rule rewriting host:port to container:port, scoped by the bind address. User-defined networks add an embedded DNS at 127.0.0.11 resolving names. Most 'works locally but not remotely' and 'name not found' bugs are these two, misread."
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The demo worked on the developer's laptop and failed in staging, and the difference was one missing colon. The compose file published the API as `127.0.0.1:8080:8080`. On the laptop, the developer hit `localhost:8080` and everything was fine. In staging, the load balancer health check came from another host, got connection-refused, and marked the service down — so it never received traffic, and the on-call engineer saw an outage with green container logs. `docker ps` showed the port "published," `curl localhost:8080` on the box itself returned 200, and yet the port was unreachable from anywhere else. The bind address `127.0.0.1` had silently scoped the published port to host-loopback only: the DNAT rule existed but only matched packets arriving on the loopback interface. Change it to `0.0.0.0:8080:8080` (or just `8080:8080`) and the health check went green. Publishing a port is an iptables rule with an interface scope, and the embedded DNS is a second mechanism people conflate with it — both are worth understanding exactly, because together they explain most container-networking confusion.
+</Hook>
+
+<Crux>Publishing a port is a scoped iptables DNAT rule; the embedded DNS at 127.0.0.11 resolves names. Two mechanisms, two failure classes.</Crux>
+
+<Explanation>
+
+## Publishing a port is DNAT
+
+`-p 8080:8080` does not "open" a port the way a firewall rule does — it installs a **DNAT** (destination NAT) rule in iptables that rewrites the destination of packets arriving at the host's port 8080 to the container's IP and port. The rule lands in the `nat` table's `DOCKER` chain, reached from `PREROUTING` (for traffic arriving from outside) and `OUTPUT` (for traffic originating on the host):
+
+```text
+-A DOCKER ! -i docker0 -p tcp --dport 8080 -j DNAT --to-destination 172.17.0.2:8080
+```
+
+The published-port spec has three parts: `[bind-address:]host-port:container-port`. The **bind address** is the part that bites: omit it (or use `0.0.0.0`) and the port is reachable on every host interface; set `127.0.0.1:8080:8080` and the DNAT only matches traffic arriving on loopback — reachable from the host itself, invisible to every other machine. That is the Hook bug: the rule existed, `docker ps` proudly listed it, but its interface scope excluded the health checker. A second subtlety: by default Docker's DNAT rule is inserted *ahead of* the host firewall's INPUT rules, so a published port can be reachable from the outside even if `ufw`/`firewalld` thinks it blocked that port — Docker and the host firewall are editing different chains, and people are surprised which one wins.
+
+### The userland-proxy
+
+There are actually two paths for published-port traffic. The fast path is the iptables DNAT above, handled entirely in-kernel. But Docker also runs a small `docker-proxy` userland process per published port as a fallback — for hairpin cases and same-host loopback connections the DNAT rule alone doesn't cover. The kernel path costs essentially nothing; the userland-proxy path copies bytes through a userspace process, adding **single-digit microseconds** of latency per packet plus a process and a held socket per published port. On a host publishing hundreds of ports this is real overhead, which is why high-throughput setups often disable it (`"userland-proxy": false`) and rely on DNAT plus a kernel hairpin route alone.
+
+<Quiz
+  id="02-port-publishing-and-dns-quiz-1"
+  lessonSlug="02-port-publishing-and-dns"
+  lang="en"
+  question="A container publishes 127.0.0.1:5432:5432 for Postgres. From the host, psql connects fine. From another machine on the same network, connection is refused. docker ps lists the port as published. What is wrong?"
+  choices={[
+    { label: "The bind address 127.0.0.1 scopes the DNAT rule to loopback only, so the published port is reachable from the host but from no other interface", correct: true },
+    { label: "Postgres is only listening on the container's loopback, so external hosts cannot reach it", misconception: "If Postgres bound only to container-loopback, even host-side psql through the published port would fail; here the host connects fine, so the container listens on its eth0 — the restriction is the host-side bind address scoping the DNAT to loopback." },
+    { label: "The host firewall is blocking 5432 from external hosts", misconception: "Docker's DNAT is inserted ahead of the host firewall's INPUT rules, so a firewall is usually not what blocks a published port; and the symptom precisely matches a loopback-scoped bind address, which docker ps still shows as 'published'." },
+    { label: "The embedded DNS failed to resolve the container, so external clients cannot find it", misconception: "The embedded DNS resolves container names for other containers on a user-defined network; external clients connect by host IP and port through DNAT and never touch Docker's DNS at all." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does `127.0.0.1:port` even exist as an option if it causes this confusion? Because it is the right default for a database or admin port you want reachable only by other processes on the same host (or by a reverse proxy on that host), never from the network. The footgun is using it by reflex and then expecting remote reachability. The discipline: bind to loopback when the consumer is co-located, bind to `0.0.0.0` when something off-box must connect, and never let `docker ps` showing "published" stand in for "reachable from where I need it."
+</Inset>
+
+## The embedded DNS at 127.0.0.11
+
+On the *default* bridge, containers can only reach each other by IP — there is no name resolution. On a **user-defined** bridge network (the kind `docker network create` or any Compose service network makes), Docker runs an **embedded DNS server** that every container reaches at the fixed address **127.0.0.11:53**. Docker rewrites each container's `/etc/resolv.conf` to point at it, and it resolves container names and network aliases to current container IPs, forwarding everything else to the host's configured resolvers. This is why on a Compose network you connect to `http://api:8080` and it just works — `api` is a container name the embedded DNS knows, and the IP it returns is always current even after a restart gives the container a new address.
+
+The numbers and failure modes that matter:
+
+- The resolver lives at `127.0.0.11` inside *every* container's netns — a loopback address, so it never collides with the host's DNS and is unreachable from outside the container. iptables NAT rules inside the netns redirect that loopback traffic to the daemon's DNS listener.
+- Name resolution is **per-network**: a container only resolves names of containers attached to a network it shares. Two containers on different user-defined networks cannot resolve each other by name even on the same host — the classic "works in one compose file, not across two" bug.
+- A short DNS TTL plus resolution-on-every-connect is what makes restarts transparent, but a client that caches a resolved IP forever (some JVM defaults, naive HTTP clients) keeps hitting the *old* IP after the target container restarts — a stale-connection bug that looks like the network but is the client's resolver cache.
+
+<Quiz
+  id="02-port-publishing-and-dns-quiz-2"
+  lessonSlug="02-port-publishing-and-dns"
+  lang="en"
+  question="Service A reaches service B by the name 'b' in one Compose project. A second project's service C cannot resolve 'b' at all, though both run on the same host. Why?"
+  choices={[
+    { label: "The embedded DNS resolves names per-network; C is on a different user-defined network and the resolver only returns names of containers sharing a network with the caller", correct: true },
+    { label: "The embedded DNS at 127.0.0.11 is single-instance and only one project can register names with it", misconception: "Each network has its own name scope served by the same daemon resolver; the limit is not one project per resolver but that resolution is scoped to the caller's networks — attach C to b's network and it resolves." },
+    { label: "C must use B's IP because cross-project DNS requires the default bridge, which has no DNS", misconception: "The default bridge indeed has no DNS, but C's problem is that it shares no user-defined network with b — connect both to a shared external network and name resolution works without any IPs." },
+    { label: "DNS TTL expired between the projects, dropping b's record", misconception: "TTL governs caching freshness within a network, not visibility across networks; b's record exists, it is simply out of C's resolution scope because they share no network." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="A container resolves a peer name through the embedded DNS, then the kernel DNATs the published-port connect to the target container"
+  hue="var(--d-infra)"
+  actors={["app", "127.0.0.11", "kernel DNAT", "target"]}
+  messages={[
+    { from: "app", to: "127.0.0.11", label: "A? api" },
+    { from: "127.0.0.11", to: "app", label: "172.18.0.3 (current IP)" },
+    { from: "app", to: "kernel DNAT", label: "SYN host:8080" },
+    { from: "kernel DNAT", to: "target", label: "rewritten -> 172.18.0.3:8080" },
+    { from: "target", to: "app", label: "SYN-ACK (un-DNATed)" },
+  ]}
+  caption="Name resolution (embedded DNS, 127.0.0.11) and reachability (DNAT on the published port) are two separate mechanisms. A 'name not found' is a DNS-scope problem; a 'connection refused from outside' is a bind-address or DNAT problem. Diagnose the right one."
+/>
+
+<KeyTakeaway>Publishing a port is an iptables DNAT rule, not a firewall opening: it rewrites host:port to container-IP:port and is scoped by the bind address — `127.0.0.1:` makes it loopback-only while `docker ps` still says 'published', and Docker's DNAT is inserted ahead of host firewall INPUT rules. The userland-proxy is a per-port fallback adding single-digit-microsecond latency, often disabled at high throughput. Separately, user-defined networks run an embedded DNS at 127.0.0.11 that resolves container names per-network to current IPs; names don't resolve across networks, and clients caching IPs break on restart. Reachability and resolution are two mechanisms — match the symptom to the right one.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="02-port-publishing-and-dns-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain exactly what '-p 127.0.0.1:8080:8080' installs and why the same container is reachable from the host but not from another machine.", a: "It installs an iptables DNAT rule in nat/DOCKER (reached from PREROUTING and OUTPUT) that rewrites the destination of packets arriving at host port 8080 to the container's IP and port. The optional bind-address prefix scopes which host interface the rule matches: 127.0.0.1 means the DNAT only fires for packets arriving on loopback, so a connection from the host itself works while a connection from any other machine (arriving on the real NIC) is connection-refused because no DNAT matches it. docker ps still lists the port as 'published' because the rule exists — published is not the same as reachable-from-where-you-need. Use 0.0.0.0 (or omit the bind address) to match every interface. Note Docker's DNAT sits ahead of host firewall INPUT rules, so a published port can be reachable even when ufw/firewalld think they blocked it." },
+    { q: "Describe the embedded DNS: its address, scope, what it returns, and two failure modes.", a: "On a user-defined bridge network (default bridge has no DNS), Docker runs an embedded DNS server reachable at the fixed loopback address 127.0.0.11:53 inside every container's netns; Docker rewrites /etc/resolv.conf to point there and netns NAT rules redirect that loopback to the daemon's resolver. It resolves container names and network aliases to current container IPs (forwarding other queries to the host resolvers), which is why http://api:8080 works on a Compose network and survives restarts that change the IP. Failure mode one: resolution is per-network — a container only resolves names of containers sharing one of its networks, so two separate Compose projects can't resolve each other's names even on one host unless joined to a shared network. Failure mode two: a client that caches the resolved IP forever (some JVM/HTTP-client defaults) keeps hitting the old IP after the target restarts, a stale-cache bug masquerading as a network failure." },
+  ]}
+/>
+
+<Recap lang="en">
+Two distinct mechanisms account for most container-networking confusion, and the senior skill is keeping them apart. Publishing a port (-p) installs an iptables DNAT rule in the nat table's DOCKER chain that rewrites the destination of traffic arriving at the host port to the container's IP and port; it is reachability plumbing, not a firewall opening. The published-port spec is [bind-address:]host-port:container-port, and the bind address scopes the rule to an interface: 127.0.0.1: makes the port loopback-only — reachable from the host, refused from every other machine — even though docker ps still proudly prints 'published'. Docker inserts this DNAT ahead of the host firewall's INPUT rules, so a published port can be externally reachable even when ufw or firewalld believe they blocked it. A per-port docker-proxy userland process is a fallback for hairpin and same-host loopback cases the DNAT alone misses; it adds single-digit-microsecond per-packet latency and a held socket per port, so high-throughput hosts often set userland-proxy false. The second mechanism is name resolution: a user-defined bridge network (the default bridge has none) runs an embedded DNS at the fixed loopback 127.0.0.11:53 inside every container, resolving container names and aliases to current IPs and forwarding the rest upstream — which is why http://api:8080 works on a Compose network and survives restarts that reassign IPs. Its scope is per-network, so two separate networks can't resolve each other's names without a shared network, and a client caching IPs forever keeps connecting to a dead address after a restart. When you debug, first decide whether the symptom is reachability (bind address, DNAT, firewall) or resolution (DNS scope, stale cache) — then you are fixing the right mechanism.
+</Recap>

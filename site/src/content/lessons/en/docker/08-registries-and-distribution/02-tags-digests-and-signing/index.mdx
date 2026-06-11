@@ -1,0 +1,129 @@
+---
+concepts:
+- docker-digests-signing
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-tags-digests-and-signing"
+sources:
+- https://github.com/opencontainers/distribution-spec/blob/main/spec.md
+- https://docs.sigstore.dev/cosign/signing/overview/
+spiral: []
+status: ready
+summary: 'Tags move, digests do not: a tag is a mutable label, a digest is the sha256 of the manifest and fixes the bytes. Signing (cosign) binds a claim to the digest, stored as a referring artifact. Deploy by digest and verify the signature, or you trust whatever the tag last pointed at.'
+title: 'Tags move, digests do not: pinning and signing for a verifiable supply chain'
+track: "docker"
+unit: "08-registries-and-distribution"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The post-incident timeline was the kind nobody wants to write. At 14:02 a developer fixed a typo in a Dockerfile comment, rebuilt, and ran `docker push internal/checkout:prod` — the same tag the production cluster pinned. They did not know the cluster used `:prod` directly. The rebuild had pulled a fresh base image overnight; the new base bumped a TLS library to a version with a regression that closed keep-alive connections aggressively. No deploy was triggered, no PR merged, no approval requested — but over the next hour, as nodes recycled pods and re-pulled `:prod`, half the fleet silently swapped to the broken image while the other half stayed on the old one. Checkout error rate climbed in a staircase nobody could correlate to a change, because in the change log there *was* no change. The tag `:prod` had moved out from under a running system. The fix that shipped that night was one rule: production references a digest, `internal/checkout@sha256:…`, and a signature gate refuses any image whose digest is not signed by the release key.
+</Hook>
+
+<Crux>A tag is a mutable label; a digest is the sha256 of the manifest and fixes the exact bytes. Sign the digest, deploy by digest.</Crux>
+
+<Explanation>
+
+## The digest is the manifest's hash
+
+A digest is not assigned, it is computed: `sha256:<hex>` where the hex is the SHA-256 of the **canonical manifest bytes**. That has a precise consequence — the digest covers the manifest, and the manifest lists the config digest and every layer digest, each of which covers its own bytes. So a single manifest digest transitively pins the *entire* image: change any layer, the layer's digest changes, the manifest's content changes, the manifest digest changes. `internal/checkout@sha256:9f3c…` therefore names one specific tree of bytes that can never be anything else. A tag has no such property: `internal/checkout:prod` is an entry in the registry's mutable index mapping the string `prod` to *some* manifest digest, and a `PUT /v2/.../manifests/prod` overwrites that mapping. The registry will even tell you the current digest of a tag — a `HEAD /v2/<name>/manifests/prod` returns the manifest's digest in the `Docker-Content-Digest` response header — which is exactly how CI should resolve a tag to a digest at release time and never look at the tag again.
+
+```bash
+# resolve the tag you just built to its immutable digest, then deploy THAT
+digest=$(docker buildx imagetools inspect internal/checkout:prod \
+         --format '{{.Manifest.Digest}}')          # sha256:9f3c…
+kubectl set image deploy/checkout app=internal/checkout@${digest}
+```
+
+<Inset kind="why" lang="en">
+Why isn't "just don't re-push prod" enough? Because the property you need is not a process promise, it is a structural guarantee. A tag policy lives in people's heads and CI conventions; it fails the moment someone runs `docker push` by hand, a second pipeline reuses the tag, or a mirror re-tags upstream. A digest reference cannot be wrong even in principle — there is no operation that makes `@sha256:9f3c…` mean different bytes, so the reference itself enforces what the policy only requested. This is the same reason content-addressing beats names everywhere in the stack: names are claims, hashes are facts.
+</Inset>
+
+## Signing binds a claim to a digest
+
+A digest fixes *which* bytes you run, but says nothing about *who vouched* for them — anyone who can push can create a digest. **Signing** closes that gap. With cosign, you sign the image's digest (not its tag — signing a tag would be meaningless since the tag moves), producing a signature plus optional claims (an SBOM, a provenance attestation). In the modern OCI model these are stored back in the **same registry as referring artifacts**: a signature is itself a small manifest whose `subject` field is the digest it signs, discoverable through the **referrers API** (`GET /v2/<name>/referrers/<digest>`) which lists all artifacts that refer to a given image. Verification is then: resolve tag→digest, fetch the referrers for that digest, and check that a signature from a trusted key (or, with keyless cosign, a trusted OIDC identity recorded in the Rekor transparency log) covers exactly that digest.
+
+```bash
+cosign sign   --key release.key  internal/checkout@sha256:9f3c…
+cosign verify --key release.pub  internal/checkout@sha256:9f3c…   # gate: nonzero exit blocks deploy
+```
+
+The order is load-bearing: you **verify against the digest you are about to run**, not against the tag. If you verify `:prod` and then deploy `:prod`, a tag move between the two steps means you verified one image and ran another — a time-of-check-to-time-of-use hole. Verifying and deploying the *same digest* closes it: the thing you checked and the thing you run are bit-identical by construction.
+
+<Quiz
+  id="02-tags-digests-and-signing-quiz-1"
+  lessonSlug="02-tags-digests-and-signing"
+  lang="en"
+  question="A pipeline runs `cosign verify internal/app:prod` and, on success, runs `kubectl set image ... internal/app:prod`. Why is this still unsafe despite the verification passing?"
+  choices={[
+    { label: "Both steps resolve the mutable tag independently — a re-push of :prod between verify and deploy means you verified one digest and ran another (a TOCTOU gap)", correct: true },
+    { label: "cosign cannot verify images addressed by tag at all, so the verify step is a no-op", misconception: "cosign can resolve a tag to verify it; the problem isn't that verification is impossible, it's that the tag is resolved twice independently, so the digest verified and the digest deployed need not be the same." },
+    { label: "The signature is stored under the tag, so moving the tag also moves the signature and breaks verification", misconception: "Signatures are bound to the digest (the signature's subject is the digest), not the tag — moving the tag doesn't move the signature. The real hole is that verify and deploy each re-resolve the tag, opening a window where the bytes can change between them." },
+    { label: "kubectl cannot deploy a signed image without the cosign public key mounted in the cluster", misconception: "Cluster-side admission verification is a separate, complementary control; it isn't why this pipeline is unsafe. The flaw here is verifying and deploying the tag rather than pinning and acting on one resolved digest." },
+  ]}
+/>
+
+## Why this is the supply-chain backbone
+
+Three senior consequences. First, **deploy references must be digests** — the Hook incident (a hand `docker push` to `:prod` silently rolling out a regression with no change record) is structurally impossible when the running reference is `@sha256:…`, because no push can re-aim a digest. Second, **a signature gate must verify the digest you run, not the tag**, and ideally enforce it at admission (a Kubernetes admission controller like sigstore policy-controller rejecting unsigned digests) so the guarantee holds even when a human bypasses CI. Third, **mutability has a blast radius**: a tag move with no audit trail (`:latest` re-pushed) can roll out an unintended image fleet-wide over the minutes it takes pods to recycle, and because there is no deploy event, your change-correlation tooling is blind — the staircase error graph with an empty change log. Pinning plus signing converts "we trust whoever last pushed the tag" into "we run exactly these signed bytes," which is the entire difference between a name you hope is right and a fact you can prove.
+
+<Quiz
+  id="02-tags-digests-and-signing-quiz-2"
+  lessonSlug="02-tags-digests-and-signing"
+  lang="en"
+  question="Why does signing an image's digest, rather than its tag, actually provide a meaningful guarantee?"
+  choices={[
+    { label: "The digest is the hash of the manifest and transitively of every layer, so a signature over the digest commits to exact, immutable bytes; a tag can be re-pointed, so a signature over it would commit to nothing fixed", correct: true },
+    { label: "Tags cannot be signed by cosign for technical reasons, so digests are the only option", misconception: "It's not a technical limitation — you could compute a signature over a tag string, but it would be worthless: the tag can be re-pointed to different bytes afterward, so the signature would no longer correspond to what runs. The point is semantic, not capability." },
+    { label: "Signing the tag is fine as long as you never re-push it", misconception: "That reduces the guarantee to a process promise — the same fragile 'just don't re-push' assumption that fails on a manual push or a second pipeline. A digest signature needs no such promise because the digest cannot move." },
+    { label: "The registry refuses to store signatures for tagged references", misconception: "The registry stores the signature as a referring artifact whose subject is a digest regardless of how you addressed the image to sign it; the digest binding is inherent to the signing model, not a storage restriction." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="A verified deploy resolves the tag to a digest, checks the signature on that digest, then deploys the same digest"
+  hue="var(--d-backend)"
+  actors={["CI", "registry", "cluster"]}
+  messages={[
+    { from: "CI", to: "registry", label: "HEAD manifests/prod" },
+    { from: "registry", to: "CI", label: "Docker-Content-Digest: sha256:9f3c" },
+    { from: "CI", to: "registry", label: "GET referrers/sha256:9f3c" },
+    { from: "registry", to: "CI", label: "signature artifact (subject=digest)" },
+    { from: "CI", to: "CI", label: "cosign verify sha256:9f3c (gate)" },
+    { from: "CI", to: "cluster", label: "deploy app@sha256:9f3c" },
+    { from: "cluster", to: "registry", label: "pull by digest (immutable)" },
+  ]}
+  caption="Verify and deploy the SAME digest, never the tag twice — that closes the time-of-check-to-time-of-use gap where a tag move swaps the image between verification and rollout."
+/>
+
+<KeyTakeaway>A digest is the sha256 of the manifest, which transitively pins the config and every layer — so `@sha256:…` names exact, immutable bytes, while a tag is a mutable index pointer that any push can re-aim. Sign the digest (cosign), stored as a referring artifact whose subject is that digest and found via the referrers API; verify the digest you are about to run, not the tag, or a tag move opens a TOCTOU gap. Production deploys by digest behind a signature gate (ideally at admission) so "we trust the last push" becomes "we run exactly these signed bytes" — and a silent tag move can no longer roll out an unapproved image with no change record.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="02-tags-digests-and-signing-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain precisely why a digest is immutable and a tag is not, and how CI should turn one into the other.", a: "A digest is sha256:<hex> where the hex is the SHA-256 of the canonical manifest bytes. The manifest lists the config digest and every layer digest, each itself the hash of its bytes, so the manifest digest transitively covers the whole image: change any layer and the chain of hashes changes, yielding a different manifest digest. Thus @sha256:9f3c… can only ever name one tree of bytes. A tag is just an entry in the registry's mutable index mapping a string to some manifest digest; a PUT to the manifests endpoint for that tag overwrites the mapping, so the same tag can name different bytes over time. CI bridges them by resolving the tag once at release: HEAD /v2/<name>/manifests/<tag> returns the current digest in the Docker-Content-Digest header (or docker buildx imagetools inspect --format '{{.Manifest.Digest}}'), and the pipeline writes that digest into the Deployment and never references the tag again." },
+    { q: "Why must you verify the signature on the digest you deploy, and what goes wrong if you verify the tag?", a: "A signature is bound to a digest — the signature artifact's subject field is the digest it covers — because only a digest names fixed bytes worth vouching for. If you run cosign verify against a tag and then deploy that tag, each step independently resolves the tag to whatever it currently points at. A re-push landing between the two means you verified digest A but deployed digest B: a time-of-check-to-time-of-use hole where the signature gate passed on an image you never ran. Resolving the tag once to a digest, verifying that digest, and deploying that same digest closes the gap, because the verified bytes and the running bytes are identical by construction. Enforcing the same check at admission (e.g. a sigstore policy-controller) extends the guarantee to images that bypass CI entirely." },
+  ]}
+/>
+
+<Recap lang="en">
+Tags move, digests do not — and an entire class of silent production incidents collapses once a team internalizes that. A digest is the SHA-256 of the canonical manifest bytes, and because the manifest enumerates the config and layer digests, a single manifest digest transitively pins every byte of the image; @sha256:… can never name anything else. A tag is the opposite: a mutable entry in the registry index that a PUT to the manifests endpoint overwrites, so :prod or :latest names whatever was last pushed. CI converts a freshly built tag into a stable reference by reading the Docker-Content-Digest header from a HEAD on the manifests endpoint (or imagetools inspect), then deploys that digest and forgets the tag. Signing adds the missing dimension — who vouched: cosign signs a digest (never a tag, which would vouch for nothing fixed), and the signature lands in the same registry as a referring artifact whose subject is that digest, discoverable through the referrers API. Verification must target the digest you are about to run, because verifying a tag and then deploying it re-resolves the tag twice and opens a TOCTOU window a re-push can drive through. The payoff is structural, not procedural: deploying by digest makes a stray docker push to :prod incapable of moving a running rollout, a signature gate (ideally at admission) makes unsigned bytes unrunnable even when a human skips CI, and the staircase error graph with an empty change log — a tag that moved out from under a live system — stops being possible. Names are claims you hope are right; digests and signatures are facts you can prove.
+</Recap>

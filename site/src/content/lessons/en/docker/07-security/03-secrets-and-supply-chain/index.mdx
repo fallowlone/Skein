@@ -1,0 +1,122 @@
+---
+concepts:
+- docker-supply-chain
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-secrets-and-supply-chain"
+sources:
+- https://docs.sigstore.dev/cosign/signing/overview/
+- https://slsa.dev/spec/v1.0/
+- https://docs.docker.com/build/building/secrets/
+spiral: []
+status: ready
+summary: 'A secret in ENV or ARG leaks via docker inspect and bakes into a layer; build secret mounts keep it out. An unsigned image can be swapped at the registry; cosign signs the digest, records it in Rekor, and an admission gate refuses unsigned images — the SLSA build-to-admit chain.'
+title: 'Secrets and the supply chain: keeping secrets out of layers, and signing images so they cannot be swapped'
+track: "docker"
+unit: "07-security"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Two failures, one supply chain. The first was quiet: a Dockerfile passed an npm registry token as a build `ARG` to install a private package, and a year later a security researcher pulled the public image, ran `docker history` and `docker inspect`, and read the token straight out of the image metadata — it had been baked into a layer and the inspect output, immutable and shipped to anyone who could pull. The second was louder: an attacker who had compromised a CI service account pushed a tampered image to the same repository under the `latest` tag, swapping the legitimate binary for one with a backdoor. The cluster pulled `latest` on the next deploy and ran it without a second thought, because nothing in the path from registry to running container ever asked "is this the image we actually built?" Both holes close the same way — secrets that never enter a layer, and images that carry a cryptographic signature an admission gate verifies before anything runs.
+</Hook>
+
+<Crux>Secrets in ENV or ARG leak via docker inspect and bake into layers; signing the digest with cosign plus an admission gate stops image swaps.</Crux>
+
+<Explanation>
+
+## A secret in a layer is a published secret
+
+The image is an append-only stack of layers, and its metadata is world-readable to anyone who can pull it. That makes every common way of passing a secret into a build a leak. An `ENV API_KEY=...` line is visible in `docker inspect` and `docker history` and is inherited by every process in the container — and by `docker inspect` from anyone with registry access. A build `ARG SECRET` is no better: even though it is not in the final environment, build args are recorded in the image history, and any file the build writes the secret into becomes a layer that persists *even if a later layer deletes it*, because layers are additive — `rm`-ing a file in layer 5 does not remove it from layer 3, it just hides it, and `docker save` or a layer-extraction tool reads it right back. Copying a credentials file in, using it, and deleting it is the canonical mistake: the secret is in the image forever, one `tar` extraction away.
+
+The fix is to give the build the secret *without writing it into any layer*. BuildKit secret mounts do exactly this: `RUN --mount=type=secret,id=npmtoken` exposes the secret as a file under `/run/secrets` for the duration of that one `RUN` step only, mounted in a tmpfs that is never committed to a layer and never appears in history or inspect. The secret is present while the command runs and gone the instant it finishes, leaving no trace in the image. The same principle governs runtime: never bake credentials into the image at all — inject them at run time from the orchestrator's secret store (Docker/Kubernetes secrets, a vault sidecar, or mounted files), so the image is identical across environments and carries nothing sensitive. The rule is blunt: if a secret is ever in a layer, ENV, or build ARG, treat it as published and rotate it.
+
+<Quiz
+  id="03-secrets-and-supply-chain-quiz-1"
+  lessonSlug="03-secrets-and-supply-chain"
+  lang="en"
+  question="A Dockerfile does COPY creds.json ., uses it during npm install, then RUN rm creds.json as the next step. Is the secret safe in the published image?"
+  choices={[
+    { label: "No — layers are additive, so the file still exists in the earlier layer; rm only hides it, and a layer extraction reads it right back", correct: true },
+    { label: "Yes, because the rm step deletes the file before the image is finalized", misconception: "Deleting a file in a later layer does not remove it from the layer that added it — layers are additive and immutable. The rm creates a whiteout that hides the file in the merged view, but docker save or a tar extraction of the earlier layer recovers it intact." },
+    { label: "Yes, as long as the repository is private", misconception: "A private repo limits who can pull, but anyone with pull access — a leaked CI token, an insider, a future public push — gets the baked-in secret. Privacy is not a substitute for keeping the secret out of the layer entirely." },
+    { label: "Yes, because COPY'd files are not recorded in image history", misconception: "The file content lives in the layer regardless of history. Even with no history entry, the layer tarball contains the secret, and that is what makes COPY-then-rm the canonical leak. A BuildKit secret mount avoids writing it to a layer at all." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does a build secret mount solve what ENV and ARG cannot? Because it changes *where* the secret lives during the build. ENV and ARG make the secret part of the image's declarative definition — recorded, inherited, inspectable — and any file written from them is committed to an additive layer. A secret mount makes the secret a transient tmpfs file scoped to one RUN, visible to that command's processes and unmounted before the layer is committed, so it is never part of the layer's content or the image's metadata. The image you publish is byte-identical whether or not a secret was used to build it. That is the property you want: the artifact carries nothing sensitive, so leaking the artifact leaks nothing.
+</Inset>
+
+## Signing the digest: stopping the swap
+
+Keeping secrets out of the image protects what is *in* the image; signing protects *which* image runs. A tag like `latest` is a mutable pointer — anyone who can push to the repository can repoint it at a different digest, and a tampered image swapped under the same tag pulls and runs exactly like the original. The cryptographic anchor is the image **digest** (a SHA-256 over the manifest): it is content-addressed and immutable, so a different image has a different digest. **Cosign** (from the sigstore project) signs that digest and stores the signature as an artifact alongside the image in the registry. Crucially, it can do this *keylessly*: it gets a short-lived certificate tied to an OIDC identity (your CI's workload identity) and records the signing event in **Rekor**, a public append-only **transparency log** — so there is a tamper-evident, queryable record that "this digest was signed by this identity at this time," with no long-lived private key to steal.
+
+Signing only matters if something *verifies* it before running the image, which is the job of an **admission controller** (Kubernetes admission webhook, OPA/Gatekeeper, or the cosign policy controller): at deploy time it resolves the image to its digest, checks for a valid cosign signature from an allowed identity, and refuses to admit anything unsigned or signed by the wrong key. That single gate defeats the tag-swap: the backdoored image has no valid signature from the trusted CI identity, so it is rejected before a pod ever starts. This is the spine of **SLSA** (Supply-chain Levels for Software Artifacts): a verifiable chain of provenance from a trusted build, through a recorded signature and transparency-log entry, to an admission gate that only runs artifacts whose origin it can prove. Pin to digests, sign at build, verify at admit — and the registry stops being a place an attacker can quietly substitute your binary.
+
+<Quiz
+  id="03-secrets-and-supply-chain-quiz-2"
+  lessonSlug="03-secrets-and-supply-chain"
+  lang="en"
+  question="A team signs every image with cosign and records each signature in Rekor, but deploys still pull by mutable tag with no admission check. An attacker pushes a backdoored image to the same tag. What happens?"
+  choices={[
+    { label: "The backdoored image runs — signing without an admission gate that verifies before running changes nothing; the cluster never checks the signature", correct: true },
+    { label: "The deploy is blocked because cosign automatically refuses unsigned images at pull time", misconception: "Cosign signs and records; it does not intercept pulls on its own. Without an admission controller (or equivalent verify step) configured to check signatures before running, the cluster pulls and runs whatever the tag points at, signed or not." },
+    { label: "Rekor rejects the push because the new image is not in the transparency log", misconception: "Rekor is an append-only record of signing events, not a gate on registry pushes. It can prove what was signed, but it does not block a tampered image from being pushed or pulled — only a verifying admission step does." },
+    { label: "The mutable tag cannot be repointed once any digest under it is signed", misconception: "Signing a digest does not lock a tag. Tags stay mutable; anyone with push access can repoint latest at a new, unsigned digest. The protection comes entirely from verifying signatures at admission, not from the act of signing." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The supply chain runs build to sign to scan to admit, with an admission gate refusing anything unsigned"
+  hue="var(--d-security)"
+  perRow={3}
+  nodes={[
+    { id: "build", label: "Build", sub: "secret mount, no leak" },
+    { id: "digest", label: "Digest", sub: "SHA-256, immutable" },
+    { id: "sign", label: "Cosign sign", sub: "keyless OIDC identity" },
+    { id: "rekor", label: "Rekor log", sub: "transparency record" },
+    { id: "admit", label: "Admission gate", sub: "verify signature" },
+    { id: "reject", label: "Reject", sub: "unsigned / wrong key" },
+  ]}
+  edges={[
+    { from: "build", to: "digest", label: "produces" },
+    { from: "digest", to: "sign", label: "signs" },
+    { from: "sign", to: "rekor", label: "records" },
+    { from: "sign", to: "admit", label: "verify" },
+    { from: "admit", to: "reject", label: "no valid sig" },
+  ]}
+  caption="The signature only protects the deploy if the admission gate verifies it before running. A tag-swapped image has no valid signature from the trusted identity, so it is rejected at admit — the SLSA chain from a trusted build to a proven origin."
+/>
+
+<KeyTakeaway>Image layers are additive and metadata is world-readable, so a secret in ENV, build ARG, or a COPY-then-rm leaks via docker inspect and persists in a layer forever; BuildKit secret mounts expose it only for one RUN in tmpfs, never committing it. Mutable tags let an attacker swap a backdoored image; cosign signs the immutable digest with a keyless OIDC identity and records it in the Rekor transparency log, and an admission gate that verifies signatures before running refuses anything unsigned — the SLSA chain from trusted build to proven admit.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-secrets-and-supply-chain-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why does COPY-then-rm or a build ARG leak a secret, and what does a BuildKit secret mount do differently?", a: "An image is an append-only stack of immutable layers with world-readable metadata. A build ARG is recorded in image history, and any file a build writes a secret into becomes a layer that persists even if a later layer deletes it — layers are additive, so rm in a later layer only creates a whiteout that hides the file in the merged view, while docker save or a tar extraction of the earlier layer recovers the secret intact. COPY-then-rm is therefore the canonical leak: the credential is in the image forever, one extraction away. A BuildKit secret mount (RUN --mount=type=secret,id=...) exposes the secret as a tmpfs file under /run/secrets for the duration of one RUN step only; it is never committed to a layer and never appears in history or inspect. The published image is byte-identical whether or not a secret was used, so leaking the artifact leaks nothing." },
+    { q: "Walk through how cosign, Rekor, and an admission controller stop a tag-swap attack, and why each piece is necessary.", a: "A tag like latest is a mutable pointer; anyone with push access can repoint it at a backdoored digest, and the cluster runs it like the original. The anchor is the image digest, a SHA-256 over the manifest that is content-addressed and immutable, so a different image has a different digest. Cosign signs that digest and stores the signature alongside the image, keylessly: it obtains a short-lived certificate tied to an OIDC identity (the CI workload identity) and records the signing event in Rekor, a public append-only transparency log, giving a tamper-evident record of who signed what when, with no long-lived key to steal. But signing alone changes nothing unless something verifies before running — that is the admission controller (Kubernetes webhook, OPA/Gatekeeper, or cosign's policy controller), which at deploy time resolves the image to its digest, checks for a valid signature from an allowed identity, and refuses anything unsigned or wrongly signed. The backdoored image has no valid signature from the trusted CI identity, so it is rejected before a pod starts. This is the SLSA spine: provenance from a trusted build, a recorded signature, and a gate that only admits artifacts whose origin it can prove." },
+  ]}
+/>
+
+<Recap lang="en">
+A container image is an append-only stack of immutable layers whose metadata is readable by anyone who can pull it, so every casual way of passing a secret into a build is a leak. ENV is inherited and inspectable; a build ARG is recorded in history; and any file a build writes a secret into becomes a layer that survives even a later rm, because layers are additive — the deletion is a whiteout that hides the file in the merged view while docker save recovers it intact, which makes COPY-then-rm the textbook mistake. The fix is to keep the secret out of every layer: a BuildKit secret mount exposes it as a transient tmpfs file scoped to one RUN, never committed and never in history, leaving the published image byte-identical whether or not a secret was used; at runtime, inject credentials from the orchestrator's secret store rather than baking them in. If a secret ever touched a layer, ENV, or ARG, treat it as published and rotate it. Keeping secrets out protects what is in the image; signing protects which image runs. A mutable tag like latest lets anyone with push access repoint it at a tampered digest, so the anchor is the immutable content-addressed digest: cosign signs that digest keylessly via a short-lived OIDC-bound certificate and records the event in the Rekor transparency log, and an admission controller verifies the signature against an allowed identity before admitting the image, rejecting anything unsigned or wrongly signed — defeating the tag-swap before a pod starts. Together, pin to digests, sign at build, and verify at admit, this is the SLSA chain: a verifiable path from a trusted build through a recorded signature to a gate that runs only artifacts whose origin it can prove.
+</Recap>
