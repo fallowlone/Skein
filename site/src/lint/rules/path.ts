@@ -107,6 +107,21 @@ function resolveGoal(goal: PathGoalLike, concepts: PathConceptLike[]): string[] 
     return concepts.filter((c) => core.has(c.track) && BAND_RANK[c.band as Band] >= min).map((c) => c.id);
   }
 
+  // track-band=<lo>..<hi>: concepts in the goal's CORE tracks whose band is inside the inclusive
+  // range. Mirrors planner.resolveGoalTargets — keep the two in sync.
+  const tbr = rule.match(/^track-band=(\w+)\.\.(\w+)$/);
+  if (tbr) {
+    const lo = BAND_RANK[tbr[1] as Band];
+    const hi = BAND_RANK[tbr[2] as Band];
+    if (lo === undefined || hi === undefined) return [];
+    const core = new Set(
+      Object.entries(goal.trackWeights ?? {}).filter(([, w]) => (w ?? 0) >= 1).map(([t]) => t),
+    );
+    return concepts
+      .filter((c) => core.has(c.track) && BAND_RANK[c.band as Band] >= lo && BAND_RANK[c.band as Band] <= hi)
+      .map((c) => c.id);
+  }
+
   const m = rule.match(/^band>=(\w+)$/);
   if (m) {
     const min = BAND_RANK[m[1] as Band];
