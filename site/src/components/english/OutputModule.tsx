@@ -2,7 +2,7 @@
 import { useMemo, useState } from "preact/hooks";
 import { outputTasks } from "~/english/data/output/tasks";
 import type { OutputTask, GradingResult, Band } from "~/english/types";
-import { englishState, getPlacement, getGradingModel, recordOutputAttempt } from "~/english/state";
+import { englishState, getPlacement, getGradingModel, recordOutputAttempt, addChunk } from "~/english/state";
 import { keyStatus } from "~/english/byok";
 import { gradeOutput } from "~/english/byok/anthropic";
 import { type Locale } from "~/i18n";
@@ -28,6 +28,7 @@ export default function OutputModule({ lang }: Props) {
   const [selfAssess, setSelfAssess] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [savedBetter, setSavedBetter] = useState(false); // upgrade-cycle: better version → chunk card
 
   const task = openId ? outputTasks.find((t) => t.id === openId) ?? null : null;
 
@@ -36,14 +37,16 @@ export default function OutputModule({ lang }: Props) {
     back: "← All tasks", rubric: "You'll be graded on", corrections: "Corrections", better: "A stronger version",
     band: "Estimated level", notice: "Notice next time", model: "Model answer", grading: "Grading…",
     needKey: "Add an API key for AI feedback, or self-assess against the model answer.",
+    toSrs: "→ SRS", savedSrs: "saved ✓", myVersion: "my version: ",
   } : {
     title: "Письмо", write: "Напиши ответ", submit: "Получить AI-фидбек", selfAssessBtn: "Показать образец",
     back: "← Все задания", rubric: "Оценивается по", corrections: "Исправления", better: "Сильнее версия",
     band: "Оценка уровня", notice: "Обрати внимание", model: "Образец ответа", grading: "Оцениваю…",
     needKey: "Добавь API-ключ для AI-фидбека или сверься с образцом.",
+    toSrs: "→ в карточки", savedSrs: "сохранено ✓", myVersion: "моя версия: ",
   };
 
-  function openTask(id: string) { setOpenId(id); setText(""); setResult(null); setSelfAssess(false); setErr(null); }
+  function openTask(id: string) { setOpenId(id); setText(""); setResult(null); setSelfAssess(false); setErr(null); setSavedBetter(false); }
 
   async function submit() {
     if (!task) return;
@@ -53,6 +56,7 @@ export default function OutputModule({ lang }: Props) {
       if (st === "device" || st === "unlocked") {
         const r = await gradeOutput(task, text, getGradingModel());
         setResult(r);
+        setSavedBetter(false);
         recordOutputAttempt(task.id, r.scoreBand, now());
       } else {
         setSelfAssess(true);
@@ -85,7 +89,18 @@ export default function OutputModule({ lang }: Props) {
                   ))}
                 </ul></div>
             ) : null}
-            <div><div class="meta mb-1">{L.better}</div><p class="text-[14px] text-ink m-0">{result.betterVersion}</p></div>
+            {result.betterVersion ? (
+              <div>
+                <div class="meta mb-1 flex items-center gap-2 flex-wrap">
+                  <span>{L.better}</span>
+                  <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[11px]" disabled={savedBetter}
+                    onClick={() => { addChunk(result.betterVersion, L.myVersion + text.slice(0, 120), now(), "upgrade-cycle"); setSavedBetter(true); }}>
+                    {savedBetter ? L.savedSrs : L.toSrs}
+                  </button>
+                </div>
+                <p class="text-[14px] text-ink m-0">{result.betterVersion}</p>
+              </div>
+            ) : null}
             {result.noticingHints.length ? (
               <div><div class="meta mb-1">{L.notice}</div>
                 <ul class="text-[13px] text-ink">{result.noticingHints.map((h, i) => <li key={i}>{h}</li>)}</ul></div>
