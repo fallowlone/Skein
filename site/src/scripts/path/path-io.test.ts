@@ -88,7 +88,7 @@ describe("path-io calibration surface", () => {
 describe("path-io cold-start", () => {
   it("the bundle loads the full graph", () => {
     expect(content.concepts.length).toBeGreaterThan(4000);
-    expect(content.units.length).toBe(337); // 327 + 10 docker (waves 10-11)
+    expect(content.units.length).toBe(342); // 337 + 5 ci-cd GHA course (wave 12)
     expect(content.goals.map((g) => g.id)).toContain("senior-fullstack");
   });
 
