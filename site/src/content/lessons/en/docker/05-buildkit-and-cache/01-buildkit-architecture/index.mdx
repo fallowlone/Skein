@@ -1,0 +1,146 @@
+---
+concepts:
+- docker-buildkit
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-buildkit-architecture"
+sources:
+- https://docs.docker.com/build/buildkit/
+- https://github.com/moby/buildkit/blob/master/docs/build-repro.md
+- https://docs.docker.com/reference/dockerfile/
+spiral: []
+status: ready
+summary: 'BuildKit parses a Dockerfile into LLB — a content-addressed DAG of build operations, not a top-to-bottom script. Independent stages build in parallel, and cache hits are decided by the digests of an operation''s inputs, not by line numbers.'
+title: 'BuildKit as a build graph: LLB, content-addressed cache keys, and why a build is a DAG not a script'
+track: "docker"
+unit: "05-buildkit-and-cache"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+CI had been green for months at 45 seconds a build, then one morning every build took six minutes — and nothing in the Dockerfile had changed. The team stared at the same `COPY . .` line they had shipped for a year, convinced the registry cache was broken. The real change was upstream: someone had added a `.env.local` to the repo and dropped a generated `build-info.txt` that CI wrote *before* the docker build. Every build now produced a slightly different file in the context, so the digest of the `COPY . .` input changed on every run, every layer after it missed cache, and `RUN npm ci` reran from scratch — the 5 minutes 15 seconds that used to be one cache hit. The fix was a `.dockerignore` line, but the lesson was the mental model. BuildKit had not "decided" to rebuild line 8. It had computed a content digest for that operation's inputs, found no matching cache entry, and correctly executed it. The cache key was never the line number. It was the bytes.
+</Hook>
+
+<Crux>BuildKit compiles a Dockerfile into LLB, a content-addressed DAG, so cache hits depend on input digests, not line numbers.</Crux>
+
+<Explanation>
+
+## The Dockerfile is a graph, not a script
+
+The classic mental model — "Docker runs my Dockerfile top to bottom, one line one layer" — describes the legacy builder, and it is wrong for BuildKit, the default since Docker 23.0. BuildKit's frontend parses the Dockerfile into **LLB** (Low-Level Build definition): a directed acyclic graph of operations. Each node is a vertex like "run this command on this rootfs," "copy these files from the context," or "pull this image"; edges are data dependencies. The solver then walks the DAG and executes vertices whose inputs are ready, in parallel, as worker capacity allows.
+
+The practical consequence is parallelism you did not write. Two independent `FROM` stages — say a Go build stage and a separate stage that fetches static assets — have no edge between them, so BuildKit runs them at the same time on different workers. A serial 6-minute build with two independent 3-minute legs can finish in a little over 3. You get this for free precisely because the build is a graph: the solver sees the legs are independent and schedules them concurrently, where the legacy builder would have run them one after the other.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+# These two stages are independent vertices in the LLB graph —
+# BuildKit builds them concurrently, not sequentially.
+FROM golang:1.23 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download           # depends only on go.mod/go.sum
+COPY . .
+RUN go build -o /app ./cmd/server
+
+FROM node:22 AS assets
+WORKDIR /web
+COPY web/package*.json ./
+RUN npm ci                     # runs in parallel with go mod download
+COPY web/ ./
+RUN npm run build
+```
+
+## Cache keys are digests, not line numbers
+
+Every LLB vertex computes a **cache key** from the digest of its inputs. For a `RUN`, the key folds in the digest of the parent layer (the entire filesystem state it runs on top of) plus the command string. For a `COPY`, the key folds in the parent plus the **digest of the exact file contents** being copied — computed from the build context, honoring `.dockerignore`. The solver looks that key up in the local cache and any imported remote cache; a match is a **cache hit**, and the vertex's pre-computed output layer is reused without running anything. A miss runs the vertex and stores the result under that key.
+
+This is why ordering instructions correctly is the single highest-leverage build optimization. `COPY go.mod go.sum ./` then `RUN go mod download` *before* `COPY . .` means the expensive download vertex depends only on two small files: change application source and those files' digests are unchanged, so the download is a cache hit while only the cheap `go build` reruns. Invert it — `COPY . .` before `go mod download` — and every source edit changes the copy vertex's digest, cascading a miss into the download. A correctly ordered Node build hits cache and finishes in ~4 seconds; the inverted one reruns `npm ci` for ~90 seconds on every one-line change. Same instructions, same final image, 20× difference, decided entirely by which vertex sits upstream of the volatile input.
+
+<Quiz
+  id="01-buildkit-architecture-quiz-1"
+  lessonSlug="01-buildkit-architecture"
+  lang="en"
+  question="A Dockerfile has COPY . . on line 8, then RUN npm ci on line 9. A developer edits a single line in src/app.js and rebuilds. Why does npm ci rerun even though package.json did not change?"
+  choices={[
+    { label: "The COPY . . vertex's cache key folds in the digest of all copied files, so editing app.js changes that digest, misses cache, and produces a new parent layer that npm ci then depends on", correct: true },
+    { label: "BuildKit always reruns every RUN after a COPY because COPY invalidates the cache by design", misconception: "COPY does not blanket-invalidate later steps; it changes the cache key only when the copied bytes change. The cascade here happens specifically because app.js is inside the copied set, so the COPY vertex's input digest moved." },
+    { label: "npm ci reran because line 9 comes after the edited line numerically", misconception: "Line numbers are not cache keys. BuildKit keys on input digests; npm ci reran because its parent layer (the output of the COPY vertex) changed digest, not because of any line position." },
+    { label: "Editing any file forces a full rebuild from the base image in BuildKit", misconception: "Only vertices downstream of the changed input miss. Stages and steps upstream of, or independent from, the edited file stay cached — that is the whole point of the DAG." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why digest-based keys instead of timestamps or line numbers? Because content addressing makes the cache correct under reordering, sharing, and distribution. A vertex keyed by the digest of its inputs produces the same key on any machine, so a cache populated in CI can be imported on a developer laptop and hit. Timestamp-based invalidation would miss whenever an mtime changed even if bytes did not, and line-based keying would break the moment you moved an instruction. The price is the failure mode in the Hook: anything that perturbs the input bytes — a generated file in the context, an `mtime`-sensitive build that BuildKit had to read — changes the digest and busts the layer. Content addressing is unforgiving but honest: the cache reflects exactly what went in.
+</Inset>
+
+## Reading a build log as a graph walk
+
+Once you see the build as a DAG, the log reads differently. `CACHED` next to a step means the solver found that vertex's cache key already satisfied. Steps printed interleaved rather than strictly in file order are independent vertices being solved concurrently. A `=> [build 4/7]` and `=> [assets 2/4]` appearing together is the two-stage parallelism, not a rendering glitch. And a step that you expected to be cached but shows as running tells you precisely one thing: the digest of its inputs differs from last time. The debugging question is never "why did Docker decide to rebuild this line" — it is "what input byte changed." Usually it is the context (add a `.dockerignore`), sometimes a base image that moved tags (pin by digest), occasionally a build arg folded into the command string.
+
+<Quiz
+  id="01-buildkit-architecture-quiz-2"
+  lessonSlug="01-buildkit-architecture"
+  lang="en"
+  question="A Dockerfile defines two stages with FROM that share no COPY --from or other dependency between them. What does BuildKit do that the legacy builder did not?"
+  choices={[
+    { label: "It schedules the two independent stages as concurrent vertices in the LLB graph and builds them in parallel, so total time approaches the slower leg rather than the sum", correct: true },
+    { label: "It builds them strictly in the order they appear in the file, same as the legacy builder", misconception: "That is the legacy builder's behavior. BuildKit models the file as a DAG; stages with no edge between them have no ordering constraint, so the solver runs them concurrently rather than top-to-bottom." },
+    { label: "It refuses to build because two FROM stages without a link are ambiguous", misconception: "Multiple independent stages are completely valid and common; BuildKit just only outputs the final target stage. Independence is an opportunity for parallelism, not an error." },
+    { label: "It merges the two stages into one layer to save space", misconception: "Stages stay distinct; BuildKit does not merge them. What it does with independence is schedule the vertices in parallel — a time optimization, not a layer-merging one." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="BuildKit compiles the Dockerfile to an LLB DAG; the solver runs independent vertices in parallel and reuses any whose input digest hits cache"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "dockerfile", label: "Dockerfile", sub: "frontend parses" },
+    { id: "llb", label: "LLB DAG", sub: "vertices + edges" },
+    { id: "build", label: "build stage", sub: "go mod + go build" },
+    { id: "assets", label: "assets stage", sub: "npm ci (parallel)" },
+    { id: "cache", label: "cache lookup", sub: "key = input digest" },
+    { id: "image", label: "final image", sub: "target stage only" },
+  ]}
+  edges={[
+    { from: "dockerfile", to: "llb", label: "compile" },
+    { from: "llb", to: "build", label: "vertex" },
+    { from: "llb", to: "assets", label: "vertex" },
+    { from: "build", to: "cache", label: "digest" },
+    { from: "assets", to: "cache", label: "digest" },
+    { from: "cache", to: "image", label: "hit or run" },
+  ]}
+  caption="Independent stages have no edge, so the solver schedules them concurrently. Each vertex's cache key is the digest of its inputs — parent layer plus command, or parent plus copied file bytes — so a hit reuses a stored layer and a changed input byte misses regardless of line position."
+/>
+
+<KeyTakeaway>BuildKit compiles a Dockerfile into LLB, a content-addressed DAG of build operations, and the solver runs independent vertices in parallel — two unrelated stages build concurrently, cutting a serial build's wall time toward its slowest leg. Each vertex's cache key is the digest of its inputs: a RUN folds in the parent layer plus the command, a COPY folds in the parent plus the exact bytes being copied. A cache hit reuses a stored layer without executing; a miss happens only when an input digest changes. So ordering matters enormously — COPY go.mod before COPY . . keeps an expensive download cached on source edits — and the right debugging question is never "why rebuild this line" but "what input byte changed".</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="01-buildkit-architecture-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain what LLB is and how BuildKit's cache key for a vertex is computed for a RUN versus a COPY.", a: "LLB (Low-Level Build definition) is the intermediate representation BuildKit's frontend compiles a Dockerfile into: a directed acyclic graph whose vertices are build operations (run a command, copy files, pull an image) and whose edges are data dependencies. The solver executes vertices whose inputs are ready, in parallel where there is no edge between them. Each vertex has a cache key derived from the digest of its inputs. For a RUN, the key folds in the digest of the parent layer — the full filesystem state it runs on — plus the command string. For a COPY, the key folds in the parent plus the digest of the exact file contents being copied from the build context (after .dockerignore filtering). The solver looks the key up in local and imported caches: a match reuses the stored output layer (a CACHED step) without running anything; a miss executes the vertex and stores its output under that key. Nothing in the key is the line number — identical inputs anywhere produce the same key." },
+    { q: "Why does instruction ordering produce a 20x build-time difference, and how do you debug an unexpected cache miss?", a: "Because a vertex's cache key includes its parent layer's digest, every step depends on the cumulative state above it. Put COPY go.mod go.sum then RUN go mod download (or COPY package*.json then RUN npm ci) before COPY . . and the expensive dependency-install vertex depends only on the small manifest files: editing application source leaves those digests unchanged, so the install is a cache hit (~4s) and only the cheap compile reruns. Invert it so COPY . . comes first and every source edit changes the copy vertex's digest, cascading a miss into the install (~90s) on every change. Same instructions and same final image, ~20x apart, decided by which vertex sits upstream of the volatile input. To debug an unexpected miss, stop asking 'why did Docker rebuild this line' and ask 'what input byte changed': usually the build context (fix with a .dockerignore entry, as in the generated-file case), sometimes a base image whose tag moved (pin FROM by digest), occasionally a build arg folded into a command string." },
+  ]}
+/>
+
+<Recap lang="en">
+BuildKit, the default builder since Docker 23.0, does not execute a Dockerfile top to bottom — its frontend compiles the file into LLB, a content-addressed directed acyclic graph whose vertices are build operations and whose edges are data dependencies. The solver runs vertices whose inputs are ready, concurrently wherever no edge forces an order, so two independent FROM stages build in parallel and a serial-looking build finishes in close to the time of its slowest leg. Every vertex carries a cache key computed from the digest of its inputs: a RUN folds in the parent layer's digest plus the command string, a COPY folds in the parent plus the digest of the exact file bytes copied from the context after .dockerignore filtering. The solver looks that key up in local and any imported remote cache — a hit reuses the stored layer and prints CACHED without executing, a miss runs the vertex and stores its output. This is why line numbers never matter and ordering matters enormously: COPY go.mod and RUN go mod download before COPY . . keeps the expensive download keyed to small stable files, so source edits leave it cached (~4s) and only the cheap compile reruns, while the inverted order busts the install on every change (~90s) — same instructions, ~20x apart. And it is why the mystery six-minute build was never about line 8: a generated file slipped into the context, the COPY vertex's input digest moved, and everything downstream correctly missed. Read the log as a graph walk, treat CACHED as "key already satisfied," and debug a surprise miss by hunting the input byte that changed — the context, a moved base tag, or a build arg — not the line.
+</Recap>

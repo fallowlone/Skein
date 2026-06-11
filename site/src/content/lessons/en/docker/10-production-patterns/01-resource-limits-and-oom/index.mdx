@@ -1,0 +1,141 @@
+---
+concepts:
+- docker-resource-limits
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-resource-limits-and-oom"
+sources:
+- https://docs.docker.com/engine/containers/resource_constraints/
+- https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+- https://pkg.go.dev/runtime/debug#SetMemoryLimit
+spiral: []
+status: ready
+summary: 'A container with no memory limit can OOM the whole node, and a runtime that ignores cgroup limits OOMs itself. --memory sets the cgroup ceiling, exit 137 is the OOM kill, and cgroup-aware runtimes (GOMEMLIMIT, MaxRAMPercentage) keep the heap under it.'
+title: 'Resource limits and OOM: cgroup ceilings, exit 137, and runtimes that ignore them'
+track: "docker"
+unit: "10-production-patterns"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The node went dark at 02:14. Not one container — the whole machine: kubelet unresponsive, SSH timing out, every pod on it flapping. The post-mortem found a single batch worker that loaded an unbounded result set into memory. It had no memory limit set, so its cgroup ceiling was the node's entire RAM. The kernel's OOM killer woke up, but with the host out of memory it started reaping by a heuristic score, and the highest-scoring victims were the fat JVM next door and, eventually, kubelet itself. One process with no limit took down a node hosting forty others. The fix was one line in the pod spec — a memory limit — and the deeper lesson was that the absence of a limit is not "unlimited, but fine": it is "unlimited, and your blast radius is the whole host."
+</Hook>
+
+<Crux>No memory limit means the cgroup ceiling is the whole node, so one container can OOM everything; a limit bounds the blast radius to itself.</Crux>
+
+<Explanation>
+
+## The cgroup ceiling and exit 137
+
+A container is a process in a cgroup, and `--memory` (Compose `mem_limit`, Kubernetes `resources.limits.memory`) writes the cgroup v2 `memory.max` ceiling. When the cgroup's resident memory crosses that ceiling and cannot reclaim, the kernel OOM killer terminates a process *inside that cgroup* — usually PID 1, which ends the container. The container records **exit code 137**, which is `128 + 9`: the process died from signal 9, SIGKILL, delivered by the OOM killer. That number is the single most useful diagnostic in production containers — 137 almost always means "hit the memory ceiling," not a crash in your code.
+
+```bash
+docker run --memory=512m --memory-swap=512m myapp
+#                        ^ equal to --memory disables swap for the container;
+#                          omit it and Docker grants swap = 2× memory, so the
+#                          container can quietly use 1 GiB before OOM and thrash first.
+docker inspect --format '{{.State.OOMKilled}} {{.State.ExitCode}}' myapp
+# true 137   ← the kernel OOM-killed it at the cgroup ceiling
+```
+
+The contained case is the good one: with a limit, only *your* container dies, gets restarted by the orchestrator, and the node stays healthy. Without a limit (`memory.max = max`), the cgroup can grow until the *host* is out of memory, and then the system-wide OOM killer chooses victims across all cgroups by `oom_score` — which can be a different container, or a critical daemon. **A missing limit does not protect your container; it endangers its neighbours.** This is why production guidance is to always set memory limits, and to set requests equal to limits for memory (memory is incompressible — you cannot throttle it like CPU, you can only kill).
+
+<Quiz
+  id="01-resource-limits-and-oom-quiz-1"
+  lessonSlug="01-resource-limits-and-oom"
+  lang="en"
+  question="A container is OOM-killed and its state shows ExitCode 137, OOMKilled true. What does 137 specifically tell you?"
+  choices={[
+    { label: "The process was killed by signal 9 (SIGKILL) — 128+9 — which the kernel OOM killer sent when the cgroup hit its memory ceiling", correct: true },
+    { label: "The application threw an unhandled exception and exited with its own code 137", misconception: "Exit codes above 128 encode a fatal signal: the value is 128 + signal number. 137 = 128 + 9 = SIGKILL, and combined with OOMKilled true it is the kernel's OOM killer, not application code choosing to exit." },
+    { label: "Docker sent SIGTERM during shutdown and the app failed to handle it in time", misconception: "A SIGTERM-then-timeout SIGKILL during docker stop also yields 137, but OOMKilled true is the distinguishing fact: this kill came from the memory cgroup hitting its ceiling, not from a stop grace period expiring." },
+    { label: "The container exceeded its CPU limit and was throttled to death", misconception: "CPU limits throttle (slow) a container — they never kill it, because CPU is compressible. Memory is incompressible, so the only enforcement is the OOM kill, which is exactly what 137 + OOMKilled records." },
+  ]}
+/>
+
+## Runtimes that ignore the cgroup limit
+
+Setting the cgroup ceiling is only half the job — the *runtime inside* the container has to respect it. Many runtimes default to sizing their heap from the **host's** memory, not the cgroup's, because they read `/proc/meminfo` (the host total) rather than `memory.max`. A JVM before container-awareness would see a 64 GiB host, set its default max heap to ~16 GiB (¼ of host), and get OOM-killed the instant it tried to grow inside a 512 MiB cgroup — exit 137 on startup, before serving a request. Go's garbage collector, left to defaults, only triggers when the heap doubles, so a service holding 400 MiB live can balloon past a 512 MiB ceiling between collections and get killed mid-request.
+
+The fixes are runtime-specific knobs that tie the heap to the cgroup:
+
+```bash
+# JVM: size the heap as a percentage of the cgroup limit (container-aware since JDK 10/8u191)
+java -XX:MaxRAMPercentage=75.0 -jar app.jar     # 75% of memory.max, not of host RAM
+
+# Go (1.19+): a soft memory target the GC honours, set just under the cgroup ceiling
+ENV GOMEMLIMIT=450MiB        # for a 512 MiB limit — leave headroom for non-heap memory
+# the GC runs more aggressively as the heap approaches GOMEMLIMIT instead of waiting to double
+
+# Node: cap V8's old-space below the cgroup limit
+node --max-old-space-size=400 server.js          # MiB; V8 default is ~2 GiB regardless of cgroup
+```
+
+The pattern is the same across stacks: the cgroup limit is a hard wall enforced by the kernel with SIGKILL; the runtime knob is a soft target the runtime enforces by collecting garbage *before* it hits the wall. Set only the cgroup limit and the runtime cheerfully grows into the wall and dies; set only the runtime knob and a leak past it still has no kernel backstop. You need both — and you set the soft target a little *below* the hard wall, because non-heap memory (thread stacks, native buffers, metaspace) lives in the same cgroup and counts against `memory.max` too.
+
+<Quiz
+  id="01-resource-limits-and-oom-quiz-2"
+  lessonSlug="01-resource-limits-and-oom"
+  lang="en"
+  question="You set --memory=512m on a Go service but it still gets OOM-killed under load while reporting only ~400 MiB live heap. Why, and what knob fixes it?"
+  choices={[
+    { label: "Go's GC waits for the heap to roughly double before collecting, so live memory plus uncollected garbage can cross 512 MiB between cycles — set GOMEMLIMIT just under the limit so the GC runs harder as it approaches the ceiling", correct: true },
+    { label: "The --memory flag does not apply to Go binaries because they manage their own memory", misconception: "--memory writes the cgroup ceiling that the kernel enforces on any process regardless of language; Go binaries are bound by it like everything else. The issue is the GC's default pacing, not that the limit is ignored by the kernel." },
+    { label: "512m is interpreted as 512 megabits, so the real limit is 64 MiB", misconception: "Docker's m suffix is mebibytes, not megabits; 512m is 512 MiB. The kill is real at ~512 MiB — the gap is garbage the GC has not yet reclaimed, which GOMEMLIMIT addresses." },
+    { label: "You must also raise --memory-swap to give the container swap room", misconception: "Adding swap only delays the kill while thrashing; it does not stop the heap from growing past the ceiling. The fix is to make the GC collect sooner via GOMEMLIMIT, bounding live+garbage under the wall." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Memory pressure flows from the runtime heap against the cgroup ceiling, where the kernel OOM killer decides who dies"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "runtime", label: "Runtime heap", sub: "JVM / Go / V8" },
+    { id: "soft", label: "Soft target", sub: "GOMEMLIMIT / RAMPercent" },
+    { id: "ceiling", label: "cgroup memory.max", sub: "hard wall, --memory" },
+    { id: "oom", label: "OOM killer", sub: "SIGKILL → exit 137" },
+    { id: "contained", label: "Container dies", sub: "limit set: blast = self" },
+    { id: "node", label: "Node OOM", sub: "no limit: blast = host" },
+  ]}
+  edges={[
+    { from: "runtime", to: "soft", label: "GC before wall" },
+    { from: "soft", to: "ceiling", label: "stays under" },
+    { from: "ceiling", to: "oom", label: "crossed" },
+    { from: "oom", to: "contained", label: "limit present" },
+    { from: "oom", to: "node", label: "limit absent" },
+  ]}
+  caption="The soft target keeps the heap below the hard wall; crossing the wall is a kernel SIGKILL recording exit 137. With a limit the kill is contained to the container; without one the cgroup can grow until the host OOMs and the kernel reaps across all cgroups."
+/>
+
+<KeyTakeaway>A container with no memory limit has the whole node as its ceiling, so one leak can OOM-kill neighbours and daemons — always set a memory limit to bound the blast radius to the container itself. The cgroup `--memory` ceiling is a hard wall the kernel enforces with SIGKILL, recorded as exit 137 with OOMKilled true. But the runtime must respect it: JVM, Go, and Node default to sizing the heap from host RAM and will grow into the wall and die unless you set a cgroup-aware soft target (MaxRAMPercentage, GOMEMLIMIT, max-old-space-size) a little below the limit, leaving headroom for non-heap memory.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="01-resource-limits-and-oom-retrieval"
+  lang="en"
+  questions={[
+    { q: "A container shows exit code 137 with OOMKilled true. Explain exactly what happened and why the number is 137.", a: "The container's memory cgroup hit its memory.max ceiling (set by --memory / limits.memory) and could not reclaim, so the kernel OOM killer sent SIGKILL (signal 9) to a process in the cgroup — typically PID 1, ending the container. The exit code is 137 because the convention for a process killed by a signal is 128 + signal number, and 128 + 9 = 137. OOMKilled true confirms the kill came from the memory cgroup rather than from a stop-grace SIGKILL (which also yields 137 but without the OOMKilled flag). If the container had no memory limit, the ceiling would have been the whole node, and the OOM killer would have chosen victims across all cgroups by oom_score, potentially killing a neighbour or a daemon instead." },
+    { q: "Why can a Go or JVM service be OOM-killed inside a 512 MiB cgroup even though its application data fits, and how do GOMEMLIMIT / MaxRAMPercentage prevent it?", a: "By default these runtimes size their heap from the host's memory (read from /proc/meminfo), not from the cgroup's memory.max. A pre-container-aware JVM on a 64 GiB host sets a ~16 GiB default max heap and is killed the moment it grows past 512 MiB; Go's GC waits for the heap to roughly double before collecting, so live plus uncollected garbage crosses the ceiling between cycles. The fix ties the heap to the cgroup: -XX:MaxRAMPercentage=75 sizes the JVM heap as a fraction of memory.max, and GOMEMLIMIT sets a soft target the Go GC honours by collecting more aggressively as the heap approaches it. You set the soft target a bit below the hard wall because non-heap memory (thread stacks, native buffers, metaspace) also counts against memory.max — so leave headroom or the kernel still SIGKILLs you at exit 137." },
+  ]}
+/>
+
+<Recap lang="en">
+A container is a process in a cgroup, and a memory limit writes that cgroup's memory.max ceiling. When resident memory crosses it and cannot be reclaimed, the kernel OOM killer SIGKILLs a process inside the cgroup — usually PID 1 — and the container records exit 137 (128 + signal 9) with OOMKilled true, the single clearest signal in production that you hit the memory wall rather than crashing in code. Set --memory equal to --memory-swap to disable the container's swap, otherwise Docker grants swap of twice the limit and the container thrashes before it dies. The reason to always set a limit is blast radius: with a limit only your container is killed and restarted while the node stays healthy; without one the cgroup ceiling is the whole host, and when the host runs out the OOM killer reaps across every cgroup by oom_score, potentially taking down a neighbour or kubelet itself. Setting the kernel ceiling is only half the job — the runtime inside must respect it, because JVM, Go, and Node default to sizing their heap from host RAM and will grow straight into the wall: a JVM picking ~16 GiB on a 64 GiB host dies on startup inside 512 MiB, and a Go service holding 400 MiB live can balloon past 512 MiB between garbage collections. Tie the heap to the cgroup with a soft target — MaxRAMPercentage for the JVM, GOMEMLIMIT for Go, max-old-space-size for Node — and set it a little below the hard wall, because non-heap memory shares the same cgroup and counts against memory.max too. The cgroup limit is the hard kernel backstop; the runtime knob is the soft target that collects before the wall. You need both.
+</Recap>

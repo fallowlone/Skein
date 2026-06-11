@@ -1,0 +1,126 @@
+---
+concepts:
+- docker-volumes
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-volumes-vs-bind-mounts"
+sources:
+- https://docs.docker.com/engine/storage/volumes/
+- https://docs.docker.com/engine/storage/bind-mounts/
+- https://docs.docker.com/engine/storage/tmpfs/
+spiral: []
+status: ready
+summary: "Named volumes are Docker-managed durable storage under /var/lib/docker/volumes; bind mounts paste a host path straight in; tmpfs lives in RAM. Each picks a different tradeoff in portability, UID semantics, and latency — and getting it wrong loses data or breaks writes."
+title: "Volumes, bind mounts, and tmpfs: three ways to escape the writable layer"
+track: "docker"
+unit: "04-storage-and-volumes"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+The migration looked clean: move the Postgres container from a bind mount to a named volume for the production cutover. The team changed `-v /data/pg:/var/lib/postgresql/data` to `-v pgdata:/var/lib/postgresql/data`, redeployed, and watched Postgres initialize a brand-new empty database — the eight-week-old production data still sat in `/data/pg` on the host, now mounted nowhere, while the application happily served an empty schema and accepted new writes. Nobody noticed for forty minutes because the app didn't crash; it just lost a customer's entire account history. The deeper cut came a week later on a second host: the same named volume, but a bind mount of the source tree had been added for hot-reload, and the container ran as UID 1000 while the host files were owned by UID 0 — every write failed with `permission denied` and the framework swallowed the errors as "file not found." Three storage mechanisms, three different failure shapes, one root cause: the team treated `-v` as one feature when it is three.
+</Hook>
+
+<Crux>Volumes are Docker-managed, bind mounts paste a host path in raw, tmpfs lives in RAM — three different durability and UID tradeoffs.</Crux>
+
+<Explanation>
+
+## Named volumes: Docker owns the storage
+
+A named volume is storage the engine creates and manages. `docker volume create pgdata` materializes a directory at `/var/lib/docker/volumes/pgdata/_data`, and mounting it at `/var/lib/postgresql/data` makes the container write straight to that host directory — **bypassing the overlay2 storage driver entirely**. That bypass is the whole performance story: writes go directly to the host filesystem instead of through the union mount, so there is no copy-up tax and no extra layer for the kernel to traverse. For a write-heavy workload like a database, a volume is not just for durability; it is materially faster than the writable layer, with none of the file-level copy-up stalls.
+
+```bash
+$ docker volume inspect pgdata --format '{{ .Mountpoint }}'
+/var/lib/docker/volumes/pgdata/_data
+
+# Volume survives the container; data outlives any rm/recreate:
+$ docker run -d -v pgdata:/var/lib/postgresql/data postgres:16
+$ docker rm -f $(docker ps -lq)      # container gone
+$ docker run -d -v pgdata:/var/lib/postgresql/data postgres:16   # data still there
+```
+
+Volumes are **portable and backup-friendly**: because Docker owns the path and the lifecycle, you back them up, migrate them, and move them between Linux and Windows containers without caring about host directory layout. They also have a crucial first-run behavior: when you mount an *empty* named volume over a container directory that the image populated, Docker **copies the image's contents into the volume** on first use — so mounting an empty `pgdata` over a fresh Postgres image preserves the image's seed files. (This copy happens only for empty named volumes, never for bind mounts, and never if the volume already has data — which is exactly the trap in the Hook: a different empty volume initialized a blank database.)
+
+## Bind mounts: a raw host path, with the host's rules
+
+A bind mount maps a specific host path directly into the container: `-v /data/pg:/var/lib/postgresql/data` or the explicit `--mount type=bind,source=/data/pg,target=...`. There is no Docker-managed directory and no first-run copy — whatever is at the host path *is* what the container sees, immediately and bidirectionally. This is the right tool for development hot-reload (mount your source tree, edit on the host, the container sees it) and for injecting host config files. But you inherit the host's filesystem semantics wholesale, and the sharp edge is **UID/GID ownership**.
+
+Linux file permissions are numeric. The container has its own `/etc/passwd`, but the kernel enforces permissions by *number*, not name. If the host directory is owned by UID 0 and the container process runs as UID 1000 (as a hardened image should), every write gets `EACCES` — `permission denied` — regardless of what the username "looks like" inside the container. There is no automatic UID remapping for a plain bind mount (rootless Docker and user namespaces change this, but the default daemon does not), so the host directory must be chowned to the UID the container actually runs as, or the container must run as the UID that owns the host files. This is the single most common bind-mount failure in production, and frameworks routinely mask it as a missing-file error.
+
+<Quiz
+  id="02-volumes-vs-bind-mounts-quiz-1"
+  lessonSlug="02-volumes-vs-bind-mounts"
+  lang="en"
+  question="A container running as UID 1000 bind-mounts a host directory owned by root (UID 0) and writes fail with permission denied. What is actually wrong?"
+  choices={[
+    { label: "The kernel enforces permissions by numeric UID, and the container's UID 1000 has no write access to a UID-0-owned host directory — bind mounts do no UID remapping by default", correct: true },
+    { label: "Bind mounts are read-only by default, so writes are rejected", misconception: "Bind mounts are read-write by default unless you add the :ro flag. The failure here is ownership, not mount mode — the writes reach the filesystem and are rejected by permission checks, not by a read-only mount." },
+    { label: "Docker needs a docker volume create call before any host path can be written", misconception: "Bind mounts require no volume creation — the host path is used directly. Adding a named volume would not fix a UID mismatch anyway; the problem is that the process UID does not own the target directory." },
+    { label: "The container's /etc/passwd lacks a user named root, so the write is unauthorized", misconception: "The kernel checks numeric UID/GID, not usernames — what /etc/passwd calls the UID is irrelevant to permission enforcement. The mismatch is between UID 1000 (process) and UID 0 (directory owner), not a username lookup." },
+  ]}
+/>
+
+## tmpfs: storage that is RAM
+
+A `tmpfs` mount is neither persistent nor on disk — it is a filesystem in memory. `--tmpfs /tmp` or `--mount type=tmpfs,destination=/tmp,tmpfs-size=64m` gives the container a fast scratch area that never touches the storage driver or any disk, and **vanishes when the container stops** (it is even more ephemeral than the writable layer, which at least survives a stop/start). You use it for two things: secrets and sensitive data you never want written to disk, and high-churn scratch (session files, render temp, sort spill) where you want speed and zero durability. The catch is that tmpfs consumes the host's RAM: without `tmpfs-size`, a tmpfs can grow until it exhausts memory and the OOM killer reaps the container, so production tmpfs mounts should always set an explicit size cap.
+
+<StackDiagram
+  label="Three ways out of the writable layer, ordered by durability and where the bytes physically live"
+  hue="var(--d-infra)"
+  layers={[
+    { label: "Named volume — Docker-managed, portable, survives recreate", note: "/var/lib/docker/volumes, bypasses overlay2" },
+    { label: "Bind mount — raw host path, bidirectional, host UID rules", note: "host filesystem, no remap" },
+    { label: "tmpfs — in-memory scratch, gone on stop", note: "host RAM, set tmpfs-size" },
+    { label: "Writable layer — last resort, ephemeral, copy-up tax", note: "upperdir, dies with container" },
+  ]}
+  caption="Volumes and bind mounts both write straight to the host filesystem and skip the storage driver's copy-up. tmpfs trades durability for RAM-speed. The writable layer is the fallback you escape from."
+/>
+
+<Quiz
+  id="02-volumes-vs-bind-mounts-quiz-2"
+  lessonSlug="02-volumes-vs-bind-mounts"
+  lang="en"
+  question="You mount an empty named volume over /var/lib/postgresql/data on a fresh Postgres image, then on a second deploy you bind-mount an empty host directory at the same path. What happens to the image's seed files in each case?"
+  choices={[
+    { label: "The empty named volume gets the image's seed files copied in on first use; the empty bind mount hides them and exposes a blank directory", correct: true },
+    { label: "Both preserve the image's seed files, because Docker always copies image contents into any mount", misconception: "The first-run copy happens only for empty named volumes, never for bind mounts. A bind mount shadows the image directory unconditionally — whatever is on the host path is what the container sees, even if that is nothing." },
+    { label: "Both hide the seed files, because any mount shadows the underlying image directory", misconception: "Bind mounts do shadow unconditionally, but an empty named volume is the exception: Docker pre-populates it from the image directory on first use, which is why a fresh volume on Postgres still has the initialized cluster." },
+    { label: "Neither matters because Postgres regenerates seed files on startup regardless of the mount", misconception: "Postgres only runs initdb when the data directory is empty — and whether it looks empty depends entirely on the mount. An empty bind mount makes it look empty and triggers a fresh, blank cluster; the populated volume does not." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does an empty named volume copy the image contents but a bind mount does not? Because a named volume is a Docker-managed object with no prior identity — Docker can safely seed it from the image so the container starts in a sane state, which is what makes "just add a volume" work for stateful images. A bind mount points at a host path that already has meaning to the operator; silently overwriting it with image contents would be destructive and surprising. The asymmetry is a deliberate ownership boundary: Docker initializes what it owns and never touches what you own.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>Three mechanisms escape the writable layer. Named volumes are Docker-managed under /var/lib/docker/volumes — portable, backup-friendly, they bypass overlay2's copy-up, and an empty one is seeded from the image on first use. Bind mounts paste a raw host path in with no remapping, so the container's numeric UID must own the directory or every write fails EACCES. tmpfs is RAM-backed scratch that dies on stop and must be size-capped or it OOM-kills the container. Volumes for durable state, bind mounts for dev and host config, tmpfs for secrets and churn.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="02-volumes-vs-bind-mounts-retrieval"
+  lang="en"
+  questions={[
+    { q: "Compare named volumes and bind mounts on lifecycle, performance, portability, first-run behavior, and the permission model.", a: "A named volume is a Docker-managed directory under /var/lib/docker/volumes/<name>/_data; the engine owns its lifecycle, it survives container removal and recreate, it is portable and backup-friendly because Docker abstracts the host path, and on first use an empty volume is seeded with the image's contents at that path. A bind mount maps a specific host path directly in, bidirectionally, with no Docker-managed object, no first-run copy, and no portability — it is tied to that host's directory layout. Both write straight to the host filesystem and bypass overlay2's copy-up, so both avoid the writable-layer tax. The decisive difference in production is permissions: a bind mount inherits the host's numeric UID/GID ownership with no default remapping, so a container running as UID 1000 cannot write a root-owned host directory; a named volume is created with permissions Docker can align to the image's expectations, sidestepping the common EACCES failure." },
+    { q: "When should you reach for tmpfs instead of a volume or bind mount, and what is the operational risk?", a: "Use tmpfs when you explicitly do not want bytes on disk: secrets and sensitive material you never want persisted, and high-churn scratch (temp files, session data, sort/render spill) where speed matters and durability does not. tmpfs is a RAM-backed filesystem that bypasses the storage driver entirely and is destroyed when the container stops — more ephemeral than the writable layer, which at least survives stop/start. The risk is memory: a tmpfs counts against host RAM, and without an explicit tmpfs-size cap it can grow until it exhausts memory and the OOM killer reaps the container. Always set a size limit on production tmpfs mounts, and never use tmpfs for anything that must survive a restart." },
+  ]}
+/>
+
+<Recap lang="en">
+The writable layer is the place state should never live, and Docker gives three ways out, each a different tradeoff. A named volume is storage the engine owns: it lives at /var/lib/docker/volumes/&lt;name&gt;/_data, survives any container removal or recreate, is portable and easy to back up because Docker abstracts away the host directory, and writes straight to the host filesystem so it skips overlay2's copy-up entirely — for a database that means both durability and real speed. Its quiet superpower is the first-run copy: mount an empty named volume over a directory the image populated and Docker seeds the volume from the image, which is why a fresh volume on Postgres still holds an initialized cluster. A bind mount is the opposite philosophy: it pastes a specific host path straight into the container, bidirectionally, with no managed object and no first-run copy — ideal for development hot-reload and injecting host config, but you inherit the host's filesystem rules whole. The recurring production wound is UID ownership: the kernel enforces permissions by number, there is no default remapping, so a container running as a non-root UID cannot write a root-owned host directory, and frameworks love to disguise the resulting EACCES as a missing file. tmpfs is the third option — a RAM-backed filesystem that never touches disk, ideal for secrets and high-churn scratch, gone the instant the container stops, and dangerous without a tmpfs-size cap because it eats host memory until the OOM killer fires. The senior reflex is to name the mechanism, not the flag: volumes for durable state, bind mounts for dev and host config with ownership checked, tmpfs for ephemeral or sensitive scratch with a size limit.
+</Recap>

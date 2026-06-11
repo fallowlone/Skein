@@ -28,7 +28,8 @@ export type Track =
   | "system-design" | "system-design-cases"
   | "aws" | "python" | "ci-cd"
   | "node" | "nest"
-  | "logic" | "react" | "nextjs" | "go";
+  | "logic" | "react" | "nextjs" | "go"
+  | "docker";
 
 export const TRACKS: Track[] = [
   "math", "base-cs", "algorithms",
@@ -41,6 +42,7 @@ export const TRACKS: Track[] = [
   "aws", "python", "ci-cd",
   "node", "nest",
   "logic", "react", "nextjs", "go",
+  "docker",
 ];
 
 export type LessonStatus = "stub" | "draft" | "ready";

@@ -1,0 +1,129 @@
+---
+concepts:
+- docker-writable-layer
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-the-writable-layer"
+sources:
+- https://docs.docker.com/engine/storage/drivers/
+- https://docs.docker.com/engine/storage/drivers/overlayfs-driver/
+- https://www.kernel.org/doc/html/latest/filesystems/overlayfs.html
+spiral: []
+status: ready
+summary: "Every container gets a thin writable layer stacked over the read-only image via overlay2. Writes copy-up whole files from lowerdir to upperdir, the layer dies with the container, and unbounded writes (logs, temp files) silently fill the host disk."
+title: "The writable layer: copy-on-write, the upperdir, and why container state evaporates"
+track: "docker"
+unit: "04-storage-and-volumes"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+The Postgres container had been running for eight months when the node alerted: disk 100% full, every write failing. The DBA's first instinct was the volume — but the data volume was 40% full. The culprit was `/var/lib/docker/overlay2`, and one directory inside it had grown to 180 GB. Someone, long ago, had set the container's log level to `debug` and pointed the application log at a file path *inside the container* rather than a mounted volume. Eight months of debug logs had accumulated in the container's writable layer at roughly 900 MB per day, invisible to every `df` the team ran inside the volume, invisible to backups, and one `docker rm` away from total loss. The fix took thirty seconds — redirect logs to stdout — but the lesson was structural: the writable layer is a place data goes to die quietly, and the only thing keeping the disk alive had been luck.
+</Hook>
+
+<Crux>The writable layer is a thin copy-on-write scratchpad over the image: it grows silently, fills the disk, and dies with its container.</Crux>
+
+<Explanation>
+
+## The stack: lowerdir, upperdir, merged
+
+When you start a container, Docker does not copy the image. With the default `overlay2` storage driver it assembles a union mount: the image's read-only layers become the **lowerdir** (stacked, up to 128 layers natively), a fresh empty directory becomes the container's **upperdir** (the writable layer), and the kernel presents a unified view at **merged** — the root filesystem your process sees as `/`. A fourth directory, **workdir**, is OverlayFS's internal staging area for atomic operations. All of this lives under `/var/lib/docker/overlay2/<id>/`, with a `l/` directory of short symlinks so the mount command stays under the kernel's argument-length limit.
+
+```bash
+$ docker inspect --format '{{ .GraphDriver.Data.MergedDir }}' web
+/var/lib/docker/overlay2/3f9a.../merged
+
+# The four overlay components for a running container:
+#   lowerdir  -> image layers (read-only, shared across containers)
+#   upperdir  -> this container's writes (the writable layer)
+#   workdir   -> kernel scratch space (never touch it)
+#   merged    -> the unified root the process sees
+```
+
+Reads fall through the stack: the kernel looks in upperdir first, then each lowerdir top-down, and serves the first hit. Because lowerdir is shared and read-only, **ten containers from the same image share one on-disk copy and one page cache entry per file** — overlay2 supports page-cache sharing, which is why you can pack hundreds of identical containers onto a node without ten times the memory. The writable layer is the *only* per-container storage, and it starts empty: a freshly started container's upperdir is often just a few hundred kilobytes.
+
+## Copy-up: the cost of the first write
+
+The expensive operation is modifying a file that lives in a lower layer. OverlayFS works at the **file level, not the block level**, so the first write to any lower-layer file triggers a `copy_up`: the kernel copies the *entire* file from lowerdir into upperdir before applying your change. Append one byte to a 2 GB SQLite database baked into the image and the kernel copies all 2 GB first — a multi-second stall, 2 GB of disk consumed, and a latency spike that looks like the process hung. Subsequent writes to that now-copied-up file are normal direct writes; the tax is paid once, on first touch.
+
+This is why a database's data files must never live in the image or the writable layer. A busy table doing block-level updates over a copied-up multi-gigabyte file means OverlayFS already copied the whole thing once, and the file-level granularity means small random writes get no benefit from the union filesystem's abstraction — every write goes through an extra layer the kernel must traverse. Deleting a lower-layer file is also not free or real: OverlayFS writes a **whiteout** marker in upperdir to hide the file, so the bytes still occupy lowerdir and the writable layer *grows* when you delete.
+
+<Quiz
+  id="01-the-writable-layer-quiz-1"
+  lessonSlug="01-the-writable-layer"
+  lang="en"
+  question="An image bundles a 2 GB read-only data file. The container appends a single log line to it. What happens on disk?"
+  choices={[
+    { label: "OverlayFS copies the entire 2 GB file from lowerdir to upperdir before the append, consuming 2 GB in the writable layer and stalling for seconds", correct: true },
+    { label: "Only the changed 4 KB block is copied up, because overlay2 works at block granularity", misconception: "OverlayFS works at the file level, not the block level. There is no per-block copy-up — the smallest unit it can copy is the whole file, which is exactly why large files baked into images are a trap for any workload that mutates them." },
+    { label: "The append writes through directly to the image layer, since the file already exists", misconception: "Image layers are strictly read-only — the kernel never writes to lowerdir. Any modification forces the file into the writable upperdir first via copy-up; the original stays untouched in the lower layer." },
+    { label: "Nothing is copied; overlay2 stores a diff of just the appended bytes", misconception: "Overlay2 is not a block-diff store. It is a union mount that materializes whole files in the upper layer on first write — there is no delta encoding of the change." },
+  ]}
+/>
+
+<StackDiagram
+  label="A container root filesystem is a union mount: writable upperdir over read-only image layers, presented as merged"
+  hue="var(--d-infra)"
+  layers={[
+    { label: "merged — the / your process sees", note: "union view" },
+    { label: "upperdir — this container's writes (writable layer)", note: "copy-up target, dies with container" },
+    { label: "lowerdir — image layer N (app code)", note: "read-only, shared" },
+    { label: "lowerdir — image layer 1 (base OS)", note: "read-only, shared page cache" },
+  ]}
+  caption="Reads fall through upperdir → lowerdirs top-down. The first write to any lower-layer file copies the whole file up. Only upperdir is per-container, and it is deleted when the container is removed."
+/>
+
+## Ephemerality and silent growth
+
+The writable layer's defining property is that **it is deleted when the container is removed**. `docker rm`, a `docker compose down`, a Kubernetes pod reschedule, a `--rm` flag, an OOM-kill followed by a fresh container — all of these throw away the upperdir. State written there does not survive the container's lifecycle, which is the entire reason volumes exist. A `docker stop` then `docker start` keeps the layer (same container), but recreating the container from the image — which any deploy or crash-recovery does — starts a brand-new empty upperdir.
+
+The second hazard is invisibility. Anything writing to a non-mounted path inside the container — application logs, upload temp files, a cache directory, a runaway core dump — lands in the writable layer and counts against the host's Docker storage, not against any volume the team monitors. A chatty service logging to a file at even 20 MB/hour adds half a gigabyte a day to a layer nobody is watching; multiply by a few hundred containers per node and `/var/lib/docker` fills while every volume dashboard reads green. `docker ps -s` reveals it: the `SIZE` column's `virtual` figure is the shared image, but the leading number is the writable layer's actual growth.
+
+<Quiz
+  id="01-the-writable-layer-quiz-2"
+  lessonSlug="01-the-writable-layer"
+  lang="en"
+  question="A service writes 30 MB/hour of logs to /app/logs/app.log inside the container, with no volume mounted there. After the container is recreated on a deploy, what is true?"
+  choices={[
+    { label: "All accumulated logs are gone — they lived in the writable layer, which is deleted when the container is replaced", correct: true },
+    { label: "The logs persist because file writes inside a container are committed back to the image", misconception: "Writes are never committed back to the image automatically — the image is immutable. Only an explicit docker commit would capture the layer, and nobody does that in production. On recreate, the upperdir is discarded with everything in it." },
+    { label: "The logs survive because /var/lib/docker/overlay2 is on the host, not in the container", misconception: "The bytes are physically on the host, but they belong to that container's upperdir directory. Removing the container deletes that directory — being on the host filesystem does not make the writable layer persistent across container lifecycle." },
+    { label: "Nothing is lost because Docker automatically rotates writable-layer data into a volume", misconception: "Docker does no such automatic migration. Unmounted paths stay in the ephemeral writable layer; persistence only happens for paths explicitly backed by a volume, bind mount, or tmpfs." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why make the writable layer ephemeral at all, instead of just persisting it? Because the entire container model trades durable per-instance state for disposability: a container you can throw away and recreate identically from the image is what makes horizontal scaling, rolling deploys, and crash-recovery trivial. If the writable layer persisted, every container would accrue snowflake state and the "cattle, not pets" property would be lost. Ephemerality is not a limitation to work around — it is the contract, and the right response is to push every byte of durable state out of the container and into a volume.
+</Inset>
+
+</Explanation>
+
+<KeyTakeaway>A container's root filesystem is a union mount: read-only image layers (lowerdir) under a thin writable layer (upperdir), unified at merged by overlay2. Reads share the image across containers; the first write to any lower-layer file copies the whole file up — fatal for large mutable files. The writable layer is deleted with the container, and unmonitored writes there (logs, temp, caches) silently fill the host disk while volume dashboards read green. Durable state belongs in a volume, never in the container.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="01-the-writable-layer-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through what overlay2 does when a container modifies a 2 GB file that came from the image, and explain why that is a problem for databases.", a: "The 2 GB file lives in a read-only lower layer (lowerdir). On the first write, OverlayFS performs a copy_up: because it operates at file granularity, not block granularity, it copies the entire 2 GB file into the container's writable upperdir before applying the change — a multi-second stall and 2 GB of disk consumed up front. Subsequent writes to the now-copied file are direct. For a database this is doubly bad: the initial copy-up of a large data file stalls writes, and the union filesystem adds an extra layer the kernel traverses on every I/O with no block-level benefit, so small random writes are slower than going straight to the host. Database data files must live in a volume that bypasses the storage driver entirely." },
+    { q: "List the ways a container's writable layer can fill the host disk or lose data, and how each is avoided.", a: "Data loss: the upperdir is deleted whenever the container is removed or recreated — docker rm, compose down, --rm, a pod reschedule, or crash-recovery from the image all start a fresh empty layer, so any state written to a non-mounted path is gone. Avoided by mounting a volume at every durable path. Disk fill: anything writing to an unmounted path — application logs to a file, upload temp dirs, caches, core dumps — accumulates in the writable layer, counts against /var/lib/docker rather than any monitored volume, and is invisible to volume dashboards; even 20-30 MB/hour becomes ~0.5 GB/day per container. Avoided by logging to stdout/stderr (the engine's logging driver handles rotation), mounting tmpfs or a volume for scratch, and watching docker ps -s for writable-layer growth." },
+  ]}
+/>
+
+<Recap lang="en">
+With the default overlay2 driver, a container's root filesystem is a union mount, not a copy of the image: the image's layers are stacked read-only as lowerdir, a fresh empty upperdir holds the container's writes, and the kernel presents them unified at merged — all under /var/lib/docker/overlay2. Reads fall through upperdir then the lowerdirs, and because lowerdir is shared, many containers from one image share a single on-disk copy and a single page-cache entry per file, which is what makes high container density cheap on memory. The cost lives at the first write to a lower-layer file: OverlayFS copies at file granularity, so modifying a 2 GB image-baked file copies all 2 GB into upperdir before the change lands — a stall and a disk spike that makes large mutable files in images a trap, especially for databases, where the union abstraction also taxes every small write. Two properties make the writable layer dangerous as a home for state. It is ephemeral: removing or recreating the container deletes the upperdir, so a deploy or crash discards whatever was written there. And it is invisible: writes to any unmounted path — logs, temp files, caches — pile up in the writable layer, count against host Docker storage rather than any volume the team watches, and fill /var/lib/docker while every volume dashboard reads green. docker ps -s surfaces the growth. The discipline is single-minded: nothing durable lives in the container — push logs to stdout, scratch to tmpfs, and every byte of state into a volume.
+</Recap>

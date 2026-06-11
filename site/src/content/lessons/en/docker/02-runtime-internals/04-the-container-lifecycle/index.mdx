@@ -1,0 +1,141 @@
+---
+concepts:
+- docker-lifecycle
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-the-container-lifecycle"
+sources:
+- https://github.com/opencontainers/runtime-spec/blob/main/runtime.md
+- https://man7.org/linux/man-pages/man2/clone.2.html
+- https://github.com/containerd/containerd/blob/main/docs/getting-started.md
+spiral: []
+status: ready
+summary: "A container's life is dockerd → containerd → shim → runc. runc sets up namespaces/cgroups, execs your binary, and exits — the shim stays as PID parent. Stop is SIGTERM, a 10 s grace, then SIGKILL; signals only reach PID 1 if it forwards them."
+title: "The container lifecycle: from docker run to a reaped exit"
+track: "docker"
+unit: "02-runtime-internals"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Deploys had a tax nobody could explain: every rollout added about ten seconds per pod of pure dead time. The app logged "shutting down gracefully," the orchestrator logged the SIGTERM, yet the container always lingered the full grace period before dying. The smoking gun was the entrypoint: `ENTRYPOINT sh -c "node server.js"`. The shell was PID 1. When the orchestrator sent SIGTERM, it went to PID 1 — the shell — which has no SIGTERM handler and, as PID 1, receives no default action from the kernel, so it simply ignored the signal. `node` never saw it, kept serving, and only died when the grace timer expired and the runtime escalated to SIGKILL — exactly ten seconds later, every single time. The fix was the exec form, `ENTRYPOINT ["node", "server.js"]`, so `node` *was* PID 1 and received SIGTERM directly. The ten-second tax was the lifecycle's stop sequence colliding with a shell that swallowed the signal.
+</Hook>
+
+<Crux>A container's life is a chain — dockerd, containerd, shim, runc — creating the process, then a stop sequence: SIGTERM, grace, SIGKILL.</Crux>
+
+<Explanation>
+
+## The chain that starts a container
+
+`docker run` does not directly spawn your process. There is a deliberate chain, each layer with one job:
+
+- **dockerd** (the Docker daemon) — the API and image management; it does not parent containers.
+- **containerd** — the container supervisor: pulls images, manages the lifecycle, talks to the runtime.
+- **containerd-shim** — one per container; it is the lasting **parent** of the container process. The shim is what lets containerd (and even dockerd) restart without killing running containers, keeps the stdio open, and reports the exit code.
+- **runc** — the OCI runtime. It does the actual kernel work: `clone()`/`unshare()` the namespaces, write the cgroup limits, set capabilities and the seccomp filter, `pivot_root` into the image, then **`execve()` your binary so it replaces runc itself**. runc then **exits** — it is not a running supervisor, just a setup tool.
+
+That last point surprises people: after start, `runc` is gone. Your process is now PID 1 in its namespace, parented (from the host's view) by the shim. This is why containers are cheap to run thousands of: no fat per-container daemon, just a tiny shim and your process directly on the host kernel.
+
+```text
+dockerd ──API──▶ containerd ──▶ containerd-shim-runc-v2  (stays as parent)
+                                      │
+                                      └─▶ runc create/start
+                                            ├─ unshare namespaces
+                                            ├─ apply cgroup limits
+                                            ├─ set caps + seccomp
+                                            ├─ pivot_root → image
+                                            └─ execve(entrypoint)  ← becomes PID 1
+                                      runc exits; shim reaps the exit code
+```
+
+## Stop: SIGTERM, grace, SIGKILL
+
+Stopping a container is not a kill — it is a negotiation with a deadline. `docker stop` (and Kubernetes pod termination) sends **SIGTERM to PID 1**, waits a grace period (**Docker default 10 s**; Kubernetes `terminationGracePeriodSeconds` default 30 s), and if the process is still alive, sends **SIGKILL**, which the process cannot catch or ignore. The contract is: PID 1 should handle SIGTERM, stop accepting new work, drain in-flight requests, and exit before the timer. The catch is the one from the Hook: **signals are delivered to PID 1, and PID 1 alone** — if PID 1 is a shell or a wrapper that does not forward signals to its children, the real server never hears SIGTERM and the grace period is pure latency before the SIGKILL. This is the operational reason the exec form (`ENTRYPOINT ["app"]`) and init shims (`--init`, tini) matter: they put a signal-aware process at PID 1.
+
+<Quiz
+  id="04-the-container-lifecycle-quiz-1"
+  lessonSlug="04-the-container-lifecycle"
+  lang="en"
+  question="After runc starts a container, which process is the lasting parent of the container's PID 1 on the host, and what role does runc play afterward?"
+  choices={[
+    { label: "The containerd-shim is the lasting parent; runc execs the entrypoint (so the binary replaces runc) and then exits — it is a setup tool, not a running supervisor", correct: true },
+    { label: "runc stays running as the parent supervisor for the container's whole life", misconception: "runc is not a supervisor — it sets up namespaces, cgroups, caps, and seccomp, then execve()s the entrypoint (which replaces the runc process) and exits. The lasting parent is the shim, which is why containerd can restart without killing containers." },
+    { label: "dockerd is the direct parent of every container process", misconception: "dockerd is the API/daemon and deliberately not the container's parent — that decoupling lets dockerd restart without taking containers down. The per-container shim is the parent." },
+    { label: "containerd parents the process directly with no shim involved", misconception: "There is a shim per container precisely so containerd itself is not the parent; the shim keeps stdio and the exit code and survives containerd restarts. containerd manages, the shim parents." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why a shim at all — why not let containerd be the parent? Decoupling. If containerd were the direct parent, restarting or upgrading containerd would orphan or kill every running container, and you could never patch the supervisor without downtime. The shim is a tiny, long-lived process that owns exactly one container's stdio and exit status, so containerd (and dockerd) can crash, restart, or upgrade while your containers keep running and their exit codes are still captured when they finish. It is the same separation-of-concerns instinct as the lifecycle chain itself: each layer can fail or be replaced without taking the others down.
+</Inset>
+
+## Pause, restart, and the states
+
+Between created and exited a container moves through states the runtime tracks: **created** (namespaces and cgroups set up, entrypoint not yet running), **running**, **paused**, **stopped/exited**. Pause is its own mechanism — the cgroup **freezer** (`cgroup.freeze`) suspends every process in the cgroup *without* sending a signal, so the process cannot react and no SIGSTOP handler runs; it is frozen mid-instruction and thaws exactly where it was. Restart policies (`--restart=on-failure`, `unless-stopped`, `always`) are containerd watching the exit code and re-running the same setup chain. The key mental model: a stopped container still exists as a record (its writable layer, its config) until removed — `docker ps -a` shows it — which is why an exited container's logs and exit code remain inspectable, and why a restart re-execs the entrypoint rather than resuming a frozen process.
+
+<Quiz
+  id="04-the-container-lifecycle-quiz-2"
+  lessonSlug="04-the-container-lifecycle"
+  lang="en"
+  question="A container's entrypoint is a shell wrapper (sh -c 'exec-less') that does not forward signals. On docker stop, what happens during the grace period and why?"
+  choices={[
+    { label: "SIGTERM reaches the shell at PID 1, which neither handles nor forwards it, so the real server keeps running until the grace timer expires and the runtime sends an uncatchable SIGKILL", correct: true },
+    { label: "SIGTERM is broadcast to every process in the container, so the server shuts down immediately", misconception: "Stop sends SIGTERM to PID 1 only, not a broadcast. If PID 1 does not forward it, child processes never receive it — that is exactly why a non-forwarding shell at PID 1 causes the full grace-period delay." },
+    { label: "The kernel applies the default SIGTERM action to PID 1, killing the shell at once", misconception: "PID 1 is special: the kernel does NOT apply default signal dispositions to it, so an unhandled SIGTERM is dropped rather than terminating the process. That is precisely why the shell survives and the server keeps running." },
+    { label: "docker stop sends SIGKILL first, so there is no grace period at all", misconception: "The sequence is SIGTERM, then a grace period, then SIGKILL — SIGKILL is the escalation after the deadline, not the first signal. The whole delay exists because SIGTERM came first and was ignored." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A container's life runs from the start chain through running to a negotiated stop"
+  hue="var(--d-infra)"
+  perRow={3}
+  nodes={[
+    { id: "run", label: "docker run", sub: "dockerd → containerd" },
+    { id: "shim", label: "shim + runc", sub: "ns, cgroups, caps" },
+    { id: "exec", label: "execve(entrypoint)", sub: "becomes PID 1" },
+    { id: "term", label: "SIGTERM → PID 1", sub: "drain, then exit" },
+    { id: "grace", label: "Grace period", sub: "10 s default" },
+    { id: "kill", label: "SIGKILL", sub: "uncatchable, exit 137" },
+  ]}
+  edges={[
+    { from: "run", to: "shim", label: "create" },
+    { from: "shim", to: "exec", label: "runc start, then exits" },
+    { from: "exec", to: "term", label: "docker stop" },
+    { from: "term", to: "grace", label: "still alive" },
+    { from: "grace", to: "kill", label: "deadline passed" },
+  ]}
+  caption="runc is a setup tool that exits after exec; the shim stays as parent. Stop is SIGTERM to PID 1, a grace period, then an uncatchable SIGKILL — signals only reach what sits at PID 1."
+/>
+
+<KeyTakeaway>A container's lifecycle is a chain: dockerd to containerd to a per-container shim to runc, where runc unshares namespaces, writes cgroup limits, sets caps and seccomp, pivot_roots, then execve()s your binary and exits — the shim remains the lasting parent. Stopping is a negotiation: SIGTERM to PID 1, a grace period (Docker 10 s, Kubernetes 30 s), then an uncatchable SIGKILL. Because signals reach only PID 1, a non-forwarding shell entrypoint swallows SIGTERM and burns the entire grace period; the exec form or an init shim fixes it.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="04-the-container-lifecycle-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the start chain from docker run to a running PID 1, naming each layer's job and what runc does and becomes.", a: "docker run hits dockerd (the API/daemon, image management — not the parent). dockerd calls containerd, the supervisor that pulls images and manages lifecycle. containerd launches a containerd-shim, one per container, which becomes the lasting parent of the container process and holds its stdio and exit code so containerd/dockerd can restart without killing containers. The shim invokes runc, the OCI runtime, which does the kernel setup: unshare/clone the namespaces, write cgroup limits, set capabilities and the seccomp filter, pivot_root into the image, then execve() the entrypoint so your binary replaces the runc process and becomes PID 1 in its namespace. runc then exits — it is a setup tool, not a supervisor — leaving your process running directly on the host kernel, parented by the shim." },
+    { q: "Describe the stop sequence and explain why a shell entrypoint can make a container take the full grace period to die.", a: "docker stop (and Kubernetes termination) sends SIGTERM to PID 1, waits a grace period (Docker default 10 s, Kubernetes terminationGracePeriodSeconds default 30 s), and then sends SIGKILL, which cannot be caught or ignored. The contract is that PID 1 handles SIGTERM, stops taking work, drains, and exits before the deadline. Signals are delivered to PID 1 and only PID 1. If the entrypoint is a shell (sh -c '...') that does not forward signals, SIGTERM hits the shell, which has no handler — and because the kernel applies no default disposition to PID 1, the signal is simply dropped. The real server, a child, never receives it, keeps running, and is only killed when the grace timer expires and the runtime escalates to SIGKILL — so the container lingers the entire grace period. The fix is the exec form (ENTRYPOINT [\"app\"]) so the server is PID 1, or an init shim like --init/tini that forwards signals." },
+  ]}
+/>
+
+<Recap lang="en">
+A container's life is a chain of cooperating processes, not a monolith. docker run reaches dockerd, the API daemon that manages images but deliberately does not parent containers; dockerd calls containerd, the supervisor that pulls images and drives the lifecycle; containerd starts a containerd-shim per container, and that shim is the lasting parent — it holds the container's stdio and exit code so containerd and dockerd can restart or upgrade without killing running containers. The shim invokes runc, the OCI runtime, which performs the real kernel work: unshare the namespaces, write the cgroup limits, set capabilities and the seccomp filter, pivot_root into the image, and finally execve() the entrypoint so your binary replaces runc and becomes PID 1. runc then exits — it is a setup tool, which is why running thousands of containers is cheap: a tiny shim and your process directly on the shared kernel, no per-container daemon. Stopping is a negotiation with a deadline: SIGTERM goes to PID 1, the runtime waits a grace period (10 s in Docker, 30 s in Kubernetes), and then sends an uncatchable SIGKILL. Because signals reach only PID 1, a shell or wrapper that does not forward them swallows SIGTERM and burns the whole grace period as dead latency before the kill — fixed with the exec form or an init shim that sits, signal-aware, at PID 1. Pause is the cgroup freezer suspending the cgroup without any signal; restart policies re-run the same setup chain; and a stopped container persists as an inspectable record, with logs and exit code, until it is removed.
+</Recap>

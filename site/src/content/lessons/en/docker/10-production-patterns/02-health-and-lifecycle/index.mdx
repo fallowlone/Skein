@@ -1,0 +1,136 @@
+---
+concepts:
+- docker-health-lifecycle
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-health-and-lifecycle"
+sources:
+- https://docs.docker.com/reference/dockerfile/#healthcheck
+- https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/
+- https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+spiral: []
+status: ready
+summary: 'A health check that pings a port while the app is wedged is worse than none. Honest health means liveness, readiness and startup are distinct, and the SIGTERM → grace → SIGKILL lifecycle with a preStop hook is what makes a rollout drop zero requests.'
+title: 'Health and lifecycle: honest probes, the SIGTERM grace window, and preStop'
+track: "docker"
+unit: "10-production-patterns"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The dashboards were all green while the checkout API was down. Every pod reported healthy, the load balancer kept routing, and customers got timeouts. The health check was a TCP probe on the listening port: the Go process was still alive and the socket still open, so the probe passed — but every request was blocked on a connection-pool deadlock against a database that had failed over. The app was a corpse with a heartbeat. The fix was not more monitoring; it was an honest health check. The readiness probe was changed to hit a `/readyz` endpoint that actually ran a 200 ms query against the pool, and it went red within one interval. The load balancer pulled the pod, traffic shifted to healthy replicas, and the on-call alert fired on the *cause* instead of the symptom. A health check that cannot fail when the app is wedged is not a safety net — it is a green light painted over a brick wall.
+</Hook>
+
+<Crux>An honest probe checks the work, not the port; liveness, readiness, startup differ; and SIGTERM → grace → SIGKILL with preStop drains.</Crux>
+
+<Explanation>
+
+## Three probes, three different questions
+
+The cardinal mistake is one health check answering "is the process up?" when production needs three different answers. Docker's `HEALTHCHECK` and Kubernetes' probes formalize the distinction:
+
+```dockerfile
+HEALTHCHECK --interval=10s --timeout=2s --start-period=30s --retries=3 \
+  CMD curl -f http://localhost:8080/healthz || exit 1
+#   --interval: run every 10s   --retries=3: 3 consecutive fails → unhealthy
+#   --start-period=30s: failures during the first 30s don't count (slow boot grace)
+```
+
+- **Liveness** answers "is this process wedged and unrecoverable?" — if it fails, the orchestrator **restarts** the container. Make it cheap and dependency-free: a wedged event loop or a deadlocked process should fail it, but a transient database blip should *not*, or you turn a downstream outage into a restart storm that makes everything worse.
+- **Readiness** answers "should this instance receive traffic right now?" — if it fails, the load balancer **stops routing** to it but does not restart it. This is where you check real dependencies: a 200 ms query against the connection pool, as in the Hook. A pod that loses its database should go NotReady (drain traffic) without going non-live (restart won't fix a database outage).
+- **Startup** answers "has the slow boot finished?" — it gates the other two during initialization so a JVM that takes 40 s to warm up isn't liveness-killed at second 10. The Docker equivalent is `--start-period`.
+
+The dangerous default is a probe that passes while the app is wedged — a TCP-port check, or a `/healthz` that returns 200 from a static handler that never touches the work path. **A health check is only honest if it can go red for the same reason a user's request would fail.** The classic failure mode runs the other way too: a liveness probe that calls the database turns a 30-second database hiccup into every pod being restarted at once, deleting your warm caches and connection pools exactly when the system is already stressed.
+
+<Quiz
+  id="02-health-and-lifecycle-quiz-1"
+  lessonSlug="02-health-and-lifecycle"
+  lang="en"
+  question="A service's database fails over for 20 seconds. Which probe configuration handles this best?"
+  choices={[
+    { label: "Readiness checks the database and goes NotReady (traffic drains to healthy replicas); liveness stays cheap and dependency-free so no pod is restarted over a transient blip", correct: true },
+    { label: "Liveness checks the database so the failing pods restart and reconnect", misconception: "A liveness probe that depends on the database turns a 20 s downstream blip into a synchronized restart of every pod — wiping warm caches and pools when the system is already stressed. Database health belongs in readiness (drain), not liveness (restart)." },
+    { label: "A single TCP-port probe used for both liveness and readiness", misconception: "A TCP-port probe passes while the app is wedged on a dead database — exactly the Hook's silent outage. It cannot go red for the reason a user's request fails, so it is dishonest for both roles." },
+    { label: "No probes at all, so the blip resolves itself without interference", misconception: "Without readiness the load balancer keeps routing to pods that cannot serve, so users get timeouts for the full 20 s instead of being shifted to replicas that can reach a healthy database path." },
+  ]}
+/>
+
+## The shutdown lifecycle: SIGTERM, grace, SIGKILL, preStop
+
+A rollout terminates old pods, and how it does that decides whether in-flight requests survive. The contract is a fixed sequence. When the orchestrator decides to stop a pod it (1) optionally runs a **preStop** hook, then (2) sends **SIGTERM** to PID 1, then (3) waits up to `terminationGracePeriodSeconds` (default **30 s**), and finally (4) sends **SIGKILL** to anything still running. Your job is to fully drain within the grace window so step 4 never fires on a live request.
+
+```yaml
+lifecycle:
+  preStop:
+    exec: { command: ["sh", "-c", "sleep 5"] }   # bridge the LB de-registration race
+terminationGracePeriodSeconds: 45                # > worst-case drain (p99 + LB propagation)
+```
+
+The subtle bug is a race that has nothing to do with your signal handler. The moment a pod is marked Terminating, two things happen *concurrently*: SIGTERM is delivered, and the endpoint is removed from the Service. But endpoint removal propagates asynchronously to every kube-proxy and load balancer — for a second or two, traffic is still being routed to a pod that has already started shutting down. If your SIGTERM handler closes the listener immediately, those in-transit requests hit a closed socket and get connection-refused. The fix is the **preStop hook**: a short `sleep` (commonly 5–15 s) that delays SIGTERM, keeping the pod fully serving while the de-registration propagates, so no new traffic is dropped. Then SIGTERM arrives, your handler flips readiness off (belt and braces), drains in-flight requests, and exits 0 — all comfortably inside a grace period sized above your p99 plus that propagation delay. Set the grace too low and SIGKILL severs live connections mid-response (the client sees an RST); forget preStop and the LB race drops requests even with a perfect handler.
+
+<Quiz
+  id="02-health-and-lifecycle-quiz-2"
+  lessonSlug="02-health-and-lifecycle"
+  lang="en"
+  question="Your SIGTERM handler is correct — it drains in-flight requests and exits cleanly — yet a few requests still fail at the start of every rollout. Why, and what closes the gap?"
+  choices={[
+    { label: "Endpoint removal from the Service propagates asynchronously, so the LB still routes for a second or two after SIGTERM; a preStop sleep delays SIGTERM until de-registration propagates, so those in-transit requests still land on a serving pod", correct: true },
+    { label: "The grace period is too short, so SIGKILL fires before the handler finishes", misconception: "A too-short grace causes SIGKILL mid-drain, but the symptom here is failures at the START of the rollout on newly-arriving requests — that is the LB de-registration race, which a preStop delay fixes, not a larger grace period." },
+    { label: "The handler should close the listener faster to reject the extra requests sooner", misconception: "Closing the listener faster makes it worse: it rejects the in-transit requests the LB is still sending. You want to keep serving during the propagation window, which is exactly what the preStop delay buys." },
+    { label: "Liveness is failing and restarting the pod mid-shutdown", misconception: "Liveness does not run a pod into a restart during normal termination; the failures are the routing race between SIGTERM and asynchronous endpoint removal, bridged by preStop." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A pod termination flows from preStop through SIGTERM and the grace window to SIGKILL, racing against asynchronous endpoint removal"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "term", label: "Pod Terminating", sub: "rollout starts" },
+    { id: "endpoint", label: "Endpoint removed", sub: "async LB propagation" },
+    { id: "prestop", label: "preStop sleep", sub: "bridge the race" },
+    { id: "sigterm", label: "SIGTERM → PID 1", sub: "flip readiness, drain" },
+    { id: "grace", label: "Grace window", sub: "30s default, drain here" },
+    { id: "sigkill", label: "SIGKILL", sub: "exit 137, RST if live" },
+  ]}
+  edges={[
+    { from: "term", to: "endpoint", label: "concurrently" },
+    { from: "term", to: "prestop", label: "hook runs" },
+    { from: "prestop", to: "sigterm", label: "after sleep" },
+    { from: "sigterm", to: "grace", label: "draining" },
+    { from: "grace", to: "sigkill", label: "if not done" },
+  ]}
+  caption="preStop delays SIGTERM so the asynchronous endpoint removal propagates before the listener closes, preventing connection-refused on in-transit traffic. A grace period above p99 plus propagation lets the handler drain fully so SIGKILL never severs a live request."
+/>
+
+<KeyTakeaway>An honest health check can go red for the same reason a user's request fails — a port-ping or static 200 that passes while the app is wedged is a green light over a brick wall. Split the three questions: liveness (restart if wedged, keep it dependency-free so a database blip is not a restart storm), readiness (drain traffic when a dependency is down), and startup (don't kill a slow boot). The shutdown contract is preStop → SIGTERM → grace (30 s default) → SIGKILL: size the grace above p99 plus LB de-registration propagation, and use a preStop sleep to bridge the race where the Service still routes for a second or two after SIGTERM, so a rollout drains every in-flight and in-transit request to zero loss.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="02-health-and-lifecycle-retrieval"
+  lang="en"
+  questions={[
+    { q: "Distinguish liveness, readiness and startup probes by the question each answers and the action each triggers — and give the failure mode of putting a database check in the wrong one.", a: "Liveness answers 'is the process wedged and unrecoverable?' — failing it restarts the container; keep it cheap and dependency-free. Readiness answers 'should this instance receive traffic now?' — failing it stops the load balancer routing to the pod without restarting it; this is where real dependency checks belong (e.g. a query against the connection pool). Startup answers 'has the slow boot finished?' — it gates the other two during initialization so a 40 s JVM warm-up is not liveness-killed at second 10 (Docker's --start-period). The failure mode of putting a database check in liveness is that a 20-second database blip restarts every pod simultaneously, wiping warm caches and pools when the system is already stressed; the same check belongs in readiness, which merely drains traffic until the dependency recovers." },
+    { q: "Walk the pod shutdown sequence and explain why a correct SIGTERM handler still drops requests without a preStop hook.", a: "On termination the orchestrator runs an optional preStop hook, sends SIGTERM to PID 1, waits up to terminationGracePeriodSeconds (default 30 s), then SIGKILLs whatever remains. The catch is that marking the pod Terminating triggers SIGTERM and endpoint removal from the Service concurrently, and endpoint removal propagates asynchronously to every kube-proxy and load balancer. So for a second or two after SIGTERM the LB is still routing new requests to the pod; if the handler closes the listener immediately, those in-transit requests hit a closed socket and get connection-refused. A preStop sleep (5–15 s) delays SIGTERM until de-registration propagates, keeping the pod fully serving through the window. Then SIGTERM arrives, the handler flips readiness off and drains in-flight requests, exiting 0 within a grace period sized above p99 plus propagation. Too small a grace lets SIGKILL sever a live connection (client sees an RST); no preStop drops new requests during the race even with a perfect handler." },
+  ]}
+/>
+
+<Recap lang="en">
+Production health is two separate disciplines that teams routinely collapse into one. The first is honest probing: a health check must be able to go red for the same reason a real request would fail, so a TCP-port check or a static 200 handler that passes while the app is wedged on a dead database is worthless — it kept dashboards green through a full outage. Split the three questions the orchestrator actually asks. Liveness asks whether the process is wedged and unrecoverable and restarts the container on failure, so keep it cheap and free of external dependencies, or a transient database blip becomes a synchronized restart storm that wipes warm caches and pools. Readiness asks whether this instance should take traffic right now and merely stops the load balancer routing to it, so this is where genuine dependency checks live — a real query against the pool. Startup gates the other two through a slow boot (Docker's --start-period) so a 40 s JVM warm-up is not liveness-killed prematurely. The second discipline is the shutdown lifecycle: a rollout runs an optional preStop hook, sends SIGTERM to PID 1, waits up to terminationGracePeriodSeconds (default 30 s), then SIGKILLs the rest. Sizing that grace above worst-case drain (p99 plus LB de-registration propagation) keeps SIGKILL from severing a live connection and sending the client an RST. And the subtle race — endpoint removal propagates asynchronously while SIGTERM is delivered, so the LB keeps routing for a second or two — is bridged by a short preStop sleep that delays SIGTERM until de-registration lands, so a correct handler drains every in-flight and in-transit request to zero loss.
+</Recap>

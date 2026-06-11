@@ -1,0 +1,139 @@
+---
+concepts:
+- docker-net-bridge
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-network-namespaces-and-bridges"
+sources:
+- https://docs.docker.com/engine/network/drivers/bridge/
+- https://man7.org/linux/man-pages/man4/veth.4.html
+- https://man7.org/linux/man-pages/man8/iptables.8.html
+spiral: []
+status: ready
+title: "Network namespaces and bridges: what 'docker run' actually wires up"
+track: "docker"
+unit: "03-networking"
+summary: "A container's network is a Linux netns with its own interfaces and routes, joined to the host by a veth pair on the docker0 bridge, with iptables MASQUERADE NATing egress. Knowing the four primitives turns most networking bugs into a one-command diagnosis."
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The on-call alert was vague: one service couldn't reach another, but only sometimes. The team had spent an hour staring at application logs, retry counts, and DNS config before someone ran `ip netns` on the host and found the real story. A container's whole network — its interfaces, its routes, its ARP table, its iptables view — lives in a Linux network namespace, a kernel object as concrete as a process. Inside the failing container, `ip addr` showed `eth0` with an address in `172.17.0.0/16`, but `ip route` was missing the default route to the bridge. A botched custom entrypoint had flushed the routing table on startup. The "intermittent" pattern was just which container had restarted last. The fix took thirty seconds once they stopped debugging the application and started debugging the namespace — because everything Docker does to networking is four kernel primitives you can inspect by hand: the namespace, the veth pair, the bridge, and the NAT rule.
+</Hook>
+
+<Crux>A container's network is a Linux netns wired to the host by a veth pair on the docker0 bridge, with iptables MASQUERADE NATing its egress.</Crux>
+
+<Explanation>
+
+## The namespace is the boundary
+
+A container is mostly a set of namespaces, and the network namespace (netns) is the one that owns networking. It has its own interface list, routing table, ARP cache, `/proc/net`, conntrack view, and iptables rules — fully isolated from the host and from sibling containers. When `docker run` starts a container on the default `bridge` network, the daemon creates a fresh netns; inside it the container sees exactly two interfaces:
+
+```text
+$ docker run --rm alpine ip addr
+1: lo: <LOOPBACK,UP> mtu 65536      # loopback, 127.0.0.1
+2: eth0@if47: <UP> mtu 1500         # one end of a veth pair
+    inet 172.17.0.2/16 ...          # an address out of docker0's subnet
+```
+
+The host is the source of truth here, not the container's self-report. From the host, `ip netns` and `nsenter --net=/proc/<pid>/ns/net ip addr` let you step *into* the container's network view without a shell in the container at all — the diagnostic that ends most "is it the app or the network" arguments. The `eth0@if47` notation is the tell: `eth0` is one half of a **veth pair**, and `if47` is the interface index of its other half, living on the host.
+
+## veth pairs and the bridge
+
+A **veth pair** is a virtual Ethernet cable: two interfaces wired back-to-back, where a frame written into one comes out the other. One end (`eth0`) sits inside the container's netns; the other end (named like `vethXXXX`) stays in the host netns and is enslaved to the **docker0 bridge**. The bridge is a software Layer-2 switch: every container's host-side veth plugs into it, so containers on the same bridge can reach each other directly by IP at L2, no routing or NAT involved.
+
+The default numbers worth memorizing: docker0 carries subnet **172.17.0.0/16** with the bridge itself at `172.17.0.1` (the containers' default gateway), and every veth interface defaults to **MTU 1500** to match standard Ethernet. That MTU is a classic failure source: run Docker *inside* an overlay or VPN whose effective MTU is 1450, leave the veth at 1500, and large packets get silently dropped or fragmented — TLS handshakes hang at exactly the point the certificate (a big frame) is sent. The bridge driver does not auto-discover the underlay MTU; you set `com.docker.network.driver.mtu` or it bites you.
+
+<Quiz
+  id="01-network-namespaces-and-bridges-quiz-1"
+  lessonSlug="01-network-namespaces-and-bridges"
+  lang="en"
+  question="A container shows eth0@if47 with 172.17.0.2/16 but cannot reach anything outside the host. ip route inside the container is empty. What single primitive is broken?"
+  choices={[
+    { label: "The container's routing table — without a default route via 172.17.0.1 (docker0) the netns has no path off-link, even though the veth and address are fine", correct: true },
+    { label: "The veth pair is severed, so no frames can leave eth0", misconception: "If the veth were severed the interface would not show eth0@if47 with a live address and the container could not even reach 172.17.0.1; here the L2 path exists and only the routing table off-link is missing." },
+    { label: "docker0 is down, so the whole bridge subnet is unreachable", misconception: "A down bridge would break every container at once, not one; and the symptom is specifically an empty route table inside one netns, which is a per-container routing problem, not a host-wide bridge outage." },
+    { label: "DNS is misconfigured, so name resolution fails", misconception: "The failure is reaching anything outside the host by any means, with an empty route table — a Layer-3 routing gap, not name resolution, which sits a layer above and would still let raw IP traffic flow." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why a bridge plus veth pairs instead of just handing each container a host interface? Isolation and density. The netns gives each container its own private L3 stack so port 8080 in one never collides with port 8080 in another, and the bridge lets hundreds of containers share one host NIC while still talking to each other at L2 — all in software, no extra hardware, no IP from the physical network. The cost is the extra hop through the bridge and the NAT rule on egress, which is exactly the machinery the next section covers.
+</Inset>
+
+## MASQUERADE: how egress leaves the host
+
+The bridge subnet `172.17.0.0/16` is private and not routable on the physical network, so a container talking to the internet needs its source address rewritten to the host's. Docker installs an **iptables MASQUERADE** rule in the `nat` table's `POSTROUTING` chain:
+
+```text
+-A POSTROUTING -s 172.17.0.0/16 ! -o docker0 -j MASQUERADE
+```
+
+Read it precisely: for any packet sourced from the bridge subnet that is *leaving* by an interface other than docker0 (i.e. heading out the real NIC), rewrite the source IP to that NIC's address. MASQUERADE is SNAT that picks the outbound interface's current IP automatically — right for DHCP hosts. The kernel's **conntrack** table remembers each flow so replies are un-NATed back to the correct container. That table is finite (`net.netfilter.nf_conntrack_max`, often **262144** on a default host): a box running tens of thousands of short-lived outbound connections per second can exhaust it, at which point new connections fail with `nf_conntrack: table full, dropping packet` even though CPU and memory look idle. The egress that "randomly stops working under load" is usually conntrack, not the app.
+
+<Quiz
+  id="01-network-namespaces-and-bridges-quiz-2"
+  lessonSlug="01-network-namespaces-and-bridges"
+  lang="en"
+  question="Two containers on the default bridge talk to each other by IP with no NAT, but each one's traffic to the internet is NATed to the host IP. Why the asymmetry?"
+  choices={[
+    { label: "Container-to-container traffic stays on docker0 (L2, same subnet) so MASQUERADE's '! -o docker0' guard excludes it; only traffic leaving via the real NIC is rewritten", correct: true },
+    { label: "Docker NATs all container traffic, but same-host traffic is NATed to 127.0.0.1 which looks like no NAT", misconception: "Same-bridge traffic is never NATed at all — it is plain L2 switching on docker0; the MASQUERADE rule explicitly excludes packets leaving via docker0, so there is no rewrite to observe, not a rewrite to loopback." },
+    { label: "The two containers share a network namespace, so traffic between them never hits the network", misconception: "Each container has its own netns; their traffic does traverse the bridge as real frames — it just isn't NATed, because the egress NAT rule only fires for packets exiting the host's physical interface." },
+    { label: "iptables cannot NAT traffic between private addresses", misconception: "iptables can NAT anything; the reason this traffic isn't NATed is the rule's own interface guard, not a limitation — change the rule and same-subnet traffic could be rewritten too." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="An egress packet travels from the container netns through the veth pair onto docker0, then gets MASQUERADE-NATed out the host NIC"
+  hue="var(--d-infra)"
+  perRow={3}
+  nodes={[
+    { id: "app", label: "Container app", sub: "src 172.17.0.2" },
+    { id: "eth0", label: "eth0 (netns)", sub: "veth end, MTU 1500" },
+    { id: "veth", label: "vethXXXX (host)", sub: "enslaved to bridge" },
+    { id: "br", label: "docker0 bridge", sub: "172.17.0.1, L2 switch" },
+    { id: "nat", label: "POSTROUTING", sub: "MASQUERADE + conntrack" },
+    { id: "nic", label: "host eth0", sub: "src rewritten to host IP" },
+  ]}
+  edges={[
+    { from: "app", to: "eth0", label: "send" },
+    { from: "eth0", to: "veth", label: "veth pair" },
+    { from: "veth", to: "br", label: "L2" },
+    { from: "br", to: "nat", label: "route off-link" },
+    { from: "nat", to: "nic", label: "SNAT" },
+  ]}
+  caption="Same-subnet container-to-container traffic stops at the bridge (no NAT). Only off-link egress hits POSTROUTING, where MASQUERADE rewrites the source and conntrack records the flow so replies return to the right container."
+/>
+
+<KeyTakeaway>Docker networking is four inspectable kernel primitives, not magic. Each container gets a network namespace with its own stack; a veth pair bridges that namespace to the host, with the host end enslaved to the docker0 bridge (172.17.0.0/16, gateway .1, MTU 1500). Same-bridge containers talk at L2 with no NAT; egress to the outside is SNATed by an iptables MASQUERADE rule, with conntrack tracking flows for return traffic. When networking breaks, identify which of the four primitives failed — missing route, dead veth, MTU mismatch, conntrack exhaustion — and the fix follows.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="01-network-namespaces-and-bridges-retrieval"
+  lang="en"
+  questions={[
+    { q: "Trace what 'docker run' wires up for a container on the default bridge, naming all four primitives and the default numbers.", a: "The daemon creates a network namespace (netns) giving the container its own interfaces, routing table, ARP cache, and iptables view. It then creates a veth pair — a virtual cable of two back-to-back interfaces; one end becomes eth0 inside the netns with an address from 172.17.0.0/16, the other (vethXXXX) stays on the host and is enslaved to the docker0 bridge, a software L2 switch with itself at 172.17.0.1 as the containers' gateway. Both veth ends default to MTU 1500. Finally, an iptables MASQUERADE rule in nat/POSTROUTING SNATs packets leaving the bridge subnet via the real NIC to the host IP, and conntrack records each flow so replies are un-NATed back. Containers on the same bridge reach each other directly at L2 with no NAT." },
+    { q: "Give the failure mode and one-line diagnosis for each primitive: routing, veth/MTU, and conntrack.", a: "Routing: a container with a valid eth0 and address but an empty route table cannot leave its link — diagnose with 'ip route' inside the netns (or via nsenter from the host); a missing default via 172.17.0.1 is the cause, often a custom entrypoint that flushed routes. MTU: a veth pinned at 1500 over an underlay with a smaller effective MTU (1450 on many overlays/VPNs) silently drops large packets — TLS handshakes hang where the certificate frame is sent; fix by setting the bridge driver MTU. Conntrack: under tens of thousands of short-lived egress connections per second the conntrack table (default nf_conntrack_max ~262144) fills, and new connections drop with 'nf_conntrack: table full, dropping packet' while CPU looks idle — diagnose by reading /proc/sys/net/netfilter/nf_conntrack_count against the max." },
+  ]}
+/>
+
+<Recap lang="en">
+Container networking is not a black box; it is four Linux kernel primitives you can inspect by hand. The network namespace is the boundary — each container gets its own interfaces, routing table, ARP cache, conntrack view, and iptables rules, isolated from the host and from siblings, which is why ports never collide across containers. A veth pair is the cable joining that namespace to the host: one end is the container's eth0 with an address from 172.17.0.0/16, the other is a host-side vethXXXX enslaved to the docker0 bridge, a software L2 switch at 172.17.0.1 that lets same-bridge containers reach each other directly with no NAT. Both veth ends default to MTU 1500, and a mismatch against a smaller underlay MTU is a classic silent-drop bug that hangs TLS handshakes. Egress to the outside world is SNATed by an iptables MASQUERADE rule in nat/POSTROUTING that only fires for packets leaving via the real NIC (the '! -o docker0' guard is why same-subnet traffic is untouched), and the kernel's conntrack table remembers each flow so replies return to the right container — a finite table (default ~262144) that exhausts under high connection churn and drops new connections while the box looks idle. The senior move is to stop debugging the application and identify which primitive failed: a missing route, a dead veth, an MTU mismatch, or conntrack exhaustion — each has a one-command diagnosis from the host.
+</Recap>

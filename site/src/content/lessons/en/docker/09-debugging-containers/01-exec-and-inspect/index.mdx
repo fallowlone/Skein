@@ -1,0 +1,136 @@
+---
+concepts:
+- docker-exec-inspect
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-exec-and-inspect"
+sources:
+- https://docs.docker.com/reference/cli/docker/container/exec/
+- https://docs.docker.com/reference/cli/docker/inspect/
+- https://man7.org/linux/man-pages/man1/nsenter.1.html
+spiral: []
+status: ready
+summary: 'docker exec joins a running container''s namespaces to give you a shell, but it runs as a sibling of PID 1 — not as PID 1 — so a healthy shell can hide a dead app. inspect reads the engine''s truth: State.ExitCode where 137 is OOM-kill and 143 is SIGTERM.'
+title: 'docker exec and inspect: joining a container''s namespaces and reading the engine''s ground truth'
+track: "docker"
+unit: "09-debugging-containers"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The pager fired at 03:12: the API was returning 502s, but the container showed `Up 3 hours` and the readiness probe was green. On-call did the obvious thing — `docker exec -it api sh`, then `curl localhost:8080/health`. Connection refused. So the app was down. But `ps` inside that shell showed the Java process running, PID 1, eating 100% of one core. The app was not crashed; it was deadlocked in a GC death spiral, alive enough to hold PID 1 open so the container never exited, dead enough to serve nothing. The shell had lied by omission: `exec` had dropped them into a brand-new process that was a *sibling* of the app, sharing its namespaces but not its fate. The real signal was one command away — `docker inspect` would have shown the OOMKilled flag flickering and the restart count climbing — but the shell felt like being inside the app, and that feeling cost twenty minutes.
+</Hook>
+
+<Crux>docker exec joins namespaces as a sibling of PID 1 — a live shell can sit next to a dead app. inspect reads the engine's verdict.</Crux>
+
+<Explanation>
+
+## exec joins namespaces — it does not become the app
+
+A container is not a box; it is a normal host process wrapped in namespaces (PID, mount, net, IPC, UTS) and cgroups. `docker exec` asks the engine to spawn a new process *inside those same namespaces*: same network stack, same filesystem view, same PID-space — but it is a fresh process, a child of the container's PID 1, not PID 1 itself. This is exactly what `nsenter --target <host-PID> --all` does by hand when you bypass Docker: it `setns()`-es into every namespace of the target. The two are the same mechanism; `docker exec` is the engine-mediated, cgroup-correct version, while `nsenter --target <pid> --all` is the raw kernel call you reach for when the engine is wedged or the container has no entry the daemon will honor.
+
+```bash
+# Engine-mediated: join api's namespaces, land as a child of its PID 1
+docker exec -it api sh
+
+# Raw kernel: find the host PID, setns into ALL of its namespaces
+PID=$(docker inspect --format '{{.State.Pid}}' api)
+sudo nsenter --target "$PID" --all   # --mount --uts --ipc --net --pid
+```
+
+The consequence that bites: your shell is not PID 1. If the application is hung, exec still succeeds — you are a separate process. If the application has its own internal threads stuck, your `ps` sees them but your shell keeps responding. A healthy prompt proves the *namespace* is alive, not that the *workload* is. The honest checks from inside are: `ps -ef` to confirm PID 1 is the process you expect and is not zombie/defunct, and probing the app's own port (`curl localhost:PORT`) rather than trusting that "exec worked, so the app works."
+
+<Quiz
+  id="01-exec-and-inspect-quiz-1"
+  lessonSlug="01-exec-and-inspect"
+  lang="en"
+  question="You run docker exec -it api sh and get a working shell, but curl localhost:8080 inside it is refused. What has the working shell actually proven?"
+  choices={[
+    { label: "Only that the container's namespaces are alive — your shell is a sibling of PID 1, not the app, so the app can be hung while exec still succeeds", correct: true },
+    { label: "That the application is running, since exec only works on a healthy container", misconception: "exec spawns a new process inside the namespaces regardless of the app's state; PID 1 can be deadlocked or spinning and exec still drops you into a fresh, responsive shell. A working shell says nothing about the workload." },
+    { label: "That the container has restarted and lost its listener", misconception: "exec does not cause or imply a restart, and a restart would have given you a fresh app, not a refused port. The refusal points at the running app's own state, which inspect and ps reveal — not at exec." },
+    { label: "That you are now running as PID 1 inside the container", misconception: "exec makes you a child of PID 1, never PID 1 itself. Confusing the two is exactly why a green shell gets mistaken for a green app." },
+  ]}
+/>
+
+## inspect is the engine's ground truth — and the exit code is a sentence
+
+When the workload is the question, stop trusting the inside view and read what the engine recorded. `docker inspect` returns the daemon's structured state, and `.State.ExitCode` is the most compressed incident report you will get:
+
+```bash
+docker inspect --format '{{.State.Status}} exit={{.State.ExitCode}} oom={{.State.OOMKilled}} restarts={{.RestartCount}}' api
+# exited exit=137 oom=true restarts=14
+```
+
+Exit codes follow `128 + signal`: **137 = 128 + 9 (SIGKILL)** — almost always the OOM-killer when `OOMKilled:true`, or a `docker kill`; **143 = 128 + 15 (SIGTERM)** — a clean stop request the app honored (or `docker stop`'s grace timer firing). Reading 137 as "the app crashed with a bug" is the classic misdiagnosis: nothing in the app's code threw — the kernel cgroup memory controller killed it for breaching its limit, and the fix is a memory limit or a leak hunt, not a stack trace. A climbing `RestartCount` with `oom=true` is a crash-loop on memory, not a logic bug. `inspect` also hands you `.State.Pid` (the host PID, the bridge to `nsenter`), the resolved mounts, the effective env, and the health-check log — the facts that survive after the container is gone.
+
+<Quiz
+  id="01-exec-and-inspect-quiz-2"
+  lessonSlug="01-exec-and-inspect"
+  lang="en"
+  question="docker inspect shows State.ExitCode 137 with OOMKilled true and RestartCount 14. What is the correct read?"
+  choices={[
+    { label: "The kernel's OOM-killer SIGKILLed the process for exceeding its memory limit, and it is crash-looping — fix the limit or the leak, not the code logic", correct: true },
+    { label: "The application threw an uncaught exception with exit status 137", misconception: "137 is 128 + 9 — an external SIGKILL, not an application return value. With OOMKilled true the kill came from the kernel memory controller; the app never chose to exit, so a stack trace will not explain it." },
+    { label: "143 and 137 are interchangeable signals from docker stop", misconception: "143 is 128 + 15 (SIGTERM, a graceful stop the app honored); 137 is 128 + 9 (SIGKILL). docker stop sends SIGTERM first (→143 if honored) and only escalates to SIGKILL (→137) when the grace period expires. They mean different things." },
+    { label: "RestartCount 14 means a human restarted it 14 times", misconception: "RestartCount is the engine's automatic restart-policy counter, not manual restarts. Fourteen automatic restarts with OOMKilled true is the signature of a memory crash-loop the restart policy keeps reviving." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why trust inspect over the shell? Because the shell is a live view of a moving system and inspect is the engine's recorded verdict. The shell can only show you the present instant — and if the app already died and the restart policy revived it, the shell shows a *fresh, healthy* process while inspect's RestartCount and last ExitCode preserve the crash you are actually chasing. Ground truth is the layer that remembers; the inside view forgets the moment it restarts.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="A debug decision tree: is the question about the namespace's live state, or the engine's recorded verdict?"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "q", label: "Container misbehaving", sub: "where to look?" },
+    { id: "live", label: "Need live state?", sub: "what is it doing now" },
+    { id: "verdict", label: "Need the verdict?", sub: "why did it die" },
+    { id: "exec", label: "docker exec", sub: "sibling of PID 1" },
+    { id: "nsenter", label: "nsenter --target PID --all", sub: "engine wedged" },
+    { id: "inspect", label: "docker inspect", sub: "ExitCode 137=OOM 143=TERM" },
+  ]}
+  edges={[
+    { from: "q", to: "live", label: "running" },
+    { from: "q", to: "verdict", label: "exited/looping" },
+    { from: "live", to: "exec", label: "daemon ok" },
+    { from: "live", to: "nsenter", label: "daemon stuck" },
+    { from: "verdict", to: "inspect", label: "read state" },
+  ]}
+  caption="exec and nsenter both setns() into the container's namespaces and land you as a sibling of PID 1 — a live shell does not prove a live app. inspect reads State.ExitCode/OOMKilled/RestartCount, the only view that survives a restart."
+/>
+
+<KeyTakeaway>docker exec is nsenter with engine bookkeeping: it joins a container's namespaces as a child of PID 1, so a responsive shell proves the namespace is alive, never that the workload is. When the question is why it died, read docker inspect: State.ExitCode 137 means an external SIGKILL (OOMKilled:true → the kernel memory-killer, a crash-loop, not an app bug), 143 means a graceful SIGTERM. The shell shows the present and forgets on restart; inspect remembers the verdict.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="01-exec-and-inspect-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why can docker exec give you a perfectly healthy shell while the application inside is dead, and what is the relationship to nsenter?", a: "A container is a host process inside namespaces; docker exec spawns a brand-new process inside those same namespaces (net, mount, PID, IPC, UTS) as a child of the container's PID 1 — it never becomes PID 1. This is the engine-mediated form of nsenter --target <host-PID> --all, which setns()-es into every namespace of the target process by hand. Because your shell is a separate process from the app, exec succeeds and stays responsive even when PID 1 is deadlocked, GC-spinning, or hung: a working prompt proves the namespace is alive, not the workload. The honest checks are ps -ef (is PID 1 the process you expect, not zombie?) and probing the app's own port, rather than treating exec succeeding as proof the app works. You reach for raw nsenter (via .State.Pid from inspect) when the daemon itself is wedged and docker exec will not respond." },
+    { q: "How do you read docker inspect's State.ExitCode, and why is 137 routinely misdiagnosed?", a: "Exit codes for signal-terminated processes are 128 + signal. 137 = 128 + 9 (SIGKILL): with OOMKilled:true it is the kernel cgroup memory controller killing the process for breaching its limit — not an application error and not anything a stack trace will explain; the fix is a memory limit or a leak hunt. 143 = 128 + 15 (SIGTERM): a graceful stop the app honored, e.g. docker stop within its grace window. docker stop sends SIGTERM (→143 if obeyed) and escalates to SIGKILL (→137) only after the grace timer expires. The misdiagnosis is reading 137 as 'the app crashed with bug 137'; combined with a climbing RestartCount and OOMKilled:true it is actually a memory crash-loop the restart policy keeps reviving. inspect is the only view that survives a restart, so it preserves the crash the live shell has already forgotten." },
+  ]}
+/>
+
+<Recap lang="en">
+A container is an ordinary host process fenced off by namespaces and cgroups, and docker exec spawns a new process inside those same namespaces — the engine-mediated equivalent of nsenter --target &lt;host-PID&gt; --all, which setns()-es into the lot by hand. The catch every senior eventually learns the hard way: that new process is a sibling of the container's PID 1, not PID 1 itself, so exec succeeds and your shell stays responsive even when the application is deadlocked or spinning. A green prompt proves the namespace is alive, never the workload; the honest checks from inside are ps -ef to confirm PID 1 is the process you expect and probing the app's actual port. When the question turns from "what is it doing" to "why did it die," stop trusting the live view and read docker inspect — the engine's recorded verdict. State.ExitCode speaks in 128 + signal: 137 is an external SIGKILL (with OOMKilled:true, the kernel memory-killer, a limit breach, a crash-loop — not an app bug and not a stack-trace problem), while 143 is a graceful SIGTERM the app honored. docker stop walks SIGTERM then SIGKILL, so 143 versus 137 tells you whether the shutdown was clean or forced. A rising RestartCount with OOMKilled:true is a memory crash-loop, and because the live shell forgets the moment the restart policy revives the container, inspect is the one view that remembers the crash you are chasing. Reach for raw nsenter via .State.Pid only when the daemon itself is wedged.
+</Recap>

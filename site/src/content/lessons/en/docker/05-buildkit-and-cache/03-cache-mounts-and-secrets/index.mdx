@@ -1,0 +1,141 @@
+---
+concepts:
+- docker-cache-mounts
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-cache-mounts-and-secrets"
+sources:
+- https://docs.docker.com/reference/dockerfile/
+- https://docs.docker.com/build/cache/optimize/
+- https://docs.docker.com/build/building/secrets/
+spiral: []
+status: ready
+summary: 'RUN --mount=type=cache persists a package cache across builds even on cache-miss layers, turning a cold npm/go/pip download warm. RUN --mount=type=secret feeds a credential to one command without writing it to a layer — the fix for the token ARG and ENV bake into image history.'
+title: 'Cache mounts and build secrets: --mount=type=cache keeps downloads warm, --mount=type=secret keeps tokens out of layers'
+track: "docker"
+unit: "05-buildkit-and-cache"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The rotation alert came from GitHub itself: a secret-scanning bot had found a live npm automation token in a public image on Docker Hub. The team's first reaction was disbelief — the token was passed as a build arg, `--build-arg NPM_TOKEN=...`, and the Dockerfile deleted the `.npmrc` right after `npm ci`. They were sure it was gone. Then someone ran `docker history --no-trunc` on the published image and there it was, in plain text, in the metadata of the `ARG NPM_TOKEN` layer — and a second time in the `RUN echo "//registry..._authToken=${NPM_TOKEN}" > .npmrc` command string. Deleting the file in a later layer changed nothing: every layer is immutable and shipped, so the `rm` just added a layer that hides a file still present, byte for byte, in the layer below. The token had been baked into the image history of every build for three months. The fix was not a better `rm`. It was `RUN --mount=type=secret`, which hands the credential to exactly one command and never writes it to any layer at all.
+</Hook>
+
+<Crux>--mount=type=cache persists a package cache across builds; --mount=type=secret feeds a credential to one command, never to a layer.</Crux>
+
+<Explanation>
+
+## Cache mounts: keep the package cache warm across builds
+
+Layer caching is all-or-nothing per vertex: change one byte the `RUN npm ci` depends on and the whole step reruns cold, re-downloading every dependency. But a package manager already has its own internal cache (npm's `~/.npm`, Go's `/go/pkg/mod`, pip's `~/.cache/pip`, apt's `/var/cache/apt`) — and normally that cache lives inside the layer, so a layer cache miss throws it away too. `RUN --mount=type=cache` breaks that coupling: it mounts a **persistent BuildKit-managed directory** into the build that survives across builds independently of layer caching.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM node:22 AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci
+```
+
+Now even when `package-lock.json` changes and the `npm ci` layer misses, the `~/.npm` cache mount is still populated from prior builds, so npm re-uses already-downloaded tarballs and only fetches what is genuinely new. On a large monorepo this turns a ~3-minute cold `npm ci` into a ~25-second warm one; a Go service's `go mod download` over a `/go/pkg/mod` cache mount drops from minutes to seconds. The cache mount is not in any layer — it never ships — and BuildKit serializes concurrent access with a `sharing` mode (default `shared`; use `locked` for tools that cannot tolerate concurrent writers, like some package databases).
+
+<Quiz
+  id="03-cache-mounts-and-secrets-quiz-1"
+  lessonSlug="03-cache-mounts-and-secrets"
+  lang="en"
+  question="A RUN npm ci step uses --mount=type=cache,target=/root/.npm. A developer changes one line in package-lock.json and rebuilds, so the npm ci layer is a cache miss. What does the cache mount do for this rebuild?"
+  choices={[
+    { label: "The layer reruns, but the persisted ~/.npm cache from prior builds is mounted in, so npm reuses already-downloaded tarballs and fetches only the newly-changed dependencies — warm, not cold", correct: true },
+    { label: "Nothing — a layer cache miss discards the cache mount along with the layer", misconception: "A cache mount is decoupled from layer caching by design. The layer reruns, but the mounted directory is BuildKit-managed and persists across builds independently, so the package manager finds its prior downloads intact." },
+    { label: "It makes the layer a cache hit, so npm ci does not run at all", misconception: "A cache mount does not turn a miss into a hit; the RUN still executes because its inputs changed. What the mount does is make that execution fast by preserving the package manager's internal download cache across runs." },
+    { label: "It bakes ~/.npm into the layer so the next build is smaller", misconception: "The opposite — a cache mount is explicitly not part of any layer and never ships in the image. Its whole purpose is to live outside the layer so layer cache misses do not destroy it." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why is a cache mount different from just ordering instructions well? Ordering (manifests before source) keeps a layer a cache *hit* when its inputs are unchanged — but the moment a lockfile legitimately changes, that layer *must* rerun, and without a cache mount it reruns fully cold. The cache mount addresses the orthogonal problem: making the unavoidable reruns cheap. The two compose. Good ordering minimizes how often the install reruns; a cache mount minimizes how expensive each rerun is. Skip the mount and every dependency bump pays the full cold-download tax; skip the ordering and you rerun far more often than necessary. Senior Dockerfiles do both, which is why their CI is fast even on dependency churn.
+</Inset>
+
+## Build secrets: a credential that touches no layer
+
+The Hook's failure is structural, not a mistake of forgetting an `rm`. `ARG` and `ENV` values are recorded in the image config and `docker history`; any command string that interpolates a secret is recorded verbatim; and every layer is immutable, so a later `rm` cannot remove bytes from an earlier layer — it only stacks a whiteout on top while the data sits readable in the layer below, shipped to anyone who pulls. `RUN --mount=type=secret` solves it at the root: BuildKit mounts the secret as a file (default `/run/secrets/<id>`) **only for the duration of that one RUN**, and it is never written to the layer, the config, or the history.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM node:22
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN --mount=type=secret,id=npmtoken \
+    NPM_TOKEN=$(cat /run/secrets/npmtoken) \
+    npm ci
+# build with:  docker build --secret id=npmtoken,env=NPM_TOKEN .
+```
+
+The token is read from the mounted file inside the command, used by `npm ci`, and gone when the step ends. `docker history` shows the `RUN` with the `--mount` flag and no token. The published image carries nothing. You provide the value at build time from an env var (`--secret id=npmtoken,env=NPM_TOKEN`) or a file (`--secret id=npmtoken,src=./token`) — never as a build arg. The same mechanism delivers SSH agents (`--mount=type=ssh`) for private `git` deps without baking a key. The rule that prevents the whole class of incident: a credential needed only at build time goes through a secret mount; it never appears in `ARG`, `ENV`, or a command string.
+
+<Quiz
+  id="03-cache-mounts-and-secrets-quiz-2"
+  lessonSlug="03-cache-mounts-and-secrets"
+  lang="en"
+  question={"A Dockerfile does ARG TOKEN, then RUN echo \"token=$TOKEN\" > .npmrc && npm ci && rm .npmrc. The final image deletes .npmrc. Is the token recoverable from the published image?"}
+  choices={[
+    { label: "Yes — the token is in docker history (the ARG and the RUN command string) and the .npmrc bytes still exist in the earlier layer; the later rm only stacks a whiteout on top, it cannot remove data from an immutable lower layer", correct: true },
+    { label: "No — the rm removes .npmrc, so the secret is gone from the image", misconception: "Layers are immutable and all ship. An rm in a later layer adds a whiteout that hides the file at runtime, but the bytes remain readable in the layer below, and the token is also recorded in docker history from the ARG and the command string. The secret is fully recoverable." },
+    { label: "No — ARG values are stripped from the final image automatically", misconception: "ARG values are recorded in the image config and surface in docker history; they are not stripped. Combined with the command string and the persisted .npmrc bytes, the token is exposed three ways." },
+    { label: "Only if the attacker has the original build context", misconception: "No build context is needed — docker history --no-trunc on the pulled image shows the ARG and the RUN command verbatim, and the .npmrc bytes are extractable from the layer tarball. The published image alone leaks it." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A cache mount persists the package cache outside layers; a secret mount feeds a credential to one RUN and leaves no trace in the image"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "lock", label: "lockfile change", sub: "RUN npm ci misses" },
+    { id: "cachemount", label: "cache mount", sub: "/root/.npm persists" },
+    { id: "warm", label: "warm install", sub: "~25s vs ~3min" },
+    { id: "secretsrc", label: "--secret src/env", sub: "supplied at build" },
+    { id: "secretmount", label: "secret mount", sub: "/run/secrets, 1 RUN" },
+    { id: "clean", label: "shipped image", sub: "no token in history" },
+  ]}
+  edges={[
+    { from: "lock", to: "cachemount", label: "rerun" },
+    { from: "cachemount", to: "warm", label: "reuse tarballs" },
+    { from: "secretsrc", to: "secretmount", label: "mount" },
+    { from: "secretmount", to: "clean", label: "unmount after RUN" },
+  ]}
+  caption="The cache mount lives outside every layer, so a layer cache miss does not discard it — reruns stay warm. The secret mount exists only for one RUN and is never written to a layer, the config, or docker history, unlike ARG/ENV which are recorded permanently."
+/>
+
+<KeyTakeaway>RUN --mount=type=cache mounts a persistent BuildKit-managed directory (npm's ~/.npm, Go's /go/pkg/mod, pip's cache) that survives across builds independently of layer caching, so even when a lockfile change forces the install layer to rerun, the package manager reuses its prior downloads — a ~3-minute cold npm ci becomes ~25 seconds warm, and the cache never ships in a layer. RUN --mount=type=secret feeds a credential as a file (default /run/secrets/&lt;id&gt;) to exactly one RUN and never writes it to any layer, the config, or docker history. That is the fix for the structural leak where ARG/ENV values and interpolated command strings are recorded permanently and a later rm cannot delete bytes from an immutable lower layer — the deleted .npmrc stays readable and the token is recoverable from the published image.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-cache-mounts-and-secrets-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain what RUN --mount=type=cache does and why it helps even when the layer is a cache miss.", a: "It mounts a persistent, BuildKit-managed directory into the build at a target path (e.g. target=/root/.npm for npm, /go/pkg/mod for Go, the pip or apt cache dirs) that lives outside the image layers and survives across builds independently of layer caching. Layer caching is all-or-nothing per vertex: change a byte the RUN npm ci depends on — a lockfile line — and the whole step reruns. Without a cache mount the package manager's own download cache lived inside that layer and is thrown away on the miss, so the install reruns fully cold, re-downloading everything. With the cache mount, the layer still reruns (the inputs changed), but the mounted ~/.npm is still populated from prior builds, so the package manager reuses already-downloaded tarballs and fetches only what is genuinely new — turning a ~3-minute cold npm ci into ~25 seconds, or a Go go mod download from minutes to seconds. BuildKit serializes concurrent access via a sharing mode (default shared; locked for tools that cannot tolerate concurrent writers). The mount is never part of any layer and never ships." },
+    { q: "Why do ARG, ENV, and rm fail to keep a build secret out of an image, and how does --mount=type=secret fix it?", a: "Three structural facts defeat the rm approach. First, ARG and ENV values are recorded in the image config and shown by docker history. Second, any command string that interpolates the secret (RUN echo \"token=$TOKEN\" > .npmrc) is recorded verbatim in history. Third, every layer is immutable and all of them ship, so a later RUN rm .npmrc cannot remove bytes from an earlier layer — it stacks a whiteout that hides the file at runtime while the data remains readable in the layer below and extractable from the layer tarball. So the token leaks three ways from the published image, no build context required. RUN --mount=type=secret,id=npmtoken mounts the secret as a file (default /run/secrets/npmtoken) only for the duration of that single RUN; the command reads it (NPM_TOKEN=$(cat /run/secrets/npmtoken)), uses it, and it vanishes when the step ends. Nothing is written to any layer, the config, or history. The value is supplied at build time with --secret id=npmtoken,env=NPM_TOKEN or src=./token, never as a build arg. The rule: a build-time-only credential goes through a secret mount and never appears in ARG, ENV, or a command string." },
+  ]}
+/>
+
+<Recap lang="en">
+Two BuildKit mounts solve two recurring build problems that ordering alone cannot. RUN --mount=type=cache mounts a persistent, BuildKit-managed directory — npm's ~/.npm, Go's /go/pkg/mod, pip's or apt's cache — that lives outside the image layers and survives across builds independently of layer caching. Layer caching is all-or-nothing per step, so a single lockfile change forces RUN npm ci to rerun; normally that discards the package manager's own download cache and the install reruns cold, but the cache mount keeps that cache intact across builds, so the rerun reuses prior tarballs and fetches only what changed — a ~3-minute cold install becomes ~25 seconds, a Go go mod download drops from minutes to seconds, and the cache never ships in a layer. It composes with good ordering: ordering minimizes how often the install reruns, the cache mount minimizes how expensive each rerun is. RUN --mount=type=secret addresses a structural leak, not a careless rm. ARG and ENV are recorded in the image config and docker history, interpolated command strings are recorded verbatim, and because layers are immutable and all ship, a later rm only stacks a whiteout while the secret bytes stay readable in the layer below — so a deleted .npmrc still leaks the token from the published image, three ways over. A secret mount hands the credential to exactly one RUN as a file under /run/secrets, used and gone when the step ends, written to no layer, config, or history, with the value supplied at build time via --secret id=...,env=... or src=... rather than a build arg. The discipline that closes the whole CVE-and-token class: keep reruns warm with cache mounts, and route every build-time-only credential through a secret mount so it never appears in ARG, ENV, or a command string.
+</Recap>

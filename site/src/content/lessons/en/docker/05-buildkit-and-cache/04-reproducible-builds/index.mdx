@@ -1,0 +1,144 @@
+---
+concepts:
+- docker-reproducible
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: "04-reproducible-builds"
+sources:
+- https://github.com/moby/buildkit/blob/master/docs/build-repro.md
+- https://reproducible-builds.org/docs/source-date-epoch/
+- https://docs.docker.com/reference/dockerfile/
+spiral: []
+status: ready
+summary: 'A reproducible build yields byte-identical layer digests from the same source on any machine. Embedded timestamps, unpinned base tags, and checkout mtimes break it — churning digests and undermining signing. SOURCE_DATE_EPOCH and digest-pinned bases are the levers.'
+title: 'Reproducible builds: SOURCE_DATE_EPOCH, digest-pinned bases, and why a churning layer digest breaks signing'
+track: "docker"
+unit: "05-buildkit-and-cache"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The supply-chain audit asked a simple question and the team could not answer it: "Rebuild release `v2.4.1` from the tagged commit and show us the same image digest you signed." They checked out the exact tag, ran the exact build command — and got a completely different image digest. Every layer hash was different. The signed image in the registry and the rebuilt one shared not a single layer, so there was no way to prove the deployed artifact corresponded to the audited source. The cause was mundane: the Dockerfile used `FROM node:22` (an unpinned tag that had moved since the release), `COPY . .` recorded the checkout's file mtimes into the layer tarball, and the build stamped `BUILD_TIME=$(date)` into an env var. Three sources of non-determinism, each enough to change a digest. The image was perfectly *functional* both times — same code, same behavior — but not *reproducible*, and reproducibility is the property the signature was supposed to guarantee. A signature over a digest you cannot reproduce proves nothing about the source.
+</Hook>
+
+<Crux>A reproducible build yields byte-identical layer digests anywhere; timestamps and unpinned bases break it — and with it, signing.</Crux>
+
+<Explanation>
+
+## What "reproducible" means and why digests churn
+
+Reproducible means: the same source, built anywhere, any day, produces an image with the **same layer digests** down to the byte. Because everything in OCI is content-addressed, a single differing byte anywhere in a layer tarball changes that layer's sha256 and every digest above it. Three usual suspects inject those differing bytes:
+
+- **Embedded timestamps.** `BUILD_TIME=$(date)`, a build-info file with the current time, or a compiler that stamps the build date — any of these writes a value that changes every second, so the layer never reproduces.
+- **File mtimes in the archive.** When `COPY . .` writes files into a layer, the layer tarball records each file's modification time. A fresh `git checkout` sets mtimes to *now*, so the same source copied on two days produces two different tarballs with identical contents but different timestamps — different digest.
+- **Unpinned base images.** `FROM node:22` resolves to whatever digest the tag points at *today*; the tag moves on every minor patch, so a rebuild months later pulls a different base and inherits its different layers.
+
+The fix for each is direct. Pin the base by digest: `FROM node:22@sha256:abc...` so the base never moves. Drive timestamps from `SOURCE_DATE_EPOCH` — a standardized environment variable holding a fixed Unix time (typically the commit's author date) that build tools honor instead of the wall clock. And have BuildKit normalize the mtimes it writes.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM node:22@sha256:1a2b3c...      # pinned: base never silently moves
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+```
+
+```bash
+# Feed a fixed time and ask BuildKit to rewrite layer timestamps to it:
+SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
+  docker buildx build \
+    --output type=image,name=app:v2.4.1,rewrite-timestamp=true .
+```
+
+`rewrite-timestamp=true` tells BuildKit to set every file's mtime in the produced layers to `SOURCE_DATE_EPOCH`, erasing the checkout-time variance. With the base pinned, the clock pinned, and mtimes normalized, two builds of the same commit on two machines produce the same digests.
+
+<Quiz
+  id="04-reproducible-builds-quiz-1"
+  lessonSlug="04-reproducible-builds"
+  lang="en"
+  question="Two builds of the exact same commit, on two machines, produce images with different layer digests. The code and behavior are identical. Which of these is NOT a likely cause?"
+  choices={[
+    { label: "The two builds ran on different CPU architectures but you compared the same-arch manifest from each", correct: false, misconception: "Architecture differences are a real source of differing layers, so this can absolutely cause divergence — it is a likely cause, making it the wrong pick for 'NOT a cause'." },
+    { label: "FROM node:22 resolved to a base whose tag moved between the two builds", correct: false, misconception: "An unpinned tag moving is one of the three classic causes — the rebuild pulls a different base and inherits different layers. This is a likely cause, so not the answer." },
+    { label: "COPY . . recorded the git-checkout mtimes, which differ between the two checkouts", correct: false, misconception: "Checkout mtimes landing in the layer tarball is a classic cause of digest divergence even with identical file contents. Likely cause, not the answer." },
+    { label: "Both builds used SOURCE_DATE_EPOCH set to the same commit date and rewrite-timestamp=true", correct: true },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does signing care about reproducibility specifically? A signature (cosign, Notary) is computed over the image digest. The promise a consumer wants is: "this running image corresponds to that audited source." If you cannot rebuild the audited source into the same digest, the signature degrades to "someone with the key signed some bytes" — it no longer ties the artifact to a source you can inspect. Reproducibility is what makes the signature *verifiable*: an auditor (or an SLSA provenance check) rebuilds from source, gets the identical digest, and confirms the signed artifact is exactly that source with nothing injected. Non-reproducible builds also quietly defeat the cross-stage and registry cache — a churning digest means COPY --from and pushed layers miss every time — so reproducibility pays in both security and build speed.
+</Inset>
+
+## Determinism beyond the three big levers
+
+Pinning the base, the clock, and mtimes handles most cases, but a few subtler non-determinisms remain worth knowing. Package installs that do not pin versions (`apt-get install curl` without `=version`, `pip install` without a lockfile) pull whatever is current, so freeze versions or use a lockfile. Build steps that emit output in filesystem-iteration order can vary; tools increasingly sort deterministically, but a custom script may need an explicit sort. Embedded build paths (a compiler recording `/home/runner/...`) differ across machines; many toolchains accept a path-prefix remap. And network access during build is inherently non-reproducible — the same `curl https://...` can return different bytes tomorrow — which is why hermetic builds fetch only pinned, checksummed inputs. The senior posture: treat every input to the build as something that must be pinned or normalized, and assume any unpinned input will eventually move and break your digest when you least want it to.
+
+<Quiz
+  id="04-reproducible-builds-quiz-2"
+  lessonSlug="04-reproducible-builds"
+  lang="en"
+  question="Your security team signs release images with cosign. Why does a non-reproducible build undermine the value of that signature, even though the signing key is secure?"
+  choices={[
+    { label: "The signature is over the image digest; if you cannot rebuild the audited source into the same digest, the signature no longer proves the running artifact corresponds to that inspectable source — it only proves someone with the key signed some bytes", correct: true },
+    { label: "A non-reproducible build leaks the signing key into the image", misconception: "Reproducibility has nothing to do with key exposure; the key stays secure. The problem is that the signature, computed over a digest you cannot reproduce, can no longer be tied back to a verifiable source build." },
+    { label: "cosign refuses to sign images that lack SOURCE_DATE_EPOCH", misconception: "cosign signs whatever digest you give it; it does not require reproducibility to produce a signature. The issue is downstream verification value, not whether signing succeeds." },
+    { label: "Non-reproducible builds always produce vulnerable images", misconception: "Reproducibility is orthogonal to whether the image has CVEs; a non-reproducible image can be perfectly secure. What it loses is the ability to prove, by rebuilding, that the signed artifact matches the audited source." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="Three non-determinism sources churn the digest; pinning base, clock, and mtimes makes the rebuild match the signed digest"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "source", label: "tagged commit", sub: "same source" },
+    { id: "epoch", label: "SOURCE_DATE_EPOCH", sub: "fixed commit time" },
+    { id: "pin", label: "pinned base @sha256", sub: "base never moves" },
+    { id: "rewrite", label: "rewrite-timestamp", sub: "normalize mtimes" },
+    { id: "digest", label: "stable digest", sub: "byte-identical layers" },
+    { id: "sign", label: "verifiable signature", sub: "rebuild matches" },
+  ]}
+  edges={[
+    { from: "source", to: "epoch", label: "fix clock" },
+    { from: "source", to: "pin", label: "fix base" },
+    { from: "epoch", to: "rewrite", label: "set mtimes" },
+    { from: "pin", to: "digest", label: "same layers" },
+    { from: "rewrite", to: "digest", label: "same tarball" },
+    { from: "digest", to: "sign", label: "cosign verifies" },
+  ]}
+  caption="Embedded timestamps, checkout mtimes, and unpinned base tags each inject differing bytes that change layer digests. Pinning the base by digest, driving time from SOURCE_DATE_EPOCH, and rewrite-timestamp normalizing mtimes make two builds of one commit produce identical digests — so a signature over that digest is reproducible and therefore verifiable."
+/>
+
+<KeyTakeaway>A reproducible build produces byte-identical layer digests from the same source on any machine and any day. Because OCI is content-addressed, a single differing byte changes a layer's sha256 and every digest above it, and three sources usually inject that byte: embedded timestamps (BUILD_TIME=$(date)), file mtimes recorded by COPY from a fresh git checkout, and unpinned base tags (FROM node:22) that move under you. Fix them by pinning the base with @sha256, driving time from SOURCE_DATE_EPOCH (the commit date), and using BuildKit rewrite-timestamp=true to normalize mtimes; also pin package versions and avoid networked build steps. This matters because signing (cosign) is computed over the digest: if you cannot rebuild the audited source into the same digest, the signature stops proving the artifact corresponds to inspectable source — and a churning digest also defeats cross-stage and registry cache.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="04-reproducible-builds-retrieval"
+  lang="en"
+  questions={[
+    { q: "Name the three classic sources of build non-determinism and the lever that fixes each.", a: "First, embedded timestamps: BUILD_TIME=$(date), a build-info file stamped with the current time, or a compiler recording the build date — each writes a value that changes every second so the layer never reproduces. Fix: drive all build timestamps from SOURCE_DATE_EPOCH, a standardized env var holding a fixed Unix time (typically the commit's author date, git log -1 --pretty=%ct), which build tools honor instead of the wall clock. Second, file mtimes in the layer tarball: COPY . . records each file's modification time, and a fresh git checkout sets mtimes to now, so identical contents copied on two days yield different tarballs and digests. Fix: build with BuildKit rewrite-timestamp=true (via buildx --output), which sets every file's mtime in the produced layers to SOURCE_DATE_EPOCH. Third, unpinned base images: FROM node:22 resolves to whatever digest the tag points at today, and the tag moves on every patch. Fix: pin by digest, FROM node:22@sha256:.... With base, clock, and mtimes all pinned, two builds of one commit on two machines produce identical layer digests." },
+    { q: "Explain why reproducibility is what makes an image signature meaningful, and what else a churning digest breaks.", a: "A signature (cosign, Notary) is computed over the image digest. The guarantee a consumer wants is that the running image corresponds to a specific, auditable source. If the build is non-reproducible — different digest every time from the same commit — then an auditor checking out the tag and rebuilding gets a digest that does not match the signed one, so the signature can no longer tie the artifact to inspectable source; it degrades to 'someone with the key signed some bytes.' Reproducibility is precisely what lets an auditor or an SLSA provenance check rebuild from source, obtain the identical digest, and confirm the signed artifact is that source with nothing injected. A non-reproducible, functionally-identical image is perfectly secure yet unverifiable in this sense. A churning digest also breaks caching: the cross-stage COPY --from is keyed on the artifact digest and the registry caches by layer digest, so non-determinism makes both miss on every build, pushing fresh layers for no real change — reproducibility pays in security and build speed together." },
+  ]}
+/>
+
+<Recap lang="en">
+Reproducible means the same source, built on any machine on any day, yields an image with byte-identical layer digests. OCI is content-addressed, so one differing byte in a layer tarball changes that layer's sha256 and every digest stacked above it, and three usual suspects inject that byte. Embedded timestamps — BUILD_TIME=$(date), a build-info file, a compiler stamping the date — change every second. File mtimes recorded into the layer by COPY . . differ because a fresh git checkout sets them to now, so identical contents reproduce as different tarballs. And unpinned base tags like FROM node:22 resolve to whatever the tag points at today and move under you between builds. The levers are direct: pin the base by digest (FROM node:22@sha256:...), drive every build timestamp from SOURCE_DATE_EPOCH set to the commit's author date, and run BuildKit with rewrite-timestamp=true so it normalizes every file mtime in the produced layers to that epoch; beyond the big three, pin package versions or use a lockfile, sort any iteration-ordered output, remap embedded build paths, and avoid networked build steps that fetch unpinned bytes. This matters most for the supply chain: a signature (cosign) is computed over the image digest, so if you cannot rebuild the audited commit into the same digest, the signature no longer proves the deployed artifact corresponds to inspectable source — exactly the audit the team failed when v2.4.1 rebuilt to a different hash. Reproducibility is what makes the signature verifiable, lets SLSA provenance checks confirm the artifact by rebuilding, and as a bonus keeps cross-stage COPY --from and registry layer caches hitting instead of churning a fresh layer for every functionally-identical build. Treat every build input as something to pin or normalize, because any unpinned input will eventually move and break your digest at the worst time.
+</Recap>
