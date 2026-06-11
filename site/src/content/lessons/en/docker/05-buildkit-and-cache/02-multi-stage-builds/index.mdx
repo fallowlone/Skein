@@ -1,0 +1,139 @@
+---
+concepts:
+- docker-multistage
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-multi-stage-builds"
+sources:
+- https://docs.docker.com/build/building/multi-stage/
+- https://docs.docker.com/reference/dockerfile/
+- https://github.com/moby/buildkit/blob/master/docs/build-repro.md
+spiral: []
+status: ready
+summary: 'A multi-stage build compiles in a fat builder stage, then a thin runtime stage copies only the artifact. BuildKit builds just the final target and its deps, prunes unreferenced stages, and ships a 28 MB image instead of 1.2 GB — with toolchains and source absent from the layers.'
+title: 'Multi-stage builds: a fat builder, a thin runtime, and how COPY --from collapses 1.2 GB into 28 MB'
+track: "docker"
+unit: "05-buildkit-and-cache"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The security team blocked the release: the scanner had flagged 312 CVEs in the Go service's image, most of them in `gcc`, `git`, `make`, and a pile of `-dev` headers — none of which the running binary used. The image was 1.2 GB. The developer was baffled: the Go program was a single statically linked binary, 18 MB. Where did 1.2 GB come from? From the Dockerfile shipping the entire build toolchain into production: `FROM golang:1.23`, then `COPY . .`, `RUN go build`, and that was the final image — compiler, module cache, the full Debian userland, and the source code, all baked into the shipped layers. Every one of those CVEs was in software that existed only to *produce* the binary, not to run it. The rewrite was four lines: build in one stage, then `FROM gcr.io/distroless/static`, `COPY --from=build /app /app`. The image dropped to 28 MB, the CVE count to single digits, and the source code stopped shipping to customers. Nothing about the program changed. The build just stopped confusing "what I need to compile" with "what I need to run."
+</Hook>
+
+<Crux>A multi-stage build compiles in a fat stage and copies only the artifact into a thin runtime stage, so toolchains and source never ship.</Crux>
+
+<Explanation>
+
+## Two jobs, two stages
+
+A single-stage build conflates two different filesystems: the one you need to *build* an artifact (compilers, package managers, headers, source, module caches) and the one you need to *run* it (the binary plus its actual runtime dependencies). Multi-stage separates them. You write several `FROM` stages in one Dockerfile; the last one is the image you ship, and earlier stages exist only to produce inputs the final stage copies in.
+
+```dockerfile
+# syntax=docker/dockerfile:1
+FROM golang:1.23 AS build           # ~840 MB: compiler, git, module cache
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /app ./cmd/server
+
+FROM gcr.io/distroless/static:nonroot AS runtime   # ~2 MB base
+COPY --from=build /app /app          # copy ONLY the binary
+USER nonroot
+ENTRYPOINT ["/app"]
+```
+
+`COPY --from=build /app /app` is the hinge. It reaches into the `build` stage's final filesystem and copies just `/app` into the runtime stage. The compiler, the 400 MB module cache, the source tree, `git` — none of it crosses the boundary. The shipped image is the distroless base plus one 18 MB binary layer: **28 MB total**, against the 1.2 GB single-stage image. Same binary, 40× smaller, and the entire build toolchain — every CVE-bearing dev package — is simply absent from the layers a customer pulls.
+
+## Only the target stage (and its deps) gets built
+
+A second property people miss: `docker build` builds the **final target stage and only the stages it transitively depends on**. Unreferenced stages are pruned from the LLB graph and never execute. So you can keep a `test` stage and a `lint` stage in the same Dockerfile, and a plain `docker build` (targeting the runtime stage) skips them entirely unless something `COPY --from`s their output. You can also build a specific stage with `--target build` to get a debug image with the full toolchain, or `--target test` in CI to run tests inside the graph. One Dockerfile, several outputs, and the production build pays for none of the stages it does not reference.
+
+<Quiz
+  id="02-multi-stage-builds-quiz-1"
+  lessonSlug="02-multi-stage-builds"
+  lang="en"
+  question="A Dockerfile has a build stage (compiler + source, ~840 MB) and a runtime stage that does COPY --from=build /app /app onto a 2 MB distroless base. How large is the shipped image, and where did the compiler go?"
+  choices={[
+    { label: "About 28 MB — only the 18 MB binary crosses via COPY --from onto the 2 MB base; the compiler stays in the build stage's filesystem, which is never part of the final image", correct: true },
+    { label: "About 858 MB — the final image includes the build stage plus the runtime stage stacked together", misconception: "Stages are not stacked into the final image. Only the target stage's layers ship; COPY --from copies selected files out of an earlier stage, but that earlier stage's filesystem is not appended. The compiler never reaches the shipped layers." },
+    { label: "About 840 MB — COPY --from copies the whole build stage into runtime", misconception: "COPY --from copies only the path you specify (/app here), not the entire stage. The 840 MB toolchain stays behind; just the named binary crosses the boundary." },
+    { label: "It depends on how many layers the build stage has", misconception: "The build stage's layer count is irrelevant to the final image size, because none of the build stage's layers ship. Only what COPY --from pulls into the runtime stage, plus the runtime base, counts." },
+  ]}
+/>
+
+<Inset kind="why" lang="en">
+Why does a smaller image matter beyond the disk number? Three compounding reasons. Attack surface: every binary in the image is something a scanner flags and an attacker might exploit; a distroless image with no shell, no package manager, and no compiler removes whole classes of post-exploitation moves (you cannot `curl | sh` what has no curl and no sh). Pull latency: a 28 MB image cold-pulls onto a fresh node in well under a second where 1.2 GB takes tens of seconds — multiplied across an autoscaling event spinning up 50 pods, that is the difference between fast and visibly slow scale-up. And supply-chain hygiene: shipping source code and `.git` to production leaks intellectual property and credentials that should never leave the build. The size is a proxy; what you are really minimizing is everything that is not the program.
+</Inset>
+
+## The COPY-from-stage cache trap
+
+Multi-stage interacts with caching in a way that bites people. The runtime stage's `COPY --from=build /app` vertex is keyed on the **digest of `/app`** as produced by the build stage. So if the build stage's compile is a cache hit and produces the identical binary, the `COPY --from` hits cache too and the runtime layer is reused. But if your build is non-deterministic — embedding a timestamp, a random build ID, or a Go build that varies — `/app`'s digest changes every build, the `COPY --from` always misses, and you push a new runtime layer to the registry every time even when nothing meaningful changed. The same content addressing that makes the cache work makes non-reproducible builds expensive: a reproducible compile lets the final layer be a stable cache hit, which is exactly what the next lesson on reproducible builds is about. The discipline: order the build stage like any other (manifests before source), and keep the artifact deterministic so the cross-stage copy can cache.
+
+<Quiz
+  id="02-multi-stage-builds-quiz-2"
+  lessonSlug="02-multi-stage-builds"
+  lang="en"
+  question="A Dockerfile contains build, test, and lint stages plus a runtime stage. The CI runs plain docker build targeting runtime, which only COPY --from=build. What happens to the test and lint stages?"
+  choices={[
+    { label: "They are pruned from the LLB graph and never execute, because the target stage does not transitively depend on them; you would run them with --target test or by COPY --from-ing their output", correct: true },
+    { label: "They always build because every FROM stage in a Dockerfile is executed", misconception: "BuildKit builds only the target stage and the stages it transitively depends on. A stage nothing references — not by being the target nor by a COPY --from — is dropped from the graph and skipped entirely." },
+    { label: "They build but their layers are discarded, so they still cost full build time", misconception: "It is stronger than discarding output: unreferenced stages are not scheduled at all, so they cost zero build time. You opt into them explicitly with --target or a COPY --from." },
+    { label: "The build fails because stages must be referenced", misconception: "Unreferenced stages are perfectly legal — keeping a test stage you invoke only in CI via --target is a common pattern. They are simply skipped when not needed, not an error." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A fat build stage produces the artifact; COPY --from pulls only that artifact into a thin runtime stage, and unreferenced stages are pruned"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "src", label: "source + go.mod", sub: "build context" },
+    { id: "build", label: "build stage", sub: "~840 MB toolchain" },
+    { id: "artifact", label: "/app binary", sub: "18 MB, deterministic" },
+    { id: "test", label: "test stage", sub: "pruned if unreferenced" },
+    { id: "runtime", label: "runtime stage", sub: "distroless ~2 MB" },
+    { id: "image", label: "shipped image", sub: "~28 MB, few CVEs" },
+  ]}
+  edges={[
+    { from: "src", to: "build", label: "compile" },
+    { from: "build", to: "artifact", label: "produces" },
+    { from: "src", to: "test", label: "(skipped)" },
+    { from: "artifact", to: "runtime", label: "COPY --from" },
+    { from: "runtime", to: "image", label: "ship target" },
+  ]}
+  caption="Only the runtime target and its transitive deps build; the test stage is pruned unless invoked with --target. COPY --from copies just the named path, so the toolchain, module cache, and source never enter the shipped layers — 1.2 GB collapses to 28 MB."
+/>
+
+<KeyTakeaway>A multi-stage build separates the build filesystem (compilers, package managers, source, module caches) from the runtime filesystem (the binary plus real runtime deps). You write several FROM stages; COPY --from=build /app pulls only the named artifact into a thin final stage on a minimal base like distroless, so a 1.2 GB single-stage image becomes ~28 MB and hundreds of toolchain CVEs disappear because that software simply is not in the shipped layers. BuildKit builds only the target stage and its transitive dependencies, pruning unreferenced test or lint stages — keep them in the same file and invoke with --target. Watch the cross-stage cache trap: COPY --from is keyed on the artifact's digest, so a non-reproducible build pushes a fresh runtime layer every time even when nothing changed.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="02-multi-stage-builds-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through how a multi-stage build turns a 1.2 GB single-stage Go image into ~28 MB, and what specifically stops shipping.", a: "A single-stage build leaves the entire build environment in the final image: the golang base (~840 MB with compiler, git, headers), the downloaded module cache (can be hundreds of MB), the copied source tree, and the resulting binary — all in the shipped layers, which is where the 1.2 GB and 300+ toolchain CVEs come from. Multi-stage splits it: a build stage (FROM golang:1.23 AS build) does the compile producing, say, /app at 18 MB; a separate runtime stage (FROM gcr.io/distroless/static, ~2 MB) does COPY --from=build /app /app and nothing else. Because COPY --from copies only the named path out of the earlier stage's filesystem, and the earlier stage's layers are not themselves part of the final image, the shipped image is just the distroless base plus the 18 MB binary layer — ~28 MB. What stops shipping: the compiler and toolchain, the module cache, git, the -dev headers, and the source code itself. The CVE count drops to single digits because the flagged packages existed only to build the binary, not to run it, and they are now absent." },
+    { q: "Explain which stages BuildKit actually builds, and the cross-stage COPY --from cache trap.", a: "BuildKit builds only the target stage (the last one, or the one named by --target) and the stages it transitively depends on through COPY --from or being its base. Stages nothing references are pruned from the LLB graph and never execute — so a test or lint stage in the same Dockerfile costs zero build time under a plain production build and is opted into with docker build --target test in CI. The cache trap: the runtime stage's COPY --from=build /app vertex is keyed on the digest of /app as the build stage produced it. If the compile is deterministic and a cache hit, the same binary digest means the COPY --from also hits and the runtime layer is reused. But if the build embeds a timestamp, random build ID, or is otherwise non-reproducible, /app's digest changes every build, the COPY --from always misses, and a new runtime layer is pushed to the registry on every build even when nothing meaningful changed. The fix is keeping the artifact reproducible so the cross-stage copy can stay a cache hit." },
+  ]}
+/>
+
+<Recap lang="en">
+A single-stage build ships one filesystem that conflates building and running — compiler, package manager, module cache, source, and the artifact all in the final image — which is why a single statically linked 18 MB Go binary arrives as a 1.2 GB image carrying 300-plus CVEs in software the running program never touches. A multi-stage build writes several FROM stages in one Dockerfile: a fat build stage compiles the artifact, and a separate thin runtime stage on a minimal base (distroless, ~2 MB) does COPY --from=build /app /app and nothing else. COPY --from copies only the named path out of the earlier stage's filesystem; that stage's layers are never appended to the final image, so the toolchain, the module cache, git, the dev headers, and the source code do not cross the boundary. The result is ~28 MB instead of 1.2 GB — same binary, ~40x smaller — with the CVE count in single digits and source no longer leaking to customers, while the smaller surface also removes the shell and package manager an attacker would reach for and slashes cold-pull latency during autoscaling. BuildKit reinforces this by building only the target stage and its transitive dependencies: a test or lint stage in the same file is pruned unless you target it explicitly with --target, so production pays for nothing it does not reference. The one trap is cache: the runtime stage's COPY --from is keyed on the artifact's digest, so a non-reproducible build whose binary digest churns every run misses that copy every time and pushes a fresh registry layer for no real change — which is the bridge to keeping builds reproducible.
+</Recap>

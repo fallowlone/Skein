@@ -14,6 +14,7 @@ export const TRACK_ABBR: Record<Track, string> = {
   "ci-cd": "CICD",
   "node": "NODE", "nest": "NEST",
   "logic": "LOGIC", "react": "RCT", "nextjs": "NEXT", "go": "GO",
+  "docker": "DOCK",
 };
 
 export type TrackColor = "lilac" | "mint" | "peach" | "sky" | "rose";
