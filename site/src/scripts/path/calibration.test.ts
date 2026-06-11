@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { CONCEPTS } from "./__fixtures__/mini-graph";
 import { buildConceptGraph } from "./graph";
 import { emptyState, applyDiagnostic } from "./knowledge";
-import { pickProbe, gradeMcq, gradeBlanks, fracOf } from "./calibration";
+import { pickProbe, placementPlan, gradeMcq, gradeBlanks, fracOf } from "./calibration";
 
 const g = buildConceptGraph(CONCEPTS);
 const frontier = ["consensus", "tls", "mvcc"];
@@ -42,5 +42,25 @@ describe("grading", () => {
   it("fracOf is correct/total", () => {
     expect(fracOf([true, false, true])).toBeCloseTo(2 / 3, 5);
     expect(fracOf([])).toBe(0);
+  });
+});
+
+describe("placementPlan", () => {
+  const fams = [
+    { key: "net", tracks: ["networking"] },
+    { key: "db", tracks: ["databases"] },
+  ];
+  it("picks up to perFamily diagnosable, unsettled concepts per family, highest gain first", () => {
+    const diagnosed = new Set(["tcp-handshake", "ip-addressing", "indexing", "mvcc"]);
+    const plan = placementPlan(emptyState(), g, diagnosed, fams, 1, new Set());
+    expect(plan.map((p) => p.family)).toEqual(["net", "db"]);
+    for (const p of plan) expect(p.concepts.length).toBe(1);
+    // within a family, the higher-closure-gain concept wins the single slot
+  });
+  it("skips concepts already settled (confident) or session-excluded", () => {
+    const diagnosed = new Set(["tcp-handshake"]);
+    const settled = applyDiagnostic(emptyState(), g, "tcp-handshake", 1, 0);
+    expect(placementPlan(settled, g, diagnosed, fams, 2, new Set())).toEqual([]);
+    expect(placementPlan(emptyState(), g, diagnosed, fams, 2, new Set(["tcp-handshake"]))).toEqual([]);
   });
 });
