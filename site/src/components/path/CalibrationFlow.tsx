@@ -3,6 +3,7 @@ import { useState, useRef } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import { knowledge, nextCalibrationProbe, unitProbeConcepts, applyDiagnosticResult } from "~/scripts/path/path-io";
 import DiagnosticRunner from "./DiagnosticRunner";
+import SelfPlacement from "./SelfPlacement";
 
 const MAX_PROBES = 8;
 const L = {
@@ -49,6 +50,7 @@ export default function CalibrationFlow({ lang, unit: unitProp }: { lang: Locale
       <div class="max-w-xl flex flex-col gap-4">
         <h1 class="text-3xl font-extrabold">{t.title}</h1>
         <p class="text-stone-600">{t.intro}</p>
+        <SelfPlacement lang={lang} />
         <div class="flex gap-3">
           {!noProbes && <button class="rounded bg-sky-600 px-4 py-2 text-white" onClick={begin}>{t.start}</button>}
           <a class="rounded border border-stone-300 px-4 py-2" href={roadmap}>{t.skip}</a>

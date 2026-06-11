@@ -6,7 +6,7 @@ import {
   nextCalibrationProbe, unitProbeConcepts,
   overrides, loosenUnit, clearOverrides, importState,
   searchConcepts, reorderList,
-  tierOf, unitPracticeFractions,
+  tierOf, unitPracticeFractions, conceptsUpToBand,
 } from "./path-io";
 import { DEFAULT_CONFIG } from "./config";
 import { emptyState, applySelfDeclare } from "./knowledge";
@@ -222,5 +222,20 @@ describe("unitPracticeFractions", () => {
       ["ghost/99-unit/01-lesson", { t1: "done" }],   // unit absent from the content bundle
     ]);
     expect(unitPracticeFractions(progress, counts).size).toBe(0);
+  });
+});
+
+describe("conceptsUpToBand", () => {
+  const cs = [
+    { id: "a", track: "go", band: "foundations" },
+    { id: "b", track: "go", band: "surface" },
+    { id: "c", track: "go", band: "middle" },
+    { id: "d", track: "go", band: "advanced" },
+    { id: "e", track: "react", band: "foundations" },
+  ] as any;
+  it("selects the track's concepts with band <= the ceiling", () => {
+    expect(conceptsUpToBand(cs, "go", "surface")).toEqual(["a", "b"]);
+    expect(conceptsUpToBand(cs, "go", "advanced")).toEqual(["a", "b", "c", "d"]);
+    expect(conceptsUpToBand(cs, "react", "middle")).toEqual(["e"]);
   });
 });
