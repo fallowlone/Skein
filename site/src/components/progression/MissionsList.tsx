@@ -4,7 +4,7 @@
 // The parent (ProfilePanel) computes the missions once via computeMissions() and passes
 // them in, so the gate and the list never diverge and the signals aren't read twice.
 import type { Locale } from "~/i18n";
-import { knowledge, config, content } from "~/scripts/path/path-io";
+import { effectiveKnowledge, config, content } from "~/scripts/path/path-io";
 import { userState } from "~/scripts/user-state";
 import { domainRatings } from "~/scripts/progression/domain-ratings";
 import { deriveMissions, type Mission } from "~/scripts/progression/missions";
@@ -17,7 +17,7 @@ const L = {
 // Reads the live signals (knowledge/config/userState) — call it inside a component render
 // so the caller subscribes. Returns the honest derived missions (may be empty).
 export function computeMissions(): Mission[] {
-  const domains = domainRatings(knowledge.value, content.concepts, config.value.weights.masteryThreshold);
+  const domains = domainRatings(effectiveKnowledge(), content.concepts, config.value.weights.masteryThreshold);
   return deriveMissions({ domains, streakCount: userState.value.progression.streak.count });
 }
 
