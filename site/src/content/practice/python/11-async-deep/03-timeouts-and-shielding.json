@@ -139,6 +139,134 @@
         "en": "import asyncio, contextlib\n\nasync def on_sigterm(exporter):\n    flush = asyncio.ensure_future(exporter.flush())   # named: the orphan answer\n    try:\n        async with asyncio.timeout(10):               # grace is 20 s: headroom kept\n            await asyncio.shield(flush)               # shutdown storm stops here\n    except (TimeoutError, asyncio.CancelledError):\n        flush.cancel()                                # now we MEAN it\n        with contextlib.suppress(asyncio.CancelledError, Exception):\n            async with asyncio.timeout(2):\n                await flush                           # observe its end, bounded\n        spill_to_disk(exporter.buffer)                # money saved the slow way\n        metrics.inc(\"flush_abandoned\")\n    finally:\n        loop_stopper.set()                            # exit by 13 s of 20, always\n\nWhy each piece: shield without the timeout is the original incident — a dead collector blackholes the socket write and kernel TCP gives up minutes later, far past SIGKILL; the application timeout is the only bound that exists. Timeout without the shield re-creates the older incident — the shutdown cancellation storm eats the flush mid-write. The named task answers the orphan question twice: the happy path awaits it through the shield, the failure path awaits it again (bounded) after a real cancel, so its exception is always observed. Budgets nest: 10 s flush + 2 s abandon + spill time, all strictly under the 20 s grace — the hierarchy is the design, not a tuning detail. The failure path is not an apology: spill-to-disk plus a metric turns lost-buffer incidents into a re-import job.",
         "ru": "# Пара shield+timeout, именованная задача, бюджеты под grace period, явный путь отказа\nimport asyncio, contextlib\n\nasync def on_sigterm(exporter):\n    flush = asyncio.ensure_future(exporter.flush())   # именованная: ответ сироте\n    try:\n        async with asyncio.timeout(10):               # grace 20 с: запас оставлен\n            await asyncio.shield(flush)               # шторм остановки встаёт здесь\n    except (TimeoutError, asyncio.CancelledError):\n        flush.cancel()                                # теперь — всерьёз\n        with contextlib.suppress(asyncio.CancelledError, Exception):\n            async with asyncio.timeout(2):\n                await flush                           # увидеть её конец, ограниченно\n        spill_to_disk(exporter.buffer)                # деньги спасены медленным путём\n        metrics.inc(\"flush_abandoned\")\n    finally:\n        loop_stopper.set()                            # выход к 13 с из 20, всегда\n\nЗачем каждая деталь: shield без таймаута — исходный инцидент: мёртвый коллектор превращает запись в сокет в чёрную дыру, TCP ядра сдаётся минуты спустя, сильно после SIGKILL; таймаут уровня приложения — единственная существующая граница. Таймаут без shield воспроизводит инцидент постарше — шторм отмен на остановке съедает flush посреди записи. Именованная задача отвечает на вопрос о сироте дважды: счастливый путь await-ит её через шилд, путь отказа await-ит её снова (ограниченно) после настоящего cancel, так что её исключение всегда увидено. Бюджеты вложены: 10 с flush + 2 с отказ + время сброса, всё строго под 20 с grace — иерархия и есть дизайн, а не деталь настройки. Путь отказа — не извинение: сброс на диск плюс метрика превращают инциденты потерянного буфера в задачу повторного импорта."
       }
+    },
+    {
+      "id": "incident-shield-orphan-double-charge",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 13,
+      "title": {
+        "en": "Shielded charge survives the timeout and runs twice",
+        "ru": "Защищённый платёж переживает таймаут и выполняется дважды"
+      },
+      "prompt": {
+        "en": "A payment endpoint wraps charge_card() in asyncio.shield(), then awaits it under asyncio.wait_for(timeout=5). Under load, p99 of the gateway call climbs to 8s, so wait_for raises TimeoutError and the handler returns 504 to the client, who retries. Reconciliation shows 1 in 40 customers charged twice. The shielded task is still alive: the timeout cancelled the wait, not the work. Explain the leak and the fix. Work it step by step; commit before revealing.",
+        "ru": "Платёжный эндпоинт оборачивает charge_card() в asyncio.shield(), затем ждёт его под asyncio.wait_for(timeout=5). Под нагрузкой p99 вызова шлюза вырастает до 8с, поэтому wait_for бросает TimeoutError, обработчик возвращает клиенту 504, и тот повторяет запрос. Сверка показывает: 1 из 40 клиентов списан дважды. Защищённая задача всё ещё жива: таймаут отменил ожидание, а не работу. Объясните утечку и исправление. Веди по шагам; сформулируй ответ до раскрытия."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · What shield actually protects",
+            "ru": "1 · Что на самом деле защищает shield"
+          },
+          "prompt": {
+            "en": "When wait_for times out, what gets cancelled — the shield wrapper or the inner charge_card coroutine? Why does the inner task keep running?",
+            "ru": "Когда wait_for истекает, что отменяется — обёртка shield или внутренняя корутина charge_card? Почему внутренняя задача продолжает выполняться?"
+          },
+          "reveal": {
+            "en": "asyncio.shield wraps the inner task in an outer future. Cancelling the outer future (what wait_for does on timeout) does NOT propagate into the shielded task — that is the entire point of shield. So wait_for raises TimeoutError, the await site unwinds, but charge_card keeps running on the loop to completion and the gateway is actually hit. The handler already returned 504, so the successful charge is now an orphan with no caller to observe it.",
+            "ru": "asyncio.shield оборачивает внутреннюю задачу во внешний future. Отмена внешнего future (что делает wait_for при таймауте) НЕ распространяется на защищённую задачу — в этом весь смысл shield. Поэтому wait_for бросает TimeoutError, точка await раскручивается, но charge_card продолжает выполняться в цикле до конца и реально обращается к шлюзу. Обработчик уже вернул 504, так что успешное списание становится сиротой без вызывающей стороны."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · Why the retry double-charges",
+            "ru": "2 · Почему повтор списывает дважды"
+          },
+          "prompt": {
+            "en": "The client retries on 504. Both the orphaned first charge and the retry reach the gateway. What makes them non-idempotent?",
+            "ru": "Клиент повторяет запрос на 504. И осиротевшее первое списание, и повтор доходят до шлюза. Что делает их неидемпотентными?"
+          },
+          "reveal": {
+            "en": "Each call to charge_card generates a fresh transaction with no shared idempotency key, so the gateway treats the orphan and the retry as two distinct charges. The timeout was a lie to the client (work succeeded) but truth to the handler (it gave up). Shield converted a clean cancel into a silent background success the system cannot account for.",
+            "ru": "Каждый вызов charge_card создаёт новую транзакцию без общего ключа идемпотентности, поэтому шлюз считает сироту и повтор двумя разными списаниями. Таймаут оказался ложью для клиента (работа удалась) и правдой для обработчика (он сдался). Shield превратил чистую отмену в тихий фоновый успех, который система не может учесть."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · The correct fix",
+            "ru": "3 · Правильное исправление"
+          },
+          "prompt": {
+            "en": "How do you fix this so a timeout either cancels the charge or the system tolerates the orphan?",
+            "ru": "Как исправить, чтобы таймаут либо отменял списание, либо система терпела сироту?"
+          },
+          "reveal": {
+            "en": "Drop shield here — a payment that loses its caller should be cancellable, so let wait_for cancel charge_card and surface a definite 'not charged' outcome. If the gateway truly cannot be cancelled mid-flight, send a per-request idempotency key (same key on retry) so the gateway dedupes, and keep a handle to the shielded task to await/observe it instead of orphaning it. The anti-pattern is shield + a timeout that abandons the result: never shield work whose side effect you cannot reconcile after you stop waiting for it.",
+            "ru": "Уберите здесь shield — платёж, потерявший вызывающую сторону, должен быть отменяемым, поэтому пусть wait_for отменит charge_card и вернёт определённый исход «не списано». Если шлюз действительно нельзя отменить на лету, передавайте ключ идемпотентности на запрос (тот же ключ при повторе), чтобы шлюз дедуплицировал, и держите ссылку на защищённую задачу, чтобы дождаться её, а не бросать сиротой. Антипаттерн — shield плюс таймаут, который бросает результат: никогда не защищайте shield работу, чей побочный эффект нельзя сверить после прекращения ожидания."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-shield-wait-for-leak",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review: a 'safe' timeout wrapper around a critical task",
+        "ru": "Ревью: «безопасная» обёртка таймаута вокруг критической задачи"
+      },
+      "prompt": {
+        "en": "A teammate wrote a helper to run a critical coroutine 'safely' with a deadline. Review like a senior: name the real defects, don't flag non-issues.",
+        "ru": "Коллега написал хелпер для «безопасного» запуска критической корутины с дедлайном. Ревьюй как сеньор: назови реальные дефекты, не отмечай несуществующие."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "import asyncio\nimport logging\n\nlog = logging.getLogger(__name__)\n\n\nasync def run_critical_with_deadline(coro, deadline=5.0):\n    \"\"\"Run a critical task; if it overruns the deadline, return None.\"\"\"\n    task = asyncio.ensure_future(coro)\n    try:\n        result = await asyncio.wait_for(asyncio.shield(task), timeout=deadline)\n        return result\n    except asyncio.TimeoutError:\n        log.warning(\"critical task overran %.1fs deadline\", deadline)\n        return None\n\n\nasync def handle_request(charge_coro):\n    outcome = await run_critical_with_deadline(charge_coro, deadline=5.0)\n    if outcome is None:\n        return {\"status\": 504}\n    return {\"status\": 200, \"data\": outcome}\n"
+      },
+      "findings": [
+        {
+          "id": "shield-leaves-task-running",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "shield lets the task keep running after the timeout",
+            "ru": "shield оставляет задачу работающей после таймаута"
+          },
+          "explanation": {
+            "en": "asyncio.shield stops wait_for's cancellation from reaching task, so on TimeoutError the helper returns None while task keeps executing to completion in the background. The side effect (a charge) still happens even though the caller was told it didn't — an orphaned task and, on retry, a double effect. Either drop the shield (let it cancel) or keep the task handle and reconcile it.",
+            "ru": "asyncio.shield не даёт отмене из wait_for дойти до task, поэтому при TimeoutError хелпер возвращает None, а task продолжает выполняться до конца в фоне. Побочный эффект (списание) всё равно происходит, хотя вызывающей стороне сказали обратное — осиротевшая задача и при повторе двойной эффект. Либо уберите shield (пусть отменяется), либо держите ссылку на задачу и сверяйте её."
+          }
+        },
+        {
+          "id": "orphan-never-awaited",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "the orphaned task is never awaited — exceptions vanish",
+            "ru": "осиротевшая задача никогда не ожидается — исключения исчезают"
+          },
+          "explanation": {
+            "en": "After the timeout path, task is abandoned. If it later raises, asyncio logs 'Task exception was never retrieved' and the failure is invisible to the request flow. A critical task needs its result observed, not dropped on the floor.",
+            "ru": "После ветки таймаута task брошена. Если она позже бросит исключение, asyncio залогирует «Task exception was never retrieved», и сбой будет невидим для потока запроса. Результат критической задачи надо наблюдать, а не выбрасывать."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "ensure-future-vs-create-task",
+          "label": {
+            "en": "using ensure_future instead of create_task",
+            "ru": "использование ensure_future вместо create_task"
+          },
+          "explanation": {
+            "en": "Not a defect. The coro passed in is a coroutine, and asyncio.ensure_future on a coroutine is equivalent to create_task. create_task would be slightly more idiomatic but behaviour is identical — this is not the bug.",
+            "ru": "Не дефект. Переданный coro — корутина, а asyncio.ensure_future для корутины эквивалентен create_task. create_task был бы чуть идиоматичнее, но поведение идентично — это не баг."
+          }
+        },
+        {
+          "id": "bare-deadline-default",
+          "label": {
+            "en": "hard-coded 5.0s default deadline",
+            "ru": "захардкоженный дедлайн 5.0с по умолчанию"
+          },
+          "explanation": {
+            "en": "Looks like a magic number, but it's an overridable default parameter and the call site passes deadline=5.0 explicitly. Tuning the value is a config concern, not a correctness defect in this helper.",
+            "ru": "Похоже на магическое число, но это переопределяемый параметр по умолчанию, и точка вызова передаёт deadline=5.0 явно. Подбор значения — вопрос конфигурации, а не дефект корректности этого хелпера."
+          }
+        }
+      ]
     }
   ]
 }
