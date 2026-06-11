@@ -142,6 +142,147 @@
         "en": "Registration (reversed execution): app.add_middleware(RateLimitMW) first, then AuthMW, then RequestIdLogMW last — so execution is RequestIdLog → Auth → RateLimit → router. RequestIdLog outermost satisfies the exception constraint: an unhandled error propagates out through it, so the 500 still logs with the request-id. RateLimit sits inside Auth because it keys on the authenticated user. Lifespan: app.state.pool = await asyncpg.create_pool(...) once per worker; close on shutdown — the per-request version is the canonical max_connections incident. Transaction dependency:\n\nasync def tx(request: Request):\n    async with request.app.state.pool.acquire() as conn:\n        async with conn.transaction():\n            yield conn   # commit on clean unwind, rollback on raise\n\nDependency caching means handler + audit code share one conn per request. Audit export: the handler writes an outbox row INSIDE the request transaction (atomic with the mutation), and queue workers deliver it to the flaky partner with retries — BackgroundTasks fails all three constraints: it would hold the worker 1-4 s, vanish on deploy, and run after the transaction teardown anyway. CSV: StreamingResponse(generate(), media_type=\"text/csv\") where generate() acquires its own connection and yields ~10k-row chunks from a server-side cursor — constant MBs of memory for 2 GB of output. Error map: validation answers 422 before the handler; domain errors raise HTTPException rendered with their status (teardown still runs, transaction rolls back); anything unhandled crosses RateLimit, Auth, and RequestIdLog — which records it — before the outermost layer answers 500.",
         "ru": "# Раскладка: лог снаружи, auth внутри, лимит за auth; пул в lifespan; outbox вместо BackgroundTasks\nРегистрация (зеркальна исполнению): сначала app.add_middleware(RateLimitMW), затем AuthMW, последним RequestIdLogMW — исполнение получается RequestIdLog → Auth → RateLimit → роутер. Внешний RequestIdLog закрывает ограничение про исключения: необработанная ошибка распространяется наружу сквозь него, и 500 всё равно логируется с request-id. RateLimit стоит внутри Auth, потому что ключуется на аутентифицированном пользователе. Lifespan: app.state.pool = await asyncpg.create_pool(...) раз на воркер; закрыть на остановке — пер-запросная версия и есть канонический инцидент с max_connections. Зависимость-транзакция:\n\nasync def tx(request: Request):\n    async with request.app.state.pool.acquire() as conn:\n        async with conn.transaction():\n            yield conn   # commit при чистой размотке, rollback при raise\n\nКэш зависимостей означает: хендлер и аудит-код делят одно соединение на запрос. Экспорт аудита: хендлер пишет outbox-строку ВНУТРИ транзакции запроса (атомарно с мутацией), а воркеры очереди доставляют её нестабильному партнёру с ретраями — BackgroundTasks проваливает все три ограничения: держал бы воркер 1–4 с, исчезал бы на деплое и в любом случае бежит после teardown транзакции. CSV: StreamingResponse(generate(), media_type=\"text/csv\"), где generate() берёт собственное соединение и отдаёт чанки по ~10 тыс. строк из серверного курсора — константные мегабайты памяти на 2 ГБ вывода. Карта ошибок: валидация отвечает 422 до хендлера; доменные ошибки поднимают HTTPException со своим статусом (teardown выполняется, транзакция откатывается); всё необработанное проходит RateLimit, Auth и RequestIdLog — который его записывает — прежде чем внешний слой ответит 500."
       }
+    },
+    {
+      "id": "incident-middleware-swallows-cancellation",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "Incident: clients disconnect, work keeps running, DB pool exhausts",
+        "ru": "Инцидент: клиенты отваливаются, работа продолжается, пул БД исчерпан"
+      },
+      "prompt": {
+        "en": "An endpoint runs a 30 s report. A dashboard polls it with a 5 s client timeout, so clients disconnect constantly. The DB connection pool (size 20) hits exhaustion within minutes under modest traffic, and a custom logging middleware wraps every request in try/except. Work it step by step; commit before revealing.",
+        "ru": "Эндпоинт строит отчёт 30 с. Дашборд опрашивает его с клиентским таймаутом 5 с, поэтому клиенты постоянно отваливаются. Пул соединений БД (размер 20) исчерпывается за минуты при умеренном трафике, а кастомная логирующая middleware оборачивает каждый запрос в try/except. Веди по шагам; сформулируй ответ до раскрытия."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · Recall the cancel mechanism",
+            "ru": "1 · Вспомни механизм отмены"
+          },
+          "prompt": {
+            "en": "When the client disconnects, what is ASGI supposed to do to the handler, and how would it normally free the connection?",
+            "ru": "Когда клиент отваливается, что ASGI должен сделать с хендлером и как это обычно освобождает соединение?"
+          },
+          "reveal": {
+            "en": "On disconnect the server cancels the request task: the await points raise asyncio.CancelledError, the handler unwinds, and `async with pool.acquire()` releases the connection in its __aexit__. Cancellation is the mechanism that reclaims resources for abandoned requests.",
+            "ru": "При отвале сервер отменяет задачу запроса: точки await пробрасывают asyncio.CancelledError, хендлер разворачивается, и `async with pool.acquire()` освобождает соединение в своём __aexit__. Отмена — это механизм, возвращающий ресурсы брошенных запросов."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · Connect except to exhaustion",
+            "ru": "2 · Свяжи except с исчерпанием"
+          },
+          "prompt": {
+            "en": "How does a `try: ... except Exception:` middleware turn disconnect into pool exhaustion?",
+            "ru": "Как middleware с `try: ... except Exception:` превращает отвал в исчерпание пула?"
+          },
+          "reveal": {
+            "en": "In Python 3.8+, CancelledError is a BaseException, not Exception — so a correct `except Exception` would NOT catch it. The bug is catching it explicitly or using `except BaseException` / bare `except:`. Swallowing CancelledError suppresses the unwind: the handler keeps running the 30 s query to completion holding its pooled connection, even though no client waits. Every abandoned request leaks one connection for 30 s; at >0.7 disconnects/s the size-20 pool drains.",
+            "ru": "В Python 3.8+ CancelledError — это BaseException, не Exception, поэтому корректный `except Exception` его НЕ ловит. Баг — ловить его явно либо использовать `except BaseException` / голый `except:`. Проглатывание CancelledError подавляет разворот: хендлер дорабатывает 30-секундный запрос до конца, держа соединение из пула, хотя клиента уже нет. Каждый брошенный запрос держит одно соединение 30 с; при >0.7 отвалов/с пул на 20 осушается."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · Fix the middleware contract",
+            "ru": "3 · Почини контракт middleware"
+          },
+          "prompt": {
+            "en": "Give the correct middleware contract and a belt-and-suspenders guard.",
+            "ru": "Дай корректный контракт middleware и подстраховку."
+          },
+          "reveal": {
+            "en": "Never swallow BaseException; catch Exception only, and if you must catch CancelledError to log, re-raise it. Add a server-side timeout (asyncio.timeout(10)) so even non-cancelled work cannot outlive its budget, and verify connections release on cancel with a pool-checkout gauge. The handler must be cancellation-correct: no shielding the DB call unless it is genuinely uninterruptible.",
+            "ru": "Никогда не глотай BaseException; лови только Exception, а если нужно поймать CancelledError для лога — пробрось его заново. Добавь серверный таймаут (asyncio.timeout(10)), чтобы даже неотменённая работа не пережила свой бюджет, и проверь освобождение соединений при отмене метрикой checkout пула. Хендлер обязан быть корректным к отмене: без shield на DB-вызове, если он не по-настоящему непрерываемый."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-asgi-middleware-error-handling",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review: a custom timing/logging middleware",
+        "ru": "Ревью: кастомная middleware тайминга/логирования"
+      },
+      "prompt": {
+        "en": "This middleware wraps every request for metrics and error logging. Review like a senior: name the real defects, don't flag non-issues.",
+        "ru": "Эта middleware оборачивает каждый запрос для метрик и логирования ошибок. Ревьюй как сеньор: назови реальные дефекты, не отмечай несуществующие."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "import time, logging\nfrom starlette.responses import JSONResponse\n\nlog = logging.getLogger(\"req\")\n\nclass TimingMiddleware:\n    def __init__(self, app):\n        self.app = app\n\n    async def __call__(self, scope, receive, send):\n        if scope[\"type\"] != \"http\":\n            return\n        start = time.time()\n        try:\n            await self.app(scope, receive, send)\n        except BaseException as exc:\n            log.error(\"request failed: %s\", exc)\n            resp = JSONResponse({\"error\": \"internal\"}, status_code=500)\n            await resp(scope, receive, send)\n        finally:\n            log.info(\"took %.3f\", time.time() - start)"
+      },
+      "findings": [
+        {
+          "id": "catches-baseexception-cancel",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "except BaseException swallows CancelledError, defeating disconnect cleanup",
+            "ru": "except BaseException глотает CancelledError, ломая очистку при отвале"
+          },
+          "explanation": {
+            "en": "On client disconnect the task is cancelled via CancelledError (a BaseException). Catching it here turns a cancellation into a 500 response and lets the handler's resource unwind be skipped. Catch Exception only.",
+            "ru": "При отвале клиента задача отменяется через CancelledError (это BaseException). Перехват здесь превращает отмену в ответ 500 и пропускает разворот ресурсов хендлера. Лови только Exception."
+          }
+        },
+        {
+          "id": "non-http-scope-dropped",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "Non-http scopes (websocket, lifespan) are returned without calling app",
+            "ru": "Не-http scope (websocket, lifespan) возвращаются без вызова app"
+          },
+          "explanation": {
+            "en": "`if scope[\"type\"] != \"http\": return` drops websocket and lifespan events entirely — startup/shutdown never fire and websockets break. It must `await self.app(scope, receive, send); return` for non-http.",
+            "ru": "`if scope[\"type\"] != \"http\": return` полностью отбрасывает websocket и lifespan-события — startup/shutdown не срабатывают, websockets ломаются. Надо `await self.app(scope, receive, send); return` для не-http."
+          }
+        },
+        {
+          "id": "send-after-response-started",
+          "severity": "tradeoff",
+          "planted": true,
+          "label": {
+            "en": "Sending a 500 may fail if the inner app already started the response",
+            "ru": "Отправка 500 может упасть, если внутреннее приложение уже начало ответ"
+          },
+          "explanation": {
+            "en": "If self.app raised after emitting http.response.start, calling resp(...) sends a second start and raises 'response already started'. Wrap send to track whether the response began before attempting a fallback.",
+            "ru": "Если self.app упал после http.response.start, вызов resp(...) шлёт второй start и кидает 'response already started'. Оборачивай send, отслеживая, начался ли ответ, прежде чем слать фолбэк."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "time-time-not-monotonic",
+          "label": {
+            "en": "time.time() can go backwards; should use perf_counter",
+            "ru": "time.time() может идти назад; нужен perf_counter"
+          },
+          "explanation": {
+            "en": "Looks wrong, is fine for this purpose: perf_counter is nicer for durations, but time.time() deltas are not a correctness defect blocking the review — it is a refinement, not a bug.",
+            "ru": "Выглядит неправильно, но для этой цели нормально: perf_counter приятнее для длительностей, но дельты time.time() — не дефект корректности, блокирующий ревью; это улучшение, не баг."
+          }
+        },
+        {
+          "id": "logger-not-structured",
+          "label": {
+            "en": "Logs are plain strings, not structured JSON",
+            "ru": "Логи — обычные строки, не структурированный JSON"
+          },
+          "explanation": {
+            "en": "Looks wrong, is fine: structured logging is an ops preference, not a defect. The code logs correctly; format is out of scope for a correctness review.",
+            "ru": "Выглядит неправильно, но нормально: структурное логирование — предпочтение эксплуатации, не дефект. Код логирует корректно; формат вне рамок ревью корректности."
+          }
+        }
+      ]
     }
   ]
 }
