@@ -3,7 +3,7 @@
 // grouped into 8 domain families, each node tagged known/shaky/unknown. All data
 // is real: masteryField over the live knowledge signal + committed concepts.
 import type { Locale } from "~/i18n";
-import { knowledge, config, content } from "~/scripts/path/path-io";
+import { effectiveKnowledge, config, content } from "~/scripts/path/path-io";
 import { masteryField, topShaky, topGaps } from "~/scripts/path/mastery-field";
 
 const NODE_CAP = 80; // render budget per family; overflow shown as +N count
@@ -31,7 +31,7 @@ const L = {
 
 export default function ConceptMasteryMap({ lang }: { lang: Locale }) {
   const t = L[lang];
-  const state = knowledge.value; // subscribe
+  const state = effectiveKnowledge(); // subscribe
   const threshold = config.value.weights.masteryThreshold; // subscribe
   const field = masteryField(state, content.concepts, threshold, lang);
 
