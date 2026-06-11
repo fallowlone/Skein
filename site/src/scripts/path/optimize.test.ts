@@ -48,4 +48,17 @@ describe("bestCombo", () => {
     const shorter = combo.slice(0, -1).reduce((n, f) => n + f.deltaMin, 0);
     expect(shorter).toBeLessThan(300);
   });
+
+  it("bestCombo takes one lever per kind — hour variants are alternatives, not additive", () => {
+    const fixes = suggestFixes({
+      deficitMin: 1000,
+      raiseHours: [{ hours: 0.5, deltaMin: 300 }, { hours: 1, deltaMin: 600 }],
+      extendDate: [{ days: 7, deltaMin: 300 }],
+      behind: false,
+    });
+    const combo = bestCombo(fixes, 1000);
+    expect(combo.filter((f) => f.kind === "raise-hours")).toHaveLength(1);
+    expect(combo.find((f) => f.kind === "raise-hours")!.deltaMin).toBe(600); // strongest variant
+    expect(combo.find((f) => f.kind === "extend-date")!.deltaMin).toBe(300);
+  });
 });
