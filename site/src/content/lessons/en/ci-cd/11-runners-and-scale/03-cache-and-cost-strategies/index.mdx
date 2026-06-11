@@ -1,0 +1,138 @@
+---
+concepts:
+- ci-cd-gha-cache-cost
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-cache-and-cost-strategies"
+sources:
+- https://docs.github.com/en/actions/using-workflows/caching-dependencies-to-speed-up-workflows
+- https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions
+- https://docs.docker.com/build/cache/backends/gha/
+spiral: []
+status: ready
+title: "Cache and cost strategy: restore-keys hierarchy, the 10 GB eviction wall, and Docker layer cache"
+summary: "GitHub Actions cache gives each repo a 10 GB store with LRU eviction. A precise key plus broad restore-keys turns a cold cache warm; Docker layer caching via the gha backend caches build layers, but an oversized cache that evicts itself can cost more than no cache at all."
+track: "ci-cd"
+unit: "11-runners-and-scale"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The team had added dependency caching to speed up CI, and for a week it worked — installs that took 90 seconds dropped to 8. Then the cache hit rate quietly collapsed to near zero and nobody noticed until the bill for runner minutes crept back up. The cause was the 10 GB-per-repo cache ceiling and LRU eviction: someone had started caching the entire `node_modules` *and* the Docker build cache *and* a Cypress binary cache, each keyed so loosely that every branch wrote a fresh 2 GB entry. Within a day the repo's caches blew past 10 GB, and LRU started evicting the dependency cache — the one with the highest hit rate — to make room for per-branch Docker caches that were each used once. The team was paying the write cost of caching with none of the read benefit. The fix was not more cache; it was *less*: drop the per-branch Docker cache to a single `main` scope, tighten the keys, and let the high-value dependency cache survive eviction.
+</Hook>
+
+<Crux>Caching only pays when the warm path is hit: a precise key, broad restore-keys, and staying under the 10 GB LRU wall.</Crux>
+
+<Explanation>
+
+## The key and the restore-keys ladder
+
+The cache action restores by a primary `key` and a list of `restore-keys` fallbacks:
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: ~/.npm
+    key: npm-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+    restore-keys: |
+      npm-${{ runner.os }}-
+```
+
+The `key` is an **exact** match: hashing the lockfile means the key changes only when dependencies change, so an unchanged lockfile gets a perfect hit and a changed one gets a clean miss (no stale deps). On a miss, `restore-keys` are tried as **prefix** matches, most-recent-first: `npm-Linux-` restores the newest cache from any prior lockfile, so a one-line dependency bump still warm-starts from yesterday's `node_modules` and only installs the delta. The pattern is **specific key, broad fallback** — exact for correctness, prefixes for warmth. A cache writes a new entry only on a key miss; if the exact key hit, no new cache is saved.
+
+<Quiz
+  id="03-cache-and-cost-strategies-quiz-1"
+  lessonSlug="03-cache-and-cost-strategies"
+  lang="en"
+  question="A workflow keys its dependency cache on hashFiles('package-lock.json') with a restore-key prefix of npm-Linux-. A PR adds one new dependency, changing the lockfile. What happens on that run?"
+  choices={[
+    { label: "Exact key misses, but the npm-Linux- prefix restores the most recent prior cache, so the install only fetches the delta and a new exact-key cache is saved", correct: true },
+    { label: "Exact key misses, no fallback applies, and the job does a full cold install from scratch", correct: false, misconception: "The restore-keys prefix is exactly the fallback for this case: a changed lockfile misses the exact key but npm-Linux- matches the most recent prior cache, warm-starting the install instead of going fully cold." },
+    { label: "Exact key hits because hashFiles ignores added lines", correct: false, misconception: "hashFiles hashes the file contents, so adding a dependency changes the lockfile and therefore the key — it is a deliberate miss, which is correct because the dependency set really did change." },
+    { label: "The prefix match restores a stale cache and the new dependency is silently missing", correct: false, misconception: "The restored cache warm-starts the directory, but the install step still runs and reconciles against the changed lockfile, fetching the new dependency. The prefix gives a head start, not a stale final state." },
+  ]}
+/>
+
+## The 10 GB wall and LRU eviction
+
+Every repository gets a **10 GB total cache budget**. When writes push it past 10 GB, GitHub evicts entries by **least-recently-used** — and caches are also evicted if **untouched for 7 days**. Two consequences drive real cost:
+
+- **Branch scope**: a cache created on a branch is readable by that branch and by child branches; the **default branch's caches are readable by all branches**. So caching on `main` seeds every PR, while caching per-feature-branch produces low-reuse entries that just consume the 10 GB budget.
+- **Eviction is silent and value-blind**: LRU does not know your dependency cache has a 95% hit rate and your per-branch Docker cache has 1%. If the low-value caches are written more recently, they push the high-value one out. Caching *more things* can make CI *slower* by evicting the cache that mattered.
+
+The discipline: cache the few high-value, high-reuse things on the default branch with tight keys, and resist the urge to cache everything. A cache that is written every run but rarely read is pure overhead — you pay the upload time and the eviction pressure for no restore benefit.
+
+<Inset kind="why" lang="en">
+Why does over-caching actively hurt instead of just being neutral? Three compounding costs. First, every cache save uploads the artifact, adding wall-clock time to the job even when it is never restored. Second, every write competes for the fixed 10 GB, so a low-value write can evict a high-value entry, converting a future hit into a miss. Third, the miss it caused is the expensive one — a full cold install or rebuild — so one wasted 2 GB per-branch cache can turn a 95%-hit dependency restore into a 90-second cold install on the next run of a *different* branch. Cache budget is a shared, scarce, LRU-managed resource; treating it as free leads directly to a slower, costlier pipeline.
+</Inset>
+
+## Docker layer cache: powerful and easy to misuse
+
+For container builds, BuildKit can use the GitHub Actions cache as a layer-cache backend (`cache-from`/`cache-to: type=gha`). Done right it skips rebuilding unchanged layers — a multi-minute image build drops to seconds when only the app layer changed. Two traps: `mode=max` caches *all* intermediate layers (great hit rate, but large — easily multiple GB, which eats the 10 GB budget and triggers eviction), while `mode=min` caches only the final layers (smaller, lower hit rate). And ordering your Dockerfile so dependencies install *before* code is copied is what makes the cache hit at all — copy code first and every build invalidates the dependency layer. Layer caching is leverage, but a fat `mode=max` cache that evicts your dependency cache, or a poorly ordered Dockerfile that never hits, costs more than building cold.
+
+<Quiz
+  id="03-cache-and-cost-strategies-quiz-2"
+  lessonSlug="03-cache-and-cost-strategies"
+  lang="en"
+  question="A repo's CI got slower after the team added a Docker layer cache with type=gha,mode=max on every feature branch. Dependency-install steps that used to hit cache now often miss. What is the most likely mechanism?"
+  choices={[
+    { label: "The large per-branch mode=max Docker caches filled the 10 GB budget and LRU evicted the high-hit-rate dependency cache to make room", correct: true },
+    { label: "mode=max disables all other caches in the repo by design", correct: false, misconception: "mode=max only controls how many Docker layers are cached; it does not disable other caches. The slowdown comes from the large Docker caches consuming the shared 10 GB and pushing the dependency cache out via LRU." },
+    { label: "Docker layer caches and dependency caches use separate quotas, so they cannot affect each other", correct: false, misconception: "They share the same 10 GB per-repo cache budget. A large Docker cache competes directly with the dependency cache, and LRU eviction does not respect which is more valuable." },
+    { label: "type=gha caches are encrypted and slower to restore, so every restore now takes longer", correct: false, misconception: "The symptom is dependency steps missing cache, not slow restores. That points to eviction from the shared 10 GB budget by the new large Docker caches, not to restore encryption overhead." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="A cache lookup tries the exact key, falls back through restore-key prefixes, and any write competes for the 10 GB budget under LRU eviction"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "exact", label: "Exact key", sub: "lockfile hash" },
+    { id: "prefix", label: "restore-keys", sub: "prefix fallback" },
+    { id: "restore", label: "Warm restore", sub: "install delta" },
+    { id: "save", label: "Save on miss", sub: "upload entry" },
+    { id: "budget", label: "10 GB budget", sub: "per repo" },
+    { id: "evict", label: "LRU evict", sub: "value-blind" },
+  ]}
+  edges={[
+    { from: "exact", to: "prefix", label: "on miss" },
+    { from: "prefix", to: "restore", label: "newest match" },
+    { from: "save", to: "budget", label: "consumes" },
+    { from: "budget", to: "evict", label: "over 10 GB" },
+    { from: "evict", to: "restore", label: "future miss" },
+  ]}
+  caption="Exact key for correctness, restore-key prefixes for warmth. Every save competes for the fixed 10 GB; LRU eviction is value-blind, so a low-reuse cache can push out a high-hit-rate one and turn a future restore into an expensive cold miss."
+/>
+
+<KeyTakeaway>GitHub Actions caching pays only when the warm path is hit: an exact `key` (hash the lockfile) guarantees correctness, broad `restore-keys` prefixes give a warm start on a near-miss, and caches written on the default branch seed every PR. But the store is a shared 10 GB per repo with value-blind LRU eviction (and a 7-day idle expiry), so caching too much — large per-branch entries, a fat Docker `mode=max` layer cache — can evict the one high-hit-rate cache that mattered and make CI slower and costlier than caching less. Order your Dockerfile so dependency layers cache before code, and cache few high-value things, not everything.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-cache-and-cost-strategies-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the key vs restore-keys distinction and why the pattern is specific key, broad fallback.", a: "The primary key is an exact match, typically a hash of the lockfile, so it changes only when dependencies change — an unchanged lockfile gets a perfect hit and a changed one a clean miss, never serving stale dependencies. restore-keys are prefix fallbacks tried most-recent-first on a miss: a prefix like npm-Linux- restores the newest prior cache from any earlier lockfile, so a one-line dependency bump warm-starts from the previous install and only fetches the delta instead of going fully cold. Specific key gives correctness (exact match on the real dependency set); broad fallback gives warmth (a head start when the exact key misses). A new cache entry is saved only when the exact key missed; an exact hit saves nothing." },
+    { q: "Why can adding more caches make CI slower, and what governs the 10 GB store?", a: "Each repo has a 10 GB total cache budget with least-recently-used eviction and a 7-day idle expiry, and eviction is value-blind: it does not know which cache has a high hit rate. So a large, low-reuse cache — a per-branch Docker mode=max layer cache, say — written more recently can evict a high-hit-rate dependency cache to stay under 10 GB, converting a future cheap restore into an expensive cold install or rebuild. Over-caching also costs upload time on every save even when the entry is never restored. Branch scope matters: default-branch caches are readable by all branches and seed every PR, while per-feature-branch caches have low reuse and just consume budget. The discipline is to cache few high-value, high-reuse things on the default branch with tight keys, and order Dockerfiles so dependency layers cache before code, rather than caching everything." },
+  ]}
+/>
+
+<Recap lang="en">
+GitHub Actions caching is leverage only when the warm path is actually hit, and that hinges on three things: the key, the fallbacks, and the budget. The primary key should be an exact value — typically a hash of the lockfile — so it hits when nothing changed and cleanly misses when dependencies did, never serving stale state. The restore-keys list provides prefix fallbacks tried most-recent-first, so a changed lockfile still warm-starts from the newest prior cache and installs only the delta: specific key for correctness, broad prefixes for warmth, with a new entry saved only on an exact-key miss. The hard constraint is the store: 10 GB per repository, evicted by least-recently-used and expired after 7 days idle, and eviction is value-blind — it cannot tell your 95%-hit dependency cache from a per-branch Docker cache used once. That is why caching more can make CI slower: a large low-reuse cache competes for the fixed budget and can push out the high-value one, turning a future cheap restore into an expensive cold install, on top of the upload cost every save pays even when never read. Branch scope compounds it — default-branch caches seed every PR, while per-feature-branch entries reuse poorly and just burn budget. Docker layer caching through the type=gha backend is powerful: it skips unchanged layers and drops a multi-minute build to seconds, but mode=max caches every intermediate layer and can grow to multiple GB that evict your dependency cache, and a Dockerfile that copies code before installing dependencies never hits at all. The throughline is restraint: cache a few high-value, high-reuse artifacts on the default branch with tight keys and well-ordered Dockerfiles, and treat the 10 GB as the scarce shared resource it is.
+</Recap>
