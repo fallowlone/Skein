@@ -73,23 +73,30 @@ export function schedulePlan(path: Path, cfg: DeadlineConfig, nowMs: number, tie
   const required = path.steps.reduce((n, s) => n + scale(s.estMin), 0);
   const available = availableMinutes(days);
 
+  // Place steps in path order, splitting a step across as many days as it needs — a unit's
+  // scaled cost routinely exceeds a single day's budget (median unit 75 min, p90 295 min vs a
+  // 1–2 h day). A step appears in every day it occupies; budgeting uses the scaled cost while
+  // the step keeps its canonical estMin for display. Splitting wastes nothing, so a step is
+  // unplaced iff the total budget is exhausted.
   let di = 0, used = 0;
   const placed = new Set<string>();
-  for (const step of path.steps) {
-    const cost = scale(step.estMin);
-    while (di < plan.length && used + cost > plan[di].minutes) { di++; used = 0; }
-    if (di >= plan.length) break;
-    plan[di].steps.push(step); // step keeps its canonical estMin for display; budgeting uses `cost`
-    used += cost;
+  outer: for (const step of path.steps) {
+    let left = scale(step.estMin);
+    while (left > 0) {
+      while (di < plan.length && used >= plan[di].minutes) { di++; used = 0; }
+      if (di >= plan.length) break outer;
+      plan[di].steps.push(step);
+      const take = Math.min(plan[di].minutes - used, left);
+      used += take;
+      left -= take;
+    }
     placed.add(step.unit);
   }
   // roi here is a cost-only placeholder (1/cost): with no per-step value field yet, longer
   // steps are dropped first. Replace with value/cost once steps carry a learning-value weight.
   const dropUnits = path.steps.filter((s) => !placed.has(s.unit))
     .map((s) => ({ id: s.unit, estMin: scale(s.estMin), roi: 1 / Math.max(1, scale(s.estMin)) }));
-  const feas: Feasibility = dropUnits.length
-    ? { verdict: "over", deltaMin: dropUnits.reduce((n, d) => n + d.estMin, 0), dropped: dropUnits.map((d) => d.id) }
-    : feasibility(required, available, dropUnits);
+  const feas: Feasibility = feasibility(required, available, dropUnits);
 
   const countdownDays = Math.max(0, Math.ceil((cfg.targetDateMs - nowMs) / DAY));
   return { days: plan, feasibility: feas, countdownDays };
