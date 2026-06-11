@@ -48,7 +48,9 @@ export function suggestFixes(inp: LeverInputs): Fix[] {
     ORDER.indexOf(a.kind) - ORDER.indexOf(b.kind) || a.deltaMin - b.deltaMin);
 }
 
-// Minimal in-order prefix whose summed delta covers the deficit (greedy on the disruption order).
+// Cover the deficit with at most one lever PER KIND (the 0.5h/1h raises and 7d/14d extensions
+// are alternatives — applying two of a kind stacks beyond what either delta promised), walking
+// kinds in disruption order and taking each kind's strongest variant.
 export function bestCombo(fixes: Fix[], deficitMin: number): Fix[] {
   if (deficitMin <= 0) return [];
   // Prefer a single lever that closes the gap (least disruptive first).
@@ -56,10 +58,13 @@ export function bestCombo(fixes: Fix[], deficitMin: number): Fix[] {
   if (single) return [single];
   const combo: Fix[] = [];
   let sum = 0;
-  for (const f of fixes) {
+  for (const kind of ORDER) {
     if (sum >= deficitMin) break;
-    combo.push(f);
-    sum += f.deltaMin;
+    const ofKind = fixes.filter((f) => f.kind === kind);
+    if (!ofKind.length) continue;
+    const strongest = ofKind.reduce((a, b) => (b.deltaMin > a.deltaMin ? b : a));
+    combo.push(strongest);
+    sum += strongest.deltaMin;
   }
   return combo;
 }
