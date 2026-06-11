@@ -166,3 +166,23 @@ describe("english state — P4 grammar/collocation completion", () => {
     expect(parsed.grammarDone["grammar:passive"]).toBe(true);
   });
 });
+
+import { addChunk, gradeChunk, dueChunks } from "./state";
+
+describe("chunk cards", () => {
+  beforeEach(() => resetEnglish());
+
+  it("addChunk creates a scheduled card; gradeChunk advances it; dueChunks surfaces due ids", () => {
+    const id = addChunk("the tricky part is that the cache is cold", "источник: статья", 1_000);
+    expect(id).toBeTruthy();
+    expect(dueChunks(2_000)).toContain(id);
+    gradeChunk(id, "good", 2_000);
+    expect(dueChunks(2_000)).not.toContain(id); // scheduled into the future
+    expect(englishState.value.chunks[id].text).toMatch(/tricky part/);
+  });
+  it("addChunk dedupes by normalized text", () => {
+    const a = addChunk("It turns out that...", undefined, 1_000);
+    const b = addChunk("it turns out that…", undefined, 2_000);
+    expect(a).toBe(b);
+  });
+});
