@@ -12,7 +12,7 @@ export const DEFAULT_CONFIG: PathConfig = {
   breadthVsDepth: 0.3, // lean depth-first by default
   depthTier: "middle",
   pace: { stepsAhead: 5, srsAggressiveness: 0.5 },
-  weights: { prior: 0.25, lessons: 0.35, practice: 0.4, recency: 1.0, masteryThreshold: 0.6, decayFloor: 0.3 },
+  weights: { lessons: 0.35, practice: 0.4, masteryThreshold: 0.6, decayFloor: 0.3 },
 };
 
 export function clampConfig(c: PathConfig): PathConfig {
@@ -29,10 +29,8 @@ export function clampConfig(c: PathConfig): PathConfig {
     },
     weights: {
       ...c.weights,
-      prior: clamp(c.weights.prior, 0, 1),
       lessons: clamp(c.weights.lessons, 0, 1),
       practice: clamp(c.weights.practice, 0, 1),
-      recency: clamp(c.weights.recency, 0, 1),
       masteryThreshold: clamp(c.weights.masteryThreshold, 0.1, 0.95),
       // must stay below masteryThreshold's floor (0.1..0.95): a decayFloor above the threshold
       // makes decay incapable of ever un-knowing a concept (the pre-repair 0.85 default bug)
