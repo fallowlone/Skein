@@ -19,7 +19,8 @@ import { buildConceptGraph } from "./graph";
 import { userState, importUserState } from "~/scripts/user-state";
 import { pretestQuestions, advancedQuestions } from "~/scripts/pretest-questions";
 import { seedFromPretest } from "./pretest-seed";
-import { pickProbe, type DiagItem } from "./calibration";
+import { pickProbe, placementPlan, type DiagItem } from "./calibration";
+import { DOMAIN_FAMILIES } from "./mastery-field";
 import { targetFrontier } from "./planner";
 import committedOverrides from "~/content/path/concept-overrides.json";
 import type { Overrides } from "./graph";
@@ -469,6 +470,13 @@ export function applyDiagnosticResult(concept: string, correctFrac: number): voi
 export function nextCalibrationProbe(): string | null {
   const frontier = targetFrontier(activeGoals(), config.value, concepts);
   return pickProbe(effectiveKnowledge(), graph, frontier, diagnosedConcepts, config.value.weights.masteryThreshold);
+}
+
+// Stratified general placement: 8 domain families × `perFamily` keystone probes, re-planned by
+// the caller between families so earlier propagation prunes later probes.
+export function placementBatches(exclude: Set<string>, perFamily = 2): { family: string; concepts: string[] }[] {
+  const fams = DOMAIN_FAMILIES.map((f) => ({ key: f.key, tracks: f.tracks as string[] }));
+  return placementPlan(effectiveKnowledge(), graph, diagnosedConcepts, fams, perFamily, exclude);
 }
 export function unitProbeConcepts(unitId: string): string[] {
   return (teachesByUnit.get(unitId) ?? []).filter((c) => diagnosedConcepts.has(c));
