@@ -113,12 +113,23 @@ describe("checkPracticeLessonKey", () => {
 describe("checkPracticeCount", () => {
   test("warns (not errors) for a ready lesson with no practice file in a non-required track", async () => {
     await withRoot(async (root) => {
-      // typescript is not in PRACTICE_REQUIRED_TRACKS, so a missing practice file warns rather than errors
-      await lesson(root, "en", "typescript/03-generics/01-generic-functions");
-      await lesson(root, "ru", "typescript/03-generics/01-generic-functions");
+      // checkPracticeCount derives the track from the key prefix; a track absent from
+      // PRACTICE_REQUIRED_TRACKS warns rather than errors. (Every real content track is
+      // now required, so use a placeholder prefix to exercise the warning branch.)
+      await lesson(root, "en", "not-a-required-track/03-generics/01-generic-functions");
+      await lesson(root, "ru", "not-a-required-track/03-generics/01-generic-functions");
       const { errors, warnings } = await checkPracticeCount(root);
       expect(errors).toEqual([]);
       expect(warnings.some((w) => /01-generic-functions/.test(w))).toBe(true);
+    });
+  });
+
+  test("errors for a ready lesson with no practice file in a required track", async () => {
+    await withRoot(async (root) => {
+      await lesson(root, "en", "typescript/03-generics/01-generic-functions");
+      await lesson(root, "ru", "typescript/03-generics/01-generic-functions");
+      const { errors } = await checkPracticeCount(root);
+      expect(errors.some((e) => /01-generic-functions/.test(e))).toBe(true);
     });
   });
 });
