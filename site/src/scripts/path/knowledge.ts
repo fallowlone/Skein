@@ -6,7 +6,6 @@ import { ancestors, descendants } from "./graph";
 const DAY = 86_400_000;
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 
-export const ACTIVITY_CAP = 0.5;   // activity alone can't exceed this
 export const PROP_UP_FACTOR = 0.8; // share of a passed concept's confidence granted to prereqs
 export const PASS_HIGH = 0.6;      // >= => "passed", propagate up-closure lift
 export const FAIL_LOW = 0.4;       // <  => "failed", propagate down to dependents
@@ -51,9 +50,17 @@ export function applyDiagnostic(
   return next;
 }
 
-export function applyActivity(state: KnowledgeState, taught: string[], weight: number, now: number): KnowledgeState {
+// Reading + graded-practice evidence for a unit's taught concepts. `touchedFrac` = share of the
+// unit's lessons with any practice interaction, `doneFrac` = share with ≥1 task completed.
+// Target = wLessons*touchedFrac + wPractice*doneFrac: with the default weights (0.35/0.4),
+// reading alone stays below masteryThreshold (shaky), reading + passing practice crosses it —
+// graded practice is objective enough to retire a unit from the path without a quick-check.
+export function applyStudyEvidence(
+  state: KnowledgeState, taught: string[], touchedFrac: number, doneFrac: number,
+  wLessons: number, wPractice: number, now: number,
+): KnowledgeState {
   let next = state;
-  const target = clamp01(ACTIVITY_CAP * clamp01(weight));
+  const target = clamp01(wLessons * clamp01(touchedFrac) + wPractice * clamp01(doneFrac));
   for (const c of taught) {
     const cur = next.get(c);
     if (cur && STRONG.includes(cur.source)) continue;     // never override stronger evidence

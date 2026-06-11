@@ -55,7 +55,7 @@ export function targetFrontier(goals: Goal[], config: PathConfig, concepts: Conc
 // Topo-ordered closure of every target concept the learner does not yet know.
 // Note: a target already KNOWN is dropped outright — its own prereqs are NOT pulled in (only
 // unknown targets expand ancestors). applyDiagnostic propagates mastery down to prereqs, but
-// applySelfDeclare/applyActivity do not, so declaring a deep concept known implies its chain.
+// applySelfDeclare/applyStudyEvidence do not, so declaring a deep concept known implies its chain.
 export function missingConcepts(frontier: string[], state: KnowledgeState, g: ConceptGraph, threshold: number): string[] {
   const needed = new Set<string>();
   for (const f of frontier) {

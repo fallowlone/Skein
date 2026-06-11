@@ -431,7 +431,7 @@ Replace the never-called `applyActivity` with `applyStudyEvidence`: confidence t
 - Modify: `src/scripts/path/path-io.ts` (collector + init call)
 - Test: `src/scripts/path/knowledge.test.ts`, `src/scripts/path/path-io.test.ts`
 
-- [ ] **Step 1: Write the failing `applyStudyEvidence` test**
+- [x] **Step 1: Write the failing `applyStudyEvidence` test**
 
 In `src/scripts/path/knowledge.test.ts`, replace the test `"applyActivity bumps taught concepts but never above ACTIVITY_CAP nor over diagnostic evidence"` with:
 
@@ -462,12 +462,12 @@ import {
 } from "./knowledge";
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test src/scripts/path/knowledge.test.ts`
 Expected: FAIL — `applyStudyEvidence` is not exported.
 
-- [ ] **Step 3: Replace `applyActivity` in `knowledge.ts`**
+- [x] **Step 3: Replace `applyActivity` in `knowledge.ts`**
 
 Delete the `ACTIVITY_CAP` constant (`knowledge.ts:9`) and replace the whole `applyActivity` function (`knowledge.ts:54-64`) with:
 
@@ -495,12 +495,12 @@ export function applyStudyEvidence(
 
 In `src/scripts/path/planner.ts:56-58`, update the comment's function name (`applySelfDeclare/applyActivity do not` → `applySelfDeclare/applyStudyEvidence do not`).
 
-- [ ] **Step 4: Run knowledge tests**
+- [x] **Step 4: Run knowledge tests**
 
 Run: `bun test src/scripts/path/knowledge.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Write failing tests for the pure fraction collector**
+- [x] **Step 5: Write failing tests for the pure fraction collector**
 
 Append to `src/scripts/path/path-io.test.ts`:
 
@@ -530,12 +530,12 @@ describe("unitPracticeFractions", () => {
 
 Add `unitPracticeFractions` to the test file's import from `./path-io`.
 
-- [ ] **Step 6: Run to verify it fails**
+- [x] **Step 6: Run to verify it fails**
 
 Run: `bun test src/scripts/path/path-io.test.ts`
 Expected: FAIL — `unitPracticeFractions` is not exported.
 
-- [ ] **Step 7: Add the collector + refresh to `path-io.ts`**
+- [x] **Step 7: Add the collector + refresh to `path-io.ts`**
 
 Update the knowledge import at `path-io.ts:115` to include the new function:
 
@@ -619,12 +619,12 @@ export function refreshStudyEvidence(): void {
 if (typeof window !== "undefined") refreshStudyEvidence();
 ```
 
-- [ ] **Step 8: Run the full path suite**
+- [x] **Step 8: Run the full path suite**
 
 Run: `bun test src/scripts/path/`
 Expected: PASS.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/scripts/path/knowledge.ts src/scripts/path/knowledge.test.ts src/scripts/path/planner.ts src/scripts/path/path-io.ts src/scripts/path/path-io.test.ts

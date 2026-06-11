@@ -3,8 +3,8 @@ import { describe, it, expect } from "vitest";
 import { CONCEPTS } from "./__fixtures__/mini-graph";
 import { buildConceptGraph } from "./graph";
 import {
-  emptyState, masteryOf, isKnown, applyDiagnostic, applyActivity, applySelfDeclare, decay,
-  ACTIVITY_CAP, PROP_UP_FACTOR,
+  emptyState, masteryOf, isKnown, applyDiagnostic, applyStudyEvidence, applySelfDeclare, decay,
+  PROP_UP_FACTOR,
 } from "./knowledge";
 
 const g = buildConceptGraph(CONCEPTS);
@@ -30,12 +30,20 @@ describe("knowledge", () => {
     expect(masteryOf(s, "tls")).toBeLessThanOrEqual(0.1);       // dependent dragged down
   });
 
-  it("applyActivity bumps taught concepts but never above ACTIVITY_CAP nor over diagnostic evidence", () => {
-    let s = applyActivity(emptyState(), ["indexing"], 1, NOW);
-    expect(masteryOf(s, "indexing")).toBeCloseTo(ACTIVITY_CAP, 5);
-    s = applyDiagnostic(s, g, "indexing", 0.95, NOW);   // stronger evidence wins
-    s = applyActivity(s, ["indexing"], 1, NOW);          // activity must not lower it
-    expect(masteryOf(s, "indexing")).toBeCloseTo(0.95, 5);
+  it("applyStudyEvidence: reading alone stays shaky; reading + graded practice crosses the threshold", () => {
+    let s = applyStudyEvidence(emptyState(), ["indexing"], 1, 0, 0.35, 0.4, NOW);
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.35, 5);   // touched only → below 0.6
+    s = applyStudyEvidence(s, ["indexing"], 1, 1, 0.35, 0.4, NOW);
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.75, 5);   // touched + done → known
+  });
+
+  it("applyStudyEvidence never lowers and never overrides diagnostic/declared evidence", () => {
+    let s = applyDiagnostic(emptyState(), g, "indexing", 0.2, NOW); // failed quick-check
+    s = applyStudyEvidence(s, ["indexing"], 1, 1, 0.35, 0.4, NOW);
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.2, 5);          // diagnostic wins
+    let s2 = applyStudyEvidence(emptyState(), ["mvcc"], 1, 1, 0.35, 0.4, NOW);
+    s2 = applyStudyEvidence(s2, ["mvcc"], 0.5, 0, 0.35, 0.4, NOW); // weaker later evidence
+    expect(masteryOf(s2, "mvcc")).toBeCloseTo(0.75, 5);            // never lowered
   });
 
   it("applySelfDeclare marks known/unknown", () => {

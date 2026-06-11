@@ -112,7 +112,7 @@ export function deserializeKnowledge(arr: [string, ConceptMastery][]): Knowledge
 // ── (Task 2 appends the content bundle + signals + mutations below this line) ──
 import { buildPath } from "./planner";
 import { schedulePlan, studyDays, availableMinutes } from "./schedule";
-import { emptyState, applySelfDeclare, applyDiagnostic } from "./knowledge";
+import { emptyState, applySelfDeclare, applyDiagnostic, applyStudyEvidence } from "./knowledge";
 import { mergeConfig, clampConfig } from "./config";
 import type { DeadlineConfig } from "./types";
 import { tierEffort } from "./tier-effort";
@@ -206,6 +206,78 @@ if (typeof window !== "undefined") {
   effect(() => { try { localStorage.setItem(C_KEY, JSON.stringify(config.value)); } catch {} });
   effect(() => { try { localStorage.setItem(O_KEY, JSON.stringify(overrides.value)); } catch {} });
 }
+
+// ── study evidence: graded practice progress → concept confidence ──────────────
+const PRACTICE_PREFIX = "atlas.practice.";
+const unitLessonCounts = new Map<string, number>(
+  (unitsJson as any[]).map((u) => [u.id as string, ((u.lessons as string[]) ?? []).length]),
+);
+
+// Pure (exported for tests): per-unit touched/done lesson shares from raw practice-progress
+// maps keyed by lesson key ("<track>/<unit>/<lesson>"; PracticeSection's storage shape).
+export function unitPracticeFractions(
+  progress: Map<string, Record<string, string>>,
+  lessonCounts: Map<string, number>,
+): Map<string, { touchedFrac: number; doneFrac: number }> {
+  const touched = new Map<string, Set<string>>();
+  const done = new Map<string, Set<string>>();
+  const add = (m: Map<string, Set<string>>, unit: string, lesson: string) => {
+    const s = m.get(unit) ?? new Set<string>();
+    s.add(lesson);
+    m.set(unit, s);
+  };
+  for (const [lessonKey, tasks] of progress) {
+    const seg = lessonKey.split("/");
+    if (seg.length < 3) continue; // lab keys and other non-lesson entries
+    const unitId = `${seg[0]}/${seg[1]}`;
+    const lesson = seg.slice(2).join("/");
+    const statuses = Object.values(tasks ?? {});
+    if (!statuses.length) continue;
+    add(touched, unitId, lesson);
+    if (statuses.includes("done")) add(done, unitId, lesson);
+  }
+  const out = new Map<string, { touchedFrac: number; doneFrac: number }>();
+  for (const [unitId, set] of touched) {
+    const count = lessonCounts.get(unitId) ?? 0;
+    if (!count) continue;
+    out.set(unitId, {
+      touchedFrac: Math.min(1, set.size / count),
+      doneFrac: Math.min(1, (done.get(unitId)?.size ?? 0) / count),
+    });
+  }
+  return out;
+}
+
+function readPracticeProgress(): Map<string, Record<string, string>> {
+  const out = new Map<string, Record<string, string>>();
+  if (typeof window === "undefined") return out;
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith(PRACTICE_PREFIX)) continue;
+    try {
+      const v = JSON.parse(localStorage.getItem(k) ?? "{}");
+      if (v && typeof v === "object" && !Array.isArray(v)) out.set(k.slice(PRACTICE_PREFIX.length), v);
+    } catch { /* corrupt entry — skip */ }
+  }
+  return out;
+}
+
+// Fold graded-practice progress into concept confidence. Idempotent and monotone: never lowers,
+// never overrides diagnostic/declared evidence; when nothing increases, the signal keeps its
+// reference, so running on every page load causes no persist churn.
+export function refreshStudyEvidence(): void {
+  const fractions = unitPracticeFractions(readPracticeProgress(), unitLessonCounts);
+  if (!fractions.size) return;
+  const { lessons: wL, practice: wP } = config.value.weights;
+  const now = Date.now();
+  let next = knowledge.value;
+  for (const [unitId, f] of fractions) {
+    const taught = teachesByUnit.get(unitId);
+    if (taught) next = applyStudyEvidence(next, taught, f.touchedFrac, f.doneFrac, wL, wP, now);
+  }
+  knowledge.value = next;
+}
+if (typeof window !== "undefined") refreshStudyEvidence();
 
 // ── recompute (the single entry point; reads signals → subscribes the caller) ──
 // Memoize the override application by the overrides signal's identity — the signal is replaced

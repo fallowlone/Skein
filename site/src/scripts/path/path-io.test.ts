@@ -6,7 +6,7 @@ import {
   nextCalibrationProbe, unitProbeConcepts,
   overrides, loosenUnit, clearOverrides, importState,
   searchConcepts, reorderList,
-  tierOf,
+  tierOf, unitPracticeFractions,
 } from "./path-io";
 import { DEFAULT_CONFIG } from "./config";
 import { emptyState, applySelfDeclare } from "./knowledge";
@@ -200,5 +200,27 @@ describe("tierOf", () => {
   });
   it("falls back to middle for a per-track map", () => {
     expect(tierOf({ ...DEFAULT_CONFIG, depthTier: { frontend: "senior" } })).toBe("middle");
+  });
+});
+
+describe("unitPracticeFractions", () => {
+  const counts = new Map([["docker/01-images", 4], ["go/02-slices", 2]]);
+  it("groups lesson keys by unit and computes touched/done shares", () => {
+    const progress = new Map<string, Record<string, string>>([
+      ["docker/01-images/01-what-is-an-image", { t1: "done", t2: "seen" }],
+      ["docker/01-images/02-layers",           { t1: "attempted" }],
+      ["go/02-slices/01-intro",                { t1: "done" }],
+    ]);
+    const f = unitPracticeFractions(progress, counts);
+    expect(f.get("docker/01-images")).toEqual({ touchedFrac: 0.5, doneFrac: 0.25 }); // 2/4 touched, 1/4 done
+    expect(f.get("go/02-slices")).toEqual({ touchedFrac: 0.5, doneFrac: 0.5 });
+  });
+  it("ignores malformed keys, empty task maps, and unknown units", () => {
+    const progress = new Map<string, Record<string, string>>([
+      ["docker-lab-senior", { t1: "done" }],        // lab key — not <track>/<unit>/<lesson>
+      ["docker/01-images/03-registries", {}],        // no interactions recorded
+      ["ghost/99-unit/01-lesson", { t1: "done" }],   // unit absent from the content bundle
+    ]);
+    expect(unitPracticeFractions(progress, counts).size).toBe(0);
   });
 });
