@@ -88,7 +88,7 @@ describe("path-io calibration surface", () => {
 describe("path-io cold-start", () => {
   it("the bundle loads the full graph", () => {
     expect(content.concepts.length).toBeGreaterThan(4000);
-    expect(content.units.length).toBe(327); // 318 + 9 wave-6 (go 11-13, python 09-12, logic 05-06)
+    expect(content.units.length).toBe(337); // 327 + 10 docker (waves 10-11)
     expect(content.goals.map((g) => g.id)).toContain("senior-fullstack");
   });
 
