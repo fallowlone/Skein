@@ -9,6 +9,7 @@ import { fsrsScheduler } from "./scheduler/fsrs";
 import type { CardState, Grade } from "./scheduler/types";
 import { recordActiveDay } from "~/scripts/user-state";
 import type { Band } from "~/english/types";
+import { appendHours, type HourEntry, type HourKind } from "./hours";
 
 const KEY = "awesome.english.v2"; // v2: scheduler-backed (v1 Leitner is discarded)
 const scheduler = fsrsScheduler();
@@ -39,6 +40,7 @@ export type EnglishState = {
   outputAttempts: Record<string, { at: number; scoreBand?: string }>;
   grammarDone: Record<string, true>;
   collocationDone: Record<string, true>;
+  hoursLog: HourEntry[];
 };
 
 const DEFAULT_NEW_PER_DAY = 20;
@@ -47,6 +49,7 @@ const defaults: EnglishState = {
   settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY, gradingModel: "claude-haiku-4-5" },
   readUnits: {}, outputAttempts: {},
   grammarDone: {}, collocationDone: {},
+  hoursLog: [],
 };
 
 function load(): EnglishState {
@@ -76,6 +79,7 @@ function load(): EnglishState {
       outputAttempts: parsed.outputAttempts ?? {},
       grammarDone: parsed.grammarDone ?? {},
       collocationDone: parsed.collocationDone ?? {},
+      hoursLog: Array.isArray(parsed.hoursLog) ? parsed.hoursLog : [],
     };
   } catch {
     return defaults;
@@ -158,6 +162,7 @@ export function resetEnglish() {
     settings: { newWordsPerDay: DEFAULT_NEW_PER_DAY, gradingModel: "claude-haiku-4-5" },
     readUnits: {}, outputAttempts: {},
     grammarDone: {}, collocationDone: {},
+    hoursLog: [],
   };
   if (typeof window !== "undefined") localStorage.removeItem(KEY);
 }
@@ -286,4 +291,13 @@ export function markCollocationDone(id: string) {
     collocationDone: { ...englishState.value.collocationDone, [id]: true },
   };
   if (typeof window !== "undefined") recordActiveDay();
+}
+
+/** Log minutes of input/srs/output against today (the methodology's primary metric). */
+export function logMinutes(kind: HourKind, min: number, src?: string): void {
+  const date = new Date().toISOString().slice(0, 10);
+  englishState.value = {
+    ...englishState.value,
+    hoursLog: appendHours(englishState.value.hoursLog, { date, min, kind, src }),
+  };
 }
