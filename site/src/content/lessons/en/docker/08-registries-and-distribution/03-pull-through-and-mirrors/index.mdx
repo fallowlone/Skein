@@ -1,0 +1,121 @@
+---
+concepts:
+- docker-mirrors
+deepensInto: []
+estMin: 15
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-pull-through-and-mirrors"
+sources:
+- https://distribution.github.io/distribution/recipes/mirror/
+- https://docs.docker.com/docker-hub/usage/
+spiral: []
+status: ready
+summary: 'A pull-through cache is a registry in proxy mode: it serves layer blobs locally and only fetches misses upstream. It collapses fleet bandwidth and dodges Docker Hub rate limits — but a moved tag can serve a stale manifest unless tag resolution stays authoritative.'
+title: 'Pull-through caches and mirrors: surviving rate limits without serving stale images'
+track: "docker"
+unit: "08-registries-and-distribution"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The autoscaler did exactly its job and that was the problem. A traffic spike scaled a deployment from 30 to 300 pods in four minutes, and every new node pulled the same `node:20` base plus three app layers from Docker Hub. Around pod 140 the pulls started returning `429 Too Many Requests`: the cluster's egress NAT presented one shared IP to Docker Hub, and the anonymous pull limit of 100 per 6 hours per IP had been blown through in minutes. New pods stuck in `ImagePullBackOff`, the scale-up stalled at exactly the moment it was needed, and the incident channel filled with people confused that a *Docker Hub* limit could take down their *own* service. The permanent fix was one line in the daemon config pointing at a pull-through cache they ran inside the cluster: after the first node fetched `node:20`, every other node pulled the layers from the in-cluster mirror at LAN speed, the upstream saw one pull instead of 300, and the rate limit never came near again — turning roughly 300 × 180 MB of repeated upstream transfer into a single fetch.
+</Hook>
+
+<Crux>A pull-through cache is a registry in proxy mode: it serves cached blobs locally and fetches only misses upstream, collapsing fleet pulls.</Crux>
+
+<Explanation>
+
+## What a pull-through cache actually does
+
+A pull-through cache (registry mirror) is an ordinary registry running in **proxy mode**: configured with an upstream (`proxy.remoteurl: https://registry-1.docker.io`), it answers the same `/v2/` pull API, but on a request it checks local storage first and only reaches upstream on a miss, storing what it fetches. The leverage is entirely the **content-addressed blob layer**: because a layer blob's name is its `sha256:` digest, once *any* node has pulled `node:20` through the mirror, the mirror holds those layer blobs, and every subsequent node's `GET /v2/.../blobs/sha256:…` is a **local hit** served at LAN bandwidth. A 300-node rollout of a 180 MB image stops being 300 × 180 MB ≈ 54 GB of upstream transfer and becomes one ~180 MB upstream fetch plus 299 LAN reads. The clients point at it by setting `registry-mirrors` in the Docker daemon config (or `containerd`'s registry host config); to the client it is just a faster registry.
+
+```json5
+// /etc/docker/daemon.json — clients fetch via the in-cluster mirror first
+{ "registry-mirrors": ["https://mirror.internal:5000"] }
+```
+
+The two payoffs are bandwidth and rate limits, and the rate-limit one is what bites first. Docker Hub enforces **100 pulls per 6 hours for anonymous** and **200 per 6 hours for authenticated free** accounts, counted **per source IP** (or per account when logged in) and **per manifest pull**. A NATed cluster shares one egress IP, so its *whole fleet* shares one quota — the Hook's failure. A pull-through cache fronts upstream with **one** identity: the fleet's thousands of pulls become a handful of upstream manifest fetches, keeping you under the limit by construction.
+
+<Inset kind="why" lang="en">
+Why does caching blobs work so cleanly but caching the tag→manifest mapping is dangerous? Because the two halves of the protocol have opposite mutability. A blob is immutable — its digest is its content — so a cached blob is *always* correct to serve; it can never be stale, only absent. A tag is mutable — it is a pointer the upstream can re-aim — so a cached "tag X = manifest Y" answer can silently go stale the moment upstream re-pushes X. This is why a correct pull-through cache caches blobs freely but must keep tag resolution authoritative (revalidate the manifest against upstream, or pin clients to digests): the immutable half is safe to cache forever, the mutable half is not.
+</Inset>
+
+## The failure mode: caching the mutable half
+
+Here is the trap that turns a mirror from a savior into an incident. A pull resolves a tag to a manifest *first*, then fetches blobs. The blobs are safe to cache forever. But if the mirror also caches the **tag→manifest resolution** and serves it without revalidating, then after upstream re-pushes `node:20` to a new digest, the mirror keeps handing out the **old** manifest — and since it still has the old manifest's blobs locally, every node happily assembles a stale image with zero errors. You get the inverse of the lesson-2 incident: there, a tag moved and everyone got the *new* image; here, a tag moved and your mirror pins everyone to the *old* one. The correct behavior is to treat tag resolution as **always revalidate against upstream** (a conditional manifest request; blobs, being immutable, never need revalidation) — or, far more robustly, **have clients pull by digest**, which makes the cache trivially correct because a digest request can only ever be a hit for the exact right bytes or a miss to fetch them.
+
+<Quiz
+  id="03-pull-through-and-mirrors-quiz-1"
+  lessonSlug="03-pull-through-and-mirrors"
+  lang="en"
+  question="A pull-through cache caches both blobs and tag→manifest resolutions without revalidating tags. Upstream re-pushes app:stable to a new digest. What do nodes pulling app:stable through the mirror now get?"
+  choices={[
+    { label: "The old manifest and its old blobs — the mirror serves the stale cached tag resolution and already holds those layers, so nodes silently run the previous image", correct: true },
+    { label: "An error, because the cached manifest no longer matches upstream", misconception: "No error occurs — that's what makes it dangerous. The mirror has a self-consistent old manifest plus its old blobs, so the pull succeeds end to end; it just returns yesterday's image. Stale caching fails silently, not loudly." },
+    { label: "The new manifest, because pulling always re-resolves the tag upstream", misconception: "That's true only if the mirror revalidates tag resolutions. The premise here is it caches them without revalidating, so it keeps serving the old digest until the cache entry expires or is purged." },
+    { label: "A mix of old and new layers stitched together", misconception: "Layers are addressed by digest and assembled per the manifest the mirror returns; it serves one coherent (old) manifest, so the image is wholly the old one, not a stitch. The danger is a consistent-but-stale image, not a corrupt one." },
+  ]}
+/>
+
+## Mirrors, sizing, and the operational picture
+
+A few senior points round this out. A **mirror** can mean two related things: a pull-through cache (lazy, fills on demand) or a fully replicated registry (eager copy, for geo-distribution or air-gapped sites). For rate-limit and bandwidth relief inside one cluster, the lazy pull-through cache is the right tool and the cheaper one. **Sizing** matters: the cache needs disk for the working set of layers (a few hundred GB covers most fleets, since base images dominate and dedup by digest is automatic) and you must run garbage collection on it like any registry, or it grows unbounded. **Cache hit ratio** is the metric that proves the win — a healthy fleet mirror sits well above 90% hits on blob requests once base images are warm, and that ratio is exactly the upstream-traffic and rate-limit reduction. And the **authenticated-upstream** nuance: pointing the mirror at Docker Hub with credentials raises your shared limit to the authenticated tier and consolidates the whole fleet under one accountable identity, which is both higher and observable. The throughline: cache the immutable blob layer aggressively, keep the mutable tag layer honest, and a single shared cache turns a fleet-scale pull storm into one upstream fetch.
+
+<Quiz
+  id="03-pull-through-and-mirrors-quiz-2"
+  lessonSlug="03-pull-through-and-mirrors"
+  lang="en"
+  question="Why does a single in-cluster pull-through cache let a 300-node rollout escape Docker Hub's per-IP pull rate limit?"
+  choices={[
+    { label: "The fleet's pulls hit the local cache; only cache misses go upstream under one identity, so thousands of node pulls collapse to a handful of upstream fetches well under the limit", correct: true },
+    { label: "The cache disables rate limiting on Docker Hub for the cluster's IP", misconception: "A client-side cache can't change Docker Hub's server-side limits. It avoids the limit by not making most requests to Docker Hub at all — misses are rare and shared, so the quota is barely touched, rather than the limit being lifted." },
+    { label: "Each node authenticates separately through the cache, giving each its own 200-pull quota", misconception: "It's the opposite consolidation: the fleet shares the cache's single upstream identity, not one-per-node. The win is fewer upstream requests, not more quotas — most pulls never reach upstream because they're local hits." },
+    { label: "Pulling by tag instead of digest avoids counting against the limit", misconception: "Manifest pulls count regardless of tag vs digest. What avoids the limit is the cache absorbing the pulls locally so they never reach Docker Hub, not the reference form used." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="The first node misses the cache and fills it from upstream; every later node is a local hit"
+  hue="var(--d-backend)"
+  actors={["nodeA", "mirror", "upstream"]}
+  messages={[
+    { from: "nodeA", to: "mirror", label: "GET blobs/sha256:layer (miss)" },
+    { from: "mirror", to: "upstream", label: "fetch once, store" },
+    { from: "upstream", to: "mirror", label: "180 MB layers" },
+    { from: "mirror", to: "nodeA", label: "layers (LAN)" },
+    { from: "nodeA", to: "mirror", label: "nodeB..nodeN: same blob (hit)" },
+    { from: "mirror", to: "nodeA", label: "served local, no upstream" },
+  ]}
+  caption="Blobs are immutable, so a cached blob is always safe to serve — only absent, never stale. Tag→manifest resolution is mutable and must be revalidated upstream (or clients pull by digest), or the mirror pins the fleet to a stale image."
+/>
+
+<KeyTakeaway>A pull-through cache is a registry in proxy mode that serves cached layer blobs locally and only fetches a miss upstream. Because blob names are sha256 digests, the first node's fetch warms the cache and every later node hits it at LAN speed — collapsing a 300-node, 54 GB pull storm into one ~180 MB upstream fetch and one shared upstream identity that stays under Docker Hub's 100/200-per-6h per-IP limit. The one hazard is the mutable half: caching tag→manifest resolution without revalidation serves a stale image silently after an upstream re-push, so keep tag resolution authoritative or have clients pull by digest, where the cache is correct by construction. Watch hit ratio (>90% warm) and GC the cache like any registry.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-pull-through-and-mirrors-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain mechanically how a pull-through cache cuts both bandwidth and Docker Hub rate-limit pressure for a large rollout.", a: "It is a registry in proxy mode with an upstream configured; it answers the /v2/ pull API but checks local storage first and only fetches upstream on a miss, storing what it fetches. Because layer blobs are content-addressed by sha256 digest, the first node to pull an image warms the cache with those blobs, and every subsequent node's blob GETs are local hits served at LAN bandwidth. So a 300-node rollout of a 180 MB image is one ~180 MB upstream fetch plus 299 LAN reads instead of ~54 GB of repeated upstream transfer — that's the bandwidth win. The rate-limit win is the same shape: Docker Hub counts manifest pulls per source IP (100/6h anonymous, 200/6h authenticated free), and a NATed cluster shares one egress IP, so the whole fleet shares one quota. The cache fronts upstream with a single identity and absorbs nearly all pulls locally, so only the rare miss reaches Docker Hub and the quota is barely touched." },
+    { q: "Why is caching blobs always safe but caching tag resolution dangerous, and what are the two correct mitigations?", a: "The two protocol halves have opposite mutability. A blob's name is the sha256 of its bytes, so a cached blob is immutable — it can be absent (a miss to fetch) but never stale; serving it is always correct. A tag is a mutable pointer upstream can re-aim, so a cached 'tag X resolves to manifest Y' answer can silently go stale the instant upstream re-pushes X. A cache that serves the old resolution without revalidating, while still holding the old manifest's blobs, hands out a fully self-consistent but outdated image with no error — the inverse staleness incident. The two fixes: revalidate tag resolutions against upstream on every pull (a conditional manifest request; blobs never need revalidation), or, more robustly, have clients pull by digest so a request can only be an exact-bytes hit or a fetch-the-right-bytes miss, making the cache correct by construction." },
+  ]}
+/>
+
+<Recap lang="en">
+A pull-through cache is an ordinary registry run in proxy mode: it speaks the same /v2/ pull API, but checks local storage first and only reaches its configured upstream on a miss, storing what it fetches. Its whole leverage is the content-addressed blob layer — a layer's name is its sha256 digest, so once any node has pulled an image through the mirror, every later node's blob GETs are local hits at LAN bandwidth, turning a 300-node rollout of a 180 MB image from roughly 54 GB of repeated upstream transfer into one ~180 MB fetch plus LAN reads. That same consolidation defeats Docker Hub's rate limits — 100 pulls per 6 hours anonymous, 200 authenticated free, counted per source IP — which a NATed cluster otherwise shares as a single fleet-wide quota that an autoscale event blows through in minutes; behind a mirror the fleet's thousands of pulls become a handful of upstream fetches under one identity. The hazard is the mutable half of the protocol: blobs are immutable and always safe to cache, but tag→manifest resolution is a mutable pointer, and a mirror that caches it without revalidating will serve a stale-but-self-consistent image after an upstream re-push, silently, because it still holds the old blobs. Keep tag resolution authoritative (revalidate manifests; blobs never need it) or, better, pull by digest so the cache is correct by construction. Operationally, size the cache for the working set of base layers, run GC on it like any registry, watch a blob-hit ratio that should sit above 90% once warm, and consider authenticating the upstream to lift the quota and consolidate the fleet under one accountable identity. Cache the immutable layer aggressively, keep the mutable layer honest, and a fleet-scale pull storm becomes a single upstream fetch.
+</Recap>

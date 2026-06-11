@@ -1,0 +1,132 @@
+---
+concepts:
+- docker-registry-protocol
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-registry-protocol"
+sources:
+- https://github.com/opencontainers/distribution-spec/blob/main/spec.md
+- https://distribution.github.io/distribution/spec/api/
+spiral: []
+status: ready
+summary: 'A registry is a content-addressed blob store behind a small HTTP API. Pull resolves a tag to a manifest, fetches a config and layer blobs by sha256 digest; push uploads blobs (chunked or monolithic, or cross-repo mounted) then PUTs the manifest. Digests are the real identity.'
+title: 'The registry pull/push protocol: manifests, blobs, and content-addressed distribution'
+track: "docker"
+unit: "08-registries-and-distribution"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The on-call page said "image pull backoff" across the whole fleet, and the registry dashboard was green. What was actually happening showed up only in a packet capture: every node was issuing `GET /v2/payments-api/manifests/v2.4.1`, getting a 200 with a tiny JSON body, then a storm of `GET /v2/payments-api/blobs/sha256:...` requests — and one of those blob GETs was returning 404. A garbage-collection job had run against the registry the night before, and because of a race between an in-flight push and the mark phase, it had deleted a layer blob that a still-referenced manifest pointed at. The manifest resolved fine; the tag looked healthy; the registry's own health check fetched no blobs. But the image was a directory listing pointing at a file that no longer existed. The fix was understanding that a registry is not "where images live" — it is a content-addressed blob store with a thin index on top, and the index had outlived its contents.
+</Hook>
+
+<Crux>A registry is a content-addressed blob store behind a tiny API: pull resolves a tag to a manifest, then fetches layers by sha256 digest.</Crux>
+
+<Explanation>
+
+## Two object kinds, one address space
+
+Everything in a registry is one of two things: a **manifest** (small JSON describing an image — its config plus an ordered list of layers) or a **blob** (an opaque content-addressed object: a layer tarball or the config JSON). Both live under the `/v2/` API, the OCI distribution spec's single namespaced tree:
+
+```text
+GET /v2/<name>/manifests/<reference>   # reference = a tag (v2.4.1) OR a digest (sha256:ab…)
+GET /v2/<name>/blobs/<digest>          # digest is ALWAYS sha256:<hex>, never a tag
+HEAD /v2/<name>/blobs/<digest>         # does the layer already exist here? (used before push)
+```
+
+The split is the whole design. A **blob's address is its content**: `sha256:9b2a…` *is* the SHA-256 of the bytes, so a blob is immutable by definition — change one byte and it is a different object with a different name. A **manifest's reference can be a tag**, and a tag is just a mutable pointer the registry stores in its index. So `myrepo:latest` and `myrepo@sha256:9b2a…` are categorically different: the digest names an exact bit-identical image forever; the tag names "whatever was last pushed under this label." When you pull a tag, the client does a `GET .../manifests/v2.4.1`, reads the returned `Content-Type` to learn the manifest's media type (e.g. `application/vnd.oci.image.manifest.v1+json` for a single-arch image, or `...image.index.v1+json` for a multi-arch index that lists per-platform manifests), then fetches the `config` blob and each `layers[].digest` blob — deduplicating any layer it already has in its local content store.
+
+<Inset kind="why" lang="en">
+Why address blobs by hash instead of a path or an id? Because content-addressing makes deduplication and integrity free. Two images sharing a base layer reference the identical `sha256:` blob — the registry stores it once, the client downloads it once, and a CDN caches it forever because the URL can never mean different bytes. Integrity comes for the same reason: the client recomputes the SHA-256 of every blob it pulls and compares it to the digest it asked for, so a corrupted or tampered byte is caught locally, no signature needed for the transport-integrity layer. The cost is that nothing about a tag is verifiable — only a digest is.
+</Inset>
+
+## Push: blobs first, manifest last
+
+Push is the mirror image and the order is load-bearing. You cannot PUT a manifest that references a blob the registry does not yet have, so the client uploads **blobs first, manifest last**:
+
+```text
+POST /v2/<name>/blobs/uploads/          # start an upload, get a session URL (Location:)
+PATCH <session-url>                      # chunked upload: send a byte range, repeat
+PUT <session-url>?digest=sha256:<hex>    # finalize: registry verifies the bytes hash to <digest>
+PUT /v2/<name>/manifests/<tag>           # only after every referenced blob is present
+```
+
+Two senior optimizations live here. **Cross-repository blob mount**: before uploading a layer the client `HEAD`s it; if the registry already holds that `sha256:` (in any repo the credential can read), the client issues `POST .../blobs/uploads/?mount=<digest>&from=<other-repo>` and the layer is linked without transferring a byte — the reason pushing a new tag of a base-image-sharing app moves only the changed layers, often a few MB instead of hundreds. **Chunked vs monolithic upload**: small blobs go in one `PUT` with the body inline; large blobs stream as `PATCH` ranges so a dropped connection resumes from the last acknowledged offset instead of restarting a 400 MB layer. The finalizing `PUT ...?digest=` is where the registry **verifies** — it recomputes the hash and rejects the upload with `400 DIGEST_INVALID` if the bytes do not match, so a corrupted transfer can never be committed under a valid name.
+
+<Quiz
+  id="01-registry-protocol-quiz-1"
+  lessonSlug="01-registry-protocol"
+  lang="en"
+  question="During a pull, GET /v2/app/manifests/v2.4.1 returns 200 with a valid manifest, but a subsequent GET /v2/app/blobs/sha256:9b2a… returns 404. What does this state mean?"
+  choices={[
+    { label: "The tag's index entry still points at a manifest whose referenced layer blob has been deleted — the manifest resolved but the content it names is gone", correct: true },
+    { label: "The tag v2.4.1 does not exist, so the pull should have failed at the manifest step", misconception: "The manifest GET returned 200 — the tag exists and resolves fine. The failure is one level down: a blob the manifest references is missing, which a tag/manifest health check never catches because it fetches no blobs." },
+    { label: "The client requested the blob with a tag instead of a digest, so the registry rejected it", misconception: "Blobs are only ever addressed by sha256 digest, and the request shown uses one. A 404 here means that exact content-addressed object is absent from storage, not that the address form was wrong." },
+    { label: "404 on a blob always means an authentication failure for that repository", misconception: "Auth failures return 401/403, not 404. A 404 on a blob whose digest a valid manifest references means the blob itself was removed from storage — classically a GC race deleting a still-referenced layer." },
+  ]}
+/>
+
+## Why the protocol shapes operations
+
+Three operational facts fall straight out of this design. First, **pull is fan-out**: one manifest GET spawns N+1 blob GETs (N layers plus the config), so a 12-layer image is ~13 requests per node, and a 200-node rollout is thousands of blob GETs — which is exactly why pull-through caches and rate limits exist (a public registry like Docker Hub caps anonymous pulls at 100 per 6 hours and authenticated free pulls at 200 per 6 hours, counted per manifest pull, throttling fleet rollouts that re-pull). Second, **garbage collection is a two-phase mark-and-sweep over the blob store**: it walks every manifest to mark referenced digests, then deletes unmarked blobs — and a push racing the mark phase can leave a referenced blob unmarked and swept, the exact Hook failure. Run GC with the registry in read-only mode for correctness. Third, **digests are the only safe deploy reference**: pinning a Deployment to `app@sha256:…` means the bytes can never change under you, whereas `app:latest` can be re-pushed to point at a different manifest between two nodes pulling it, so a single rollout runs two different images.
+
+<Quiz
+  id="01-registry-protocol-quiz-2"
+  lessonSlug="01-registry-protocol"
+  lang="en"
+  question="A client is about to push a new app tag whose layers are mostly shared with a base image already in the registry. Why does the push transfer only a few megabytes instead of the full image?"
+  choices={[
+    { label: "It HEADs each layer digest first; layers the registry already holds are linked via cross-repo blob mount, so only the genuinely new layers' bytes are uploaded", correct: true },
+    { label: "The registry compresses the duplicate layers on the fly so they cost almost nothing to send", misconception: "There is no server-side dedup-compression step in the push path. The saving comes from not sending shared layers at all: the client checks existence with HEAD and mounts existing blobs by digest, transferring zero bytes for them." },
+    { label: "Docker always uploads only the topmost layer and assumes the rest are present", misconception: "There is no 'topmost only' assumption — each layer is checked independently by its sha256 digest. Any layer the registry lacks is uploaded; any it already has (in a readable repo) is mounted. Shared base layers happen to already exist." },
+    { label: "The manifest is uploaded first and the registry fetches missing blobs itself", misconception: "Push order is blobs first, manifest last — a registry never reaches back out to fetch blobs a manifest references. The client must ensure every referenced blob is present (uploaded or mounted) before the manifest PUT." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="A docker pull resolves a tag to a manifest then fetches the config and each layer blob by digest"
+  hue="var(--d-backend)"
+  actors={["client", "registry", "blobstore"]}
+  messages={[
+    { from: "client", to: "registry", label: "GET /v2/app/manifests/v2.4.1" },
+    { from: "registry", to: "client", label: "200 manifest (Content-Type media type)" },
+    { from: "client", to: "registry", label: "GET /v2/app/blobs/sha256:config" },
+    { from: "registry", to: "blobstore", label: "fetch by digest" },
+    { from: "registry", to: "client", label: "200 config blob" },
+    { from: "client", to: "registry", label: "GET /v2/app/blobs/sha256:layerN" },
+    { from: "registry", to: "client", label: "200 layer (or 404 if GC swept it)" },
+  ]}
+  caption="One manifest GET fans out to N+1 blob GETs (config plus layers). Each blob is verified locally against its sha256 digest. A 404 here with a 200 manifest is a dangling reference — usually a GC race."
+/>
+
+<KeyTakeaway>A registry is a content-addressed blob store behind the small `/v2/` HTTP API. Pull is GET-manifest then fan-out GET-blob-by-digest, with the manifest's media type telling the client whether it is a single image or a multi-arch index; the client verifies each blob's bytes against its sha256 name. Push is blobs-first (chunked, resumable, cross-repo mountable) then manifest-last, with the finalizing PUT verifying the digest. A blob is immutable because its name is its hash; a tag is a mutable index pointer — which is why digests, not tags, are the only safe deploy reference, and why a GC race can leave a manifest pointing at a swept blob.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="01-registry-protocol-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through what a docker pull of app:v2.4.1 actually does at the HTTP level, and where verification happens.", a: "The client issues GET /v2/app/manifests/v2.4.1. The registry resolves the tag through its index to a manifest and returns it with a Content-Type media type; if that type is an image index (multi-arch), the client selects the per-platform manifest for its OS/arch and fetches that. From the chosen image manifest the client reads the config digest and the ordered layers[] digests, then issues GET /v2/app/blobs/sha256:<digest> for the config and each layer it does not already hold locally, deduplicating against its content store. Verification is local and per-blob: the client recomputes the SHA-256 of each downloaded blob and compares it to the digest it requested, so corruption or tampering in transit is caught without any signature. A 200 manifest with a 404 blob means the tag resolved but a referenced content object is missing — a dangling reference, classically from a GC race." },
+    { q: "Explain why a tag and a digest are not interchangeable as deploy references, using the registry's data model.", a: "A blob's address is the SHA-256 of its bytes, so it is immutable — the name cannot survive a content change. A manifest can be addressed by digest the same way, giving an exact, bit-identical, permanent identity: app@sha256:9b2a… is the same image on every node forever. A tag, by contrast, is a mutable pointer the registry stores in its index; v2.4.1 or latest simply names whatever manifest was last PUT under that label, and it can be re-pushed to point elsewhere at any time. So pinning a deploy to a tag means two nodes pulling a few seconds apart can get different manifests if a push lands between them, silently running two different images in one rollout. Pinning to a digest removes that class of bug entirely: the bytes are fixed by the reference itself." },
+  ]}
+/>
+
+<Recap lang="en">
+A registry is not a filesystem of images; it is a content-addressed blob store with a thin mutable index, exposed through the OCI distribution spec's /v2/ API. Two object kinds exist: manifests (small JSON listing a config blob and ordered layer blobs, addressable by tag or by digest) and blobs (opaque content-addressed objects whose sha256 name is the hash of their bytes, so they are immutable by construction). A pull is GET /v2/<name>/manifests/<ref> — reading the returned media type to tell a single image from a multi-arch index — followed by GET /v2/<name>/blobs/<digest> for the config and every not-yet-held layer, each verified locally against its digest. A push runs the mirror order, blobs first: POST to open an upload session, PATCH chunked ranges for resumable large-layer transfer, PUT ?digest= to finalize where the registry verifies the hash, and HEAD plus ?mount= to skip layers the registry already holds via cross-repository blob mount, transferring only the changed bytes. From this model fall the operational truths a senior carries: pull is fan-out (N+1 blob GETs per image, why pull-through caches and the 100/200-per-6h Docker Hub rate limits exist), garbage collection is a mark-and-sweep that must run read-only or it can sweep a still-referenced blob and strand a manifest, and only a digest — never a tag — is a safe deploy reference, because a tag is a pointer that can be re-aimed under a running rollout.
+</Recap>
