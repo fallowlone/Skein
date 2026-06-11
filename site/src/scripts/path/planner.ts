@@ -67,9 +67,34 @@ export function missingConcepts(frontier: string[], state: KnowledgeState, g: Co
   return topoSort(g).filter((id) => needed.has(id));
 }
 
+// Greedy set cover over units teaching ≥1 missing concept: repeatedly take the unit covering the
+// most still-uncovered concepts (ties: smaller estMin, then unit id). ~630 concepts are taught by
+// 2+ units — without the cover step every teacher entered the path and double-counted its minutes.
 export function conceptsToUnits(missing: string[], units: UnitConcepts[]): UnitConcepts[] {
-  const need = new Set(missing);
-  return units.filter((u) => u.teaches.some((c) => need.has(c)));
+  const uncovered = new Set(missing);
+  const candidates = units.filter((u) => u.teaches.some((c) => uncovered.has(c)));
+  const picked = new Set<string>();
+  const out: UnitConcepts[] = [];
+  while (uncovered.size) {
+    let best: UnitConcepts | undefined;
+    let bestCover = 0;
+    for (const u of candidates) {
+      if (picked.has(u.unit)) continue;
+      let cover = 0;
+      for (const c of u.teaches) if (uncovered.has(c)) cover++;
+      if (!cover) continue;
+      if (!best || cover > bestCover ||
+          (cover === bestCover && (u.estMin < best.estMin || (u.estMin === best.estMin && u.unit < best.unit)))) {
+        best = u;
+        bestCover = cover;
+      }
+    }
+    if (!best) break; // remaining concepts are taught by no unit
+    picked.add(best.unit);
+    out.push(best);
+    for (const c of best.teaches) uncovered.delete(c);
+  }
+  return out;
 }
 
 export interface OrderCtx {
@@ -173,7 +198,12 @@ export function buildPath(input: BuildInput): Path {
   const learn: PathStep[] = ordered.map((u) => {
     const unlocks = u.teaches.filter((c) => missingSet.has(c));
     const labels = unlocks.map((c) => byId.get(c)?.label.en ?? c).join(", ");
-    return { unit: u.unit, track: u.track, unlocks, reason: `Unlocks ${labels}`, kind: "learn", estMin: u.estMin };
+    // Remaining-effort estimate: authored estMin scaled by the share of the unit's concepts
+    // still missing — a mostly-known unit costs a fraction of a full read. 5-min floor keeps a
+    // step from rounding to nothing.
+    const share = u.teaches.length ? unlocks.length / u.teaches.length : 1;
+    const estMin = Math.max(5, Math.round(u.estMin * share));
+    return { unit: u.unit, track: u.track, unlocks, reason: `Unlocks ${labels}`, kind: "learn", estMin };
   });
 
   const withReviews = interleaveReviews(learn, srsDue, config.pace.srsAggressiveness);
