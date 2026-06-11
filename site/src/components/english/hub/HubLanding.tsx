@@ -9,6 +9,7 @@ import HoursPanel from "./HoursPanel";
 import NextPath from "./NextPath";
 import ByoPipe from "./ByoPipe";
 import OwnedModules from "./OwnedModules";
+import MonologueCheckpoint from "./MonologueCheckpoint";
 import Launchpads from "./Launchpads";
 import CuratedLibrary from "./CuratedLibrary";
 import HonestStrip from "./HonestStrip";
@@ -22,6 +23,7 @@ export default function HubLanding({ lang }: { lang: Locale }) {
       <NextPath lang={lang} />
       <ByoPipe lang={lang} />
       <OwnedModules lang={lang} />
+      <MonologueCheckpoint lang={lang} />
       <Launchpads lang={lang} />
       <CuratedLibrary lang={lang} />
       <HonestStrip lang={lang} />
