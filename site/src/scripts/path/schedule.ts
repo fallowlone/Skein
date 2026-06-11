@@ -93,10 +93,11 @@ export function schedulePlan(path: Path, cfg: DeadlineConfig, nowMs: number, tie
     }
     placed.add(step.unit);
   }
-  // roi here is a cost-only placeholder (1/cost): with no per-step value field yet, longer
-  // steps are dropped first. Replace with value/cost once steps carry a learning-value weight.
-  const dropUnits = path.steps.filter((s) => !placed.has(s.unit))
-    .map((s) => ({ id: s.unit, estMin: scale(s.estMin), roi: 1 / Math.max(1, scale(s.estMin)) }));
+  // Triage candidates: every step, ranked by value density. `dropped` is the engine's suggestion
+  // of what to cut when over budget — with step.value present, the cheapest-per-learning-value
+  // units go first instead of simply the longest (the old 1/cost placeholder).
+  const dropUnits = path.steps
+    .map((s) => ({ id: s.unit, estMin: scale(s.estMin), roi: (s.value ?? 1) / Math.max(1, scale(s.estMin)) }));
   const feas: Feasibility = feasibility(required, available, dropUnits);
 
   const countdownDays = Math.max(0, Math.ceil((cfg.targetDateMs - nowMs) / DAY));
