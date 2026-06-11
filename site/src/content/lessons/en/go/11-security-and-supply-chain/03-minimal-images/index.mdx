@@ -1,0 +1,147 @@
+---
+concepts:
+- go-minimal-images
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-minimal-images"
+sources:
+- https://go.dev/blog/docker
+- https://github.com/GoogleContainerTools/distroless
+- https://docs.docker.com/build/building/multi-stage/
+spiral: []
+status: ready
+summary: 'Every binary in an image is a tool for an attacker after RCE. Multi-stage builds compile with the full toolchain, then COPY one static binary into scratch or distroless — no shell, no package manager, nothing for a scanner to flag. Add CA certs and a nonroot user.'
+title: 'Minimal container images for Go: the attack-surface ladder from ubuntu to scratch via multi-stage builds'
+track: "go"
+unit: "11-security-and-supply-chain"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+The intrusion detection alert fired on an outbound connection to a mining pool, and the on-call braced for the usual cryptominer cleanup. The webshell was real: an unpatched image-processing endpoint had let an attacker write a PHP-style dropper into a writable temp directory, and the payload was textbook — fetch a miner with curl, make it executable, fork it under a process name that mimicked the app. Except the logs showed the same three lines retrying in a loop and failing every time: `sh: not found`, `curl: not found`, `chmod: not found`. The service ran in a `scratch` image — one statically linked Go binary, no shell, no busybox, no package manager, no libc. The dropper had a foothold inside the process but no second stage to launch, because every tool it reached for had been deleted at build time by virtue of never being added. The attacker had code execution and nothing to execute. The incident downgraded from "miner running in prod" to "blocked exploit attempt", and the post-mortem's strongest control was a line nobody wrote: the shell that was not in the image.
+</Hook>
+
+<Crux>Every binary in an image is a post-RCE tool. Multi-stage builds copy one static Go binary into scratch: nothing left to weaponize.</Crux>
+
+<Explanation>
+
+## The attack-surface argument
+
+A container image is not a virtual machine; it is a filesystem your process sees. Everything in it that is executable — `/bin/sh`, `apt`, `curl`, `wget`, `python`, the entire GNU coreutils — is a capability available to anyone who achieves code execution inside the container. Most real-world container attacks are two-stage: an application vulnerability (deserialization, SSRF, a path-traversal write) gets a foothold, and then the attacker *lives off the land*, using the tools already present to download a payload, escalate, and persist. A shell is the universal second stage; a package manager is a software-delivery service handed to the intruder; `curl` and `wget` are exfiltration channels. The minimal-image thesis is blunt: you cannot exploit a tool that is not there. This is defense by absence, and it is unusually robust because it does not depend on a rule being evaluated correctly at runtime — the capability simply does not exist.
+
+Go is the language this works best for, because the Go toolchain can emit a single statically linked binary with no runtime dependency on the host's libc or interpreter. That means the *runnable surface* of a Go service can be exactly one file: your binary. Nothing else needs to be in the image for the program to run.
+
+## The ladder, rung by rung
+
+Think of base images as a ladder trading convenience for attack surface:
+
+<StackDiagram
+  label="Base-image ladder: each rung down removes tools an attacker could use"
+  hue="var(--d-backend)"
+  layers={[
+    { label: "ubuntu / debian — full userland", note: "~75-120MB+, shell, apt, coreutils" },
+    { label: "alpine — busybox + musl", note: "~5-10MB, has a shell, cgo caveats" },
+    { label: "distroless — glibc, no shell", note: "~20MB, ca-certs + tzdata baked in" },
+    { label: "scratch — empty, static binary only", note: "~app size, nothing to flag" },
+  ]}
+  caption="Down the ladder, runnable tooling disappears. Alpine still ships a busybox shell; distroless removes the shell but keeps a glibc base and CA certs; scratch is empty — your static binary is the entire image."
+/>
+
+**ubuntu / debian** give you a full userland — convenient for debugging, and a complete toolkit for an intruder. **alpine** trims to ~5–10 MB on busybox and musl, but it still has a shell (busybox `sh` is a real second stage), and musl is not glibc: cgo-enabled builds can hit subtle libc differences, and DNS resolution behaved differently enough historically to cause production incidents. **distroless** (Google's images) removes the shell and package manager entirely while keeping a glibc base, CA certificates, and `/etc/passwd` — about 20 MB, with a `:nonroot` variant and a `:debug` variant that adds busybox only when you explicitly need it. **scratch** is the empty image: zero bytes of base, so the image is just your binary. It demands static-linking discipline and you must add by hand the few things a full OS gave you for free.
+
+## Building it: multi-stage is the mechanism
+
+The build needs the whole toolchain; the runtime needs none of it. Multi-stage builds express exactly that split — compile in a fat builder stage, then `COPY` only the artifact into a minimal final stage:
+
+```dockerfile
+# --- build stage: has the full Go toolchain ---
+FROM golang:1.23 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# CGO_ENABLED=0 forces a static binary with no libc dependency,
+# which is what makes a scratch final stage possible at all.
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /app ./cmd/server
+
+# --- final stage: nothing but what the binary needs ---
+FROM scratch
+# TLS to any HTTPS endpoint needs the CA bundle; scratch has none.
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build /app /app
+# Run as a non-root UID; scratch has no useradd, so set it numerically.
+USER 65534
+ENTRYPOINT ["/app"]
+```
+
+The four things `scratch` does not give you, and how to supply them: **CA certificates** (`ca-certificates.crt`, or the program can't validate any TLS cert — the classic "x509: certificate signed by unknown authority" in prod); **tzdata** if you do timezone math (or embed it with Go's `time/tzdata` import); **`/etc/passwd`** if a tool needs to resolve a username (a numeric `USER` sidesteps this); and a **nonroot UID**, because the default is root and a root process plus a container escape is a host-level event. Pair `USER` with a read-only root filesystem (`--read-only` at runtime) and you have removed write targets for droppers too. Distroless is the same recipe with the certs and `/etc/passwd` already included — choose it over scratch when you want those batteries included or need a debug variant on standby.
+
+<Quiz
+  id="03-minimal-images-quiz-1"
+  lessonSlug="03-minimal-images"
+  lang="en"
+  question="A Go service runs fine locally but, deployed from a scratch image, fails every outbound HTTPS call with 'x509: certificate signed by unknown authority'. What is missing and why?"
+  choices={[
+    { label: "The CA certificate bundle — scratch ships no files at all, so there are no root certs to validate the server's TLS chain against", correct: true },
+    { label: "The Go binary was built without TLS support and needs a build tag to enable crypto/tls", misconception: "crypto/tls is always compiled in; there is no opt-in build tag. The handshake is reaching the verification step and failing there precisely because the trust store is empty, not because TLS code is absent." },
+    { label: "scratch lacks a shell, so the binary cannot invoke openssl to verify certificates", misconception: "Go verifies certificates in-process with crypto/x509 — it never shells out to openssl. The shell's absence is a security feature here and is unrelated; what is missing is the root CA bundle the verifier reads." },
+    { label: "The container runs as root, and root cannot read the system trust store", misconception: "This is a missing-file problem, not a permissions one: scratch contains no trust store for any user to read. Copying ca-certificates.crt from the build stage fixes it regardless of UID." },
+  ]}
+/>
+
+## Scanning, honestly
+
+Image scanners (Trivy, Grype, the registry's built-in) are overwhelmingly good at one thing: matching installed **OS package** versions against CVE databases. That framing is the key to reading their output on minimal images. A debian-based image with 200 packages will show a long, mostly-noise CVE list — many in packages your Go binary never invokes. A `scratch` image has *no OS packages*, so the OS-layer scan is clean by construction — not because the scanner is lenient, but because there is nothing in its wheelhouse to find. This is a genuine, structural advantage, and it is also exactly where honesty matters: a clean scratch scan does not mean a secure service. Your Go module vulnerabilities still exist (that is govulncheck's job, from the previous lesson), your application logic can still be exploited, and your own static binary is unscanned by OS-package tools. Minimal images shrink the *base* attack surface to near zero; they say nothing about the code you shipped. The two controls compose: govulncheck for your Go code, minimal images for everything underneath it.
+
+<Inset kind="why" lang="en">
+Why is "the scanner found nothing" a weaker signal than it feels? Because OS-package scanners answer "does an installed package match a known CVE?" — and on scratch the set of installed packages is empty, so the answer is trivially no. The risk is treating that empty result as a clean bill of health for the whole service. The defensible reading is narrow and true: the base image contributes no known-vulnerable packages. Everything above the base — your dependencies, your code, your configuration — needs its own controls. Minimal images make the scanner's job easy by deleting its entire domain, which is a real win and a partial one.
+</Inset>
+
+## The cost side, stated plainly
+
+Minimal images are not free convenience. The shell you deleted is the shell you cannot `kubectl exec` into to debug a live incident — your debugging story moves to structured logs, metrics, ephemeral debug containers (a sidecar sharing the process namespace), or the distroless `:debug` variant kept on a shelf. Static linking constrains you: cgo-dependent libraries (some SQLite drivers, certain crypto bindings) either need `CGO_ENABLED=1` and therefore a libc in the final image (distroless, not scratch), or a pure-Go alternative. And the numbers are real motivation: dropping from a ~120 MB debian base to a ~10 MB final image cuts pull time and cold-start latency on autoscaling nodes, and shrinks per-image storage across a fleet — meaningful when a registry holds thousands of tags. Pick the lowest rung your dependencies actually permit: scratch for pure-Go static binaries, distroless for cgo or batteries-included, alpine only when you have a concrete reason to want its shell and accept musl.
+
+<Quiz
+  id="03-minimal-images-quiz-2"
+  lessonSlug="03-minimal-images"
+  lang="en"
+  question="Why does a multi-stage build with a scratch final stage reduce attack surface in a way that 'just running apt-get remove' on a debian image does not reliably match?"
+  choices={[
+    { label: "The build tools never enter the final image at all — only the copied artifact does — so there is no removal step that can be incomplete or leave dependencies behind", correct: true },
+    { label: "apt-get remove is slower, so the multi-stage build is mainly a performance optimization", misconception: "Speed is a side benefit, not the security point. The security difference is categorical: removal subtracts from a populated image and can miss transitive files or leave a shell, while multi-stage starts empty and adds only the binary." },
+    { label: "scratch images are signed by Docker, so they are inherently more trusted", misconception: "scratch is simply the empty image; no special signing is involved. Its security comes from containing nothing executable except your binary, not from provenance guarantees the other approach lacks." },
+    { label: "Removing packages from debian is reversible at runtime, but scratch images are immutable", misconception: "All container image layers are immutable once built; debian-minus-packages is not rewritable at runtime either. The real distinction is start-empty-and-add versus start-full-and-subtract, where subtraction is error-prone and usually leaves a shell." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Every executable in an image is a ready-made second stage for an attacker who gets code execution, so the strongest control is absence: a multi-stage build compiles with the full Go toolchain, then copies one statically linked binary (CGO_ENABLED=0) into scratch or distroless — no shell, no package manager, no curl to weaponize. Supply the few things scratch omits explicitly (CA certs, tzdata, a numeric nonroot USER, read-only rootfs). OS-package scanners find nothing because there is nothing in their domain — a real structural win, but govulncheck and app security still own the layers above the base.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-minimal-images-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the attack-surface argument for minimal images and why multi-stage builds implement it more reliably than removing packages.", a: "Most container compromises are two-stage: an app-level vulnerability gets a foothold, then the attacker lives off the land using tools already in the image — a shell as universal second stage, a package manager to fetch payloads, curl/wget to exfiltrate. Defense by absence removes those capabilities so there is nothing to weaponize, and it is robust because it does not rely on a runtime rule evaluating correctly: the tool simply is not there. Multi-stage builds implement this by category, not subtraction: a fat builder stage holds the toolchain, and only the compiled artifact is COPYed into a minimal final stage. Starting empty and adding one binary cannot be incomplete, whereas apt-get remove on a populated image can miss transitive files and typically leaves a shell behind — start-empty beats start-full-and-subtract." },
+    { q: "What does scratch omit that a Go service often needs, how do you supply each, and what does a clean image scan actually prove?", a: "scratch is the empty image, so you add by hand: CA certificates (ca-certificates.crt, or every outbound TLS fails with x509 unknown-authority), tzdata for timezone math (or import time/tzdata to embed it), /etc/passwd if a username must resolve (a numeric USER avoids it), and a nonroot UID since the default is root. CGO_ENABLED=0 produces the static binary scratch requires; cgo dependencies force distroless (glibc) instead. A clean OS-package scan proves only that the base contributes no known-vulnerable packages — true and structural, because scratch has no packages for the scanner to match. It says nothing about your Go module CVEs (govulncheck's job), your application logic, or your own unscanned binary; minimal images and govulncheck compose, base versus code." },
+  ]}
+/>
+
+<Recap lang="en">
+A container image is the filesystem your process inhabits, and every executable in it is a capability handed to anyone who achieves code execution inside the container. Because real attacks are two-stage — foothold, then live off the land with the shell, package manager, and curl already present — the most durable control is deletion by omission: an exploited process in a scratch image reaches for /bin/sh and finds nothing, which is exactly the Hook's blocked miner. Go suits this uniquely well: CGO_ENABLED=0 emits one statically linked binary with no libc dependency, so the runnable surface collapses to a single file. The base-image ladder trades convenience for surface — ubuntu's full userland, alpine's busybox-and-musl (a shell remains, and cgo hits musl quirks), distroless's glibc-without-a-shell, scratch's emptiness — and multi-stage builds are the mechanism: compile in a fat builder stage, COPY only the artifact into the minimal final stage, which starts empty and so cannot leave a forgotten shell the way apt-get remove can. Scratch omits four things you supply explicitly — CA certificates (or every TLS call fails x509-unknown-authority), tzdata, /etc/passwd, a numeric nonroot USER, ideally with a read-only rootfs — and distroless is the same recipe with those batteries included plus a debug variant for incidents. Scanning is where honesty matters: OS-package scanners find nothing on scratch because there is nothing in their domain, a genuine structural win that nonetheless says nothing about your module CVEs, your logic, or your own binary. Minimal images shrink the base to near zero; govulncheck and application security own everything above it, and you pick the lowest rung your dependencies actually allow.
+</Recap>

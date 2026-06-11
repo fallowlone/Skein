@@ -1,0 +1,139 @@
+---
+concepts:
+- python-workers-lifecycle
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-workers-and-lifecycle"
+sources:
+- https://docs.gunicorn.org/en/stable/settings.html
+- https://docs.gunicorn.org/en/stable/design.html
+- https://www.uvicorn.org/deployment/
+spiral: []
+status: ready
+summary: 'Sync workers for blocking apps, uvicorn for async; ~cores CPU-bound, 1-2x cores I/O — the GIL makes processes the unit. preload_app saves memory but shares pre-fork sockets: init clients post_fork. max_requests+jitter mitigates leaks; SIGTERM drains within graceful_timeout.'
+title: 'Workers and lifecycle: gunicorn process math, preload and fork safety, graceful shutdown'
+track: "python"
+unit: "12-production-python"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import SequenceDiagram from "~/components/diagram/SequenceDiagram.astro";
+
+<Hook>
+The bug report read like a security incident: "I opened my orders page and saw someone else's orders." Then a second report, then a dozen — intermittent, unreproducible, gone on refresh. The team audited auth for two days before someone looked at `gunicorn.conf.py`: `preload_app = True`, eight workers, and — in a module imported at startup — `redis = Redis()` at module level. There it was. With preload, the app imports **once in the master**, and `fork()` then duplicates the process — including the already-open Redis TCP socket — into all eight workers. Eight processes, one shared connection. Each worker wrote commands and read whatever reply happened to be next on the stream: worker A's `GET session:alice` answered with the bytes belonging to worker B's `GET session:bob`. Not an auth bug — a file-descriptor bug. The fix was the fork-safety rule this lesson hammers: create connections **after** the fork, in a `post_fork` hook or lazily on first use. Process-model decisions — how many workers, what class, what preload shares, how SIGTERM drains — are quiet config lines with user-visible blast radius.
+</Hook>
+
+<Crux>Workers ~cores (CPU) or 1-2x cores (async); connect clients after fork; max_requests is a mitigation; SIGTERM drains in graceful_timeout.</Crux>
+
+<Explanation>
+
+## Worker classes and the count math
+
+Gunicorn is a pre-forking master: it binds the listening socket, forks N workers that all `accept()` from it, and supervises — restarts crashes, recycles, relays signals. The worker *class* decides what one worker is. A **sync** worker handles exactly one request at a time: your concurrency equals your worker count, and a slow upstream call holds a whole process hostage. A **uvicorn worker** runs an event loop: one process handles hundreds of concurrent in-flight requests, as long as everything awaits (match the class to the app you actually built in python/06 — blocking DB drivers belong on sync workers or thread executors, not on a loop). Newer uvicorn ships the class as the separate `uvicorn-worker` package; the old `uvicorn.workers` import path is deprecated but everywhere in older configs.
+
+The count math follows from the GIL: threads inside one process do not add CPU parallelism, so **processes are the unit of CPU scale**. CPU-bound services: workers ≈ cores — more just adds context-switching. I/O-bound async services: 1-2 × cores — each worker is a loop that already multiplexes thousands of sockets; you add workers to use more cores and to isolate failure, not to add concurrency. The classic `2*cores+1` heuristic is a sync-worker-era rule of thumb for mixed I/O; treat every formula as a starting point you re-measure under your own p99.
+
+## preload_app and fork safety
+
+`preload_app = True` imports the application once in the master before forking. The wins are real: copy-on-write means heavy imports (numpy, pandas, a model) occupy physical memory **once** across all workers instead of N times, and worker (re)boot is near-instant because the import already happened. The cost is the Hook: *everything created at import time exists before the fork and is duplicated into every child* — and while Python objects are copy-on-write copies, an open socket is an OS-level file descriptor, and `fork()` duplicates the descriptor, not the connection. Eight workers inherit one TCP stream; concurrent writes interleave, replies route to whichever process reads first — the corrupted-connection classic, surfacing as users seeing each other's data or as protocol errors deep in a driver.
+
+The rule: **connections are created after the fork.** Two idioms:
+
+```python
+# gunicorn.conf.py
+import multiprocessing
+workers = multiprocessing.cpu_count() * 2          # async I/O shape; ~cores if CPU-bound
+worker_class = "uvicorn_worker.UvicornWorker"
+preload_app = True                                 # CoW savings — with the rule below
+max_requests = 5_000
+max_requests_jitter = 500                          # de-synchronize recycles
+graceful_timeout = 25                              # < terminationGracePeriodSeconds (30)
+timeout = 30
+
+def post_fork(server, worker):
+    from app import state
+    state.init_clients()                           # pools/clients born HERE, per worker
+```
+
+The alternative is lazy init — the client is constructed on first use inside a worker. Either works; what never works is module-level `Redis()` or a connected pool at import time with preload on. The same hazard applies to `random` seeds (fork copies the state — identical "random" sequences per worker) and to held locks.
+
+<Quiz
+  id="03-workers-and-lifecycle-quiz-1"
+  lessonSlug="03-workers-and-lifecycle"
+  lang="en"
+  question="gunicorn runs preload_app=True with 8 workers. A module creates redis = Redis() at import time. Users intermittently receive each other's data. What is the mechanism?"
+  choices={[
+    { label: "The client connected pre-fork, so all 8 workers inherited the same socket fd; concurrent writes interleave on one TCP stream and replies are read by the wrong worker — init clients post_fork or lazily", correct: true },
+    { label: "Redis itself mixes up keys under concurrent load from multiple processes", misconception: "The server answers each command on the connection it arrived on, in order. The corruption is client-side: eight processes share one stream, so replies are consumed by whichever process reads next." },
+    { label: "preload_app keeps Python objects shared between workers at runtime, so the connection object races", misconception: "After fork, Python objects are copy-on-write copies — each worker has its own object. What stays genuinely shared is the underlying OS file descriptor, i.e. one TCP connection." },
+    { label: "The GIL does not span processes, so the client needed a multiprocessing lock", misconception: "No lock can fix this: the design is wrong, not the synchronization. Separate processes must each own their own connection, created after fork — then nothing is shared to lock." },
+  ]}
+/>
+
+## Lifecycle: recycling and timeouts
+
+`max_requests` recycles a worker after N requests; `max_requests_jitter` randomizes N per worker so eight workers do not all restart in the same minute and dip your capacity in sync. Be honest about what this is: a **mitigation** for memory growth, not a fix — it caps RSS by resetting the process while you find the actual leak with tracemalloc (next lesson dissects one). Running it forever as "the fix" means every leak you ship next is invisible.
+
+`timeout` is the master's heartbeat contract: a sync worker that stops notifying the arbiter for `timeout` seconds is presumed stuck (deadlocked, hung on an unbounded call) and is killed and replaced — brutal but correct for one-request-at-a-time workers. On an async worker the same symptom means something different and worse: the heartbeat misses because **the event loop itself is blocked** — some sync call crept in (the python/11 bridging lesson) — and the kill takes down not one request but every coroutine in flight on that worker. Same timeout, different blast radius; the diagnosis differs too (py-spy, next lesson).
+
+## Graceful shutdown and the scaling signals
+
+The shutdown sequence is a contract spanning two systems. Kubernetes marks the pod terminating: the endpoint leaves the Service (readiness-off-first — new traffic stops routing; a small `preStop` sleep covers propagation lag), then SIGTERM goes to PID 1. Gunicorn's master stops accepting, signals workers to finish in-flight requests, and waits `graceful_timeout` before force-killing stragglers; the pod must exit before `terminationGracePeriodSeconds` or the kernel SIGKILLs mid-drain. So the inequality is: preStop + graceful_timeout safely under the grace period — the same drain pattern you wired in Go services (go/12), because the contract is the platform's, not the language's. Scale signals, honestly: CPU per worker tells you compute headroom; queue/backlog depth and p99 latency tell you saturation before CPU does on I/O-bound services. Scale **pods**, not just worker counts — pods buy isolation, scheduler bin-packing, and restart blast-radius control that fatter pods do not.
+
+<Quiz
+  id="03-workers-and-lifecycle-quiz-2"
+  lessonSlug="03-workers-and-lifecycle"
+  lang="en"
+  question="gunicorn has graceful_timeout=30, but the pod spec says terminationGracePeriodSeconds=10. What happens to in-flight requests on every deploy?"
+  choices={[
+    { label: "k8s SIGKILLs the pod at 10s while workers are still draining — the platform deadline wins; keep preStop plus graceful_timeout safely under the grace period", correct: true },
+    { label: "gunicorn detects the pod deadline and caps its drain at 10 seconds", misconception: "gunicorn knows nothing about Kubernetes; the two timeouts are independent clocks on different systems. Nothing reconciles them except you, in config review." },
+    { label: "Readiness going false makes the question moot — no requests are left to drop", misconception: "Readiness-off stops NEW traffic from routing. The requests already executing are exactly what the drain window exists to protect, and they are the ones SIGKILL destroys." },
+    { label: "It does not matter: SIGTERM already aborts in-flight requests immediately", misconception: "SIGTERM begins a graceful stop — finish current work, refuse new work. Only SIGKILL aborts mid-request; the whole point of the grace window is that SIGTERM does not." },
+  ]}
+/>
+
+</Explanation>
+
+<SequenceDiagram
+  label="Graceful shutdown across two systems: readiness off, SIGTERM, drain, exit — before the grace deadline"
+  hue="var(--d-systems)"
+  actors={["k8s", "ingress", "master", "worker"]}
+  messages={[
+    { from: "k8s", to: "ingress", label: "endpoint removed" },
+    { from: "k8s", to: "master", label: "SIGTERM (PID 1)" },
+    { from: "master", to: "worker", label: "stop accepting" },
+    { from: "worker", to: "master", label: "drain in-flight" },
+    { from: "master", to: "k8s", label: "exit 0" },
+    { from: "k8s", to: "master", label: "SIGKILL at deadline" },
+  ]}
+  caption="The pod leaves the Service before SIGTERM lands (preStop covers propagation), workers finish in-flight requests within graceful_timeout, and the process exits before terminationGracePeriodSeconds — the last arrow only fires when the budget math is wrong."
+/>
+
+<KeyTakeaway>Processes are Python's unit of scale: ~cores workers for CPU-bound, 1-2x cores for async I/O, sync workers only for blocking apps. `preload_app` buys copy-on-write memory but everything created pre-fork is duplicated — an import-time client means all workers share one socket fd; connect in `post_fork` or lazily. `max_requests` + jitter is a leak mitigation, not a fix. Shutdown is an inequality: readiness off, then SIGTERM, drain within `graceful_timeout`, all safely under `terminationGracePeriodSeconds`.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-workers-and-lifecycle-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the preload_app tradeoff end to end: what does it save, what exactly breaks with a module-level client, and what are the two safe idioms?", a: "preload_app imports the app once in the master; fork then shares memory copy-on-write, so heavy imports cost physical RAM once instead of per-worker, and worker restarts skip the import. The hazard: anything constructed at import time exists pre-fork. Python objects become per-worker CoW copies, but an open connection is an OS file descriptor — fork duplicates the fd, so all workers share ONE TCP stream. Concurrent writes interleave and replies are read by whichever process recv-s first: interleaved responses, protocol errors, users seeing each other's data. Safe idioms: a post_fork hook in gunicorn.conf.py that initializes pools/clients per worker, or lazy first-use construction inside the worker. Same fork rule covers random state (identical sequences per worker) and held locks." },
+    { q: "Give the worker count math with its GIL reasoning, and the full graceful-shutdown timing contract against Kubernetes.", a: "The GIL means threads in one process do not add CPU parallelism, so processes are the CPU scaling unit: CPU-bound at ~cores (beyond that you buy context switches, not throughput); async I/O at 1-2x cores, since each uvicorn worker's loop already multiplexes thousands of connections — extra workers add cores and failure isolation, not concurrency. 2*cores+1 is a sync-era heuristic; measure under p99. Shutdown: k8s removes the endpoint from the Service (readiness-off-first; a preStop sleep covers propagation), sends SIGTERM to PID 1; the gunicorn master stops accepting and lets workers drain in-flight requests up to graceful_timeout; the pod must exit before terminationGracePeriodSeconds or SIGKILL aborts the drain. The invariant: preStop + graceful_timeout safely below the grace period. Scale pods, not just workers — watching CPU per worker, queue depth, and p99." },
+  ]}
+/>
+
+<Recap lang="en">
+The process model is where Python services win or lose their operational reputation. Gunicorn's master forks workers; the class defines a worker: sync means one request per process and concurrency equals worker count, uvicorn-worker means an event loop per process and hundreds of in-flight requests — match it to whether your app actually awaits. The GIL fixes the math: processes are the CPU unit, so ~cores for CPU-bound, 1-2x cores for async I/O, and every formula is a hypothesis until your p99 confirms it. `preload_app` is the sharpest tradeoff: import once in the master and copy-on-write makes heavy imports nearly free per worker — but everything born pre-fork is duplicated into the children, and an import-time Redis client is one socket fd shared by eight processes, interleaving users' replies until someone reads `gunicorn.conf.py` instead of the auth code. Connections are created after the fork: `post_fork` hook or lazy init, no exceptions. `max_requests` with jitter recycles workers to cap a leak you have not found yet — a mitigation with an expiry date, not a fix. And shutdown is an inequality across two systems: readiness off first, SIGTERM to PID 1, drain within `graceful_timeout`, exit before `terminationGracePeriodSeconds` — the same contract you wired in go/12, because the platform owns it. When you need more capacity, scale pods, watching CPU per worker, queue depth, and p99.
+</Recap>

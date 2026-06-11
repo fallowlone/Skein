@@ -1,0 +1,130 @@
+---
+concepts:
+- python-dataframes
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 1
+prereqs: []
+slug: "01-pandas-polars-pragmatically"
+sources:
+- https://pandas.pydata.org/docs/
+- https://docs.pola.rs/
+- https://arrow.apache.org/docs/
+spiral: []
+status: ready
+summary: 'A DataFrame is columnar arrays: pandas wraps numpy blocks with object-pointer string columns; polars is Arrow-backed with a lazy optimizer. Covers predicate/projection pushdown, SettingWithCopyWarning and Copy-on-Write, silent int-to-float promotion, and when each wins.'
+title: 'pandas and Polars, pragmatically: columnar blocks, eager vs lazy, and the pitfalls that bite in production'
+track: "python"
+unit: "09-data-work"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The nightly revenue rollup had crept to 47 minutes of pandas, and the on-call rota knew it by heart: start late, and the 7 a.m. dashboards were empty. The team rewrote it in polars expecting the advertised order-of-magnitude win — and the first run took 44 minutes. The rewrite had faithfully ported `df.apply(lambda row: ..., axis=1)` into `map_elements`, so the new engine spent its time exactly where pandas had: calling a Python function ten million times, once per row, with the interpreter as chaperone. The second rewrite replaced the per-row lambda with column expressions — `pl.when(...).then(...)`, arithmetic on whole columns — and switched `read_parquet` to `scan_parquet` so the optimizer could see the whole query before touching disk. Four minutes. Same machine, same data, same business logic. The speedup was never going to come from Rust being faster at running a Python lambda; it came from not running Python per row at all, and from a query plan that read two columns instead of forty.
+</Hook>
+
+<Crux>pandas runs eagerly — every step materializes. Polars LazyFrame builds a query plan and pushes filters down before reading data.</Crux>
+
+<Explanation>
+
+## What a DataFrame actually is
+
+Strip the API away and a DataFrame is a set of named columnar arrays plus row labels. In pandas the columns live inside a BlockManager: consecutive columns of the same dtype are consolidated into 2-D numpy blocks (all your float64 columns may be one contiguous matrix), and the index is a separate labeled axis that aligns, joins, and occasionally surprises. Numeric columns are real machine arrays — eight bytes per float, vectorizable. String columns historically are not: classic `object` dtype is an array of pointers to individual Python `str` objects scattered on the heap, each dragging the ~50-byte per-object overhead you measured in the memory lesson of unit 08. Ten million short strings cost roughly 700-900 MB as objects versus ~150 MB as an Arrow string column (one contiguous byte buffer plus offsets) — a 5x gap before you compute anything.
+
+Polars starts from the other end: every column is an Arrow array (typed, contiguous, a null bitmap instead of NaN sentinels), the engine is multi-threaded Rust over that memory, and there is no index — rows are positions, alignment is explicit joins. The same Arrow layout is what pandas 2+ exposes as Arrow-backed dtypes and what pandas 3 adopts for strings by default, which is why interop between the two (and DuckDB) can be a pointer hand-off rather than a serialization step.
+
+## Eager versus lazy: the mechanism, not the marketing
+
+pandas executes line by line. `read_parquet` materializes everything; the boolean filter builds a second full DataFrame; the groupby builds a third. Peak memory is the sum of your intermediates, and no step knows what the next one needs. Polars in eager mode behaves the same way — the structural difference is `LazyFrame`. `pl.scan_parquet(...)` reads nothing; it returns a plan node. Every subsequent `.filter()`, `.select()`, `.group_by()` extends a logical plan, and `.collect()` hands the plan to an optimizer before execution. Two rewrites do most of the work: **projection pushdown** — only columns the query actually uses are read, and 2 of 40 columns means roughly 5% of the IO — and **predicate pushdown** — filters move into the scan itself, where Parquet row-group statistics can skip whole chunks of the file. Add common-subexpression elimination and a streaming engine that processes batches when data exceeds RAM, and that is the actual mechanism: less data read, fewer materializations, all cores busy.
+
+Honest numbers from a single-key groupby-mean over 10 M rows on an 8-core box: pandas lands around 2-3 s, polars around 0.3-0.5 s — call it 5-10x. Chain filters, joins, and column selection over a wide table and the lazy plan widens the gap to 10-50x, because pandas pays full materialization at every line while polars pays once, for a pruned plan.
+
+<Quiz
+  id="01-pandas-polars-pragmatically-quiz-1"
+  lessonSlug="01-pandas-polars-pragmatically"
+  lang="en"
+  question="A LazyFrame pipeline over a 40-column Parquet file ends with a filter on country and a select of one amount column. What does collect() actually read from disk?"
+  choices={[
+    { label: "Only the two involved columns, and only row groups whose statistics can contain the filtered country — projection and predicate pushdown rewrite the scan itself", correct: true },
+    { label: "All 40 columns, then it filters in memory — lazy only defers when work happens", misconception: "Deferral is the enabler, not the win. Because execution waits, the optimizer sees the whole plan and rewrites the scan — pushdown at the IO layer is precisely the speedup mechanism." },
+    { label: "It depends on whether streaming mode is enabled", misconception: "Streaming changes how execution buffers batches when data exceeds RAM. Pushdown happens earlier, in plan optimization, and applies with or without streaming." },
+    { label: "The whole file once, cached for subsequent collects", misconception: "There is no implicit file cache. The plan narrows the scan; a second collect() re-runs the (narrowed) scan unless you cache explicitly." },
+  ]}
+/>
+
+## The pandas pitfalls that bite in production
+
+**Chained assignment.** `df[df.qty > 0]["price"] = 0` runs two indexing operations: the first may return a view or a copy depending on internal block layout, and the assignment lands on whichever you got — sometimes mutating the original, sometimes a temporary that evaporates. `SettingWithCopyWarning` is pandas admitting it cannot tell you which. Copy-on-Write semantics (opt-in in pandas 2.x, the default behavior from pandas 3) end the ambiguity: every derived frame behaves as a copy, materialized lazily only when written, so chained assignment deterministically never propagates — one `.loc[mask, "price"] = 0` on the original is the supported spelling.
+
+**Silent dtype promotion.** numpy int64 has no missing value, so the moment a merge, reindex, or alignment introduces a hole, the whole column promotes to float64 and `NaN` stands in. Two consequences: ids start rendering as `1.0`, and — the expensive one — float64 carries a 53-bit mantissa, so integers above 2^53 (about 9 × 10^15; every snowflake-style id qualifies) silently round to the nearest representable value. That is the merge that corrupted ids: nothing raised, the numbers were just off by one. The fix is the nullable `Int64` extension dtype or Arrow-backed dtypes, where missing is a mask bit, not a float.
+
+**The object-dtype cliff.** Anything in an `object` column — and any `df.apply(..., axis=1)` — executes a Python-level loop: an interpreter frame, refcount traffic, no SIMD, no parallelism. Expect 10-100x against the vectorized path. The profiler signature is unmistakable: a job that is 95% `apply`.
+
+## When pandas stays, when polars wins, and how to migrate
+
+pandas remains right where its ecosystem is the point: scikit-learn, statsmodels, plotting glue, notebooks where data fits in memory with room to spare and per-step materialization cost is noise. Polars wins pipelines: scheduled jobs over data approaching or exceeding RAM, where pushdown, parallelism, and strict-by-default semantics (no index alignment, no silent promotion — missing integers stay integers, errors are loud) pay every night. Migration is not transliteration: pandas thinks in method calls on materialized frames, polars in *expressions* — `pl.col("amount") * pl.col("fx")` composed inside `select`, `with_columns`, `group_by().agg` — and per-row lambdas must become expressions or the engine cannot help you, which is the Hook in one sentence. The boundary is cheap, though: both speak Arrow, so a polars pipeline can call `to_pandas()` at the very end — zero-copy for Arrow-backed dtypes — and hand the last mile to the plotting glue.
+
+<Quiz
+  id="01-pandas-polars-pragmatically-quiz-2"
+  lessonSlug="01-pandas-polars-pragmatically"
+  lang="en"
+  question="An int64 account_id column arrives via a left merge in which some rows have no match. The job then writes ids to a downstream system. What is the failure mode?"
+  choices={[
+    { label: "Unmatched rows get NaN, which promotes the whole column to float64 — ids above 2^53 silently round, so downstream receives corrupted ids with no error raised", correct: true },
+    { label: "The merge raises because int64 cannot represent a missing value", misconception: "That is exactly what pandas does not do. Instead of raising, it silently promotes the column to float64 so NaN fits — the absence of an error is why this class of bug ships." },
+    { label: "Only the unmatched rows become floats; matched rows keep exact int64 values", misconception: "Dtype is a property of the column, not of individual cells. One NaN anywhere converts every value in the column, including the matched ids." },
+    { label: "Rows without a match are dropped, so ids stay intact", misconception: "A left merge keeps every left row by definition. The rows survive — carrying NaN — and the promoted, possibly-rounded ids travel downstream." },
+  ]}
+/>
+
+</Explanation>
+
+<FlowDiagram
+  label="The same query, eager and lazy: pandas materializes a DataFrame per line; the polars plan pushes filter and projection into the scan"
+  hue="var(--d-systems)"
+  perRow={3}
+  nodes={[
+    { id: "eread", label: "read_parquet", sub: "40 cols into RAM" },
+    { id: "efilter", label: "boolean filter", sub: "full copy no. 2" },
+    { id: "egroup", label: "groupby().agg()", sub: "full copy no. 3" },
+    { id: "scan", label: "scan_parquet", sub: "plan node, no IO" },
+    { id: "opt", label: "optimizer", sub: "pushdown cols + filter" },
+    { id: "collect", label: "collect()", sub: "2 cols, pruned groups" },
+  ]}
+  edges={[
+    { from: "eread", to: "efilter", label: "materializes" },
+    { from: "efilter", to: "egroup", label: "materializes" },
+    { from: "scan", to: "opt", label: "logical plan" },
+    { from: "opt", to: "collect", label: "one pass" },
+    { from: "eread", to: "scan", label: "lazy rewrite" },
+  ]}
+  caption="Top row: eager execution — each line returns a fresh DataFrame, so peak memory is the sum of intermediates and IO is the whole file. Bottom row: the lazy plan moves the filter and the column list into the scan — the job reads 2 of 40 columns and skips row groups before any execution starts."
+/>
+
+<KeyTakeaway>A DataFrame is columnar arrays: pandas wraps numpy blocks (object-dtype strings are pointer arrays, ~5x the memory of Arrow strings); polars wraps Arrow with no index. Eager pandas materializes every step; a polars LazyFrame builds a plan whose projection and predicate pushdown shrink IO before execution — that mechanism, not Rust per se, is the 5-50x. In production, fear chained assignment (ended by Copy-on-Write), int-to-float promotion corrupting ids past 2^53 (use nullable Int64), and the per-row apply cliff. pandas for ecosystem and small data; polars for pipelines; Arrow makes the handoff zero-copy.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-pandas-polars-pragmatically-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the mechanism behind the polars lazy speedup — why is the honest answer not just that Rust is fast?", a: "scan_parquet returns a plan node instead of data; filter/select/group_by extend a logical plan; collect() runs an optimizer over the whole plan before execution. Projection pushdown reads only the columns the query uses (2 of 40 columns is ~5% of the IO); predicate pushdown moves filters into the scan, where Parquet row-group statistics skip whole chunks of the file; common subexpressions are eliminated; a streaming engine processes batches when data exceeds RAM. Eager pandas cannot do any of this because each line executes immediately and materializes a full intermediate — peak memory is the sum of intermediates and IO is the whole file. Rust and multi-threading multiply the win, but the structural gap is less data read and fewer materializations. Corollary: a per-row Python lambda (map_elements) re-introduces the interpreter per row and forfeits the entire advantage — expressions are mandatory, not stylistic." },
+    { q: "Walk the three pandas production pitfalls: chained assignment, dtype promotion, and the object-dtype cliff — mechanism and fix for each.", a: "Chained assignment: df[mask][col] = x indexes twice; the first op returns a view or a copy depending on block layout, so the write lands unpredictably — SettingWithCopyWarning is pandas admitting it cannot tell. Copy-on-Write (opt-in 2.x, default from pandas 3) makes every derived frame behave as a copy, so chained writes deterministically never propagate; use .loc[mask, col] = x. Dtype promotion: numpy int64 has no missing value, so a merge or reindex that introduces a hole promotes the whole column to float64 with NaN; ids above 2^53 silently round (the corrupted-ids merge), since float64 has a 53-bit mantissa. Fix: nullable Int64 or Arrow-backed dtypes where missing is a mask bit. Object cliff: object columns and apply(axis=1) run a Python-level loop — 10-100x slower than vectorized paths; the profile shows the job living in apply. Fix: vectorize or move to expressions." },
+  ]}
+/>
+
+<Recap lang="en">
+A DataFrame is named columnar arrays. pandas implements them as numpy blocks behind a BlockManager plus a labeled index, which makes numeric columns true machine arrays and classic string columns arrays of pointers to heap objects — the ~5x memory tax against Arrow strings, and the reason unit 08's per-object overhead numbers matter here. Polars implements them as Arrow arrays under a multi-threaded Rust engine with no index at all. The deeper split is execution: pandas runs eagerly, one full materialization per line, while a polars LazyFrame accumulates a logical plan that the optimizer rewrites — projection pushdown reads only used columns, predicate pushdown pushes filters into the scan where row-group statistics skip data — before anything executes; that plan, not the implementation language, is why 47 minutes became 4 only after per-row lambdas became expressions. In production pandas bites three ways: chained assignment writes into a maybe-view (Copy-on-Write, default from pandas 3, makes derived frames deterministic copies), missing values promote int64 to float64 and silently corrupt ids past 2^53 (nullable Int64 or Arrow dtypes fix it), and object-dtype plus per-row apply is a 10-100x cliff. Keep pandas where the ecosystem and small data live; run pipelines on polars; let Arrow make the boundary a zero-copy pointer hand-off.
+</Recap>

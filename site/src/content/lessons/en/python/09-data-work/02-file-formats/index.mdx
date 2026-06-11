@@ -1,0 +1,119 @@
+---
+concepts:
+- python-file-formats
+deepensInto: []
+estMin: 17
+lang: en
+lessonType: topic
+level: senior
+order: 2
+prereqs: []
+slug: "02-file-formats"
+sources:
+- https://parquet.apache.org/docs/
+- https://arrow.apache.org/docs/
+- https://pandas.pydata.org/docs/
+spiral: []
+status: ready
+summary: 'The format ladder with mechanisms: CSV re-parses and re-guesses types on every read; Parquet adds a typed schema, row groups with stats, column pruning and compression; Arrow is the zero-copy in-memory standard. Plus partitioning, the small-files failure, and schema evolution.'
+title: 'File formats: CSV at the edges, Parquet inside — row groups, statistics, Arrow, and compression tradeoffs'
+track: "python"
+unit: "09-data-work"
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import StackDiagram from "~/components/diagram/StackDiagram.astro";
+
+<Hook>
+One daily export, three consuming teams, three different tables. The warehouse dropped a CSV every morning; finance, ops, and data science each read it with their own `read_csv`. Finance got zip codes as integers — `02134` became `2134`, and a regional report quietly merged two states. Data science got customer ids as float64 because one row had an empty cell, so ids above 2^53 rounded and a dedup job started finding "duplicates" that were really two distinct customers one unit apart. Ops pinned dtypes by hand — but their list drifted from the export when a column was added, and their loader silently filled the new column into the wrong dtype. The reconciliation meeting became weekly. Nobody had written a bug; the format had. CSV stores characters, not types — every reader re-derives the schema from scratch, and three readers means three schemas. The fix was boring: the same export as Parquet, where the schema travels inside the file. The dtype arguments did not get resolved; they became impossible to have.
+</Hook>
+
+<Crux>CSV re-parses and guesses types on every read. Parquet stores typed columns in row groups, so readers prune columns and skip row groups.</Crux>
+
+<Explanation>
+
+## CSV and JSON: text at the edges
+
+CSV is characters separated by commas — no types, no schema, no contract. Every read re-parses the bytes and re-guesses what they mean: is `02134` an int or a zip code, is an empty field NaN or an empty string, is `2026-06-01` a date or text? That guess runs per reader, per day, which makes the failure class systemic rather than incidental: leading zeros vanish, one missing cell turns an id column into float64, a locale flips the decimal separator. The mitigations — explicit `dtype=` maps, `parse_dates`, pinned column lists — are a schema maintained by hand, outside the file, by every consumer independently. JSON and NDJSON climb half a rung: they can nest, and NDJSON streams line-by-line nicely, but they remain text — verbose (field names repeated per row), still type-ambiguous at the edges (no integer-vs-float distinction in the standard, no native dates).
+
+## Parquet: the file that carries its own pruning
+
+Parquet is columnar and typed, and its layout is the mechanism. A file ends with a **footer** holding the schema and metadata for every **row group** — a horizontal slice of rows, typically tens to a hundred-plus MB, often around a million rows per group depending on the writer. Inside a row group, each column is a **column chunk**, split into **pages** (~1 MB), the unit of encoding and compression: dictionary encoding for repetitive values, run-length encoding for long stretches, then a codec on top. Two query-time consequences fall straight out of the layout. **Column pruning**: a reader that needs 3 of 40 columns seeks to exactly those column chunks and never touches the rest. **Predicate pushdown**: the footer stores per-chunk min/max statistics (plus null counts, optionally bloom filters), so a filter like one day of timestamps skips every row group whose range cannot match — if the data was written sorted by that column, the day lives in a handful of contiguous groups and the read touches a few percent of the file.
+
+Compression is per column chunk, and the choice is a real tradeoff: **snappy** decompresses at GB/s and barely taxes CPU but leaves files ~20-30% larger; **zstd** compresses noticeably smaller at modest extra CPU. Storage-heavy lakes default to zstd; scan-heavy hot paths sometimes keep snappy. The honest scale, same 10 M-row, ~20-column table on one box: CSV ~1.2 GB, gzipped CSV ~300-400 MB, Parquet-zstd ~150-250 MB; reading it: pandas `read_csv` in the tens of seconds, full-file Parquet in a few seconds, and a 2-column projection sub-second. Format choice is an order of magnitude on both axes before any engine tuning.
+
+<Quiz
+  id="02-file-formats-quiz-1"
+  lessonSlug="02-file-formats"
+  lang="en"
+  question="A query filters a 10 M-row Parquet table to a single day of ts values, and the table was written sorted by ts. Why does the read touch only a few percent of the file?"
+  choices={[
+    { label: "The footer stores min/max statistics per row group; sorting made day ranges disjoint across groups, so the reader skips every group whose range cannot match", correct: true },
+    { label: "Parquet maintains a B-tree index on the ts column", misconception: "Parquet has no index structures. The pruning comes from per-row-group (and optionally per-page) min/max statistics plus optional bloom filters — which is why writer-side sorting matters so much." },
+    { label: "Compression makes the file small enough that a full read is negligible", misconception: "Compression shrinks bytes but does not skip them — unsorted data would still decompress every row group. Statistics-based pruning is what avoids the IO entirely." },
+    { label: "The reader binary-searches the column because Parquet requires sorted writes", misconception: "Parquet does not require sorting and nothing binary-searches raw data. Sorting is a writer-side choice whose payoff is making the min/max ranges selective enough to prune." },
+  ]}
+/>
+
+## Arrow: the in-memory standard that makes formats interoperate
+
+Arrow is not a file format competing with Parquet — it is the columnar **in-memory** layout that pandas (Arrow-backed dtypes), polars, and DuckDB all share. Same buffer layout in every engine means handing a table across is a pointer exchange, not a serialize-deserialize round trip: polars to DuckDB to pandas without copying the data even once. When Arrow does go to disk it is the IPC format (Feather is its file flavor) — essentially the memory layout written out, near-zero parse cost on read, but lightly compressed and not stat-pruned like Parquet. The division of labor: Parquet for storage (smallest bytes, prunable), Arrow for interchange and memory (zero parse, zero copy).
+
+## Partitioning and the two ways to ruin it
+
+On disk, datasets get split hive-style into `key=value` directories — `dt=2026-06-01/` — and engines prune whole directories before opening a single file: a one-day query over a year of data lists one directory of 365. The failure mode is **over-partitioning**: add a high-cardinality second key (say 50 k customer ids) and a year becomes ~18 million files averaging tens of KB. Now listing dominates, every file costs an open-plus-footer-read, and row-group statistics never get a chance because no file is big enough to have meaningful row groups. The working heuristics: partition only on low-cardinality columns you actually filter by, aim for files of ~100 MB-1 GB, and *sort within files* by the next most-filtered column so statistics pruning takes over where partitioning stops. Schema evolution follows the same grain of honesty: adding nullable columns is cheap (old files simply yield nulls), renames are breaks in disguise (column identity is the name), and type changes generally mean rewriting history — plan names and types as if they were an API, because they are.
+
+<Quiz
+  id="02-file-formats-quiz-2"
+  lessonSlug="02-file-formats"
+  lang="en"
+  question="A team partitions an events lake by dt AND customer_id (50 k customers). Queries got slower than before partitioning. What happened?"
+  choices={[
+    { label: "Over-partitioning: tens of thousands of directories per day produce millions of tiny files, so listing and per-file footer reads dominate — and row-group pruning never engages on files that small", correct: true },
+    { label: "Hive-style partitioning supports only a single key", misconception: "Multiple partition keys are mechanically fine — warehouses use dt plus region routinely. The problem is cardinality of the key, not the number of keys." },
+    { label: "Parquet cannot filter on customer_id unless it is a partition key", misconception: "Row-group statistics filter inside files regardless of partitioning — especially if files are sorted by customer_id. Partition pruning is one mechanism of two, not the only one." },
+    { label: "zstd compresses small files at a worse ratio, inflating the lake", misconception: "Ratio degrades only marginally on small files. The regression is metadata and open-per-file overhead multiplied by millions of files — an IO-pattern problem, not a codec problem." },
+  ]}
+/>
+
+## The rule
+
+CSV at the **edges** — humans, spreadsheets, legacy systems that speak nothing else — ingested once, validated, and converted. Parquet **inside** the pipeline, where the schema travels with the data, readers prune instead of parse, and three teams reading the same file get the same table by construction.
+
+</Explanation>
+
+<StackDiagram
+  label="Inside a Parquet file: what the reader opens first and what it can skip"
+  hue="var(--d-systems)"
+  layers={[
+    { label: "Footer", note: "schema + row-group stats" },
+    { label: "Row group", note: "~1 M rows, min/max per col" },
+    { label: "Column chunk", note: "one column, prunable" },
+    { label: "Page", note: "~1 MB, encoding unit" },
+    { label: "Values", note: "dict + RLE, snappy/zstd" },
+  ]}
+  caption="A reader starts at the footer: schema plus statistics for every row group. Column pruning seeks only to requested column chunks; predicate pushdown skips row groups whose min/max cannot match; only surviving pages are decompressed. The pruning is file layout, not engine magic."
+/>
+
+<KeyTakeaway>CSV stores characters: every reader re-parses and re-guesses types, which is why zip codes lose zeros and one empty cell floats an id column. Parquet stores typed columns in row groups with footer statistics — column pruning and predicate pushdown are layout features, worth ~5-10x in size and read time over CSV. Arrow is the shared in-memory layout that makes pandas/polars/DuckDB interchange zero-copy; Feather/IPC is its disk form. Partition by low-cardinality keys only, keep files ~100 MB+, sort within files; evolve schemas additively. CSV at the edges, Parquet inside.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-file-formats-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk the internals of a Parquet file — footer, row groups, column chunks, pages — and explain how a filtered, projected read uses each level.", a: "The footer (end of file) holds the typed schema and metadata for every row group: byte offsets plus min/max and null-count statistics per column chunk. A row group is a horizontal slice — typically tens to ~128 MB or about a million rows. Within it each column is a column chunk, split into ~1 MB pages, the unit of encoding (dictionary, run-length) and compression (snappy fast and larger, zstd smaller for modest CPU). A read of 3 columns filtered to one day proceeds: open footer, build the column list (projection — seek only to those chunks), test the filter against each row group min/max (predicate pushdown — skip groups that cannot match; effective when the writer sorted by the filter column), decompress only surviving pages. That is why a projected, filtered Parquet read is sub-second where CSV is tens of seconds: CSV must parse every byte to even know the types." },
+    { q: "Give the format rule with its honest numbers, and the partitioning plus schema-evolution discipline that keeps a lake fast.", a: "Rule: CSV only at edges (humans, legacy), converted and validated once on ingest; Parquet inside, because the schema travels in the file — the three-teams-three-schemas failure becomes impossible. Numbers for a 10 M-row, ~20-column table: CSV ~1.2 GB, gzip-CSV ~300-400 MB, Parquet-zstd ~150-250 MB; reads go from tens of seconds (CSV parse) to a few seconds full-file, sub-second projected. Compression: zstd for storage, snappy when decompress CPU dominates scans. Partitioning: hive-style key=value dirs pruned before file opens — but only low-cardinality keys you filter by; high-cardinality partitioning makes millions of tiny files where listing and footer reads dominate (the small-files failure). Keep files ~100 MB-1 GB and sort within files by the next filter column so row-group stats continue the pruning. Schema evolution: additive nullable columns are cheap, renames are breaks (identity is the name), type changes mean rewriting — treat names and types as an API." },
+  ]}
+/>
+
+<Recap lang="en">
+Formats are contracts, and CSV is the absence of one: characters whose meaning every reader re-derives, which is how one export produced three tables — vanished leading zeros, an id column floated by a single empty cell, hand-pinned dtypes drifting from the source. JSON and NDJSON add nesting but stay verbose, type-ambiguous text. Parquet changes the physics: a footer carries the typed schema and per-row-group min/max statistics; data lives in row groups of column chunks of ~1 MB pages, dictionary- and run-length-encoded under snappy (fast) or zstd (small). Column pruning and predicate pushdown therefore come from the file layout itself — 3 of 40 columns is a seek pattern, one day of sorted timestamps is a handful of row groups, and the same table drops from ~1.2 GB of CSV to ~200 MB of Parquet-zstd while reads fall from tens of seconds to sub-second when projected. Arrow is the in-memory half of the story: one columnar layout shared by pandas, polars, and DuckDB, making interchange a pointer hand-off, with IPC/Feather as its near-zero-parse disk form. Partition hive-style on low-cardinality filter keys, keep files around 100 MB-1 GB, sort within files, evolve schemas additively — and keep CSV where it belongs, at the edges, with Parquet inside.
+</Recap>
