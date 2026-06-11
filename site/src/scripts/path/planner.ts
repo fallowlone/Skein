@@ -1,7 +1,7 @@
 // site/src/scripts/path/planner.ts
 import type { Concept, Goal, KnowledgeState, PathConfig, UnitConcepts, Path, PathStep, Band, Track } from "./types";
 import type { ConceptGraph } from "./graph";
-import { topoSort, ancestors, buildConceptGraph, induceUnitGraph, validateAcyclic } from "./graph";
+import { topoSort, ancestors, descendants, buildConceptGraph, induceUnitGraph, validateAcyclic } from "./graph";
 import { isKnown } from "./knowledge";
 import { normalizeRanks, goalWeightFactor } from "./goal-rank";
 
@@ -211,6 +211,7 @@ export function buildPath(input: BuildInput): Path {
   const units = conceptsToUnits(missing, content.units);
   const ordered = orderUnits(units, { config, state, graph, units: content.units, goals, concepts: content.concepts, trackOrder });
 
+  const ranks = new Map(normalizeRanks(config.goals).map((r) => [r.id, r.rank]));
   const learn: PathStep[] = ordered.map((u) => {
     const unlocks = u.teaches.filter((c) => missingSet.has(c));
     const labels = unlocks.map((c) => byId.get(c)?.label.en ?? c).join(", ");
@@ -219,7 +220,14 @@ export function buildPath(input: BuildInput): Path {
     // step from rounding to nothing.
     const share = u.teaches.length ? unlocks.length / u.teaches.length : 1;
     const estMin = Math.max(5, Math.round(u.estMin * share));
-    return { unit: u.unit, track: u.track, unlocks, reason: `Unlocks ${labels}`, kind: "learn", estMin };
+    // Triage value for over-budget cuts: goal-weighted track relevance × band sweet-spot ×
+    // unlocking power (count of still-missing concepts transitively requiring this unit's
+    // unlocks). log2 damps hub explosion so a 50-dependent hub doesn't drown everything.
+    const band = byId.get(u.teaches[0])?.band ?? "foundations";
+    const down = new Set<string>();
+    for (const c of unlocks) for (const d of descendants(graph, c)) if (missingSet.has(d)) down.add(d);
+    const value = goalTrackWeight(u.track, goals, ranks) * SENIOR_WEIGHT[band] * (1 + Math.log2(1 + down.size));
+    return { unit: u.unit, track: u.track, unlocks, reason: `Unlocks ${labels}`, kind: "learn", estMin, value };
   });
 
   const withReviews = interleaveReviews(learn, srsDue, config.pace.srsAggressiveness);
