@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from "preact/hooks";
+import { useMemo, useState, useEffect, useRef } from "preact/hooks";
 import type { ReadingUnit, VocabWord } from "~/english/types";
 import {
   englishState,
@@ -8,6 +8,7 @@ import {
   gradeWord,
   bumpSeen,
   recordReveal,
+  logMinutes,
 } from "~/english/state";
 import type { Grade } from "~/english/scheduler/types";
 import type { Locale } from "~/i18n";
@@ -77,6 +78,14 @@ const L = {
 export default function EnReader({ unit, lang, onComplete }: Props) {
   const l = L[lang];
   const [tab, setTab] = useState<"read" | "review" | "check">("read");
+
+  // Auto-log reading minutes (comprehensible input — the methodology's primary metric); logged on
+  // exit, only if at least a full minute was spent, so a bounce off the page logs nothing.
+  const startedAt = useRef(now());
+  useEffect(() => () => {
+    const min = Math.round((now() - startedAt.current) / 60_000);
+    if (min >= 1) logMinutes("input-active", min, "reading");
+  }, []);
 
   const allWords = useMemo<VocabWord[]>(
     () => unit.passages.flatMap((p) => p.words ?? []),
