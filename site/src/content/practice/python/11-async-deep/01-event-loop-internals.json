@@ -139,6 +139,123 @@
         "en": "POLICY\n1) Staging gate: pytest-bench scenario runs the gateway under PYTHONASYNCIODEBUG=1; loop.slow_callback_duration = 0.05. Log scraper fails CI on any 'Executing ... took' line — the built-in detector becomes a deploy gate.\n2) Prod: loop-lag heartbeat, no debug overhead:\n\nasync def loop_lag(metrics):\n    while True:\n        t0 = time.monotonic()\n        await asyncio.sleep(0.1)\n        metrics.observe(\"loop_lag\", time.monotonic() - t0 - 0.1)\n\nAlert when p99 lag exceeds 50 ms for 1 min — a stall shows within seconds because every sleep is a timer the frozen loop cannot fire.\n3) CPU rule: budget 10 ms per step. Resize goes off-loop:\n\nasync def resize(req):\n    img = await req.bytes()\n    out = await asyncio.to_thread(pil_resize, img)   # PIL releases the GIL\n    return Response(out)\n\nPure-Python CPU (signing, parsing) goes to a small ProcessPoolExecutor instead — the GIL makes a thread useless for it.\n4) uvloop: adopted. The gateway is mostly proxying small frames, the share where libuv machinery pays 2-4x; we state in the ADR that it cannot fix CPU stalls — the heartbeat stays the source of truth.\n5) Guard test: wrk hammers /resize while a probe asserts /healthz p99 under 10 ms; the test fails if anyone inlines CPU back onto the loop.",
         "ru": "# Политика: гейт в стейджинге, heartbeat в проде, правило 10 мс, честный uvloop, тест от голодания\nПОЛИТИКА\n1) Гейт в стейджинге: бенч-сценарий гоняет гейтвей под PYTHONASYNCIODEBUG=1; loop.slow_callback_duration = 0.05. Скрейпер логов валит CI на любой строке 'Executing ... took' — встроенный детектор становится деплой-гейтом.\n2) Прод: heartbeat лага цикла, без накладных расходов debug:\n\nasync def loop_lag(metrics):\n    while True:\n        t0 = time.monotonic()\n        await asyncio.sleep(0.1)\n        metrics.observe(\"loop_lag\", time.monotonic() - t0 - 0.1)\n\nАлерт, когда p99 лага выше 50 мс минуту — залипание видно за секунды, потому что каждый sleep — таймер, который замороженный цикл не может выстрелить.\n3) Правило CPU: бюджет 10 мс на шаг. Ресайз уходит с цикла:\n\nasync def resize(req):\n    img = await req.bytes()\n    out = await asyncio.to_thread(pil_resize, img)   # PIL отпускает GIL\n    return Response(out)\n\nЧистопитоновый CPU (подпись, парсинг) — в маленький ProcessPoolExecutor: с GIL поток для него бесполезен.\n4) uvloop: берём. Гейтвей в основном проксирует мелкие фреймы — та доля, где машинерия libuv платит 2–4x; в ADR прямо пишем, что CPU-залипания он не чинит — источником истины остаётся heartbeat.\n5) Тест-страховка: wrk долбит /resize, проба проверяет p99 /healthz ниже 10 мс; тест падает, если кто-то снова заинлайнит CPU на цикл."
       }
+    },
+    {
+      "id": "incident-loop-starvation-json",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "Incident: a 'fast' JSON path freezes the whole worker",
+        "ru": "Инцидент: «быстрый» JSON-путь морозит весь воркер"
+      },
+      "prompt": {
+        "en": "An aiohttp pricing service runs at 1200 RPS on one event loop per worker. After a release that added a bulk-export endpoint, p99 across ALL endpoints jumped from 8 ms to 340 ms, and the loop-lag heartbeat (an `asyncio.sleep(0.05)` drift probe) reports 280 ms of drift in bursts. The new endpoint serializes a 60 MB nested dict with `json.dumps` and returns it; it is only 2% of traffic. py-spy shows the loop thread spending 78% of samples inside `json.encoder`. Find why a 2%-traffic endpoint taxes every request and what fixes it without dropping the feature. Work it step by step; commit before revealing.",
+        "ru": "aiohttp-сервис ценообразования держит 1200 RPS на одном цикле событий на воркер. После релиза с эндпоинтом массового экспорта p99 по ВСЕМ эндпоинтам подскочил с 8 мс до 340 мс, а heartbeat лага цикла (проба дрейфа на `asyncio.sleep(0.05)`) сообщает о 280 мс дрейфа всплесками. Новый эндпоинт сериализует вложенный dict на 60 МБ через `json.dumps` и возвращает его; это лишь 2% трафика. py-spy показывает поток цикла, проводящий 78% сэмплов внутри `json.encoder`. Найдите, почему эндпоинт на 2% трафика облагает каждый запрос и что чинит это без потери фичи. Веди по шагам; сформулируй ответ до раскрытия."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · who runs json.dumps",
+            "ru": "1 · кто выполняет json.dumps"
+          },
+          "prompt": {
+            "en": "The endpoint is `async def`, so the team assumed it could not block. py-spy puts the loop thread inside `json.encoder`. Reconcile these: on which thread does a plain `json.dumps(...)` call inside a coroutine actually execute, and what is it holding while it runs?",
+            "ru": "Эндпоинт — `async def`, поэтому команда решила, что он не может блокировать. py-spy ставит поток цикла внутрь `json.encoder`. Согласуйте это: на каком потоке реально выполняется обычный вызов `json.dumps(...)` внутри корутины и что он удерживает, пока выполняется?"
+          },
+          "reveal": {
+            "en": "`json.dumps` is a synchronous CPU call. `async def` does not move work to another thread — it only marks suspension points at `await`. A bare `json.dumps` has no `await` inside, so it runs to completion on the single loop thread, holding that thread for the entire serialization. Encoding 60 MB of nested Python objects is hundreds of milliseconds of pure CPU executing exactly where the loop should be cycling.",
+            "ru": "`json.dumps` — синхронный CPU-вызов. `async def` не уносит работу в другой поток — он лишь помечает точки приостановки на `await`. У голого `json.dumps` нет `await` внутри, поэтому он выполняется до конца на единственном потоке цикла, удерживая этот поток на всю сериализацию. Кодирование 60 МБ вложенных Python-объектов — сотни миллисекунд чистого CPU, выполняемого ровно там, где цикл должен прокручиваться."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · why all endpoints stall",
+            "ru": "2 · почему встают все эндпоинты"
+          },
+          "prompt": {
+            "en": "Walk one loop iteration — drain ready callbacks, poll the selector, fire timers. Place the in-progress `json.dumps` in that cycle and explain why a request to a 2%-traffic endpoint inflates p99 for the unrelated 98%, and why the heartbeat sees 280 ms drift.",
+            "ru": "Пройдите одну итерацию цикла — разгрузка готовых колбэков, опрос селектора, срабатывание таймеров. Поместите выполняющийся `json.dumps` в этот цикл и объясните, почему запрос к эндпоинту на 2% трафика раздувает p99 для посторонних 98% и почему heartbeat видит 280 мс дрейфа."
+          },
+          "reveal": {
+            "en": "While `json.dumps` runs, the loop is stuck inside the drain phase of one task step; it cannot reach `selector.select()` to read other ready sockets, and it cannot fire any due timers. Every other connection — including /healthz and the heartbeat's `sleep` — is a timer or a readable socket the frozen loop simply does not service until serialization finishes. So unrelated requests queue behind the CPU burst and inherit its duration in their tail latency. The heartbeat's `sleep(0.05)` is a timer due at +50 ms but cannot fire until the loop is free, so its measured drift equals the stall length — ~280 ms.",
+            "ru": "Пока `json.dumps` выполняется, цикл застрял внутри фазы разгрузки одного шага задачи; он не может дойти до `selector.select()`, чтобы прочитать другие готовые сокеты, и не может выстрелить ни один наступивший таймер. Каждое прочее соединение — включая /healthz и `sleep` heartbeat — это таймер или читаемый сокет, который замороженный цикл просто не обслуживает, пока сериализация не закончится. Поэтому посторонние запросы стоят в очереди за CPU-всплеском и наследуют его длительность в своём хвосте латентности. `sleep(0.05)` heartbeat — таймер, наступивший на +50 мс, но он не может выстрелить, пока цикл занят, так что измеренный дрейф равен длине залипания — ~280 мс."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · the offload fix",
+            "ru": "3 · фикс с выгрузкой"
+          },
+          "prompt": {
+            "en": "Give the fix that keeps the export feature and restores loop health, with the exact bridge and the right pool choice for pure-Python serialization. Why is `asyncio.to_thread(json.dumps, ...)` only a partial win, and what is the stronger move?",
+            "ru": "Дайте фикс, сохраняющий фичу экспорта и восстанавливающий здоровье цикла, с точным мостом и верным выбором пула для чистопитоновой сериализации. Почему `asyncio.to_thread(json.dumps, ...)` — лишь частичная победа и какой ход сильнее?"
+          },
+          "reveal": {
+            "en": "Get the CPU off the loop: `await loop.run_in_executor(pool, json.dumps, payload)` so the loop keeps cycling while another worker serializes. For PURE-Python CPU like `json.dumps`, `asyncio.to_thread` (a thread) only partially helps — the GIL means the serializing thread still contends for the interpreter, so the loop thread gets starved of GIL time even though it is no longer running the encode itself. The stronger move is a `ProcessPoolExecutor`: a separate process has its own GIL, giving true parallelism for pure-Python CPU. Pair it with backpressure (cap concurrent exports) so a flood of 60 MB jobs cannot exhaust the pool. Verify with the heartbeat: loop-lag p99 must stay flat while the export endpoint is hammered.",
+            "ru": "Уберите CPU с цикла: `await loop.run_in_executor(pool, json.dumps, payload)`, чтобы цикл крутился, пока другой воркер сериализует. Для ЧИСТО питонового CPU вроде `json.dumps` `asyncio.to_thread` (поток) помогает лишь частично — из-за GIL сериализующий поток всё равно борется за интерпретатор, так что поток цикла недополучает GIL-время, хотя сам кодирование уже не гоняет. Сильнее — `ProcessPoolExecutor`: у отдельного процесса свой GIL, что даёт настоящий параллелизм для чистопитонового CPU. Сочетайте с backpressure (ограничьте число одновременных экспортов), чтобы поток 60-МБ задач не исчерпал пул. Проверьте по heartbeat: p99 лага цикла должен оставаться ровным, пока эндпоинт экспорта под огнём."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-async-cache-warmer",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review: an async cache-warming background task",
+        "ru": "Ревью: фоновая задача прогрева кеша на asyncio"
+      },
+      "prompt": {
+        "en": "A teammate adds a background coroutine that periodically rebuilds an in-memory price cache on the same event loop that serves requests. They say it is async so it 'won't block anything'. Review like a senior: name the real defects, don't flag non-issues.",
+        "ru": "Коллега добавляет фоновую корутину, периодически перестраивающую in-memory кеш цен на том же цикле событий, что обслуживает запросы. Он говорит, что раз это async, оно «ничего не заблокирует». Ревьюй как сеньор: назови реальные дефекты, не отмечай несуществующие."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "import asyncio, time\n\ncache = {}\n\n\nasync def warm_cache(rows):\n    # rebuild the price index from ~500k rows\n    new_index = {}\n    for row in rows:\n        new_index[row.sku] = compute_price(row)   # pure-Python, no await\n    cache.clear()\n    cache.update(new_index)\n\n\nasync def warmer_loop(db):\n    while True:\n        rows = await db.fetch_all(\"select * from prices\")\n        await warm_cache(rows)\n        await asyncio.sleep(60)\n\n\nasync def startup(db):\n    asyncio.create_task(warmer_loop(db))"
+      },
+      "findings": [
+        {
+          "id": "cpu-loop-no-yield",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "500k-row pure-CPU loop never yields",
+            "ru": "Чисто-CPU цикл на 500к строк не уступает"
+          },
+          "explanation": {
+            "en": "`warm_cache` is `async def` but contains no `await` in its hot loop — building a 500k-entry dict with `compute_price` is pure CPU that runs to completion on the loop thread, freezing every request for the whole rebuild. The `async def` gives no concurrency here; it must be offloaded with `run_in_executor`/`to_thread` (or chunked with periodic `await asyncio.sleep(0)`), ideally a process pool since it is pure-Python CPU.",
+            "ru": "`warm_cache` — `async def`, но в горячем цикле нет ни одного `await`: построение dict на 500к записей через `compute_price` — чистый CPU, выполняемый до конца на потоке цикла, что морозит каждый запрос на всё время перестройки. `async def` не даёт здесь конкурентности; нужно выгрузить через `run_in_executor`/`to_thread` (или порезать на куски с периодическим `await asyncio.sleep(0)`), лучше в пул процессов, раз это чистопитоновый CPU."
+          }
+        },
+        {
+          "id": "unawaited-task-gc",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "create_task result discarded, may be GC'd",
+            "ru": "Результат create_task отброшен, может быть собран GC"
+          },
+          "explanation": {
+            "en": "`asyncio.create_task(...)` returns a Task whose only reference is dropped. The loop keeps only a weak reference, so under memory pressure the warmer task can be garbage-collected mid-flight and silently stop warming, with a 'Task was destroyed but it is pending' warning at best. The task must be stored in a long-lived container (e.g. an app-level set) and have its exceptions observed.",
+            "ru": "`asyncio.create_task(...)` возвращает Task, единственная ссылка на который теряется. Цикл держит лишь слабую ссылку, так что под давлением памяти задача прогрева может быть собрана GC на полпути и тихо перестать греть кеш — в лучшем случае с предупреждением 'Task was destroyed but it is pending'. Задачу надо сохранить в долгоживущем контейнере (например, множестве уровня приложения) и наблюдать её исключения."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "global-cache-dict",
+          "label": {
+            "en": "Mutating a module-level `cache` dict",
+            "ru": "Мутация словаря `cache` уровня модуля"
+          },
+          "explanation": {
+            "en": "On a single-threaded event loop there is no preemption between `await` points, so `cache.clear()` immediately followed by `cache.update(...)` is atomic with respect to other coroutines — no reader can observe a half-empty cache because no `await` separates the two calls. A shared module dict mutated this way is fine here; it would only be a problem across threads.",
+            "ru": "На однопоточном цикле событий нет вытеснения между точками `await`, поэтому `cache.clear()`, сразу за которым идёт `cache.update(...)`, атомарен относительно других корутин — ни один читатель не увидит полупустой кеш, ведь между двумя вызовами нет `await`. Разделяемый модульный dict, мутируемый так, здесь в порядке; проблемой это было бы лишь между потоками."
+          }
+        }
+      ]
     }
   ]
 }

@@ -144,6 +144,147 @@
         "en": "Placement. CRUD: async def + asyncpg. Every await returns the loop; 300 rps × 20 ms = 6 concurrent queries on average — a 10-connection pool per worker covers it, and the handler cost (~200 µs) is noise. SOAP: plain def. zeep blocks, so it must not run on the loop; steady-state thread demand is 20 rps × 0.8 s ≈ 16 tokens of the 40-token anyio pool. During partner brownouts (p99 → 5 s) demand grows to 100 — so cap it: a dedicated limiter (anyio CapacityLimiter(24) via run_in_threadpool wrapper) keeps SOAP from eating the whole pool, shedding excess with 503 + Retry-After instead of starving other def work. PDF: neither. 1.5 s of pure CPU in the threadpool holds the GIL whenever it is runnable, which degrades the loop on the same core; in async def it would freeze the worker outright. The endpoint validates, enqueues (the allowed queue), returns 202 with a status URL; separate queue workers — plain processes, 1 per core — do the rendering within the minutes-scale SLO. Sizing: uvicorn --workers 2 per 2 vCPU pod, one loop and one 40-token pool each; scale pods until CRUD headroom is 2x. Verification: load-test partner-slowdown and PDF-burst scenarios and watch CRUD p99 — it should not move; if it does, py-spy will show either a blocked loop (dispatch bug) or GIL-bound threads (CPU leaked back into the web process).",
         "ru": "# Раскладка: CRUD на цикле, SOAP в тредпуле с лимитером, PDF — в очередь\nРазмещение. CRUD: async def + asyncpg. Каждый await возвращает цикл; 300 rps × 20 мс = в среднем 6 одновременных запросов — пул на 10 соединений на воркер покрывает это, а стоимость хендлера (~200 мкс) — шум. SOAP: обычный def. zeep блокирует, значит на цикле ему не место; устойчивый спрос на потоки — 20 rps × 0,8 с ≈ 16 токенов из 40-токенного пула anyio. Во время браунаутов партнёра (p99 → 5 с) спрос растёт до 100 — поэтому ограничиваем: выделенный лимитер (anyio CapacityLimiter(24) через обёртку run_in_threadpool) не даёт SOAP съесть весь пул, сбрасывая излишек 503 + Retry-After вместо голодания остальной def-работы. PDF: ни то ни другое. 1,5 с чистого CPU в тредпуле держит GIL всякий раз, когда поток готов к исполнению, и деградирует цикл на том же ядре; в async def он заморозил бы воркер сразу. Эндпоинт валидирует, ставит в очередь (разрешённую), отвечает 202 со статусным URL; отдельные воркеры очереди — обычные процессы, по одному на ядро — рендерят в рамках минутного SLO. Сайзинг: uvicorn --workers 2 на под с 2 vCPU, у каждого свой цикл и свой пул на 40 токенов; масштабируем подами, пока запас CRUD не 2x. Проверка: нагрузочные сценарии «партнёр замедлился» и «всплеск PDF» с наблюдением p99 CRUD — он не должен двигаться; если двигается, py-spy покажет либо заблокированный цикл (ошибка диспетчеризации), либо GIL-bound потоки (CPU просочился обратно в веб-процесс)."
       }
+    },
+    {
+      "id": "incident-event-loop-frozen-under-startup",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "Incident: healthcheck flaps right after every deploy",
+        "ru": "Инцидент: healthcheck мигает сразу после каждого деплоя"
+      },
+      "prompt": {
+        "en": "After every rollout, Kubernetes kills 3-4 pods on failed liveness probes in the first 90 seconds, then they stabilize. /health is an async def returning {\"ok\": true}; under steady traffic its p99 is 4 ms. During the flap, py-spy shows the event loop thread parked inside a synchronous boto3 call. Work it step by step; commit before revealing.",
+        "ru": "После каждого выката Kubernetes убивает 3-4 пода по проваленным liveness-пробам в первые 90 секунд, затем они стабилизируются. /health — это async def, возвращающий {\"ok\": true}; при штатном трафике его p99 — 4 мс. Во время мигания py-spy показывает поток event loop, припаркованный внутри синхронного вызова boto3. Веди по шагам; сформулируй ответ до раскрытия."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "1 · Find the startup work",
+            "ru": "1 · Найди стартовую работу"
+          },
+          "prompt": {
+            "en": "/health does nothing blocking, yet its probe times out only at startup. What runs at startup that a probe never triggers?",
+            "ru": "/health не делает ничего блокирующего, но его проба истекает только на старте. Что выполняется при старте, чего проба никогда не запускает?"
+          },
+          "reveal": {
+            "en": "Startup work runs on the same single event-loop thread that serves /health. A @app.on_event(\"startup\") (or lifespan) hook that fetches secrets/config via blocking boto3 parks the loop: until it returns, no coroutine — including /health — gets scheduled, so the probe times out.",
+            "ru": "Стартовая работа выполняется на том же единственном потоке event loop, что обслуживает /health. Хук @app.on_event(\"startup\") (или lifespan), тянущий секреты/конфиг через блокирующий boto3, паркует цикл: пока он не вернётся, ни одна корутина — включая /health — не планируется, и проба истекает."
+          }
+        },
+        {
+          "label": {
+            "en": "2 · Explain the self-heal",
+            "ru": "2 · Объясни самоизлечение"
+          },
+          "prompt": {
+            "en": "Why does it heal after ~90 s without intervention, and why exactly 3-4 pods?",
+            "ru": "Почему оно само лечится за ~90 с без вмешательства и почему именно 3-4 пода?"
+          },
+          "reveal": {
+            "en": "Once the blocking startup call returns, the loop is free and /health answers in 4 ms forever after — that is the self-heal. The 3-4 figure is the pods whose cold boto3 call (cold connection pool, STS token mint, occasional retry) exceeds the probe deadline; warm pods get under it. It is a race against the probe timeout, not a code path that differs per pod.",
+            "ru": "Как только блокирующий стартовый вызов возвращается, цикл свободен и /health отвечает за 4 мс навсегда — это самоизлечение. Цифра 3-4 — это поды, чей холодный вызов boto3 (холодный пул соединений, выпуск STS-токена, случайный ретрай) превышает дедлайн пробы; тёплые поды укладываются. Это гонка с таймаутом пробы, а не разный путь кода у разных подов."
+          }
+        },
+        {
+          "label": {
+            "en": "3 · Fix without faking readiness",
+            "ru": "3 · Чини без подделки readiness"
+          },
+          "prompt": {
+            "en": "Give the fix that keeps liveness honest without faking readiness.",
+            "ru": "Дай фикс, который сохраняет честность liveness, не подделывая readiness."
+          },
+          "reveal": {
+            "en": "Move blocking startup off the loop: await anyio.to_thread.run_sync(load_config) in lifespan, or use an async SDK (aioboto3). Separate the probes: liveness = the process is alive (cheap, always-true once loop runs); readiness = startup completed, gating traffic until config is loaded. Then a slow cold start delays traffic, not kills the pod.",
+            "ru": "Унеси блокирующий старт с цикла: await anyio.to_thread.run_sync(load_config) в lifespan или async-SDK (aioboto3). Раздели пробы: liveness = процесс жив (дёшево, всегда true, когда цикл крутится); readiness = старт завершён, не пускающий трафик, пока конфиг не загружен. Тогда медленный холодный старт задерживает трафик, а не убивает под."
+          }
+        }
+      ]
+    },
+    {
+      "id": "review-startup-and-dispatch-mismatch",
+      "type": "review",
+      "difficulty": "stretch",
+      "estMin": 11,
+      "title": {
+        "en": "Review: a FastAPI app factory and two handlers",
+        "ru": "Ревью: фабрика FastAPI-приложения и два хендлера"
+      },
+      "prompt": {
+        "en": "This is a new FastAPI service going to production. Review like a senior: name the real defects, don't flag non-issues.",
+        "ru": "Это новый сервис FastAPI, идущий в прод. Ревьюй как сеньор: назови реальные дефекты, не отмечай несуществующие."
+      },
+      "diff": {
+        "lang": "python",
+        "code": "import requests\nfrom fastapi import FastAPI\n\napp = FastAPI()\n\n@app.on_event(\"startup\")\nasync def warm():\n    app.state.config = requests.get(\"http://config/svc\", timeout=10).json()\n\n@app.get(\"/quote/{sym}\")\nasync def quote(sym: str):\n    # upstream pricing API, sync client\n    r = requests.get(f\"http://prices/{sym}\", timeout=2)\n    return r.json()\n\n@app.get(\"/report/{id}\")\ndef report(id: int):\n    return build_pdf(id)   # ~1.5 s pure-CPU render\n\n@app.get(\"/health\")\nasync def health():\n    return {\"ok\": True}"
+      },
+      "findings": [
+        {
+          "id": "blocking-requests-in-async-startup",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "Blocking requests.get inside an async startup hook freezes the loop during boot",
+            "ru": "Блокирующий requests.get в async-хуке старта замораживает цикл при загрузке"
+          },
+          "explanation": {
+            "en": "The startup coroutine runs on the event loop; requests.get blocks it for up to 10 s, so /health cannot answer during boot and liveness probes flap. Use an async client or anyio.to_thread.run_sync.",
+            "ru": "Корутина старта выполняется на event loop; requests.get блокирует его до 10 с, поэтому /health не отвечает при загрузке и liveness-пробы мигают. Используй async-клиент или anyio.to_thread.run_sync."
+          }
+        },
+        {
+          "id": "blocking-call-in-async-handler",
+          "severity": "bug",
+          "planted": true,
+          "label": {
+            "en": "requests.get in async def quote blocks the loop for every request",
+            "ru": "requests.get в async def quote блокирует цикл на каждом запросе"
+          },
+          "explanation": {
+            "en": "A sync HTTP call inside an async handler parks the only loop thread for up to 2 s per call, serializing all traffic. Either make quote a plain def (threadpool) or switch to httpx.AsyncClient and await it.",
+            "ru": "Синхронный HTTP-вызов в async-хендлере паркует единственный поток цикла до 2 с на вызов, сериализуя весь трафик. Сделай quote обычным def (тредпул) или перейди на httpx.AsyncClient с await."
+          }
+        },
+        {
+          "id": "cpu-render-in-web-process",
+          "severity": "tradeoff",
+          "planted": true,
+          "label": {
+            "en": "1.5 s CPU render in a request handler starves the worker even as def",
+            "ru": "Рендер 1.5 с CPU в хендлере морит воркер даже как def"
+          },
+          "explanation": {
+            "en": "build_pdf is pure CPU; in a def it holds a threadpool token and the GIL, degrading the loop on the same core. Move it to a queue/worker process; the endpoint should enqueue and return 202.",
+            "ru": "build_pdf — чистый CPU; в def он держит токен тредпула и GIL, деградируя цикл на том же ядре. Унеси в очередь/воркер-процесс; эндпоинт должен ставить задачу и возвращать 202."
+          }
+        }
+      ],
+      "decoys": [
+        {
+          "id": "sym-not-validated",
+          "label": {
+            "en": "sym is a bare str with no length validation",
+            "ru": "sym — голый str без валидации длины"
+          },
+          "explanation": {
+            "en": "Looks wrong, is fine here: sym is interpolated into an internal URL only and an unknown symbol returns a clean upstream 404; tightening it is hardening, not a defect blocking this review.",
+            "ru": "Выглядит неправильно, но здесь нормально: sym подставляется только во внутренний URL, а неизвестный символ даёт чистый 404 от апстрима; ужесточение — это харднинг, а не дефект, блокирующий ревью."
+          }
+        },
+        {
+          "id": "health-too-trivial",
+          "label": {
+            "en": "/health is too trivial to be a real check",
+            "ru": "/health слишком тривиален для настоящей проверки"
+          },
+          "explanation": {
+            "en": "Looks wrong, is fine: a trivial liveness endpoint is correct by design — it proves the loop runs. Dependency checks belong in a separate readiness probe, not here.",
+            "ru": "Выглядит неправильно, но нормально: тривиальный liveness-эндпоинт верен по замыслу — он доказывает, что цикл крутится. Проверки зависимостей — в отдельной readiness-пробе, не здесь."
+          }
+        }
+      ]
     }
   ]
 }
