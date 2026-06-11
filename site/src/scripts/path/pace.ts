@@ -1,11 +1,12 @@
 // src/scripts/path/pace.ts
-// Pure: planned-vs-completed pace against a deadline. "Done" is inferred from the baseline
-// snapshot (required minutes when the deadline was set) minus what currently remains — work
-// that has left the path because its concepts became known. No clock here; `nowMs` is injected.
+// Pure: planned-vs-completed pace against a deadline, measured in PLANNED STUDY MINUTES, not
+// wall-clock — a weekends-only learner must not drift "behind" every weekday. "Done" is inferred
+// from the baseline snapshot (required minutes when the deadline was set) minus what currently
+// remains. No clock here; all calendar math is injected by the caller (path-io currentPace).
 const DAY = 86_400_000;
 const BEHIND = 0.9;       // ratio below this → behind
 const AHEAD = 1.1;        // ratio above this → ahead
-const DATA_FLOOR = 0.05;  // need >5% of the window elapsed before a verdict (day-0 noise guard)
+const DATA_FLOOR = 0.05;  // need >5% of planned minutes elapsed before a verdict (day-0 noise guard)
 
 export type PaceStatus = "ahead" | "on-track" | "behind" | "no-data";
 export interface Pace {
@@ -17,23 +18,41 @@ export interface Pace {
   behindDays: number;
 }
 
+export interface PaceInputs {
+  baselineMin: number;        // scaled required minutes when the deadline was activated
+  currentRequiredMin: number; // scaled required minutes remaining now
+  elapsedAvailMin: number;    // planned study minutes from activation to now
+  totalAvailMin: number;      // planned study minutes from activation to the target date
+  futureDays: { date: string; minutes: number }[]; // study days from now to an extended horizon
+  targetMs: number;
+  nowMs: number;
+}
+
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
-export function pace(
-  baselineMin: number, currentRequiredMin: number,
-  startedAtMs: number, nowMs: number, targetMs: number,
-): Pace {
-  const span = targetMs - startedAtMs;
-  const elapsed = nowMs - startedAtMs;
-  const elapsedFrac = span > 0 ? clamp01(elapsed / span) : 0;
+export function pace(inp: PaceInputs): Pace {
+  const { baselineMin, currentRequiredMin, elapsedAvailMin, totalAvailMin, futureDays, targetMs, nowMs } = inp;
+  const elapsedFrac = totalAvailMin > 0 ? clamp01(elapsedAvailMin / totalAvailMin) : 0;
   const doneMin = Math.max(0, baselineMin - currentRequiredMin);
   const expectedDoneMin = baselineMin * elapsedFrac;
   const ratio = expectedDoneMin > 0 ? doneMin / expectedDoneMin : 1;
 
-  // Projected finish from the realized rate; null until there's a non-zero rate to extrapolate.
-  const rate = elapsed > 0 ? doneMin / elapsed : 0; // minutes-of-work per ms
-  const projectedFinishMs = rate > 0 ? Math.round(nowMs + currentRequiredMin / rate) : null;
-  const behindDays = projectedFinishMs && projectedFinishMs > targetMs
+  // Projected finish: realized productivity per PLANNED study minute, walked over the future
+  // study-day calendar. Clamps to the supplied horizon's last day when the rate is too low to
+  // cover the remaining work inside it; null until there's a non-zero rate to extrapolate.
+  const rate = elapsedAvailMin > 0 ? doneMin / elapsedAvailMin : 0;
+  let projectedFinishMs: number | null = null;
+  if (currentRequiredMin === 0) {
+    projectedFinishMs = nowMs;
+  } else if (rate > 0 && futureDays.length) {
+    let needAvail = currentRequiredMin / rate;
+    for (const d of futureDays) {
+      needAvail -= d.minutes;
+      if (needAvail <= 0) { projectedFinishMs = Date.parse(`${d.date}T00:00:00Z`); break; }
+    }
+    if (projectedFinishMs === null) projectedFinishMs = Date.parse(`${futureDays[futureDays.length - 1].date}T00:00:00Z`);
+  }
+  const behindDays = projectedFinishMs !== null && projectedFinishMs > targetMs
     ? Math.ceil((projectedFinishMs - targetMs) / DAY) : 0;
 
   let status: PaceStatus;
