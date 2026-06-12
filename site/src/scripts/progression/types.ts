@@ -12,6 +12,8 @@ export interface RankDef {
   icon: string;
   color: string;
   label: { en: string; ru: string };
+  /** Short market-level note on a few anchor ranks (≈ junior baseline, ≈ senior bar…). */
+  market?: { en: string; ru: string };
 }
 
 export interface StageResult { score: number; answers: number[]; }
