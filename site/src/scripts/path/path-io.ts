@@ -122,7 +122,7 @@ export function deserializeKnowledge(arr: [string, ConceptMastery][]): Knowledge
 import { buildPath } from "./planner";
 import { schedulePlan, studyDays, availableMinutes } from "./schedule";
 import { emptyState, applySelfDeclare, applyDiagnostic, applyStudyEvidence, decay } from "./knowledge";
-import { mergeConfig, clampConfig } from "./config";
+import { mergeConfig, clampConfig, coldStartConfig } from "./config";
 import type { DeadlineConfig } from "./types";
 import { tierEffort } from "./tier-effort";
 import { pace, type Pace } from "./pace";
@@ -191,14 +191,19 @@ function loadKnowledge(): KnowledgeState {
   if (pretest) return seedFromPretest(emptyState(), graph, pretest, pretestQuestions, advancedQuestions, Date.now());
   return emptyState();
 }
-function defaultStoredConfig(): StoredPathConfig {
-  return { ...(mergeConfig({}) as StoredPathConfig), view: { order: [] } };
+// `coldStart` true → swap the cold-start goal in for a brand-new learner; false → keep the
+// general DEFAULT_CONFIG goal (an existing learner who has knowledge but no stored config).
+function defaultStoredConfig(coldStart = false): StoredPathConfig {
+  const base = coldStart ? mergeConfig(coldStartConfig()) : mergeConfig({});
+  return { ...(base as StoredPathConfig), view: { order: [] } };
 }
 function loadConfig(): StoredPathConfig {
   if (typeof window === "undefined") return defaultStoredConfig();
   try {
     const raw = localStorage.getItem(C_KEY);
-    if (!raw) return defaultStoredConfig();
+    // Genuine cold start = no persisted path state at all (no config AND no knowledge). A learner
+    // with stored knowledge but no config is NOT cold — keep the general default, don't retarget them.
+    if (!raw) return defaultStoredConfig(localStorage.getItem(K_KEY) === null);
     const stored = JSON.parse(raw);
     const merged = mergeConfig(stored) as StoredPathConfig;
     merged.view = { order: stored.view?.order ?? [] };
@@ -399,7 +404,8 @@ export function setDeadline(d: DeadlineConfig | undefined): void {
 }
 export function resetPath(): void {
   knowledge.value = emptyState();
-  config.value = defaultStoredConfig();
+  // Reset returns the learner to a brand-new state, so the fresh config uses the cold-start goal.
+  config.value = defaultStoredConfig(true);
   if (typeof window !== "undefined") { try { localStorage.removeItem(K_KEY); localStorage.removeItem(C_KEY); } catch {} }
 }
 

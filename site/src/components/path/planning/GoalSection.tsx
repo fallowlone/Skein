@@ -9,6 +9,7 @@ import {
   config, content, setGoals, toggleCustomTarget, toggleExcludedTrack, searchConcepts,
 } from "~/scripts/path/path-io";
 import { normalizeRanks, goalWeightFactor } from "~/scripts/path/goal-rank";
+import { COLD_START_GOAL_ID } from "~/scripts/path/config";
 
 const L = {
   en: {
@@ -18,6 +19,7 @@ const L = {
     refine: "Refine / custom targets", hide: "Hide",
     targets: "Custom targets", search: "Search concepts to target…",
     exclude: "Excluded tracks", up: "more important", down: "less important",
+    recommended: "Recommended", // mirrors ui.json path.goal.recommended (path islands carry their own L map)
   },
   ru: {
     tracks: (n: number) => `${n} трек${n === 1 ? "" : n < 5 ? "а" : "ов"}`,
@@ -26,6 +28,7 @@ const L = {
     refine: "Уточнить / свои цели", hide: "Скрыть",
     targets: "Свои цели", search: "Найти концепты для цели…",
     exclude: "Исключённые треки", up: "важнее", down: "менее важно",
+    recommended: "Рекомендуем", // mirrors ui.json path.goal.recommended (path islands carry their own L map)
   },
 } as const;
 
@@ -83,11 +86,15 @@ export default function GoalSection({ lang }: { lang: Locale }) {
         {content.goals.map((g) => {
           const rank = rankOf(g.id);
           const on = rank !== null;
+          const recommended = g.id === COLD_START_GOAL_ID;
           return (
             <div key={g.id} class={`goal-wrap${on ? " on" : ""}`}>
               <button type="button" class="goal" aria-pressed={on} onClick={() => toggle(g.id)}>
                 {on && <span class="g-prio">{rank}</span>}
-                <span class="g-name">{g.label[lang]}</span>
+                <span class="g-name">
+                  {g.label[lang]}
+                  {recommended && <span class="g-recommended">{t.recommended}</span>}
+                </span>
                 <span class="g-meta">{goalMeta(lang, g)}</span>
               </button>
               <div class={`g-rank${on ? "" : " g-rank-hidden"}`}>
