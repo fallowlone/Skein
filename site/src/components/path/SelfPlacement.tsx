@@ -36,31 +36,33 @@ export default function SelfPlacement({ lang }: { lang: Locale }) {
   };
 
   return (
-    <details class="rounded border border-stone-200 p-4">
-      <summary class="cursor-pointer font-bold">{t.title}</summary>
-      <p class="mt-2 text-sm text-stone-600">{t.hint}</p>
-      <div class="mt-3 flex flex-col gap-3">
+    <section class="self-place">
+      <h2 class="sp-title">{t.title}</h2>
+      <p class="sp-hint">{t.hint}</p>
+      <div class="sp-grid">
         {DOMAIN_FAMILIES.map((f) => (
-          <div key={f.key}>
-            <div class="text-xs font-semibold uppercase tracking-wide text-stone-500">{f.label[lang]}</div>
+          <div key={f.key} class="sp-family">
+            <div class="sp-fam-label">{f.label[lang]}</div>
             {f.tracks.map((track) => (
-              <div key={track} class="mt-1 flex flex-wrap items-center gap-1 text-sm">
-                <span class="w-40 shrink-0 font-mono">{track}</span>
-                {LEVELS.map((lv) => (
-                  <button
-                    key={lv}
-                    type="button"
-                    class={`rounded border px-2 py-0.5 text-xs ${(picked[track] ?? "none") === lv ? "border-sky-600 bg-sky-50 font-semibold" : "border-stone-300"}`}
-                    onClick={() => pick(track, lv)}
-                  >
-                    {t.levels[lv]}
-                  </button>
-                ))}
+              <div key={track} class="sp-row">
+                <span class="sp-track">{track}</span>
+                <div class="seg sp-levels" role="group" aria-label={track}>
+                  {LEVELS.map((lv) => (
+                    <button
+                      key={lv}
+                      type="button"
+                      aria-pressed={(picked[track] ?? "none") === lv}
+                      onClick={() => pick(track, lv)}
+                    >
+                      {t.levels[lv]}
+                    </button>
+                  ))}
+                </div>
               </div>
             ))}
           </div>
         ))}
       </div>
-    </details>
+    </section>
   );
 }
