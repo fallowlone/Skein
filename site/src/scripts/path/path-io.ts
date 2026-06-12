@@ -313,6 +313,13 @@ export function effectiveKnowledge(): KnowledgeState {
   return decay(knowledge.value, graph, Date.now(), config.value.weights.decayFloor);
 }
 
+// Cold-start view = a brand-new learner with no surveyed knowledge yet. Drives the
+// Planning screen's onboarding: when true PathView shows only the welcome banner + one
+// "Calibrate" CTA and tucks every config section behind a collapsed disclosure.
+export function isColdStartView(knowledgeSize: number): boolean {
+  return knowledgeSize === 0;
+}
+
 export function computePath(): { path: Path; schedule?: Schedule; droppedLocal: boolean } {
   const cfg = config.value;
   const now = Date.now();
