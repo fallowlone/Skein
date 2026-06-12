@@ -55,6 +55,8 @@ The order-events topic was lagging, so someone bumped it from 6 partitions to 12
 
 ## A topic is N independent logs, and the key picks the log
 
+Why does choosing the wrong key silently destroy your ordering guarantee while everything else looks healthy? Because a single formula — `hash(key) % N` — is doing three separate jobs at once, and most engineers only notice one of them.
+
 A Kafka topic is not one stream — it is N partitions, each an independent append-only log with its own offsets. When a producer sends a keyed record, the default partitioner computes `murmur2(key) % N` to choose exactly which partition the record lands in. Same key, same partition, every time — as long as N never changes. Records with no key are spread across partitions (round-robin or sticky batching) since they have nothing to pin them.
 
 This single mechanism is doing three jobs at once, and conflating them is where designs go wrong:
@@ -63,7 +65,7 @@ This single mechanism is doing three jobs at once, and conflating them is where 
 - **Ordering** — Kafka guarantees order *only within a single partition*, never across the topic. There is no global order.
 - **Co-location** — every record for one key is in one place, so a consumer sees that key's full history in sequence.
 
-So "ordering" in Kafka really means *per-key ordering*, and you get it for free only because all of a key's records hash to the same partition. The choice of key is therefore the choice of what stays ordered: key by `orderId` and an order's events are sequenced; key by `customerId` and you serialize everything for a customer (and risk one big customer overwhelming a partition — more on that below).
+So "ordering" in Kafka really means *per-key ordering*, and you get it for free only because all of a key's records hash to the same partition. The choice of key is therefore the choice of what stays ordered: key by `orderId` and an order's events are sequenced; key by `customerId` and you serialize everything for a customer (and risk one big customer overwhelming a partition — more on that below). When you inherit a Kafka pipeline and find an ordering bug, the first thing to check is not the brokers or the consumer code — it is the key the producer is using.
 
 ## Consumer groups: one partition, one consumer
 
@@ -146,11 +148,13 @@ This is why partition count is a capacity-planning decision, not a tuning knob. 
   </table>
 </div>
 
+Together these rows say one thing: the partition count is the dial that controls how much parallelism is even theoretically possible. Add consumers without adding partitions and you buy nothing. Ignore skew and even a perfectly balanced assignment still bottlenecks on one overloaded key.
+
 ## The one-way door: changing N rehashes everything
 
 You can increase a topic's partition count. You cannot decrease it, and increasing it is rarely as cheap as it looks. The problem is the partitioner: `hash(key) % N` is a function of N. Change N from 6 to 12 and the modulo result changes for most keys, so a key that always went to partition 2 now goes to partition 8. Future records for that key route to the new partition while its history sits in the old one — the two streams are no longer ordered relative to each other, and any consumer that built per-key state (a running balance, a state-machine position) now reads a split, out-of-order history.
 
-For stateful Kafka Streams apps this is worse than a hiccup: the changelog/state store is keyed by partition, so a partition-count change can effectively corrupt the local state. The standard senior move is therefore *not* to resize in place. You over-provision partitions up front for expected growth, or — when you truly must scale — you create a new topic with the larger count and migrate (dual-write to old and new, drain the old, cut consumers over). It is a migration, not a config edit.
+For stateful Kafka Streams apps this is worse than a hiccup: the changelog/state store is keyed by partition, so a partition-count change can effectively corrupt the local state. When you see a Kafka Streams job producing wrong results after a "routine" partition bump, this split-history corruption is the first thing to suspect. The standard senior move is therefore *not* to resize in place. You over-provision partitions up front for expected growth, or — when you truly must scale — you create a new topic with the larger count and migrate (dual-write to old and new, drain the old, cut consumers over). It is a migration, not a config edit.
 
 <Inset kind="why" lang="en">
 Why can't you decrease partitions? A partition is an ordered log with committed offsets and possibly compacted state. Merging two logs would have to interleave their records into one timeline, but there is no correct interleaving — their offsets and orderings are independent. Kafka refuses rather than silently destroy ordering, so the count only ratchets upward. Treat it as permanent.
@@ -233,5 +237,5 @@ Numbers ground the tradeoff. A single partition handles roughly tens of MB/s, so
 />
 
 <Recap lang="en">
-A Kafka topic is N independent partitions, and the default partitioner sends each keyed record to hash(key) % N — so a key always lands on the same partition, which is why ordering is guaranteed only within a partition and never across the topic. On the read side a consumer group gives each partition to exactly one consumer, so the partition count is a hard ceiling on consumer parallelism: extra consumers just sit idle. That makes the count a capacity decision, and a near-permanent one — you can raise it but never lower it, and raising it rehashes most keys, splitting each key's history across old and new partitions and silently breaking per-key ordering (and corrupting Kafka Streams state). So you over-provision up front or migrate to a new topic rather than resize in place. In production the pain shows up as hot-partition skew (one key pegs one consumer while the rest idle — fix at the key level) and rebalances (stop-the-world pauses of seconds, tamed by incremental cooperative rebalancing and static membership). A partition does tens of MB/s, but past ~1,000 partitions per broker throughput and p99 degrade, and on legacy ZooKeeper controller failover ran 5–7 seconds with thousands of partitions — KRaft cuts that under a second. The whole game is choosing N to buy parallelism and ordering you can live with for a long time.
+A Kafka topic is N independent partitions, and the default partitioner sends each keyed record to hash(key) % N — so a key always lands on the same partition, which is why ordering is guaranteed only within a partition and never across the topic. On the read side a consumer group gives each partition to exactly one consumer, so the partition count is a hard ceiling on consumer parallelism: extra consumers just sit idle. That makes the count a capacity decision, and a near-permanent one — you can raise it but never lower it, and raising it rehashes most keys, splitting each key's history across old and new partitions and silently breaking per-key ordering (and corrupting Kafka Streams state). So you over-provision up front or migrate to a new topic rather than resize in place. In production the pain shows up as hot-partition skew (one key pegs one consumer while the rest idle — fix at the key level) and rebalances (stop-the-world pauses of seconds, tamed by incremental cooperative rebalancing and static membership). A partition does tens of MB/s, but past ~1,000 partitions per broker throughput and p99 degrade, and on legacy ZooKeeper controller failover ran 5–7 seconds with thousands of partitions — KRaft cuts that under a second. The whole game is choosing N to buy parallelism and ordering you can live with for a long time. Now when you see lag climbing on a keyed topic, you'll know to check the partition count, the consumer count, the key distribution, and the rebalance logs — in that order — before touching any config.
 </Recap>

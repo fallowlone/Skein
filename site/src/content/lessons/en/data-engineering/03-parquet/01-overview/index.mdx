@@ -50,9 +50,13 @@ A nightly Spark job writes the events table to S3 as `gzip` CSV. A simple `SELEC
 
 <Crux>Parquet is columnar and self-describing: its footer stats let a query skip row groups and read only the columns it needs.</Crux>
 
+In ten minutes you will know exactly why that 90-second query happens and what three layout decisions make it go away.
+
 <Explanation>
 
 ## Columns on disk, not rows
+
+Why does the file format matter so much? Because the engine can only skip what it knows isn't needed — and CSV gives it nothing to go on. Here is what happens instead in Parquet.
 
 CSV and JSON store data row by row: every field of row 1, then every field of row 2. To read one column you still walk every byte of every row, parse the delimiters, and discard 95% of what you parsed. There are no statistics, no types — `"2024"` could be a string or a number, the reader can't know without parsing it.
 
@@ -62,7 +66,7 @@ Parquet flips the layout. Inside each file, data is split into **row groups** (a
 
 Every Parquet file ends with a footer: the schema, plus per-row-group, per-column metadata — and crucially **min/max/null-count statistics** for each column in each row group. This is the single most important structure for query performance.
 
-When you run `WHERE day = '2024-02-01'`, the engine reads the footer first, looks at each row group's `day` min and max, and **skips any row group whose range can't contain the value** without reading a single data byte. This is *predicate pushdown* plus *row-group skipping*. On a year of daily data sorted by day, that filter touches roughly 1 of 365 row groups. Page-level stats (and optional page indexes) push the same idea one level deeper, skipping pages inside a surviving row group. CSV can do none of this — no stats means the only way to know if a row matches is to read and parse it.
+When you run `WHERE day = '2024-02-01'`, the engine reads the footer first, looks at each row group's `day` min and max, and **skips any row group whose range can't contain the value** without reading a single data byte. This is *predicate pushdown* plus *row-group skipping*. On a year of daily data sorted by day, that filter touches roughly 1 of 365 row groups. Page-level stats (and optional page indexes) push the same idea one level deeper, skipping pages inside a surviving row group. CSV can do none of this — no stats means the only way to know if a row matches is to read and parse it. When you write a filter and wonder why it's still slow, the footer stats are the first place to look: are the row-group ranges actually narrow enough to skip anything?
 
 <Inset kind="why" lang="en">
 Skipping only works if the data is laid out so the filter column's min/max ranges are *narrow and non-overlapping*. Sort or partition by the columns you filter on most. If `day` values are randomly scattered across row groups, every row group's `[min, max]` spans the whole year, no row group can be skipped, and you've paid for statistics that buy nothing. Stats are necessary but not sufficient — clustering is what makes them pay.
@@ -172,11 +176,15 @@ The numbers are why the format won. A CSV that is 1.9 GB lands around 1.2 GB as 
 
 ## Where it bites in production
 
+The format looks fast in every demo. The question is: which of these failure modes will you hit first in your own pipeline?
+
 Parquet is not free of footguns, and every one of them shows up at scale, not in the demo.
 
 The first is the **small-files problem**. Each Parquet file carries its own footer and costs one I/O to open and read. A streaming job that writes a 4 KB file every few seconds produces millions of tiny files, and now the slowest part of every query is *listing* them — recursively enumerating millions of objects in S3 is notoriously slow and expensive, and the query planner must read every footer before it can plan. The fix is **compaction**: periodically rewrite the swarm into files in the 128 MB – 1 GB range.
 
 The second is **row-group size**. Too large and you lose granularity for skipping and need huge memory to write a single group; too small and metadata overhead balloons and you read more footers than data. The third is **dictionary blowup**: dictionary encoding is fantastic for low-cardinality columns, but on a high-cardinality column (a UUID, a free-text field) the dictionary grows past its page-size budget (~1 MB), Parquet falls back to plain encoding, and you've paid to build a dictionary that bought nothing — sometimes a *larger* file. The fourth is **schema evolution**: adding, renaming, or reordering columns across thousands of files leaves readers reconciling mismatched schemas, and a renamed-then-reused column name can silently mix two meanings.
+
+Together these four failure modes share a pattern: each one looks fine at prototype scale and invisible until you hit production volume. When you see a query that's mysteriously slow despite good stats, check this list in order — small files and wrong row-group size account for the majority of cases.
 
 ## Table formats: Parquet plus a brain
 
@@ -251,5 +259,5 @@ Raw Parquet is just files in a directory; it has no notion of a transaction, a s
 />
 
 <Recap lang="en">
-Parquet stores data column by column instead of row by row, which makes two things possible that CSV and JSON cannot do: column pruning, where a query reads only the column chunks it needs, and row-group skipping, where the engine uses min/max/null-count statistics in the file footer to skip whole row groups (and pages) that can't satisfy the filter — predicate pushdown. Inside, the layout nests file → row group (~128 MB) → column chunk → page (~1 MB), and each page is first encoded (dictionary, RLE, bit-packing, delta) and then compressed (snappy for hot data, zstd for ~15–20% smaller cold files), landing typically at 9–15% of the original CSV size. The senior failure modes are the small-files problem (millions of tiny files make listing and footer-reading dominate query planning — fix with compaction), wrong row-group size, dictionary blowup on high-cardinality columns (fallback to plain encoding, sometimes a larger file), and messy schema evolution across many files. Skipping only pays when data is clustered by the filter columns, so sort and partition deliberately. And because raw Parquet has no transactions or snapshots, table formats — Iceberg, Delta Lake, Hudi — wrap it with a manifest layer for ACID, time travel, safe schema evolution, and manifest-level pruning, which is what turns a pile of Parquet files into a lakehouse table.
+Parquet stores data column by column instead of row by row, which makes two things possible that CSV and JSON cannot do: column pruning, where a query reads only the column chunks it needs, and row-group skipping, where the engine uses min/max/null-count statistics in the file footer to skip whole row groups (and pages) that can't satisfy the filter — predicate pushdown. Inside, the layout nests file → row group (~128 MB) → column chunk → page (~1 MB), and each page is first encoded (dictionary, RLE, bit-packing, delta) and then compressed (snappy for hot data, zstd for ~15–20% smaller cold files), landing typically at 9–15% of the original CSV size. The senior failure modes are the small-files problem (millions of tiny files make listing and footer-reading dominate query planning — fix with compaction), wrong row-group size, dictionary blowup on high-cardinality columns (fallback to plain encoding, sometimes a larger file), and messy schema evolution across many files. Skipping only pays when data is clustered by the filter columns, so sort and partition deliberately. And because raw Parquet has no transactions or snapshots, table formats — Iceberg, Delta Lake, Hudi — wrap it with a manifest layer for ACID, time travel, safe schema evolution, and manifest-level pruning, which is what turns a pile of Parquet files into a lakehouse table. Now when you see a slow lake query, your first question should be: is the predicate pushed into the reader, and is the data clustered so the footer stats can actually skip row groups?
 </Recap>
