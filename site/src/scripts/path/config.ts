@@ -5,6 +5,11 @@ export const CONFIG_VERSION = 1;
 // Returns `lo` for non-finite input so a corrupted localStorage value can't propagate NaN.
 const clamp = (x: number, lo: number, hi: number) => (Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : lo);
 
+// The goal a brand-new learner (no persisted path state) starts on. A job-ready arc
+// (junior → middle) is the right first target; senior-fullstack stays the general base
+// goal for the merge of any *stored* config so we never mutate an existing learner's goal.
+export const COLD_START_GOAL_ID = "job-ready-junior";
+
 export const DEFAULT_CONFIG: PathConfig = {
   version: CONFIG_VERSION,
   goals: [{ id: "senior-fullstack", priority: 1 }],
@@ -14,6 +19,13 @@ export const DEFAULT_CONFIG: PathConfig = {
   pace: { stepsAhead: 5, srsAggressiveness: 0.5 },
   weights: { lessons: 0.35, practice: 0.4, masteryThreshold: 0.6, decayFloor: 0.3 },
 };
+
+// Cold-start config: DEFAULT_CONFIG with the job-ready goal swapped in. Used ONLY when there
+// is no persisted path state at all — a stored config is always merged onto DEFAULT_CONFIG,
+// which keeps that learner's own goals.
+export function coldStartConfig(): PathConfig {
+  return { ...DEFAULT_CONFIG, goals: [{ id: COLD_START_GOAL_ID, priority: 1 }] };
+}
 
 export function clampConfig(c: PathConfig): PathConfig {
   const stepsAhead = Number.isFinite(c.pace.stepsAhead) ? Math.max(1, Math.round(c.pace.stepsAhead)) : 1;
