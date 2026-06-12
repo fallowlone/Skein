@@ -68,35 +68,35 @@ export default function CalibrationFlow({ lang, unit: unitProp }: { lang: Locale
         : (nextCalibrationProbe() ? [1] : [])
     ).length === 0;
     return (
-      <div class="max-w-xl flex flex-col gap-4">
-        <h1 class="text-3xl font-extrabold">{placement ? t.placementTitle : t.title}</h1>
-        <p class="text-stone-600">{placement ? t.placementIntro : t.intro}</p>
+      <div class="cal-flow">
+        <h1 class="cf-title">{placement ? t.placementTitle : t.title}</h1>
+        <p class="cf-lead">{placement ? t.placementIntro : t.intro}</p>
         <SelfPlacement lang={lang} />
-        <div class="flex gap-3">
-          {!noProbes && <button class="rounded bg-sky-600 px-4 py-2 text-white" onClick={begin}>{t.start}</button>}
-          <a class="rounded border border-stone-300 px-4 py-2" href={roadmap}>{t.skip}</a>
+        <div class="cf-actions">
+          {!noProbes && <button type="button" class="btn btn-primary" onClick={begin}>{t.start}</button>}
+          <a class="btn btn-secondary" href={roadmap}>{t.skip}</a>
         </div>
         {!unit && !placement && (
-          <a class="text-sm text-stone-500 underline" href={`/${lang}/calibrate?mode=placement`}>{t.placementTitle} →</a>
+          <a class="cf-link" href={`/${lang}/calibrate?mode=placement`}>{t.placementTitle} →</a>
         )}
       </div>
     );
   }
   if (phase === "run") {
     return (
-      <div class="max-w-xl flex flex-col gap-4">
-        <h1 class="text-2xl font-bold">{placement ? t.placementTitle : t.title}</h1>
-        {placement && famLabel && <div class="text-xs uppercase tracking-wide text-stone-500">{t.family}: {famLabel}</div>}
+      <div class="cal-flow">
+        <h1 class="cf-title cf-title-sm">{placement ? t.placementTitle : t.title}</h1>
+        {placement && famLabel && <div class="cf-family">{t.family}: {famLabel}</div>}
         <DiagnosticRunner key={current.join(",")} lang={lang} conceptIds={current} onConcept={onConcept} onDone={onDone} />
-        <a class="text-sm text-stone-500 underline" href={roadmap}>{t.skip}</a>
+        <a class="cf-link" href={roadmap}>{t.skip}</a>
       </div>
     );
   }
   return (
-    <div class="max-w-xl flex flex-col gap-4">
-      <h1 class="text-3xl font-extrabold">{t.done}</h1>
-      <p class="text-stone-600">{t.doneBody} · {probes} {t.probed} · {knowledge.value.size} concepts touched.</p>
-      <a class="rounded bg-sky-600 px-4 py-2 text-white w-fit" href={roadmap}>{t.toPath}</a>
+    <div class="cal-flow">
+      <h1 class="cf-title">{t.done}</h1>
+      <p class="cf-lead">{t.doneBody} · {probes} {t.probed} · {knowledge.value.size} concepts touched.</p>
+      <a class="btn btn-primary cf-self" href={roadmap}>{t.toPath}</a>
     </div>
   );
 }

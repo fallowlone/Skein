@@ -25,6 +25,19 @@ export const RANKS: RankDef[] = [
   { id: "distinguished", tier: "Distinguished", division: null, min: 990, max: 1000, contentTier: "senior", icon: "👑", color: "#d6c15c", label: { en: "Distinguished", ru: "Distinguished" } },
 ];
 
+// Market-level annotations on a few anchor ranks — what each milestone means relative to
+// real hiring bars. Kept as a small id→label map so the tier() generator stays untouched.
+const MARKET: Record<string, { en: string; ru: string }> = {
+  "apprentice-1": { en: "≈ junior baseline", ru: "≈ база джуна" },
+  "engineer-2": { en: "≈ ready for middle interviews", ru: "≈ готов к собеседованиям на middle" },
+  "senior-engineer-1": { en: "≈ the senior bar", ru: "≈ планка senior" },
+  "principal-1": { en: "≈ staff / principal scope", ru: "≈ уровень staff / principal" },
+};
+for (const r of RANKS) {
+  const m = MARKET[r.id];
+  if (m) r.market = m;
+}
+
 export function ratingToRank(rating: number): RankDef {
   const r = Math.max(0, Math.min(1000, rating));
   for (const rank of RANKS) {

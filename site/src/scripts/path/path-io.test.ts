@@ -7,6 +7,7 @@ import {
   overrides, loosenUnit, clearOverrides, importState,
   searchConcepts, reorderList,
   tierOf, unitPracticeFractions, conceptsUpToBand,
+  isColdStartView,
 } from "./path-io";
 import { DEFAULT_CONFIG } from "./config";
 import { emptyState, applySelfDeclare } from "./knowledge";
@@ -92,6 +93,12 @@ describe("path-io cold-start", () => {
     expect(content.concepts.length).toBeGreaterThan(4000);
     expect(content.units.length).toBe(343); // 342 + 1 engineering-practice/debugger-mastery (wave 9b)
     expect(content.goals.map((g) => g.id)).toContain("senior-fullstack");
+  });
+
+  it("isColdStartView is true only when no concept has been surveyed", () => {
+    expect(isColdStartView(0)).toBe(true);
+    expect(isColdStartView(1)).toBe(false);
+    expect(isColdStartView(42)).toBe(false);
   });
 
   it("computePath returns dependency-ordered learn steps for the default goal", () => {

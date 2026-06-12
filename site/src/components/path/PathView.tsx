@@ -9,7 +9,7 @@ import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
   effectiveKnowledge, config, content, computePath,
-  unitProbeConcepts, applyDiagnosticResult,
+  unitProbeConcepts, applyDiagnosticResult, isColdStartView,
 } from "~/scripts/path/path-io";
 import { currentXp } from "~/scripts/progression/current";
 import { levelFromXp } from "~/scripts/progression/xp";
@@ -27,8 +27,9 @@ const L = {
   en: {
     level: "Level", xp: "XP", steps: "Steps completed",
     coldTitle: "Start here",
-    coldBody: "We've planned a path toward becoming a senior fullstack engineer, beginning at the foundations. Mark what you already know, or set a goal to retarget.",
+    coldBody: "We've planned a path toward becoming a senior fullstack engineer, beginning at the foundations. One quick calibration tells us what you already know, so the plan skips it.",
     coldCta: "Calibrate (5 min)",
+    coldSettings: "Set a goal, deadline, or fine-tune — optional",
     droppedNote: "Some local prerequisite edits created a cycle and were ignored.",
     goalHead: "What are you aiming at?", goalNote: "Active goals shape the plan below",
     mapHead: "Concept-mastery map", mapNote: "Everything you've surveyed — and the gaps",
@@ -39,8 +40,9 @@ const L = {
   ru: {
     level: "Уровень", xp: "XP", steps: "Шагов пройдено",
     coldTitle: "Начни здесь",
-    coldBody: "Мы построили путь к уровню senior fullstack, начиная с основ. Отметь, что уже знаешь, или задай цель, чтобы перенацелить.",
+    coldBody: "Мы построили путь к уровню senior fullstack, начиная с основ. Одна быстрая калибровка покажет, что ты уже знаешь, — и план это пропустит.",
     coldCta: "Калибровка (5 мин)",
+    coldSettings: "Задать цель, дедлайн или донастроить — по желанию",
     droppedNote: "Некоторые локальные правки пререквизитов создали цикл и были проигнорированы.",
     goalHead: "К чему ты идёшь?", goalNote: "Активные цели формируют план ниже",
     mapHead: "Карта освоения концептов", mapNote: "Всё, что размечено — и пробелы",
@@ -58,7 +60,7 @@ export default function PathView({ lang }: { lang: Locale }) {
   const k = effectiveKnowledge();        // subscribe
   const cfg = config.value;         // subscribe
   const { droppedLocal } = computePath();
-  const isColdStart = k.size === 0;
+  const isColdStart = isColdStartView(k.size);
 
   const xp = currentXp();
   const lvl = levelFromXp(xp);
@@ -67,31 +69,10 @@ export default function PathView({ lang }: { lang: Locale }) {
     ? Math.round((lvl.intoLevel / (lvl.intoLevel + lvl.toNext)) * 100)
     : 0;
 
-  return (
-    <div>
-      {/* XP / level strip */}
-      <div class="xp-strip">
-        <span class="xs-level">{t.level} {lvl.level}</span>
-        <span class="xs-xp">{xp} {t.xp}</span>
-        <div class="xs-bar"><div style={`width:${intoPct}%`} /></div>
-        <span class="xs-steps">{t.steps}: {doneSteps} <b>+{doneSteps * PATH_STEP_BONUS} {t.xp}</b></span>
-      </div>
-
-      {/* Cold-start banner */}
-      {isColdStart && (
-        <section class="banner cold">
-          <h2>{t.coldTitle}</h2>
-          <p>{t.coldBody}</p>
-          <a class="btn btn-primary btn-sm" href={`/${lang}/calibrate`}><span>{t.coldCta}</span><span class="arrow">→</span></a>
-        </section>
-      )}
-
-      {/* droppedLocal warning */}
-      {droppedLocal && <p class="banner dropped">{t.droppedNote}</p>}
-
-      {/* TODAY focus */}
-      <TodayFocus lang={lang} />
-
+  // The four numbered sections + advanced knobs. Rendered flat when the student has a
+  // plan; tucked inside a collapsed inset at cold-start (see below).
+  const sections = (
+    <>
       {/* 01 · GOAL */}
       <section class="screen-section" aria-labelledby="goal-h">
         <div class="sec-head">
@@ -136,6 +117,49 @@ export default function PathView({ lang }: { lang: Locale }) {
       <section class="screen-section">
         <AdvancedKnobs lang={lang} onGraphEdits={() => setModal("config")} />
       </section>
+    </>
+  );
+
+  return (
+    <div>
+      {/* XP / level strip */}
+      <div class="xp-strip">
+        <span class="xs-level">{t.level} {lvl.level}</span>
+        <span class="xs-xp">{xp} {t.xp}</span>
+        <div class="xs-bar"><div style={`width:${intoPct}%`} /></div>
+        <span class="xs-steps">{t.steps}: {doneSteps} <b>+{doneSteps * PATH_STEP_BONUS} {t.xp}</b></span>
+      </div>
+
+      {/* Cold-start banner */}
+      {isColdStart && (
+        <section class="banner cold">
+          <h2>{t.coldTitle}</h2>
+          <p>{t.coldBody}</p>
+          <a class="btn btn-primary btn-sm" href={`/${lang}/calibrate`}><span>{t.coldCta}</span><span class="arrow">→</span></a>
+        </section>
+      )}
+
+      {/* droppedLocal warning */}
+      {droppedLocal && <p class="banner dropped">{t.droppedNote}</p>}
+
+      {/* TODAY focus */}
+      <TodayFocus lang={lang} />
+
+      {/* Planning sections. At cold-start the student sees only the banner above;
+          everything else is progressive-disclosure inside a collapsed inset so the
+          single "Calibrate" CTA is the obvious next move. With a plan, sections
+          render flat as before. */}
+      {isColdStart ? (
+        <details class="screen-section inset cold-more">
+          <summary>
+            <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6" /></svg>
+            {t.coldSettings}
+          </summary>
+          <div class="inset-body">{sections}</div>
+        </details>
+      ) : (
+        sections
+      )}
 
       {/* modals (reused, mounted conditionally) */}
       {modal === "config" && <PathConfigDrawer lang={lang} onClose={() => setModal(null)} />}
