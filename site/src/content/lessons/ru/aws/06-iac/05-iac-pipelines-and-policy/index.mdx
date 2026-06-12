@@ -55,12 +55,12 @@ import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 Механизм разбивает рабочий процесс на два триггера пайплайна. **На PR** CI выполняет read-only половину: `terraform plan` (или `cdk diff`, или change set CloudFormation), затем публикует получившийся дифф комментарием в PR. **На мердж в дефолтную ветку** CI выполняет write-половину: `terraform apply`. Ключевая идея в том, что план *и есть* артефакт ревью. Ревьюер, апрувящий PR, апрувит не HCL в абстракции — он апрувит **конкретный набор изменений**, который напечатал план: эти три ресурса обновляются на месте, этот заменяется (удаляется и пересоздаётся), и больше ничего. Код-ревью только `.tf`-файлов необходимо, но недостаточно, потому что один и тот же код порождает разный план в зависимости от текущего состояния. План закрывает этот разрыв, показывая буквальную дельту, которая попадёт в аккаунт.
 
 ```yaml
-# .github/workflows/infra.yml — plan on PR, apply on merge
+# .github/workflows/infra.yml — plan на PR, apply при мердже
 name: infra
 on:
-  pull_request:        # PR: plan only, post the diff for review
+  pull_request:        # PR: только plan, публикуем дифф для ревью
   push:
-    branches: [main]   # merge: apply
+    branches: [main]   # мердж: apply
 
 jobs:
   plan:
@@ -72,12 +72,12 @@ jobs:
       - run: terraform init
       - run: terraform plan -no-color -out=tfplan
       - run: terraform show -no-color tfplan > plan.txt
-      # …then a step posts plan.txt as a PR comment (the review artifact)
+      # …затем шаг публикует plan.txt как комментарий к PR (артефакт ревью)
 
   apply:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
-    environment: prod   # gate: requires a human approval before this job runs
+    environment: prod   # гейт: требует ручной апрув до запуска джоба
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
@@ -102,14 +102,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: prod
     permissions:
-      id-token: write     # let the job request an OIDC token
+      id-token: write     # разрешить джобу запрашивать OIDC-токен
       contents: read
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::111122223333:role/ci-terraform-prod
           aws-region: eu-central-1
-          # no AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY anywhere
+          # нигде нет AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 ```
 
 Вся граница безопасности — это условие в trust policy. Сузь claim `sub` до конкретного репозитория *и* ref, чтобы форк, фича-ветка или воркфлоу другой организации не могли занять твою prod-роль:
@@ -137,7 +137,7 @@ jobs:
 Инструменты группируются по экосистемам: **OPA/Conftest**, **Checkov** и **tfsec/Trivy** оценивают план Terraform в JSON; **HashiCorp Sentinel** — платный, нативный для Terraform вариант; **AWS CloudFormation Guard (`cfn-guard`)** проверяет шаблоны CloudFormation и любой JSON/YAML компактным DSL для правил. Правила кодируют то, что ты никогда не хочешь отгрузить, — никаких публичных S3-бакетов, обязательное шифрование, никаких `0.0.0.0/0` на порт 22, обязательные теги для аллокации затрат, — и ловят *весь класс* багов, а не один экземпляр, который случайно заметил ревьюер.
 
 ```ruby
-# cfn-guard rule: no S3 bucket may be public, and encryption is required
+# Правило cfn-guard: ни один S3-бакет не может быть публичным, шифрование обязательно
 rule s3_must_be_private when Resources.*.Type == "AWS::S3::Bucket" {
   Resources.*[ Type == "AWS::S3::Bucket" ] {
     Properties.PublicAccessBlockConfiguration exists
@@ -149,7 +149,7 @@ rule s3_must_be_private when Resources.*.Type == "AWS::S3::Bucket" {
 ```
 
 ```rego
-# Conftest/OPA equivalent over a `terraform show -json` plan
+# Аналог Conftest/OPA для плана `terraform show -json`
 package main
 deny[msg] {
   r := input.resource_changes[_]
@@ -174,12 +174,12 @@ Hook — это каноничный инцидент IaC, и у него ест
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
       - run: terraform init
-      # detailed-exitcode: 0 = no drift, 2 = drift present, 1 = error
+      # detailed-exitcode: 0 = нет дрейфа, 2 = дрейф есть, 1 = ошибка
       - run: terraform plan -detailed-exitcode -no-color || echo "DRIFT" >> alert
-      # …a non-empty plan with no open PR pages on-call
+      # …непустой план без открытого PR пейджит дежурного
 on:
   schedule:
-    - cron: "0 3 * * *"   # nightly drift scan
+    - cron: "0 3 * * *"   # ночной скан дрейфа
 ```
 
 Вторая опасность — **конкурентность**. Два пайплайна, применяющие *одно и то же состояние* одновременно, гоняются: оба читают одинаковое стартовое состояние, оба пишут, второй затирает первого, и файл состояния теперь не соответствует реальности — осиротевшие ресурсы, которые Terraform больше не отслеживает, счётчик serial, который больше не сходится. Защита — **блокировка состояния** из урока про Terraform: DynamoDB-лок (или `use_lockfile`) для S3-бэкенда и собственная серверная блокировка стека CloudFormation, — плюс **сериализация apply на одно состояние** в CI (concurrency-группа, чтобы два apply-джоба на одно состояние не пересекались). **Режим отказа**, который привносит сама блокировка: CI-джоб умирает посреди apply (раннер убит, сеть отвалилась) и **оставляет лок удержанным**, так что каждый последующий apply блокируется — `Error acquiring the state lock` — пока кто-то не разберётся. Опасный рефлекс — `terraform force-unlock`, чтобы «просто разблокировать команду». Если этот лок действительно принадлежит apply, всё ещё мутирующему AWS, force-unlock даёт второму apply работать конкурентно и **по-настоящему портит состояние**. Делай force-unlock только после того, как *подтвердил*, что удерживающий джоб действительно мёртв; застрявший лок раздражает, а ошибочный force-unlock — это испорченный файл prod-состояния.
@@ -213,7 +213,7 @@ on:
 </Explanation>
 
 <FlowDiagram
-  label="IaC pipeline from PR through gated apply to scheduled drift scan"
+  label="Пайплайн IaC от PR через гейтнутый apply к плановому скану дрейфа"
   hue="var(--d-systems)"
   perRow={4}
   nodes={[

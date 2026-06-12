@@ -55,7 +55,7 @@ import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
 Это важнейший факт о рантайме, потому что он диктует, куда класть дорогую инициализацию. Код на уровне модуля выполняется **один раз на окружение**; код внутри обработчика — **один раз на запрос**. Поэтому клиент базы данных, SDK-клиенты и пулы соединений ты конструируешь на уровне модуля — они переживают вызовы и переиспользуются бесплатно. Помести это конструирование внутрь обработчика — и будешь платить за открытие нового соединения на *каждом* запросе, что и жжёт латентность, и под нагрузкой исчерпывает лимит соединений базы.
 
 ```js
-// ✅ module scope — runs ONCE per environment during INIT, reused on every warm invoke
+// ✅ уровень модуля — выполняется ОДИН РАЗ на окружение при INIT, переиспользуется в каждом тёплом вызове
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 
@@ -63,7 +63,7 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const TABLE = process.env.TABLE_NAME;
 
 export const handler = async (event) => {
-  // ❌ do NOT build the client here — that would re-run per request
+  // ❌ НЕ строй клиент здесь — это выполнялось бы на каждый запрос
   const { Item } = await ddb.send(
     new GetCommand({ TableName: TABLE, Key: { id: event.id } })
   );
@@ -90,17 +90,17 @@ export const handler = async (event) => {
 Эта 1000 — **общий пул на все функции аккаунта**, и вот где живёт war-story. **Reserved concurrency** делает две вещи разом: она *гарантирует* функции выделенный кусок пула (так что она всегда может масштабироваться до этого числа) и она *ограничивает* эту функцию этим числом (она никогда не сможет его превысить). Функция **без** reserved-конкурентности черпает из оставшегося *незарезервированного* пула — и конкурирует за него с каждой другой незарезервированной функцией. Поэтому когда одна runaway-функция (шторм ретраев, случайная рекурсия, сорвавшийся fan-out) поглощает незарезервированный пул, каждая другая незарезервированная функция в аккаунте начинает **троттлиться** с `429 / TooManyRequestsException` — ровно тот межкомандный радиус поражения из Hook. Фикс двойной: поставь **reserved-конкурентность как кэп** на плохую/недоверенную функцию, чтобы она не съела больше своей доли, и зарезервируй гарантированный пол для критичных путей вроде checkout, чтобы их никогда не морил голодом сосед.
 
 ```yaml
-# SAM/CloudFormation: reserve a guaranteed AND capped slice for checkout,
-# and pre-warm part of it with provisioned concurrency to kill cold starts.
+# SAM/CloudFormation: зарезервировать гарантированный и ограниченный кусок для checkout,
+# и прогреть часть из него provisioned concurrency, чтобы убрать холодные старты.
 CheckoutFunction:
   Type: AWS::Serverless::Function
   Properties:
     Handler: index.handler
-    MemorySize: 1769          # ~1 vCPU; profile cost across sizes
+    MemorySize: 1769          # ~1 vCPU; профилируй стоимость по размерам
     Timeout: 10
-    ReservedConcurrentExecutions: 200   # guarantees 200 AND caps at 200
+    ReservedConcurrentExecutions: 200   # гарантирует 200 И ограничивает до 200
     ProvisionedConcurrencyConfig:
-      ProvisionedConcurrentExecutions: 50   # 50 always-warm, no cold start
+      ProvisionedConcurrentExecutions: 50   # 50 всегда тёплых, без холодного старта
 ```
 
 Заметь различие, которое кодирует этот сниппет. **Reserved**-конкурентность — про то, *какой долей пула 1000 владеет эта функция* — она ничего не стоит дополнительно, лишь разбивает общий лимит. **Provisioned**-конкурентность — про *держание окружений тёплыми* — она стоит денег и убирает холодные старты. Они ортогональны: можно резервировать без provisioning (гарантировать ёмкость, принять холодные старты) или зашить часть зарезервированной ёмкости (обычная продакшен-форма выше). Режим отказа — зарезервировать 100% пула одной функции и оставить всё остальное с **нулевой** незарезервированной ёмкостью — теперь каждая другая функция троттлится мгновенно. Всегда оставляй запас (AWS даже принудительно держит минимальный незарезервированный буфер).
@@ -116,19 +116,19 @@ CheckoutFunction:
 **Poll-based** источники (SQS, Kinesis, DynamoDB Streams) работают снова иначе: **сам сервис Lambda опрашивает** источник, собирает записи в **батч** и вызывает твою функцию с этим батчем. Вот где важны `BatchSize`, `MaximumBatchingWindow`, **partial-batch-response** (возвращай `batchItemFailures`, чтобы ретраились только упавшие записи, а не весь батч) и **упорядоченность** — Kinesis и DynamoDB Streams обрабатывают записи по шарду *по порядку*, и запись-«отравленная пилюля» может застопорить шард, пока она не устареет или ты её не обработаешь. У SQS standard упорядоченности нет, и он перенаправляет отказы через собственную redrive-политику очереди в SQS DLQ.
 
 ```js
-// SQS poll-based handler with partial-batch-response: report only the
-// records that failed so SQS retries just those, not the whole batch.
+// Обработчик SQS poll-based с partial-batch-response: сообщаем только о
+// упавших записях, чтобы SQS ретраил только их, а не весь батч.
 export const handler = async (event) => {
   const batchItemFailures = [];
   for (const record of event.Records) {
     try {
       await process(JSON.parse(record.body));
     } catch (err) {
-      // surface this one record for redrive; others are acknowledged
+      // отправить эту запись в redrive; остальные подтверждены
       batchItemFailures.push({ itemIdentifier: record.messageId });
     }
   }
-  return { batchItemFailures }; // requires ReportBatchItemFailures on the mapping
+  return { batchItemFailures }; // требует ReportBatchItemFailures на маппинге
 };
 ```
 
