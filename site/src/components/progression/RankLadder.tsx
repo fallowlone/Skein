@@ -13,12 +13,14 @@ const L = {
     you: "you", floor: "from",
     band: { junior: "foundations", middle: "intermediate", senior: "senior" },
     more: (n: number) => `+${n} more`,
+    whatSenior: "What does senior mean?",
   },
   ru: {
     head: "Лестница · 25 рангов", note: "основы → senior",
     you: "ты", floor: "от",
     band: { junior: "основы", middle: "средний", senior: "senior" },
     more: (n: number) => `ещё +${n}`,
+    whatSenior: "Что значит senior?",
   },
 } as const;
 
@@ -41,7 +43,7 @@ export default function RankLadder({ lang, rating }: { lang: Locale; rating: num
     <div class="panel">
       <div class="panel-head">
         <span class="ph-label">{t.head}</span>
-        <span class="ph-note">{t.note}</span>
+        <a class="ph-note lad-what" href={`/${lang}/about#what-senior-means`}>{t.whatSenior}</a>
       </div>
       <div class="ladder">
         {shown.flatMap((i, n) => {
@@ -59,7 +61,10 @@ export default function RankLadder({ lang, rating }: { lang: Locale; rating: num
           els.push(
             <div key={`row-${i}`} class={cls.join(" ")} aria-current={row.current ? "true" : undefined}>
               <div class="lr-rank">{i + 1}</div>
-              <div class="lr-tier">{row.rank.label[lang]}</div>
+              <div class="lr-tier">
+                {row.rank.label[lang]}
+                {row.rank.market && <span class="lr-market">{row.rank.market[lang]}</span>}
+              </div>
               <div class="lr-band">{t.band[row.rank.contentTier]}</div>
               <div class="lr-rating">
                 {row.current
