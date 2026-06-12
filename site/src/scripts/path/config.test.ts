@@ -1,6 +1,6 @@
 // site/src/scripts/path/config.test.ts
 import { describe, it, expect } from "vitest";
-import { DEFAULT_CONFIG, mergeConfig, clampConfig } from "./config";
+import { DEFAULT_CONFIG, mergeConfig, clampConfig, coldStartConfig, COLD_START_GOAL_ID } from "./config";
 
 describe("config", () => {
   it("DEFAULT_CONFIG is internally valid (clamp is a no-op on it)", () => {
@@ -41,5 +41,33 @@ describe("config", () => {
     expect(DEFAULT_CONFIG.weights.decayFloor).toBe(0.3);
     // a stored pre-repair config (0.85 — above the threshold, made decay a no-op) is pulled down
     expect(mergeConfig({ weights: { ...DEFAULT_CONFIG.weights, decayFloor: 0.85 } }).weights.decayFloor).toBe(0.5);
+  });
+});
+
+describe("cold-start goal", () => {
+  it("cold-start config targets the job-ready-junior goal", () => {
+    expect(COLD_START_GOAL_ID).toBe("job-ready-junior");
+    expect(coldStartConfig().goals).toEqual([{ id: COLD_START_GOAL_ID, priority: 1 }]);
+  });
+
+  it("cold-start config is otherwise the default (only the goal differs)", () => {
+    expect(coldStartConfig()).toEqual({ ...DEFAULT_CONFIG, goals: [{ id: COLD_START_GOAL_ID, priority: 1 }] });
+    // the general base goal must NOT be cold-start — existing learners keep senior-fullstack
+    expect(DEFAULT_CONFIG.goals).toEqual([{ id: "senior-fullstack", priority: 1 }]);
+  });
+
+  it("cold-start config survives a clamp round-trip unchanged", () => {
+    expect(clampConfig(coldStartConfig())).toEqual(coldStartConfig());
+  });
+
+  it("an existing learner's stored config keeps its own goal (cold-start is NOT applied on merge)", () => {
+    // mergeConfig overlays a *stored* config onto DEFAULT_CONFIG — the cold-start swap lives only in
+    // coldStartConfig()/loadConfig's no-state branch, so merging never retargets a saved learner.
+    const stored = mergeConfig({ goals: [{ id: "interview-prep", priority: 1 }] });
+    expect(stored.goals).toEqual([{ id: "interview-prep", priority: 1 }]);
+
+    // an existing learner with knowledge but no stored goals falls back to the general default,
+    // NOT the cold-start goal.
+    expect(mergeConfig({}).goals).toEqual([{ id: "senior-fullstack", priority: 1 }]);
   });
 });
