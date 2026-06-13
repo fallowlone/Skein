@@ -49,6 +49,11 @@ export const TRACK_BAND: Record<Track, Band> = {
   "go":                   "surface",
   // containers as a system
   "docker":               "advanced",
+  // cybersecurity cluster (2026-06-13)
+  "security-foundations": "middle",
+  "security-offensive":   "advanced",
+  "security-defensive":   "advanced",
+  "security-cloud":       "advanced",
 };
 
 export function bandOf(slug: Track): Band {
