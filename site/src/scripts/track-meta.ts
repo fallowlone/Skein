@@ -15,6 +15,8 @@ export const TRACK_ABBR: Record<Track, string> = {
   "node": "NODE", "nest": "NEST",
   "logic": "LOGIC", "react": "RCT", "nextjs": "NEXT", "go": "GO",
   "docker": "DOCK",
+  "security-foundations": "SECF", "security-offensive": "RED",
+  "security-defensive": "BLUE", "security-cloud": "CLOUD",
 };
 
 export type TrackColor = "lilac" | "mint" | "peach" | "sky" | "rose";
