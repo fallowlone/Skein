@@ -29,7 +29,9 @@ export type Track =
   | "aws" | "python" | "ci-cd"
   | "node" | "nest"
   | "logic" | "react" | "nextjs" | "go"
-  | "docker";
+  | "docker"
+  | "security-foundations" | "security-offensive"
+  | "security-defensive" | "security-cloud";
 
 export const TRACKS: Track[] = [
   "math", "base-cs", "algorithms",
@@ -43,6 +45,8 @@ export const TRACKS: Track[] = [
   "node", "nest",
   "logic", "react", "nextjs", "go",
   "docker",
+  "security-foundations", "security-offensive",
+  "security-defensive", "security-cloud",
 ];
 
 export type LessonStatus = "stub" | "draft" | "ready";
