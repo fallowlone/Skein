@@ -14,6 +14,10 @@ import diagnosticsIndex from "~/content/path/diagnostics-index.json";
 import unitsJson from "~/content/units.json";
 import tracksJson from "~/content/tracks.json";
 import { masteryOf } from "./knowledge";
+import { readAttempts, recordAttempt, type AttemptRec } from "~/scripts/practice-state";
+import { dueBefore, recordReview } from "~/scripts/review-state";
+import { unitStruggleFractions } from "./practice-signal";
+import { buildDoNow, type DoNowItem } from "./do-now";
 import diagnosticsBundle from "~/content/path/diagnostics-bundle.json";
 import { buildConceptGraph } from "./graph";
 import { userState, importUserState } from "~/scripts/user-state";
@@ -123,7 +127,7 @@ export function deserializeKnowledge(arr: [string, ConceptMastery][]): Knowledge
 // ── (Task 2 appends the content bundle + signals + mutations below this line) ──
 import { buildPath } from "./planner";
 import { schedulePlan, studyDays, availableMinutes } from "./schedule";
-import { emptyState, applySelfDeclare, applyDiagnostic, applyStudyEvidence, decay } from "./knowledge";
+import { emptyState, applySelfDeclare, applyDiagnostic, applyStudyEvidence, applyPracticeStruggle, decay } from "./knowledge";
 import { mergeConfig, clampConfig, coldStartConfig } from "./config";
 import type { DeadlineConfig } from "./types";
 import { tierEffort } from "./tier-effort";
@@ -225,8 +229,19 @@ if (typeof window !== "undefined") {
 
 // ── study evidence: graded practice progress → concept confidence ──────────────
 const PRACTICE_PREFIX = "atlas.practice.";
+const ATTEMPTS_PREFIX = "atlas.practice-attempts.";
+// Small weight: a struggle signal nudges confidence down, it does not collapse it (mirrors the
+// modest reading/practice study-evidence weights). Erosion floors at config.weights.decayFloor.
+const PRACTICE_STRUGGLE_WEIGHT = 0.25;
 const unitLessonCounts = new Map<string, number>(
   (unitsJson as any[]).map((u) => [u.id as string, ((u.lessons as string[]) ?? []).length]),
+);
+// unit id → ordered full lesson keys ("<track>/<unit>/<lesson-slug>"), the do-now scan order.
+const unitLessonKeys = new Map<string, string[]>(
+  (unitsJson as any[]).map((u) => [
+    u.id as string,
+    ((u.lessons as string[]) ?? []).map((slug) => `${u.id}/${slug}`),
+  ]),
 );
 
 // Pure (exported for tests): per-unit touched/done lesson shares from raw practice-progress
@@ -294,6 +309,83 @@ export function refreshStudyEvidence(): void {
   knowledge.value = next;
 }
 if (typeof window !== "undefined") refreshStudyEvidence();
+
+// ── practice-attempt outcomes: struggle → downward knowledge signal + fail→resurface ──────────
+// Mirror of readPracticeProgress for the graded-outcomes store (atlas.practice-attempts.*).
+export function readAttemptsAll(): Map<string, Record<string, AttemptRec>> {
+  const out = new Map<string, Record<string, AttemptRec>>();
+  if (typeof window === "undefined") return out;
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k || !k.startsWith(ATTEMPTS_PREFIX)) continue;
+    try {
+      const v = JSON.parse(localStorage.getItem(k) ?? "{}");
+      if (v && typeof v === "object" && !Array.isArray(v)) out.set(k.slice(ATTEMPTS_PREFIX.length), v);
+    } catch { /* corrupt entry — skip */ }
+  }
+  return out;
+}
+
+// Fold repeated practice failures into a downward confidence nudge for the struggling unit's
+// taught concepts. Mirror of refreshStudyEvidence but downward: only erodes activity-sourced
+// confidence (applyPracticeStruggle guards diagnostic/declared), bounded by decayFloor, and
+// keeps the signal reference when nothing lowers — so running on every load causes no churn.
+export function refreshPracticeSignal(): void {
+  const fractions = unitStruggleFractions(readAttemptsAll(), unitLessonCounts);
+  if (!fractions.size) return;
+  const floor = config.value.weights.decayFloor;
+  const now = Date.now();
+  let next = knowledge.value;
+  for (const [unitId, f] of fractions) {
+    if (f.struggleFrac <= 0) continue;
+    const taught = teachesByUnit.get(unitId);
+    if (taught) next = applyPracticeStruggle(next, taught, f.struggleFrac, floor, PRACTICE_STRUGGLE_WEIGHT, now);
+  }
+  knowledge.value = next;
+}
+if (typeof window !== "undefined") refreshPracticeSignal();
+
+// Due-review read-model (fixes computePath's srsDue: []). SSR-safe: [] when there is no window.
+export function dueReviews(now = Date.now()): { cardKey: string; lessonKey: string }[] {
+  if (typeof window === "undefined") return [];
+  return dueBefore(now).map((c) => ({ cardKey: c.cardKey, lessonKey: c.lessonKey }));
+}
+
+// Record a graded practice outcome: always log the attempt; on a fail, advance the task's SRS
+// card (grade "again" → interval 0) so the flunked task resurfaces due-soon. SSR-safe.
+export function recordPracticeOutcome(lessonKey: string, taskId: string, passed: boolean): void {
+  if (typeof window === "undefined") return;
+  recordAttempt(lessonKey, taskId, passed);
+  if (!passed) recordReview(`${lessonKey}::practice::${taskId}`, "again");
+}
+
+// Read-model assembling the "do this now" action list (do-now.ts). Lead units come from the
+// computed path; lesson keys from the content bundle; mastery from a unit's first taught concept
+// against the decayed knowledge; due reviews from the SRS store. `tasksByLesson` is injectable —
+// the path bundle does not carry per-lesson practice tasks, so by default a unit only yields a
+// task row when the UI supplies real tasks; reviews always surface regardless.
+export function computeDoNow(opts?: {
+  tasksByLesson?: (lessonKey: string) => { id: string; difficulty: string }[];
+  maxUnits?: number;
+}): DoNowItem[] {
+  const eff = effectiveKnowledge();
+  const { path } = computePath();
+  // A unit resolves to the mastery of its first taught concept (its representative knowledge level).
+  const masteryOfUnit = (unitId: string): number => {
+    const first = teachesByUnit.get(unitId)?.[0];
+    return first ? masteryOf(eff, first) : 0;
+  };
+  return buildDoNow({
+    leadUnits: path.steps,
+    unitLessons: unitLessonKeys,
+    lessonStatus: (lessonKey) => readPracticeProgress().get(lessonKey) ?? {},
+    mastery: masteryOfUnit,
+    threshold: config.value.weights.masteryThreshold,
+    dueReviewKeys: dueReviews(),
+    tasksByLesson: opts?.tasksByLesson ?? (() => []),
+    maxUnits: opts?.maxUnits ?? 3,
+  });
+}
 
 // ── recompute (the single entry point; reads signals → subscribes the caller) ──
 // Memoize the override application by the overrides signal's identity — the signal is replaced
