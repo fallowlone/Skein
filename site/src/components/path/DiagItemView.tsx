@@ -1,7 +1,8 @@
-// Single diagnostic item: renders one MCQ or blanks question, grades it client-side, and reports
-// a bayes Response. Stateless across items — the parent controls identity via `key`, so a fresh
-// item resets the local pick/value. Shared by DiagnosticRunner (whole-bank loop, used by UnitProbe)
-// and CalibrationFlow's one-item-per-step placement run.
+// Single diagnostic item rendered as the Open Atlas question card (q-card). One MCQ or one
+// free-text blank. Select-then-submit: picking an option / "I don't know" / typing only arms the
+// answer; it is sent on Next (a real third "dont_know" answer, never scored wrong). The parent
+// controls identity via `key`, so a fresh item resets local state. Shared by DiagnosticRunner
+// (whole-bank loop, UnitProbe) and CalibrationFlow's one-item-per-step placement run.
 import { useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { Locale } from "~/i18n";
@@ -9,59 +10,100 @@ import { gradeMcq, gradeBlanks, type DiagItem } from "~/scripts/path/calibration
 import type { Response } from "~/scripts/path/bayes";
 
 const L = {
-  en: { dunno: "I don't know", next: "Next" },
-  ru: { dunno: "Не знаю", next: "Дальше" },
+  en: { dunno: "I don't know", next: "Next", hint: "one line · spelling-tolerant", ph: "Type your answer…" },
+  ru: { dunno: "Не знаю", next: "Дальше", hint: "одна строка · допускает опечатки", ph: "Введи ответ…" },
 } as const;
+
+const KEYS = ["A", "B", "C", "D", "E", "F"];
+
+const Check = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 6L9 17l-5-5" />
+  </svg>
+);
 
 type ItemView = DiagItem & { prompt: Record<Locale, string>; choices?: Record<Locale, string>[] };
 
 type Props = {
   lang: Locale;
   item: ItemView;
+  /** Context strip + progress (q-context / q-progress) rendered above the question text. */
   heading?: ComponentChildren;
+  /** Area hue token (e.g. "--d-backend") for the card's left accent. Defaults to the accent. */
+  hue?: string;
+  /** Extra nodes appended to the actions row (e.g. the placement "skip" link). */
+  trailingActions?: ComponentChildren;
   onAnswer: (r: Response) => void;
 };
 
-export default function DiagItemView({ lang, item, heading, onAnswer }: Props) {
+export default function DiagItemView({ lang, item, heading, hue, trailingActions, onAnswer }: Props) {
   const t = L[lang];
-  const [value, setValue] = useState("");
   const [picked, setPicked] = useState<number | null>(null);
+  const [value, setValue] = useState("");
+  const [dunno, setDunno] = useState(false);
   const qid = `q-${item.id}`;
 
+  const isMcq = item.type === "mcq";
+  const armed = dunno || (isMcq ? picked !== null : value.trim().length > 0);
+
+  const submit = () => {
+    if (!armed) return;
+    if (dunno) return onAnswer("dont_know");
+    if (isMcq) return onAnswer(gradeMcq(item, picked!) ? "correct" : "wrong");
+    onAnswer(gradeBlanks(item, value) ? "correct" : "wrong");
+  };
+
+  const cardStyle = hue ? `--d:var(${hue})` : undefined;
+
   return (
-    <div class="flex flex-col gap-3">
+    <div class="q-card q-swap-body is-entering" style={cardStyle}>
       {heading}
-      <p id={qid} class="font-medium text-stone-900">{item.prompt[lang]}</p>
-      {item.type === "mcq" ? (
-        <ul class="flex flex-col gap-2">
+      <p class="q-text" id={qid}>{item.prompt[lang]}</p>
+
+      {isMcq ? (
+        <div class="q-options" role="group" aria-labelledby={qid}>
           {(item.choices ?? []).map((ch, i) => (
-            <li key={i}>
-              <button
-                class={`w-full rounded border px-3 py-2 text-left text-sm ${picked === i ? "border-sky-500 bg-sky-50" : "border-stone-300 hover:bg-stone-100"}`}
-                aria-pressed={picked === i}
-                onClick={() => setPicked(i)}
-              >{ch[lang]}</button>
-            </li>
+            <button
+              key={i}
+              class="q-opt"
+              type="button"
+              aria-pressed={picked === i}
+              onClick={() => { setPicked(i); setDunno(false); }}
+            >
+              <span class="qo-key">{KEYS[i] ?? i + 1}</span>
+              <span class="qo-label">{ch[lang]}</span>
+              <span class="qo-tick"><Check /></span>
+            </button>
           ))}
-          <li class="flex gap-2">
-            <button class="rounded bg-sky-600 px-3 py-1.5 text-sm text-white disabled:opacity-40"
-              disabled={picked === null}
-              onClick={() => onAnswer(gradeMcq(item, picked!) ? "correct" : "wrong")}>{t.next}</button>
-            <button class="rounded border border-stone-300 px-3 py-1.5 text-sm"
-              onClick={() => onAnswer("dont_know")}>{t.dunno}</button>
-          </li>
-        </ul>
+        </div>
       ) : (
-        <div class="flex gap-2">
-          <input class="flex-1 rounded border border-stone-300 px-3 py-1.5 text-sm" value={value}
-            aria-labelledby={qid}
-            onInput={(e) => setValue((e.target as HTMLInputElement).value)} />
-          <button class="rounded bg-sky-600 px-3 py-1.5 text-sm text-white"
-            onClick={() => onAnswer(gradeBlanks(item, value) ? "correct" : "wrong")}>{t.next}</button>
-          <button class="rounded border border-stone-300 px-3 py-1.5 text-sm"
-            onClick={() => onAnswer("dont_know")}>{t.dunno}</button>
+        <div class={`q-blank${value.trim() && !dunno ? " is-filled" : ""}`}>
+          <label class="qb-field">
+            <span class="qb-pre">&gt;</span>
+            <input
+              type="text"
+              aria-labelledby={qid}
+              value={value}
+              placeholder={t.ph}
+              onInput={(e) => { setValue((e.target as HTMLInputElement).value); setDunno(false); }}
+            />
+          </label>
+          <span class="qb-hint">{t.hint}</span>
         </div>
       )}
+
+      <div class="q-actions">
+        <button class="btn btn-primary" type="button" disabled={!armed} aria-disabled={!armed} onClick={submit}>
+          <span>{t.next}</span><span class="arrow">→</span>
+        </button>
+        <button
+          class="btn btn-secondary q-dunno"
+          type="button"
+          aria-pressed={dunno}
+          onClick={() => { setDunno((d) => !d); setPicked(null); }}
+        >{t.dunno}</button>
+        {trailingActions}
+      </div>
     </div>
   );
 }
