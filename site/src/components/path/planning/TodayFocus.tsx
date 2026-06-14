@@ -2,7 +2,7 @@
 // Top-of-screen focus: what to do TODAY. Deadline set → today's schedule row; otherwise the
 // next path step. When behind/over, surfaces the single best catch-up action inline.
 import type { Locale } from "~/i18n";
-import { config, content, computePath, currentPace, currentFixes, applyFix } from "~/scripts/path/path-io";
+import { config, content, computePath, currentPace, currentFixes, applyFix, dueReviews } from "~/scripts/path/path-io";
 import unitsJson from "~/content/units.json";
 
 type UnitMeta = { track: string; slug: string; firstLesson?: string; lessonCount: number };
@@ -23,11 +23,20 @@ function ruLessons(n: number): string {
 const L = {
   en: { today: "Today", next: "Next up", start: "Start", min: (m: number) => `~${m} min`,
     done: "Nothing due — you're on top of your plan.", behind: (d: number) => `Behind ~${d} day(s).`, apply: "Apply",
-    scope: (n: number) => `This step is a unit of ${n} lesson${n === 1 ? "" : "s"} — it starts at lesson 1; the step is done when you've finished all of them.` },
+    scope: (n: number) => `This step is a unit of ${n} lesson${n === 1 ? "" : "s"} — it starts at lesson 1; the step is done when you've finished all of them.`,
+    doNow: "Do now", review: "Review", reviewReason: "Due for review", lessonReason: "Next lesson", open: "Open" },
   ru: { today: "Сегодня", next: "Дальше", start: "Начать", min: (m: number) => `~${m} мин`,
     done: "На сегодня ничего — ты в графике.", behind: (d: number) => `Отстаёшь ~${d} дн.`, apply: "Применить",
-    scope: (n: number) => `Этот шаг — юнит из ${n} ${ruLessons(n)}: начинаешь с первого, шаг засчитан, когда пройдены все.` },
+    scope: (n: number) => `Этот шаг — юнит из ${n} ${ruLessons(n)}: начинаешь с первого, шаг засчитан, когда пройдены все.`,
+    doNow: "Делай сейчас", review: "Повторение", reviewReason: "Пора повторить", lessonReason: "Следующий урок", open: "Открыть" },
 } as const;
+
+// A practice lessonKey ("<track>/<unit>/<lesson>") maps directly to its reader route. Retrieval
+// cards can carry a bare piece slug instead, so only build a lesson link for a real 3-segment key;
+// otherwise fall back to the review hub (always valid).
+function reviewHref(lang: Locale, lessonKey: string): string {
+  return lessonKey.split("/").length >= 3 ? `/${lang}/learn/${lessonKey}` : `/${lang}/review/`;
+}
 
 export default function TodayFocus({ lang }: { lang: Locale }) {
   const t = L[lang];
@@ -51,7 +60,43 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
     minutes = s.estMin;
   }
 
-  if (units.length === 0) return <section class="today-card empty"><p>{t.done}</p></section>;
+  // Do-now rows: every due review (links to the lesson / review hub), then the next lesson for the
+  // first few lead path units. Reviews come first — resurfaced/overdue work outranks fresh study.
+  const reviews = dueReviews();
+  const seenReviewLessons = new Set<string>();
+  const reviewRows = reviews
+    .filter((r) => (seenReviewLessons.has(r.lessonKey) ? false : (seenReviewLessons.add(r.lessonKey), true)))
+    .slice(0, 5)
+    .map((r) => ({ key: r.cardKey, href: reviewHref(lang, r.lessonKey), reason: t.reviewReason }));
+  const leadRows = path.steps.slice(0, 3).flatMap((s) => {
+    const href = startHref(lang, s.unit);
+    if (!href) return [];
+    return [{ key: s.unit, href, title: content.unitTitleById.get(s.unit)?.[lang] ?? s.unit, reason: t.lessonReason }];
+  });
+  const hasDoNow = reviewRows.length > 0 || leadRows.length > 0;
+
+  const doNow = hasDoNow ? (
+    <section class="today-card do-now">
+      <span class="tc-head">{t.doNow}</span>
+      <ol class="dn-list">
+        {reviewRows.map((r) => (
+          <li key={`r:${r.key}`} class="dn-row">
+            <a class="dn-link" href={r.href}><span class="dn-title">{t.review}</span><span class="dn-reason">{r.reason}</span></a>
+          </li>
+        ))}
+        {leadRows.map((r) => (
+          <li key={`l:${r.key}`} class="dn-row">
+            <a class="dn-link" href={r.href}><span class="dn-title">{r.title}</span><span class="dn-reason">{r.reason}</span></a>
+          </li>
+        ))}
+      </ol>
+    </section>
+  ) : null;
+
+  // Cold-start: no path AND nothing due → keep the existing empty card unchanged.
+  if (units.length === 0) {
+    return doNow ?? <section class="today-card empty"><p>{t.done}</p></section>;
+  }
 
   const href = startHref(lang, units[0].unit);
   const lessonCount = UNIT_META.get(units[0].unit)?.lessonCount ?? 0;
@@ -62,20 +107,23 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
   const catchUp = (p?.status === "behind" || (schedule?.feasibility.verdict === "over")) ? (combo[0] ?? fixes[0]) : undefined;
 
   return (
-    <section class="today-card">
-      <div class="tc-main">
-        <span class="tc-head">{head}</span>
-        <span class="tc-units">{units.map((u) => u.title).join(" · ")}</span>
-        <span class="tc-min">{t.min(minutes)}</span>
-        {href && <a class="btn btn-primary btn-sm" href={href}><span>{t.start}</span><span class="arrow">→</span></a>}
-      </div>
-      {lessonCount > 0 && <p class="tc-scope">{t.scope(lessonCount)}</p>}
-      {catchUp && (
-        <div class="tc-catchup">
-          {p?.status === "behind" && <span>{t.behind(p.behindDays)}</span>}
-          <button type="button" class="btn btn-sm" onClick={() => applyFix(catchUp)}>{t.apply}</button>
+    <>
+      {doNow}
+      <section class="today-card">
+        <div class="tc-main">
+          <span class="tc-head">{head}</span>
+          <span class="tc-units">{units.map((u) => u.title).join(" · ")}</span>
+          <span class="tc-min">{t.min(minutes)}</span>
+          {href && <a class="btn btn-primary btn-sm" href={href}><span>{t.start}</span><span class="arrow">→</span></a>}
         </div>
-      )}
-    </section>
+        {lessonCount > 0 && <p class="tc-scope">{t.scope(lessonCount)}</p>}
+        {catchUp && (
+          <div class="tc-catchup">
+            {p?.status === "behind" && <span>{t.behind(p.behindDays)}</span>}
+            <button type="button" class="btn btn-sm" onClick={() => applyFix(catchUp)}>{t.apply}</button>
+          </div>
+        )}
+      </section>
+    </>
   );
 }
