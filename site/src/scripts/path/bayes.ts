@@ -1,5 +1,7 @@
 // Pure probabilistic placement model. No I/O, no Date.now(), no path-io imports.
 import type { Band } from "./types";
+import type { ConceptGraph } from "./graph";
+import { ancestors, descendants } from "./graph";
 
 export type SelfPlace = "never" | "basics" | "prod";
 export type Response = "correct" | "wrong" | "dont_know";
@@ -77,4 +79,27 @@ export const SETTLE_VAR = 0.10;
 
 export function collapse(p: number): { confidence: number; shaky: boolean } {
   return { confidence: clamp01(p), shaky: variance(p) > SETTLE_VAR };
+}
+
+export const PASS = 0.7;     // focal posterior ≥ PASS ⇒ confident known
+export const FAIL = 0.3;     // focal posterior ≤ FAIL ⇒ confident not-known
+const PROP_UP_FACTOR = 0.8;  // share of focal confidence granted to prereqs
+const DK_CASCADE_DAMP = 0.5; // dont_know down-cascade is half-strength vs wrong
+
+// Returns a NEW prior map with unobserved ancestors/descendants nudged after a focal update.
+export function propagatePriors(
+  priors: Map<string, number>, g: ConceptGraph, concept: string, p: number, via: Response,
+): Map<string, number> {
+  const next = new Map(priors);
+  if (p >= PASS) {
+    const lift = p * PROP_UP_FACTOR;
+    for (const a of ancestors(g, concept)) if ((next.get(a) ?? 0) < lift) next.set(a, lift);
+  } else if (p <= FAIL) {
+    const damp = via === "dont_know" ? DK_CASCADE_DAMP : 1;
+    for (const d of descendants(g, concept)) {
+      const cur = next.get(d) ?? 0.5;
+      if (cur > p) next.set(d, cur + (p - cur) * damp);
+    }
+  }
+  return next;
 }
