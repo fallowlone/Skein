@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { priorFor, fallbackIrt, likelihood, posterior, variance, entropy, expectedInfoGain, collapse, SETTLE_VAR, propagatePriors, type Irt } from "./bayes";
+import { priorFor, fallbackIrt, likelihood, posterior, variance, entropy, expectedInfoGain, collapse, SETTLE_VAR, propagatePriors, resolveIrt, type Irt } from "./bayes";
 import { buildConceptGraph } from "./graph";
 import type { Concept } from "./types";
 
@@ -89,5 +89,16 @@ describe("propagatePriors", () => {
     const viaWrong = propagatePriors(base, G, "a", 0.05, "wrong").get("c")!;
     const viaDk = propagatePriors(base, G, "a", 0.05, "dont_know").get("c")!;
     expect(viaDk).toBeGreaterThan(viaWrong);
+  });
+});
+
+describe("resolveIrt", () => {
+  it("uses authored irt when present", () => {
+    expect(resolveIrt({ b: 0.4, a: 1.7, c: 0.2 }, "advanced", "mcq", 4)).toEqual({ b: 0.4, a: 1.7, c: 0.2 });
+  });
+  it("falls back to band/type when irt absent", () => {
+    const irt = resolveIrt(undefined, "foundations", "mcq", 5);
+    expect(irt.c).toBeCloseTo(0.2, 5);
+    expect(irt.a).toBe(1.0);
   });
 });
