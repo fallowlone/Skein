@@ -34,8 +34,26 @@ import PlacementResult from "./PlacementResult";
 
 const EXPRESS_CAP = 5; // items per family in express mode
 const L = {
-  en: { mode: "Choose depth", express: "Express (~10 min)", full: "Full coverage", family: "Area", skip: "Skip to my path" },
-  ru: { mode: "Выбери глубину", express: "Экспресс (~10 мин)", full: "Полное покрытие", family: "Область", skip: "Сразу к пути" },
+  en: {
+    depthKick: "Calibration · step 2 of 2", depthTitle: "Choose depth", rec: "recommended",
+    expressTag: "Express", expressTime: "≈ 10 min",
+    expressBlurb: "Probes only the most informative areas and stops the moment your level is clear. Best for a fast, honest first map.",
+    expressEst: "≈ 12 questions", expressCta: "Express (~10 min)",
+    fullTag: "Full coverage", fullTime: "≈ 25–30 min",
+    fullBlurb: "Every area gets several questions, even strong ones. The most precise placement — slower, and thorough across the whole atlas.",
+    fullEst: "up to ≈ 40 questions", fullCta: "Full coverage",
+    skip: "Skip to my path →", question: "Question", progress: "Approximate progress",
+  },
+  ru: {
+    depthKick: "Калибровка · шаг 2 из 2", depthTitle: "Выбери глубину", rec: "рекомендуем",
+    expressTag: "Экспресс", expressTime: "≈ 10 мин",
+    expressBlurb: "Прощупывает только самые информативные области и останавливается, как только уровень ясен. Лучшее для быстрой честной первой карты.",
+    expressEst: "≈ 12 вопросов", expressCta: "Экспресс (~10 мин)",
+    fullTag: "Полное покрытие", fullTime: "≈ 25–30 мин",
+    fullBlurb: "Каждая область получает несколько вопросов, даже сильные. Самая точная оценка — медленнее и тщательнее по всему атласу.",
+    fullEst: "до ≈ 40 вопросов", fullCta: "Полное покрытие",
+    skip: "Сразу к пути →", question: "Вопрос", progress: "Приблизительный прогресс",
+  },
 } as const;
 
 type Phase = "aim" | "mode" | "run" | "result";
@@ -119,13 +137,31 @@ function PlacementMachine({ lang }: { lang: Locale }) {
 
   if (phase === "mode") {
     return (
-      <div class="cal-flow">
-        <h1 class="cf-title">{t.mode}</h1>
-        <div class="cf-actions">
-          <button type="button" class="btn btn-primary" onClick={() => startDeep(true)}>{t.express}</button>
-          <button type="button" class="btn btn-secondary" onClick={() => startDeep(false)}>{t.full}</button>
+      <div class="cal-flow" data-pt>
+        <div class="pt-panel pt-rise">
+          <div class="pt-panel-head">
+            <span class="pph-kick">{t.depthKick}</span>
+            <h3>{t.depthTitle}</h3>
+          </div>
+          <div class="depth-grid">
+            <button class="depth-card is-rec" type="button" onClick={() => startDeep(true)}>
+              <span class="dc-pick">{t.rec}</span>
+              <span class="dc-kick"><span class="dc-tag">{t.expressTag}</span><span class="dc-time">{t.expressTime}</span></span>
+              <span class="dc-title">{t.expressTag}</span>
+              <span class="dc-blurb">{t.expressBlurb}</span>
+              <span class="dc-gauge"><span class="dc-bar"><i style="width:30%" /></span><span class="dc-est">{t.expressEst}</span></span>
+              <span class="dc-cta"><span class="btn btn-primary" role="presentation"><span>{t.expressCta}</span><span class="arrow">→</span></span></span>
+            </button>
+            <button class="depth-card" type="button" onClick={() => startDeep(false)}>
+              <span class="dc-kick"><span class="dc-tag">{t.fullTag}</span><span class="dc-time">{t.fullTime}</span></span>
+              <span class="dc-title">{t.fullTag}</span>
+              <span class="dc-blurb">{t.fullBlurb}</span>
+              <span class="dc-gauge"><span class="dc-bar"><i style="width:92%" /></span><span class="dc-est">{t.fullEst}</span></span>
+              <span class="dc-cta"><span class="btn btn-secondary" role="presentation">{t.fullCta}</span></span>
+            </button>
+          </div>
+          <div class="depth-foot"><a class="pt-skip" href={roadmap}>{t.skip}</a></div>
         </div>
-        <a class="cf-link" href={roadmap}>{t.skip}</a>
       </div>
     );
   }
@@ -134,19 +170,43 @@ function PlacementMachine({ lang }: { lang: Locale }) {
     // nextConcept only returns concepts with cursor < bankSize, so this item always exists.
     const bank = content.diagnostics[cur.concept];
     const item = bank.items[cur.idx] as DiagItem & { prompt: Record<Locale, string>; choices?: Record<Locale, string>[] };
-    const label = content.conceptById.get(cur.concept)?.label[lang] ?? cur.concept;
-    const heading = <div class="text-xs uppercase tracking-wide text-stone-500">{label}</div>;
+    const conceptLabel = content.conceptById.get(cur.concept)?.label[lang] ?? cur.concept;
+    const fam = families().find((f) => f.key === familyOf(cur.concept));
+    const areaName = fam?.label[lang] ?? familyOf(cur.concept);
+    const s = st.current!;
+    const num = s.totalAsked + 1;
+    const pct = Math.min(96, Math.round((s.totalAsked / Math.max(1, deps.current!.maxItems)) * 100));
+    const heading = (
+      <>
+        <div class="q-context">
+          <span class="q-area"><span class="sq" /><span class="qa-name">{areaName}</span></span>
+          <span class="q-concept">{conceptLabel}</span>
+        </div>
+        <div class="q-progress" aria-label={t.progress}>
+          <span class="q-prog-track"><i style={`width:${pct}%`} /></span>
+          <span class="q-prog-meta">{t.question} <b>{num}</b></span>
+        </div>
+      </>
+    );
+    const skip = (
+      <>
+        <span class="q-spacer" />
+        <a class="pt-skip" href={roadmap}>{t.skip}</a>
+      </>
+    );
     return (
-      <div class="cal-flow">
-        <div class="cf-family">{t.family}: {familyOf(cur.concept)}</div>
-        <DiagItemView
-          key={`${cur.concept}#${cur.idx}`}
-          lang={lang}
-          item={item}
-          heading={heading}
-          onAnswer={(r) => onAnswer(cur.concept, item, r)}
-        />
-        <a class="cf-link" href={roadmap}>{t.skip}</a>
+      <div class="cal-flow" data-pt>
+        <div class="pt-panel lift pt-rise">
+          <DiagItemView
+            key={`${cur.concept}#${cur.idx}`}
+            lang={lang}
+            item={item}
+            heading={heading}
+            hue={fam?.hue}
+            trailingActions={skip}
+            onAnswer={(r) => onAnswer(cur.concept, item, r)}
+          />
+        </div>
       </div>
     );
   }
