@@ -70,6 +70,30 @@ export function applyStudyEvidence(
   return next;
 }
 
+// Downward mirror of applyStudyEvidence: a unit whose practice the learner repeatedly flunks is
+// weaker than reading-evidence alone implied, so lower its taught concepts toward `floor` by
+// struggleFrac*weight. Only activity-sourced (or absent-but-present) confidence is eroded — a
+// diagnostic or declared concept is stronger evidence and is never touched, and confidence is
+// never raised (target only applies when it is below the current value). An absent concept stays
+// absent (we never lift 0 → floor). Immutable; returns the same reference when nothing changes.
+export function applyPracticeStruggle(
+  state: KnowledgeState, taught: string[], struggleFrac: number, floor: number, weight: number, now: number,
+): KnowledgeState {
+  if (struggleFrac <= 0) return state;
+  let next = state;
+  const drop = clamp01(struggleFrac) * weight;
+  for (const c of taught) {
+    const cur = next.get(c);
+    if (!cur) continue;                          // absent — never lift 0 toward the floor
+    if (STRONG.includes(cur.source)) continue;   // never erode stronger evidence
+    if (cur.source !== "activity") continue;     // only activity-sourced confidence is eroded
+    const target = Math.max(floor, cur.confidence - drop);
+    if (target >= cur.confidence) continue;      // never raise
+    next = setMastery(next, c, { confidence: target, source: "activity", lastAt: now });
+  }
+  return next;
+}
+
 export function applySelfDeclare(state: KnowledgeState, concept: string, known: boolean, now: number): KnowledgeState {
   return setMastery(state, concept, { confidence: known ? 1 : 0, source: "declared", lastAt: now });
 }
