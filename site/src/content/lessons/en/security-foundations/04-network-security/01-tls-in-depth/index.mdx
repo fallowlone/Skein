@@ -1,0 +1,222 @@
+---
+concepts:
+- tls-handshake
+- forward-secrecy
+- cipher-suites
+- protocol-downgrade
+- hsts-and-stripping
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: middle
+order: 1
+prereqs: []
+slug: 01-tls-in-depth
+sources:
+- https://datatracker.ietf.org/doc/html/rfc8446
+- https://wiki.mozilla.org/Security/Server_Side_TLS
+- https://datatracker.ietf.org/doc/html/rfc6797
+spiral: []
+status: ready
+summary: 'A valid padlock only proves the channel is encrypted and the server authenticated
+  right now. Whether that protection survives a stolen key, an active downgrade, or a
+  plaintext first hop depends on forward secrecy, a minimum protocol version, and HSTS.'
+title: 'TLS in depth'
+track: security-foundations
+unit: 04-network-security
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A backup of your API server's private key turns up in a public bucket. Annoying, but you rotate the key, revoke the cert, and move on — the breach is contained, you tell the room. Then a researcher emails you a decrypted transcript of a request one of your customers made *three months ago*: their bearer token, in cleartext, pulled from traffic captured long before the leak. Nobody touched your server back then. The attacker simply recorded the ciphertext and waited. Your TLS was "on" the whole time — valid cert, green padlock — and it still handed over months of history the instant one long-term key escaped. The padlock was never the whole story.
+</Hook>
+
+By the end of this lesson you'll know what a valid TLS connection actually guarantees, why forward secrecy decides whether a stolen key leaks the past, how a downgrade attack defeats "we ordered strong ciphers first," and why SSL stripping is the one gap no cipher can close.
+
+<Crux>TLS gives you an encrypted, authenticated channel — but only forward secrecy and a minimum version keep that promise when a key leaks.</Crux>
+
+<Explanation>
+
+## What the handshake actually establishes
+
+A TLS connection does three jobs at once, and conflating them is the root of most TLS mistakes. It **authenticates** the server: the certificate, validated up a chain to a trusted root, proves you're talking to the real `api.example.com` and not an impostor. It **establishes a session key**: both sides agree on symmetric keys so the rest of the conversation is encrypted. And it provides **integrity**: an AEAD cipher (AES-GCM, ChaCha20-Poly1305) makes tampering detectable. The green padlock means all three held *at handshake time* — nothing more. It says nothing about what happens to that traffic if the server's private key is stolen tomorrow, and nothing about how the connection got started in the first place.
+
+In TLS 1.3 (RFC 8446) the handshake is one round trip. The client sends a `ClientHello` listing the protocol versions and cipher suites it supports, plus a freshly generated ephemeral Diffie-Hellman public key. The server replies with its certificate, its own ephemeral DH key, and a `Finished` that signs the whole transcript so far. Both sides combine the two ephemeral keys to derive the session secret. The crucial detail: the long-term certificate key is used only to *sign* the handshake (prove identity), never to *encrypt* the session secret. That separation is what makes the next section possible.
+
+<FlowDiagram
+  label="A TLS 1.3 handshake: client sends ClientHello with its supported versions, cipher suites, and an ephemeral key share; server responds with its certificate, its own ephemeral key share, and a signed Finished over the transcript; both derive the same session key from the two ephemeral shares; encrypted application data then flows."
+  perRow={5}
+  hue="var(--d-crypto)"
+  nodes={[
+    { id: "hello", label: "ClientHello", sub: "versions + suites + key" },
+    { id: "srvcert", label: "Server cert", sub: "signs transcript" },
+    { id: "share", label: "Ephemeral DH", sub: "both sides" },
+    { id: "derive", label: "Derive key", sub: "from ephemerals" },
+    { id: "data", label: "App data", sub: "AEAD encrypted" },
+  ]}
+  edges={[
+    { from: "hello", to: "srvcert" },
+    { from: "srvcert", to: "share", label: "offers key" },
+    { from: "share", to: "derive", label: "mix" },
+    { from: "derive", to: "data", label: "then encrypt" },
+  ]}
+  caption="The long-term cert key only signs the transcript to prove identity. The session key comes from the two ephemeral DH shares — which is precisely why a later theft of the cert key can't reconstruct it."
+/>
+
+## Forward secrecy: does a stolen key leak the past?
+
+Here is the single most important property, and the one the padlock hides. The question is: *if an attacker steals the server's long-term private key, can they decrypt traffic they recorded before the theft?*
+
+With **RSA key transport** — the old TLS ≤1.2 default — the answer is yes. The client generates the session secret, encrypts it with the server's long-term RSA public key, and sends it. Whoever holds the matching private key can recover that session secret, forever. So an attacker who records ciphertext today and steals the key in six months decrypts everything retroactively. This is the **"harvest now, decrypt later"** model, and it's exactly the incident in the hook: months of captured traffic unlocked by one leaked key.
+
+With **(EC)DHE key exchange** — ephemeral Diffie-Hellman — the session secret is derived from per-connection ephemeral keys that are generated, used, and then *thrown away*. The long-term key only signs; it never carries the secret. After the handshake there is nothing on disk that can reconstruct that session's key. Stealing the long-term key lets the attacker impersonate the server *going forward* (which rotation and revocation address), but it cannot decrypt a single recorded past session. That property is **forward secrecy**, and TLS 1.3 makes it mandatory — RSA key transport was removed from the protocol entirely. On TLS 1.2 you get it only if you restrict the cipher suites to ECDHE.
+
+So "we have HTTPS and the cert is valid" is not the same claim as "our recorded traffic is safe from a future key theft." The first is about authentication and encryption right now; the second is purely about whether every accepted suite is ECDHE. A padlock over an RSA-key-transport suite is a time bomb.
+
+<Inset kind="why" lang="en">
+Why was RSA key transport ever the default if it has this flaw? Because for years it was *simpler and faster*: the server did one private-key decryption per handshake and skipped the ephemeral DH math, which mattered when CPUs were slower and ECDHE wasn't hardware-accelerated. Forward secrecy looked like a luxury — until "harvest now, decrypt later" stopped being theoretical (mass traffic capture, plus the looming threat that a future quantum computer or a single key leak retroactively unlocks years of archives). The cost-benefit flipped: modern CPUs make ECDHE cheap, and the downside of *not* having it is catastrophic and retroactive. TLS 1.3's designers settled the debate by deleting the non-forward-secret option from the protocol.
+</Inset>
+
+## Downgrade attacks: why "we ordered strong ciphers first" fails
+
+A common and wrong mental model is: "our server lists the strong ECDHE-AEAD suites first in its preference order, and `ssl_prefer_server_ciphers` is on, so a modern client always lands on a strong suite." Server preference order only decides the winner when *both ends are negotiating honestly* and mutually support several suites. It is irrelevant against an active attacker.
+
+A **downgrade attack** is an active man-in-the-middle that tampers with the negotiation itself. The attacker intercepts the `ClientHello` and strips out the strong suites the client offered, or forces a fallback to an older protocol version. The server then sees a menu containing only the weak option — an export-grade key exchange (FREAK, Logjam) or an old CBC suite (POODLE on TLS 1.0) — and picks it, because that's all that appears to be on offer. Your careful ordering never came into play, because the attacker controls what reaches the server.
+
+The fix is not reordering. The fix is **deletion**: you cannot be downgraded to a protocol version or cipher your server flatly refuses to speak. Set a minimum protocol version of TLS 1.2 (ideally 1.3) and remove every non-AEAD, non-ECDHE, and export suite from what the server will accept at all. With TLS 1.0/1.1 disabled and weak suites gone, there is no weak option left on the menu for the attacker to force. (TLS 1.3 also binds the entire handshake transcript into the `Finished` MAC, so any tampering with the offered suites is detected — but "don't offer it" remains the durable control.)
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Claim about the connection</th>
+        <th class="border border-border px-3 py-2 text-left">What it actually proves</th>
+        <th class="border border-border px-3 py-2 text-left">What it does NOT prove</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Valid cert / green padlock</td>
+        <td class="border border-border px-3 py-2">Channel encrypted + server authenticated now</td>
+        <td class="border border-border px-3 py-2">That past traffic survives a key theft</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Strong suites listed first</td>
+        <td class="border border-border px-3 py-2">Winner among honest, mutual suites</td>
+        <td class="border border-border px-3 py-2">Resistance to an active downgrade</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">ECDHE-only suites enforced</td>
+        <td class="border border-border px-3 py-2">Forward secrecy — past sessions safe</td>
+        <td class="border border-border px-3 py-2">That the first hop was ever encrypted</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">301 redirect http → https</td>
+        <td class="border border-border px-3 py-2">Honest clients end up on HTTPS</td>
+        <td class="border border-border px-3 py-2">Protection against active SSL stripping</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## SSL stripping: the gap no cipher can close
+
+Every property so far protects bytes that are already inside a TLS session. None of them protects the moment *before* the session exists. When a user types `example.com`, the browser's first request often goes out as plain `http://`. A **stripping** man-in-the-middle intercepts that plaintext request, talks HTTPS to your server on the victim's behalf, and serves them plain HTTP — the user never sees a padlock, and every byte flows in cleartext to the attacker.
+
+The instinct "we issue a 301 redirect from http:// to https:// on every request" does not fix this. The redirect only fires if the attacker lets the plaintext request reach your server. An active stripping MITM intercepts that first `http://` request *before* it ever arrives, never follows your redirect, and simply proxies plain HTTP to the victim. A server-side redirect cannot protect a request that never reaches the server.
+
+The real control is **HSTS** (HTTP Strict Transport Security, RFC 6797). The server sends a `Strict-Transport-Security` header, and the browser remembers: for this domain, *never* send plaintext again — upgrade `http://` to `https://` before the request leaves the browser. Now there is no plaintext first hop to intercept. The remaining gap is the very first visit before any HSTS header was seen (trust-on-first-use); the **preload list** closes it by shipping the HSTS policy inside the browser itself, so the upgrade happens even on a cold first request. This is why hardening ciphers and protocols is necessary but not sufficient: stripping happens outside TLS, and only HSTS moves the defense into the browser where the plaintext hop lives.
+
+<Inset kind="why" lang="en">
+Why isn't a redirect enough, concretely? Picture the victim on coffee-shop Wi-Fi controlled by the attacker. The victim's browser sends `GET http://bank.example/`. The attacker's box answers that request *itself* — it does not relay it to the bank — and meanwhile opens its own clean HTTPS session to the real bank. To the victim it's an ordinary (plaintext) site; to the bank it's a normal HTTPS client. The bank's "301 → https" is never seen by the victim because the victim's request never reached the bank. With HSTS already known for `bank.example`, the browser refuses to emit that `http://` request at all and goes straight to HTTPS, removing the only plaintext message the attacker had to work with.
+</Inset>
+
+## How a senior hardens a TLS endpoint
+
+Put the four properties together and the playbook is mechanical — and the senior move is to adopt a *named, standardized profile* (Mozilla's Server Side TLS recommendations) rather than hand-pick ciphers, because a hand-tuned list rots and reintroduces weak options. **Versions:** minimum TLS 1.2, keep 1.3, delete SSL 3.0 / TLS 1.0 / 1.1 — this closes version downgrade by deletion. **Suites:** ECDHE key exchange only, AEAD ciphers (AES-GCM, ChaCha20-Poly1305), no RSA key transport, no CBC — this gives forward secrecy and removes export/POODLE targets. **Stripping:** `Strict-Transport-Security` with a long `max-age`, `includeSubDomains`, then preload, plus a 301 from http to https. **Operational hygiene:** serve the full certificate chain (the leaf alone causes the "works in Chrome, fails in curl" bug because some clients can't build the trust path), and enable OCSP stapling so revocation status travels with the handshake. **Verify from the wire, not the file:** run SSL Labs or `testssl.sh` against the live endpoint, because a deploy can silently keep an old config the file doesn't show. The recurring discipline: TLS posture is something you test on the live endpoint continuously, not something you read off the intended config once.
+
+<TradeoffMatrix
+  id="01-tls-in-depth-tradeoff-1"
+  lessonSlug="01-tls-in-depth"
+  lang="en"
+  prompt="A pentest report says your public site is vulnerable to a protocol downgrade because TLS 1.0 and an export cipher are still enabled. An engineer proposes: keep every version and suite enabled 'for compatibility' but move the strong ECDHE-AEAD suites to the top of the server's preference order. What's the correct call?"
+  options={[
+    { name: "Reject it: reordering doesn't stop an active downgrade — disable TLS 1.0/1.1 and remove the export/weak suites so there's nothing to downgrade to", summary: "Fix by deletion.", correct: true, justification: "An active MITM tampers with the ClientHello — it strips the strong suites or forces an old version, so the server only ever sees the weak option. Preference order only decides the winner in an honest negotiation. The durable fix is to delete the weak versions and suites: you can't be downgraded to something your server refuses to speak." },
+    { name: "Accept it: with strong suites first and ssl_prefer_server_ciphers on, a modern client always negotiates a strong suite", summary: "Ordering wins.", justification: "This is the exact misconception. Server preference order is irrelevant when an attacker controls what's offered in the ClientHello. The attacker forces the weak option onto the menu, and the server picks it because that's all it sees. Ordering protects nothing against an active downgrade." },
+    { name: "Keep everything enabled but add a WAF rule to detect downgrade attempts", summary: "Detect, don't prevent.", justification: "A downgrade happens inside the TLS handshake, below the WAF, which only sees decrypted HTTP after the (already weak) session is established. You can't reliably detect a stripped ClientHello at the application layer, and even if you could, the weak session already exists. Remove the option instead of trying to spot its abuse." },
+    { name: "Leave the protocols and ciphers, just renew to a stronger 4096-bit RSA certificate", summary: "Bigger key.", justification: "Certificate key size is unrelated to the downgrade path. The vulnerability is that weak protocol versions and export suites are on the menu at all; a larger RSA cert key changes nothing about which version or suite an attacker can force. It may even keep you on non-forward-secret RSA key transport." },
+  ]}
+/>
+
+<Quiz
+  id="01-tls-in-depth-quiz-1"
+  lessonSlug="01-tls-in-depth"
+  lang="en"
+  question="A team confirms their site shows a valid certificate and a green padlock for every user. Why is that not enough to conclude recorded traffic is safe if the server's private key is later stolen?"
+  choices={[
+    { label: "The padlock proves encryption + authentication at handshake time, but only forward secrecy (ECDHE) keeps past sessions safe; an RSA-key-transport suite lets a stolen long-term key decrypt all recorded traffic", correct: true },
+    { label: "A valid cert means the connection uses forward secrecy by definition, so recorded traffic is always safe", misconception: "Certificate validity and forward secrecy are independent. A valid cert over an RSA key-transport suite has no forward secrecy at all — the padlock looks identical, but the recorded traffic is fully recoverable once the long-term key leaks." },
+    { label: "Recorded ciphertext can never be decrypted later regardless of key theft, because the session key isn't stored", misconception: "Whether the session key is recoverable depends entirely on the key-exchange method. With RSA key transport the session secret was encrypted to the long-term key, so it IS recoverable from a stolen key — that's the whole 'harvest now, decrypt later' problem." },
+    { label: "Key theft only matters for future connections, never past ones, in every TLS configuration", misconception: "That's true only with forward secrecy (ECDHE). Without it — RSA key transport — a stolen long-term key decrypts past recorded sessions too. The configuration is exactly what decides whether the past is exposed." },
+  ]}
+/>
+
+<Quiz
+  id="01-tls-in-depth-quiz-2"
+  lessonSlug="01-tls-in-depth"
+  lang="en"
+  question="Why does a 301 redirect from http:// to https:// fail to stop an active SSL stripping attacker, where HSTS succeeds?"
+  choices={[
+    { label: "The attacker intercepts the first plaintext http:// request before it reaches the server and never follows the redirect; HSTS makes the browser upgrade to https:// before that request is ever sent", correct: true },
+    { label: "A 301 redirect is cached too aggressively, so the browser stops re-checking the scheme", misconception: "Caching isn't the issue. The redirect fails because the plaintext request is intercepted before it reaches your server at all — the server's redirect never runs for the victim. HSTS works because the upgrade happens in the browser, not the server." },
+    { label: "HSTS encrypts the redirect response, which a 301 leaves in cleartext", misconception: "HSTS isn't about encrypting a redirect. It's a browser-side policy that suppresses the plaintext request entirely, so there's no first hop to intercept. The 301's weakness is that it depends on the plaintext request actually reaching the server." },
+    { label: "A 301 only works for GET requests, while HSTS covers all methods", misconception: "The method isn't the point. The 301 fails because an active MITM intercepts the plaintext hop before the server sees it; HSTS removes that plaintext hop by upgrading in the browser before any request leaves." },
+  ]}
+/>
+
+<DragOrder
+  id="01-tls-in-depth-drag-1"
+  lessonSlug="01-tls-in-depth"
+  lang="en"
+  prompt="Order the steps of a TLS 1.3 handshake that establishes a forward-secret session:"
+  items={[
+    { id: "a", label: "Client sends ClientHello with supported versions, cipher suites, and an ephemeral key share" },
+    { id: "b", label: "Server replies with its certificate and its own ephemeral key share" },
+    { id: "c", label: "Server signs the handshake transcript with its long-term key to prove identity" },
+    { id: "d", label: "Both sides derive the session key from the two ephemeral shares" },
+    { id: "e", label: "Ephemeral keys are discarded; AEAD-encrypted application data flows" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A green padlock proves only that the channel is encrypted and the server authenticated right now. Whether that protection survives is a config question: forward secrecy (ECDHE-only) decides if a stolen key leaks the past, a minimum protocol version plus weak-suite deletion decides if an active downgrade can force a weak session, and HSTS — not a redirect — decides if the plaintext first hop can be stripped. Verify all three on the live wire, not the config file.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-tls-in-depth-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain forward secrecy: what is the concrete difference between RSA key transport and ECDHE when an attacker steals the server's long-term private key after recording months of traffic?", a: "Forward secrecy is the property that compromising the long-term private key does not expose past recorded sessions. With RSA key transport (old TLS ≤1.2 default), the client generates the session secret and encrypts it with the server's long-term RSA public key; whoever later holds the matching private key can recover that session secret forever, so an attacker who recorded ciphertext and then steals the key decrypts everything retroactively — the 'harvest now, decrypt later' model. With ECDHE (ephemeral Diffie-Hellman), the session key is derived from per-connection ephemeral keys that are generated, used, and discarded; the long-term key only signs the handshake to prove identity, it never carries the session secret. After the handshake nothing on disk can reconstruct that session's key, so stealing the long-term key only lets the attacker impersonate the server going forward (handled by rotation/revocation), never decrypt a single past session. TLS 1.3 makes forward secrecy mandatory by removing RSA key transport entirely; on TLS 1.2 you get it only by restricting suites to ECDHE. So 'valid cert + padlock' is not the same claim as 'recorded traffic is safe' — that depends solely on every accepted suite being ECDHE." },
+    { q: "Why does reordering cipher suites fail to stop a downgrade attack, and why does a 301 redirect fail to stop SSL stripping — and what actually fixes each?", a: "Both are cases of defending in the wrong place. Server cipher preference order only decides the winner when both ends negotiate honestly over mutually-supported suites. A downgrade attack is an active MITM that tampers with the ClientHello — it strips the strong suites or forces an old protocol version, so the server only ever sees the weak export/CBC option and picks it; your ordering never applied because the attacker controls the menu. The fix is deletion, not ordering: set a minimum version of TLS 1.2 (ideally 1.3) and remove every non-AEAD/non-ECDHE/export suite, so there is no weak option to force. SSL stripping is the analogous failure before TLS even starts: the browser's first request often goes out as plaintext http://, and an active MITM intercepts it before it reaches the server, talks HTTPS to the server itself, and serves the victim plain HTTP. A 301 http→https redirect can't help because it only fires if the plaintext request actually reaches the server — the MITM intercepts it first and never follows the redirect. The real fix is HSTS: the browser remembers to upgrade http:// to https:// before the request ever leaves, removing the plaintext first hop; the preload list closes the first-visit gap by shipping the policy inside the browser. The lesson: a downgrade is fought by removing options, and stripping is fought by moving the upgrade into the browser — neither is solved at the layer the naive fix targets." },
+  ]}
+/>
+
+<Recap lang="en">
+A TLS handshake does three things at once — authenticates the server, establishes an encrypted session, and provides integrity — and the green padlock only certifies that all three held at handshake time. It says nothing about three failure modes that a senior must reason about separately. First, forward secrecy: with RSA key transport a stolen long-term key decrypts all previously recorded sessions ("harvest now, decrypt later"); with ECDHE the session secret comes from discarded ephemeral keys, so a stolen key can't touch the past. TLS 1.3 mandates this; on 1.2 you must restrict suites to ECDHE. Second, downgrade: an active MITM tampers with the ClientHello to force a weak version or export suite, so server cipher ordering is irrelevant — the fix is deleting weak versions and suites, not reordering them. Third, stripping: the plaintext first hop lives outside TLS, so a 301 redirect can't protect a request the attacker intercepts before it arrives — only HSTS (ideally preloaded) moves the upgrade into the browser. The hardening playbook is mechanical: min TLS 1.2, ECDHE-AEAD only, HSTS + preload, full chain + OCSP stapling — adopt a named profile (Mozilla) and verify it on the live wire with SSL Labs / testssl.sh, because the config file can lie. So when someone says "we have HTTPS, we're secure," the senior questions are: is every suite ECDHE, is there a weak version still on the menu, and is the very first hop protected by HSTS rather than a redirect?
+</Recap>

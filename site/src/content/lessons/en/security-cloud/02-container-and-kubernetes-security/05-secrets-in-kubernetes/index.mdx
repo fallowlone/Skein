@@ -1,0 +1,243 @@
+---
+concepts:
+- kubernetes-secrets
+- secret-management
+- external-secrets
+- encryption-at-rest
+- secret-sprawl
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 5
+prereqs: []
+slug: 05-secrets-in-kubernetes
+sources:
+- https://kubernetes.io/docs/concepts/security/
+- https://owasp.org/www-project-kubernetes-top-ten/
+spiral: []
+status: ready
+title: Secrets in Kubernetes
+track: security-cloud
+unit: 02-container-and-kubernetes-security
+summary: 'A Kubernetes Secret is base64, not encryption — plaintext to anyone with etcd, a node, or RBAC read. Why that matters and how to manage secrets without copies sprawling across namespaces and CI logs.'
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import FadedExample from "~/components/pedagogy/FadedExample.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A junior on your team is debugging a crashing pod and pastes a manifest into the ticket: `kubectl get secret db-creds -o yaml`. The `data:` field is a wall of base64, so they think it's safe to share — it *looks* encrypted. You decode one line in your head: `cG9zdGdyZXM6Ly9hZG1pbjpodW50ZXIyQA==` is just `postgres://admin:hunter2@`. The production database password is now in a Jira comment, indexed by search, visible to every contractor with view access. No CVE, no exploit. Just base64 mistaken for a lock.
+</Hook>
+
+By the end of this lesson you'll know exactly why a Kubernetes Secret is *not* encrypted, who can read it, and how to manage secrets without the sprawl that turns one leak into a fleet-wide compromise.
+
+<Crux>A Kubernetes Secret is base64, not encryption — plaintext to anyone with etcd, node, or RBAC read access.</Crux>
+
+<Explanation>
+
+## base64 is encoding, not encryption
+
+This is the most expensive misconception in Kubernetes security, so let me say it plainly: **base64 is a reversible, keyless transcoding.** Anyone, anywhere, can run `base64 -d` and get the original bytes back. No secret material is involved in decoding — that's the whole point of base64: it exists so binary data survives a text-only channel, not to protect it. Calling a Secret "encrypted" because the YAML shows `aHVudGVyMg==` instead of `hunter2` is like calling a window "locked" because you taped paper over it.
+
+What a Kubernetes `Secret` actually buys you over a `ConfigMap` is *operational*, not cryptographic: it's flagged so it isn't printed in plain logs by default; it can be mounted as a `tmpfs` (in-memory) volume rather than written to disk; access is governed through RBAC as a distinct resource type. Those are real, useful properties. None of them is confidentiality on disk. The bytes sit in etcd, and by default they sit there in plaintext.
+
+## Who can actually read your Secret
+
+The mature question is never "is it base64?" but "what is the read surface?". A Secret is exposed to a surprisingly wide blast radius, and each path is a real attack we've seen in postmortems:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Read path</th>
+        <th class="border border-border px-3 py-2 text-left">Who gets access</th>
+        <th class="border border-border px-3 py-2 text-left">What stops it</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">etcd on disk</td>
+        <td class="border border-border px-3 py-2">Anyone with a node, a backup, or a stolen etcd snapshot</td>
+        <td class="border border-border px-3 py-2">EncryptionConfiguration (KMS provider), not base64</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">RBAC <code>get/list secrets</code></td>
+        <td class="border border-border px-3 py-2">Any user/SA with that verb in the namespace</td>
+        <td class="border border-border px-3 py-2">Least-privilege RBAC; never grant <code>list secrets</code> broadly</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Mounted into a pod</td>
+        <td class="border border-border px-3 py-2">Anyone who can <code>exec</code> into the pod or read its FS</td>
+        <td class="border border-border px-3 py-2">Scope the SA; mount only what the workload needs</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Default ServiceAccount token</td>
+        <td class="border border-border px-3 py-2">A compromised pod reaching the API with auto-mounted rights</td>
+        <td class="border border-border px-3 py-2"><code>automountServiceAccountToken: false</code></td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">CI logs / Git</td>
+        <td class="border border-border px-3 py-2">Anyone reading a pipeline log or committing the manifest</td>
+        <td class="border border-border px-3 py-2">External secret store; never commit a rendered Secret</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+Two paths surprise people the most: **etcd on disk** and **RBAC `list secrets`**. By default kube-apiserver writes Secret objects to etcd unencrypted — so an etcd backup in an S3 bucket, or a stolen volume snapshot, is a full credential dump. And the `list` verb on secrets in RBAC is catastrophic precisely because it returns *contents*, not just names: a single over-broad `Role` with `list` on secrets in a namespace hands every credential in that namespace to whoever holds it. It's near the top of the OWASP Kubernetes Top 10 for a reason.
+
+## Encryption at rest: turning the lock on
+
+The fix for the etcd path is **encryption at rest**, configured on the API server via `EncryptionConfiguration`. The lesson here is *which provider you pick*, because the obvious option is a trap.
+
+<FlowDiagram
+  label="How a Secret write reaches etcd: a client applies a Secret, kube-apiserver consults its EncryptionConfiguration, and depending on the provider the bytes are either stored as base64 plaintext (identity / aescbc with a local key) or sealed with a key from an external KMS that the apiserver must call to decrypt — so an etcd snapshot alone is useless to an attacker."
+  perRow={5}
+  hue="var(--d-crypto)"
+  nodes={[
+    { id: "apply", label: "kubectl apply", sub: "Secret object" },
+    { id: "api", label: "kube-apiserver", sub: "EncryptionConfiguration" },
+    { id: "identity", label: "identity provider", sub: "plaintext in etcd" },
+    { id: "kms", label: "KMS provider", sub: "envelope encryption" },
+    { id: "etcd", label: "etcd on disk", sub: "ciphertext + DEK" },
+  ]}
+  edges={[
+    { from: "apply", to: "api" },
+    { from: "api", to: "identity", label: "default — no lock" },
+    { from: "api", to: "kms", label: "external key" },
+    { from: "kms", to: "etcd", label: "sealed" },
+  ]}
+  caption="The default 'identity' provider stores secrets in plaintext — encryption at rest is opt-in. The strong choice is a KMS provider (envelope encryption): the data key that encrypts the secret is itself encrypted by a key that never leaves the external KMS, so a stolen etcd snapshot is ciphertext with no unwrap key."
+/>
+
+The trap is the **`aescbc`/`aesgcm` providers with the key in the config file**: yes, they encrypt etcd, but the encryption key sits on the control-plane node in plaintext, so an attacker who can read etcd's data can usually read the key file too. That's a sideways step, not a fix. The strong choice is a **KMS provider** performing *envelope encryption*: each secret is encrypted with a data-encryption key (DEK), the DEK is encrypted with a key-encryption key (KEK) that lives only inside an external KMS (AWS KMS, GCP KMS, Vault), and the API server must make a network call to the KMS to unwrap it. Now a stolen etcd snapshot is inert ciphertext. Note one catch: turning on encryption only encrypts secrets *written after* you enable it — you must rewrite every existing secret (`kubectl get secrets -A -o json | kubectl replace -f -`) to actually seal what's already there.
+
+<Inset kind="why" lang="en">
+Why can't you just turn on encryption at rest and call it done? Because encryption at rest protects only *one* of the five read paths in the table — the stolen-etcd path. It does nothing against over-broad RBAC `list`, against `kubectl exec` into a pod with the secret mounted, or against a credential pasted into a CI log. Encryption at rest is necessary and frequently skipped, but it's a single layer. The read surface is what you actually manage, and most real secret leaks happen through RBAC and human copy-paste, not stolen disks.
+</Inset>
+
+## Secret sprawl: the real operational failure
+
+Even with encryption at rest enabled and RBAC tight, the failure that actually bites teams is **sprawl**: the same secret copied into ten namespaces, baked into three Docker images, pasted into two CI variable stores, and committed once to Git "just to unblock the deploy." Sprawl is what turns one rotation into a week of archaeology, and one leak into a fleet-wide incident, because you can no longer answer "where does this credential live?".
+
+The mature pattern is a **single source of truth outside the cluster** plus **sync-in, not copy-in**. You hold the canonical secret in a dedicated store (Vault, AWS Secrets Manager, GCP Secret Manager), and a controller — the External Secrets Operator (ESO) or the Secrets Store CSI Driver — pulls it into the cluster as a native `Secret` on demand. Manifests reference an `ExternalSecret` pointing at the store; the credential itself never sits in Git, never in an image, and rotation happens in *one* place and propagates. The in-cluster Secret becomes a cache, not a source-of-record database.
+
+<FadedExample
+  client:load
+  id="05-secrets-k8s-faded-1"
+  pieceSlug="05-secrets-in-kubernetes"
+  lang="en"
+  title="Scope a Secret read to one object"
+  steps={{
+    solved: (
+      <p>
+        A pod needs to read exactly one Secret, <code>db-creds</code>, in the <code>payments</code> namespace. The least-privilege Role uses <code>verbs: ["get"]</code> (not <code>list</code>, which returns contents of <em>all</em> secrets) and pins the object with <code>resourceNames: ["db-creds"]</code> so even a compromised token can read only that one Secret.
+      </p>
+    ),
+    semi: {
+      prompt: (
+        <p>Fill the two fields that make this grant least-privilege rather than namespace-wide:</p>
+      ),
+      blanks: [
+        { id: "verb", expected: "get", placeholder: "verb (not list)" },
+        { id: "scope", expected: "resourceNames", placeholder: "field that pins the object" },
+      ],
+    },
+    blank: {
+      prompt: (
+        <p>From scratch: what single change turns <code>verbs: ["list"]</code> on all secrets into a safe one-object read? State the verb and the field.</p>
+      ),
+      reveal: (
+        <p>
+          Replace <code>list</code> with <code>get</code> and add <code>resourceNames: ["db-creds"]</code>. <code>list</code> returns the full contents of every Secret in the namespace; <code>get</code> + <code>resourceNames</code> restricts the principal to the one object it actually needs, so a stolen token can't enumerate the namespace's other credentials.
+        </p>
+      ),
+    },
+  }}
+/>
+
+<TradeoffMatrix
+  id="05-secrets-k8s-tradeoff-1"
+  lessonSlug="05-secrets-in-kubernetes"
+  lang="en"
+  prompt="You have one DB password used by services across six namespaces. Today it's a hand-created Secret copied into each. Pick the approach that best prevents sprawl and makes rotation a single-place operation."
+  options={[
+    { name: "Hold the canonical secret in an external store and sync it into each namespace via the External Secrets Operator, referencing it from ExternalSecret manifests", summary: "Single source of truth, sync-in.", correct: true, justification: "This is the pattern that actually kills sprawl: the credential lives once, outside the cluster, and a controller projects it into namespaces as native secrets on demand. Manifests carry a reference (ExternalSecret), not the value, so nothing sensitive is in Git or images. Rotation happens in one place and propagates everywhere automatically, and 'where does it live?' has a single answer." },
+    { name: "Commit the secret's base64 YAML to Git so every namespace reproducibly deploys the same file", summary: "GitOps the raw secret.", justification: "base64 is not encryption, so this commits the plaintext password into version history forever — readable by everyone with repo access and unrotatable out of history. Reproducibility is real, but you're reproducing a leak. If you need GitOps, commit an encrypted form (Sealed Secrets / SOPS) or an ExternalSecret reference, not the raw data." },
+    { name: "Create the secret once in a shared namespace and give the other five RBAC list access to it", summary: "Share via RBAC list.", justification: "Granting list on secrets is exactly the catastrophic verb: it returns contents, not just names — so this widens the read surface to every workload in five namespaces and anything that can assume their service account. And it doesn't solve rotation; it only centralizes the blast radius." },
+    { name: "Bake the password into the container image as an ENV default so pods always have it", summary: "Bake into the image.", justification: "Images are pulled, cached, and spread across registries and laptops; a credential in an image layer is extractable by anyone who can docker pull it, and survives layer history even after you 'remove' it. This is the worst form of sprawl: unrotatable, unauditable, and copied to every node that runs the image." },
+  ]}
+/>
+
+<Quiz
+  id="05-secrets-k8s-quiz-1"
+  lessonSlug="05-secrets-in-kubernetes"
+  lang="en"
+  question="A colleague says: 'our secrets are safe in etcd because Kubernetes base64-encodes them.' What's the precise correction?"
+  choices={[
+    { label: "base64 is reversible, keyless encoding; secrets in etcd are plaintext by default until you enable encryption at rest", correct: true },
+    { label: "base64 is a weak cipher, so we should switch to AES-256 base64", misconception: "base64 isn't a cipher at all — there's no key and nothing to strengthen. The fix is encryption at rest via EncryptionConfiguration, not a 'stronger' base64." },
+    { label: "It's fine because etcd is only reachable from the control plane", misconception: "Network reachability isn't disk confidentiality. etcd backups, volume snapshots, and node access all expose the on-disk bytes, which without encryption at rest are plaintext." },
+    { label: "The secrets are encrypted as long as RBAC is configured", misconception: "RBAC governs who can call the API for an object; it does nothing to the bytes in etcd. RBAC and encryption at rest protect different read paths." },
+  ]}
+/>
+
+<Quiz
+  id="05-secrets-k8s-quiz-2"
+  lessonSlug="05-secrets-in-kubernetes"
+  lang="en"
+  question="You enable encryption at rest with a KMS provider on a cluster that already has 200 secrets. What else must you do, and why?"
+  choices={[
+    { label: "Rewrite all existing secrets, because encryption only applies to objects written after it's enabled", correct: true },
+    { label: "Nothing — enabling it automatically re-encrypts every existing secret", misconception: "No. Encryption applies on write; secrets already present stay in their old (plaintext) form in etcd until they're rewritten, e.g. kubectl get secrets -A -o json | kubectl replace -f -." },
+    { label: "Delete and recreate the cluster so the new config applies cleanly", misconception: "That's overkill and destructive. You only need to rewrite the existing Secret objects so they pass through the new encryption provider." },
+    { label: "Switch RBAC to deny all reads during the migration", misconception: "Encryption at rest and RBAC are independent layers; you don't disable reads to migrate — you rewrite the Secret objects so they get encrypted on write." },
+  ]}
+/>
+
+<DragOrder
+  id="05-secrets-k8s-drag-1"
+  lessonSlug="05-secrets-in-kubernetes"
+  lang="en"
+  prompt="Order these from weakest to strongest as a way to protect a DB password in Kubernetes:"
+  items={[
+    { id: "a", label: "base64 Secret committed to Git (plaintext in history)" },
+    { id: "b", label: "Plain Secret in etcd, no encryption at rest" },
+    { id: "c", label: "Encryption at rest with a local aescbc key on the node" },
+    { id: "d", label: "Encryption at rest via an external KMS (envelope encryption)" },
+    { id: "e", label: "External store + ESO sync, tight RBAC, no copies in Git/images" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A Kubernetes Secret is base64, not encryption — plaintext in etcd by default, readable through etcd, RBAC `list`, pod mounts, SA tokens, and CI logs. Turn on encryption at rest with a KMS provider, tighten RBAC, and kill sprawl with a single external source of truth synced in (not copied in).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="05-secrets-k8s-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why a Kubernetes Secret is not encrypted, and list who can actually read it.", a: "A Secret's data field is base64-encoded, and base64 is a reversible, keyless transcoding: anyone can run base64 -d and recover the original bytes, so it provides zero confidentiality. What a Secret buys over a ConfigMap is operational: it isn't printed in plain logs by default, it can be mounted as an in-memory tmpfs volume, and it's a separate RBAC resource. None of that is encryption. The read surface is wide: (1) etcd on disk — by default kube-apiserver writes secrets to etcd in plaintext, so a backup, a volume snapshot, or a node gives a full credential dump; (2) RBAC get/list on secrets — and list is catastrophic because it returns contents, not just names, so one over-broad Role leaks every credential in the namespace; (3) any pod the secret is mounted into, reachable by anyone who can exec or read its FS; (4) the auto-mounted default ServiceAccount token, which lets a compromised pod reach the API; and (5) CI logs and Git, where rendered secrets get pasted or committed. The mature question is never 'is it base64?' but 'what is the full read surface, and what protects each path?'." },
+    { q: "What is secret sprawl, why is it a real failure, and what pattern prevents it?", a: "Sprawl is the same credential copied into many places: duplicated across namespaces, baked into container images, pasted into CI variable stores, and committed to Git 'to unblock a deploy.' It's the operational failure that actually bites teams because it makes two things impossible: you can't answer 'where does this credential live?', so rotation becomes a multi-day dig, and one leak becomes a fleet-wide incident since copies are everywhere and some (image layers, Git history) are effectively unrotatable. The pattern that prevents it is a single source of truth outside the cluster plus sync-in, not copy-in: keep the canonical secret in a dedicated store (Vault, AWS/GCP Secrets Manager) and have a controller — External Secrets Operator or the Secrets Store CSI Driver — pull it into the cluster as a native Secret on demand. Manifests carry only an ExternalSecret reference, so the value isn't in Git or images; rotation happens in one place and propagates; and the in-cluster Secret becomes a cache, not a source-of-record. Encryption at rest (a KMS/envelope provider, not a local aescbc key) closes the stolen-etcd path on top of this, but it only protects one of the five read paths, so sprawl control and tight RBAC matter just as much." },
+  ]}
+/>
+
+<Recap lang="en">
+A Kubernetes Secret is base64-encoded, and that's keyless encoding, not encryption — `base64 -d` reverses it instantly, so a secret in a Jira comment or a committed manifest is a plaintext credential leak. Compared to a ConfigMap, a Secret buys operational properties (not printed in plain logs, tmpfs mounting, separate RBAC) but never on-disk confidentiality. Its read surface is wide: plaintext in etcd by default, RBAC `list` (which returns contents), pod mounts, auto-mounted ServiceAccount tokens, and CI/Git. Closing the etcd path means enabling encryption at rest — and choosing a KMS provider for true envelope encryption, not a local `aescbc` key sitting on the same node, and remembering to rewrite existing secrets since encryption only applies on write. But the failure that actually causes incidents is sprawl: copies of one credential scattered across namespaces, images, CI, and Git, making rotation impossible and turning one leak into a fleet-wide compromise. The mature fix is one external source of truth synced in via the External Secrets Operator or CSI driver — a reference, not a copy — so the in-cluster Secret is a cache and rotation happens in exactly one place. Next time you see a `data:` field full of base64, your reflex should be: who can read etcd, who has `list`, and how many copies of this exist?
+</Recap>

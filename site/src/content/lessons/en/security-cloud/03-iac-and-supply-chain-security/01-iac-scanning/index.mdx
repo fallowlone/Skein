@@ -1,0 +1,216 @@
+---
+concepts:
+- iac-scanning
+- terraform-security
+- policy-as-code
+- misconfiguration
+- pre-deploy-gate
+deepensInto: []
+estMin: 15
+lang: en
+lessonType: topic
+level: middle
+order: 1
+prereqs: []
+slug: 01-iac-scanning
+sources:
+- https://slsa.dev/
+- https://owasp.org/www-project-devsecops-guideline/
+spiral: []
+status: ready
+summary: 'Cloud breaches are usually misconfigurations, not exploits — a bucket left
+  public, a security group open to 0.0.0.0/0. IaC scanning reads the Terraform plan
+  and fails the pipeline before apply, so the bad config never reaches the cloud.'
+title: IaC scanning
+track: security-cloud
+unit: 03-iac-and-supply-chain-security
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Someone merges a Terraform change to add a CDN logging bucket. It's three lines. The reviewer skims the diff, sees no `acl = "public-read"`, approves it. What the diff doesn't show is the module default: this S3 module ships with public access *not* blocked, and the org has no account-level `BlockPublicAccess`. `terraform apply` runs in the deploy job, the bucket goes live, and four hours later it's indexed by a scanner-as-a-service that crawls cloud ranges for open buckets. No CVE, no exploit, no attacker skill — just a default the human eye couldn't see in a diff. This is the modal cloud breach, and it is exactly what a pre-apply scan catches.
+</Hook>
+
+By the end of this lesson you'll know how IaC scanning reads a Terraform plan to catch cloud misconfig *before* `apply`, why the pipeline gate beats post-deploy detection, and where the gate's blind spots are.
+
+<Crux>Scan Terraform for misconfig before apply and fail the pipeline, so a public bucket or open security group never reaches prod.</Crux>
+
+<Explanation>
+
+## Why misconfiguration, not exploits, is the cloud threat
+
+The picture most engineers carry of a "cloud breach" is an attacker chaining a clever exploit. The reality is duller and far more common: a resource was *configured* to be open, and someone found it. An S3 bucket whose policy allows `Principal: "*"`. A security group with `0.0.0.0/0` on port 22 or 5432. An RDS instance with `publicly_accessible = true`. A KMS-less, unencrypted volume holding PII. None of these is a software flaw — the cloud did exactly what the config told it to. The defender's job is therefore not "patch faster"; it's *prevent the wrong config from ever being applied.*
+
+Infrastructure-as-Code is what makes that prevention possible. When every bucket, security group, and IAM policy is declared in Terraform and goes through a pull request, the configuration becomes a reviewable, testable artifact *before* it touches the cloud. The catch: humans are bad at reading config diffs for security. The dangerous setting is usually an *absence* — a missing `aws_s3_bucket_public_access_block`, an unspecified `encryption` block that falls back to a weak default — and absences don't appear in a diff. That's the gap a scanner fills: it evaluates the *effective* configuration, including module defaults the diff never showed, against a library of known-bad patterns.
+
+## Scan the plan, not just the files
+
+There are two places to scan, and the difference is the whole game. **Static scanning of `.tf` source** (the fast path) parses HCL and flags obvious bad literals — a hardcoded `cidr_blocks = ["0.0.0.0/0"]`, `acl = "public-read"` written in plain text. It's instant and needs no cloud credentials, but it's blind to anything computed: a variable, a module default, a `for_each`, a value pulled from a remote data source.
+
+**Scanning the Terraform *plan*** is the senior move. You run `terraform plan -out=tfplan && terraform show -json tfplan > plan.json`, then point the scanner at `plan.json`. The plan is the *resolved* end state — every variable substituted, every module expanded, every default materialized — so the scanner sees the bucket as it will actually exist, public-access-block and all. This is what catches the Hook's bug: the source diff was clean, but the *planned* bucket has no public-access block, and the plan makes that visible. The cost is that producing a plan needs read access to provider state, so it runs slightly later and with credentials — a real tradeoff, not a free upgrade.
+
+<FlowDiagram
+  label="The IaC scanning pipeline gate: a developer opens a pull request with a Terraform change; CI runs terraform plan to resolve the effective config including module defaults, exports it to JSON, and a policy-as-code scanner checks it against rules; on a fail the merge and apply are blocked and the misconfig never reaches the cloud, on a pass it proceeds to apply."
+  perRow={3}
+  hue="var(--d-crypto)"
+  nodes={[
+    { id: "pr", label: "Pull request", sub: ".tf change" },
+    { id: "plan", label: "terraform plan", sub: "resolve defaults" },
+    { id: "json", label: "show -json", sub: "plan.json" },
+    { id: "scan", label: "Policy scan", sub: "tfsec / checkov / OPA" },
+    { id: "gate", label: "Gate", sub: "fail = block" },
+    { id: "apply", label: "apply", sub: "reaches cloud" },
+  ]}
+  edges={[
+    { from: "pr", to: "plan" },
+    { from: "plan", to: "json", label: "export" },
+    { from: "json", to: "scan" },
+    { from: "scan", to: "gate", label: "findings" },
+    { from: "gate", to: "apply", label: "pass" },
+  ]}
+  caption="The gate sits between plan and apply. Scanning the resolved plan.json — not just the source — is what surfaces a missing public-access block hidden in a module default. A failing high-severity rule blocks the merge so the config never reaches the cloud."
+/>
+
+## Policy-as-code: the rules are the gate
+
+A scanner is only as good as its policy. The first layer is a vendor's built-in ruleset — tfsec, Checkov, Trivy, or Terrascan ship hundreds of curated checks ("S3 bucket should block public access", "security group should not allow ingress from 0.0.0.0/0 to port 22", "RDS storage must be encrypted"). That gets you the OWASP/CIS baseline for free on day one.
+
+The layer that separates teams is **custom policy-as-code** — your own rules, version-controlled next to the infra, expressed in a policy engine (Open Policy Agent's Rego, Checkov's Python/YAML custom checks, or HashiCorp Sentinel). This is where org-specific invariants live: "every resource must carry a `cost-center` tag," "no IAM policy may grant `*:*`," "all data buckets must use our specific KMS key." The point of policy-as-code is that the rule is *itself* a reviewed, tested, diffable artifact — a security requirement encoded once and enforced on every PR forever, instead of living in a wiki page a reviewer is supposed to remember. That's the same shift-left discipline as a misconfig: turn a thing humans forget into a thing the pipeline enforces.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Misconfig in Terraform</th>
+        <th class="border border-border px-3 py-2 text-left">Why it's dangerous</th>
+        <th class="border border-border px-3 py-2 text-left">What the scan flags</th>
+        <th class="border border-border px-3 py-2 text-left">The fix in HCL</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>S3 bucket, no public_access_block</code></td>
+        <td class="border border-border px-3 py-2">Bucket can be made world-readable; data leaks</td>
+        <td class="border border-border px-3 py-2">HIGH — missing block (module default)</td>
+        <td class="border border-border px-3 py-2"><code>aws_s3_bucket_public_access_block</code> all true</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>SG ingress 0.0.0.0/0 → 22</code></td>
+        <td class="border border-border px-3 py-2">SSH open to the internet; brute-force / scan</td>
+        <td class="border border-border px-3 py-2">HIGH — wide-open ingress</td>
+        <td class="border border-border px-3 py-2">Scope <code>cidr_blocks</code> to a bastion / VPN</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>RDS publicly_accessible = true</code></td>
+        <td class="border border-border px-3 py-2">Database reachable from the public internet</td>
+        <td class="border border-border px-3 py-2">HIGH — public DB</td>
+        <td class="border border-border px-3 py-2">Set <code>false</code>; reach it via private subnet</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2"><code>EBS / RDS no encryption block</code></td>
+        <td class="border border-border px-3 py-2">PII at rest unencrypted; compliance fail</td>
+        <td class="border border-border px-3 py-2">MEDIUM — encryption disabled</td>
+        <td class="border border-border px-3 py-2"><code>storage_encrypted = true</code> + KMS key</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2"><code>IAM policy with "*:*"</code></td>
+        <td class="border border-border px-3 py-2">Compromised role = full account takeover</td>
+        <td class="border border-border px-3 py-2">HIGH — wildcard privilege</td>
+        <td class="border border-border px-3 py-2">Least-privilege action + resource ARNs</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Why gate at the pipeline instead of just running a Cloud Security Posture Management tool (CSPM) that scans the *live* account? Because CSPM detects the bucket *after* it's public — the window between `apply` and the next CSPM scan is real exposure, and that window is exactly when crawlers find it. The pipeline gate is prevention: the misconfig is rejected before it exists. The two aren't rivals — CSPM is your safety net for drift, manual console changes, and resources created outside Terraform — but the cheapest misconfig to fix is the one that never reached the cloud, and only the pre-apply gate gives you that.
+</Inset>
+
+## The gate's blind spots — and where it bites
+
+A pre-apply scan is necessary, not sufficient, and a senior knows its limits. It only sees what Terraform manages: a bucket a teammate created by hand in the console, or a setting changed live after `apply` (drift), is invisible to it. It catches *known* bad patterns, so a novel misconfig with no rule is a clean pass. And it has a sharp operational edge — **false positives**. Turn on every rule at HIGH and block on all of them, and the first week is a wall of findings on legitimate exceptions (a genuinely public marketing-asset bucket, a port open by design). The failure mode here is *alert fatigue*: developers learn to slap a blanket `# tfsec:ignore` on everything, and the gate becomes theater. The senior practice is to gate hard only on a curated high-severity set, route mediums to warnings, and require every suppression to carry an inline justification and an owner — so an exception is a recorded decision, not a silent escape hatch.
+
+<TradeoffMatrix
+  id="01-iac-scanning-tradeoff-1"
+  lessonSlug="01-iac-scanning"
+  lang="en"
+  prompt="Your team adds IaC scanning. A new S3 logging bucket passes the source-file scan but is actually public because the module default leaves public-access unblocked. Pick the approach that catches this class of bug as a reliable pre-deploy gate."
+  options={[
+    { name: "Scan the resolved `terraform plan` JSON in CI and fail the pipeline on high-severity findings before `apply`", summary: "Gate the plan.", correct: true, justification: "Scanning the resolved plan.json sees the bucket as it will actually exist — every module default and variable materialized — so the missing public-access block is visible even though the source diff was clean. Failing the pipeline before apply means the misconfig never reaches the cloud. This is prevention at the cheapest possible point and is exactly what a pre-deploy gate is for." },
+    { name: "Keep scanning only the raw `.tf` files — it's fast and needs no credentials", summary: "Source-only scan.", justification: "Static source scanning is a good fast first pass, but it's blind to anything computed: module defaults, variables, for_each. This is precisely the bug it misses — the dangerous setting is an absence introduced by a module default, which never appears in the source. Fast, but it gives false confidence on exactly this class." },
+    { name: "Skip the pipeline gate and rely on a CSPM tool that scans the live account every few hours", summary: "Detect after apply.", justification: "CSPM is a valuable safety net for drift and out-of-band changes, but it detects the public bucket *after* apply — the window before the next scan is real exposure, and crawlers find open buckets in minutes. Detection is not prevention; you want both, but the gate is what stops it reaching prod." },
+    { name: "Add a checklist item asking reviewers to confirm no bucket is public", summary: "Manual review.", justification: "This is the control that already failed in the Hook. Humans can't see an absent setting in a diff, and a checklist relies on memory and diligence on every PR forever. Encoding the rule as policy-as-code is the whole point — turn a thing humans forget into a thing the pipeline enforces." },
+  ]}
+/>
+
+<Quiz
+  id="01-iac-scanning-quiz-1"
+  lessonSlug="01-iac-scanning"
+  lang="en"
+  question="Why does a senior scan the `terraform plan` JSON rather than only the `.tf` source files?"
+  choices={[
+    { label: "The plan is the resolved end state — module defaults, variables, and expansions are materialized — so the scanner sees the config as it will actually exist", correct: true },
+    { label: "Scanning the plan is faster than parsing HCL source", misconception: "It's the opposite: producing a plan is slower and needs provider credentials. You pay that cost precisely because the plan resolves computed values the source can't show." },
+    { label: "The `.tf` files are encrypted and can't be parsed directly", misconception: "Terraform source is plain HCL and parses fine; static scanners read it directly. The reason to also scan the plan is coverage of computed/defaulted values, not readability." },
+    { label: "Scanning the plan removes the need for any custom policy-as-code rules", misconception: "What you scan and which rules you run are independent. You still need custom policy for org-specific invariants regardless of whether you scan source or plan." },
+  ]}
+/>
+
+<Quiz
+  id="01-iac-scanning-quiz-2"
+  lessonSlug="01-iac-scanning"
+  lang="en"
+  question="Your team turns on every rule at HIGH and blocks the pipeline on all of them. Within a week developers are adding blanket ignore comments everywhere. What went wrong, and what's the senior fix?"
+  choices={[
+    { label: "Alert fatigue from over-gating — gate hard only on a curated high-severity set, route the rest to warnings, and require each suppression to carry a justification and owner", correct: true },
+    { label: "The scanner is broken — switch to a different vendor", misconception: "The tool isn't the problem; the policy configuration is. Blocking on every rule including low-value or context-dependent ones is what produced the fatigue. Swapping vendors repeats the same mistake." },
+    { label: "Developers shouldn't be allowed to suppress findings at all", misconception: "Some findings are legitimate exceptions (a deliberately public asset bucket). The fix isn't to ban suppression — it's to make each suppression a recorded, owned, justified decision rather than a silent blanket escape." },
+    { label: "The gate should be moved to run only after apply, in the live account", misconception: "Moving detection after apply gives up prevention entirely and reintroduces the exposure window. The fix is to tune severity and suppressions, not to abandon the pre-apply gate." },
+  ]}
+/>
+
+<DragOrder
+  id="01-iac-scanning-drag-1"
+  lessonSlug="01-iac-scanning"
+  lang="en"
+  prompt="Order the pre-apply IaC scanning gate from pull request to the cloud:"
+  items={[
+    { id: "a", label: "Developer opens a PR with a Terraform change" },
+    { id: "b", label: "CI runs `terraform plan -out=tfplan`" },
+    { id: "c", label: "Export the resolved plan to JSON (`terraform show -json`)" },
+    { id: "d", label: "Policy-as-code scanner checks plan.json against built-in + custom rules" },
+    { id: "e", label: "Fail on high-severity findings → merge/apply is blocked; pass → `apply` runs" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Most cloud breaches are misconfigurations the cloud applied faithfully — a public bucket, a 0.0.0.0/0 security group — and the dangerous setting is usually an absence a human can't see in a diff. Scan the resolved `terraform plan` (not just source) with built-in plus custom policy-as-code, and fail the pipeline before `apply`. Gate hard only on curated high-severity rules so the gate stays trusted, not ignored.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="01-iac-scanning-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why a senior scans the resolved Terraform plan instead of only the .tf source, and what that costs.", a: "The dangerous cloud misconfig is usually an absence, not a literal: a missing aws_s3_bucket_public_access_block, an unspecified encryption block, a module default that leaves a bucket open. Static source scanning parses the HCL and flags obvious bad literals (a hardcoded 0.0.0.0/0, an acl = \"public-read\"), but it's blind to anything computed — variables, for_each, and especially module defaults — so the most common real bug, a clean-looking diff hiding a module's insecure default, sails through. Scanning the plan fixes that: you run terraform plan -out=tfplan and terraform show -json tfplan > plan.json, then point the scanner at the resolved JSON. The plan is the materialized end state — every variable substituted, every module expanded, every default made explicit — so the scanner sees the bucket exactly as it will exist, public-access-block and all. The cost is real: producing a plan needs read access to provider state/credentials and runs slightly later in the pipeline than a pure source lint, so source scanning stays useful as a fast credential-free first pass while the plan scan is the authoritative gate." },
+    { q: "What is policy-as-code, why gate at the pipeline instead of relying on a CSPM that scans the live account, and where are the gate's blind spots?", a: "Policy-as-code means the security rules themselves are version-controlled, tested, diffable artifacts next to the infra — a vendor baseline (tfsec/Checkov/Trivy ship CIS-aligned checks like 'block public S3' and 'no 0.0.0.0/0 to port 22') plus custom rules in an engine like OPA/Rego, Checkov custom checks, or Sentinel for org invariants ('no IAM *:*', 'every resource tagged cost-center', 'data buckets must use our KMS key'). You gate at the pipeline rather than leaning only on a CSPM because CSPM detects the public bucket AFTER apply — the window between apply and the next live scan is genuine exposure, and crawlers find open buckets in minutes — whereas the pre-apply gate is prevention: the misconfig is rejected before it ever exists, the cheapest possible point to fix it. CSPM still matters as the safety net for drift, console changes, and resources made outside Terraform, so they're complementary. The gate's blind spots: it only sees Terraform-managed resources (hand-created or drifted config is invisible), it only catches known patterns (a novel misconfig with no rule passes), and over-gating on every rule at HIGH causes alert fatigue and blanket ignores — so gate hard only on a curated high-severity set, warn on the rest, and make every suppression a justified, owned, recorded decision." },
+  ]}
+/>
+
+<Recap lang="en">
+Most cloud breaches aren't exploits — they're misconfigurations the cloud applied exactly as told: a public S3 bucket, a security group open to 0.0.0.0/0 on SSH, a publicly-accessible database, an unencrypted volume of PII. Infrastructure-as-Code makes prevention possible by turning every resource into a reviewable artifact before it touches the cloud, but humans can't reliably spot the danger because it's usually an absence — a missing public-access block, an unset encryption flag — that never shows up in a diff. IaC scanning closes that gap: scan the resolved `terraform plan` JSON (not just the .tf source, which is blind to module defaults and computed values) against a vendor baseline plus custom policy-as-code, and fail the pipeline before `apply` so the bad config never reaches the account. Policy-as-code makes each org invariant a tested, diffable rule enforced on every PR instead of a wiki line a reviewer must remember. The gate has limits — it only sees Terraform-managed resources, only catches known patterns, and over-gating breeds the alert fatigue that turns it into theater — so pair it with a CSPM safety net for drift, gate hard only on a curated high-severity set, and make every suppression an owned, justified decision. Now when you read a three-line Terraform diff that adds a bucket, your first question is: what does the *plan* say this resource actually looks like once the module defaults resolve?
+</Recap>
