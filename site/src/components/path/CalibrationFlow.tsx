@@ -2,14 +2,16 @@
 // Probabilistic placement orchestrator (4 stages: Aim → Mode → Deep run → Result).
 //
 // Aim   — pick a goal + coarse per-family self-placement (AimStage).
-// Mode   — express (cap per family) vs full coverage (run until every concept settles).
-// Run    — adaptive Bayesian probing: each step picks the unsettled concept with the highest
-//          expected info-gain, updates its posterior per answer, and propagates PASS/FAIL to
-//          prereqs/dependents. Express stops a family at EXPRESS_CAP; full runs to settle.
+// Mode   — express (cap per family) vs full coverage (run until every concept settles-or-exhausts).
+// Run    — adaptive Bayesian probing: each STEP asks one item of the unsettled concept with the
+//          highest expected info-gain, updates its posterior, and propagates PASS/FAIL to
+//          prereqs/dependents. A concept leaves the pool once it settles OR its bank is exhausted;
+//          a global cap (MAX_PLACEMENT_ITEMS) backstops termination. Selection + termination is the
+//          pure, unit-tested placement-runner — guaranteeing the run ends and never repeats an item.
 // Result — writes posteriors back to KnowledgeState, then shows the report (PlacementResult).
 //
-// The legacy `?unit=` pre-check is preserved verbatim (UnitMode): a single linear pass over a
-// unit's diagnosed concepts, folding the correct-fraction into knowledge via applyDiagnosticResult.
+// The legacy `?unit=` pre-check is preserved (UnitMode): a single linear pass over a unit's
+// diagnosed concepts via the shared UnitProbe.
 import { useState, useRef } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
@@ -17,11 +19,15 @@ import {
   writePlacementPosteriors,
 } from "~/scripts/path/path-io";
 import {
-  posterior, propagatePriors, variance, expectedInfoGain, SETTLE_VAR, PASS, FAIL,
+  posterior, propagatePriors, PASS, FAIL,
   type SelfPlace, type Response,
 } from "~/scripts/path/bayes";
+import {
+  initState, nextConcept, applyAsked, MAX_PLACEMENT_ITEMS,
+  type RunnerDeps, type RunnerState,
+} from "~/scripts/path/placement-runner";
 import type { DiagItem } from "~/scripts/path/calibration";
-import DiagnosticRunner from "./DiagnosticRunner";
+import DiagItemView from "./DiagItemView";
 import UnitProbe from "./UnitProbe";
 import AimStage from "./AimStage";
 import PlacementResult from "./PlacementResult";
@@ -33,6 +39,7 @@ const L = {
 } as const;
 
 type Phase = "aim" | "mode" | "run" | "result";
+type Cursor = { concept: string; idx: number };
 
 export default function CalibrationFlow({ lang, unit: unitProp }: { lang: Locale; unit?: string }) {
   const unit = unitProp ?? (typeof window !== "undefined"
@@ -49,11 +56,9 @@ function PlacementMachine({ lang }: { lang: Locale }) {
   const roadmap = `/${lang}/roadmap`;
   const [phase, setPhase] = useState<Phase>("aim");
   const self = useRef<Record<string, SelfPlace> | null>(null);
-  const express = useRef(false);
-  const priors = useRef(new Map<string, number>());
-  const order = useRef<string[]>([]);
-  const famCount = useRef(new Map<string, number>());
-  const [curConcept, setCurConcept] = useState<string | null>(null);
+  const deps = useRef<RunnerDeps | null>(null);
+  const st = useRef<RunnerState | null>(null);
+  const [cur, setCur] = useState<Cursor | null>(null);
 
   const familyOf = (id: string): string => {
     const track = content.conceptById.get(id)?.track as string;
@@ -61,57 +66,50 @@ function PlacementMachine({ lang }: { lang: Locale }) {
     return "";
   };
 
-  // Adaptive selection: among unsettled candidates (and, in express mode, families under the cap),
-  // pick the concept whose next answer is expected to shed the most entropy.
-  const pickNext = (): string | null => {
-    let best: string | null = null, bestGain = -1;
-    for (const id of order.current) {
-      const p = priors.current.get(id) ?? 0.5;
-      if (variance(p) < SETTLE_VAR) continue;
-      if (express.current && (famCount.current.get(familyOf(id)) ?? 0) >= EXPRESS_CAP) continue;
-      const gain = expectedInfoGain(p, conceptIrt(id));
-      if (gain > bestGain) { bestGain = gain; best = id; }
-    }
-    return best;
+  const buildDeps = (candidates: string[], express: boolean): RunnerDeps => ({
+    candidates,
+    bankSize: (c) => content.diagnostics[c]?.items.length ?? 0,
+    familyOf,
+    irtOf: (c) => conceptIrt(c),
+    express,
+    expressPerFamily: EXPRESS_CAP,
+    maxItems: MAX_PLACEMENT_ITEMS,
+  });
+
+  // Move to the next probe, or finish when the runner reports the pool is drained.
+  const advanceTo = (concept: string | null) => {
+    if (!concept) { finish(); return; }
+    setCur({ concept, idx: st.current!.cursor.get(concept) ?? 0 });
+    setPhase("run");
   };
 
-  const startDeep = () => {
+  const startDeep = (express: boolean) => {
     const sel = self.current!;
     const cand: string[] = [];
     for (const f of families()) {
       if ((sel[f.key] ?? "never") === "never") continue; // skip untouched families entirely
       cand.push(...familyConcepts(f.key));
     }
-    order.current = cand;
-    priors.current = seedPriors(cand, sel);
-    famCount.current = new Map();
-    const first = pickNext();
-    if (!first) { finish(); return; }
-    setCurConcept(first);
-    setPhase("run");
+    const d = buildDeps(cand, express);
+    deps.current = d;
+    st.current = initState(d, seedPriors(cand, sel));
+    advanceTo(nextConcept(d, st.current));
   };
 
-  const onResponse = (item: DiagItem, r: Response) => {
-    const id = curConcept!;
-    const p0 = priors.current.get(id) ?? 0.5;
-    const p1 = posterior(p0, r, itemIrt(id, item as any));
-    const fam = familyOf(id);
-    const updated = new Map(priors.current);
-    updated.set(id, p1);
-    priors.current = (p1 >= PASS || p1 <= FAIL)
-      ? propagatePriors(updated, content.graph, id, p1, r)
-      : updated;
-    famCount.current.set(fam, (famCount.current.get(fam) ?? 0) + 1);
-  };
-
-  const onConceptDone = () => {
-    const nxt = pickNext();
-    if (nxt) setCurConcept(nxt);
-    else finish();
+  const onAnswer = (concept: string, item: DiagItem, r: Response) => {
+    const d = deps.current!;
+    const s = st.current!;
+    const p0 = s.priors.get(concept) ?? 0.5;
+    const p1 = posterior(p0, r, itemIrt(concept, item as any));
+    let priorsAfter = new Map(s.priors);
+    priorsAfter.set(concept, p1);
+    if (p1 >= PASS || p1 <= FAIL) priorsAfter = propagatePriors(priorsAfter, content.graph, concept, p1, r);
+    st.current = applyAsked(d, s, concept, priorsAfter);
+    advanceTo(nextConcept(d, st.current));
   };
 
   const finish = () => {
-    writePlacementPosteriors(priors.current, Date.now());
+    writePlacementPosteriors(st.current!.priors, Date.now());
     setPhase("result");
   };
 
@@ -124,26 +122,29 @@ function PlacementMachine({ lang }: { lang: Locale }) {
       <div class="cal-flow">
         <h1 class="cf-title">{t.mode}</h1>
         <div class="cf-actions">
-          <button type="button" class="btn btn-primary" onClick={() => { express.current = true; startDeep(); }}>{t.express}</button>
-          <button type="button" class="btn btn-secondary" onClick={() => { express.current = false; startDeep(); }}>{t.full}</button>
+          <button type="button" class="btn btn-primary" onClick={() => startDeep(true)}>{t.express}</button>
+          <button type="button" class="btn btn-secondary" onClick={() => startDeep(false)}>{t.full}</button>
         </div>
         <a class="cf-link" href={roadmap}>{t.skip}</a>
       </div>
     );
   }
 
-  if (phase === "run" && curConcept) {
-    const label = content.conceptById.get(curConcept)?.label[lang] ?? curConcept;
+  if (phase === "run" && cur) {
+    // nextConcept only returns concepts with cursor < bankSize, so this item always exists.
+    const bank = content.diagnostics[cur.concept];
+    const item = bank.items[cur.idx] as DiagItem & { prompt: Record<Locale, string>; choices?: Record<Locale, string>[] };
+    const label = content.conceptById.get(cur.concept)?.label[lang] ?? cur.concept;
+    const heading = <div class="text-xs uppercase tracking-wide text-stone-500">{label}</div>;
     return (
       <div class="cal-flow">
-        <div class="cf-family">{t.family}: {familyOf(curConcept)}</div>
-        <DiagnosticRunner
-          key={curConcept}
+        <div class="cf-family">{t.family}: {familyOf(cur.concept)}</div>
+        <DiagItemView
+          key={`${cur.concept}#${cur.idx}`}
           lang={lang}
-          concept={curConcept}
-          label={label}
-          onResponse={onResponse}
-          onDone={onConceptDone}
+          item={item}
+          heading={heading}
+          onAnswer={(r) => onAnswer(cur.concept, item, r)}
         />
         <a class="cf-link" href={roadmap}>{t.skip}</a>
       </div>
@@ -151,7 +152,7 @@ function PlacementMachine({ lang }: { lang: Locale }) {
   }
 
   // phase === "result" (also the fallback if a run lands with no current concept).
-  return <PlacementResult lang={lang} priors={priors.current} />;
+  return <PlacementResult lang={lang} priors={st.current?.priors ?? new Map()} />;
 }
 
 // Legacy `?unit=` pre-check: one linear pass over a unit's diagnosed concepts, delegated to the
