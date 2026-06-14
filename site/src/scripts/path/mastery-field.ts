@@ -30,14 +30,14 @@ export const DOMAIN_FAMILIES: DomainFamily[] = [
   { key: "distributed", label: { en: "Distributed · design", ru: "Распределённые · дизайн" }, hue: "--d-systems",
     tracks: ["distributed", "queues", "system-design", "system-design-cases"] as Track[] },
   { key: "network-sec", label: { en: "Networking · security", ru: "Сети · безопасность" }, hue: "--d-network",
-    tracks: ["networking", "security"] as Track[] },
+    tracks: ["networking", "security", "security-foundations", "security-offensive", "security-defensive", "security-cloud"] as Track[] },
   { key: "infra", label: { en: "Infra · operations", ru: "Инфра · эксплуатация" }, hue: "--d-crypto",
     tracks: ["deployment", "aws", "ci-cd", "docker", "observability", "performance", "engineering-practice"] as Track[] },
   { key: "ai", label: { en: "AI · LLMs", ru: "AI · LLM" }, hue: "--d-ai",
     tracks: ["ai-llm"] as Track[] },
 ];
 
-const FAMILY_OF: Map<string, DomainFamily> = (() => {
+export const FAMILY_OF: Map<string, DomainFamily> = (() => {
   const m = new Map<string, DomainFamily>();
   for (const f of DOMAIN_FAMILIES) for (const t of f.tracks) m.set(t, f);
   return m;
