@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import {
   unitsFromMap, applyViewOrder, masteryByTrack, serializeKnowledge, deserializeKnowledge,
   togglePin, moveInOrder,
@@ -8,9 +8,12 @@ import {
   searchConcepts, reorderList,
   tierOf, unitPracticeFractions, conceptsUpToBand,
   isColdStartView,
+  readAttemptsAll, dueReviews, recordPracticeOutcome, computeDoNow,
 } from "./path-io";
 import { DEFAULT_CONFIG } from "./config";
 import { emptyState, applySelfDeclare } from "./knowledge";
+import { recordAttempt } from "~/scripts/practice-state";
+import { addCard, recordReview, dueBefore, REVIEW_KEY } from "~/scripts/review-state";
 import type { PathStep, Concept, Track } from "./types";
 import conceptsJson from "~/content/path/concepts.json";
 import unitConceptsJson from "~/content/path/unit-concepts.json";
@@ -246,5 +249,107 @@ describe("conceptsUpToBand", () => {
     expect(conceptsUpToBand(cs, "go", "surface")).toEqual(["a", "b"]);
     expect(conceptsUpToBand(cs, "go", "advanced")).toEqual(["a", "b", "c", "d"]);
     expect(conceptsUpToBand(cs, "react", "middle")).toEqual(["e"]);
+  });
+});
+
+describe("readAttemptsAll", () => {
+  beforeEach(() => localStorage.clear());
+  it("collects every atlas.practice-attempts.* entry keyed by lessonKey", () => {
+    recordAttempt("go/01-basics/01-intro", "t1", false, 1000);
+    recordAttempt("docker/01-images/02-layers", "t2", true, 2000);
+    const all = readAttemptsAll();
+    expect(all.get("go/01-basics/01-intro")).toEqual({ t1: { attempts: 1, passes: 0, lastResult: "fail", lastAt: 1000 } });
+    expect(all.get("docker/01-images/02-layers")).toEqual({ t2: { attempts: 1, passes: 1, lastResult: "pass", lastAt: 2000 } });
+  });
+  it("ignores unrelated keys and survives a corrupt entry", () => {
+    recordAttempt("go/01-basics/01-intro", "t1", true, 1000);
+    localStorage.setItem("atlas.practice.go/01-basics/01-intro", JSON.stringify({ t1: "done" })); // status store, different prefix
+    localStorage.setItem("atlas.practice-attempts.bad", "{ not json");
+    const all = readAttemptsAll();
+    expect(all.has("go/01-basics/01-intro")).toBe(true);
+    expect(all.has("bad")).toBe(false);
+    expect(all.size).toBe(1);
+  });
+});
+
+describe("dueReviews", () => {
+  beforeEach(() => localStorage.removeItem(REVIEW_KEY));
+  const seed = {
+    cardKey: "go/01-basics/01-intro::practice::t1",
+    lessonKey: "go/01-basics/01-intro",
+    source: "practice" as const,
+    index: 0,
+    front: "front", back: "back", lang: "en" as const,
+  };
+  it("maps due cards to lightweight {cardKey, lessonKey}", () => {
+    const now = Date.parse("2026-06-05T00:00:00Z");
+    addCard(seed, now); // fresh card is due now
+    const due = dueReviews(now + 1);
+    expect(due).toContainEqual({ cardKey: seed.cardKey, lessonKey: seed.lessonKey });
+  });
+  it("excludes cards not yet due", () => {
+    const now = Date.parse("2026-06-05T00:00:00Z");
+    addCard(seed, now);
+    recordReview(seed.cardKey, "good", now); // pushed ~1 day out
+    expect(dueReviews(now + 1).map((c) => c.cardKey)).not.toContain(seed.cardKey);
+  });
+});
+
+describe("recordPracticeOutcome", () => {
+  beforeEach(() => { localStorage.clear(); });
+  it("records the attempt for both pass and fail", () => {
+    recordPracticeOutcome("go/01-basics/01-intro", "t1", true);
+    recordPracticeOutcome("go/01-basics/01-intro", "t2", false);
+    const all = readAttemptsAll().get("go/01-basics/01-intro")!;
+    expect(all.t1.lastResult).toBe("pass");
+    expect(all.t2.lastResult).toBe("fail");
+  });
+  it("on fail, advances the matching SRS card so it returns due-soon (interval 0)", () => {
+    const now = Date.now(); // real clock so the pushed-out card is genuinely not due before the fail
+    const cardKey = "go/01-basics/01-intro::practice::t1";
+    addCard({ cardKey, lessonKey: "go/01-basics/01-intro", source: "practice", index: 0, front: "f", back: "b", lang: "en" }, now);
+    recordReview(cardKey, "easy", now); // push it out of the due window
+    expect(dueBefore(now + 1).map((c) => c.cardKey)).not.toContain(cardKey);
+    recordPracticeOutcome("go/01-basics/01-intro", "t1", false); // fail → grade "again" → interval 0 → due now
+    expect(dueBefore(Date.now() + 1).map((c) => c.cardKey)).toContain(cardKey);
+  });
+  it("on pass, does not resurface the card", () => {
+    // Anchor the review to the real clock so the easy-graded interval lands in the future,
+    // then a passing outcome must leave the card untouched (still not due now).
+    const now = Date.now();
+    const cardKey = "go/01-basics/01-intro::practice::t1";
+    addCard({ cardKey, lessonKey: "go/01-basics/01-intro", source: "practice", index: 0, front: "f", back: "b", lang: "en" }, now);
+    recordReview(cardKey, "good", now); // reps→1 → interval 1 day → due tomorrow
+    recordPracticeOutcome("go/01-basics/01-intro", "t1", true);
+    expect(dueBefore(now + 1).map((c) => c.cardKey)).not.toContain(cardKey);
+  });
+});
+
+describe("computeDoNow", () => {
+  beforeEach(() => { localStorage.removeItem(REVIEW_KEY); });
+  it("returns an ordered DoNowItem[] with reviews first when any card is due", () => {
+    config.value = { ...config.value, pace: { stepsAhead: 8, srsAggressiveness: 0 } };
+    const lead = computePath().path.steps[0]?.unit;
+    if (lead) {
+      // seed a due review on a lesson of the lead unit
+      const lessonKey = `${lead}/01-x`;
+      addCard({ cardKey: `${lessonKey}::practice::t1`, lessonKey, source: "practice", index: 0, front: "f", back: "b", lang: "en" }, Date.parse("2026-06-05T00:00:00Z"));
+    }
+    const items = computeDoNow();
+    expect(Array.isArray(items)).toBe(true);
+    const firstNonReview = items.findIndex((i) => i.kind !== "review");
+    const lastReview = items.map((i) => i.kind).lastIndexOf("review");
+    if (firstNonReview !== -1 && lastReview !== -1) expect(lastReview).toBeLessThan(firstNonReview);
+    expect(items.every((i) => typeof i.reason === "string" && i.reason.length > 0)).toBe(true);
+  });
+  it("accepts an injected tasksByLesson resolver for adaptive task rows", () => {
+    config.value = { ...config.value, pace: { stepsAhead: 8, srsAggressiveness: 0 } };
+    const lead = computePath().path.steps[0]?.unit;
+    const items = computeDoNow({ tasksByLesson: () => [{ id: "r1", difficulty: "recall" }] });
+    const taskRow = items.find((i) => i.kind === "task");
+    if (lead) {
+      expect(taskRow).toBeDefined();
+      expect(taskRow!.taskId).toBe("r1");
+    }
   });
 });

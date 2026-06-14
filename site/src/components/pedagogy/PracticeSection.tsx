@@ -5,6 +5,7 @@ import type { PracticeTaskData } from "~/content.config";
 import { checkBlank } from "~/scripts/practice-grade";
 import { setTaskStatus, readProgress } from "~/scripts/practice-state";
 import { recordPracticeResult } from "~/scripts/metrics";
+import { recordPracticeOutcome } from "~/scripts/path/path-io";
 import { runDebug, type DebugRunResult } from "~/scripts/debug-runner";
 import type { ExecCheck } from "~/scripts/practice-grade";
 import { cardsFromPractice } from "~/scripts/review-harvest";
@@ -71,6 +72,12 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
   void tick; // tick only forces a re-render; readProgress is re-read each render
   const p = readProgress(lessonKey);
   const done = ordered.filter((t) => p[t.id] === "done").length;
+  // Adaptive "do this next" cue. A per-concept mastery number is NOT cheap here (the island has no
+  // lesson→unit-concept map and would have to import the path graph + decayed knowledge), so per the
+  // plan we use the simplest signal that still gives a clear next-action: the first not-"done" task
+  // in the easiest→hardest order. `ordered` already sorts recall→apply→stretch, so this lands on the
+  // lowest open tier — the same task difficulty.recommendTask would pick for a weak/new learner.
+  const recommendedId = ordered.find((t) => p[t.id] !== "done")?.id;
   return (
     <section data-practice-layer data-lesson-key={lessonKey} class="my-12">
       <h2 class="font-display font-[520] text-ink text-2xl mb-1">{tt(lang, "Practice", "Практика")}</h2>
@@ -88,7 +95,7 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
       <ol class="space-y-4">
         {ordered.map((task) => (
           <li key={task.id}>
-            <TaskCard lang={lang} lessonKey={lessonKey} task={task} onChange={bump} />
+            <TaskCard lang={lang} lessonKey={lessonKey} task={task} recommended={task.id === recommendedId} onChange={bump} />
           </li>
         ))}
       </ol>
@@ -96,7 +103,7 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
   );
 }
 
-function TaskCard({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey: string; task: PracticeTaskData; onChange?: () => void }) {
+function TaskCard({ lang, lessonKey, task, recommended, onChange }: { lang: Locale; lessonKey: string; task: PracticeTaskData; recommended?: boolean; onChange?: () => void }) {
   const [open, setOpen] = useState(false);
   const onOpen = () => {
     setOpen((v) => {
@@ -108,7 +115,12 @@ function TaskCard({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
   return (
     <div data-practice-task={task.id} class="rounded-[var(--r-md)] border-[0.5px] border-hairline-2 bg-card p-5">
       <button type="button" onClick={onOpen} class="w-full flex items-center justify-between gap-3 text-left">
-        <span class="font-medium text-ink">{tt(lang, task.title.en, task.title.ru)}</span>
+        <span class="flex items-center gap-2 min-w-0">
+          <span class="font-medium text-ink">{tt(lang, task.title.en, task.title.ru)}</span>
+          {recommended && (
+            <span class="text-[10px] font-mono uppercase tracking-wide px-2 py-0.5 rounded-[var(--r-sm)] bg-accent-ghost text-accent shrink-0">{tt(lang, "Start here", "Начни здесь")}</span>
+          )}
+        </span>
         <span class="flex items-center gap-2 shrink-0">
           <span class="text-[10px] font-mono uppercase tracking-wide px-2 py-0.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 text-muted">{tt(lang, (TIER_LABEL[task.difficulty]?.en ?? task.difficulty), (TIER_LABEL[task.difficulty]?.ru ?? task.difficulty))}</span>
           <span class="text-xs font-mono text-muted">{task.estMin} min</span>
@@ -172,7 +184,7 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
       }
       {
         const done = () => { setTaskStatus(lessonKey, task.id, "done"); onChange?.(); };
-        const common = { lang, setup: task.grading.setup, check: task.grading.check, onResult: (ok: boolean) => { recordPracticeResult(lessonKey, task.id, "fix", ok); if (ok) done(); } };
+        const common = { lang, setup: task.grading.setup, check: task.grading.check, onResult: (ok: boolean) => { recordPracticeResult(lessonKey, task.id, "fix", ok); recordPracticeOutcome(lessonKey, task.id, ok); if (ok) done(); } };
         return (
           <div>
             {task.starter && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{task.starter}</pre>}
@@ -194,11 +206,11 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
       }
       if (task.runtime === "sql") {
         return <Suspense fallback={<Loading lang={lang} />}>
-          <SqlSandbox lang={lang} setup={task.setup} initialSql={task.initialCode ?? ""} check={task.expected} onResult={(ok) => { recordPracticeResult(lessonKey, task.id, "sandbox", ok); if (ok) done(); }} />
+          <SqlSandbox lang={lang} setup={task.setup} initialSql={task.initialCode ?? ""} check={task.expected} onResult={(ok) => { recordPracticeResult(lessonKey, task.id, "sandbox", ok); recordPracticeOutcome(lessonKey, task.id, ok); if (ok) done(); }} />
         </Suspense>;
       }
       return <Suspense fallback={<Loading lang={lang} />}>
-        <JsSandbox lang={lang} setup={task.setup} initialCode={task.initialCode ?? ""} check={task.expected} onResult={(ok) => { recordPracticeResult(lessonKey, task.id, "sandbox", ok); if (ok) done(); }} />
+        <JsSandbox lang={lang} setup={task.setup} initialCode={task.initialCode ?? ""} check={task.expected} onResult={(ok) => { recordPracticeResult(lessonKey, task.id, "sandbox", ok); recordPracticeOutcome(lessonKey, task.id, ok); if (ok) done(); }} />
       </Suspense>;
     }
     case "review":
@@ -230,6 +242,7 @@ function DebugBody({ lang, lessonKey, taskId, starter, setup, verify, check, evi
       const r = await runDebug({ setup, learnerCode: code, verify, check });
       setResult(r);
       recordPracticeResult(lessonKey, taskId, "debug", r.status === "pass");
+      recordPracticeOutcome(lessonKey, taskId, r.status === "pass");
       if (r.status === "pass") { setTaskStatus(lessonKey, taskId, "done"); onChange?.(); }
     } finally {
       setBusy(false);
@@ -398,6 +411,7 @@ function Blanks({ lang, lessonKey, taskId, evidence, blanks, onChange }: {
     }
     setResult(r);
     recordPracticeResult(lessonKey, taskId, "diagnose", allOk);
+    recordPracticeOutcome(lessonKey, taskId, allOk);
     setTaskStatus(lessonKey, taskId, allOk ? "done" : "attempted");
     onChange?.();
   };
