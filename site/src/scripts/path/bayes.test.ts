@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { priorFor, fallbackIrt, likelihood, posterior, variance, entropy, expectedInfoGain, collapse, SETTLE_VAR, type Irt } from "./bayes";
+import { priorFor, fallbackIrt, likelihood, posterior, variance, entropy, expectedInfoGain, collapse, SETTLE_VAR, propagatePriors, type Irt } from "./bayes";
+import { buildConceptGraph } from "./graph";
+import type { Concept } from "./types";
 
 const sharp: Irt = { b: 0, a: 1.4, c: 0.1 }; // discriminating, low guess
 
@@ -60,5 +62,32 @@ describe("collapse", () => {
     expect(collapse(0.9).shaky).toBe(false);
     expect(collapse(0.5).shaky).toBe(true);
     expect(variance(0.5)).toBeGreaterThan(SETTLE_VAR);
+  });
+});
+
+// b requires a ; c requires b   (a ancestor of b/c ; c descendant of a/b)
+const G = (() => {
+  const mk = (id: string, requires: string[]): Concept =>
+    ({ id, label: { en: id, ru: id }, track: "networking" as any, band: "surface", requires });
+  return buildConceptGraph([mk("a", []), mk("b", ["a"]), mk("c", ["b"])]);
+})();
+
+describe("propagatePriors", () => {
+  it("a confident known lifts ancestor priors, never lowers", () => {
+    const priors = new Map([["a", 0.2], ["b", 0.9], ["c", 0.5]]);
+    const next = propagatePriors(priors, G, "c", 0.95, "correct");
+    expect(next.get("a")!).toBeGreaterThan(0.2);
+    expect(next.get("b")!).toBeGreaterThanOrEqual(0.9);
+  });
+  it("a wrong (not-known) lowers descendant priors", () => {
+    const priors = new Map([["a", 0.9], ["b", 0.8], ["c", 0.8]]);
+    const next = propagatePriors(priors, G, "a", 0.05, "wrong");
+    expect(next.get("c")!).toBeLessThan(0.8);
+  });
+  it("dont_know cascade is strictly weaker than an equivalent wrong", () => {
+    const base = new Map([["a", 0.9], ["b", 0.8], ["c", 0.8]]);
+    const viaWrong = propagatePriors(base, G, "a", 0.05, "wrong").get("c")!;
+    const viaDk = propagatePriors(base, G, "a", 0.05, "dont_know").get("c")!;
+    expect(viaDk).toBeGreaterThan(viaWrong);
   });
 });
