@@ -1,0 +1,43 @@
+import { describe, it, expect } from "vitest";
+import { priorFor, fallbackIrt, likelihood, posterior, variance, type Irt } from "./bayes";
+
+const sharp: Irt = { b: 0, a: 1.4, c: 0.1 }; // discriminating, low guess
+
+describe("priorFor", () => {
+  it("is monotone: higher self-placement and lower band give higher prior", () => {
+    expect(priorFor("prod", "foundations")).toBeGreaterThan(priorFor("basics", "foundations"));
+    expect(priorFor("basics", "foundations")).toBeGreaterThan(priorFor("never", "foundations"));
+    expect(priorFor("prod", "foundations")).toBeGreaterThan(priorFor("prod", "advanced"));
+  });
+  it("keeps prod+advanced genuinely uncertain (gets tested)", () => {
+    const p = priorFor("prod", "advanced");
+    expect(p).toBeGreaterThan(0.15);
+    expect(p).toBeLessThan(0.5);
+  });
+});
+
+describe("fallbackIrt", () => {
+  it("derives guess from mcq choice count and difficulty from band", () => {
+    expect(fallbackIrt("surface", "mcq", 4).c).toBeCloseTo(0.25, 5);
+    expect(fallbackIrt("surface", "blanks", 0).c).toBeCloseTo(0.05, 5);
+    expect(fallbackIrt("advanced", "mcq", 4).b).toBeGreaterThan(fallbackIrt("foundations", "mcq", 4).b);
+  });
+});
+
+describe("likelihood + posterior", () => {
+  it("correct raises p, wrong lowers p", () => {
+    expect(posterior(0.5, "correct", sharp)).toBeGreaterThan(0.5);
+    expect(posterior(0.5, "wrong", sharp)).toBeLessThan(0.5);
+  });
+  it("dont_know lowers p MORE confidently than wrong (lower resulting mean and variance)", () => {
+    const pWrong = posterior(0.5, "wrong", sharp);
+    const pDk = posterior(0.5, "dont_know", sharp);
+    expect(pDk).toBeLessThan(pWrong);
+    expect(variance(pDk)).toBeLessThan(variance(pWrong));
+  });
+  it("dont_know|unknown carries no guess floor c, but does scale with (1-c)", () => {
+    const lowGuess = likelihood("dont_know", { b: 0, a: 1, c: 0.05 });
+    const highGuess = likelihood("dont_know", { b: 0, a: 1, c: 0.5 });
+    expect(lowGuess.unknown).toBeGreaterThan(highGuess.unknown);
+  });
+});
