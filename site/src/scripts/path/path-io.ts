@@ -26,6 +26,8 @@ import committedOverrides from "~/content/path/concept-overrides.json";
 import type { Overrides } from "./graph";
 import { applyOverridesFull, mergeOverrides, loosenUnitEdges } from "./overrides";
 import { serializeStateBundle, parseStateBundle } from "./state-io";
+import { resolveIrt, priorFor, collapse, type SelfPlace, type Irt } from "./bayes";
+import type { Band } from "./types";
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────────────────
 export function unitsFromMap(map: Record<string, { teaches: string[]; requires: string[]; estMin: number }>): UnitConcepts[] {
@@ -493,6 +495,65 @@ export function placementBatches(exclude: Set<string>, perFamily = 2): { family:
 }
 export function unitProbeConcepts(unitId: string): string[] {
   return (teachesByUnit.get(unitId) ?? []).filter((c) => diagnosedConcepts.has(c));
+}
+
+// ── probabilistic placement bridge (bayes.ts ↔ runtime content/knowledge) ──────
+// Connects the pure Bayes model to the committed content bundle: band/irt/family
+// lookups, prior seeding from self-placement, and posterior write-back via applyDiagnostic.
+export function conceptBand(id: string): Band {
+  return (conceptById.get(id)?.band ?? "surface") as Band;
+}
+
+// IRT for a concept's first item (used to rank concepts by expected info-gain).
+export function conceptIrt(id: string): Irt {
+  // bundle mcq items carry `choices` at runtime though DiagItem does not declare it.
+  const it = diagnostics[id]?.items?.[0] as (DiagItem & { choices?: unknown[] }) | undefined;
+  const choices = Array.isArray(it?.choices) ? it.choices.length : 0;
+  return resolveIrt(it?.irt, conceptBand(id), it?.type ?? "mcq", choices);
+}
+
+// IRT for a specific answered item (used during posterior updates).
+export function itemIrt(conceptId: string, item: { type: "mcq" | "blanks"; choices?: unknown[]; irt?: Irt }): Irt {
+  const choices = Array.isArray(item.choices) ? item.choices.length : 0;
+  return resolveIrt(item.irt, conceptBand(conceptId), item.type, choices);
+}
+
+// Diagnosable concepts of a domain family (by track membership).
+export function familyConcepts(familyKey: string): string[] {
+  const fam = DOMAIN_FAMILIES.find((f) => f.key === familyKey);
+  if (!fam) return [];
+  const tracks = new Set(fam.tracks as string[]);
+  return [...diagnosedConcepts].filter((id) => tracks.has(conceptById.get(id)?.track as string));
+}
+
+export const families = () =>
+  DOMAIN_FAMILIES.map((f) => ({ key: f.key, label: f.label, hue: f.hue, tracks: f.tracks as string[] }));
+
+// Initial prior map for a set of concepts from per-family self-placement.
+export function seedPriors(conceptIds: string[], selfByFamily: Record<string, SelfPlace>): Map<string, number> {
+  const famOf = new Map<string, string>();
+  for (const f of DOMAIN_FAMILIES) for (const tr of f.tracks as string[]) famOf.set(tr, f.key);
+  const priors = new Map<string, number>();
+  for (const id of conceptIds) {
+    const track = conceptById.get(id)?.track as string;
+    const self = selfByFamily[famOf.get(track) ?? ""] ?? "never";
+    priors.set(id, priorFor(self, conceptBand(id)));
+  }
+  return priors;
+}
+
+// Collapse a final posterior map into KnowledgeState (source "diagnostic"), reusing applyDiagnostic
+// so propagation-on-write matches legacy calibrate and existing guards hold.
+// Note: propagation thresholds intentionally differ between the in-flight Bayes model
+// (bayes.PASS=0.7 / FAIL=0.3) and this committed write-back (applyDiagnostic's PASS_HIGH=0.6 /
+// FAIL_LOW=0.4) — the write-back deliberately follows the legacy calibrate contract.
+export function writePlacementPosteriors(posteriors: Map<string, number>, now: number): void {
+  let next = knowledge.value;
+  for (const [id, p] of posteriors) {
+    const { confidence } = collapse(p);
+    next = applyDiagnostic(next, graph, id, confidence, now);
+  }
+  knowledge.value = next;
 }
 
 // ── deadline read-models for the UI (pace + optimization suggestions) ──────────
