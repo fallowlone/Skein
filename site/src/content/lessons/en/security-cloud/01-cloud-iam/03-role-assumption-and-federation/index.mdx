@@ -1,0 +1,222 @@
+---
+concepts:
+- assume-role
+- temporary-credentials
+- federation
+- oidc-to-cloud
+- workload-identity
+deepensInto: []
+estMin: 15
+lang: en
+lessonType: topic
+level: middle
+order: 3
+prereqs: []
+slug: 03-role-assumption-and-federation
+sources:
+- https://aws.amazon.com/iam/
+- https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+spiral: []
+status: ready
+summary: Long-lived access keys are the credential that leaks. Assume-role mints short-lived STS credentials for a scoped task; cross-account uses a trust policy with an external id; CI and pods federate via OIDC, so there are no keys to steal at all.
+title: Role assumption and federation
+track: security-cloud
+unit: 01-cloud-iam
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A GitHub Action runs `terraform apply` against production. To do it, someone pasted an `AWS_SECRET_ACCESS_KEY` into the repo's CI secrets two years ago — a long-lived key bound to a role with broad permissions. The key never expires, nobody remembers it exists, and it sits in plaintext in the runner's environment on every build. One leaked workflow log, one malicious dependency in the build, one fork with `pull_request_target`, and that key walks out the door — still valid, still privileged, usable from anywhere on the planet until a human notices and rotates it. The fix isn't a better secret store. It's to stop having a standing key at all: let the runner *prove who it is* and receive credentials that are already dead in fifteen minutes.
+</Hook>
+
+By the end of this lesson you'll know how `AssumeRole` mints short-lived credentials, how a cross-account trust policy and external id let one account safely act in another, and how OIDC federation lets CI and Kubernetes workloads get cloud access with no stored key at all.
+
+<Crux>Cross-account access mints short-lived STS role credentials; CI and workloads federate via OIDC, so no long-lived keys exist to leak.</Crux>
+
+<Explanation>
+
+## The problem: standing keys are the thing that leaks
+
+A long-lived access key (an `AKIA...` pair, a service-account JSON file) has three properties that make it the single most exfiltrated credential in cloud: it does not expire, it is bearer-only (whoever holds the bytes is the identity — no proof of possession), and it is usable from any network on earth. So a key that leaks at 3am in a log line is still a fully valid identity at noon the next day. The entire design goal of role assumption is to replace that standing key with a credential that is **scoped to a task, short by default, and tied to an identity that has to be re-proven** to get more.
+
+The mechanism is **temporary security credentials**. Instead of holding a key for the permissions you need, you hold the right to *ask* for them. You call the Security Token Service (`sts:AssumeRole`), name a role you're allowed to assume, and STS hands back a triple — an access key id, a secret, and a **session token** — that expires on a clock you set (15 minutes to 12 hours; one hour is a common default). When it expires, it is inert: a leaked session token recovered after its TTL is worthless. You've turned a permanent liability into a perishable one.
+
+## How assume-role actually works
+
+Two policies have to agree before STS issues anything, and conflating them is the most common IAM mistake on this topic:
+
+- The **trust policy** (the `AssumeRolePolicyDocument`, attached *to the role*) answers "**who** is allowed to become this role?" Its `Principal` names the identities — an account, a user, another role, or a federated provider — permitted to call `AssumeRole` on it.
+- The **permissions policy** (attached to the role) answers "once you *are* this role, **what** can you do?" — the actual `s3:GetObject`, `dynamodb:Query`, etc.
+
+A request to assume a role is denied unless the caller is *both* listed in the role's trust policy *and* has `sts:AssumeRole` permission on their own side. That two-sided handshake is the whole security model: the role owner decides who may enter, and the caller's own account decides whether they may try. When STS approves, it returns short-lived credentials carrying the role's permissions — not the caller's. You can shrink them further at assume-time with a **session policy** (an inline policy passed in the `AssumeRole` call that can only *subtract* permissions), which is how you hand a sub-task even less than the role grants.
+
+<FlowDiagram
+  label="The assume-role handshake: a principal in account A calls sts:AssumeRole for a role in account B; STS checks both the caller's own AssumeRole permission and the role's trust policy (which must name account A as principal); if both agree it mints short-lived credentials carrying the role's permissions, which expire on a clock and become inert when the TTL elapses."
+  perRow={5}
+  hue="var(--d-crypto)"
+  nodes={[
+    { id: "caller", label: "Principal (acct A)", sub: "has sts:AssumeRole" },
+    { id: "sts", label: "STS", sub: "AssumeRole call" },
+    { id: "trust", label: "Trust policy", sub: "names A as principal" },
+    { id: "creds", label: "Temp credentials", sub: "key+secret+token" },
+    { id: "expire", label: "TTL expires", sub: "credential inert" },
+  ]}
+  edges={[
+    { from: "caller", to: "sts", label: "assume role B" },
+    { from: "sts", to: "trust", label: "who may enter?" },
+    { from: "trust", to: "creds", label: "both agree" },
+    { from: "creds", to: "expire", label: "15m–12h" },
+  ]}
+  caption="Assume-role is a two-sided handshake: the caller must have sts:AssumeRole AND the role's trust policy must name the caller. STS then issues credentials scoped to the role, on a TTL — so a leak after expiry is worthless."
+/>
+
+## Cross-account: the trust policy and the confused-deputy fix
+
+Cross-account assume-role is how a CI account, an audit-tooling account, or a third-party SaaS gets scoped access into your account without you ever creating a user for them. You create a role in *your* account whose trust policy names *their* account as principal, attach a tight permissions policy, and hand them the role ARN. They assume it from their side and operate inside your account as that role — never as a long-lived key you minted and shipped to them.
+
+But cross-account trust has a classic trap: the **confused deputy**. Suppose a SaaS vendor assumes a role in *every* customer's account using the *same* vendor account as principal. If the vendor is tricked into using your role ARN while acting for a different customer — or an attacker who knows your role ARN can reach the vendor — your account is accessed under the vendor's legitimately-trusted identity. The fix is the **external id**: a secret string you choose, recorded in your trust policy's condition (`sts:ExternalId`), that the vendor must pass on every `AssumeRole`. Because it's per-customer and not guessable, an attacker who knows only the role ARN can't make the deputy use it against you. For your *own* workloads, the modern equivalent is OIDC subject conditions (below) — the external id pattern is specifically for third parties you can't federate.
+
+<Inset kind="why" lang="en">
+Why one hour and not one minute? Shorter is safer per-credential, but every expiry forces a re-assume round-trip, and STS has account-level request rate limits. A 15-minute TTL on a chatty service means constant re-auth and a real chance of throttling under load; a 12-hour TTL on an interactive admin session is a long window for a stolen token. The senior reflex is to match TTL to blast radius: minutes for high-privilege or cross-account roles, an hour for ordinary service work, and let the SDK's credential provider auto-refresh so the rotation is invisible to your code. The point of short-lived creds isn't to maximize friction — it's to make a leaked token expire before it's useful.
+</Inset>
+
+## Federation: CI and workloads with zero stored keys
+
+The endgame removes the bootstrap key entirely. **Federation** lets an identity from outside the cloud's own IAM — a GitHub Actions run, a Kubernetes pod, a Google or Okta login — exchange a token it already holds for short-lived cloud credentials, with no key ever stored.
+
+The dominant pattern for machines is **OIDC**. GitHub Actions, GitLab CI, and Kubernetes all act as OIDC identity providers: at runtime they mint a signed, short-lived JWT that asserts *who is running* — the repo, the branch, the workflow, the service account. You register that provider once in your cloud account and create a role whose trust policy says "trust tokens from `token.actions.githubusercontent.com`, but only when the `sub` claim is `repo:acme/api:ref:refs/heads/main`." The CI job calls `AssumeRoleWithWebIdentity`, presents its JWT, STS validates the signature against the provider's published keys *and* checks the claim conditions, and returns short-lived credentials. **No secret was ever stored in CI.** A leaked workflow log contains, at most, an already-expiring token bound to one repo and branch.
+
+The same idea runs inside Kubernetes as **workload identity** (EKS IRSA, GKE Workload Identity): a pod's service account is bound to a cloud role, the kubelet projects a signed service-account JWT into the pod, and the SDK exchanges it for credentials scoped to that workload — so two pods on the same node get different, minimal permissions instead of sharing the node's role. The trust-policy condition is doing the heavy lifting in every case: federation is only as safe as how tightly you pin the `sub`/`aud` claims. A trust policy that trusts the whole GitHub org instead of one repo, or omits the `aud`, is a federated wildcard — the same blast-radius mistake as `*:*`, just wearing an OIDC costume.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Access pattern</th>
+        <th class="border border-border px-3 py-2 text-left">Credential held</th>
+        <th class="border border-border px-3 py-2 text-left">Lifetime</th>
+        <th class="border border-border px-3 py-2 text-left">Trust gate</th>
+        <th class="border border-border px-3 py-2 text-left">Blast radius on leak</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2 font-medium">Long-lived access key</td>
+        <td class="border border-border px-3 py-2">Stored secret (AKIA…)</td>
+        <td class="border border-border px-3 py-2">Until rotated by a human</td>
+        <td class="border border-border px-3 py-2">Bearer — none</td>
+        <td class="border border-border px-3 py-2">Full, indefinite, from anywhere</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2 font-medium">Assume-role (same account)</td>
+        <td class="border border-border px-3 py-2">STS session creds</td>
+        <td class="border border-border px-3 py-2">15 min – 12 h TTL</td>
+        <td class="border border-border px-3 py-2">Caller perm + trust policy</td>
+        <td class="border border-border px-3 py-2">Role scope, until TTL only</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2 font-medium">Cross-account assume-role</td>
+        <td class="border border-border px-3 py-2">STS session creds</td>
+        <td class="border border-border px-3 py-2">15 min – 12 h TTL</td>
+        <td class="border border-border px-3 py-2">Trust policy + external id</td>
+        <td class="border border-border px-3 py-2">Role scope in your acct, until TTL</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2 font-medium">OIDC federation (CI / pod)</td>
+        <td class="border border-border px-3 py-2">None stored — JWT minted at runtime</td>
+        <td class="border border-border px-3 py-2">Minutes (token + STS TTL)</td>
+        <td class="border border-border px-3 py-2">Provider sig + sub/aud claim pin</td>
+        <td class="border border-border px-3 py-2">One repo/branch/pod, already expiring</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## How a senior reasons about it
+
+The order of preference is a ladder, and you climb as far as the platform allows. For your own workloads inside a cloud, attach a role to the compute (instance profile, IRSA, workload identity) so credentials are delivered and rotated automatically and *no key exists*. For CI and external-but-federatable systems, use OIDC with tightly pinned claim conditions. For third parties you can't federate, use cross-account assume-role with an external id. A static access key is the bottom rung — justified only when nothing above it is available, and then it must be short-TTL, narrowly scoped, alarmed on use, and rotated on a schedule. Every step up the ladder removes a stored secret, shortens a lifetime, or tightens a trust condition — and that is the whole game: shrink what a leak gets and how long it lasts.
+
+<TradeoffMatrix
+  id="03-role-assumption-tradeoff-1"
+  lessonSlug="03-role-assumption-and-federation"
+  lang="en"
+  prompt="Your GitHub Actions pipeline needs to deploy to a production cloud account. Today it uses a long-lived access key stored in CI secrets. Pick the best replacement."
+  options={[
+    { name: "Configure OIDC federation: register GitHub's provider, create a deploy role whose trust policy pins the sub claim to repo:acme/api:ref:refs/heads/main, and use AssumeRoleWithWebIdentity — no stored key", summary: "Federate, pin the claim.", correct: true, justification: "This removes the stored secret entirely. The runner mints a short-lived JWT proving which repo and branch is running, STS validates it against GitHub's published keys and the pinned sub/aud claims, and returns credentials that expire in minutes. A leaked log holds at most an already-expiring token bound to one branch — the smallest possible blast radius for CI." },
+    { name: "Move the same long-lived key into a dedicated secrets manager and inject it at build time", summary: "Better vault, same key.", justification: "A vault improves storage hygiene but the credential is still a standing, non-expiring bearer key that lands in the runner's environment on every build. If a malicious dependency or a leaked log exfiltrates it, it's valid indefinitely from anywhere. You've protected the key at rest while leaving the actual leak path — runtime exposure of a permanent credential — wide open." },
+    { name: "Rotate the long-lived key automatically every 24 hours via a scheduled job", summary: "Rotate faster.", justification: "Frequent rotation shrinks the window but doesn't close it: a key leaked at hour one is fully valid for up to 24 hours, and the rotation job itself needs a privileged standing credential to run. It's a mitigation bolted onto the wrong model when federation removes the stored key altogether." },
+    { name: "Set up OIDC but trust the whole GitHub org (sub claim repo:acme/*) so any repo can deploy", summary: "Federate, but wildcard the claim.", justification: "This adopts the right mechanism and then throws away its security. A trust policy that trusts every repo in the org means any compromised or attacker-created repo under acme/ can assume the production deploy role. It's a federated wildcard — the same blast-radius mistake as a *:* policy, just expressed as an unpinned sub claim." },
+  ]}
+/>
+
+<Quiz
+  id="03-role-assumption-quiz-1"
+  lessonSlug="03-role-assumption-and-federation"
+  lang="en"
+  question="A role in account B has a permissions policy granting s3:* but its trust policy lists no principals. A user in account A with sts:AssumeRole tries to assume it. What happens?"
+  choices={[
+    { label: "Denied — the role's trust policy doesn't name account A (or anyone), so STS won't issue credentials regardless of the permissions policy", correct: true },
+    { label: "Allowed — the user has sts:AssumeRole, which is sufficient on its own", misconception: "Assume-role is a two-sided handshake. The caller's own sts:AssumeRole permission only lets them try; the role's trust policy must also name them as a principal. Both must agree or STS denies." },
+    { label: "Allowed — the s3:* permissions policy grants broad access, so the assume succeeds", misconception: "The permissions policy decides what you can do once you ARE the role; it has no bearing on whether you're allowed to become it. With an empty trust policy, nobody can assume the role." },
+    { label: "Denied — because cross-account assume-role always requires an external id", misconception: "An external id is a defense against the confused-deputy problem for third parties; it isn't universally required. Here the assume fails for the more basic reason that the trust policy names no principal at all." },
+  ]}
+/>
+
+<Quiz
+  id="03-role-assumption-quiz-2"
+  lessonSlug="03-role-assumption-and-federation"
+  lang="en"
+  question="Why does OIDC federation for CI eliminate the leaked-key risk that a stored long-lived key has?"
+  choices={[
+    { label: "No secret is stored — the runner mints a signed, short-lived JWT at runtime, exchanges it via AssumeRoleWithWebIdentity for credentials that expire in minutes, so a leaked log holds at most an already-expiring token", correct: true },
+    { label: "The OIDC token is encrypted, so even if it leaks an attacker can't read it", misconception: "The protection isn't encryption of the token — it's that the token is short-lived, bound to claims (repo/branch/aud), and that no standing secret is stored at all. A leaked token expires on its own in minutes." },
+    { label: "GitHub validates the cloud credentials on every request, blocking stolen ones", misconception: "Validation happens at assume-time: STS checks the JWT signature and claim conditions, then issues independent short-lived creds. The win is the absence of a stored key plus a short TTL, not per-request revalidation by GitHub." },
+    { label: "Federation makes the credentials usable only from GitHub's IP ranges", misconception: "OIDC federation isn't an IP allowlist. Its safety comes from the signed identity assertion, the pinned sub/aud claims in the trust policy, and the short lifetime of the resulting credentials." },
+  ]}
+/>
+
+<DragOrder
+  id="03-role-assumption-drag-1"
+  lessonSlug="03-role-assumption-and-federation"
+  lang="en"
+  prompt="Order the steps of an OIDC-federated CI deploy, from start to issued credentials:"
+  items={[
+    { id: "a", label: "Register the CI provider once and create a role whose trust policy pins the sub/aud claims" },
+    { id: "b", label: "At runtime the CI job mints a signed, short-lived OIDC JWT asserting repo + branch" },
+    { id: "c", label: "The job calls AssumeRoleWithWebIdentity, presenting the JWT" },
+    { id: "d", label: "STS validates the signature against the provider's keys and checks the claim conditions" },
+    { id: "e", label: "STS returns short-lived credentials scoped to the role; the build deploys" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Replace standing keys with temporary STS credentials. Assume-role needs both the caller's sts:AssumeRole permission and the role's trust policy; cross-account adds an external id to stop confused-deputy abuse; CI and pods federate via OIDC with tightly pinned sub/aud claims, storing no key at all. Match TTL to blast radius.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="03-role-assumption-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain how AssumeRole works, the two policies involved, and why the credentials it returns are safer than a long-lived access key.", a: "AssumeRole is a call to the Security Token Service: a principal that is allowed to assume a role calls sts:AssumeRole, names the role, and STS returns temporary security credentials — an access key id, a secret, and a session token — that expire on a TTL you set (15 minutes to 12 hours, often one hour). Two separate policies must both agree before STS issues anything. The trust policy is attached to the role and answers 'who is allowed to become this role?' by naming principals in its Principal element. The permissions policy is also attached to the role and answers 'once you are this role, what can you do?' The handshake is two-sided: the caller must have sts:AssumeRole on their own side AND be named in the role's trust policy, or the assume is denied — the permissions policy is irrelevant to whether you can assume. The returned credentials carry the role's permissions, not the caller's, and you can subtract further with an inline session policy at assume-time. They're safer than a long-lived key because a standing key never expires, is bearer-only, and works from anywhere, so a leak stays valid until a human rotates it; a session token is inert once its TTL elapses, so a leak recovered after expiry is worthless." },
+    { q: "What is the confused-deputy problem in cross-account assume-role, and how do the external id and OIDC claim conditions defend against it?", a: "Cross-account assume-role lets you create a role in your account whose trust policy names another account (a CI account, an audit tool, a SaaS vendor) as principal, so they get scoped access without you minting them a key. The confused-deputy problem arises when one trusted deputy — typically a SaaS vendor that assumes a role in every customer's account using the same vendor identity — is tricked into using your role ARN while acting on behalf of someone else, or is reached by an attacker who knows your role ARN. Because the vendor's identity is legitimately trusted, your account is accessed under it. The external id fixes this: it's a non-guessable secret you choose and record in your trust policy as an sts:ExternalId condition, which the vendor must present on every AssumeRole. Since it's per-customer and unknown to an attacker who has only the role ARN, the deputy can't be confused into using it against you. For your own workloads the modern equivalent is OIDC federation with tightly pinned claim conditions: the trust policy validates the provider's signature and requires specific sub and aud claims (a specific repo and branch, a specific service account), so only the exact intended workload can assume the role. In both cases the defense is the same shape — a trust condition that ties the assume to a specific, hard-to-forge identity rather than to a broad, guessable principal." },
+  ]}
+/>
+
+<Recap lang="en">
+Long-lived access keys are the most-exfiltrated cloud credential because they never expire, are bearer-only, and work from anywhere — a leak at 3am is still valid at noon. Role assumption replaces them with temporary STS credentials scoped to a task and expiring on a TTL you set (15 minutes to 12 hours). AssumeRole is a two-sided handshake: the caller needs sts:AssumeRole on their side and must be named in the role's trust policy, which is separate from the permissions policy that decides what the role can do once assumed. Cross-account access works by trusting another account in the role's trust policy, and the external id condition closes the confused-deputy hole for third parties who can't be federated. The endgame is federation: CI systems and Kubernetes workloads act as OIDC providers, minting short-lived signed JWTs at runtime that STS exchanges for credentials via AssumeRoleWithWebIdentity — so no secret is ever stored, and a leaked log holds at most an already-expiring token pinned to one repo, branch, or pod. The safety of every federated setup lives in how tightly the trust policy pins the sub and aud claims: trusting a whole org instead of one repo is a federated wildcard, the same blast-radius mistake as a *:* policy. The reflex is a ladder — attached role first, then OIDC, then cross-account with external id, and a static key only as the justified last resort with a short TTL — each rung removing a stored secret, shortening a lifetime, or tightening a trust condition.
+</Recap>

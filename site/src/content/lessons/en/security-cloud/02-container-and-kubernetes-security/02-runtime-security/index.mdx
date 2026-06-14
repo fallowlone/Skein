@@ -1,0 +1,222 @@
+---
+concepts:
+- runtime-security
+- container-escape
+- seccomp
+- capabilities
+- read-only-filesystem
+deepensInto: []
+estMin: 15
+lang: en
+lessonType: topic
+level: middle
+order: 2
+prereqs: []
+slug: 02-runtime-security
+sources:
+- https://kubernetes.io/docs/concepts/security/
+- https://owasp.org/www-project-kubernetes-top-ten/
+spiral: []
+status: ready
+summary: 'A container is a process, not a VM — it shares the host kernel. Drop Linux
+  capabilities, add a seccomp profile, and run read-only so one process bug stays a
+  process bug instead of becoming a host compromise.'
+title: Container runtime security
+track: security-cloud
+unit: 02-container-and-kubernetes-security
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A Node service has an SSRF bug. Annoying, but contained — until you notice the container runs as `--privileged` because a year ago someone needed it to mount a FUSE filesystem for a one-off job and never reverted it. The attacker pivots from the SSRF to running code in the container, and now there is no wall left: `--privileged` hands the process every Linux capability, drops the seccomp filter, and exposes all host devices. They `mknod` a block device for the host root disk, mount it, and write a cron job onto the host. One web bug, owned the node, and from a node in a shared cluster you are one `kubectl`-token-scrape away from the whole cluster. The kernel was always shared; the only thing standing between a process bug and the host was the sandbox you turned off.
+</Hook>
+
+By the end of this lesson you'll know why a container is a kernel-sharing process and not a tiny VM, and how three controls — dropped capabilities, a seccomp profile, and a read-only root filesystem — turn a contained bug into a *contained* bug instead of a host takeover.
+
+<Crux>Drop Linux capabilities, add a seccomp profile, run read-only — so a process bug in a container cannot become a host compromise.</Crux>
+
+<Explanation>
+
+## A container is a process, not a VM
+
+The single most important fact about container security is that a container is not a small virtual machine. It is an ordinary Linux process on the host, wrapped in namespaces (which change what it can *see* — its own PID tree, mounts, network) and cgroups (which limit what it can *use* — CPU, memory). What it crucially does **not** have is its own kernel. Every container on a node calls the *same* host kernel that everything else calls. A VM has a hypervisor and a guest kernel between the workload and the metal; a container has one shared kernel and some bookkeeping.
+
+That changes the threat model completely. In a VM, escaping to the host means defeating the hypervisor — a hard, well-studied boundary. In a container, "escape" means getting the shared kernel to do something on your behalf that crosses the namespace fence: a kernel bug, an over-broad capability, a writable host path, a syscall that was never filtered. **Container escape** is the event where code inside a container gains code execution or file access on the host. It is not exotic — runc's CVE-2019-5736 let a malicious image overwrite the host `runc` binary and execute as root on the host; CVE-2022-0492 abused a cgroups-v1 release-agent path to escape from a container with no exotic privileges at all. The boundary is real but thin, and your job at runtime is to make it thicker than the default.
+
+## Capabilities: stop running as a 40-power root
+
+Classic UNIX has a binary: you are root (uid 0, can do everything) or you are not. Linux **capabilities** split root's omnipotence into ~40 distinct privileges you can grant or drop individually — `CAP_NET_BIND_SERVICE` (bind ports below 1024), `CAP_NET_RAW` (craft raw packets, ping), `CAP_SYS_ADMIN` (a grab-bag so broad it's been called "the new root"), `CAP_SYS_PTRACE`, `CAP_DAC_OVERRIDE` (bypass file permission checks), and so on.
+
+Here is the trap: a container running as `root` is **not** the same as a container running as the host's all-powerful root, but by default it still gets a *generous* default capability set. The reflex of a senior is `drop ALL, then add back only what the workload provably needs` — almost always nothing, because a typical web service binds a high port and reads files it owns. The capabilities that enable escape — `CAP_SYS_ADMIN` (mount, BPF, lots of escape paths), `CAP_SYS_MODULE` (load a kernel module = instant game over), `CAP_DAC_READ_SEARCH` (the CVE-2014-9357 / Docker "Shocker" file read), `CAP_NET_ADMIN` — are exactly the ones a normal app never uses. Dropping them costs you nothing and removes whole classes of escape. The anti-pattern is the inverse: `--privileged`, which doesn't just grant all capabilities — it also disables seccomp/AppArmor and exposes host devices, which is why it appears in nearly every real container-escape writeup.
+
+<FlowDiagram
+  label="The container escape chain and where each control breaks it: an app bug gives code execution inside the container; with default or privileged capabilities and an unfiltered syscall surface and a writable filesystem, the process reaches a kernel or host path and escapes to the node, from which a cluster token is scraped. Dropping capabilities, a seccomp profile, and a read-only root filesystem each sever one link."
+  perRow={3}
+  hue="var(--d-crypto)"
+  nodes={[
+    { id: "bug", label: "App bug", sub: "RCE in container" },
+    { id: "cap", label: "Broad caps", sub: "drop ALL breaks this" },
+    { id: "sys", label: "Dangerous syscall", sub: "seccomp breaks this" },
+    { id: "fs", label: "Writable host path", sub: "read-only breaks this" },
+    { id: "host", label: "Host escape", sub: "code on the node" },
+    { id: "cluster", label: "Cluster pivot", sub: "scrape SA token" },
+  ]}
+  edges={[
+    { from: "bug", to: "cap" },
+    { from: "cap", to: "sys", label: "if granted" },
+    { from: "sys", to: "fs", label: "if allowed" },
+    { from: "fs", to: "host", label: "if writable" },
+    { from: "host", to: "cluster", label: "pivot" },
+  ]}
+  caption="The escape is a chain, and runtime hardening is defence in depth: each of drop-capabilities, seccomp, and read-only severs a different link, so no single missing control hands over the node. --privileged removes all three at once."
+/>
+
+## Seccomp: shrink the syscall attack surface
+
+Capabilities gate *privileged* operations; **seccomp** (secure computing mode) gates the *syscalls* themselves. The Linux kernel exposes ~300–400 system calls, and that surface *is* the attack surface — every container kernel exploit is ultimately "call this syscall with these arguments." A seccomp profile is an allowlist (or denylist) of syscalls applied to the process; a blocked syscall returns `EPERM` or kills the process instead of entering the kernel path.
+
+The practical numbers matter. Docker's *default* seccomp profile already blocks ~44 of the most dangerous syscalls — `mount`, `ptrace` on other processes, `kexec_load` (load a new kernel), `bpf`, `keyctl`, `unshare`/`setns` namespace tricks — and that single default has neutralized multiple real escape CVEs that depended on a now-blocked syscall. The senior failure mode to recognize: in Kubernetes, seccomp is **not on by default** for older clusters. A pod with no `seccompProfile` set historically ran *unconfined* — the full syscall surface exposed — which is why the modern reflex is to set `seccompProfile: { type: RuntimeDefault }` cluster-wide (and newer Kubernetes defaults to it). The cost is real but small: an overly tight custom profile can break a workload that legitimately needs an unusual syscall (some JITs, `io_uring`-heavy apps), so the move is `RuntimeDefault` as a baseline and a custom profile only when you've measured the syscalls the app actually makes.
+
+## Read-only root and the rest of the hardening set
+
+The third pillar is the **read-only root filesystem** (`readOnlyRootFilesystem: true`). If the container's filesystem is immutable, an attacker who gets code execution cannot drop a webshell, overwrite a binary on `$PATH`, modify a config to persist, or stage the tools they need for the next step. Most apps don't write to their own image at all — they write to a database, a log sink, or a temp dir — so you mount a small `emptyDir` at `/tmp` for the genuinely ephemeral writes and freeze everything else. It converts "I have a shell" into "I have a shell that can't keep anything," which breaks persistence and most tooling-staging.
+
+These controls are mutually reinforcing, and the table makes the mapping concrete: each one severs a *different* link in the escape chain, which is the whole point of defence in depth — a single bypass shouldn't hand over the host.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Control</th>
+        <th class="border border-border px-3 py-2 text-left">What it constrains</th>
+        <th class="border border-border px-3 py-2 text-left">Escape link it severs</th>
+        <th class="border border-border px-3 py-2 text-left">Pod spec / flag</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Drop capabilities</td>
+        <td class="border border-border px-3 py-2">Privileged kernel operations (mount, BPF, modules)</td>
+        <td class="border border-border px-3 py-2">Removes CAP_SYS_ADMIN/MODULE escape paths</td>
+        <td class="border border-border px-3 py-2"><code>capabilities.drop: ALL</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Seccomp profile</td>
+        <td class="border border-border px-3 py-2">Which of ~350 syscalls the process may call</td>
+        <td class="border border-border px-3 py-2">Blocks the dangerous syscall an exploit needs</td>
+        <td class="border border-border px-3 py-2"><code>seccompProfile.type: RuntimeDefault</code></td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Read-only root FS</td>
+        <td class="border border-border px-3 py-2">Writes to the container's own filesystem</td>
+        <td class="border border-border px-3 py-2">Stops webshell drop / binary overwrite / persistence</td>
+        <td class="border border-border px-3 py-2"><code>readOnlyRootFilesystem: true</code></td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Run as non-root</td>
+        <td class="border border-border px-3 py-2">In-container uid 0 (limits damage if escaped)</td>
+        <td class="border border-border px-3 py-2">Shrinks blast radius of a partial escape</td>
+        <td class="border border-border px-3 py-2"><code>runAsNonRoot: true</code></td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">No privilege escalation</td>
+        <td class="border border-border px-3 py-2">setuid binaries regaining privilege</td>
+        <td class="border border-border px-3 py-2">Closes the setuid re-escalation path</td>
+        <td class="border border-border px-3 py-2"><code>allowPrivilegeEscalation: false</code></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<Inset kind="why" lang="en">
+Why isn't `runAsNonRoot` alone enough? Because non-root inside the container still shares the host kernel, and a kernel bug doesn't care about your uid — a CVE in a syscall path can hand you host code execution from an unprivileged container user. Non-root is essential blast-radius reduction (it stops the trivial in-container privilege abuse and is required by most Pod Security Standards), but it is a *layer*, not the wall. The wall is built from capabilities + seccomp + read-only + non-root together, because each closes a path the others leave open. This is exactly why `--privileged` is so dangerous: it doesn't weaken one layer, it removes several at once.
+</Inset>
+
+## When hardening flags aren't enough: stronger isolation
+
+Sometimes the workload is genuinely untrusted — you're running other people's code (CI jobs, a multi-tenant function platform, AI-generated code in a sandbox). Hardening flags shrink the shared-kernel attack surface but don't eliminate it; the kernel is still shared, so a sufficiently good kernel 0-day still escapes. For that tier the answer is a **stronger isolation runtime**: gVisor (a user-space kernel that intercepts syscalls so the container never touches the real kernel directly) or Kata Containers / Firecracker microVMs (a real lightweight guest kernel per workload, hypervisor-grade isolation with near-container startup). These cost some performance and operational complexity, so you don't reach for them for your own first-party services — but for genuinely hostile code, "harden the shared kernel" is the wrong altitude and "don't share the kernel" is the right one.
+
+<TradeoffMatrix
+  id="02-runtime-security-tradeoff-1"
+  lessonSlug="02-runtime-security"
+  lang="en"
+  prompt="A first-party web service had an RCE. It runs as `--privileged` because a maintenance job once needed extra access. Pick the change that most reduces the chance an in-container RCE becomes a host compromise."
+  options={[
+    { name: "Remove `--privileged`; set drop ALL capabilities, `seccompProfile: RuntimeDefault`, `readOnlyRootFilesystem: true`, `runAsNonRoot: true`", summary: "Harden the runtime.", correct: true, justification: "This severs every link in the escape chain at once. Dropping capabilities removes the privileged operations (mount, module load) escapes rely on; RuntimeDefault seccomp blocks the dangerous syscalls an exploit needs; the read-only root stops the attacker persisting or staging tools; non-root shrinks the blast radius. --privileged was disabling seccomp/AppArmor and exposing host devices, so removing it is the single highest-value move. For a first-party app this set is essentially free — the app never needed those privileges." },
+    { name: "Keep `--privileged` but add a network policy so the pod can't reach the internet", summary: "Network-only.", justification: "Egress restriction is good defence in depth and slows exfiltration, but it does nothing about the escape itself: --privileged still hands the process every capability, an unfiltered syscall surface, and host devices, so the attacker still escapes to the node and pivots locally. You've guarded one exit while leaving the front door open." },
+    { name: "Rebuild the image on a smaller distroless base so there are fewer binaries to abuse", summary: "Slim the image.", justification: "A smaller image reduces some post-exploitation convenience and is worth doing, but it doesn't change the runtime privileges: a --privileged container can mknod the host disk or load a kernel module regardless of how few binaries ship in the image. Image hygiene is a build-time control; the escape here is a runtime-privilege problem." },
+    { name: "Move the workload to gVisor for a user-space kernel and call it done", summary: "Sandbox runtime.", justification: "gVisor genuinely strengthens isolation and is the right tool for untrusted code, but it's the wrong altitude for a first-party service you control, adds real performance/compat cost, and — critically — running it still --privileged or with broad capabilities undercuts the benefit. The cheaper, higher-leverage fix is to apply the standard hardening set first; reach for a sandbox runtime when the workload is actually hostile." },
+  ]}
+/>
+
+<Quiz
+  id="02-runtime-security-quiz-1"
+  lessonSlug="02-runtime-security"
+  lang="en"
+  question="Why does a container escape threaten the host in a way a VM escape doesn't — and what makes `--privileged` uniquely dangerous?"
+  choices={[
+    { label: "A container shares the host kernel (no guest kernel/hypervisor boundary), so a kernel bug or broad privilege crosses the namespace fence; `--privileged` grants all capabilities AND disables seccomp/AppArmor AND exposes host devices at once", correct: true },
+    { label: "Containers are slower than VMs, so attackers have more time to exploit them", misconception: "Performance has nothing to do with the isolation boundary. The point is architectural: a container shares the host kernel while a VM has its own guest kernel behind a hypervisor, which is why the container boundary is thinner." },
+    { label: "`--privileged` only grants extra CPU and memory, which lets the attacker run heavier exploits", misconception: "--privileged is about privilege, not resources. It grants every Linux capability, disables the seccomp/AppArmor filters, and exposes host devices — that's the security collapse, not a resource bump." },
+    { label: "VMs and containers are equally isolated; the only difference is startup time", misconception: "They are not equally isolated. A VM has a hypervisor and a separate guest kernel; a container shares one host kernel. That shared kernel is exactly why container escape is a different, thinner boundary." },
+  ]}
+/>
+
+<Quiz
+  id="02-runtime-security-quiz-2"
+  lessonSlug="02-runtime-security"
+  lang="en"
+  question="Your Kubernetes pods set `runAsNonRoot: true` but nothing else. Why is that insufficient, and what's the senior baseline?"
+  choices={[
+    { label: "Non-root still shares the host kernel, so a kernel/syscall bug can escape regardless of uid — add drop-ALL capabilities, a RuntimeDefault seccomp profile, and a read-only root filesystem", correct: true },
+    { label: "It's sufficient — once you're non-root inside the container, escape is impossible", misconception: "Escape is not impossible for a non-root user. A kernel bug in a syscall path doesn't care about your in-container uid; non-root reduces blast radius but is one layer, not the whole wall." },
+    { label: "Just also set `--privileged` so the container is fully managed", misconception: "--privileged is the opposite of hardening: it grants all capabilities and disables seccomp/AppArmor. Adding it would remove the very protections you need." },
+    { label: "Replace non-root with a network policy; egress filtering covers the same threat", misconception: "Network policy and runtime hardening guard different things. Egress rules limit where a compromised pod talks; they don't stop the kernel-level escape that capabilities/seccomp/read-only address." },
+  ]}
+/>
+
+<DragOrder
+  id="02-runtime-security-drag-1"
+  lessonSlug="02-runtime-security"
+  lang="en"
+  prompt="Order the container-escape chain that runtime hardening is designed to break, from the initial bug to full cluster compromise:"
+  items={[
+    { id: "a", label: "An app bug gives code execution inside the container" },
+    { id: "b", label: "A broad/privileged capability set permits a dangerous operation" },
+    { id: "c", label: "An unfiltered syscall (no seccomp) reaches a vulnerable kernel path" },
+    { id: "d", label: "A writable host path lets the attacker write to the node" },
+    { id: "e", label: "Host code execution → scrape a service-account token → pivot to the cluster" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A container is a process sharing the host kernel, not a VM — so a process bug can become a host compromise. Build the wall from layers that each sever a different escape link: drop ALL capabilities (add back only what's proven needed), apply a `RuntimeDefault` seccomp profile, mount the root filesystem read-only, and run non-root with no privilege escalation. Never `--privileged` for first-party services; for genuinely untrusted code, stop sharing the kernel (gVisor / Kata).</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="02-runtime-security-retrieval"
+  lang="en"
+  questions={[
+    { q: "Explain why a container is a different security boundary than a VM, and what 'container escape' concretely means.", a: "A container is an ordinary Linux process on the host, isolated by namespaces (what it can see: its own PID tree, mounts, network) and cgroups (what it can use: CPU, memory). The decisive fact is that it has no guest kernel of its own — every container on a node calls the *same* host kernel. A VM, by contrast, runs a separate guest kernel behind a hypervisor, so escaping to the host means defeating that hypervisor boundary. Because the container shares the kernel, 'escape' means getting the shared kernel to do something across the namespace fence on the attacker's behalf: exploiting a kernel bug, abusing an over-broad capability, writing through a mounted host path, or making a syscall that was never filtered. This is not theoretical — runc's CVE-2019-5736 let a malicious image overwrite the host runc binary and run as host root, and CVE-2022-0492 used a cgroups-v1 release-agent path to escape with no exotic privileges. The boundary is real but thin, so runtime hardening exists to make it thicker than the permissive default." },
+    { q: "Walk through the three core runtime controls — capabilities, seccomp, read-only root — and what each one stops.", a: "They are defence in depth: each severs a different link in the escape chain. (1) Capabilities split root's power into ~40 separate privileges; the reflex is drop ALL and add back only what's proven needed (usually nothing for a web app). This removes the capabilities escapes depend on — CAP_SYS_ADMIN (mount/BPF), CAP_SYS_MODULE (load a kernel module = game over), CAP_DAC_READ_SEARCH — which a normal app never uses, so dropping them is free. (2) Seccomp gates the syscalls themselves: of the ~300–400 Linux syscalls, a profile allowlists which the process may call, and a blocked one returns EPERM or kills the process. Docker's default profile blocks ~44 dangerous syscalls (mount, ptrace, kexec_load, bpf, keyctl) and has neutralized real escape CVEs; in Kubernetes the trap is that older clusters ran pods *unconfined* by default, so the modern baseline is seccompProfile: RuntimeDefault. (3) A read-only root filesystem (readOnlyRootFilesystem: true) means an attacker with code execution can't drop a webshell, overwrite a binary, or persist — you mount a small emptyDir at /tmp for ephemeral writes and freeze the rest. Together with runAsNonRoot and allowPrivilegeEscalation: false they form the wall; --privileged is dangerous precisely because it removes several of these layers at once (all caps, no seccomp/AppArmor, host devices)." },
+  ]}
+/>
+
+<Recap lang="en">
+A container is not a small VM — it is a host process isolated by namespaces and cgroups, sharing the one host kernel with everything else on the node. That shared kernel is the whole reason container runtime security exists: a process bug, an over-broad capability, an unfiltered syscall, or a writable host path can cross the namespace fence and become host code execution — a *container escape* — and from a node in a shared cluster, a scraped service-account token turns one web bug into a cluster compromise. The defence is layered, and each layer severs a different link in that chain: drop ALL Linux capabilities and add back only what the workload provably needs (removing the CAP_SYS_ADMIN/CAP_SYS_MODULE paths escapes love); apply a `RuntimeDefault` seccomp profile so the ~350-syscall attack surface shrinks to what the app actually calls (and never run pods seccomp-unconfined); mount the root filesystem read-only so an attacker can't persist or stage tools; and run non-root with `allowPrivilegeEscalation: false` to cap the blast radius. The cardinal sin is `--privileged`, which collapses several layers at once and shows up in nearly every real escape writeup. When the workload is genuinely untrusted, stop hardening the shared kernel and stop *sharing* it — reach for gVisor or Kata/Firecracker. Now when you read a pod spec, your first question is: does this `securityContext` drop capabilities, set a seccomp profile, and freeze the filesystem — or is it trusting a process bug to never happen?
+</Recap>

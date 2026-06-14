@@ -1,0 +1,212 @@
+---
+concepts:
+- tls-handshake
+- pki
+- certificate-chain
+- certificate-authority
+- trust-store
+deepensInto: []
+estMin: 15
+lang: en
+lessonType: topic
+level: middle
+order: 4
+prereqs: []
+slug: 04-tls-and-pki
+sources:
+- https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
+- https://datatracker.ietf.org/doc/html/rfc8446
+status: ready
+spiral: []
+summary: 'TLS 1.3 builds an encrypted channel in one round trip and proves who you are talking to with a certificate chain anchored in a trusted CA. This is how the browser decides the green padlock is honest — and how it goes wrong.'
+title: 'TLS and PKI'
+track: security-foundations
+unit: 02-cryptography-for-engineers
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A pager goes off at 03:00: every request to `api.payments.internal` is failing with `x509: certificate has expired`. The service didn't change, the code didn't change — a number in a file rolled over from `notAfter: 2026-06-13` to one second later, and a fleet of clients that had trusted this server for two years simultaneously refused to talk to it. No attacker, no bug, no deploy. Just a date. The same machinery that quietly stopped that outage from being a silent man-in-the-middle is the machinery that just took you down: a certificate, a chain, and a client deciding whether to trust it. Understand that machinery and you stop being surprised by it.
+</Hook>
+
+By the end of this lesson you'll know how TLS 1.3 sets up an encrypted, authenticated channel in one round trip, and exactly how a browser decides a certificate is valid — chain, CA, trust store, and the checks in between.
+
+<Crux>TLS 1.3 builds an encrypted channel in one round trip and proves the server's identity with a chain anchored in a trusted CA.</Crux>
+
+<Explanation>
+
+## What TLS actually has to do
+
+TLS has two jobs that people constantly conflate: **confidentiality** (nobody on the wire can read the bytes) and **authentication** (you are actually talking to `payments.example.com` and not an impostor who sits between you). Encryption alone is worthless without the second part — an attacker who can intercept your traffic can just as easily run their own encrypted tunnel to you while reading everything. The whole point of the certificate machinery is to bind the encryption keys to a verified identity, so the channel is both private *and* provably to the right party.
+
+TLS 1.3 (RFC 8446) is a deliberate reset of the protocol. It deleted the dangerous parts of TLS 1.2 — static RSA key exchange, CBC-mode ciphers, RC4, compression, renegotiation — and kept only forward-secret, AEAD constructions. The practical consequences are two: the handshake is faster (**one round trip** instead of two for a new connection, and an optional **zero round trip** for resumption), and the set of ways to misconfigure it shrank dramatically. There is no "downgrade to export crypto" knob left to get wrong.
+
+## The 1.3 handshake in one round trip
+
+Here is the sequence for a fresh connection. The client opens with a `ClientHello` that already includes a **key share** — an ephemeral Diffie-Hellman public value — for the curves it guesses the server will accept. That guess is the trick that collapses two round trips into one: the client doesn't wait to be told which parameters to use, it speculates.
+
+<FlowDiagram
+  label="The TLS 1.3 full handshake in one round trip: the client sends ClientHello carrying its ephemeral key share; the server replies with ServerHello (its own key share), then — already encrypted under the derived handshake keys — sends its Certificate, a CertificateVerify signature proving it owns the private key, and Finished; the client verifies the chain and signature and sends its own Finished, after which application data flows."
+  perRow={5}
+  hue="var(--d-crypto)"
+  nodes={[
+    { id: "hello", label: "ClientHello", sub: "+ key share" },
+    { id: "shello", label: "ServerHello", sub: "+ key share" },
+    { id: "cert", label: "Certificate", sub: "encrypted" },
+    { id: "verify", label: "CertificateVerify", sub: "signs handshake" },
+    { id: "data", label: "Application data", sub: "1-RTT done" },
+  ]}
+  edges={[
+    { from: "hello", to: "shello", label: "1 RTT" },
+    { from: "shello", to: "cert", label: "keys derived" },
+    { from: "cert", to: "verify", label: "proves key ownership" },
+    { from: "verify", to: "data", label: "client Finished" },
+  ]}
+  caption="The client speculates a key share in the first flight, so the server can derive the shared secret immediately and encrypt the rest of its handshake — including the certificate. Everything from ServerHello onward is already confidential; the certificate is no longer sent in cleartext as it was in TLS 1.2."
+/>
+
+The server replies with `ServerHello` carrying *its* key share. At that instant both sides can compute the shared secret via Diffie-Hellman and derive symmetric handshake keys — so everything the server sends next is **already encrypted**, including the certificate. Then comes the part that actually authenticates anyone:
+
+- **Certificate**: the server's leaf certificate plus the intermediate(s) needed to chain up.
+- **CertificateVerify**: a signature, made with the certificate's private key, over a transcript of the whole handshake so far. This is the step that proves the server *holds the private key* matching the public key in the certificate — not just that it can copy a certificate file someone else owns.
+- **Finished**: a MAC over the transcript that locks the handshake against tampering.
+
+The client validates the chain and the `CertificateVerify` signature, sends its own `Finished`, and application data flows. One round trip, end to end.
+
+<Inset kind="why" lang="en">
+Why is `CertificateVerify` the load-bearing step? Because a certificate is public — anyone can download `payments.example.com`'s certificate. What an impostor cannot do is produce a valid signature over *this specific handshake transcript* without the matching private key. That signature, recomputed over data that includes both sides' fresh key shares, is what ties "I present this identity" to "I can prove I own it right now." Strip it out and TLS authenticates nothing.
+</Inset>
+
+## Certificates, chains, and CAs
+
+A certificate is a signed statement: "this public key belongs to this name, and I — the issuer — vouch for it, until this expiry date." The name lives in the **Subject Alternative Name (SAN)** field (the old Common Name is ignored by modern clients). Critically, the server's **leaf certificate is not trusted directly**. It is signed by an **intermediate CA**, which is signed by a **root CA**. That sequence — leaf → intermediate → root — is the **certificate chain**.
+
+The reason for the layer of indirection is operational, not cryptographic. Root CA private keys are kept offline in hardware security modules and almost never touched, because if a root key leaks, every certificate it ever anchored is worthless and it cannot be quietly replaced — it is burned into billions of devices. Intermediates do the day-to-day signing and can be revoked and rotated without an apocalypse. The server is expected to send its leaf *and* the intermediate(s); a server that ships only the leaf produces the classic "chain not trusted" error on clients that don't happen to cache that intermediate.
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Link in the chain</th>
+        <th class="border border-border px-3 py-2 text-left">Signed by</th>
+        <th class="border border-border px-3 py-2 text-left">Where the key lives</th>
+        <th class="border border-border px-3 py-2 text-left">If it is compromised</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">Leaf (your server)</td>
+        <td class="border border-border px-3 py-2">Intermediate CA</td>
+        <td class="border border-border px-3 py-2">On the server / load balancer</td>
+        <td class="border border-border px-3 py-2">Revoke + reissue; ~90-day lifetimes limit blast radius</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Intermediate CA</td>
+        <td class="border border-border px-3 py-2">Root CA</td>
+        <td class="border border-border px-3 py-2">In the CA's HSM, online for signing</td>
+        <td class="border border-border px-3 py-2">Revoke the intermediate; rotate; reissue its leaves</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Root CA</td>
+        <td class="border border-border px-3 py-2">Itself (self-signed)</td>
+        <td class="border border-border px-3 py-2">Offline HSM, rarely touched</td>
+        <td class="border border-border px-3 py-2">Catastrophe: distrusted out of every trust store, slow to replace</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## How the browser decides a cert is valid
+
+Here is the part engineers most often hand-wave. When the leaf arrives, the client runs a chain of checks, and **all of them must pass** — failing any one is what triggers the scary full-page warning:
+
+1. **Build the chain to a trusted anchor.** The client walks leaf → intermediate → root and confirms the root is present in its **trust store** — the operating system's or browser's preinstalled list of root CAs it has decided to trust a priori. Trust is not magic; it bottoms out in this curated list of a few hundred roots. If the chain doesn't terminate in one of them, the cert is untrusted, full stop.
+2. **Verify every signature up the chain.** Each certificate's signature must validate against the *next* certificate's public key. A break anywhere means the chain is forged or incomplete.
+3. **Check validity dates.** Every certificate in the chain must be within its `notBefore`/`notAfter` window. This is the expired-cert 03:00 page.
+4. **Check the name.** The hostname the client asked for must match a SAN entry on the leaf. Connecting to `payments.example.com` and getting a cert for `example.com` with no matching SAN fails — this is what stops an attacker presenting a valid certificate for a domain they *do* control.
+5. **Check revocation.** Has the CA revoked this cert early (key compromise, mis-issuance)? Checked via CRL or, more commonly, **OCSP / OCSP stapling**, where the server attaches a recent signed "still good" proof so the client doesn't have to phone the CA.
+
+<TradeoffMatrix
+  id="04-tls-and-pki-tradeoff-1"
+  lessonSlug="04-tls-and-pki"
+  lang="en"
+  prompt="Your internal service `payments.internal` presents a certificate. Clients reject it with 'certificate signed by unknown authority', even though the cert itself is well-formed and not expired. What's the correct fix?"
+  options={[
+    { name: "The cert chains to a private internal root that isn't in the clients' trust stores — distribute that root CA to the clients (or use a publicly-trusted CA)", summary: "Fix the anchor.", correct: true, justification: "'Unknown authority' is specifically a trust-anchor failure: the chain is internally valid but terminates in a root the client has never been told to trust. The right fix is to make that anchor trusted — install the private root CA into each client's trust store (config management, container base image, OS policy) or issue the leaf from a publicly-trusted CA. This is the only fix that preserves authentication rather than discarding it." },
+    { name: "Tell the clients to skip certificate verification (`InsecureSkipVerify` / `-k`) for internal traffic", summary: "Turn off the check.", justification: "This is the single most dangerous 'fix' in TLS. Disabling verification doesn't add trust — it removes authentication entirely, so any host on the path can man-in-the-middle the connection while still serving encrypted bytes. 'Internal' is not a security boundary; it's exactly where lateral-movement attackers live. You've kept confidentiality and thrown away the half of TLS that matters here." },
+    { name: "Re-issue the leaf with a longer expiry so it stops complaining", summary: "Longer expiry.", justification: "Expiry is a different failure mode (`certificate has expired`) with a different error. 'Unknown authority' is about the trust anchor, not the dates, so a longer-lived leaf changes nothing — the chain still doesn't reach a trusted root and the client still rejects it." },
+    { name: "Add the leaf certificate itself to each client's trust store", summary: "Pin the leaf.", justification: "This works narrowly but is the wrong primitive: you'd be re-distributing and re-trusting every leaf on every ~90-day rotation, and you lose the whole point of a CA (rotate leaves freely under one trusted root). Trust the root or intermediate, not each ephemeral leaf — unless you are deliberately doing certificate pinning, which is a separate, advanced control with its own operational cost." },
+  ]}
+/>
+
+<Quiz
+  id="04-tls-and-pki-quiz-1"
+  lessonSlug="04-tls-and-pki"
+  lang="en"
+  question="In the TLS 1.3 handshake, what does the server's `CertificateVerify` message actually prove that the `Certificate` message alone does not?"
+  choices={[
+    { label: "That the server holds the private key matching the certificate's public key — it's a signature over the handshake transcript", correct: true },
+    { label: "That the certificate hasn't expired", misconception: "Expiry is checked by reading the notBefore/notAfter dates in the certificate itself; CertificateVerify is a proof-of-private-key-possession signature, a different check entirely." },
+    { label: "That the certificate chains to a trusted root", misconception: "Chain-building and anchoring in the trust store is a separate validation the client performs on the Certificate message; CertificateVerify proves key ownership, not chain trust." },
+    { label: "That the connection is encrypted", misconception: "Encryption comes from the Diffie-Hellman key exchange in the Hello messages; CertificateVerify is about authentication — proving identity — not confidentiality." },
+  ]}
+/>
+
+<Quiz
+  id="04-tls-and-pki-quiz-2"
+  lessonSlug="04-tls-and-pki"
+  lang="en"
+  question="A client connects to `payments.example.com` and the server presents a cryptographically valid, in-date, properly-chained certificate — but for the name `cdn.example.com`. What happens?"
+  choices={[
+    { label: "The handshake fails: the requested hostname doesn't match any SAN on the leaf, so the name check fails even though every other check passed", correct: true },
+    { label: "It succeeds, because the certificate is valid and chains to a trusted root", misconception: "All validity checks must pass, including the name check. A cert that's perfectly valid for a different name is exactly the attack the SAN check exists to stop." },
+    { label: "It succeeds, because both names share the example.com domain", misconception: "There's no automatic domain-suffix trust; the leaf must list the exact hostname (or a matching wildcard) in its SAN. Sharing a parent domain grants nothing." },
+    { label: "The client falls back to plaintext HTTP", misconception: "A failed certificate validation aborts the connection with a warning; it does not silently downgrade to unencrypted transport." },
+  ]}
+/>
+
+<DragOrder
+  id="04-tls-and-pki-drag-1"
+  lessonSlug="04-tls-and-pki"
+  lang="en"
+  prompt="Order the steps of a fresh TLS 1.3 handshake, from first to last:"
+  items={[
+    { id: "a", label: "ClientHello with an ephemeral key share" },
+    { id: "b", label: "ServerHello with the server's key share — both sides derive keys" },
+    { id: "c", label: "Server sends Certificate + CertificateVerify (now encrypted)" },
+    { id: "d", label: "Client validates the chain, signature, name, and dates" },
+    { id: "e", label: "Client sends Finished; application data flows" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>TLS 1.3 does a 1-RTT handshake: a speculative key share lets both sides derive keys immediately, so the certificate is sent encrypted and CertificateVerify proves private-key ownership. A cert is valid only when the chain anchors in a trusted-store root, every signature checks, dates are in range, the SAN matches the hostname, and it isn't revoked — fail any one and the connection aborts.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-tls-and-pki-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through the TLS 1.3 full handshake and explain how it authenticates the server in a single round trip.", a: "The client sends ClientHello already containing an ephemeral Diffie-Hellman key share for the curve(s) it guesses the server supports — speculating instead of waiting, which is what collapses the old two round trips into one. The server replies with ServerHello and its own key share; at that point both sides compute the shared secret and derive symmetric handshake keys, so everything the server sends next is already encrypted. The server then sends its Certificate (leaf plus intermediates), a CertificateVerify signature made with the certificate's private key over the entire handshake transcript, and a Finished MAC. CertificateVerify is the step that actually authenticates the server: a certificate is public and anyone can copy it, but only the holder of the matching private key can sign this specific transcript, which includes both sides' fresh key shares. The client validates the chain and that signature, sends its own Finished, and application data flows — one round trip end to end. Confidentiality comes from the DH key exchange in the Hello messages; authentication comes from CertificateVerify binding the presented identity to proof of key possession." },
+    { q: "List every check a client runs to decide a server certificate is valid, and explain what each one defends against.", a: "There are five, and all must pass or the connection aborts with a warning. (1) Build the chain to a trusted anchor: walk leaf → intermediate → root and confirm the root is in the client's trust store, the OS/browser's curated list of a few hundred a-priori-trusted root CAs — this is where trust bottoms out, so a chain that doesn't reach one of those roots is 'unknown authority'. (2) Verify every signature up the chain: each cert's signature must validate against the next cert's public key, defending against a forged or incomplete chain. (3) Check validity dates: every cert must be within its notBefore/notAfter window — this is the expired-cert outage. (4) Check the name: the requested hostname must match a SAN entry on the leaf (CN is ignored by modern clients), which is what stops an attacker presenting a real certificate for a domain they actually control. (5) Check revocation: confirm the CA hasn't revoked the cert early for key compromise or mis-issuance, via CRL or, more commonly, OCSP / OCSP stapling where the server attaches a recent signed 'still good' proof. The layered chain (leaf → intermediate → root) exists for operational safety: roots live offline in HSMs because a leaked root is unreplaceable, while intermediates do daily signing and can be revoked and rotated without burning the anchor in every device." },
+  ]}
+/>
+
+<Recap lang="en">
+TLS does two jobs: confidentiality (encryption on the wire) and authentication (you're really talking to the named server), and the certificate machinery exists for the second. TLS 1.3 deleted the unsafe parts of 1.2 and runs a one-round-trip handshake: the client speculates an ephemeral key share in ClientHello, the server answers with its own share so both sides derive keys immediately, and the rest of the handshake — including the certificate — is sent encrypted. CertificateVerify is the load-bearing step: a signature over the handshake transcript that proves the server holds the private key, not just a copy of a public certificate. Certificates form a chain — leaf → intermediate → root — because roots are kept offline and almost never touched, while intermediates do the daily signing and can be rotated. A browser accepts a certificate only when all five checks pass: the chain anchors in a trusted-store root, every signature validates, the dates are in range, the SAN matches the hostname, and the cert isn't revoked. Now when a client says "unknown authority", you know it's a trust-anchor problem — and the fix is to trust the anchor, never to disable verification.
+</Recap>

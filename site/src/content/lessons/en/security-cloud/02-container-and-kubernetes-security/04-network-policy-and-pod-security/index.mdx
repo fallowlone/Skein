@@ -1,0 +1,211 @@
+---
+concepts:
+- network-policy
+- pod-security-standards
+- security-context
+- default-deny
+- east-west-traffic
+deepensInto: []
+estMin: 16
+lang: en
+lessonType: topic
+level: middle
+order: 4
+prereqs: []
+slug: 04-network-policy-and-pod-security
+sources:
+- https://kubernetes.io/docs/concepts/services-networking/network-policies/
+- https://kubernetes.io/docs/concepts/security/pod-security-standards/
+- https://owasp.org/www-project-kubernetes-top-ten/
+spiral: []
+status: ready
+summary: 'A fresh Kubernetes pod is wide open: any pod can reach any other on the flat network, and without a SecurityContext it can run as root with host access. NetworkPolicy and Pod Security Standards are the two opt-in gates that turn that default-allow posture into default-deny.'
+title: Network Policy and Pod Security
+track: security-cloud
+unit: 02-container-and-kubernetes-security
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import TradeoffMatrix from "~/components/pedagogy/TradeoffMatrix.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+A penetration tester pops a single low-value pod — an image-resizer behind a public upload endpoint, vulnerable to an SSRF. On a hardened host that would be the end of it: one compromised process in one container. But this is a default Kubernetes cluster, so two doors are already open. First, the pod can open a TCP connection to *every other pod in the cluster*: the database, the internal admin API, the metrics endpoint that leaks tokens, the cloud metadata service at `169.254.169.254`. There is no firewall between workloads because nobody wrote one. Second, the pod's container is running as UID 0 with the default SecurityContext, so the SSRF-to-RCE chain hands the attacker root inside a container that can `mount`, load kernel modules through a permissive capability set, and probe the node. Within twenty minutes the resizer is a pivot point into the whole cluster. Kubernetes did exactly what it promised: it scheduled the pod and let it talk to everything. Nobody told it not to.
+</Hook>
+
+By the end of this lesson you'll be able to write a default-deny NetworkPolicy and read an existing one for the gap that quietly re-opens it, apply a Pod Security Standards profile that blocks the root/privileged/hostPath escapes, and explain why both gates are opt-in and why that default bites teams every time.
+
+<Crux>A fresh pod has flat network reachability and no SecurityContext gate — until a NetworkPolicy and Pod Security profile lock it down.</Crux>
+
+<Explanation>
+
+## Two default-allow doors: the network and the pod spec
+
+Kubernetes security has a recurring shape: the platform ships **default-allow**, and security is something you *add*. Two of those defaults sit in this lesson, and they are independent — closing one does nothing for the other.
+
+**Door one — the flat network.** The Kubernetes networking model requires that every pod can reach every other pod by IP, across all namespaces, with no NAT. That's not a bug; it's the contract the CNI plugin must satisfy. The consequence is that *east-west* traffic (pod-to-pod) is wide open by default. A **NetworkPolicy** is the opt-in object that restricts it — but only if your CNI implements NetworkPolicy enforcement (Calico, Cilium, and most managed CNIs do; the legacy flannel default does not, so a policy you `kubectl apply` succeeds and silently enforces nothing).
+
+**Door two — the pod's SecurityContext.** A container with no `securityContext` runs as whatever UID the image specifies — frequently `root` (UID 0) — and inherits a default Linux capability set, can be granted `privileged: true`, can mount `hostPath` volumes, and can share the host's PID or network namespace. Each of those is a documented container-escape primitive. **Pod Security Standards (PSS)** define three profiles — `privileged` (no restrictions), `baseline` (block the well-known escapes), and `restricted` (heavily locked down: non-root, no added capabilities, seccomp on) — and **Pod Security Admission (PSA)** is the built-in admission controller that enforces a chosen profile per namespace via labels.
+
+<FlowDiagram
+  label="The two independent gates on a pod: an outbound or inbound packet is checked against NetworkPolicy at the CNI dataplane (east-west traffic control), while the pod's own privilege — runAsNonRoot, capabilities, hostPath, privileged — is checked once at admission time by Pod Security Admission before the pod is ever scheduled. Closing one gate does nothing for the other."
+  perRow={5}
+  hue="var(--d-crypto)"
+  nodes={[
+    { id: "spec", label: "Pod spec", sub: "submitted" },
+    { id: "psa", label: "PSA admission", sub: "checks privilege" },
+    { id: "sched", label: "Scheduled", sub: "runs as SA" },
+    { id: "netpol", label: "NetworkPolicy", sub: "CNI dataplane" },
+    { id: "peer", label: "Peer pod", sub: "allowed or dropped" },
+  ]}
+  edges={[
+    { from: "spec", to: "psa", label: "create" },
+    { from: "psa", to: "sched", label: "if compliant" },
+    { from: "sched", to: "netpol", label: "egress/ingress" },
+    { from: "netpol", to: "peer", label: "allow rule" },
+  ]}
+  caption="Two orthogonal controls. Pod Security Admission is a one-time gate at create time on what the pod is allowed to be (root? privileged? hostPath?). NetworkPolicy is a continuous dataplane gate on who the running pod may talk to. A restricted pod with no NetworkPolicy still reaches the whole cluster; a tightly firewalled pod running as root still escapes to the node."
+/>
+
+## NetworkPolicy: additive allow, and the default-deny pattern
+
+A NetworkPolicy is **allow-only and additive**, exactly like RBAC — there is no deny rule. The trick that makes it behave like a firewall is the *selector*: the moment any NetworkPolicy selects a pod for a given direction (ingress or egress), that pod flips from default-allow to **default-deny for that direction**, and only the traffic explicitly listed in any policy selecting it is permitted. The union of all matching policies is the allow-list.
+
+So the canonical hardening move is a per-namespace **default-deny** policy that selects every pod but lists no allowed peers:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Policy</th>
+        <th class="border border-border px-3 py-2 text-left">Selector + direction</th>
+        <th class="border border-border px-3 py-2 text-left">Effect</th>
+        <th class="border border-border px-3 py-2 text-left">Foot-gun if omitted</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">default-deny-all</td>
+        <td class="border border-border px-3 py-2"><code>podSelector: &#123;&#125;</code>, both <code>Ingress</code> + <code>Egress</code></td>
+        <td class="border border-border px-3 py-2">Every pod in the namespace drops all traffic until allowed</td>
+        <td class="border border-border px-3 py-2">Flat network — popped pod reaches the whole cluster</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">allow-dns</td>
+        <td class="border border-border px-3 py-2">egress to kube-dns on UDP/TCP 53</td>
+        <td class="border border-border px-3 py-2">Lets pods resolve names once egress is denied</td>
+        <td class="border border-border px-3 py-2">Every pod breaks — DNS is the first thing default-deny kills</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">allow-from-frontend</td>
+        <td class="border border-border px-3 py-2">ingress to <code>app: api</code> from <code>app: web</code></td>
+        <td class="border border-border px-3 py-2">Only the web tier may reach the API tier</td>
+        <td class="border border-border px-3 py-2">Any pod can hit the API directly, bypassing the edge</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">block-metadata</td>
+        <td class="border border-border px-3 py-2">egress deny to <code>169.254.169.254/32</code></td>
+        <td class="border border-border px-3 py-2">Stops SSRF-to-cloud-credential theft from any pod</td>
+        <td class="border border-border px-3 py-2">SSRF in one pod reads the node's IAM role / instance creds</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+The non-obvious failure mode lives in the second row. The instant you apply a default-deny **egress** policy, you also block the pod's DNS lookups to `kube-dns`, because that is egress to another pod on port 53. Every request then fails not with "connection refused" but with a *name resolution* error, which sends engineers debugging the wrong layer for an hour. A correct default-deny is therefore always a *pair*: deny-all plus an explicit allow-DNS egress rule. This is the single most common reason teams roll back NetworkPolicy and declare it "too hard."
+
+<Inset kind="mistake" lang="en">
+A NetworkPolicy that `kubectl apply` accepts is not the same as a NetworkPolicy that is *enforced*. NetworkPolicy is an API object stored in etcd; enforcement is the CNI plugin's job, and not every CNI does it. On a cluster running plain flannel (or with the wrong Cilium/Calico mode), your carefully written default-deny is persisted, shows up in `kubectl get netpol`, and drops exactly zero packets. Always verify enforcement empirically — `kubectl exec` into a pod the policy should isolate and try to reach a peer it should not — rather than trusting that the object exists. "The policy is applied" and "the traffic is blocked" are two different claims.
+</Inset>
+
+## Pod Security Standards: blocking the escape, not just the network
+
+NetworkPolicy contains lateral movement *between* pods. It does nothing about a pod that escapes *downward* to the node — and that's what an unconstrained SecurityContext allows. The three escapes that matter, and what the `restricted` profile does to each:
+
+1. **Running as root.** `runAsNonRoot: true` plus a non-zero `runAsUser` means a container escape lands the attacker as an unprivileged UID, not root, sharply limiting what they can do on the node if they break out of the namespace.
+2. **`privileged: true` and added capabilities.** A privileged container has essentially all capabilities and device access — it is a near-direct path to the host. `restricted` forbids `privileged`, requires dropping `ALL` capabilities, and allows back only `NET_BIND_SERVICE`.
+3. **Host namespaces and `hostPath`.** `hostPID: true` / `hostNetwork: true` share the node's process or network view; a `hostPath` volume can mount `/` and read the kubelet's credentials. `restricted` and `baseline` both block these.
+
+Pod Security Admission enforces a profile by namespace label, in up to three modes — `enforce` (reject non-compliant pods), `audit` (log them), and `warn` (warn the applier) — so you can roll out in `warn`/`audit` first and watch what would break before flipping to `enforce`:
+
+<TradeoffMatrix
+  id="04-network-policy-and-pod-security-tradeoff-1"
+  lessonSlug="04-network-policy-and-pod-security"
+  lang="en"
+  prompt="You're hardening a namespace of stateless app pods that never need root, host access, or extra capabilities. Pick the Pod Security posture."
+  options={[
+    { name: "Label the namespace `pod-security.kubernetes.io/enforce: restricted`, after a `warn`/`audit` rollout to catch non-compliant pods first", summary: "Restricted, staged rollout.", correct: true, justification: "restricted blocks the whole escape class — runAsNonRoot, drop ALL capabilities, no privileged, no hostPath, seccomp RuntimeDefault — which is exactly right for stateless apps that need none of those. Staging through warn/audit first means you see which existing pods would be rejected (and fix their SecurityContext) before enforce starts dropping deploys. This is least privilege at admission time." },
+    { name: "Leave the namespace unlabeled; the cluster default is already safe enough", summary: "Rely on defaults.", justification: "An unlabeled namespace gets the `privileged` profile by default — i.e. no restrictions at all. A pod can run as root, privileged, with hostPath. Doing nothing leaves door two wide open; the whole point is that PSA is opt-in." },
+    { name: "Enforce `baseline` — it blocks the dangerous stuff and is less likely to break anything", summary: "Baseline as default.", justification: "baseline blocks the worst escapes (privileged, hostPath, host namespaces) but still permits running as root and the default capability set. For pods that demonstrably need none of that, baseline leaves avoidable risk on the table — running as root is itself a finding. Use restricted where the workload allows it; reserve baseline for pods with a real constraint." },
+    { name: "Write an OPA/Gatekeeper policy from scratch instead of using PSA", summary: "Custom admission only.", justification: "Gatekeeper/Kyverno are powerful for rules PSS can't express, but reaching for them first to replicate what the built-in, zero-dependency Pod Security Admission already does is wasted complexity. Start with PSA's restricted profile; add a policy engine only for the gaps it genuinely can't cover (e.g. per-image rules, registry allow-lists)." },
+  ]}
+/>
+
+<Quiz
+  id="04-network-policy-and-pod-security-quiz-1"
+  lessonSlug="04-network-policy-and-pod-security"
+  lang="en"
+  question="You apply a default-deny `Ingress` + `Egress` NetworkPolicy to a namespace and immediately every pod fails with name-resolution errors. What happened?"
+  choices={[
+    { label: "The egress deny also blocked DNS — pods can no longer reach kube-dns on port 53; you must add an explicit allow-DNS egress rule", correct: true },
+    { label: "NetworkPolicy corrupted the cluster DNS records and CoreDNS must be restarted", misconception: "NetworkPolicy never touches DNS records or CoreDNS state; it only filters packets at the CNI dataplane. The DNS *queries* are being dropped as egress traffic, not the DNS data being corrupted. The fix is an allow rule, not a CoreDNS restart." },
+    { label: "Default-deny policies require a cluster reboot to take effect, and the errors are transient", misconception: "NetworkPolicy takes effect immediately at the dataplane — no reboot. The errors aren't transient; they'll persist until you allow egress to kube-dns. Treating it as a transient blip means shipping a broken namespace." },
+    { label: "The policy selector matched no pods, so DNS was disabled cluster-wide", misconception: "An empty podSelector matches every pod in the namespace, which is why default-deny works — and the effect is namespace-scoped, not cluster-wide. The DNS failures are the expected consequence of denying egress, not a selector miss." },
+  ]}
+/>
+
+<Quiz
+  id="04-network-policy-and-pod-security-quiz-2"
+  lessonSlug="04-network-policy-and-pod-security"
+  lang="en"
+  question="A namespace enforces the `restricted` Pod Security profile, but the cluster's CNI does not implement NetworkPolicy. A pod is compromised via RCE. What is the attacker's realistic next move?"
+  choices={[
+    { label: "Lateral movement across the flat network — reach other pods, internal APIs, and the metadata endpoint — because PSS does nothing about east-west traffic", correct: true },
+    { label: "Nothing — `restricted` blocks all post-exploitation, including network access", misconception: "restricted constrains what the pod *is* (non-root, no privileged, no hostPath), which blocks node escape — but it places zero limits on which other pods this one can connect to. Network reachability is NetworkPolicy's job, and that gate is absent here." },
+    { label: "Escalate to root inside the container and mount hostPath to reach the node", misconception: "restricted specifically forbids running as root, added capabilities, privileged, and hostPath — so the node-escape path is closed. The open door is the network, not the SecurityContext." },
+    { label: "Crash the API server, since restricted pods get elevated API access", misconception: "The restricted profile is about the pod's Linux privileges, not its RBAC. It grants no API access at all; that's governed separately by the ServiceAccount's RBAC. The realistic move is network lateral movement." },
+  ]}
+/>
+
+<DragOrder
+  id="04-network-policy-and-pod-security-drag-1"
+  lessonSlug="04-network-policy-and-pod-security"
+  lang="en"
+  prompt="Order these steps to harden a namespace safely without an outage, from first to last:"
+  items={[
+    { id: "a", label: "Label the namespace `warn`/`audit` for the `restricted` profile and watch what would be rejected" },
+    { id: "b", label: "Fix the SecurityContext of pods the audit flags (runAsNonRoot, drop capabilities)" },
+    { id: "c", label: "Flip Pod Security to `enforce: restricted` once audit is clean" },
+    { id: "d", label: "Apply a default-deny ingress+egress NetworkPolicy plus an explicit allow-DNS rule" },
+    { id: "e", label: "Add narrow allow rules for the real traffic, then verify enforcement with kubectl exec" },
+  ]}
+  correctOrder={["a", "b", "c", "d", "e"]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A pod ships with two default-allow doors that are independent: a flat network where any pod reaches any other, closed by an additive, allow-only NetworkPolicy (a default-deny pair — deny-all plus explicit allow-DNS — that only enforces if the CNI supports it), and an unconstrained SecurityContext that can run root/privileged/hostPath, closed by a Pod Security `restricted` profile enforced per-namespace by Pod Security Admission. Closing one does nothing for the other; you need both, staged through audit/warn before enforce.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="04-network-policy-and-pod-security-retrieval"
+  lang="en"
+  questions={[
+    { q: "Walk through exactly why a NetworkPolicy `kubectl apply` can succeed and still block zero traffic, and how you'd prove enforcement.", a: "A NetworkPolicy is just an API object: kubectl apply validates its schema and persists it to etcd, and that succeeds regardless of whether anything will act on it. The actual packet filtering is performed by the CNI plugin's dataplane, and NetworkPolicy enforcement is optional in the CNI contract — Calico and Cilium implement it, but plain flannel (a common default) does not. So on the wrong CNI your default-deny shows up in `kubectl get netpol`, looks correct, and drops nothing: 'applied' and 'enforced' are different claims. To prove enforcement empirically rather than trust the object's existence, you test the dataplane directly: kubectl exec into a pod the policy is supposed to isolate and attempt a connection to a peer it should not reach (e.g. `nc -vz <other-pod-ip> 5432` or curl an internal service) — the connection must hang/time out, not succeed. Equally, verify the allow path still works (DNS resolves, the permitted peer is reachable) so you know you tested the real policy and not a broken pod. If the 'blocked' connection succeeds, the CNI isn't enforcing NetworkPolicy and you need a different CNI or the correct mode, not another policy." },
+    { q: "Why are NetworkPolicy and Pod Security Standards complementary rather than redundant, and what does each fail to cover?", a: "They guard two orthogonal axes of a compromise. NetworkPolicy is a continuous dataplane control over east-west traffic: who a running pod may connect to. It contains lateral movement — a popped pod can't reach the database, the internal admin API, or the cloud metadata endpoint if egress is denied — but it says nothing about the pod's own privileges, so a pod isolated by NetworkPolicy can still be running as root with hostPath and escape downward to the node. Pod Security Standards (enforced by Pod Security Admission at create time) constrain what the pod is allowed to be: the restricted profile forces runAsNonRoot, drops ALL capabilities, forbids privileged and hostPath and host namespaces, and turns on seccomp — closing the container-to-node escape. But PSA is a one-time admission gate on privilege and does nothing about network reachability, so a perfectly restricted pod with no NetworkPolicy still reaches every other pod in the cluster. An attacker only needs one open door: NetworkPolicy without PSS lets a contained pod escape to the node; PSS without NetworkPolicy lets a hardened pod pivot laterally across the flat network. Defense in depth here literally means applying both gates, plus keeping the ServiceAccount's RBAC minimal as the third axis." },
+  ]}
+/>
+
+<Recap lang="en">
+A fresh Kubernetes pod has two independent default-allow doors. The network is flat: every pod can reach every other pod by IP across namespaces, so east-west traffic is wide open until a NetworkPolicy restricts it. NetworkPolicy is additive and allow-only (no deny rule) — selecting a pod flips it to default-deny for that direction, and the canonical hardening is a default-deny pair: deny-all ingress+egress plus an explicit allow-DNS egress rule, because the first thing a naive egress-deny breaks is name resolution to kube-dns. Critically, NetworkPolicy only enforces if the CNI implements it, so "applied" must be verified against "enforced" by testing the dataplane with kubectl exec. The second door is the pod's SecurityContext: with no constraint a container runs as root with a default capability set and can request privileged, hostPath, and host namespaces — each a node-escape primitive. Pod Security Standards define privileged/baseline/restricted profiles, and Pod Security Admission enforces one per namespace via a label, in enforce/audit/warn modes so you stage the rollout before it starts rejecting pods. The two controls are orthogonal: NetworkPolicy contains lateral movement, PSS blocks node escape, and a compromise only needs one open door — so you apply both, plus minimal ServiceAccount RBAC. When you next review a namespace, the three questions are: is there a default-deny NetworkPolicy (and does the CNI enforce it), what Pod Security profile is enforced, and can any pod still reach the metadata endpoint?
+</Recap>
