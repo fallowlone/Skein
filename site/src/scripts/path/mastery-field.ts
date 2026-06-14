@@ -37,7 +37,7 @@ export const DOMAIN_FAMILIES: DomainFamily[] = [
     tracks: ["ai-llm"] as Track[] },
 ];
 
-const FAMILY_OF: Map<string, DomainFamily> = (() => {
+export const FAMILY_OF: Map<string, DomainFamily> = (() => {
   const m = new Map<string, DomainFamily>();
   for (const f of DOMAIN_FAMILIES) for (const t of f.tracks) m.set(t, f);
   return m;
