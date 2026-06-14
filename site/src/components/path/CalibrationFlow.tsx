@@ -1,102 +1,165 @@
 // src/components/path/CalibrationFlow.tsx
+// Probabilistic placement orchestrator (4 stages: Aim → Mode → Deep run → Result).
+//
+// Aim   — pick a goal + coarse per-family self-placement (AimStage).
+// Mode   — express (cap per family) vs full coverage (run until every concept settles).
+// Run    — adaptive Bayesian probing: each step picks the unsettled concept with the highest
+//          expected info-gain, updates its posterior per answer, and propagates PASS/FAIL to
+//          prereqs/dependents. Express stops a family at EXPRESS_CAP; full runs to settle.
+// Result — writes posteriors back to KnowledgeState, then shows the report (PlacementResult).
+//
+// The legacy `?unit=` pre-check is preserved verbatim (UnitMode): a single linear pass over a
+// unit's diagnosed concepts, folding the correct-fraction into knowledge via applyDiagnosticResult.
 import { useState, useRef } from "preact/hooks";
 import type { Locale } from "~/i18n";
-import { knowledge, nextCalibrationProbe, unitProbeConcepts, applyDiagnosticResult, placementBatches } from "~/scripts/path/path-io";
+import {
+  content, seedPriors, itemIrt, conceptIrt, familyConcepts, families,
+  writePlacementPosteriors,
+} from "~/scripts/path/path-io";
+import {
+  posterior, propagatePriors, variance, expectedInfoGain, SETTLE_VAR, PASS, FAIL,
+  type SelfPlace, type Response,
+} from "~/scripts/path/bayes";
+import type { DiagItem } from "~/scripts/path/calibration";
 import DiagnosticRunner from "./DiagnosticRunner";
-import SelfPlacement from "./SelfPlacement";
+import UnitProbe from "./UnitProbe";
+import AimStage from "./AimStage";
+import PlacementResult from "./PlacementResult";
 
-const MAX_PROBES = 8;
+const EXPRESS_CAP = 5; // items per family in express mode
 const L = {
-  en: { title: "Quick calibration", intro: "Answer a few checks so we can skip what you already know. About 5 minutes — you can stop anytime.", start: "Start", skip: "Skip to my path", done: "All set", doneBody: "Calibrated. Your path now reflects what you know.", toPath: "See my path", probed: "checks done", placementTitle: "General placement test", placementIntro: "About 16 keystone checks across 8 domains, ~20 minutes. Each answer re-colors a whole region of the map.", family: "Domain" },
-  ru: { title: "Быстрая калибровка", intro: "Ответь на несколько проверок, чтобы мы пропустили то, что ты уже знаешь. Около 5 минут — можно остановиться в любой момент.", start: "Начать", skip: "Сразу к пути", done: "Готово", doneBody: "Откалибровано. Твой путь теперь учитывает то, что ты знаешь.", toPath: "К моему пути", probed: "проверок пройдено", placementTitle: "Общий тест уровня", placementIntro: "Около 16 ключевых проверок по 8 областям, ~20 минут. Каждый ответ перекрашивает целый регион карты.", family: "Область" },
+  en: { mode: "Choose depth", express: "Express (~10 min)", full: "Full coverage", family: "Area", skip: "Skip to my path" },
+  ru: { mode: "Выбери глубину", express: "Экспресс (~10 мин)", full: "Полное покрытие", family: "Область", skip: "Сразу к пути" },
 } as const;
 
+type Phase = "aim" | "mode" | "run" | "result";
+
 export default function CalibrationFlow({ lang, unit: unitProp }: { lang: Locale; unit?: string }) {
-  const unit = unitProp ?? (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("unit") ?? undefined : undefined);
-  const placement = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mode") === "placement";
+  const unit = unitProp ?? (typeof window !== "undefined"
+    ? new URLSearchParams(window.location.search).get("unit") ?? undefined : undefined);
+
+  // `?unit=` runs the legacy single-unit pre-check; the 4-stage flow is the default.
+  // Split into two components so every hook stays unconditional (rules-of-hooks).
+  if (unit) return <UnitMode lang={lang} unit={unit} />;
+  return <PlacementMachine lang={lang} />;
+}
+
+function PlacementMachine({ lang }: { lang: Locale }) {
   const t = L[lang];
   const roadmap = `/${lang}/roadmap`;
-  const [phase, setPhase] = useState<"intro" | "run" | "done">("intro");
-  const [probes, setProbes] = useState(0);
-  const [current, setCurrent] = useState<string[]>([]);
-  // Concepts already directly probed this session. A mid-band answer (0.3–0.7) leaves a concept
-  // "ambiguous" so nextCalibrationProbe would re-pick the identical bank; stop instead of re-serving.
-  const probed = useRef(new Set<string>());
-  const [famLabel, setFamLabel] = useState<string>("");
-  // Placement: one family's batch at a time. Re-planned each call so propagation from earlier
-  // answers (already in probed.current) prunes later probes; null once every family is exhausted.
-  const nextPlacementBatch = (): string[] | null => {
-    const batches = placementBatches(probed.current);
-    if (!batches.length) return null;
-    setFamLabel(batches[0].family);
-    return batches[0].concepts;
+  const [phase, setPhase] = useState<Phase>("aim");
+  const self = useRef<Record<string, SelfPlace> | null>(null);
+  const express = useRef(false);
+  const priors = useRef(new Map<string, number>());
+  const order = useRef<string[]>([]);
+  const famCount = useRef(new Map<string, number>());
+  const [curConcept, setCurConcept] = useState<string | null>(null);
+
+  const familyOf = (id: string): string => {
+    const track = content.conceptById.get(id)?.track as string;
+    for (const f of families()) if (f.tracks.includes(track)) return f.key;
+    return "";
   };
 
-  const nextProbe = () => {
-    if (unit) return null; // unit mode runs once over the whole set
-    if (placement) return nextPlacementBatch();
-    if (probes >= MAX_PROBES) return null;
-    const p = nextCalibrationProbe();
-    return p && !probed.current.has(p) ? [p] : null;
-  };
-
-  const begin = () => {
-    if (unit) { setCurrent(unitProbeConcepts(unit)); setPhase("run"); return; }
-    if (placement) {
-      const batch = nextPlacementBatch();
-      if (!batch) { setPhase("done"); return; }
-      setCurrent(batch); setPhase("run"); return;
+  // Adaptive selection: among unsettled candidates (and, in express mode, families under the cap),
+  // pick the concept whose next answer is expected to shed the most entropy.
+  const pickNext = (): string | null => {
+    let best: string | null = null, bestGain = -1;
+    for (const id of order.current) {
+      const p = priors.current.get(id) ?? 0.5;
+      if (variance(p) < SETTLE_VAR) continue;
+      if (express.current && (famCount.current.get(familyOf(id)) ?? 0) >= EXPRESS_CAP) continue;
+      const gain = expectedInfoGain(p, conceptIrt(id));
+      if (gain > bestGain) { bestGain = gain; best = id; }
     }
-    const first = nextCalibrationProbe();
-    if (!first) { setPhase("done"); return; }
-    setCurrent([first]); setPhase("run");
+    return best;
   };
 
-  const onConcept = (concept: string, frac: number) => { applyDiagnosticResult(concept, frac); probed.current.add(concept); };
-  const onDone = () => {
-    const np = nextProbe();
-    setProbes((n) => n + current.length);
-    if (np) setCurrent(np);
-    else setPhase("done");
+  const startDeep = () => {
+    const sel = self.current!;
+    const cand: string[] = [];
+    for (const f of families()) {
+      if ((sel[f.key] ?? "never") === "never") continue; // skip untouched families entirely
+      cand.push(...familyConcepts(f.key));
+    }
+    order.current = cand;
+    priors.current = seedPriors(cand, sel);
+    famCount.current = new Map();
+    const first = pickNext();
+    if (!first) { finish(); return; }
+    setCurConcept(first);
+    setPhase("run");
   };
 
-  if (phase === "intro") {
-    const noProbes = (unit
-      ? unitProbeConcepts(unit)
-      : placement
-        ? placementBatches(probed.current)
-        : (nextCalibrationProbe() ? [1] : [])
-    ).length === 0;
-    return (
-      <div class="cal-flow">
-        <h1 class="cf-title">{placement ? t.placementTitle : t.title}</h1>
-        <p class="cf-lead">{placement ? t.placementIntro : t.intro}</p>
-        <SelfPlacement lang={lang} />
-        <div class="cf-actions">
-          {!noProbes && <button type="button" class="btn btn-primary" onClick={begin}>{t.start}</button>}
-          <a class="btn btn-secondary" href={roadmap}>{t.skip}</a>
-        </div>
-        {!unit && !placement && (
-          <a class="cf-link" href={`/${lang}/calibrate?mode=placement`}>{t.placementTitle} →</a>
-        )}
-      </div>
-    );
+  const onResponse = (item: DiagItem, r: Response) => {
+    const id = curConcept!;
+    const p0 = priors.current.get(id) ?? 0.5;
+    const p1 = posterior(p0, r, itemIrt(id, item as any));
+    const fam = familyOf(id);
+    const updated = new Map(priors.current);
+    updated.set(id, p1);
+    priors.current = (p1 >= PASS || p1 <= FAIL)
+      ? propagatePriors(updated, content.graph, id, p1, r)
+      : updated;
+    famCount.current.set(fam, (famCount.current.get(fam) ?? 0) + 1);
+  };
+
+  const onConceptDone = () => {
+    const nxt = pickNext();
+    if (nxt) setCurConcept(nxt);
+    else finish();
+  };
+
+  const finish = () => {
+    writePlacementPosteriors(priors.current, Date.now());
+    setPhase("result");
+  };
+
+  if (phase === "aim") {
+    return <AimStage lang={lang} onDone={(s) => { self.current = s; setPhase("mode"); }} />;
   }
-  if (phase === "run") {
+
+  if (phase === "mode") {
     return (
       <div class="cal-flow">
-        <h1 class="cf-title cf-title-sm">{placement ? t.placementTitle : t.title}</h1>
-        {placement && famLabel && <div class="cf-family">{t.family}: {famLabel}</div>}
-        <DiagnosticRunner key={current.join(",")} lang={lang} conceptIds={current} onConcept={onConcept} onDone={onDone} />
+        <h1 class="cf-title">{t.mode}</h1>
+        <div class="cf-actions">
+          <button type="button" class="btn btn-primary" onClick={() => { express.current = true; startDeep(); }}>{t.express}</button>
+          <button type="button" class="btn btn-secondary" onClick={() => { express.current = false; startDeep(); }}>{t.full}</button>
+        </div>
         <a class="cf-link" href={roadmap}>{t.skip}</a>
       </div>
     );
   }
-  return (
-    <div class="cal-flow">
-      <h1 class="cf-title">{t.done}</h1>
-      <p class="cf-lead">{t.doneBody} · {probes} {t.probed} · {knowledge.value.size} concepts touched.</p>
-      <a class="btn btn-primary cf-self" href={roadmap}>{t.toPath}</a>
-    </div>
-  );
+
+  if (phase === "run" && curConcept) {
+    const label = content.conceptById.get(curConcept)?.label[lang] ?? curConcept;
+    return (
+      <div class="cal-flow">
+        <div class="cf-family">{t.family}: {familyOf(curConcept)}</div>
+        <DiagnosticRunner
+          key={curConcept}
+          lang={lang}
+          concept={curConcept}
+          label={label}
+          onResponse={onResponse}
+          onDone={onConceptDone}
+        />
+        <a class="cf-link" href={roadmap}>{t.skip}</a>
+      </div>
+    );
+  }
+
+  // phase === "result" (also the fallback if a run lands with no current concept).
+  return <PlacementResult lang={lang} priors={priors.current} />;
+}
+
+// Legacy `?unit=` pre-check: one linear pass over a unit's diagnosed concepts, delegated to the
+// shared UnitProbe (folds each concept's correct-fraction into knowledge). Wraps it with the
+// post-done OK → roadmap UI that the placement flow's UnitMode has always shown.
+function UnitMode({ lang, unit }: { lang: Locale; unit: string }) {
+  const [done, setDone] = useState(false);
+  const roadmap = `/${lang}/roadmap`;
+  if (done) return <div class="cal-flow"><a class="btn btn-primary" href={roadmap}>OK</a></div>;
+  return <div class="cal-flow"><UnitProbe lang={lang} unit={unit} onComplete={() => setDone(true)} /></div>;
 }
