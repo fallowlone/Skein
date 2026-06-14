@@ -4,7 +4,7 @@ import { CONCEPTS } from "./__fixtures__/mini-graph";
 import { buildConceptGraph } from "./graph";
 import {
   emptyState, masteryOf, isKnown, applyDiagnostic, applyStudyEvidence, applySelfDeclare, decay,
-  PROP_UP_FACTOR,
+  applyPracticeStruggle, PROP_UP_FACTOR,
 } from "./knowledge";
 
 const g = buildConceptGraph(CONCEPTS);
@@ -78,5 +78,50 @@ describe("knowledge", () => {
     const s = applySelfDeclare(emptyState(), "mvcc", true, NOW); // confidence 1, source declared
     const stale = decay(s, g, NOW + 200 * 86_400_000, 0.85);
     expect(masteryOf(stale, "mvcc")).toBeCloseTo(0.85, 5);       // declared=1 fades to floor
+  });
+});
+
+describe("applyPracticeStruggle (downward, bounded, activity-only)", () => {
+  // floor=0.3, weight=0.25 throughout — mirrors path-io's refreshPracticeSignal constants.
+  it("lowers an activity-sourced concept toward the floor by struggleFrac*weight", () => {
+    let s = applyStudyEvidence(emptyState(), ["indexing"], 1, 1, 0.35, 0.4, NOW); // activity, 0.75
+    s = applyPracticeStruggle(s, ["indexing"], 1, 0.3, 0.25, NOW);                // 0.75 - 1*0.25
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.5, 5);
+    expect(s.get("indexing")!.source).toBe("activity");
+  });
+
+  it("never drops below the floor however high the struggle", () => {
+    let s = applyStudyEvidence(emptyState(), ["indexing"], 1, 0, 0.35, 0.4, NOW); // activity, 0.35
+    s = applyPracticeStruggle(s, ["indexing"], 1, 0.3, 0.25, NOW);                // 0.35 - 0.25 = 0.10 < floor
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.3, 5);                         // clamped to floor
+  });
+
+  it("never raises a concept that is already at or below the target", () => {
+    let s = applyStudyEvidence(emptyState(), ["indexing"], 1, 0, 0.35, 0.4, NOW); // activity, 0.35
+    const before = masteryOf(s, "indexing");
+    s = applyPracticeStruggle(s, ["indexing"], 0.1, 0.3, 0.25, NOW);              // target 0.325 > floor; 0.35-0.025=0.325
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.325, 5);
+    expect(masteryOf(s, "indexing")).toBeLessThanOrEqual(before);
+  });
+
+  it("leaves an absent concept untouched (never lifts 0 → floor)", () => {
+    const s = applyPracticeStruggle(emptyState(), ["indexing"], 1, 0.3, 0.25, NOW);
+    expect(s.has("indexing")).toBe(false);
+    expect(masteryOf(s, "indexing")).toBe(0);
+  });
+
+  it("never touches diagnostic or declared evidence", () => {
+    let s = applyDiagnostic(emptyState(), g, "indexing", 0.9, NOW);   // diagnostic
+    s = applySelfDeclare(s, "mvcc", true, NOW);                       // declared
+    s = applyPracticeStruggle(s, ["indexing", "mvcc"], 1, 0.3, 0.25, NOW);
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.9, 5);
+    expect(masteryOf(s, "mvcc")).toBeCloseTo(1, 5);
+  });
+
+  it("struggleFrac 0 is a no-op (returns the same reference)", () => {
+    const base = applyStudyEvidence(emptyState(), ["indexing"], 1, 1, 0.35, 0.4, NOW);
+    const after = applyPracticeStruggle(base, ["indexing"], 0, 0.3, 0.25, NOW);
+    expect(after).toBe(base);
+    expect(masteryOf(after, "indexing")).toBeCloseTo(0.75, 5);
   });
 });
