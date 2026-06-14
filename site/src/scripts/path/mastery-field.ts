@@ -30,7 +30,7 @@ export const DOMAIN_FAMILIES: DomainFamily[] = [
   { key: "distributed", label: { en: "Distributed · design", ru: "Распределённые · дизайн" }, hue: "--d-systems",
     tracks: ["distributed", "queues", "system-design", "system-design-cases"] as Track[] },
   { key: "network-sec", label: { en: "Networking · security", ru: "Сети · безопасность" }, hue: "--d-network",
-    tracks: ["networking", "security"] as Track[] },
+    tracks: ["networking", "security", "security-foundations", "security-offensive", "security-defensive", "security-cloud"] as Track[] },
   { key: "infra", label: { en: "Infra · operations", ru: "Инфра · эксплуатация" }, hue: "--d-crypto",
     tracks: ["deployment", "aws", "ci-cd", "docker", "observability", "performance", "engineering-practice"] as Track[] },
   { key: "ai", label: { en: "AI · LLMs", ru: "AI · LLM" }, hue: "--d-ai",
