@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { priorFor, fallbackIrt, likelihood, posterior, variance, type Irt } from "./bayes";
+import { priorFor, fallbackIrt, likelihood, posterior, variance, entropy, expectedInfoGain, collapse, SETTLE_VAR, type Irt } from "./bayes";
 
 const sharp: Irt = { b: 0, a: 1.4, c: 0.1 }; // discriminating, low guess
 
@@ -39,5 +39,26 @@ describe("likelihood + posterior", () => {
     const lowGuess = likelihood("dont_know", { b: 0, a: 1, c: 0.05 });
     const highGuess = likelihood("dont_know", { b: 0, a: 1, c: 0.5 });
     expect(lowGuess.unknown).toBeGreaterThan(highGuess.unknown);
+  });
+});
+
+describe("entropy + info gain", () => {
+  it("entropy peaks at p=0.5 (=1 bit) and is ~0 at the extremes", () => {
+    expect(entropy(0.5)).toBeCloseTo(1, 5);
+    expect(entropy(0.5)).toBeGreaterThan(entropy(0.1));
+    expect(entropy(0.5)).toBeGreaterThan(entropy(0.95));
+  });
+  it("a maximally uncertain concept yields more expected info gain than a settled one", () => {
+    const irt = { b: 0, a: 1.3, c: 0.1 };
+    expect(expectedInfoGain(0.5, irt)).toBeGreaterThan(expectedInfoGain(0.95, irt));
+  });
+});
+
+describe("collapse", () => {
+  it("maps posterior mean to confidence and flags shaky near 0.5", () => {
+    expect(collapse(0.9).confidence).toBeCloseTo(0.9, 5);
+    expect(collapse(0.9).shaky).toBe(false);
+    expect(collapse(0.5).shaky).toBe(true);
+    expect(variance(0.5)).toBeGreaterThan(SETTLE_VAR);
   });
 });
