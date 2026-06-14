@@ -4,12 +4,12 @@
 //   XP/level strip · cold-start banner · droppedLocal warning
 //   TodayFocus · 01 · GOAL · 02 · INSTRUMENT (deadline) · 03 · PATH (next units)
 //   04 · INSTRUMENT (concept-mastery map) · Advanced knobs.
-// Owns the two reused modals: PathConfigDrawer, DiagnosticRunner.
+// Owns the two reused modals: PathConfigDrawer, UnitProbe.
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
   effectiveKnowledge, config, content, computePath,
-  unitProbeConcepts, applyDiagnosticResult, isColdStartView,
+  isColdStartView,
 } from "~/scripts/path/path-io";
 import { currentXp } from "~/scripts/progression/current";
 import { levelFromXp } from "~/scripts/progression/xp";
@@ -21,7 +21,7 @@ import DeadlineSection from "./planning/DeadlineSection";
 import AdvancedKnobs from "./planning/AdvancedKnobs";
 import TodayFocus from "./planning/TodayFocus";
 import PathConfigDrawer from "./PathConfigDrawer";
-import DiagnosticRunner from "./DiagnosticRunner";
+import UnitProbe from "./UnitProbe";
 
 const L = {
   en: {
@@ -166,12 +166,7 @@ export default function PathView({ lang }: { lang: Locale }) {
       {quickUnit && (
         <div class="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setQuickUnit(null)}>
           <div class="w-full max-w-lg rounded-lg bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <DiagnosticRunner
-              lang={lang}
-              conceptIds={unitProbeConcepts(quickUnit)}
-              onConcept={(c, f) => applyDiagnosticResult(c, f)}
-              onDone={() => setQuickUnit(null)}
-            />
+            <UnitProbe lang={lang} unit={quickUnit} onComplete={() => setQuickUnit(null)} />
           </div>
         </div>
       )}
