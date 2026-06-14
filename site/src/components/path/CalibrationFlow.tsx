@@ -14,7 +14,7 @@ import { useState, useRef } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
   content, seedPriors, itemIrt, conceptIrt, familyConcepts, families,
-  writePlacementPosteriors, unitProbeConcepts, applyDiagnosticResult,
+  writePlacementPosteriors,
 } from "~/scripts/path/path-io";
 import {
   posterior, propagatePriors, variance, expectedInfoGain, SETTLE_VAR, PASS, FAIL,
@@ -22,6 +22,7 @@ import {
 } from "~/scripts/path/bayes";
 import type { DiagItem } from "~/scripts/path/calibration";
 import DiagnosticRunner from "./DiagnosticRunner";
+import UnitProbe from "./UnitProbe";
 import AimStage from "./AimStage";
 import PlacementResult from "./PlacementResult";
 
@@ -153,31 +154,12 @@ function PlacementMachine({ lang }: { lang: Locale }) {
   return <PlacementResult lang={lang} priors={priors.current} />;
 }
 
-// Legacy `?unit=` pre-check: one linear pass over a unit's diagnosed concepts. Each concept's
-// correct-fraction folds into knowledge via applyDiagnosticResult (unchanged from prior behavior).
+// Legacy `?unit=` pre-check: one linear pass over a unit's diagnosed concepts, delegated to the
+// shared UnitProbe (folds each concept's correct-fraction into knowledge). Wraps it with the
+// post-done OK → roadmap UI that the placement flow's UnitMode has always shown.
 function UnitMode({ lang, unit }: { lang: Locale; unit: string }) {
-  const ids = unitProbeConcepts(unit);
-  const [ci, setCi] = useState(0);
-  const got = useRef<Response[]>([]);
+  const [done, setDone] = useState(false);
   const roadmap = `/${lang}/roadmap`;
-
-  if (ids.length === 0 || ci >= ids.length) {
-    return <div class="cal-flow"><a class="btn btn-primary" href={roadmap}>OK</a></div>;
-  }
-
-  const id = ids[ci];
-  const label = content.conceptById.get(id)?.label[lang] ?? id;
-  const onResponse = (_item: DiagItem, r: Response) => { got.current.push(r); };
-  const onDone = () => {
-    const frac = got.current.length ? got.current.filter((r) => r === "correct").length / got.current.length : 0;
-    applyDiagnosticResult(id, frac);
-    got.current = [];
-    setCi((c) => c + 1);
-  };
-
-  return (
-    <div class="cal-flow">
-      <DiagnosticRunner key={id} lang={lang} concept={id} label={label} onResponse={onResponse} onDone={onDone} />
-    </div>
-  );
+  if (done) return <div class="cal-flow"><a class="btn btn-primary" href={roadmap}>OK</a></div>;
+  return <div class="cal-flow"><UnitProbe lang={lang} unit={unit} onComplete={() => setDone(true)} /></div>;
 }
