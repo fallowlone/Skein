@@ -86,6 +86,13 @@ export const FAIL = 0.3;     // focal posterior ≤ FAIL ⇒ confident not-known
 const PROP_UP_FACTOR = 0.8;  // share of focal confidence granted to prereqs
 const DK_CASCADE_DAMP = 0.5; // dont_know down-cascade is half-strength vs wrong
 
+// Resolve IRT params: use authored params if provided, otherwise fall back to band/type defaults.
+export function resolveIrt(
+  authored: Irt | undefined, band: Band, type: "mcq" | "blanks", choices: number,
+): Irt {
+  return authored ?? fallbackIrt(band, type, choices);
+}
+
 // Returns a NEW prior map with unobserved ancestors/descendants nudged after a focal update.
 export function propagatePriors(
   priors: Map<string, number>, g: ConceptGraph, concept: string, p: number, via: Response,
