@@ -25,7 +25,12 @@ export function pickProbe(
 }
 
 // ── objective grading (client-side, no runtime LLM) ──
-export interface DiagItem { id: string; type: "mcq" | "blanks"; answer: number | string[]; }
+export interface DiagItem {
+  id: string;
+  type: "mcq" | "blanks";
+  answer: number | string[];
+  irt?: { b: number; a: number; c: number }; // authored IRT params (optional; bayes falls back)
+}
 export const gradeMcq = (item: DiagItem, selected: number): boolean => item.answer === selected;
 export const gradeBlanks = (item: DiagItem, value: string): boolean =>
   Array.isArray(item.answer) && item.answer.some((a) => String(a).trim().toLowerCase() === value.trim().toLowerCase());
