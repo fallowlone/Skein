@@ -147,7 +147,7 @@ export const topic: GrammarTopic = {
       },
       "pitfalls": [
         {
-          "wrong": "It is said that he is a genius. → He is said is a genius.",
+          "wrong": "He is said is a genius.",
           "right": "He is said to be a genius.",
           "why": {
             "en": "The reporting passive raises the subject and uses a to-infinitive, not a finite clause.",
