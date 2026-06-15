@@ -250,5 +250,571 @@ export const topic: GrammarTopic = {
       "object",
       "past participle"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "causative-have-get-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Causative 'have/get' chooses a form by meaning, not by regular inflection: object + past participle for an arranged service or a misfortune ('had my hair cut', 'had his wallet stolen'), bare infinitive after 'have someone' and to-infinitive after 'get someone', plus tone-bearing reflexives ('got himself elected'). '{answer}' is the form the sentence demands.",
+          "ru": "Каузатив have/get выбирает форму по смыслу, а не по правильному словоизменению: объект + V3 для организованной услуги или неприятности ('had my hair cut', 'had his wallet stolen'), инфинитив без to после 'have someone' и to-инфинитив после 'get someone', а также рефлексив с оттенком ('got himself elected'). '{answer}' — форма, которой требует предложение."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I had my hair ___ at the new salon yesterday. (cut)",
+        "answer": "cut",
+        "distractors": [
+          "cutting",
+          "to cut"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We're getting our kitchen ___ next month. (remodel)",
+        "answer": "remodeled",
+        "distractors": [
+          "remodel",
+          "remodeling"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She had her passport ___ at the airport. (steal)",
+        "answer": "stolen",
+        "distractors": [
+          "stole",
+          "stealing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You should get your eyes ___ once a year. (test)",
+        "answer": "tested",
+        "distractors": [
+          "test",
+          "to test"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Did you have the documents ___? (translate)",
+        "answer": "translated",
+        "distractors": [
+          "translate",
+          "translating"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I had my car ___ because the brakes were making a noise. (repair)",
+        "answer": "repaired",
+        "distractors": [
+          "repair",
+          "repairing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They got the leaking roof ___ before the winter. (fix)",
+        "answer": "fixed",
+        "distractors": [
+          "fix",
+          "to fix"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He had his wallet ___ on the crowded train. (steal)",
+        "answer": "stolen",
+        "distractors": [
+          "stealing",
+          "stole"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I need to get this jacket ___ before the interview. (clean)",
+        "answer": "cleaned",
+        "distractors": [
+          "clean",
+          "cleaning"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We had the carpets ___ after the party. (clean)",
+        "answer": "cleaned",
+        "distractors": [
+          "cleaning",
+          "to clean"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She's getting her wedding dress ___ in Milan. (make)",
+        "answer": "made",
+        "distractors": [
+          "make",
+          "making"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I had my tooth ___ last week and it still hurts. (pull)",
+        "answer": "pulled",
+        "distractors": [
+          "pull",
+          "pulling"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Where did you have these photos ___? (print)",
+        "answer": "printed",
+        "distractors": [
+          "print",
+          "printing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He got his bike ___ outside the supermarket. (steal)",
+        "answer": "stolen",
+        "distractors": [
+          "stole",
+          "stealing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We didn't have the car ___ this year, so it failed the inspection. (service)",
+        "answer": "serviced",
+        "distractors": [
+          "service",
+          "servicing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Can I get my watch ___ here, or do I need to send it away? (repair)",
+        "answer": "repaired",
+        "distractors": [
+          "repair",
+          "to repair"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She had the report ___ into three languages for the client. (translate)",
+        "answer": "translated",
+        "distractors": [
+          "translate",
+          "translating"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm having my flat ___ while I'm on holiday. (paint)",
+        "answer": "painted",
+        "distractors": [
+          "paint",
+          "painting"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Did she get her teeth ___ at the dentist? (check)",
+        "answer": "checked",
+        "distractors": [
+          "check",
+          "checking"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Remember to get the heating ___ before the cold weather arrives. (service)",
+        "answer": "serviced",
+        "distractors": [
+          "service",
+          "servicing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I've had my car ___ three times this year. (service)",
+        "answer": "serviced",
+        "distractors": [
+          "service",
+          "servicing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We're having the new system ___ next Monday. (install)",
+        "answer": "installed",
+        "distractors": [
+          "install",
+          "installing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The company had the entire factory ___ by outside auditors. (inspect)",
+        "answer": "inspected",
+        "distractors": [
+          "inspect",
+          "inspecting"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He had his identity ___ during the data breach. (steal)",
+        "answer": "stolen",
+        "distractors": [
+          "stole",
+          "stealing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I had my application ___ even though my grades were excellent. (reject)",
+        "answer": "rejected",
+        "distractors": [
+          "reject",
+          "rejecting"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I had the technician ___ the machine before we restarted production. (check)",
+        "answer": "check",
+        "distractors": [
+          "to check",
+          "checked"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She had her assistant ___ the emails while she was in the meeting. (send)",
+        "answer": "send",
+        "distractors": [
+          "to send",
+          "sent"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The manager had the new recruit ___ the inventory on his first day. (count)",
+        "answer": "count",
+        "distractors": [
+          "to count",
+          "counted"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I had the plumber ___ at eight in the morning to beat the traffic. (come)",
+        "answer": "come",
+        "distractors": [
+          "to come",
+          "came"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The director had the intern ___ the slides before the pitch. (proofread)",
+        "answer": "proofread",
+        "distractors": [
+          "to proofread",
+          "proofreading"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She finally got her landlord ___ the heating after weeks of complaints. (fix)",
+        "answer": "to fix",
+        "distractors": [
+          "fix",
+          "fixing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I eventually got my colleague ___ me with the spreadsheet. (help)",
+        "answer": "to help",
+        "distractors": [
+          "help",
+          "helping"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It took ages, but she got the supplier ___ the order for free. (resend)",
+        "answer": "to resend",
+        "distractors": [
+          "resend",
+          "resending"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We managed to get the council ___ the broken streetlight. (replace)",
+        "answer": "to replace",
+        "distractors": [
+          "replace",
+          "replacing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He got his brother ___ the car for the weekend. (lend)",
+        "answer": "to lend",
+        "distractors": [
+          "lend",
+          "lending"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The firm had the audit ___ by an external agency. (complete)",
+        "answer": "completed",
+        "distractors": [
+          "complete",
+          "completing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The researchers had the samples ___ at an independent lab. (analyse)",
+        "answer": "analysed",
+        "distractors": [
+          "analyse",
+          "analysing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The plaintiff had her signature ___ by a notary. (witness)",
+        "answer": "witnessed",
+        "distractors": [
+          "witness",
+          "witnessing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I'm having my house ___ this week, so excuse the mess. (paint)",
+        "answer": "painted",
+        "distractors": [
+          "paint",
+          "painting"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She got her phone ___ when she dropped it on the platform. (break)",
+        "answer": "broken",
+        "distractors": [
+          "broke",
+          "breaking"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He got himself ___ by making promises he could not keep. (elect)",
+        "answer": "elected",
+        "distractors": [
+          "elect",
+          "to elect"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She had her manuscripts ___ in a university archive. (preserve)",
+        "answer": "preserved",
+        "distractors": [
+          "preserve",
+          "preserving"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "You really should have this ___ at by a specialist. (look)",
+        "answer": "looked",
+        "distractors": [
+          "look",
+          "looking"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "They got themselves ___ into a situation from which there was no easy exit. (drag)",
+        "answer": "dragged",
+        "distractors": [
+          "drag",
+          "dragging"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "By the end of the campaign, he had his reputation thoroughly ___. (destroy)",
+        "answer": "destroyed",
+        "distractors": [
+          "destroy",
+          "destroying"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Every morning he had his coffee ___ to his desk. (bring)",
+        "answer": "brought",
+        "distractors": [
+          "bring",
+          "bringing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She had her dresses ___ in Paris, regardless of the cost. (make)",
+        "answer": "made",
+        "distractors": [
+          "make",
+          "making"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "One by one, the tyrant had his enemies ___. (silence)",
+        "answer": "silenced",
+        "distractors": [
+          "silence",
+          "silencing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Foolishly leaving it unlocked, he got his car ___ overnight. (steal)",
+        "answer": "stolen",
+        "distractors": [
+          "stole",
+          "stealing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She had herself ___ in front of the palace for the magazine. (photograph)",
+        "answer": "photographed",
+        "distractors": [
+          "photograph",
+          "photographing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Through reckless boasting, he got himself ___ by the authorities. (arrest)",
+        "answer": "arrested",
+        "distractors": [
+          "arrest",
+          "to arrest"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The board had the audit ___ by a top-tier firm to reassure investors. (conduct)",
+        "answer": "conducted",
+        "distractors": [
+          "conduct",
+          "conducting"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Just get that ___ before the client calls back. (sort)",
+        "answer": "sorted",
+        "distractors": [
+          "sort",
+          "sorting"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Have your passport ___ when you reach the checkpoint. (ready)",
+        "answer": "ready",
+        "distractors": [
+          "readied",
+          "readying"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She'd been having her medications ___ monthly until the pharmacy closed. (deliver)",
+        "answer": "delivered",
+        "distractors": [
+          "deliver",
+          "delivering"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He had the kids ___ and out the door in ten minutes flat. (dress)",
+        "answer": "dressed",
+        "distractors": [
+          "dress",
+          "dressing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "They had themselves ___ to the gala by dropping the right names. (invite)",
+        "answer": "invited",
+        "distractors": [
+          "invite",
+          "inviting"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Through sheer carelessness, she got her identity ___ online. (steal)",
+        "answer": "stolen",
+        "distractors": [
+          "stole",
+          "stealing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We got the place ___ over the long weekend, paint fumes and all. (paint)",
+        "answer": "painted",
+        "distractors": [
+          "paint",
+          "painting"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Refusing to listen to anyone, he got himself ___ in a feud that lasted years. (embroil)",
+        "answer": "embroiled",
+        "distractors": [
+          "embroil",
+          "embroiling"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

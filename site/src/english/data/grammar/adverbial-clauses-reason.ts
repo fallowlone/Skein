@@ -392,5 +392,597 @@ export const topic: GrammarTopic = {
       "main clause (result)",
       "reason clause"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "adverbial-clauses-reason-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The correct linker is \"{answer}\": adverbial clauses of reason choose between conjunctions (because/since/as), prepositions taking a noun (because of/due to/owing to), formal connectives (in that/on the grounds that/by virtue of), reduced participles (Being/Having), and motivation (out of) by register and by whether a clause or a noun follows.",
+          "ru": "Правильный союз — «{answer}»: придаточные причины выбираются между союзами (because/since/as), предлогами с существительным (because of/due to/owing to), формальными коннекторами (in that/on the grounds that/by virtue of), причастными оборотами (Being/Having) и мотивом (out of) — по регистру и по тому, идёт ли далее предложение или существительное."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I stayed home ___ I was feeling sick.",
+        "answer": "because",
+        "distractors": [
+          "because of",
+          "so",
+          "but"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We didn't go out ___ the heavy rain.",
+        "answer": "because of",
+        "distractors": [
+          "because",
+          "since",
+          "as"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She was happy ___ she had passed the exam.",
+        "answer": "because",
+        "distractors": [
+          "because of",
+          "therefore",
+          "so"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The match was cancelled ___ the bad weather.",
+        "answer": "because of",
+        "distractors": [
+          "because",
+          "that",
+          "so"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He went to bed early ___ he was tired.",
+        "answer": "because",
+        "distractors": [
+          "because of",
+          "so that",
+          "due"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I can't talk now ___ I'm in a meeting.",
+        "answer": "because",
+        "distractors": [
+          "because of",
+          "so",
+          "but"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Why are you late? — ___ my car broke down.",
+        "answer": "Because",
+        "distractors": [
+          "Because of",
+          "So",
+          "Therefore"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The shop is closed ___ the holiday.",
+        "answer": "because of",
+        "distractors": [
+          "because",
+          "since that",
+          "as of"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We turned on the lights ___ it was getting dark.",
+        "answer": "because",
+        "distractors": [
+          "because of",
+          "due to",
+          "owing to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The flight was delayed ___ a technical problem.",
+        "answer": "because of",
+        "distractors": [
+          "because",
+          "so",
+          "that"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ you already know the story, I won't repeat it.",
+        "answer": "Since",
+        "distractors": [
+          "Because of",
+          "Due to",
+          "Thanks to"
+        ],
+        "cefr": "B1",
+        "alts": [
+          "As"
+        ]
+      },
+      {
+        "stem": "___ it was getting late, we decided to go home.",
+        "answer": "As",
+        "distractors": [
+          "Because of",
+          "Due to",
+          "Owing to"
+        ],
+        "cefr": "B1",
+        "alts": [
+          "Since"
+        ]
+      },
+      {
+        "stem": "___ heavy traffic, we arrived an hour late.",
+        "answer": "Due to",
+        "distractors": [
+          "Because",
+          "Since",
+          "As"
+        ],
+        "cefr": "B1",
+        "alts": [
+          "Owing to"
+        ]
+      },
+      {
+        "stem": "___ your help, I managed to finish on time.",
+        "answer": "Thanks to",
+        "distractors": [
+          "Because",
+          "Since",
+          "As"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The flight was cancelled ___ the storm.",
+        "answer": "owing to",
+        "distractors": [
+          "because",
+          "since",
+          "as"
+        ],
+        "cefr": "B1",
+        "alts": [
+          "due to",
+          "because of"
+        ]
+      },
+      {
+        "stem": "The reason I called is ___ I need your advice.",
+        "answer": "that",
+        "distractors": [
+          "because",
+          "because of",
+          "why"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you're the manager, the decision is yours.",
+        "answer": "Since",
+        "distractors": [
+          "Due to",
+          "Owing to",
+          "Thanks to"
+        ],
+        "cefr": "B1",
+        "alts": [
+          "As"
+        ]
+      },
+      {
+        "stem": "She got the job ___ her excellent references.",
+        "answer": "thanks to",
+        "distractors": [
+          "because",
+          "since",
+          "as"
+        ],
+        "cefr": "B1",
+        "alts": [
+          "because of",
+          "due to",
+          "owing to"
+        ]
+      },
+      {
+        "stem": "___ I had already eaten, I skipped dessert.",
+        "answer": "As",
+        "distractors": [
+          "Because of",
+          "Due to",
+          "Owing to"
+        ],
+        "cefr": "B1",
+        "alts": [
+          "Since"
+        ]
+      },
+      {
+        "stem": "The game was postponed ___ a waterlogged pitch.",
+        "answer": "due to",
+        "distractors": [
+          "because",
+          "since",
+          "as"
+        ],
+        "cefr": "B1",
+        "alts": [
+          "owing to",
+          "because of"
+        ]
+      },
+      {
+        "stem": "That's ___ I didn't tell you the news.",
+        "answer": "why",
+        "distractors": [
+          "because",
+          "since",
+          "that"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The proposal was rejected ___ the grounds that it was too costly.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "by",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The policy is flawed ___ that it ignores low-income families.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "by",
+          "with"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ that the evidence is limited, no firm conclusion can be drawn.",
+        "answer": "Given",
+        "distractors": [
+          "Owing",
+          "Due",
+          "Thanks"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ unfamiliar with the software, she asked a colleague for help.",
+        "answer": "Being",
+        "distractors": [
+          "Because",
+          "Since",
+          "As"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ finished the report, he finally took a break.",
+        "answer": "Having",
+        "distractors": [
+          "Being",
+          "Because",
+          "While"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He failed the exam; ___, he must retake the course.",
+        "answer": "hence",
+        "distractors": [
+          "because",
+          "since",
+          "as"
+        ],
+        "cefr": "B2",
+        "alts": [
+          "therefore",
+          "thus",
+          "consequently"
+        ]
+      },
+      {
+        "stem": "He did not speak, ___ he was afraid of the consequences.",
+        "answer": "for",
+        "distractors": [
+          "because of",
+          "due to",
+          "owing to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The store closed early ___ to the fact that the power had failed.",
+        "answer": "due",
+        "distractors": [
+          "because",
+          "since",
+          "owing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ from the trip, the climbers fell asleep immediately.",
+        "answer": "Exhausted",
+        "distractors": [
+          "Because",
+          "Since",
+          "Owing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The bridge was closed ___ account of structural damage.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "by",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ view of the rising costs, the project was put on hold.",
+        "answer": "In",
+        "distractors": [
+          "On",
+          "By",
+          "For"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ light of the new evidence, the verdict was reversed.",
+        "answer": "In",
+        "distractors": [
+          "On",
+          "By",
+          "For"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She helped the stranger ___ of pure kindness, not duty.",
+        "answer": "out",
+        "distractors": [
+          "because",
+          "owing",
+          "due"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The decline can be ___ to years of poor management.",
+        "answer": "attributed",
+        "distractors": [
+          "because",
+          "owing",
+          "due"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The whole crisis ___ from a single design flaw.",
+        "answer": "stems",
+        "distractors": [
+          "because",
+          "owing",
+          "due"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ with the delays and the rising costs, we abandoned the plan.",
+        "answer": "What",
+        "distractors": [
+          "Because",
+          "Since",
+          "Owing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "As a ___ of the merger, hundreds of jobs were lost.",
+        "answer": "result",
+        "distractors": [
+          "because",
+          "reason",
+          "cause"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The failure of the harvest is ___ to the drought.",
+        "answer": "attributable",
+        "distractors": [
+          "because",
+          "owing",
+          "stemming"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He gave up his seat ___ of respect for the elderly couple.",
+        "answer": "out",
+        "distractors": [
+          "because",
+          "due",
+          "owing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ that she is new to the team, her progress is remarkable.",
+        "answer": "Given",
+        "distractors": [
+          "Owing",
+          "Due",
+          "Thanks"
+        ],
+        "cefr": "C1",
+        "alts": [
+          "Seeing"
+        ]
+      },
+      {
+        "stem": "The error may be ___ to a faulty sensor rather than the software.",
+        "answer": "due",
+        "distractors": [
+          "because",
+          "stemming",
+          "resulting"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ virtue of his seniority, he chaired the committee.",
+        "answer": "By",
+        "distractors": [
+          "In",
+          "On",
+          "For"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She deserves praise, all the more so ___ she worked entirely alone.",
+        "answer": "since",
+        "distractors": [
+          "because of",
+          "due to",
+          "owing to"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "because",
+          "as"
+        ]
+      },
+      {
+        "stem": "Read this book, if only ___ it will change your perspective.",
+        "answer": "because",
+        "distractors": [
+          "because of",
+          "due to",
+          "owing to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Not for ___ is she called the queen of the courtroom.",
+        "answer": "nothing",
+        "distractors": [
+          "because",
+          "reason",
+          "virtue"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The crisis, consequent ___ years of mismanagement, was inevitable.",
+        "answer": "upon",
+        "distractors": [
+          "of",
+          "from",
+          "to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Her thesis, ___ from a decade of fieldwork, reshaped the discipline.",
+        "answer": "arising",
+        "distractors": [
+          "because",
+          "owing",
+          "since"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "stemming"
+        ]
+      },
+      {
+        "stem": "He was granted access ___ to the terms of the agreement.",
+        "answer": "pursuant",
+        "distractors": [
+          "because",
+          "owing",
+          "arising"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It wasn't ___ I disliked the offer; rather, the timing was wrong.",
+        "answer": "that",
+        "distractors": [
+          "because",
+          "because of",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He recommended the candidate for the ___ reason that she never gives up.",
+        "answer": "simple",
+        "distractors": [
+          "because",
+          "virtue",
+          "grounds"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The damages claimed are those ___ out of the breach of contract.",
+        "answer": "arising",
+        "distractors": [
+          "because",
+          "owing",
+          "pursuant"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "stemming"
+        ]
+      }
+    ]
   }
 };

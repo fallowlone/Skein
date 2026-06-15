@@ -293,5 +293,561 @@ export const topic: GrammarTopic = {
       "Subject question (no do/does/did)",
       "Object question (with do/does/did)"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "subject-vs-object-questions-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "If the wh-word is the subject, the verb carries the tense and no do/does/did is added; if it is the object (or an adverbial like where/when/why/how), the question inverts with do/does/did. Here the correct filler is \"{answer}\".",
+          "ru": "Если wh-слово — подлежащее, время несёт сам глагол и do/does/did не нужен; если оно дополнение (или обстоятельство where/when/why/how), вопрос строится с инверсией и do/does/did. Здесь верный вариант — «{answer}»."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "Who ___ you last night? (call) — I want to know which friend phoned.",
+        "answer": "called",
+        "distractors": [
+          "did call",
+          "did called",
+          "does call"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Who ___ you invite to the party? (invite) — tell me the guest's name.",
+        "answer": "did",
+        "distractors": [
+          "",
+          "does",
+          "invited"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "What ___ the accident? (cause) — the report names a single factor.",
+        "answer": "caused",
+        "distractors": [
+          "did cause",
+          "does cause",
+          "did caused"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "What ___ she tell you? (tell) — repeat her exact words.",
+        "answer": "did",
+        "distractors": [
+          "",
+          "does",
+          "told"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Who ___ the window? (break) — somebody is clearly responsible.",
+        "answer": "broke",
+        "distractors": [
+          "did break",
+          "did broke",
+          "does break"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "What ___ yesterday? (happen) — I missed the whole thing.",
+        "answer": "happened",
+        "distractors": [
+          "did happen",
+          "does happen",
+          "did happened"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Which book ___ less? (cost) — point me to the cheaper one.",
+        "answer": "costs",
+        "distractors": [
+          "does cost",
+          "do cost",
+          "did costs"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Who ___ you see at the station? (see) — I think you recognised somebody.",
+        "answer": "did",
+        "distractors": [
+          "",
+          "does",
+          "saw"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Where ___ you go after work? (go) — you left in a hurry.",
+        "answer": "did",
+        "distractors": [
+          "",
+          "went",
+          "goes"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Why ___ she leave so early? (leave) — nobody explained it.",
+        "answer": "did",
+        "distractors": [
+          "",
+          "left",
+          "does"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Who ___ the door? (open) — it was locked a minute ago.",
+        "answer": "opened",
+        "distractors": [
+          "did open",
+          "did opened",
+          "does open"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "What ___ you buy at the market? (buy) — show me the receipt.",
+        "answer": "did",
+        "distractors": [
+          "",
+          "bought",
+          "does"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Who ___ the cake? (make) — it tastes amazing.",
+        "answer": "made",
+        "distractors": [
+          "did make",
+          "did made",
+          "does make"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "When ___ the film start? (start) — I don't want to be late.",
+        "answer": "does",
+        "distractors": [
+          "",
+          "starts",
+          "did"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Which team ___ better this season? (play) — the table makes it obvious.",
+        "answer": "plays",
+        "distractors": [
+          "does play",
+          "do play",
+          "did plays"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Whose car ___ the exit? (block) — someone needs to move it now.",
+        "answer": "is blocking",
+        "distractors": [
+          "does block",
+          "do blocks",
+          "is block"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "How many people ___ the petition? (sign) — we need the final count.",
+        "answer": "signed",
+        "distractors": [
+          "did sign",
+          "did signed",
+          "does sign"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Which of you ___ the documents? (bring) — I asked for them this morning.",
+        "answer": "brought",
+        "distractors": [
+          "did bring",
+          "did brought",
+          "does bring"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Where ___ they usually travel in summer? (travel) — they're always away.",
+        "answer": "do",
+        "distractors": [
+          "",
+          "travels",
+          "does"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Which button ___ the machine? (stop) — I need the right one.",
+        "answer": "stops",
+        "distractors": [
+          "does stop",
+          "do stop",
+          "did stops"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Who ___ this film? (see) — I want to discuss the ending with someone.",
+        "answer": "has seen",
+        "distractors": [
+          "did see",
+          "does seen",
+          "has see"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Who ___ tonight? (come) — set the table for the right number.",
+        "answer": "is coming",
+        "distractors": [
+          "does come",
+          "do coming",
+          "is come"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Which door ___? (open) — only one of them works.",
+        "answer": "opens",
+        "distractors": [
+          "does open",
+          "do open",
+          "did opens"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Why ___ he change his mind? (change) — it surprised everyone.",
+        "answer": "did",
+        "distractors": [
+          "",
+          "changed",
+          "does"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "How ___ they manage the budget? (manage) — their method works.",
+        "answer": "do",
+        "distractors": [
+          "",
+          "manages",
+          "does"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "What kind of music ___ you happy? (make) — I'll put it on.",
+        "answer": "makes",
+        "distractors": [
+          "does make",
+          "do make",
+          "did makes"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "How come you ___ call me back? (negative past) — I waited all evening.",
+        "answer": "didn't",
+        "distractors": [
+          "did not called",
+          "don't",
+          "weren't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When ___ the museum close on Sundays? (close) — I might visit later.",
+        "answer": "does",
+        "distractors": [
+          "",
+          "closes",
+          "did"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Who ___ call first? (should) — somebody has to take the lead.",
+        "answer": "should",
+        "distractors": [
+          "does should",
+          "should to",
+          "do should"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "What ___ found at the scene? (be, past) — the report lists the items.",
+        "answer": "was",
+        "distractors": [
+          "did",
+          "did be",
+          "does"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Which companies ___ fined last year? (be, past) — name them precisely.",
+        "answer": "were",
+        "distractors": [
+          "did",
+          "did be",
+          "does"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Who ___ know the answer? (might) — I'm asking around the office.",
+        "answer": "might",
+        "distractors": [
+          "does might",
+          "might to",
+          "do might"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Which employees ___ the bonus? (receive, past) — payroll has the list.",
+        "answer": "received",
+        "distractors": [
+          "did receive",
+          "did received",
+          "does receive"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Which employees ___ the company promote? (promote) — I mean which staff management promoted.",
+        "answer": "did",
+        "distractors": [
+          "",
+          "promoted",
+          "does"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Who ___ arrested after the protest? (be, past) — the news won't say.",
+        "answer": "was",
+        "distractors": [
+          "did",
+          "did be",
+          "does"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Who ___ volunteer for this? (would) — we need one person.",
+        "answer": "would",
+        "distractors": [
+          "does would",
+          "would to",
+          "do would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "What exactly ___ the change in policy? (prompt, past) — be specific.",
+        "answer": "prompted",
+        "distractors": [
+          "did prompt",
+          "did prompted",
+          "does prompt"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Who on earth ___ this? (do, past) — the mess is unbelievable.",
+        "answer": "did",
+        "distractors": [
+          "did do",
+          "does did",
+          "do did"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Which of the proposals best ___ the concern? (address) — pick one.",
+        "answer": "addresses",
+        "distractors": [
+          "does address",
+          "do address",
+          "did addresses"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Who ___ have been notified first? (should) — protocol was ignored.",
+        "answer": "should",
+        "distractors": [
+          "did should",
+          "should to",
+          "does should"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "What ___ ultimately decided at the meeting? (be, past) — the minutes are vague.",
+        "answer": "was",
+        "distractors": [
+          "did",
+          "did be",
+          "does"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Who ___ you think will win? (do) — the matrix clause takes the auxiliary, not 'will win'.",
+        "answer": "do",
+        "distractors": [
+          "",
+          "does",
+          "did"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Who ___ what at the hearing? (say, past) — only one wh-word fronts; the verb stays plain.",
+        "answer": "said",
+        "distractors": [
+          "did say",
+          "did said",
+          "does say"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Which of the many factors contributing to the crisis ___ been addressed? (have, present perfect, singular subject) — only one has.",
+        "answer": "has",
+        "distractors": [
+          "did",
+          "have",
+          "does"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Who ___ have foreseen this outcome? (could) — the implied answer is 'no one'.",
+        "answer": "could",
+        "distractors": [
+          "did could",
+          "could to",
+          "does could"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "By whom ___ the order signed? (be, past) — formal pied-piping, passive subject question.",
+        "answer": "was",
+        "distractors": [
+          "did",
+          "did be",
+          "does"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Who ___ whom about this? (tell, past) — formal, with 'whom' as the in-situ object.",
+        "answer": "told",
+        "distractors": [
+          "did tell",
+          "did told",
+          "does tell"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "What, if anything, ___ changed since then? (have, present perfect, singular subject) — a cautious rhetorical form.",
+        "answer": "has",
+        "distractors": [
+          "did",
+          "have",
+          "does"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Which of us ___ without fault? (be, present, singular) — a rhetorical subject question; the answer is 'none of us'.",
+        "answer": "is",
+        "distractors": [
+          "are",
+          "did",
+          "does"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Who among the candidates ___ the most experience? (have, present, singular subject) — pick the strongest.",
+        "answer": "has",
+        "distractors": [
+          "have",
+          "did",
+          "does"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "What greater honour ___ there? (be, present, singular) — an archaic rhetorical subject question.",
+        "answer": "is",
+        "distractors": [
+          "are",
+          "did",
+          "does"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Who ___ leaked the documents? (have, present perfect, singular subject) — the newsroom is investigating who is responsible.",
+        "answer": "has",
+        "distractors": [
+          "did",
+          "have",
+          "does"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "What ___ caused the market crash, in the end? (have, present perfect, singular subject) — analysts still disagree.",
+        "answer": "has",
+        "distractors": [
+          "did",
+          "have",
+          "does"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

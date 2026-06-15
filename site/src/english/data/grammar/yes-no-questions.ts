@@ -456,5 +456,581 @@ export const topic: GrammarTopic = {
       "swap to front",
       "yes/no question (auxiliary + subject)"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "yes-no-questions-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Choose the auxiliary or embedding word ({answer}) that forms a correct yes/no question; English fronts the auxiliary and uses if/whether (statement order) when the question is embedded.",
+          "ru": "Выбери вспомогательный глагол или вводное слово ({answer}), которое образует правильный вопрос «да/нет»: в английском вспомогательный выходит вперёд, а во встроенном вопросе — if/whether с прямым порядком слов."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "___ you happy?",
+        "answer": "Are",
+        "distractors": [
+          "Is",
+          "Do",
+          "Be"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ he a student?",
+        "answer": "Is",
+        "distractors": [
+          "Are",
+          "Does",
+          "Do"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ they at home now?",
+        "answer": "Are",
+        "distractors": [
+          "Is",
+          "Do",
+          "Does"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ you help me, please?",
+        "answer": "Can",
+        "distractors": [
+          "Are",
+          "Do",
+          "Is"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ she speak English?",
+        "answer": "Can",
+        "distractors": [
+          "Is",
+          "Does",
+          "Do"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ I open the window?",
+        "answer": "Can",
+        "distractors": [
+          "Am",
+          "Do",
+          "Is"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ your parents at work?",
+        "answer": "Are",
+        "distractors": [
+          "Is",
+          "Do",
+          "Does"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ this your bag?",
+        "answer": "Is",
+        "distractors": [
+          "Are",
+          "Does",
+          "Do"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ I late for the lesson?",
+        "answer": "Am",
+        "distractors": [
+          "Are",
+          "Do",
+          "Is"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ you like pizza?",
+        "answer": "Do",
+        "distractors": [
+          "Does",
+          "Are",
+          "Did"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ she work in a bank?",
+        "answer": "Does",
+        "distractors": [
+          "Do",
+          "Is",
+          "Did"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ they arrive on time yesterday?",
+        "answer": "Did",
+        "distractors": [
+          "Do",
+          "Does",
+          "Were"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ he speak French?",
+        "answer": "Does",
+        "distractors": [
+          "Do",
+          "Is",
+          "Did"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ you finish the book last night?",
+        "answer": "Did",
+        "distractors": [
+          "Do",
+          "Does",
+          "Are"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ your brother play football?",
+        "answer": "Does",
+        "distractors": [
+          "Do",
+          "Is",
+          "Did"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ we need a visa for this trip?",
+        "answer": "Do",
+        "distractors": [
+          "Does",
+          "Are",
+          "Did"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ the shop open on Sundays?",
+        "answer": "Does",
+        "distractors": [
+          "Do",
+          "Is",
+          "Did"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ you call her this morning?",
+        "answer": "Did",
+        "distractors": [
+          "Do",
+          "Does",
+          "Were"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ it rain a lot in winter here?",
+        "answer": "Does",
+        "distractors": [
+          "Do",
+          "Is",
+          "Did"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ you working on the report right now?",
+        "answer": "Are",
+        "distractors": [
+          "Do",
+          "Is",
+          "Have"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you ever been to London?",
+        "answer": "Have",
+        "distractors": [
+          "Did",
+          "Are",
+          "Has"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ she finished her homework yet?",
+        "answer": "Has",
+        "distractors": [
+          "Have",
+          "Did",
+          "Is"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you sleeping when I called?",
+        "answer": "Were",
+        "distractors": [
+          "Did",
+          "Was",
+          "Are"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you be at the meeting tomorrow?",
+        "answer": "Will",
+        "distractors": [
+          "Are",
+          "Do",
+          "Have"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I wonder ___ she likes her new job. (embedded)",
+        "answer": "if",
+        "distractors": [
+          "is",
+          "does",
+          "that"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'm not sure ___ the shop is open today. (embedded)",
+        "answer": "whether",
+        "distractors": [
+          "is",
+          "does",
+          "what"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Can you tell me ___ this train goes to Oxford? (embedded)",
+        "answer": "if",
+        "distractors": [
+          "is",
+          "does",
+          "that"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you like to join us for dinner? (polite offer)",
+        "answer": "Would",
+        "distractors": [
+          "Do",
+          "Are",
+          "Will"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you possibly lend me a pen? (polite)",
+        "answer": "Could",
+        "distractors": [
+          "Do",
+          "Are",
+          "Have"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ the new teacher from Canada?",
+        "answer": "Is",
+        "distractors": [
+          "Does",
+          "Do",
+          "Has"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ they been waiting long?",
+        "answer": "Have",
+        "distractors": [
+          "Did",
+          "Are",
+          "Was"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you think it's too late to call her? (surprise)",
+        "answer": "Don't",
+        "distractors": [
+          "Aren't",
+          "Haven't",
+          "Doesn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ she the new manager? (surprise)",
+        "answer": "Isn't",
+        "distractors": [
+          "Doesn't",
+          "Don't",
+          "Hasn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ we met somewhere before? (surprise)",
+        "answer": "Haven't",
+        "distractors": [
+          "Didn't",
+          "Aren't",
+          "Don't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ you finished yet? (mild impatience)",
+        "answer": "Haven't",
+        "distractors": [
+          "Don't",
+          "Aren't",
+          "Didn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "May I ask ___ you received my email? (formal embedded)",
+        "answer": "whether",
+        "distractors": [
+          "if",
+          "that",
+          "is"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Would you kindly confirm ___ the package has arrived? (formal embedded)",
+        "answer": "whether",
+        "distractors": [
+          "that",
+          "is",
+          "does"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ it be easier to take a taxi? (rhetorical)",
+        "answer": "Wouldn't",
+        "distractors": [
+          "Don't",
+          "Isn't",
+          "Haven't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ he the one who called yesterday? (surprise)",
+        "answer": "Wasn't",
+        "distractors": [
+          "Didn't",
+          "Doesn't",
+          "Hasn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ you want any coffee? (negative, expecting yes)",
+        "answer": "Don't",
+        "distractors": [
+          "Aren't",
+          "Haven't",
+          "Doesn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ it really worth the risk? (rhetorical, hidden no)",
+        "answer": "Is",
+        "distractors": [
+          "Does",
+          "Has",
+          "Do"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ I suggest we reconsider the proposal? (tentative)",
+        "answer": "Might",
+        "distractors": [
+          "Do",
+          "Am",
+          "Have"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The court must decide ___ the defendant acted in self-defence. (formal)",
+        "answer": "whether",
+        "distractors": [
+          "if",
+          "that",
+          "does"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ you possibly spare a moment of your time? (very polite)",
+        "answer": "Could",
+        "distractors": [
+          "Do",
+          "Are",
+          "Will"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ we really prepared to accept these terms? (rhetorical)",
+        "answer": "Are",
+        "distractors": [
+          "Do",
+          "Have",
+          "Is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ we afford to ignore this issue? (rhetorical, hidden no)",
+        "answer": "Can",
+        "distractors": [
+          "Do",
+          "Are",
+          "Is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ it be that we're missing something? (academic caution)",
+        "answer": "Could",
+        "distractors": [
+          "Does",
+          "Is",
+          "Do"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The committee must determine ___ the evidence is admissible. (formal)",
+        "answer": "whether",
+        "distractors": [
+          "if",
+          "that",
+          "is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ it true that you were at the scene that night? (cross-examination)",
+        "answer": "Isn't",
+        "distractors": [
+          "Doesn't",
+          "Don't",
+          "Wasn't"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ we turn to the next item on the agenda? (elevated)",
+        "answer": "Shall",
+        "distractors": [
+          "Will",
+          "Do",
+          "Are"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ we, as a nation, afford to turn away? (political rhetoric)",
+        "answer": "Can",
+        "distractors": [
+          "Do",
+          "Are",
+          "Is"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ we hope for a better outcome? (high register)",
+        "answer": "Dare",
+        "distractors": [
+          "Do",
+          "Are",
+          "Have"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ this the legacy we wish to leave behind? (rhetorical)",
+        "answer": "Is",
+        "distractors": [
+          "Does",
+          "Has",
+          "Do"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ that be all, sir? (service register)",
+        "answer": "Will",
+        "distractors": [
+          "Does",
+          "Is",
+          "Do"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ you think we should resign? (steering to agree)",
+        "answer": "Don't",
+        "distractors": [
+          "Do",
+          "Aren't",
+          "Haven't"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

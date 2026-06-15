@@ -374,5 +374,484 @@ export const topic: GrammarTopic = {
       "adjective + noun / linking verb",
       "adverb + action verb"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "adjective-vs-adverb-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Choose '{answer}': decide between an adjective (after be/seem/look/feel/taste/smell/sound and change-of-state verbs, or as a depictive/resultative) and an -ly adverb (after an action verb, to say how).",
+          "ru": "Выбери «{answer}»: реши между прилагательным (после be/seem/look/feel/taste/smell/sound и глаголов смены состояния, либо как депиктив/результатив) и наречием на -ly (после глагола действия, чтобы сказать «как»)."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "She is very ___ today. (happy)",
+        "answer": "happy",
+        "distractors": [
+          "happily"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He seems ___ after the long flight. (tired)",
+        "answer": "tired",
+        "distractors": [
+          "tiredly"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The soup tastes ___. (good)",
+        "answer": "good",
+        "distractors": [
+          "well",
+          "goodly"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "You look ___ in that jacket. (nice)",
+        "answer": "nice",
+        "distractors": [
+          "nicely"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The cake smells ___. (delicious)",
+        "answer": "delicious",
+        "distractors": [
+          "deliciously"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She sings ___ in the choir. (beautiful)",
+        "answer": "beautifully",
+        "distractors": [
+          "beautiful"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He drives ___ in the rain. (careful)",
+        "answer": "carefully",
+        "distractors": [
+          "careful"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "They work ___ all week. (hard)",
+        "answer": "hard",
+        "distractors": [
+          "hardly",
+          "hardely"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The baby slept ___ all night. (quiet)",
+        "answer": "quietly",
+        "distractors": [
+          "quiet"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "This music sounds ___. (loud)",
+        "answer": "loud",
+        "distractors": [
+          "loudly"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Please speak ___ so I can understand. (slow)",
+        "answer": "slowly",
+        "distractors": [
+          "slow"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I feel ___ about forgetting your call. (bad)",
+        "answer": "bad",
+        "distractors": [
+          "badly"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She looked ___ at the old photo. (careful)",
+        "answer": "carefully",
+        "distractors": [
+          "careful"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The flowers in the vase smell ___. (sweet)",
+        "answer": "sweet",
+        "distractors": [
+          "sweetly"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He smelled the milk ___ before drinking it. (cautious)",
+        "answer": "cautiously",
+        "distractors": [
+          "cautious"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I don't feel ___ today — I think I'm getting a cold. (well)",
+        "answer": "well",
+        "distractors": [
+          "good",
+          "goodly"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "After the holiday she looks really ___. (good)",
+        "answer": "good",
+        "distractors": [
+          "goodly",
+          "wellly"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He ___ eats breakfast before work. (hardly)",
+        "answer": "hardly",
+        "distractors": [
+          "hard"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The train arrived ___, so we missed the meeting. (late)",
+        "answer": "late",
+        "distractors": [
+          "lately"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I haven't seen Tom ___. (late)",
+        "answer": "lately",
+        "distractors": [
+          "late"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She listened ___ to the instructions. (attentive)",
+        "answer": "attentively",
+        "distractors": [
+          "attentive"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The blanket feels wonderfully ___. (soft)",
+        "answer": "soft",
+        "distractors": [
+          "softly"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He tasted the sauce ___ before adding salt. (slow)",
+        "answer": "slowly",
+        "distractors": [
+          "slow"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The fresh bread smells ___. (amazing)",
+        "answer": "amazing",
+        "distractors": [
+          "amazingly"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She grew ___ of waiting for the bus. (tired)",
+        "answer": "tired",
+        "distractors": [
+          "tiredly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He became ___ when he heard the news. (angry)",
+        "answer": "angry",
+        "distractors": [
+          "angrily"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The sky turned ___ before the storm. (dark)",
+        "answer": "dark",
+        "distractors": [
+          "darkly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The milk has gone ___. (sour)",
+        "answer": "sour",
+        "distractors": [
+          "sourly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She fell ___ when the teacher walked in. (silent)",
+        "answer": "silent",
+        "distractors": [
+          "silently"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It's getting ___ outside, so take a coat. (cold)",
+        "answer": "cold",
+        "distractors": [
+          "coldly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The leaves turned ___ in late autumn. (yellow)",
+        "answer": "yellow",
+        "distractors": [
+          "yellowly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He arrived home ___ after the marathon. (exhausted)",
+        "answer": "exhausted",
+        "distractors": [
+          "exhaustedly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She smiled at me in a ___ way. (friendly)",
+        "answer": "friendly",
+        "distractors": [
+          "friendlily",
+          "friendlly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The guests left the party ___. (happy)",
+        "answer": "happy",
+        "distractors": [
+          "happily"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He spoke to the children in a ___ manner. (lovely)",
+        "answer": "lovely",
+        "distractors": [
+          "lovelily"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I feel ___ for her after what happened. (bad)",
+        "answer": "bad",
+        "distractors": [
+          "badly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She painted the wall ___ in just an hour. (red)",
+        "answer": "red",
+        "distractors": [
+          "redly"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He hammered the metal ___ on the anvil. (flat)",
+        "answer": "flat",
+        "distractors": [
+          "flatly"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He remained ___ throughout the crisis. (calm)",
+        "answer": "calm",
+        "distractors": [
+          "calmly"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The proposal seemed ___ at first. (reasonable)",
+        "answer": "reasonable",
+        "distractors": [
+          "reasonably"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "When tested, the new method proved ___. (effective)",
+        "answer": "effective",
+        "distractors": [
+          "effectively"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She appeared ___ during the interview. (confident)",
+        "answer": "confident",
+        "distractors": [
+          "confidently"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Out of nowhere, a stranger appeared ___ at the door. (sudden)",
+        "answer": "suddenly",
+        "distractors": [
+          "sudden"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The frightened child was ___ of the dark. (afraid)",
+        "answer": "afraid",
+        "distractors": [
+          "afraidly"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She is ___ smart for her age. (incredible)",
+        "answer": "incredibly",
+        "distractors": [
+          "incredible"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The film was ___ good, given the small budget. (surprising)",
+        "answer": "surprisingly",
+        "distractors": [
+          "surprising"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Exhausted, she collapsed ___ onto the sofa. (heavy)",
+        "answer": "heavily",
+        "distractors": [
+          "heavy"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She stood ___ at the edge of the cliff. (still)",
+        "answer": "still",
+        "distractors": [
+          "stilly"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The door swung ___ without a sound. (open)",
+        "answer": "open",
+        "distractors": [
+          "openly"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The theory has held ___ for a century. (true)",
+        "answer": "true",
+        "distractors": [
+          "truly"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He was born ___ but became a famous musician. (blind)",
+        "answer": "blind",
+        "distractors": [
+          "blindly"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "His reputation emerged ___ from the scandal. (unscathed)",
+        "answer": "unscathed",
+        "distractors": [
+          "unscathedly"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The old house has stood ___ for years. (empty)",
+        "answer": "empty",
+        "distractors": [
+          "emptily"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "After the long debate, the room went ___. (quiet)",
+        "answer": "quiet",
+        "distractors": [
+          "quietly"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The lecture ran ___, and students grew restless. (long)",
+        "answer": "long",
+        "distractors": [
+          "longly"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The evidence stood ___ at the trial. (uncontested)",
+        "answer": "uncontested",
+        "distractors": [
+          "uncontestedly"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

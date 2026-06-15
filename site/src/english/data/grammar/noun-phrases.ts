@@ -329,5 +329,499 @@ export const topic: GrammarTopic = {
       "+ HEAD noun",
       "+ post-modifiers"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "We bought three ___ red apples at the market. (hint: size before colour)",
+        "answer": "big",
+        "distractors": [
+          "bigly",
+          "biggest"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She wore a ___ new dress to the party. (opinion adjective)",
+        "answer": "beautiful",
+        "distractors": [
+          "beauty",
+          "beautifully"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "That ___ wooden box on the shelf is mine. (size adjective)",
+        "answer": "small",
+        "distractors": [
+          "smally",
+          "smallest"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My old friend lives in a ___ French village. (origin word for 'from France')",
+        "answer": "small",
+        "distractors": [
+          "France",
+          "Frenchly"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I need ___ car because the trains here are unreliable. (singular countable needs a determiner)",
+        "answer": "a",
+        "distractors": [
+          "the a",
+          "my a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She showed me ___ new dress, not the one her sister bought. (possessive determiner)",
+        "answer": "her",
+        "distractors": [
+          "the her",
+          "a her"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ dogs need more food than small ones, so feed them well. (plural generalisation, no article)",
+        "answer": "Big",
+        "distractors": [
+          "The big",
+          "A big"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Look at ___ three blue cars parked over there. (demonstrative for plural near)",
+        "answer": "those",
+        "distractors": [
+          "that",
+          "this"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He drives a lovely old ___ sports car from Italy. (origin for 'from Italy')",
+        "answer": "Italian",
+        "distractors": [
+          "Italy",
+          "Italianly"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We adopted ___ little kittens last week. (number determiner)",
+        "answer": "three",
+        "distractors": [
+          "the three of",
+          "threes"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It is ___ interesting idea, but it needs more work. (article before a vowel sound)",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the an"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She is reading a ___ green book about gardening. (colour adjective)",
+        "answer": "dark",
+        "distractors": [
+          "darkly",
+          "darken"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The book ___ the shelf is the one I told you about. (preposition of place)",
+        "answer": "on",
+        "distractors": [
+          "who",
+          "which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She is the woman ___ at the bus stop near the bank. (reduced relative, active -ing form)",
+        "answer": "standing",
+        "distractors": [
+          "stood",
+          "stands"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The novel ___ by Dostoevsky is studied in many schools. (reduced relative, passive V3 form)",
+        "answer": "written",
+        "distractors": [
+          "writing",
+          "wrote"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He was the first person ___ the mistake in the report. (infinitive post-modifier)",
+        "answer": "to notice",
+        "distractors": [
+          "noticing",
+          "noticed"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The man ___ lives next door is a retired teacher. (defining relative pronoun for a person)",
+        "answer": "who",
+        "distractors": [
+          "which",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My brother, ___ lives in Moscow, is visiting us this weekend. (non-defining relative pronoun, person)",
+        "answer": "who",
+        "distractors": [
+          "which",
+          "that"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "This is a good place ___ , so we are thinking of moving here. (infinitive expressing purpose)",
+        "answer": "to live",
+        "distractors": [
+          "living",
+          "lived"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The students ___ for the team trained every morning. (reduced relative from 'who were ___', passive)",
+        "answer": "chosen",
+        "distractors": [
+          "choosing",
+          "choose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The key ___ success is consistent daily practice. (preposition fixed with 'key')",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The book ___ I bought yesterday is already out of stock. (defining relative for a thing, object)",
+        "answer": "that",
+        "distractors": [
+          "who",
+          "what"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "A recent study ___ the effect of screen time on children was published. (reduced relative, active -ing)",
+        "answer": "examining",
+        "distractors": [
+          "examined",
+          "examine"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "This is the man ___ the blue shirt, the one who fixed our car. (reduced relative, active -ing of 'wear')",
+        "answer": "wearing",
+        "distractors": [
+          "worn",
+          "wears"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She told us a story ___ courage during the war. (preposition meaning 'on the subject of')",
+        "answer": "about",
+        "distractors": [
+          "of which",
+          "that"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The next train ___ from platform two goes to the airport. (infinitive post-modifier of 'leave')",
+        "answer": "to leave",
+        "distractors": [
+          "leaving",
+          "left"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The recent government decision ___ the tax reform caused concern. (infinitive of content, 'to put off')",
+        "answer": "to postpone",
+        "distractors": [
+          "postponing",
+          "postponed"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The role of NGOs ___ protecting human rights cannot be overstated. (preposition introducing the gerund)",
+        "answer": "in",
+        "distractors": [
+          "of",
+          "to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Studies ___ the link between diet and longevity remain inconclusive. (reduced relative, active -ing)",
+        "answer": "examining",
+        "distractors": [
+          "examined",
+          "examine"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "All ___ many different approaches have some merit. (predeterminer before 'these', meaning the whole set)",
+        "answer": "these",
+        "distractors": [
+          "of these",
+          "the these"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The importance ___ consistent terminology in legal documents is clear. (of-phrase linking head noun)",
+        "answer": "of",
+        "distractors": [
+          "for",
+          "about"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The committee, ___ in 2020, was asked to investigate corruption. (reduced relative, passive V3 of 'establish')",
+        "answer": "established",
+        "distractors": [
+          "establishing",
+          "establishes"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The 2020 ___ report received mixed reviews from analysts. (noun-as-modifier compressing 'against corruption')",
+        "answer": "anti-corruption",
+        "distractors": [
+          "anti-corrupt",
+          "corruptly"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The man ___ the hat in the photo is the witness we need. (reduced relative making attachment clear, -ing of 'wear')",
+        "answer": "wearing",
+        "distractors": [
+          "with worn",
+          "who has worn"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Researchers studied the correlation ___ exercise and cognitive function. (preposition pairing two items)",
+        "answer": "between",
+        "distractors": [
+          "among",
+          "of"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Both ___ the last two chapters deal with the same theme. (predeterminer pattern 'both ___ the')",
+        "answer": "of",
+        "distractors": [
+          "of the of",
+          "than"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The report ___ by the committee was finally released. (reduced relative, passive V3 of 'write')",
+        "answer": "written",
+        "distractors": [
+          "writing",
+          "wrote"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "A decision ___ small businesses should be made carefully. (reduced relative, active -ing of 'affect')",
+        "answer": "affecting",
+        "distractors": [
+          "affected",
+          "affects"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It was surprising ___ the minister resigned so suddenly. (it-extraposition with a that-clause)",
+        "answer": "that",
+        "distractors": [
+          "which",
+          "what"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ was the manager who finally approved the decision. (cleft structure subject for end-focus)",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "That"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ he said at the meeting was genuinely surprising. (pseudo-cleft opener focusing the content)",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "Which"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Tolstoy, ___ great Russian novelist, died in 1910. (article opening a non-defining appositive)",
+        "answer": "the",
+        "distractors": [
+          "who the",
+          "a who"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The person ___ for the error has already apologised. (post-positive adjective = the one to blame)",
+        "answer": "responsible",
+        "distractors": [
+          "responsibly",
+          "responsibility"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "There ___ a man who had been waiting for hours to see the doctor. (existential verb enabling end-weight)",
+        "answer": "arrived",
+        "distractors": [
+          "was arrived",
+          "arriving"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It ___ embarrassing that he turned up so late. (linking verb in it-extraposition)",
+        "answer": "was",
+        "distractors": [
+          "being",
+          "having been"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The inadequacy ___ current frameworks has been widely noted. (of-phrase after a nominalised head)",
+        "answer": "of",
+        "distractors": [
+          "for",
+          "with"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The stars ___ from here are far brighter than in the city. (post-positive adjective tied to this situation)",
+        "answer": "visible",
+        "distractors": [
+          "visibly",
+          "visibility"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "My friend ___ arrived an hour before everyone else. (defining apposition, a name, no commas)",
+        "answer": "John",
+        "distractors": [
+          "who John",
+          "the John"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The ___ of the reform faced unexpected resistance from voters. (nominalisation of 'implement' projecting objectivity)",
+        "answer": "implementation",
+        "distractors": [
+          "implementing",
+          "implemented"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Yesterday the committee rejected ___ proposal that had been debated for months. (article before a defined-by-clause head)",
+        "answer": "the",
+        "distractors": [
+          "a",
+          "some"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ the minister resigned came as a shock to the cabinet. (subordinator opening a clausal subject)",
+        "answer": "That",
+        "distractors": [
+          "It",
+          "Which"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The proposal ___ under discussion for months was finally rejected. (reduced relative, passive V3 of 'put')",
+        "answer": "put",
+        "distractors": [
+          "putting",
+          "puts"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "noun-phrases-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Choose the correct word for the blank: {answer}.",
+          "ru": "Выберите правильное слово для пропуска: {answer}."
+        }
+      }
+    ]
   }
 };

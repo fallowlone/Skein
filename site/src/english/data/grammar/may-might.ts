@@ -374,5 +374,668 @@ export const topic: GrammarTopic = {
       "may (neutral possibility)",
       "may/might + permission/wishes"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "may-might-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "may/might is a choice among modals and depends on register, idiom and structure, so each item is a fixed context where '{answer}' is the genuinely correct filler and the distractors are forms that are wrong here.",
+          "ru": "Выбор may/might зависит от регистра, устойчивых оборотов и структуры, поэтому каждое задание — это фиксированный контекст, где «{answer}» — единственно верный вариант, а дистракторы здесь неверны."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "It ___ rain later, so take an umbrella. (hint: possibility)",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "musts",
+          "mays",
+          "to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ I use your phone for a moment, please? (hint: polite permission)",
+        "answer": "May",
+        "distractors": [
+          "Might",
+          "Maybe",
+          "Do"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She isn't sure, but she ___ come to the party tonight.",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "mights",
+          "to come",
+          "cans"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "They ___ not be at home right now — the lights are off.",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "mayn't",
+          "don't",
+          "aren't"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He ___ come tomorrow; nobody knows yet. (no -s on a modal)",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "mays",
+          "may to",
+          "is"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ I ask you a question? (very polite, more formal than 'can')",
+        "answer": "May",
+        "distractors": [
+          "Might",
+          "Maybe",
+          "Am"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I'm tired, so I ___ go to bed early tonight.",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "might to",
+          "will might",
+          "am"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Take a jacket — it ___ get cold this evening.",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "may to",
+          "gets",
+          "musts"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "It ___ snow tonight, but I doubt it.",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "snow might",
+          "mights",
+          "maybe"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Perhaps she's busy — she ___ not answer the phone.",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "mayn't",
+          "not may",
+          "doesn't"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Students ___ use a dictionary during the exam — it is permitted.",
+        "answer": "may",
+        "distractors": [
+          "might",
+          "maybe",
+          "may to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ he will come; I'm not sure. (one-word adverb 'perhaps')",
+        "answer": "Maybe",
+        "distractors": [
+          "May be",
+          "Might",
+          "May"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The flight is delayed, so the meeting ___ be cancelled.",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "maybe",
+          "may to",
+          "cancels"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you asked her nicely, she ___ help you. (second conditional)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "will",
+          "would might"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You ___ now board the plane, ladies and gentlemen. (formal permission)",
+        "answer": "may",
+        "distractors": [
+          "might",
+          "maybe",
+          "may to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'm not certain of the answer, so what I say next ___ be wrong.",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "maybe",
+          "be may",
+          "is"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He ___ not have my number, which is why he hasn't called.",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "mayn't",
+          "hasn't",
+          "doesn't"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Visitors ___ park in the staff lot only with a permit. (formal notice)",
+        "answer": "may",
+        "distractors": [
+          "maybe",
+          "might",
+          "may to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It looks like 'may be' here, but the adverb in 'It will ___ happen' is one word.",
+        "answer": "maybe",
+        "distractors": [
+          "may be",
+          "might",
+          "may"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ come later — there's still a small chance, though it's unlikely.",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "mights",
+          "comes",
+          "maybe"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She isn't answering — she ___ have forgotten our meeting. (past guess)",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "maybe",
+          "had",
+          "may"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He never arrived; he ___ have missed the last bus. (guess about the past)",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "might of",
+          "missed",
+          "maybe"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You ___ have told me you were coming! I had nothing ready. (reproach)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "maybe",
+          "might of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We've finished early, so we ___ as well go home now. (idiom)",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "could",
+          "should",
+          "maybe"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She didn't reply, but she ___ not have seen the email yet.",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "maybe",
+          "mayn't",
+          "didn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Don't blame him — he ___ not have understood the instructions.",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "might of",
+          "didn't",
+          "maybe"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The spoken form is 'might've', so in writing it is always 'might ___ forgotten'.",
+        "answer": "have",
+        "distractors": [
+          "of",
+          "had",
+          "has"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The data ___ suggest a pattern, but more research is needed. (cautious academic claim)",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "maybe",
+          "musts",
+          "suggests"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm worried that he ___ fail the exam if he doesn't study.",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "maybe",
+          "fails",
+          "may to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Her long silence ___ have meant disapproval, though we couldn't be sure.",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "may of",
+          "meant",
+          "maybe"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It's worth a try — you ___ as well ask; the worst they can say is no.",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "should",
+          "would",
+          "maybe"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ have come earlier, but the past possibility needs 'have' + participle.",
+        "answer": "may",
+        "distractors": [
+          "came",
+          "might came",
+          "maybe"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Difficult as it ___ seem, the solution is actually quite simple. (concessive)",
+        "answer": "may",
+        "distractors": [
+          "might",
+          "could",
+          "maybe"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Try as he ___, he could not open the rusted door. (literary concessive)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "could",
+          "would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Be that as it ___, the committee's decision stands. (fixed concessive idiom)",
+        "answer": "may",
+        "distractors": [
+          "might",
+          "is",
+          "could"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You ___ want to reconsider your position before the vote. (very polite suggestion)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "must",
+          "should"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "On the certainty scale, ___ marks weaker possibility than 'may'. (weakest of the two)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "must",
+          "will"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It ___ be argued that the policy was premature. (formal academic hedge)",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "maybe",
+          "argues",
+          "could to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She wasn't at her desk; she ___ have been working late last night. (continuous past speculation)",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "maybe",
+          "was",
+          "may of"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If I ___ say so, that is an excellent point. (polite formal aside)",
+        "answer": "may",
+        "distractors": [
+          "might",
+          "could",
+          "would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "One ___ argue otherwise, but the evidence is fairly clear. (polite disagreement)",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "maybe",
+          "argues",
+          "must"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ you have a long and happy life! (optative wish)",
+        "answer": "May",
+        "distractors": [
+          "Might",
+          "Maybe",
+          "Will"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___ have been sleeping when you rang — he didn't pick up.",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "may of",
+          "was",
+          "maybe"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Come what ___, I will stand by you. (fixed concessive idiom)",
+        "answer": "may",
+        "distractors": [
+          "might",
+          "comes",
+          "will"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ the best candidate win! (optative; bare base verb follows)",
+        "answer": "May",
+        "distractors": [
+          "Might",
+          "Maybe",
+          "Will"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The Board ___, at its discretion, waive this requirement. (legal: permissive, not mandatory)",
+        "answer": "may",
+        "distractors": [
+          "shall",
+          "must",
+          "might"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Some ___ suggest the reform has failed, though I would not go that far. (distancing deixis)",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "maybe",
+          "suggests",
+          "must"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Had she arrived earlier, she ___ have been included in the panel. (counterfactual speculation)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "maybe",
+          "might of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Whatever the reason ___ be, the result is the same. (formal concessive)",
+        "answer": "may",
+        "distractors": [
+          "might",
+          "is",
+          "could"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ he rest in peace. (fossilized optative, archaic inversion)",
+        "answer": "May",
+        "distractors": [
+          "Might",
+          "Let",
+          "Will"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "You ___ at least have said thank you. (mock-politeness / reproach)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "could to",
+          "maybe"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "One ___ have hoped for a more nuanced reading of the text. (ironic past hope)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "maybe",
+          "might of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Skeptical as one ___ be, the evidence here is genuinely compelling. (concessive inversion)",
+        "answer": "might",
+        "alts": [
+          "may"
+        ],
+        "distractors": [
+          "maybe",
+          "could",
+          "would"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The author ___ be overstating the case somewhat. (gentle academic critique)",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "maybe",
+          "overstates",
+          "must"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "These results ___ not generalize to other populations. (academic limitation hedge)",
+        "answer": "may",
+        "alts": [
+          "might"
+        ],
+        "distractors": [
+          "maybe",
+          "don't",
+          "generalize"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

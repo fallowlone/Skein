@@ -251,5 +251,571 @@ export const topic: GrammarTopic = {
       "End-position (informal)",
       "Front-position (formal)"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "The friend I'm writing ___ lives in Paris.",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "by",
+          "of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The house I grew up ___ was small and cold.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The book she's looking ___ has been out of print for years.",
+        "answer": "for",
+        "distractors": [
+          "after",
+          "into",
+          "up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The hotel that we stayed ___ was far too expensive.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She's the colleague I most enjoy working ___.",
+        "answer": "with",
+        "distractors": [
+          "by",
+          "to",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The topic that we talked ___ for an hour was the new policy.",
+        "answer": "about",
+        "distractors": [
+          "of",
+          "on",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The person to ___ I spoke turned out to be the manager.",
+        "answer": "whom",
+        "distractors": [
+          "who",
+          "that",
+          "which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The committee to ___ I gave my report rejected it.",
+        "answer": "whom",
+        "distractors": [
+          "who",
+          "that",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The company for ___ he works is based in Berlin.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "whom",
+          "who"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "This is the author ___ book I told you about last week.",
+        "answer": "whose",
+        "distractors": [
+          "which",
+          "that",
+          "whom"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The place I come ___ has changed a lot since I left.",
+        "answer": "from",
+        "distractors": [
+          "of",
+          "off",
+          "by"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The reason ___ which we are here is to resolve the dispute.",
+        "answer": "for",
+        "distractors": [
+          "of",
+          "at",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The teacher I learned the most ___ retired last spring.",
+        "answer": "from",
+        "distractors": [
+          "of",
+          "by",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The chair you were sitting ___ is broken.",
+        "answer": "on",
+        "distractors": [
+          "at",
+          "of",
+          "with"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The neighbour ___ whom I share a wall plays loud music.",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "at",
+          "of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The project I've been working ___ is finally finished.",
+        "answer": "on",
+        "distractors": [
+          "at",
+          "in",
+          "of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The client ___ whom we sent the invoice has not paid.",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "by",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The drawer I keep my keys ___ was locked.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The man ___ whom she was talking is her supervisor.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "by",
+          "off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The bridge ___ which we drove was built in 1890.",
+        "answer": "over",
+        "distractors": [
+          "at",
+          "by",
+          "off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The principles ___ which the theory rests are now questioned.",
+        "answer": "on",
+        "distractors": [
+          "at",
+          "to",
+          "of"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The period ___ which the incident occurred was very brief.",
+        "answer": "during",
+        "distractors": [
+          "at",
+          "on",
+          "by"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The means ___ which they achieved victory remain secret.",
+        "answer": "by",
+        "distractors": [
+          "with",
+          "at",
+          "to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The laws ___ which we operate are extremely strict.",
+        "answer": "under",
+        "distractors": [
+          "at",
+          "on",
+          "by"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The conditions ___ which the treaty was signed remain disputed.",
+        "answer": "under",
+        "distractors": [
+          "on",
+          "at",
+          "by"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The standards ___ which performance is measured are public.",
+        "answer": "against",
+        "distractors": [
+          "at",
+          "by",
+          "under"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The framework ___ which we operate was set out in 2010.",
+        "answer": "within",
+        "distractors": [
+          "at",
+          "by",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The reforms, as a result ___ which unemployment fell, were praised.",
+        "answer": "of",
+        "distractors": [
+          "from",
+          "by",
+          "with"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The colleague ___ whom I've collaborated for years is retiring.",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "at",
+          "of"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The hypothesis ___ which we tested our data proved robust.",
+        "answer": "against",
+        "distractors": [
+          "at",
+          "on",
+          "by"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The park, ___ which we often go on Sundays, is beautiful.",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "by",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The issue with respect ___ which we disagree is funding.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The grounds ___ which the appeal was dismissed were procedural.",
+        "answer": "on",
+        "distractors": [
+          "at",
+          "by",
+          "to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The scale ___ which the damage spread shocked the engineers.",
+        "answer": "on",
+        "distractors": [
+          "at",
+          "by",
+          "of"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The committee, the chair ___ which resigned, has been dissolved.",
+        "answer": "of",
+        "distractors": [
+          "at",
+          "to",
+          "by"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The era ___ which these manuscripts date is poorly documented.",
+        "answer": "from",
+        "distractors": [
+          "at",
+          "on",
+          "by"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The agency ___ which the funds were channelled was later audited.",
+        "answer": "through",
+        "distractors": [
+          "at",
+          "of",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The window ___ which the burglar climbed had been left open.",
+        "answer": "through",
+        "distractors": [
+          "at",
+          "by",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The terms ___ which the loan was granted were never disclosed.",
+        "answer": "on",
+        "distractors": [
+          "at",
+          "to",
+          "by"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "To ___ it may concern: this letter recommends Jane Smith.",
+        "answer": "whom",
+        "distractors": [
+          "who",
+          "whomever",
+          "that"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She's the mentor from ___ I learned the most.",
+        "answer": "whom",
+        "distractors": [
+          "who",
+          "that",
+          "which"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "That's the theory ___ which everything else rests.",
+        "answer": "upon",
+        "distractors": [
+          "at",
+          "by",
+          "off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The extent ___ which the policy succeeded is still debated.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "at",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The degree ___ which the results are reproducible matters greatly.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "at",
+          "by"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The manner ___ which the negotiations were conducted drew criticism.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "by",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The process ___ which proteins fold is still not fully understood.",
+        "answer": "by",
+        "distractors": [
+          "at",
+          "on",
+          "to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The principles ___ means of which the system operates are transparent.",
+        "answer": "by",
+        "distractors": [
+          "with",
+          "at",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The period ___ which the reforms took place was deeply turbulent.",
+        "answer": "during",
+        "distractors": [
+          "at",
+          "on",
+          "by"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It's a theory ___ which I've devoted years of research.",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "by",
+          "of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The treaty and the obligations ___ were ratified unanimously.",
+        "answer": "thereunder",
+        "distractors": [
+          "thereof",
+          "therein",
+          "thereby"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The contract and the terms ___ were filed with the court.",
+        "answer": "thereof",
+        "distractors": [
+          "thereunder",
+          "thereby",
+          "therein"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The lens ___ which the historian views the war is unmistakably modern.",
+        "answer": "through",
+        "distractors": [
+          "at",
+          "by",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The candidate ___ whom the post was offered declined it.",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "by",
+          "of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The author ___ work I most admire lived in the 19th century.",
+        "answer": "whose",
+        "distractors": [
+          "which",
+          "that",
+          "whom"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "prepositions-in-relative-clauses-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "In a relative clause, the missing word ({answer}) is the preposition or relative pronoun that is semantically bound to the relative clause; the register (end-position stranding vs front-position pied-piping) and the use of whom/which/that must match.",
+          "ru": "В относительном придаточном пропущенное слово ({answer}) — это предлог или относительное местоимение, связанное со смыслом придаточного; регистр (стрэндинг в конце или вынос вперёд) и выбор whom/which/that должны совпадать."
+        }
+      }
+    ]
   }
 };

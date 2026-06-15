@@ -269,5 +269,681 @@ export const topic: GrammarTopic = {
       "normal: subject + auxiliary",
       "inverted: auxiliary + subject"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "templates": [
+      {
+        "id": "inversion-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "After a fronted negative/restrictive adverbial or in formal if-less conditionals, English requires subject-auxiliary inversion — the auxiliary must move before the subject (here: {answer}).",
+          "ru": "После вынесенного отрицательного/ограничительного обстоятельства или в формальных условных без 'if' английский требует инверсии подлежащего и вспомогательного глагола (здесь: {answer})."
+        }
+      }
+    ],
+    "contexts": [
+      {
+        "stem": "Never ___ I seen such a breathtaking view as the one from that summit.",
+        "answer": "have",
+        "distractors": [
+          "I have",
+          "had I have",
+          "do"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Rarely ___ she complain about the long hours she works.",
+        "answer": "does",
+        "distractors": [
+          "she",
+          "is",
+          "has"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Seldom ___ we encountered a problem this difficult to solve.",
+        "answer": "have",
+        "distractors": [
+          "we have",
+          "did have",
+          "are"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Not until the results came back ___ I finally relax.",
+        "answer": "did",
+        "distractors": [
+          "I",
+          "had",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Little ___ she know that her life was about to change forever.",
+        "answer": "did",
+        "distractors": [
+          "she",
+          "had",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Not only ___ the meal expensive, but the service was also terrible.",
+        "answer": "was",
+        "distractors": [
+          "it was",
+          "did",
+          "had"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Under no circumstances ___ you open the emergency exit during the flight.",
+        "answer": "should",
+        "distractors": [
+          "you should",
+          "you must",
+          "do"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "On no account ___ the staff give out a customer's password over the phone.",
+        "answer": "must",
+        "distractors": [
+          "the staff must",
+          "are",
+          "do"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Hardly ___ I closed my eyes when the alarm went off again.",
+        "answer": "had",
+        "distractors": [
+          "I had",
+          "did",
+          "have"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "No sooner ___ the train left than I realised I'd forgotten my bag.",
+        "answer": "had",
+        "distractors": [
+          "the train had",
+          "did",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "In no way ___ this delay our fault, so we will not offer a refund.",
+        "answer": "is",
+        "distractors": [
+          "this is",
+          "does",
+          "has"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Here ___ the bus at last, so we'd better run for the stop.",
+        "answer": "comes",
+        "distractors": [
+          "is coming",
+          "it comes",
+          "does come"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There ___ our last chance of catching the early flight.",
+        "answer": "goes",
+        "distractors": [
+          "is going",
+          "it goes",
+          "does go"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I'll handle it,\" ___ the manager, picking up the phone.",
+        "answer": "said",
+        "distractors": [
+          "she said",
+          "did say",
+          "was saying"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Never before ___ the team faced such fierce competition in a final.",
+        "answer": "had",
+        "distractors": [
+          "the team had",
+          "did",
+          "have"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Rarely ___ a film moved me as deeply as that documentary did.",
+        "answer": "has",
+        "distractors": [
+          "a film has",
+          "did",
+          "is"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Not until much later ___ we understand what the warning had meant.",
+        "answer": "did",
+        "distractors": [
+          "we",
+          "had",
+          "were"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Seldom ___ such a small company achieve so much in a single year.",
+        "answer": "does",
+        "distractors": [
+          "such a small company",
+          "is",
+          "has"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Never ___ I expected the meeting to end so badly.",
+        "answer": "had",
+        "distractors": [
+          "I had",
+          "did have",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Not only ___ she finish the marathon, but she also set a personal record.",
+        "answer": "did",
+        "distractors": [
+          "she",
+          "was",
+          "had"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "At no time ___ I informed that the policy had changed.",
+        "answer": "was",
+        "distractors": [
+          "I was",
+          "did",
+          "had"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "By no means ___ this the only solution we considered.",
+        "answer": "is",
+        "distractors": [
+          "this is",
+          "does",
+          "has"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "On no occasion ___ the auditor found any evidence of fraud.",
+        "answer": "has",
+        "distractors": [
+          "the auditor has",
+          "did",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Only then ___ we realise how serious the situation had become.",
+        "answer": "did",
+        "distractors": [
+          "we",
+          "had",
+          "were"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Only by working together ___ we hope to meet the deadline.",
+        "answer": "can",
+        "distractors": [
+          "we can",
+          "we",
+          "do"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Only after the meeting ___ she reveal her true intentions.",
+        "answer": "did",
+        "distractors": [
+          "she",
+          "had",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Not for one moment ___ I believe his excuse about the traffic.",
+        "answer": "did",
+        "distractors": [
+          "I",
+          "had",
+          "do"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Not since childhood ___ he felt so completely at ease.",
+        "answer": "had",
+        "distractors": [
+          "he had",
+          "did",
+          "has"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Barely ___ she sat down when her phone began to ring.",
+        "answer": "had",
+        "distractors": [
+          "she had",
+          "did",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Scarcely ___ the speech ended when the audience rose to applaud.",
+        "answer": "had",
+        "distractors": [
+          "the speech had",
+          "did",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ I known about the strike, I would have taken an earlier train.",
+        "answer": "Had",
+        "distractors": [
+          "If had",
+          "Have",
+          "Did"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ she here now, she would tell you exactly the same thing.",
+        "answer": "Were",
+        "distractors": [
+          "If were",
+          "Was",
+          "Be"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ you need any assistance, our team is available around the clock.",
+        "answer": "Should",
+        "distractors": [
+          "If should",
+          "Would",
+          "Do"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ I to accept their offer, I'd have to relocate abroad next month.",
+        "answer": "Were",
+        "distractors": [
+          "If were",
+          "Was",
+          "Should"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "So important ___ this decision that the board met three times to discuss it.",
+        "answer": "was",
+        "distractors": [
+          "this decision was",
+          "did",
+          "had"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Such ___ her determination that nothing could discourage her.",
+        "answer": "was",
+        "distractors": [
+          "her determination was",
+          "did",
+          "had been"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Cold ___ it was, the climbers pressed on towards the peak.",
+        "answer": "though",
+        "distractors": [
+          "despite",
+          "even",
+          "while"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Hard ___ she tried, she simply could not convince the committee.",
+        "answer": "as",
+        "distractors": [
+          "though that",
+          "even",
+          "despite"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Try ___ he might, he could not remember where he had left the keys.",
+        "answer": "as",
+        "distractors": [
+          "though",
+          "even if",
+          "while"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "On the hilltop ___ an ancient stone tower, grey against the sky.",
+        "answer": "stood",
+        "distractors": [
+          "it stood",
+          "was standing",
+          "did stand"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Out of the shadows ___ a figure none of us recognised.",
+        "answer": "emerged",
+        "distractors": [
+          "it emerged",
+          "was emerging",
+          "did emerge"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Only when the lights went out ___ the children begin to panic.",
+        "answer": "did",
+        "distractors": [
+          "the children",
+          "had",
+          "were"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "By no means ___ everyone agree with the new direction.",
+        "answer": "did",
+        "distractors": [
+          "everyone",
+          "had",
+          "is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Never again ___ I lend money to someone I barely know.",
+        "answer": "will",
+        "distractors": [
+          "I will",
+          "I",
+          "do"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Tired ___ she was, she stayed up to finish the report.",
+        "answer": "as",
+        "distractors": [
+          "though that",
+          "even",
+          "despite"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Little ___ the scientists realise the revolutionary impact of their discovery.",
+        "answer": "did",
+        "distractors": [
+          "the scientists",
+          "had",
+          "were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Such ___ the devastation that reconstruction took several decades.",
+        "answer": "was",
+        "distractors": [
+          "the devastation was",
+          "did",
+          "had been"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Gone ___ the days when a single letter could change the course of history.",
+        "answer": "are",
+        "distractors": [
+          "they are",
+          "is",
+          "have"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Missing from the report ___ any mention of the financial irregularities.",
+        "answer": "was",
+        "distractors": [
+          "it was",
+          "did",
+          "has"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ it not for her timely intervention, the whole project would have collapsed.",
+        "answer": "Were",
+        "distractors": [
+          "If were",
+          "Was",
+          "Had"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Scarcely ___ the verdict been announced when the courtroom erupted in protest.",
+        "answer": "had",
+        "distractors": [
+          "the verdict had",
+          "did",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Deep within the forest ___ a hermit who had not spoken to a soul in years.",
+        "answer": "lived",
+        "distractors": [
+          "it lived",
+          "was living",
+          "did live"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Hushed ___ the chamber as the verdict was finally read aloud.",
+        "answer": "was",
+        "distractors": [
+          "the chamber was",
+          "did",
+          "had"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Blessed ___ those who can find contentment in the smallest of things.",
+        "answer": "are",
+        "distractors": [
+          "they are",
+          "is",
+          "have"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Never before, in all my years on the bench, ___ I encountered a case so perplexing.",
+        "answer": "had",
+        "distractors": [
+          "I had",
+          "did",
+          "have"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "To her alone ___ all the credit for the company's remarkable turnaround.",
+        "answer": "went",
+        "distractors": [
+          "it went",
+          "was going",
+          "did go"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Not since the last recession ___ the markets shown such volatility.",
+        "answer": "have",
+        "distractors": [
+          "the markets have",
+          "did",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "However exhausted she ___ have been, she never once let it show.",
+        "answer": "might",
+        "distractors": [
+          "was",
+          "had",
+          "did"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "There ___ no further business, the chairman declared the meeting closed.",
+        "answer": "being",
+        "distractors": [
+          "was",
+          "is",
+          "had been"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Dinner ___ been served, the guests drifted into the drawing room.",
+        "answer": "having",
+        "distractors": [
+          "had",
+          "was",
+          "has"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "So complete ___ her victory that no rival dared to challenge her again.",
+        "answer": "was",
+        "distractors": [
+          "her victory was",
+          "did",
+          "had been"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Were ___ to discover the truth, the consequences would be catastrophic.",
+        "answer": "he",
+        "distractors": [
+          "if he",
+          "he had",
+          "should he"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Lost ___ the innocence that had once defined that small mountain village.",
+        "answer": "was",
+        "distractors": [
+          "it was",
+          "did",
+          "has been"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Long ___ she reign over a kingdom that has known nothing but peace.",
+        "answer": "may",
+        "distractors": [
+          "she may",
+          "will",
+          "does"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Under the old regime ___ a culture of corruption that took years to uproot.",
+        "answer": "flourished",
+        "distractors": [
+          "it flourished",
+          "was flourishing",
+          "did flourish"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };
