@@ -18,7 +18,13 @@ export const topic: GrammarTopic = {
   ],
   "family": "tenses",
   "egp": [
-    "EGP:can use 'will' + base form to predict and to make on-the-spot decisions, promises and offers"
+    "egp.a2.tenses-aspect.will-future-decisions-predictions",
+    "egp.b1.verbs.will-spontaneous-decisions",
+    "egp.b1.verbs.going-to-plans-predictions",
+    "egp.b1.tenses-aspect.present-continuous-future-arrangements",
+    "egp.b2.tenses-aspect.future-in-the-past",
+    "egp.c2.modality.modal-attitude-and-irony",
+    "egp.c2.modality.epistemic-modality-fine-gradation"
   ],
   "archetype": "timeline",
   "lessons": {

@@ -18,7 +18,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "tenses",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.tenses-aspect.past-continuous-interrupted",
+    "egp.b1.tenses-aspect.past-continuous-interrupted",
+    "egp.b2.verbs.state-verbs-in-continuous",
+    "egp.c1.tenses-aspect.narrative-tense-shifting"
   ],
   "archetype": "timeline",
   "lessons": {

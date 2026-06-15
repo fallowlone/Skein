@@ -17,7 +17,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "adverbs",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.adjectives-adverbs.intensifiers-quite-really",
+    "egp.b1.adjectives-adverbs.adverbs-of-degree",
+    "egp.b2.adjectives-adverbs.intensifiers-gradable-non-gradable",
+    "egp.c1.adjectives-adverbs.gradable-vs-non-gradable-intensifiers",
+    "egp.c2.adjectives-adverbs.gradable-vs-ungradable-intensification"
   ],
   "archetype": "scale",
   "lessons": {

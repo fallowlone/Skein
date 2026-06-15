@@ -15,7 +15,8 @@ export const topic: GrammarTopic = {
   ],
   "family": "discourse",
   "egp": [
-    "EGP:best-effort"
+    "egp.c1.discourse-cohesion.ellipsis-and-substitution",
+    "egp.c2.discourse-cohesion.substitution-and-ellipsis-cohesion"
   ],
   "archetype": "swap",
   "lessons": {
