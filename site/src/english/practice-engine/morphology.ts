@@ -194,8 +194,19 @@ function syllableHeuristic(adj: string): number {
     if (v && !prevV) count += 1;
     prevV = v;
   }
-  if (w.endsWith("e") && count > 1) count -= 1;
+  // Silent final -e is not its own syllable — EXCEPT in "-le" endings (ta-ble, sim-ple),
+  // where the -le carries a syllable. Subtracting there undercounts (e.g. reliable).
+  if (w.endsWith("e") && !w.endsWith("le") && count > 1) count -= 1;
   return Math.max(1, count);
+}
+
+// A "short" adjective takes -er/-est: one syllable, or two syllables ending in
+// y / le / ow / er. Everything else routes through more/most.
+function isShortAdj(w: string): boolean {
+  const syl = syllableHeuristic(w);
+  if (syl <= 1) return true;
+  if (syl === 2 && /(y|le|ow|er)$/.test(w)) return true;
+  return false;
 }
 
 export function adjForm(lemma: string, form: "base" | "comparative" | "superlative"): string {
@@ -207,9 +218,10 @@ export function adjForm(lemma: string, form: "base" | "comparative" | "superlati
     if (w === "far") return "farther";
     if (w === "many" || w === "much") return "more";
     if (w === "little") return "less";
-    if (syllableHeuristic(w) >= 3) return `more ${w}`;
+    if (!isShortAdj(w)) return `more ${w}`;
     if (consonantPlusY(w)) return `${w.slice(0, -1)}ier`;
     if (isOneSyllableCVC(w)) return `${w}${lastChar(w)}er`;
+    if (w.endsWith("e")) return `${w}r`;
     return `${w}er`;
   }
   // superlative
@@ -217,8 +229,9 @@ export function adjForm(lemma: string, form: "base" | "comparative" | "superlati
   if (w === "bad") return "worst";
   if (w === "far") return "farthest";
   if (w === "many" || w === "much") return "most";
-  if (syllableHeuristic(w) >= 3) return `most ${w}`;
+  if (!isShortAdj(w)) return `most ${w}`;
   if (consonantPlusY(w)) return `${w.slice(0, -1)}iest`;
   if (isOneSyllableCVC(w)) return `${w}${lastChar(w)}est`;
+  if (w.endsWith("e")) return `${w}st`;
   return `${w}est`;
 }

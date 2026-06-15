@@ -36,4 +36,14 @@ describe("adjForm", () => {
     expect(adjForm("big", "superlative")).toBe("biggest");
     expect(adjForm("expensive", "superlative")).toBe("most expensive");
   });
+  it("handles silent -e (no doubled e)", () => {
+    expect(adjForm("large", "comparative")).toBe("larger");
+    expect(adjForm("simple", "comparative")).toBe("simpler");
+    expect(adjForm("large", "superlative")).toBe("largest");
+  });
+  it("routes 2-syllable non-(y/le/ow/er) adjectives through more/most", () => {
+    expect(adjForm("modern", "comparative")).toBe("more modern");
+    expect(adjForm("reliable", "comparative")).toBe("more reliable");
+    expect(adjForm("modern", "superlative")).toBe("most modern");
+  });
 });
