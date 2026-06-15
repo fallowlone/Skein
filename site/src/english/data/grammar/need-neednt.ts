@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "need-neednt",
   "title": {
-    "en": "",
+    "en": "Need and Needn't",
     "ru": "Need Neednt"
   },
   "cefr": "B1",
@@ -15,36 +15,54 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "modals",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "`Need` is an unusual verb: it works **both** as an ordinary verb and as a modal.\n\n**1. Need as an ordinary verb (`need to` + base):** this is the most common and the safest pattern.\n- `I need to go home.`\n- `She needs to study more.`\n- `We don't need to hurry.`\n- `Do you need to call him?`\n\nAs an ordinary verb, `need` takes `-s` in the third person and uses `do/does` for questions and negatives.\n\n**2. Need as a modal (`needn't` + base):** only in the negative. It means *it isn't necessary*, *you aren't obliged to*:\n- `You needn't come if you're tired.`\n- `She needn't worry.`\n\nAfter `needn't` the verb has **no `to` and no `-s`**. `Needn't` = `need not`.\n\n**3. Needn't vs don't need to:** practically the same meaning — `You needn't come.` = `You don't need to come.` The difference is subtle: `needn't` is a little more formal and more British and often signals the speaker releasing you from a duty; `don't need to` is neutral and simply describes the absence of necessity. In speech, `don't need to` is more common.\n\n**4. Needn't vs mustn't — the key contrast.** `You mustn't smoke here.` is a **prohibition** (it is not allowed). `You needn't smoke.` means you are **not obliged** to (you may smoke or not). This is a classic mistake: `mustn't` = forbidden, `needn't` = no obligation.\n\n**5. Need + -ing (passive meaning):** `My car needs washing.` = it needs to be washed. The more standard alternative is `My car needs to be washed.` The `-ing` form is British and conversational.",
         "ru": "**Need** — интересный глагол: он может работать и как **обычный глагол**, и как **модальный**.\n\n**1. Need как обычный глагол (need to + base):**\nСамое частое и безопасное употребление:\n- `I need to go home.` (Мне надо домой.)\n- `She needs to study more.` (Ей надо больше учиться.)\n- `We don't need to hurry.` (Нам не надо торопиться.)\n- `Do you need to call him?` (Тебе надо ему позвонить?)\n\nКак обычный глагол, `need` имеет `-s` в 3-м лице, использует `do/does` для вопросов и отрицаний.\n\n**2. Need как модальный (needn't + base):**\nТолько в отрицательной форме. Значит «не нужно», «не обязан»:\n- `You needn't come if you're tired.` (Тебе не нужно приходить, если ты устал.)\n- `She needn't worry.` (Ей не нужно беспокоиться.)\n\nПосле `needn't` — глагол без `to` и без `-s`. `Needn't` = `need not`.\n\n**3. Needn't vs don't need to:**\nПрактически одно и то же значение:\n- `You needn't come.` = `You don't need to come.` (Тебе не нужно приходить.)\n\nРазница тонкая:\n- `needn't` — чуть более формально/британски, часто выражает позицию говорящего (я тебя освобождаю от обязанности).\n- `don't need to` — нейтрально, описывает отсутствие необходимости.\n\n**В речи чаще используется `don't need to`.**\n\n**4. Needn't vs mustn't — важная разница:**\n- `You mustn't smoke here.` (Тебе нельзя здесь курить.) — запрет.\n- `You needn't smoke.` (Тебе не нужно курить.) — не обязан (можешь не курить, если не хочешь).\n\nЭто частая ошибка! `Mustn't` = запрет, `needn't` = отсутствие обязанности.\n\n**5. Need + -ing (passive meaning, редкое использование):**\n- `My car needs washing.` (Моя машина нуждается в мытье / её надо помыть.) — британский разговорный.\n- Альтернатива: `My car needs to be washed.` — более стандартно.\n\nЭто пассивное значение: что-то нужно сделать с подлежащим.\n\n**6. Типичные ошибки:**\n- ❌ `You needn't to come.` → ✅ `You needn't come.` (без to)\n- ❌ `Do you needn't to go?` → ✅ `Don't you need to go?` (вопрос с do)\n- ❌ `He needs go.` → ✅ `He needs to go.`\n- Смешение: `don't need to` и `needn't` — одно значение, не путай их с `mustn't`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "ordinary: subject + need(s) + to + base / don't/doesn't need to + base; modal: subject + needn't + base verb (no to, no -s)",
+        "ru": "обычный глагол: подлежащее + need(s) + to + глагол / don't/doesn't need to + глагол; модальный: подлежащее + needn't + глагол (без to, без -s)"
       },
       "examples": [
         {
           "en": "You don't need to apologise — it's not your fault.",
-          "ru": "Тебе не нужно извиняться — это не твоя вина."
+          "ru": "Тебе не нужно извиняться — это не твоя вина.",
+          "note": {
+            "en": "no obligation",
+            "ru": "нет необходимости"
+          }
         },
         {
           "en": "She needn't worry about the exam — she's well prepared.",
-          "ru": "Ей не нужно беспокоиться об экзамене — она хорошо подготовлена."
+          "ru": "Ей не нужно беспокоиться об экзамене — она хорошо подготовлена.",
+          "note": {
+            "en": "needn't = not necessary",
+            "ru": "needn't = необязательно"
+          }
         },
         {
           "en": "Do we need to book in advance?",
-          "ru": "Нам нужно бронировать заранее?"
+          "ru": "Нам нужно бронировать заранее?",
+          "note": {
+            "en": "question with do",
+            "ru": "вопрос с do"
+          }
         },
         {
           "en": "My phone needs charging.",
-          "ru": "Мой телефон надо зарядить."
+          "ru": "Мой телефон надо зарядить.",
+          "note": {
+            "en": "need + -ing",
+            "ru": "need + -ing"
+          }
         },
         {
           "en": "I needn't have called — she was already on her way.",
@@ -54,34 +72,68 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Mustn't = запрет; needn't / don't need to = не обязан — это совсем разные значения."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "You needn't to come.",
+          "right": "You needn't come.",
+          "why": {
+            "en": "After modal `needn't` the verb is the bare base form, with no `to`.",
+            "ru": "После модального needn't глагол стоит без to."
+          }
+        },
+        {
+          "wrong": "You needn't smoke here, it's forbidden.",
+          "right": "You mustn't smoke here, it's forbidden.",
+          "why": {
+            "en": "A prohibition needs `mustn't`; `needn't` only means there is no obligation.",
+            "ru": "Запрет требует mustn't; needn't значит только отсутствие обязанности."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the central distinction appears: **needn't have done** vs **didn't need to do**.\n\n**1. Needn't have + past participle.** The action **was** done, but it **wasn't necessary**:\n- `You needn't have cooked — we already ate.` (you cooked, but it was pointless).\n- `She needn't have apologised — nobody was upset.` (she apologised, but it was unnecessary).\n\nThe implication is clear: **the action happened**, and we are saying it was superfluous.\n\n**2. Didn't need to + base.** The action **wasn't necessary**, and we **don't specify** whether it was done — and the implication is usually that it was **not**:\n- `I didn't need to buy bread — we had plenty.` (most likely I didn't buy it).\n- `She didn't need to come early.` (whether she came is left open).\n\n**3. The key contrast.** `needn't have done` → the action **did** happen but was pointless; `didn't need to do` → it usually **didn't** happen, or it is unclear. Compare: `I needn't have taken an umbrella — it didn't rain.` (I took one, wasted effort) vs `I didn't need to take an umbrella — the weather was fine.` (I probably didn't take one).\n\n**4. Modal need in questions (rare, formal):** `Need I say more?`, `Need you shout?` — rhetorical or literary. Everyday English prefers `Do you need to shout?`\n\n**5. Need + -ing (passive meaning):** `The windows need cleaning.`, `This report needs revising.` This equals `need to be + past participle` (`The windows need to be cleaned.`). The `-ing` version is the compact, conversational British form.",
         "ru": "На B2 появляется ключевая разница: **needn't have done** vs **didn't need to do**.\n\n**1. Needn't have + past participle:**\nДействие было сделано, но оно **не было необходимо**:\n- `You needn't have cooked — we already ate.` (Тебе не нужно было готовить — мы уже поели.) — ты приготовил, но зря.\n- `She needn't have apologised — nobody was upset.` (Ей не нужно было извиняться — никто не расстроился.) — она извинилась, но это было лишнее.\n\n**Подразумевается: действие произошло.** Мы говорим, что оно было излишним.\n\n**2. Didn't need to + base:**\nДействие **не было необходимо**, и мы **не указываем**, было ли оно сделано. Часто подразумевает, что действие не было сделано:\n- `I didn't need to buy bread — we had plenty.` (Мне не надо было покупать хлеб — у нас было достаточно.) — скорее всего, не купил.\n- `She didn't need to come early.` (Ей не надо было приходить рано.) — вопрос, пришла ли рано, остаётся открытым (но часто подразумевается, что не пришла).\n\n**3. Ключевая разница:**\n\n| Форма | Действие произошло? |\n|---|---|\n| `needn't have done` | ДА, но было излишним |\n| `didn't need to do` | обычно НЕТ, или неясно |\n\nПример на контраст:\n- `I needn't have taken an umbrella — it didn't rain.` (Я зря взял зонтик — дождя не было.) — я взял, но зря.\n- `I didn't need to take an umbrella — the weather was fine.` (Мне не нужно было брать зонтик — была хорошая погода.) — я скорее всего и не взял.\n\n**4. Need в вопросах как модальный (rare):**\n- `Need I say more?` (Нужно ли мне говорить больше?) — риторический, литературный.\n- `Need you shout?` (Тебе обязательно кричать?) — раздражённо.\n\nЭто редкое формальное использование. В повседневной речи — `Do you need to shout?`\n\n**5. Need + -ing в пассивном значении:**\n- `The windows need cleaning.` (Окна нуждаются в чистке.)\n- `This report needs revising.` (Этот отчёт нужно переработать.)\n- `Your shoes need polishing.` (Твои туфли нужно почистить.)\n\nПо значению = `need to be + past participle`:\n- `The windows need to be cleaned.`\n\nПервая форма (с `-ing`) — британская, компактная, разговорная.\n\n**6. Want + -ing (regional synonym):**\nВ некоторых диалектах вместо `need + -ing` используется `want + -ing`:\n- `The car wants washing.` (Scottish/Northern English.)\n\n**7. Типичные ошибки B2:**\n- ❌ `You didn't need have told me.` → ✅ `You needn't have told me.`\n- ❌ `I needn't went.` → ✅ `I needn't have gone.`\n- ❌ Путаница: `needn't have` со значением «не надо было делать, но сделал» — запомни это."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "needn't have + past participle = it was done but unnecessary; didn't need to + base = it wasn't necessary (usually not done); need + -ing = need to be + past participle",
+        "ru": "needn't have + причастие прошедшего времени = сделано, но было лишним; didn't need to + глагол = не было необходимости (обычно не сделано); need + -ing = need to be + причастие"
       },
       "examples": [
         {
           "en": "You needn't have bought flowers — it wasn't necessary.",
-          "ru": "Тебе не нужно было покупать цветы — это было необязательно."
+          "ru": "Тебе не нужно было покупать цветы — это было необязательно.",
+          "note": {
+            "en": "done but unnecessary",
+            "ru": "сделано, но лишнее"
+          }
         },
         {
           "en": "I didn't need to call — she saw my text.",
-          "ru": "Мне не надо было звонить — она увидела моё сообщение."
+          "ru": "Мне не надо было звонить — она увидела моё сообщение.",
+          "note": {
+            "en": "wasn't necessary (not done)",
+            "ru": "не было нужно (не сделано)"
+          }
         },
         {
           "en": "The garden needs watering.",
-          "ru": "Сад нуждается в поливе."
+          "ru": "Сад нуждается в поливе.",
+          "note": {
+            "en": "need + -ing (passive)",
+            "ru": "need + -ing (пассив)"
+          }
         },
         {
           "en": "Need I remind you of our agreement?",
-          "ru": "Нужно ли мне напоминать о нашем соглашении?"
+          "ru": "Нужно ли мне напоминать о нашем соглашении?",
+          "note": {
+            "en": "modal need in question",
+            "ru": "модальный need в вопросе"
+          }
         },
         {
           "en": "She needn't have worried — everything went smoothly.",
@@ -91,26 +143,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Needn't have done — действие произошло зря; didn't need to do — действие не было необходимо и часто не случилось."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "You didn't need have told me.",
+          "right": "You needn't have told me.",
+          "why": {
+            "en": "The 'done but unnecessary' meaning is `needn't have` + past participle, not a blend with `didn't`.",
+            "ru": "Значение «сделано, но зря» — это needn't have + причастие, а не смесь с didn't."
+          }
+        },
+        {
+          "wrong": "I needn't went to the shop.",
+          "right": "I needn't have gone to the shop.",
+          "why": {
+            "en": "For a past action use `needn't have` + past participle, never `needn't` + a past-tense verb.",
+            "ru": "Для прошлого действия нужно needn't have + причастие, а не needn't + глагол в прошедшем времени."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, `need/needn't` are precise tools of **implication**, **retroactive evaluation**, and **formal register**.\n\n**1. Needn't have done — retroactive evaluation.** `She needn't have said anything — we understood perfectly.` carries an extra pragmatic layer: a mild judgement that the action was superfluous. Contrast with `shouldn't have`: `She shouldn't have said that.` is a **moral** reproach, whereas `She needn't have said that.` flags **redundancy**, not a moral fault.\n\n**2. Modal need in formal questions:** `Need I stress the importance of confidentiality?`, `Need we discuss this further?` — rhetorical or emphatic, often with a note of impatience or authority.\n\n**3. Need not in declarations.** In official prose, `need not` is written as two words: `You need not concern yourself with the details.`, `Staff need not attend the optional session.`\n\n**4. Implication of done vs not done.** `I didn't need to pay — it was free.` usually means *I didn't pay*; `I needn't have paid — it was free.` means *I paid, though I didn't have to.* When context is ambiguous, `needn't have` unambiguously marks a completed action; `didn't need to` requires more context.\n\n**5. Need + -ing (passive):** `The proposal needs refining.`, `The contract needs reviewing by legal.` — compact, conversational-professional.\n\n**6. Need + object + to-infinitive:** `I need you to focus.`, `We need them to approve the budget.` — the standard frame for assigning someone else a task.\n\n**7. Don't need to / no need in smooth refusals:** `You don't need to apologise.`, `There's no need to worry.`, `There's no need for you to come.` — releasing the listener from social pressure.\n\n**8. Formal refusals of an offer:** `Thank you, but that won't be needed.`, `Your attendance is not required.`, `No action is needed on your part.`",
         "ru": "На C1 `need/needn't` — тонкие инструменты **implication**, **retroactive criticism** и **formal register**.\n\n**1. Needn't have done — retroactive evaluation:**\n- `She needn't have said anything — we understood perfectly.` (Ей не нужно было ничего говорить — мы прекрасно поняли.)\n\nЭта конструкция несёт дополнительное прагматическое значение: мягкий упрёк или оценка. Говорящий констатирует, что действие было излишним.\n\nСравни с `shouldn't have + pp`:\n- `She shouldn't have said that.` (Ей не следовало это говорить.) — моральный упрёк.\n- `She needn't have said that.` (Ей не нужно было это говорить.) — избыточность действия, не моральный упрёк.\n\n**2. Modal need в формальных вопросах:**\n- `Need I stress the importance of confidentiality?` (Нужно ли мне подчёркивать важность конфиденциальности?)\n- `Need we discuss this further?` (Нужно ли нам обсуждать это дальше?)\n\nЭто риторический или подчёркнутый формальный регистр. Часто с нотой нетерпения или авторитарности.\n\n**3. Don't need / need not в декларациях:**\n- `You need not concern yourself with the details.` (Вам не нужно беспокоиться о деталях.) — формально, часто в официальной корреспонденции.\n- `Staff need not attend the optional session.` (Персонал не обязан посещать факультативную сессию.)\n\nВ деловых и официальных текстах `need not` раздельно — стандарт.\n\n**4. Implication of done vs not done:**\nНа C1 нужно чётко различать прагматические импликации:\n\n- `I didn't need to pay — it was free.` — чаще всего: я не заплатил.\n- `I needn't have paid — it was free.` — я заплатил, хотя не надо было.\n\nКогда контекст двусмыслен, `needn't have` указывает на совершённое действие однозначно. `Didn't need to` требует дополнительного контекста.\n\n**5. Need + passive -ing construction:**\n- `The proposal needs refining.` (Предложение нуждается в доработке.)\n- `The contract needs reviewing by legal.` (Контракт нужно рассмотреть юридическому отделу.)\n\nВ professional writing — компактный, разговорно-деловой стиль.\n\n**6. Need + object + to-infinitive:**\n- `I need you to focus.` (Мне нужно, чтобы ты сосредоточился.)\n- `We need them to approve the budget.` (Нам нужно, чтобы они одобрили бюджет.)\n\nЭто стандартная структура для объяснения чужой задачи.\n\n**7. Don't need to в smooth refusals:**\n- `You don't need to apologise.` (Не нужно извиняться.) — освобождение от социального давления.\n- `There's no need to worry.` (Не о чем беспокоиться.) — аналог с существительным.\n\n**8. Didn't need to vs needn't have — finer distinctions:**\n\n**Scenario:** Ты думал, что нужно принести подарок на вечеринку, и принёс. Потом узнаёшь, что подарки не требовались.\n\n- `I needn't have brought a gift.` — правильно (я принёс, но не надо было).\n- `I didn't need to bring a gift.` — двусмысленно (может означать «я и не принёс», может — «я принёс, но зря»).\n\nНа C1 первая форма предпочтительнее для ясности.\n\n**9. No need + ing / infinitive:**\n- `There's no need to shout.` (Не надо кричать.)\n- `No need for worry.` (Не о чем беспокоиться.)\n- `There's no need for you to come.` (Тебе не нужно приходить.)\n\n**10. Formal refusals of offer:**\n- `Thank you, but that won't be needed.` (Спасибо, но это не понадобится.)\n- `Your attendance is not required.` (Ваше присутствие не требуется.)\n- `No action is needed on your part.` (От вас не требуется никаких действий.)\n\nЭто стандартные формулировки в корпоративной коммуникации."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "needn't have + past participle = action done but superfluous (vs shouldn't have = morally wrong); need + object + to-infinitive = ask someone else to act; need not (two words) = formal register",
+        "ru": "needn't have + причастие = действие сделано, но лишнее (vs shouldn't have = морально неверно); need + дополнение + to-инфинитив = поручить действие другому; need not (раздельно) = формальный регистр"
       },
       "examples": [
         {
           "en": "You needn't have worried — the issue resolved itself.",
-          "ru": "Тебе не надо было волноваться — проблема разрешилась сама."
+          "ru": "Тебе не надо было волноваться — проблема разрешилась сама.",
+          "note": {
+            "en": "redundancy, not reproach",
+            "ru": "избыточность, не упрёк"
+          }
         },
         {
           "en": "Need I spell out the consequences of non-compliance?",
-          "ru": "Нужно ли мне расписывать последствия несоблюдения?"
+          "ru": "Нужно ли мне расписывать последствия несоблюдения?",
+          "note": {
+            "en": "formal rhetorical question",
+            "ru": "формальный риторический вопрос"
+          }
         },
         {
           "en": "The manuscript needs extensive revision before publication.",
@@ -118,40 +196,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I need you to understand the urgency of the situation.",
-          "ru": "Мне нужно, чтобы ты понял срочность ситуации."
+          "ru": "Мне нужно, чтобы ты понял срочность ситуации.",
+          "note": {
+            "en": "need + object + to-infinitive",
+            "ru": "need + дополнение + to-инфинитив"
+          }
         },
         {
           "en": "Candidates need not submit paper copies — electronic submission is sufficient.",
-          "ru": "Кандидатам не требуется подавать бумажные копии — достаточно электронной подачи."
+          "ru": "Кандидатам не требуется подавать бумажные копии — достаточно электронной подачи.",
+          "note": {
+            "en": "formal need not",
+            "ru": "формальное need not"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Needn't have done — действие произошло и было избыточным, что тоньше чем shouldn't have (моральный упрёк)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She needn't have said that — it was so cruel of her.",
+          "right": "She shouldn't have said that — it was so cruel of her.",
+          "why": {
+            "en": "For a moral reproach use `shouldn't have`; `needn't have` only flags that the action was unnecessary.",
+            "ru": "Для морального упрёка нужен shouldn't have; needn't have отмечает только ненужность действия."
+          }
+        },
+        {
+          "wrong": "I need that you focus.",
+          "right": "I need you to focus.",
+          "why": {
+            "en": "To assign someone else a task, use `need + object + to-infinitive`, not a `that`-clause.",
+            "ru": "Чтобы поручить действие другому, используй need + дополнение + to-инфинитив, а не придаточное с that."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, `need/needn't` are a fine instrument of **retroactive regret**, **formal/literary register**, and **pragmatic irony**.\n\n**1. Advanced regret and criticism:** `She needn't have gone to such lengths.` (the effort was excessive); `One needn't have been a genius to see the flaw.` (a barbed comment on slow-wittedness); `I needn't have bothered.` (self-critical resignation).\n\n**2. Irony and sarcasm.** `Well, you needn't have been so modest about it!` is ironic — in fact he was boastful. `He needn't have gone out of his way to insult us.` sarcastically registers the gratuitousness of the rudeness. At C2 the pragmatic force of `needn't have` is often the **opposite** of its literal sense.\n\n**3. Modal need in literary register:** `Need I remind you who brought you into this world?`, `He need not fear.` (archaic-formal), `One need only look at the data to see the truth.` The fixed emphatic pattern `need only` + base means *it is enough simply to do X*.\n\n**4. You need only vs you only need to:** `You need only ask.` is emphatic — it stresses how easy the action is. `You only need to ask.` is neutral — it stresses the minimum required. At C2 this fine distinction is deployed on purpose.\n\n**5. Needn't have been + past participle:** `It needn't have been this way.` (counterfactual regret), `She needn't have been invited.` (judgement of redundancy), `The meeting needn't have been so long.` (retrospective criticism).\n\n**6. Register variation:** `needn't` (more British, slightly formal) — `don't need to` (neutral, universal) — `don't have to` (a touch more emphatic about absence of obligation) — `is not required to` (formal, institutional) — `has no need to` (literary, emphatic). At C2 the choice is a matter of register, authorial stance, and even national variety.\n\n**7. Need not be + adjective:** `The solution need not be complicated.`, `This need not be the end.` — emphatic and optimistic.\n\n**8. Contrastive control over modal siblings:** `needn't have` (redundancy) vs `shouldn't have` (morally wrong); `didn't have to` (no obligation) vs `didn't need to` (no necessity); `don't need to` vs `needn't` (synonyms differing only in formality). At C2 you feel these distinctions intuitively, and your word choice always carries the intended nuance.",
         "ru": "На C2 `need/needn't` — инструменты **retroactive regret**, **formal register** и **pragmatic irony**.\n\n**1. Advanced regret/criticism patterns:**\n- `She needn't have gone to such lengths.` (Ей не надо было так стараться / идти на такие меры.) — оценка: действие было чрезмерным.\n- `One needn't have been a genius to see the flaw.` (Не надо было быть гением, чтобы заметить изъян.) — тонкий упрёк в несообразительности.\n- `I needn't have bothered.` (Я зря старался.) — самокритика с нотой horizont.\n\n**2. Irony and sarcasm with needn't:**\n- `Well, you needn't have been so modest about it!` — ироничный упрёк: на самом деле он был хвастлив.\n- `He needn't have gone out of his way to insult us.` — саркастическая констатация ненужности грубости.\n\nНа C2 прагматические смыслы `needn't have` часто противоположны буквальному значению — это тонкий риторический приём.\n\n**3. Modal need в literary register:**\n- `Need I remind you who brought you into this world?` — литературный риторический вопрос.\n- `He need not fear.` (Ему нечего бояться.) — архаично-формальный стиль.\n- `One need only look at the data to see the truth.` (Достаточно взглянуть на данные, чтобы увидеть правду.) — риторический, эмфатический.\n\n`Need only` + base — устойчивый эмфатический оборот. Означает «достаточно просто сделать X».\n\n**4. You need only vs you only need to — разный смысл:**\n- `You need only ask.` (Достаточно спросить.) — эмфатически, говорит о лёгкости действия.\n- `You only need to ask.` — нейтрально, говорит о минимуме действия.\n\nНа C2 эти тонкие различия используются сознательно.\n\n**5. Needn't have been + past participle:**\n- `It needn't have been this way.` (Не должно было так случиться.) — counterfactual сожаление.\n- `She needn't have been invited.` (Её не нужно было приглашать.) — оценка излишности.\n- `The meeting needn't have been so long.` (Собрание не надо было тянуть так долго.) — ретроспективная критика.\n\n**6. Register variation:**\n- `needn't` — more British, slightly formal.\n- `don't need to` — neutral, universal.\n- `don't have to` — slightly more emphatic about absence of obligation.\n- `is not required to` — formal, institutional.\n- `has no need to` — literary, emphatic.\n\nНа C2 выбор между этими формами — вопрос регистра, авторской позиции и даже национального варианта (UK/US).\n\n**7. Need not be + adjective:**\n- `The solution need not be complicated.` (Решение не обязательно должно быть сложным.)\n- `This need not be the end.` (Это не обязательно конец.)\n\nЭмфатический, оптимистический оборот.\n\n**8. Subjunctive-like need:**\n- `Far be it from me to criticise, but he need not have been so harsh.` — сдвиг на оценочное суждение.\n- `Suffice it to say, he needn't have asked twice.` — высокий литературный регистр.\n\n**9. Gerund complement — advanced uses:**\n- `This argument wants demolishing.` (Этот аргумент нуждается в разгромной критике.) — используется `want` как в `need` + -ing.\n- `Your excuse needs rehearsing.` (Твоё оправдание нуждается в репетиции.) — ироничный.\n\n**10. Complex negation:**\n- `It's not that we needn't have warned them.` — двойное отрицание, тонкая прагматика: «не то чтобы мы не должны были их предупредить» (мы должны были и предупредили).\n\nНа C2 ты распутываешь такие многослойные конструкции.\n\n**11. Contrastive drills with modal siblings:**\n- `mustn't have` (wrong in most cases) vs `can't have` (correct for negative deduction).\n- `needn't have` vs `shouldn't have` — избыточность vs морально неправильно.\n- `didn't have to` vs `didn't need to` — отсутствие обязательства vs отсутствие необходимости.\n- `don't need to` vs `needn't` — синонимы, различие в формальности.\n\nНа C2 эти различия ты чувствуешь интуитивно, и твой выбор слова всегда несёт нужный оттенок."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "need only + base verb = it is enough simply to do X; needn't have been + past participle = counterfactual regret; need not be + adjective = emphatic 'it isn't necessarily'",
+        "ru": "need only + глагол = достаточно просто сделать X; needn't have been + причастие = контрфактическое сожаление; need not be + прилагательное = эмфатическое «необязательно»"
       },
       "examples": [
         {
           "en": "He needn't have gone out of his way to remind us of his superiority.",
-          "ru": "Ему не надо было так стараться напоминать нам о своём превосходстве."
+          "ru": "Ему не надо было так стараться напоминать нам о своём превосходстве.",
+          "note": {
+            "en": "sarcastic / ironic",
+            "ru": "саркастический / ироничный"
+          }
         },
         {
           "en": "One need only glance at the figures to appreciate the scale of the problem.",
-          "ru": "Достаточно взглянуть на цифры, чтобы осознать масштаб проблемы."
+          "ru": "Достаточно взглянуть на цифры, чтобы осознать масштаб проблемы.",
+          "note": {
+            "en": "need only (emphatic)",
+            "ru": "need only (эмфатически)"
+          }
         },
         {
           "en": "The situation needn't have deteriorated so dramatically.",
-          "ru": "Ситуация не должна была так драматично ухудшиться."
+          "ru": "Ситуация не должна была так драматично ухудшиться.",
+          "note": {
+            "en": "needn't have been",
+            "ru": "needn't have been"
+          }
         },
         {
           "en": "Suffice it to say, further explanation need not be provided.",
@@ -159,15 +275,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Need we subject ourselves to yet another review?",
-          "ru": "Нужно ли нам подвергать себя ещё одной проверке?"
+          "ru": "Нужно ли нам подвергать себя ещё одной проверке?",
+          "note": {
+            "en": "literary modal need",
+            "ru": "литературный модальный need"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Needn't have done часто несёт ироничный или саркастический оттенок, тоньше чем shouldn't have."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "You need only to ask.",
+          "right": "You need only ask.",
+          "why": {
+            "en": "In the emphatic pattern `need only`, `need` is modal and the verb is the bare base form, with no `to`.",
+            "ru": "В эмфатическом обороте need only глагол need модальный, а следующий глагол стоит без to."
+          }
+        },
+        {
+          "wrong": "It needn't have be this way.",
+          "right": "It needn't have been this way.",
+          "why": {
+            "en": "After `needn't have` use the past participle (`been`), not the base form.",
+            "ru": "После needn't have нужно причастие (been), а не начальная форма."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "must-have-to",
+    "should-ought-to",
+    "modal-perfect",
+    "semi-modals"
+  ],
+  "crossTopic": [
+    "verb-plus-infinitive",
+    "passive-with-modals",
+    "verb-plus-gerund",
+    "indefinite-pronouns"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "needn't = not necessary / free from obligation",
+      "mustn't = prohibited / not allowed"
+    ]
+  }
 };

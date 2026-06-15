@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "past-continuous",
   "title": {
-    "en": "",
+    "en": "Past Continuous",
     "ru": "Past Continuous"
   },
   "cefr": "A2",
@@ -16,19 +16,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Use the **past continuous** for an action that **was in progress** at a specific moment in the past. Picture a snapshot: yesterday at 8 p.m., what were you doing? You were in the middle of something.\n\n**Form:** `was/were` + verb-`ing`. Use `was` with I/he/she/it and `were` with you/we/they.\n\nThree core uses:\n\n1. **An action in progress at a point in time:** `At 8 p.m. yesterday, I was watching TV.`\n2. **A longer action interrupted by a shorter one** — past continuous + `when` + past simple: `I was reading when the phone rang.`\n3. **Two actions happening in parallel** — usually with `while`: `I was cooking while he was cleaning.`\n\n**Negative:** `wasn't/weren't` + `-ing` — `They weren't listening.`\n\n**Question:** `was/were` + subject + `-ing` — `Was she working?` / `What were you doing?`\n\n**Past simple vs. past continuous:** the past simple states a finished action (`I watched a film`); the past continuous shows the action in progress, often interrupted (`I was watching a film when you called`).\n\n**The classic mistake:** don't use the continuous with stative verbs. Say `I knew her`, not `I was knowing her`.",
         "ru": "**Past Continuous** — это время для действия, которое **происходило в определённый момент в прошлом**. Представь картинку: вчера в 8 вечера — что ты делал? Ты был в процессе какого-то действия.\n\n**Форма:** `was/were` + глагол-`ing`\n\n- `I was working`\n- `You were working`\n- `He/She/It was working`\n- `We/They were working`\n\n**Когда использовать:**\n\n1. **Действие в процессе в конкретный момент:**\n   - `At 8 pm yesterday, I was watching TV.` (Вчера в 8 вечера я смотрел телевизор.)\n   - `This time last year, she was living in Paris.` (В это время в прошлом году она жила в Париже.)\n\n2. **Прерванное действие — `when` + Past Simple:**\n   - `I was reading when the phone rang.` (Я читал, когда зазвонил телефон.)\n   - `She was cooking when I arrived.` (Она готовила, когда я пришёл.)\n\n3. **Два параллельных действия — `while`:**\n   - `I was cooking while he was cleaning.` (Я готовил, пока он убирался.)\n\n**Отрицание:** `wasn't/weren't` + `-ing`\n- `I wasn't sleeping.` (Я не спал.)\n- `They weren't listening.` (Они не слушали.)\n\n**Вопрос:** `was/were` + подлежащее + `-ing`\n- `Was she working?` (Она работала?)\n- `What were you doing?` (Что ты делал?)\n\n**Time markers:**\n- `at 5 pm yesterday`\n- `last night at 9`\n- `when you called`\n- `while I was cooking`\n- `all day/morning/evening`\n\n**Разница с Past Simple:**\n- Past Simple — законченное действие: `I watched a film.` (посмотрел — и всё)\n- Past Continuous — процесс в моменте: `I was watching a film when you called.` (смотрел — процесс был прерван)\n\n**Главная ошибка:** использовать с stative verbs.\n❌ `I was knowing her.` → ✅ `I knew her.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + was/were + verb-ing",
+        "ru": "подлежащее + was/were + глагол-ing"
       },
       "examples": [
         {
@@ -37,7 +39,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She was reading when I came in.",
-          "ru": "Она читала, когда я вошёл."
+          "ru": "Она читала, когда я вошёл.",
+          "note": {
+            "en": "interrupted action",
+            "ru": "прерванное действие"
+          }
         },
         {
           "en": "What were you doing at 9 pm?",
@@ -45,44 +51,86 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "They weren't paying attention.",
-          "ru": "Они не обращали внимания."
+          "ru": "Они не обращали внимания.",
+          "note": {
+            "en": "negative",
+            "ru": "отрицание"
+          }
         },
         {
           "en": "While I was cooking, he was watching TV.",
-          "ru": "Пока я готовил, он смотрел телевизор."
+          "ru": "Пока я готовил, он смотрел телевизор.",
+          "note": {
+            "en": "parallel actions",
+            "ru": "параллельные действия"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Прерванное действие: Past Continuous (длинное) + when + Past Simple (короткое)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I was knowing her.",
+          "right": "I knew her.",
+          "why": {
+            "en": "Stative verbs like know take the past simple, not the continuous.",
+            "ru": "Стативные глаголы вроде know идут в Past Simple, не в Continuous."
+          }
+        },
+        {
+          "wrong": "She was work when I came.",
+          "right": "She was working when I came.",
+          "why": {
+            "en": "The continuous needs the -ing form after was/were.",
+            "ru": "После was/were нужна форма с -ing."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the past continuous earns three new jobs: **setting the scene**, **showing parallel actions**, and **sounding polite**.\n\n**1. Background in a story.** The continuous paints the backdrop while the past simple delivers the main events: `The sun was shining and the birds were singing. Suddenly, a shot rang out.` Open with background in the continuous, then switch to the simple for what happens.\n\n**2. Parallel ongoing actions.** `While I was cooking, the kids were playing in the garden.`\n\n**3. Interruption.** A long action (continuous) cut by a sudden one (simple): `I was walking home when I saw an accident.` Word order is free: `When it started to rain, the kids were playing outside.`\n\n**4. Temporary vs. permanent.** `I was living in Berlin in 2018` (temporary, at that time) contrasts with `I lived in Berlin for five years` (a plain fact) and `I used to live in Berlin` (no longer true).\n\n**5. Polite distancing.** The continuous softens a request: `I was wondering if you could help me` is gentler than `I wondered...`. Also `I was hoping you'd come.`\n\n**6. Irritating repetition** with `always`/`constantly`: `He was always losing his keys!` expresses annoyance, just like the present continuous does.\n\n**Watch out:** don't put stative verbs in the continuous, don't confuse `was doing` (background) with `did` (events) in a story, and don't reach for the continuous when the simple is enough — not everything in the past was ongoing.",
         "ru": "На B1 Past Continuous используется для **создания атмосферы**, **параллельных действий** и **вежливости**.\n\n**1. Background в рассказе:**\nPast Continuous создаёт **фон** истории, а Past Simple — **главные события**:\n- `The sun was shining and the birds were singing. Suddenly, a shot rang out.`\n  (Солнце светило, птицы пели — фон. Вдруг раздался выстрел — главное событие.)\n\nДля живого рассказа начинай с фона в Past Continuous, потом переходи на Past Simple для основных действий.\n\n**2. Параллельные длительные действия:**\n- `While I was cooking, the kids were playing in the garden.` (Пока я готовил, дети играли в саду.)\n- `He was studying while his wife was working.`\n\n**3. Прерванное действие — детали:**\n- `I was walking home when I saw an accident.` (Past Continuous — длительное, Past Simple — внезапное.)\n- `The kids were playing outside when it started to rain.`\n\nПорядок не важен:\n- `When it started to rain, the kids were playing outside.`\n\n**4. Контраст с привычками (used to / Past Simple):**\n- `I was living in Berlin in 2018.` (Жил в 2018 — временное, на тот момент.)\n- `I lived in Berlin for 5 years.` (Жил 5 лет — простой факт.)\n- `I used to live in Berlin.` (Раньше жил — больше не живу.)\n\n**5. Polite past continuous:**\nPast Continuous часто звучит **вежливее**, чем Past Simple:\n- `I was wondering if you could help me.` (Вежливо.)\n- `I wondered if you could help me.` (Менее вежливо.)\n- `I was hoping you'd come.`\n- `I was thinking of asking you something.`\n\n**6. Stative verbs — нельзя:**\n- ❌ `I was knowing him.` → ✅ `I knew him.`\n- ❌ `She was wanting to go.` → ✅ `She wanted to go.`\n\nНо `think` в значении «обдумывать» можно: `I was thinking about it all day.`\n\n**7. Past Continuous для повторяющихся раздражений:**\n- `He was always losing his keys!` (Он постоянно терял ключи! — раздражение.)\n- `They were constantly arguing.` (Они постоянно ругались.)\n\nЭто эмоциональный приём, как в Present Continuous.\n\n**8. Типичные ошибки B1:**\n- Стативные глаголы в Continuous.\n- Путаница `was doing` vs `did` в рассказе: для фона — Continuous, для событий — Simple.\n- Использовать Continuous там, где достаточно Simple: не ко всему в прошлом подходит Continuous."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "(while/when) subject + was/were + verb-ing",
+        "ru": "(while/when) подлежащее + was/were + глагол-ing"
       },
       "examples": [
         {
           "en": "It was raining hard when we left the house.",
-          "ru": "Когда мы вышли из дома, шёл сильный дождь."
+          "ru": "Когда мы вышли из дома, шёл сильный дождь.",
+          "note": {
+            "en": "interruption",
+            "ru": "прерывание"
+          }
         },
         {
           "en": "While she was studying, her brother was playing video games.",
-          "ru": "Пока она училась, её брат играл в видеоигры."
+          "ru": "Пока она училась, её брат играл в видеоигры.",
+          "note": {
+            "en": "parallel actions",
+            "ru": "параллельные действия"
+          }
         },
         {
           "en": "I was wondering if you'd like to join us.",
-          "ru": "Я хотел спросить, не хочешь ли ты к нам присоединиться."
+          "ru": "Я хотел спросить, не хочешь ли ты к нам присоединиться.",
+          "note": {
+            "en": "polite request",
+            "ru": "вежливая просьба"
+          }
         },
         {
           "en": "He was always complaining about something.",
-          "ru": "Он вечно жаловался на что-то."
+          "ru": "Он вечно жаловался на что-то.",
+          "note": {
+            "en": "irritation",
+            "ru": "раздражение"
+          }
         },
         {
           "en": "The sun was setting and the wind was getting cold.",
@@ -92,30 +140,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "I was wondering if... — вежливая форма просьбы, мягче, чем I wonder."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She was wanting to go home.",
+          "right": "She wanted to go home.",
+          "why": {
+            "en": "Want is stative, so it stays in the simple past.",
+            "ru": "Want — стативный глагол, поэтому остаётся в Past Simple."
+          }
+        },
+        {
+          "wrong": "I was walking home when I was seeing an accident.",
+          "right": "I was walking home when I saw an accident.",
+          "why": {
+            "en": "The sudden, interrupting event takes the past simple, not the continuous.",
+            "ru": "Внезапное прерывающее событие идёт в Past Simple, не в Continuous."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the past continuous takes on finer shades: **softening**, **background detail**, and **overlapping intervals**.\n\n**1. Politeness and distancing.** `I was hoping to ask a favour` and `We were thinking of taking a short break` sound tentative and non-committal — common in professional and service speech.\n\n**2. Overlapping intervals.** Several ongoing actions in the same stretch of time: `The children were playing, the dog was barking, and I was trying to concentrate.`\n\n**3. A meaningful contrast with the simple.** `When I saw him, he was smiling` (he was already smiling) is not the same as `When I saw him, he smiled` (he smiled in response — a sequence).\n\n**4. Scene-painting.** The continuous is the main tool for a vivid picture: `Waiters were rushing between tables, the coffee machine was hissing, and someone was playing the piano.`\n\n**5. A planned future in the past.** `I was meeting him at 3, but my train was late` — the past-tense echo of the present continuous for arrangements.\n\n**6. The `when`-clause boundary.** `When he arrived, I was cooking` (already cooking), `...I cooked dinner` (started after), and `...I had cooked dinner` (finished before) are all correct but mean different things.\n\n**Typical B2 errors:** overusing the continuous in narrative makes it spineless; the continuous for clearly completed events is wrong (`I finished the book last night`, not `I was finishing...`); and don't confuse it with the perfect when you mean a span up to another point (`I had worked` / `I had been working`).",
         "ru": "На B2 Past Continuous получает тонкие функции: **softening**, **background detail**, **overlapping intervals**.\n\n**1. Politeness and distancing:**\nPast Continuous создаёт дистанцию и мягкость:\n- `I was hoping to ask a favour.` (Смягчённая просьба.)\n- `We were thinking of taking a short break.` (Не категоричное предложение.)\n- `I was wondering what your thoughts were.` (Вежливый запрос мнения.)\n\nЭто широко используется в профессиональной и сервисной речи.\n\n**2. Overlapping intervals:**\nКогда несколько действий происходят в одном временном промежутке:\n- `While the minister was speaking, protesters were gathering outside.` (Одновременные длительные события.)\n- `The children were playing, the dog was barking, and I was trying to concentrate.`\n\n**3. Past Continuous vs Past Simple для единовременных событий:**\n- `When I saw him, he was smiling.` (Увидел в момент, когда он улыбался — Continuous показывает процесс.)\n- `When I saw him, he smiled.` (Увидел — он улыбнулся в ответ — Simple показывает реакцию/последовательность.)\n\nРазница существенная: Continuous = уже улыбался до; Simple = улыбнулся в ответ.\n\n**4. Describing scenes and atmospheres:**\n- `The café was bustling. Waiters were rushing between tables, the coffee machine was hissing, and someone was playing the piano in the corner.`\n\nДля описания живых сцен — это основной инструмент.\n\n**5. Planned future in the past:**\n- `I was meeting him at 3, but my train was late.` (Я должен был с ним встретиться — аналог Present Continuous для будущего, сдвинутый в прошлое.)\n- `We were flying to Paris, but the flight got cancelled.`\n\n**6. `When`-clause — тонкая граница:**\n- `When he arrived, I was cooking.` (Я уже готовил — мой процесс шёл.)\n- `When he arrived, I cooked dinner.` (Я начал готовить после его прихода.)\n- `When he arrived, I had cooked dinner.` (Я закончил готовить до его прихода.)\n\nВсе три верны, но смысл разный.\n\n**7. Continuous с always/constantly для прошлых раздражений:**\n- `She was always losing her temper.` (Она постоянно теряла самообладание.)\n- `He was forever asking for favours.` (Он вечно просил об одолжениях.)\n\n**8. Stative exceptions с Continuous:**\n- `I was thinking about our conversation.` (Обдумывал — процесс.)\n- `We were having lunch when you called.` (`Have` в идиоматическом значении — допустимо.)\n- `She was seeing a therapist at the time.` (`See` в значении «встречаться с» — допустимо.)\n\n**9. B2 typical errors:**\n- Overuse of Past Continuous в нарративе: слишком много Continuous делает рассказ бесхребетным.\n- Continuous для завершённых событий: ❌ `I was finishing the book last night.` → ✅ `I finished the book last night.`\n- Путаница Continuous и Perfect: `I was working for 5 years` — правильно только если это было в определённый период прошлого. Иначе — `I had worked` или `I had been working`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + was/were + verb-ing (+ when/while clause)",
+        "ru": "подлежащее + was/were + глагол-ing (+ when/while-придаточное)"
       },
       "examples": [
         {
           "en": "When I looked at her, she was crying quietly.",
-          "ru": "Когда я посмотрел на неё, она тихо плакала."
+          "ru": "Когда я посмотрел на неё, она тихо плакала.",
+          "note": {
+            "en": "already in progress",
+            "ru": "уже в процессе"
+          }
         },
         {
           "en": "I was planning to call you, but I got distracted.",
-          "ru": "Я собирался тебе позвонить, но отвлёкся."
+          "ru": "Я собирался тебе позвонить, но отвлёкся.",
+          "note": {
+            "en": "arrangement in the past",
+            "ru": "планы в прошлом"
+          }
         },
         {
           "en": "The speaker paused. Everyone was listening intently.",
-          "ru": "Спикер замолчал. Все внимательно слушали."
+          "ru": "Спикер замолчал. Все внимательно слушали.",
+          "note": {
+            "en": "scene detail",
+            "ru": "деталь сцены"
+          }
         },
         {
           "en": "We were just discussing the proposal when you walked in.",
@@ -123,28 +201,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He was constantly checking his phone during the meeting.",
-          "ru": "Он постоянно проверял телефон во время собрания."
+          "ru": "Он постоянно проверял телефон во время собрания.",
+          "note": {
+            "en": "irritation",
+            "ru": "раздражение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "When he arrived, I was cooking = уже готовил; I cooked = начал готовить после."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I was finishing the book last night.",
+          "right": "I finished the book last night.",
+          "why": {
+            "en": "A completed one-off action takes the past simple; the continuous implies it wasn't finished.",
+            "ru": "Завершённое разовое действие — Past Simple; Continuous намекает, что не закончил."
+          }
+        },
+        {
+          "wrong": "When he arrived, I was cooking the dinner and then we ate.",
+          "right": "When he arrived, I cooked the dinner and then we ate.",
+          "why": {
+            "en": "If cooking started after he arrived (a sequence), use the past simple, not the continuous.",
+            "ru": "Если готовка началась после его прихода (последовательность), нужен Past Simple."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the past continuous is a precision instrument for marking time intervals and managing style.\n\n**1. Precise interval overlap.** It pinpoints that an action was *still going* at the moment of another event: `At midnight, she was still writing`; `By the time I arrived, the meeting was already ending.` Add `still`, `already`, or `just` to fix the position inside the ongoing action.\n\n**2. Incomplete or interrupted stages.** `He was finishing his report when the power went out` (mid-stage); `She was recovering from surgery` (in process, not yet well). The continuous often implies the action was not completed.\n\n**3. Progressive statives.** In advanced register the continuous with normally stative verbs signals temporariness or a process in awareness: `I was just thinking about you`; `We were hoping for better news` (with a hint of disappointment); `They were expecting us sooner` (a mild reproach).\n\n**4. Narrative pacing.** The choice between simple and continuous controls tempo: the simple speeds up (`She walked. She saw. She ran.`), the continuous slows down — the prose equivalent of film editing.\n\n**5. Softening criticism or disagreement.** `I was just thinking that might not work`; `We were expecting a different result`; `You were saying?`\n\n**6. Reported speech.** The past continuous backshifts the present continuous of direct speech: `I am feeling better` becomes `She said she was feeling better`.\n\n**7. Eras as processes.** `In the 1920s, the world was changing rapidly` frames a period as an unfolding process rather than a list of facts.\n\n**8. Managing the conversation.** `I was going to mention that`; `What were we discussing?`; `Where were we?`\n\n**Error patterns:** the continuous for a single completed action (`I wrote the letter yesterday`, unless still unfinished), and mismatched conjunctions — after `while` expect the continuous, after `when` the simple; breaking that sounds unnatural.",
         "ru": "На C1 Past Continuous — инструмент точного описания временных интервалов и стилистической тонкости.\n\n**1. Precise interval overlap:**\nPast Continuous точно маркирует, что действие **продолжалось** в момент другого события:\n- `At midnight, she was still writing.` (В полночь она ещё писала.)\n- `By the time I arrived, the meeting was already ending.` (Когда я приехал, собрание уже заканчивалось.)\n\n`Still`, `already`, `just` с Past Continuous фиксируют позицию в длительном действии.\n\n**2. Continuous for incomplete or interrupted stages:**\n- `He was finishing his report when the power went out.` (Был на этапе завершения.)\n- `She was recovering from surgery.` (Была в процессе выздоровления — не вполне здорова.)\n\nКонтинуум часто подразумевает, что действие не завершилось или шло с усилием.\n\n**3. Stative verbs в Continuous — progressive statives:**\nВ продвинутом регистре Continuous со stative verbs передаёт **временность** или **осознание процесса**:\n- `I was just thinking about you.` (Думал о тебе — процесс, мгновенный срез.)\n- `We were hoping for better news.` (Надеялись — с оттенком разочарования.)\n- `They were expecting us sooner.` (Ожидали раньше — мягкий укор.)\n\n**4. Narrative pacing:**\nВыбор между Past Simple и Past Continuous регулирует темп рассказа:\n- Past Simple ускоряет: `She walked. She saw. She ran.`\n- Past Continuous замедляет: `She was walking. She was seeing. She was running.`\n\nВ литературе этот выбор эквивалентен монтажу в кино.\n\n**5. Continuous для смягчения отказов и критики:**\n- `I was just thinking that might not work.` (Мягкое несогласие.)\n- `We were expecting a different result.` (Дипломатичная критика.)\n- `You were saying?` (Вежливо возвращаясь к прерванной реплике.)\n\n**6. Reported speech с Continuous:**\n- `She said she was feeling better.` (Backshift от `I am feeling better`.)\n- `He told me he was moving next month.` (От `I'm moving`.)\n\nPast Continuous в reported speech соответствует Present Continuous в прямой речи.\n\n**7. Historical and reflective descriptions:**\n- `In the 1920s, the world was changing rapidly.` (Эпоха перемен.)\n- `Art was breaking new ground, politics was becoming radical, science was accelerating.`\n\nPast Continuous создаёт ощущение эпохи как процесса, а не набора фактов.\n\n**8. Discourse and conversation management:**\n- `I was going to mention that.` (Я как раз собирался сказать об этом.)\n- `What were we discussing?` (О чём мы говорили? — возвращение к теме.)\n- `Where were we?` (Где мы остановились?)\n\n**9. C1 error patterns:**\n- Past Continuous для одноразового завершённого действия: ❌ `I was writing the letter yesterday` → если закончил, то `I wrote the letter yesterday`; если не закончил — уточни: `I was still writing when you called`.\n- Неверное согласование с временными союзами: после `while` обычно Continuous, после `when` — Simple; нарушение звучит неестественно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + was/were (+ still/already/just) + verb-ing",
+        "ru": "подлежащее + was/were (+ still/already/just) + глагол-ing"
       },
       "examples": [
         {
           "en": "At the turn of the century, the country was experiencing rapid industrialisation.",
-          "ru": "На рубеже века страна переживала быструю индустриализацию."
+          "ru": "На рубеже века страна переживала быструю индустриализацию.",
+          "note": {
+            "en": "era as process",
+            "ru": "эпоха как процесс"
+          }
         },
         {
           "en": "I was actually going to suggest the same thing.",
@@ -152,31 +256,61 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She said she was working on a new project.",
-          "ru": "Она сказала, что работает над новым проектом."
+          "ru": "Она сказала, что работает над новым проектом.",
+          "note": {
+            "en": "reported speech",
+            "ru": "косвенная речь"
+          }
         },
         {
           "en": "The report was still being drafted when the deadline passed.",
-          "ru": "Отчёт всё ещё составлялся, когда истёк срок."
+          "ru": "Отчёт всё ещё составлялся, когда истёк срок.",
+          "note": {
+            "en": "passive continuous",
+            "ru": "пассив в Continuous"
+          }
         },
         {
           "en": "We were hoping for more support from management.",
-          "ru": "Мы надеялись на большую поддержку со стороны руководства."
+          "ru": "Мы надеялись на большую поддержку со стороны руководства.",
+          "note": {
+            "en": "diplomatic critique",
+            "ru": "дипломатичная критика"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Continuous + still/already/just — точная позиция в длительном действии: she was still writing."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I was writing the letter yesterday and posted it.",
+          "right": "I wrote the letter yesterday and posted it.",
+          "why": {
+            "en": "For a completed action in a sequence, use the past simple unless you stress it was still unfinished.",
+            "ru": "Для завершённого действия в последовательности нужен Past Simple, если не подчёркивается незавершённость."
+          }
+        },
+        {
+          "wrong": "When the phone was ringing, I was answering it.",
+          "right": "When the phone rang, I answered it.",
+          "why": {
+            "en": "After when, a sudden punctual event normally takes the past simple, not the continuous.",
+            "ru": "После when внезапное мгновенное событие обычно идёт в Past Simple."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the past continuous is a fine stylistic tool, especially in literary writing.\n\n**1. Literary pacing and rhythm.** In polished prose it opens a sustained, extended moment: `The river was flowing, the stars were appearing one by one, and somewhere a dog was barking.` The past simple here would feel clipped and merely factual.\n\n**2. Suspended action for suspense.** `She was reaching for the door when she heard the voice` leaves the gesture mid-air, building tension.\n\n**3. Implicature of incompleteness.** `I was fixing the roof when it started raining` carries the implicature that the job may not have been finished; `They were building a house there` suggests an unknown outcome.\n\n**4. Authorial distance in free indirect style.** `He was sitting at the desk. The letters were piling up. Nothing was going as planned.` — the continuous conveys stasis and helplessness inside a character's thought.\n\n**5. Historical and sociological processes.** `Europe was transforming economically, socially, and politically`; `The old order was giving way to the new.` In academic and historical writing the continuous marks processes, the simple marks events.\n\n**6. Subtle stative effects.** `I was loving every minute of it` (colloquial, emotive); `We were seeing each other at the time` (a euphemism); `She was being cautious` (temporary, deliberate behaviour). Avoid these in formal writing unless the effect is wanted.\n\n**7. Maximal politeness in formal correspondence.** `I was hoping we could arrange a meeting` is the most deferential; `I hoped...` is more direct; `I hope...` is the most categorical.\n\n**8. Narrative layering.** Several simultaneous continuous clauses create polyphony: `While the jury was deliberating, the family was waiting, reporters were gathering, and the judge was reviewing one last motion.`\n\n**Style errors at C2:** an excess of continuous reads as tedious — balance with the simple; the continuous for an instantaneous flash is wrong (`He realised the truth`, not `was realising`); and switching tense registers within a paragraph needs stylistic motivation. Advanced speakers choose the continuous deliberately for backgrounded, drawn-out, or emotionally charged narration.",
         "ru": "На C2 Past Continuous — тонкий стилистический инструмент, особенно в литературном письме.\n\n**1. Literary pacing and rhythm:**\nВ изысканной прозе Past Continuous создаёт ощущение открытого, протяжённого момента:\n- `The river was flowing, the stars were appearing one by one, and somewhere in the distance a dog was barking.`\n\nЭто кинематографическая, неспешная манера. Past Simple был бы отрывистым, фактологическим.\n\n**2. Suspended action for narrative suspense:**\n- `She was reaching for the door when she heard the voice.` (Тянулась к двери — в незавершённой позе — когда услышала голос.)\n- `He was about to speak, but then he hesitated.`\n\nContinuous оставляет действие подвешенным, создаёт напряжение.\n\n**3. Implicature of incompleteness:**\n- `I was fixing the roof when it started raining.` — импликатура: возможно, не закончил.\n- `They were building a house there.` — импликатура: не достроили, или процесс неизвестного исхода.\n\nВ контексте Continuous часто подразумевает прерванность или неопределённость результата.\n\n**4. Authorial distance в free indirect style:**\n- `He was sitting at the desk. The letters were piling up. Nothing was going as planned.`\n\nPast Continuous внутри внутреннего монолога персонажа создаёт ощущение застоя, беспомощности.\n\n**5. Historical and sociological processes:**\n- `Europe was transforming economically, socially, and politically.` (Трансформировалась — процесс.)\n- `The old order was giving way to the new.` (Уступало — процесс, не завершённый в момент повествования.)\n\nВ академическом и историческом письме Past Continuous маркирует процессы, Past Simple — события.\n\n**6. Stative verbs в Continuous — subtle effects:**\n- `I was loving every minute of it.` (Разговорный, эмоционально окрашенный — наслаждался процессом.)\n- `We were seeing each other at the time.` (Встречались — эвфемизм отношений.)\n- `She was being cautious.` (Вела себя осторожно — временно, намеренно.)\n\nВ формальном письме избегай таких форм, если не требуется выразительный эффект.\n\n**7. Politeness и indirectness в формальной переписке:**\n- `I was hoping we could arrange a meeting.` — наиболее вежливо.\n- `I hoped we could arrange a meeting.` — прямее.\n- `I hope we can arrange a meeting.` — категорично, может звучать пресскационно.\n\nPast Continuous максимально дистанцирует говорящего, делая просьбу максимально мягкой.\n\n**8. Complex narrative layering:**\n- `While the jury was deliberating, the defendant's family was waiting outside, reporters were gathering on the steps, and the judge was reviewing one last motion.`\n\nНесколько одновременных Continuous создают полифонию.\n\n**9. C2 style errors:**\n- Избыточный Continuous в нарративе звучит tedious. Баланс с Simple обязателен.\n- Continuous для моментов с мгновенным действием: ❌ `He was realising the truth` (если это вспышка осознания) → ✅ `He realised the truth`.\n- Смешение временных регистров в рамках одного абзаца без стилистической мотивации.\n\n**10. Diagnostic of advanced proficiency:**\nНосители и продвинутые неносители интуитивно выбирают Continuous для фоновых, длительных, замедленных или эмоционально нагруженных элементов повествования. На C2 этот выбор осознан и контролируем."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + was/were + verb-ing (layered / suspended clauses)",
+        "ru": "подлежащее + was/were + глагол-ing (слоистые / подвешенные придаточные)"
       },
       "examples": [
         {
@@ -185,27 +319,79 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He was reaching for the phone when it rang.",
-          "ru": "Он тянулся к телефону, когда тот зазвонил."
+          "ru": "Он тянулся к телефону, когда тот зазвонил.",
+          "note": {
+            "en": "suspended action",
+            "ru": "подвешенное действие"
+          }
         },
         {
           "en": "In those years, the empire was crumbling while a new order was emerging.",
-          "ru": "В те годы империя рушилась, пока зарождался новый порядок."
+          "ru": "В те годы империя рушилась, пока зарождался новый порядок.",
+          "note": {
+            "en": "era as process",
+            "ru": "эпоха как процесс"
+          }
         },
         {
           "en": "I was wondering whether you might reconsider.",
-          "ru": "Я хотел узнать, не могли бы вы пересмотреть решение."
+          "ru": "Я хотел узнать, не могли бы вы пересмотреть решение.",
+          "note": {
+            "en": "maximal politeness",
+            "ru": "максимальная вежливость"
+          }
         },
         {
           "en": "The jury was deliberating; the whole nation was watching.",
-          "ru": "Присяжные совещались; вся страна наблюдала."
+          "ru": "Присяжные совещались; вся страна наблюдала.",
+          "note": {
+            "en": "narrative layering",
+            "ru": "слоистый нарратив"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Continuous создаёт кинематографический, замедленный кадр; Simple даёт быстрый монтаж."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He was realising the truth all at once.",
+          "right": "He realised the truth all at once.",
+          "why": {
+            "en": "An instantaneous flash of understanding takes the past simple, not the continuous.",
+            "ru": "Мгновенная вспышка осознания идёт в Past Simple, не в Continuous."
+          }
+        },
+        {
+          "wrong": "Every paragraph was using the continuous, which was making the prose feel flat.",
+          "right": "Balance the continuous with the past simple so the narrative keeps momentum.",
+          "why": {
+            "en": "Overusing the continuous in narration is a stylistic fault; mix it with the simple.",
+            "ru": "Избыток Continuous в нарративе — стилистический недостаток; чередуй с Past Simple."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "past-simple",
+    "present-continuous",
+    "past-perfect-continuous",
+    "used-to"
+  ],
+  "crossTopic": [
+    "adverbial-clauses-time",
+    "subordinating-conjunctions",
+    "reported-statements",
+    "stative-verbs"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "past",
+      "ongoing action",
+      "interrupting event",
+      "now"
+    ]
+  }
 };

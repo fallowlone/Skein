@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "second-conditional",
   "title": {
-    "en": "",
+    "en": "Second Conditional",
     "ru": "Second Conditional"
   },
   "cefr": "B1",
@@ -15,19 +15,24 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conditionals",
+  "egp": [
+    "EGP:Can use 'if' + past simple with 'would' + base verb to talk about imaginary or unlikely present and future situations.",
+    "EGP:Can use 'were' for all persons with 'be' in unreal conditions, including the fixed advice phrase 'If I were you, I would ...'.",
+    "EGP:Can replace 'would' with 'could' or 'might' in the result clause to express ability or possibility.",
+    "EGP:Can use formal inversion 'Were I ...' / 'Were it not for ...' and 'were to + infinitive' for hypothetical future."
+  ],
+  "archetype": "branch",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Use the second conditional to talk about an imaginary or unreal situation in the present or future — something that is not true now, or is unlikely to happen.\n\nThe pattern is: **if + past simple, would + base verb**. The past tense after *if* does NOT mean the past. It is a marker of unreality — the meaning is still present or future, just hypothetical.\n\n- *If I had a million dollars, I would buy a house.* (I don't have a million.)\n- *If I lived in Paris, I would speak French.* (I don't live there.)\n\nCompare with the first conditional, which is about a real, likely future:\n- *If I have time tomorrow, I will call you.* — possible.\n- *If I had time tomorrow, I would call you.* — probably no time.\n\nWith the verb *be*, use **were for all persons**, not *was*: *If I were you, I would apologise.* The fixed phrase **If I were you, I would ...** is the most common way to give advice in English. You may hear *was* in casual speech, but *were* is the correct form for exams and writing.\n\nKey point: there is no *would* in the *if*-clause — the condition uses the past simple, and only the result clause takes *would*. Contract *would* to *'d* (*I'd go*) and *would not* to *wouldn't*.",
         "ru": "**Second conditional** (второе условное) — это предложение про **воображаемую, нереальную** ситуацию в настоящем или будущем. То, чего **нет** или чего **скорее всего не будет**.\n\n**Формула:** `If + Past Simple, would + базовая форма глагола`\n\n- `If I had a million dollars, I would buy a house.` (Если бы у меня был миллион долларов, я бы купил дом.) — у меня нет миллиона.\n- `If I lived in Paris, I would speak French.` (Если бы я жил в Париже, я бы говорил по-французски.) — я там не живу.\n\n**Важно:** Past Simple после `if` **не означает прошлое**. Это форма для обозначения нереальности. Речь про настоящее или будущее, но в гипотетической форме.\n\n**Сравни First и Second conditional:**\n- `If I have time tomorrow, I will call you.` — реально, может быть.\n- `If I had time tomorrow, I would call you.` — скорее всего, не будет времени.\n\n**If I were (а не was):**\nС глаголом `be` в Second conditional используется особая форма — **were для всех лиц**:\n- `If I were you, I would apologise.` (На твоём месте я бы извинился.) — **не** `If I was you`.\n- `If he were here, he would help.` (Если бы он был здесь, он бы помог.)\n\n`Was` тоже слышится в разговорной речи, но `were` считается правильной формой. Для экзаменов — всегда `were`.\n\n**Выражение «If I were you…» (на твоём месте…)** — очень частое для совета:\n- `If I were you, I wouldn't do that.` (На твоём месте я бы этого не делал.)\n\n**Главные ошибки:**\n- ❌ `If I would have money…` → ✅ `If I had money…` (в if-части — нет `would`.)\n- ❌ `If I was you…` → ✅ `If I were you…` (при совете — `were`.)\n- ❌ `If I have a car, I would drive` — смешение First и Second.\n\n**Короткие формы:**\n- `would` → `'d`: `I'd go`, `he'd come`.\n- `would not` → `wouldn't`: `I wouldn't do that.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "If + subject + past simple, subject + would + base verb",
+        "ru": "If + подлежащее + Past Simple, подлежащее + would + базовая форма глагола"
       },
       "examples": [
         {
@@ -36,11 +41,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "What would you do if you lost your phone?",
-          "ru": "Что бы ты сделал, если бы потерял телефон?"
+          "ru": "Что бы ты сделал, если бы потерял телефон?",
+          "note": {
+            "en": "question form",
+            "ru": "вопрос"
+          }
         },
         {
           "en": "If I were you, I would take that job.",
-          "ru": "На твоём месте я бы согласился на эту работу."
+          "ru": "На твоём месте я бы согласился на эту работу.",
+          "note": {
+            "en": "advice",
+            "ru": "совет"
+          }
         },
         {
           "en": "She would be happier if she had more friends.",
@@ -48,32 +61,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "If I knew his number, I'd call him.",
-          "ru": "Если бы я знал его номер, я бы позвонил."
+          "ru": "Если бы я знал его номер, я бы позвонил.",
+          "note": {
+            "en": "'d = would",
+            "ru": "'d = would"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После if используй Past Simple (не would): if I had, if I were, if he knew."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If I would have money, I would travel.",
+          "right": "If I had money, I would travel.",
+          "why": {
+            "en": "No 'would' in the if-clause — the condition uses the past simple; only the result clause takes 'would'.",
+            "ru": "В if-части нет would: условие выражается через Past Simple, а would стоит только в результативной части."
+          }
+        },
+        {
+          "wrong": "If I was you, I would take the job.",
+          "right": "If I were you, I would take the job.",
+          "why": {
+            "en": "In the advice phrase 'If I were you', use 'were', never 'was'.",
+            "ru": "В устойчивом совете 'If I were you' всегда используется were, а не was."
+          }
+        },
+        {
+          "wrong": "If you came, I will be happy.",
+          "right": "If you came, I would be happy.",
+          "why": {
+            "en": "Don't mix conditionals: past simple in the if-clause needs 'would' (not 'will') in the result.",
+            "ru": "Нельзя смешивать условные: после Past Simple в if-части в результате идёт would, а не will."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the second conditional becomes a tool for politeness, hypothetical discussion, and subtle shifts of register — not just a way to mark something as untrue.\n\n**Modals in the result clause.** Replace *would* with *could* or *might* to soften the claim: *If I had more time, I could finish this* (ability/possibility); *If we left now, we might catch the train* (probability). Choosing between *would*, *could*, and *might* is choosing between certainty, possibility, and likelihood.\n\n**Distancing as politeness.** Where the first conditional would sound too direct, the second softens: *If you had a moment, I'd appreciate your help.* This isn't unreality — it is distance used as courtesy, especially in British English.\n\n**Formal subjunctive 'were'.** In formal contexts *were* is required even in speech, particularly with *were to + infinitive* for a hypothetical future: *If this were to happen, we would need a plan.* In writing and exams, always prefer *were* over *was* (and always *If I were you*).\n\n**Other condition words.** *unless*, *provided*, *suppose*, *what if*, and the set phrase *if it weren't for / if it wasn't for* all take the second-conditional pattern: *I wouldn't go unless you came with me.* / *If it weren't for your help, I wouldn't finish in time.*\n\nUse the second conditional for thought experiments in interviews, debates, and essays: *If you were president, what would your first action be?* The most common advanced error is still mixing real (first) and unreal (second): use the first for a likely event, the second for one you doubt.",
         "ru": "На B2 Second conditional становится инструментом вежливости, гипотетического обсуждения и тонких регистровых различий.\n\n**1. Could и might в результативной части:**\nВместо `would` часто используются `could` и `might` — для менее категоричных утверждений:\n- `If I had more time, I could finish this project.` (Если бы у меня было больше времени, я мог бы закончить этот проект.) — возможность.\n- `If we left now, we might catch the train.` (Если бы мы вышли сейчас, мы могли бы успеть на поезд.) — вероятность.\n- `If he tried harder, he could succeed.` (Если бы он старался больше, он мог бы добиться успеха.) — способность.\n\nВыбор между `would`, `could` и `might` — это выбор между уверенностью, возможностью и вероятностью.\n\n**2. Second conditional для вежливости:**\nВ ситуациях, где First conditional звучал бы слишком прямо, Second смягчает:\n- `If you had a moment, I'd appreciate your help.` (Если бы у вас была минутка, я был бы благодарен за помощь.)\n- `Would you mind if I opened the window?` (Вы не против, если я открою окно?)\n- `I would suggest that we wait.` (Я бы предложил подождать.)\n\nЭто не «нереальность» — это **дистанцирование** как вежливость. Британский английский особенно использует эту стратегию.\n\n**3. Subjunctive were (официальный регистр):**\nВ формальных контекстах `were` вместо `was` обязательна даже в разговорной речи:\n- `If this were to happen, we would need a plan.` (Если бы это случилось, нам нужен был бы план.) — гипотетическое будущее.\n- `If he were to resign, who would replace him?` (Если бы он подал в отставку, кто бы его заменил?)\n\n**Was в Second conditional:**\nВ разговорной речи можно услышать `If I was you`, но считается неформальным. В письменной и экзаменационной — всегда `were` (особенно в устойчивом `If I were you`).\n\n**4. Unless, provided, suppose в Second conditional:**\n- `I wouldn't go unless you came with me.` (Я бы не пошёл, если бы ты не пошёл со мной.)\n- `Suppose you had the chance — would you take it?` (Предположим, у тебя был бы шанс — ты бы им воспользовался?)\n- `What if you were in charge? What would you change?` (Что, если бы ты был главным? Что бы ты изменил?)\n\n**5. If it weren't for / if it wasn't for:**\n- `If it weren't for your help, I wouldn't finish in time.` (Если бы не твоя помощь, я бы не успел.)\n- `If it wasn't for the rain, we'd go for a walk.` (Если бы не дождь, мы бы пошли гулять.)\n\n**6. Second conditional для гипотетического обсуждения:**\nВ интервью, дискуссиях, эссе:\n- `If you were president, what would be your first action?`\n- `If technology replaced all jobs, how would society cope?`\n\nЭто **thought experiment** — мысленный эксперимент.\n\n**7. Типичная продвинутая ошибка:**\nСмешение гипотетического Second и реального First:\n- Если говоришь про возможное событие — First: `If you come, I'll be happy.`\n- Если про нереальное/маловероятное — Second: `If you came, I would be happy.` (Не уверен, что придёт.)\n\nРегистровое различие: Second звучит более вежливо, дистанцировано, академично."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "If + past simple, would / could / might + base verb",
+        "ru": "If + Past Simple, would / could / might + базовая форма глагола"
       },
       "examples": [
         {
           "en": "If I were to offer you the position, would you accept it?",
-          "ru": "Если бы я предложил вам эту должность, вы бы согласились?"
+          "ru": "Если бы я предложил вам эту должность, вы бы согласились?",
+          "note": {
+            "en": "were to + inf.",
+            "ru": "were to + инф."
+          }
         },
         {
           "en": "If it weren't for my colleagues, I couldn't manage this workload.",
-          "ru": "Если бы не мои коллеги, я бы не справился с этой нагрузкой."
+          "ru": "Если бы не мои коллеги, я бы не справился с этой нагрузкой.",
+          "note": {
+            "en": "if it weren't for",
+            "ru": "if it weren't for"
+          }
         },
         {
           "en": "Suppose the company merged — how would that affect us?",
@@ -91,26 +142,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "If I were to + инфинитив — вежливое гипотетическое: If I were to suggest an alternative, would you consider it?"
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If we left now, we will catch the train.",
+          "right": "If we left now, we might catch the train.",
+          "why": {
+            "en": "After a second-conditional if-clause, the result takes would/could/might, not will.",
+            "ru": "После if-части во втором условном результат идёт с would/could/might, а не с will."
+          }
+        },
+        {
+          "wrong": "If this was to happen, we would need a plan.",
+          "right": "If this were to happen, we would need a plan.",
+          "why": {
+            "en": "The hypothetical 'were to + infinitive' uses 'were' for all persons, not 'was'.",
+            "ru": "Гипотетическое 'were to + инфинитив' использует were для всех лиц, а не was."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the second conditional is a fine instrument of register: you select the form to signal distance, politeness, academic tone, or literary colour.\n\n**Formal inversion with 'were'.** Drop *if* and front *were* in high-register prose — legal, academic, and diplomatic writing: *Were I in your position, I would resign.* / *Were he to call, what would you say?* / *Were it not for his intervention, we would have lost.* This *were*-inversion is distinct from *should*-inversion, which belongs to the first conditional.\n\n**'Were to + infinitive'** foregrounds the hypothetical nature of a future event and distances it: *If the project were to fail, we would need to reassess.*\n\n**Politeness conventions.** In British business English the second conditional is the standard frame for polite recommendations and offers — *I would recommend ...*, *It would be helpful if ...*, *I'd be grateful if you could ...* These are etiquette forms, not statements of unreality.\n\n**Rhetorical use.** Essays and speeches build an 'alternative reality' to expose the gap between what is and what should be: *If education were truly universal, poverty would decline.* Stance adverbs combine naturally here: *Ideally, if the system were redesigned, efficiency would improve.*\n\nC1 writers also start mixing second and third (*If I were more ambitious, I would have applied* — present trait, past consequence) and keep the formal subjunctive after *suggest / recommend / insist*: *I would suggest that he attend.* In short, the C1 distinction is control of register — *were* in writing and exams, *was* tolerated only in informal speech, and never *was* in *If I were you*.",
         "ru": "На C1 Second conditional — тонкий регистровый инструмент. Ты выбираешь форму, чтобы сигнализировать дистанцию, вежливость, академизм или литературность.\n\n**1. Inversion с were (formal):**\n- `Were I in your position, I would resign.` (Будь я на вашем месте, я бы ушёл в отставку.)\n- `Were he to call, what would you say?` (Если бы он позвонил, что бы ты сказал?)\n- `Were it not for his intervention, we would have lost.` (Если бы не его вмешательство, мы бы проиграли.)\n\nИнверсия `were` — высокий формальный регистр. Типична для юридических, академических, литературных и дипломатических текстов. Не путать с первой инверсией `should` (которая относится к First conditional).\n\n**2. Were to + infinitive — гипотетическое будущее:**\n- `If the project were to fail, we would need to reassess.` (Если бы проект провалился, нам пришлось бы пересмотреть планы.)\n- `Were we to accept this offer, what guarantees would we have?` (Если бы мы приняли это предложение, какие у нас были бы гарантии?)\n\nЭта конструкция подчёркивает **гипотетичность будущего события**, дистанцирует его.\n\n**3. Subtle politeness shifts:**\nВ британском деловом английском Second conditional стандартно используется для вежливых предложений и советов:\n- `I would recommend…` (Я бы порекомендовал…)\n- `It would be helpful if…` (Было бы полезно, если бы…)\n- `Would you mind if…?`\n- `I'd be grateful if you could…`\n\nЭто не гипотетика, а этикетная форма.\n\n**4. Second conditional в риторике:**\nЭссе и речи часто используют Second для построения «альтернативной реальности»:\n- `If education were truly universal, poverty would decline.`\n- `If we prioritised prevention over cure, healthcare costs would fall.`\n\nЭто полемический приём: показать, что существующая реальность отличается от желаемой.\n\n**5. Stance adverbs:**\n- `Ideally, if the system were redesigned, efficiency would improve.`\n- `In principle, if we agreed, the deal would go through.`\n\nТакие комбинации встречаются в академическом письме.\n\n**6. Mixed Second-Third (предвестник Mixed conditional):**\n- `If I were more ambitious, I would have applied for that job.` (Если бы я был более амбициозным [сейчас, черта характера], я бы подал заявку [в прошлом].)\n\nЭто уже mixed conditional — но корни в понимании Second как обозначения постоянного, гипотетического состояния.\n\n**7. Subjunctive в формальном письме:**\nПосле глаголов требования/предложения: `suggest`, `recommend`, `insist`:\n- `I would suggest that he attend.` (Я бы предложил, чтобы он присутствовал.)\n- `It would be essential that the procedure be followed.`\n\nЭто remnants старого subjunctive, сохранившиеся в высоком регистре.\n\n**8. Тонкая разница if I was / if I were:**\nВ современном разговорном английском оба варианта слышатся. `Were` — формально правильное, `was` — разговорно допустимое. В устойчивом совете `If I were you` — всегда `were`, никогда `was` (иначе звучит неграмотно).\n\nC1-писатель контролирует регистр, выбирая `were` в письме и экзаменах, допуская `was` в неформальном устном."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Were + subject (+ to + infinitive), subject + would + base verb",
+        "ru": "Were + подлежащее (+ to + инфинитив), подлежащее + would + базовая форма"
       },
       "examples": [
         {
           "en": "Were I to advise you, I'd recommend caution.",
-          "ru": "Если бы я вам советовал, я бы рекомендовал осторожность."
+          "ru": "Если бы я вам советовал, я бы рекомендовал осторожность.",
+          "note": {
+            "en": "inversion",
+            "ru": "инверсия"
+          }
         },
         {
           "en": "If the board were to reconsider, the outcome might differ.",
-          "ru": "Если бы совет пересмотрел решение, результат мог бы быть иным."
+          "ru": "Если бы совет пересмотрел решение, результат мог бы быть иным.",
+          "note": {
+            "en": "were to + inf.",
+            "ru": "were to + инф."
+          }
         },
         {
           "en": "It would be prudent if the committee deferred its decision.",
@@ -118,7 +195,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Were it not for the new evidence, the case would be closed.",
-          "ru": "Если бы не новые доказательства, дело было бы закрыто."
+          "ru": "Если бы не новые доказательства, дело было бы закрыто.",
+          "note": {
+            "en": "Were it not for",
+            "ru": "Were it not for"
+          }
         },
         {
           "en": "I would argue that if data were more transparent, public trust would strengthen.",
@@ -128,34 +209,68 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Инверсия Were I… и Were it not for… — высокий формальный регистр, стандарт для юридического и академического письма."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Was I in your position, I would resign.",
+          "right": "Were I in your position, I would resign.",
+          "why": {
+            "en": "Formal inversion uses 'were' for all persons; 'was' is not used in this structure.",
+            "ru": "Формальная инверсия использует were для всех лиц; was в этой конструкции не употребляется."
+          }
+        },
+        {
+          "wrong": "If the project were to fail, we will need to reassess.",
+          "right": "If the project were to fail, we would need to reassess.",
+          "why": {
+            "en": "A hypothetical 'were to' condition requires 'would' in the result, not 'will'.",
+            "ru": "Гипотетическое условие с 'were to' требует would в результате, а не will."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the second conditional is a stylistic and pragmatic device: the form you choose reveals your stance — distance, irony, or rhetorical force.\n\n**Hypothetical vs counterfactual.** The same grammar carries two readings, told apart only by context: pure hypothesis (*If she came tomorrow, we'd celebrate* — unlikely but possible) and counterfactual (*If I were taller, I'd play basketball* — I am not tall, a fact). A C2 reader catches the nuance instantly.\n\n**'Were' in literary and analytical prose** creates a detached, generalising voice: *Were justice truly blind, inequality would not persist.* Chains of such clauses drive philosophical and political argument.\n\n**State vs action.** Compare *Had the general been more cautious, the campaign might have succeeded* (third conditional, past) with *Were the general more cautious, the campaign would succeed* — the second presents a quality as an enduring attribute rather than an act. Telling *if he were* (state) from *if he were to* (action) is a mark of maturity.\n\n**Pragmatic hedging.** In diplomatic and legal English, *would + verb* is the default impersonal, distanced assertion: *We would argue that the precedent applies.* / *It would appear that an error has occurred.*\n\n**Backshift overlap.** The second conditional is structurally identical to reported speech after a past reporting verb (*He said he would help if he could*); only context separates a genuine hypothetical from a backshifted one.\n\nFinally, the second conditional carries literary and ironic registers — *If only she were here* (regret), *Would that he knew the truth* (archaic), *If that were true, I'd eat my hat* (sceptical idiom). The choice of modal — *would* (prediction), *might* (cautious possibility), *could* (ability), *should* (logical expectation) — is a rhetorical stance, not a grammatical necessity. C2 mastery is choosing the right form for the intended effect.",
         "ru": "На C2 Second conditional — тонкий стилистический и прагматический инструмент. Выбор формы показывает твою позицию, дистанцию, иронию или риторическую силу.\n\n**1. Counterfactual и hypothetical на одном уровне:**\nSecond conditional может описывать либо **чистую гипотезу** (то, что может произойти, хотя маловероятно), либо **counterfactual** (противоположное факту):\n- Hypothetical: `If she came tomorrow, we'd celebrate.` (может прийти, хотя вряд ли.)\n- Counterfactual: `If I were taller, I'd play basketball.` (я не высокий — факт.)\n\nОба употребления грамматически идентичны, различаются только контекстом. Мастер C2 улавливает нюанс мгновенно.\n\n**2. Were в формальной и литературной прозе:**\n- `Were justice truly blind, inequality would not persist.`\n- `Were the ancient philosophers to see our world, they would marvel at the paradoxes.`\n\nЭтот регистр используется в эссе, политических речах, литературной критике. Он создаёт дистанцированный, обобщающий, аналитический голос.\n\n**3. Double dissociation в гипотетическом рассуждении:**\nC2-аргумент часто строится через цепочки Second conditional:\n- `If growth were sustainable, scarcity would not exist; if scarcity were solved, conflict would diminish; if conflict diminished, cooperation would flourish.`\n\nЭто политическая и философская риторика.\n\n**4. Second conditional vs subjunctive past:**\nВ академическом письме исторический анализ и гипотетика смешиваются:\n- `Had the general been more cautious, the campaign might have succeeded.` — Third conditional о прошлом.\n- `Were the general more cautious, the campaign would succeed.` — Second о том же, но представляющее качество как атрибут, не действие.\n\nРазличение между «если бы был» (состояние) и «если бы стал» (действие) — признак зрелости.\n\n**5. Pragmatic softening на высшем уровне:**\nВ дипломатическом и юридическом английском `would + глагол` — стандартная форма вежливого утверждения:\n- `We would argue that the precedent applies.`\n- `One would expect compliance with the terms.`\n- `It would appear that an error has occurred.`\n\nЭти формы создают безличное, дистанцированное звучание — хедж против прямолинейности.\n\n**6. Tense backshift в indirect speech:**\nSecond conditional часто появляется в косвенной речи:\n- Прямая: `I will help if I can.`\n- Косвенная: `He said he would help if he could.` — что структурно идентично Second conditional, но по функции — backshift.\n\nC2-писатель различает гипотетическое от backshifted по контексту.\n\n**7. Литературный Second:**\nВ современной прозе — инструмент создания внутреннего мира героя:\n- `If only she were here.` (Если бы она только была здесь.) — с оттенком сожаления.\n- `Would that he knew the truth.` (О, если бы он знал правду.) — архаичная, литературная форма.\n\n**8. Ironic Second:**\nВ публицистике и прозе Second часто используется иронически:\n- `Yes, and if pigs could fly, we'd have bacon rain.` (Да, а если бы свиньи летали, с неба падал бы бекон.)\n- `If that were true, I'd eat my hat.` (Если бы это было правдой, я бы шляпу съел.)\n\nЭто идиоматический регистр, сигнализирующий скепсис.\n\n**9. Choice of modal signals speaker's stance:**\n- `would` — предсказание.\n- `might` — осторожная возможность.\n- `could` — способность или возможность.\n- `should` — логическое ожидание.\n\nВыбор — не грамматическая необходимость, а риторическая позиция.\n\nC2-уровень — это не «правильная» Second conditional, а умение выбрать её в нужный момент для нужного эффекта."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Were + subject (+ noun/adjective/to-infinitive), subject + would / might / could + base verb",
+        "ru": "Were + подлежащее (+ существительное/прилагательное/to-инфинитив), подлежащее + would / might / could + базовая форма"
       },
       "examples": [
         {
           "en": "Were truth a matter of consensus, science would have stagnated centuries ago.",
-          "ru": "Если бы истина определялась консенсусом, наука остановилась бы века назад."
+          "ru": "Если бы истина определялась консенсусом, наука остановилась бы века назад.",
+          "note": {
+            "en": "inversion",
+            "ru": "инверсия"
+          }
         },
         {
           "en": "One would hope that common sense might prevail.",
-          "ru": "Хотелось бы надеяться, что здравый смысл возобладает."
+          "ru": "Хотелось бы надеяться, что здравый смысл возобладает.",
+          "note": {
+            "en": "hedging",
+            "ru": "хеджирование"
+          }
         },
         {
           "en": "If only the archives were more accessible, the research would progress faster.",
-          "ru": "Если бы архивы были доступнее, исследование продвигалось бы быстрее."
+          "ru": "Если бы архивы были доступнее, исследование продвигалось бы быстрее.",
+          "note": {
+            "en": "If only (regret)",
+            "ru": "If only (сожаление)"
+          }
         },
         {
           "en": "Were the regulations to be enforced uniformly, the market would function more efficiently.",
-          "ru": "Если бы правила применялись единообразно, рынок работал бы эффективнее."
+          "ru": "Если бы правила применялись единообразно, рынок работал бы эффективнее.",
+          "note": {
+            "en": "were to + inf.",
+            "ru": "were to + инф."
+          }
         },
         {
           "en": "If that were the case — and I'm not persuaded it is — we would need to rethink everything.",
@@ -165,9 +280,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Were I to suggest… и Were it not for… — инверсии высокого регистра; используй их в академических эссе и формальной переписке."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Was truth a matter of consensus, science would have stagnated.",
+          "right": "Were truth a matter of consensus, science would have stagnated.",
+          "why": {
+            "en": "Literary inversion uses 'were' for all persons regardless of number.",
+            "ru": "Литературная инверсия использует were для всех лиц независимо от числа."
+          }
+        },
+        {
+          "wrong": "If only she was here.",
+          "right": "If only she were here.",
+          "why": {
+            "en": "In the wishful 'if only' construction, formal usage prefers the subjunctive 'were'.",
+            "ru": "В конструкции желания 'if only' формальный регистр предпочитает сослагательное were."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "first-conditional",
+    "third-conditional",
+    "zero-conditional",
+    "mixed-conditionals"
+  ],
+  "crossTopic": [
+    "will-would",
+    "can-could",
+    "may-might",
+    "adverbial-clauses-condition"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "if + past simple (unreal present/future)",
+      "would + base verb (imagined result)"
+    ]
+  }
 };

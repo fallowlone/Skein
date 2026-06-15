@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "cleft-sentences",
   "title": {
-    "en": "",
+    "en": "Cleft Sentences",
     "ru": "Cleft Sentences"
   },
   "cefr": "B2",
@@ -14,36 +14,54 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "discourse",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "highlight",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "A cleft sentence splits one ordinary clause into two parts so you can spotlight a single piece of information. You take a neutral sentence such as 'John called me' and re-package it to put one element in focus. There are two main types. The it-cleft uses 'It + be + focus + that/who...': 'It was John who called me' (focus on John), 'It was me (that) John called' (focus on me), 'It was yesterday that John called' (focus on yesterday). The focused element sits right after 'It is/was', and a relative-style clause with 'that' (or 'who' for people) carries the rest. You can foreground a subject, an object, or an adverbial of time or place. The wh-cleft (or pseudo-cleft) uses 'What + clause + be + focus': 'What I need is peace', 'What she did was apologize', 'What surprised me was his reaction'. Here the focus is usually a longer phrase or a whole action, and it lands at the end. Choose a cleft to single out one item, to correct or contrast ('It wasn't you who called — it was John'), or to answer a question crisply ('Who broke the vase? — It was the cat'). Two clauses, not one: the link word 'that/who' is what makes it a cleft.",
         "ru": "**Cleft sentences** — это конструкции, которые разбивают простое предложение на две части, чтобы выделить (сфокусировать) одну конкретную информацию.\n\n**Два основных типа:**\n\n**1. It-cleft:** `It + be + X + that / who...`\n- Neutral: `John called me.`\n- Cleft: `It was John who called me.` (эмфаза на John.)\n- Cleft: `It was me John called.` (эмфаза на me.)\n- Cleft: `It was yesterday that John called.` (эмфаза на yesterday.)\n\nВыделение делаешь, ставя фокусируемое слово после `It is / was`.\n\n**2. Wh-cleft (pseudo-cleft):** `What + clause + is / was + X.`\n- Neutral: `I need peace.`\n- Cleft: `What I need is peace.` (эмфаза на peace.)\n- Cleft: `What she did was apologize.` (эмфаза на apologize.)\n- Cleft: `What surprised me was his reaction.`\n\n**Когда использовать:**\n- Чтобы выделить специфический элемент.\n- Чтобы противопоставить: `It wasn't you who called — it was John.`\n- Для clarity после вопроса: `Who broke the vase? — It was the cat.`\n\n**It-cleft — позиции для фокуса:**\n- Subject: `It was John who called.`\n- Object: `It was Maria who(m) I met.`\n- Adverbial of time: `It was at 3 o'clock that we arrived.`\n- Adverbial of place: `It was in Paris that we met.`\n- Adverbial of manner (rarer): `It was carefully that she opened the box.` (sounds formal / awkward; often restructured.)\n\n**Wh-cleft — типы:**\n- `What + clause + be + noun / verb phrase`.\n- `What I want is a holiday.`\n- `What he did was leave.` (= He left.)\n\nC инфинитивом или just verb — second part often needs `to` or `is + -ing`.\n- `What I want is to travel.`\n- `What she enjoys is reading.`\n\n**Reverse pseudo-cleft:**\n- `A holiday is what I want.`\n- `Her smile is what attracted me.`\n\n**Разница между it-cleft и wh-cleft:**\n- It-cleft: focus обычно на short element (person, place, time).\n- Wh-cleft: focus обычно на longer phrase or clause / action.\n\n**Примеры contrast:**\n- `It is coffee that I drink in the morning.` (выделяет coffee.)\n- `What I drink in the morning is coffee.` (to же значение, другой baking.)\n\n**Частая ошибка:** путать cleft с normal subject-verb.\n- `John called me.` (simple.)\n- `It was John who called me.` (cleft — two clauses linked by that/who.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "It + be + FOCUS + that/who + rest   |   What + clause + be + FOCUS",
+        "ru": "It + be + ФОКУС + that/who + остальное   |   What + придаточное + be + ФОКУС"
       },
       "examples": [
         {
           "en": "It was my brother who helped me, not my sister.",
-          "ru": "Именно мой брат помог мне, а не сестра."
+          "ru": "Именно мой брат помог мне, а не сестра.",
+          "note": {
+            "en": "it-cleft, subject focus",
+            "ru": "it-cleft, фокус на подлежащем"
+          }
         },
         {
           "en": "What I really want is some peace and quiet.",
-          "ru": "Что мне действительно нужно — немного тишины и покоя."
+          "ru": "Что мне действительно нужно — немного тишины и покоя.",
+          "note": {
+            "en": "wh-cleft, object focus",
+            "ru": "wh-cleft, фокус на объекте"
+          }
         },
         {
           "en": "It was in 2019 that we first met.",
-          "ru": "Именно в 2019 году мы впервые встретились."
+          "ru": "Именно в 2019 году мы впервые встретились.",
+          "note": {
+            "en": "it-cleft, time focus",
+            "ru": "it-cleft, фокус на времени"
+          }
         },
         {
           "en": "What she did was apologize immediately.",
-          "ru": "Она сразу же извинилась."
+          "ru": "Она сразу же извинилась.",
+          "note": {
+            "en": "wh-cleft, action focus",
+            "ru": "wh-cleft, фокус на действии"
+          }
         },
         {
           "en": "It's the taste I love about this coffee.",
@@ -53,30 +71,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "It-cleft выделяет один элемент: It was JOHN who called. Wh-cleft выделяет целое действие / объект: What I want is PEACE."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It was John called me.",
+          "right": "It was John who called me.",
+          "why": {
+            "en": "An it-cleft needs the link word 'that' or 'who' before the rest of the clause.",
+            "ru": "В it-cleft перед остальной частью нужно связующее слово 'that' или 'who'."
+          }
+        },
+        {
+          "wrong": "What I need peace.",
+          "right": "What I need is peace.",
+          "why": {
+            "en": "A wh-cleft needs the verb 'be' to join the 'what'-clause to the focus.",
+            "ru": "В wh-cleft нужен глагол 'be', соединяющий 'what'-придаточное с фокусом."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you widen the cleft repertoire and tighten its register. Beyond it- and wh-clefts, use the all-cleft for strong limitation ('the only thing'): 'All I want is love', 'All she did was complain' — note the bare infinitive after 'was'. The same restrictive focus comes from 'The only thing / the thing / one thing (that) ...': 'The only thing I regret is not calling her sooner.' For place, time, and reason, head the clause with the right noun: 'The place where I want to live is Barcelona', 'The reason (why) I called was to invite you.' Negative it-clefts sharpen contrast: 'It wasn't John who called', 'It's not the money I want.' Keep the tense of 'be' and the verb inside the clause in agreement ('It was John who called', not 'who calls'). A high-value formal pattern is the not-until cleft: 'It is not until you leave that you realize', and its relatives 'It is only when / after / by ... that ...'. In modern usage the focused subject pronoun is normally the object form ('It was me who went' rather than the stiff 'It was I who went'). Clefts can be questioned, too: 'Was it John who called?', 'What was it that surprised you?'",
         "ru": "На C1 расширяй cleft structures.\n\n**All-cleft:**\n- `All I want is love.` (= the only thing I want.)\n- `All she did was complain.` (= the only thing she did.)\n- Strong limitation — «единственное, что».\n\n**The only thing / the thing / one thing + that-cleft:**\n- `The only thing I regret is not calling her sooner.`\n- `The thing that bothers me is his attitude.`\n- `One thing I noticed was the silence.`\n\n**The place / the time / the reason + wh-cleft:**\n- `The place where I want to live is Barcelona.`\n- `The time when I felt happiest was childhood.`\n- `The reason (why) I called was to invite you.`\n\n**It-cleft with negative focus:**\n- `It wasn't John who called.`\n- `It's not the money I want.`\n- `It wasn't yesterday that we met.`\nDeletion of that in object position: `It's not what I said.` (common.)\n\n**Tense agreement:**\n- `It was John who called.` (past in both.)\n- `It is John who calls me every day.` (present.)\n- `It was John who calls me.` — mismatch, usually wrong.\n\n**Wh-cleft variations:**\n- `Where I grew up is a small village.`\n- `How he reacted was unexpected.`\n- `Why she left remains unclear.`\n- `Who called was my sister.` (informal; formal may restructure.)\n\n**The one who / the one that:**\n- `The one who broke the vase was the cat.`\n- `The one thing I need is time.`\n- Used for people / things specifically.\n\n**It-cleft with prepositional phrases:**\n- `It was to John (that) I spoke.`\n- `It was from Spain (that) they came.`\n- `It was with great difficulty (that) we succeeded.`\n\n**Formal register variants:**\n- `It is not until X that Y.` — «только когда X, Y.»: `It is not until you leave that you realize.`\n- `It is only when / after / by X that Y.`: `It is only when we work together that we succeed.`\n\nСтрогие negative cleft для strong emphasis.\n\n**Subtle difference of focus:**\n- `It was John who called.` (focuses on identity — not someone else.)\n- `What John did was call.` (focuses on action — not something else.)\n- `John is who called.` — grammatically dubious; prefer cleft.\n\n**Thematic vs rhematic cleft:**\n- Thematic (topic setting): `As for John, he called.` — sets topic, no cleft.\n- Rhematic (focus / new info): `It was John who called.` — focus on new info.\n\n**Cleft in questions:**\n- `Was it John who called?`\n- `Who was it that called?`\n- `What was it that surprised you?`\n\n**Common C1 errors:**\n- Missing that/who: ✗ `It was John called me.` — needs relative clause connector.\n- Wrong pronoun: ✗ `It was I who went.` — formal; modern English: `It was me who went.` (informal) or rephrase.\n- Tense mismatch in subordinate."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "All (that) + clause + be + FOCUS   |   It + be + not + FOCUS + that/who...   |   It is not until + X + that + Y",
+        "ru": "All (that) + придаточное + be + ФОКУС   |   It + be + not + ФОКУС + that/who...   |   It is not until + X + that + Y"
       },
       "examples": [
         {
           "en": "All I asked for was a little understanding.",
-          "ru": "Всё, что я просил — немного понимания."
+          "ru": "Всё, что я просил — немного понимания.",
+          "note": {
+            "en": "all-cleft = the only thing",
+            "ru": "all-cleft = единственное"
+          }
         },
         {
           "en": "It wasn't until she left that I realized how much I missed her.",
-          "ru": "Только когда она ушла, я понял, как мне её не хватает."
+          "ru": "Только когда она ушла, я понял, как мне её не хватает.",
+          "note": {
+            "en": "not-until cleft",
+            "ru": "cleft с not until"
+          }
         },
         {
           "en": "The reason I called was to invite you to dinner.",
-          "ru": "Причина, по которой я позвонил — пригласить тебя на ужин."
+          "ru": "Причина, по которой я позвонил — пригласить тебя на ужин.",
+          "note": {
+            "en": "the reason ... cleft",
+            "ru": "cleft с the reason"
+          }
         },
         {
           "en": "What I dislike is being misunderstood.",
@@ -84,36 +132,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Was it in Paris that you first met?",
-          "ru": "Именно в Париже вы впервые встретились?"
+          "ru": "Именно в Париже вы впервые встретились?",
+          "note": {
+            "en": "cleft question",
+            "ru": "вопрос-cleft"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "It is not until X that Y = только когда X, Y. Standard negative cleft: It wasn't until I read the letter that I understood."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It was John who call me every day.",
+          "right": "It is John who calls me every day.",
+          "why": {
+            "en": "Keep the tense of 'be' and the verb in the clause consistent; present focus needs a present verb inside.",
+            "ru": "Согласуй время 'be' и глагола в придаточном; настоящий фокус требует настоящего времени внутри."
+          }
+        },
+        {
+          "wrong": "All I did was complained.",
+          "right": "All she did was complain.",
+          "why": {
+            "en": "After 'All ... was/did was', use the bare infinitive, not a past form.",
+            "ru": "После 'All ... was/did was' используется голый инфинитив, а не прошедшая форма."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the cleft is a precision instrument for information packaging — deciding what is given, what is new, and what carries the rhetorical weight. Stack a compound focus for balanced emphasis: 'It was not so much what she said but rather how she said it that offended me.' Invert the wh-cleft for a more personal feel: 'His silence was what surprised me' beside the standard 'What surprised me was his silence.' Reach for maximally emphatic adverbial clefts — 'It is precisely because of X that Y', 'It was only after Z that W', 'It was not until much later that understanding dawned' — and the contrastive frame 'It wasn't A; it was B' / 'It wasn't what you said but how you said it'. Crucially, distinguish a true cleft from extraposition: 'It was John who called' clefts 'John called' and assigns focus, whereas 'It is obvious that he lied' merely extraposes 'That he lied is obvious' and carries no focus. In reported speech you may keep the cleft ('She said it had been John who had called') or drop it for simplicity ('She said John had called'). Weigh the cleft against rival emphatic devices — fronting, emphatic 'do', intensifiers — each tuning tone differently, and deploy it sparingly: overuse flattens the very emphasis it is meant to create.",
         "ru": "На C2 cleft sentences — стилистически и дискурсивно тонкий инструмент.\n\n**Multiple-cleft stacking:**\n- `It was not so much what she said but rather how she said it that offended me.`\n- Complex balancing with compound focus.\n\n**Inverted wh-cleft:**\n- Standard: `What surprised me was his silence.`\n- Inverted: `His silence was what surprised me.`\n- Both convey same focus; inverted more personal / informal.\n\n**Here-cleft and there-cleft (rare, poetic):**\n- `Here's what I want.`\n- `Here's where we disagree.`\n- `There goes the neighbourhood.`\n- Colloquial demonstrative-as-focus.\n\n**Emphatic cleft with adverbial:**\n- `It is precisely because of X that Y.` (maximum emphasis.)\n- `It was only after Z that W.`\n- `It was not until much later that understanding dawned.`\n\n**Cleft for contrast:**\n- `It wasn't A; it was B.`\n- `It wasn't what you said but how you said it.`\n- Structural parallel for strong contrast.\n\n**Discourse-level cleft function:**\n- Introducing topic with emphasis.\n- Correcting misinterpretation: `It's not that I don't like him — it's that I can't trust him.`\n- Answering wh-questions with focus: `Who did you see? — It was Tom that I saw.`\n\n**Cleft in reported speech:**\n- Direct: `It was John who called.`\n- Reported: `She said it had been John who had called.` — preserve cleft structure.\n- Or: `She said that John had called.` — lose cleft, simpler.\n\n**Nominalized cleft (formal):**\n- `His reason for leaving was the job offer.` (cleft-like nominalization: his reason for X was Y.)\n- `The cause of the crisis was mismanagement.` (reduced cleft.)\n\n**Cleft with expletive 'it' + clause extraposition:**\n- `It is important that they attend.`\n- `It is obvious that he lied.`\nThese are NOT cleft sentences — they're extraposition. Distinction:\n- Cleft: `It was John who called.` — corresponds to `John called.` with focus.\n- Extraposition: `It is obvious that he lied.` — corresponds to `That he lied is obvious.` — no cleft focus.\n\n**Philosophical / rhetorical constructions:**\n- `It is not what you have, but what you do with it that matters.`\n- `It is not the strength of the opposition that matters, but the strength of one's convictions.`\n\n**Register stratification:**\n- Casual cleft: `What I want is out of here.`\n- Neutral: `What I want is peace.`\n- Formal: `What is needed is a comprehensive review.`\n- Academic: `It is in the interplay between tradition and innovation that cultural vitality is sustained.`\n\n**Rhythm and cadence:**\nGood writers use cleft sparingly for emphasis. Overusing flattens effect.\n\n**Cleft vs other emphatic devices:**\n- Cleft: `It was the vote that changed everything.`\n- Fronting: `The vote changed everything — all of it.`\n- Emphatic 'do': `The vote did change everything.`\n- Intensifier: `The vote really changed everything.`\n- Each shift creates different emphasis / tone.\n\n**Cleft in journalistic headlines:**\n- `It's the economy, stupid.` (Clinton campaign slogan — rhetorical cleft.)\n- `What voters want is change.`\n- Effective for punchy headlines.\n\n**Final C2 principle:**\nCleft structures are deep grammar's reply to information packaging. Topic, focus, given, new — all negotiated via syntax. Mastery at C2 means:\n1. Recognizing cleft as a focus-assignment tool.\n2. Choosing between it-cleft, wh-cleft, all-cleft, reverse-cleft by discourse requirements.\n3. Balancing cleft with other emphatic devices for varied, sophisticated prose."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "It + be + not + A + but + B + that/who...   |   It is precisely/only + adverbial + that + main clause   |   FOCUS-phrase + be + what + clause (inverted)",
+        "ru": "It + be + not + A + but + B + that/who...   |   It is precisely/only + обстоятельство + that + главное   |   ФОКУС-фраза + be + what + придаточное (инвертированный)"
       },
       "examples": [
         {
           "en": "It is not what you know but whom you know that opens doors.",
-          "ru": "Важно не что ты знаешь, а кого ты знаешь — именно это открывает двери."
+          "ru": "Важно не что ты знаешь, а кого ты знаешь — именно это открывает двери.",
+          "note": {
+            "en": "compound contrast cleft",
+            "ru": "cleft с парным контрастом"
+          }
         },
         {
           "en": "What the crisis revealed was the fragility of the system.",
-          "ru": "Кризис выявил хрупкость системы."
+          "ru": "Кризис выявил хрупкость системы.",
+          "note": {
+            "en": "inverted wh-cleft",
+            "ru": "инвертированный wh-cleft"
+          }
         },
         {
           "en": "It is precisely in moments of doubt that character is forged.",
-          "ru": "Именно в моменты сомнений выковывается характер."
+          "ru": "Именно в моменты сомнений выковывается характер.",
+          "note": {
+            "en": "emphatic 'precisely' cleft",
+            "ru": "усилительный cleft с precisely"
+          }
         },
         {
           "en": "The one thing the reform failed to address was inequality.",
@@ -121,15 +203,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "It's not that I don't agree — it's that I want more evidence.",
-          "ru": "Дело не в том, что я не согласен — я хочу больше доказательств."
+          "ru": "Дело не в том, что я не согласен — я хочу больше доказательств.",
+          "note": {
+            "en": "'it's not that ...' contrast",
+            "ru": "контраст 'it's not that ...'"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Cleft для focus на specific part: it was JOHN / what I want is PEACE / all she did was APOLOGIZE. Использовать для emphasis, не каждом предложении."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is obvious that he lied is a cleft of 'He lied'.",
+          "right": "It is obvious that he lied is extraposition, not a cleft.",
+          "why": {
+            "en": "Extraposed 'It is + adj + that...' has no focused element; only a cleft re-packages a neutral clause to spotlight one part.",
+            "ru": "Экстрапозиция 'It is + прил. + that...' не выделяет элемент; только cleft переупаковывает нейтральное предложение, выделяя одну часть."
+          }
+        },
+        {
+          "wrong": "It was because of the storm because of which the flight was cancelled.",
+          "right": "It was because of the storm that the flight was cancelled.",
+          "why": {
+            "en": "An adverbial it-cleft is linked by 'that', not by a repeated preposition or relative phrase.",
+            "ru": "Обстоятельственный it-cleft связывается через 'that', а не повторным предлогом или относительной фразой."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "fronting",
+    "inversion",
+    "it-as-subject",
+    "ellipsis-and-substitution"
+  ],
+  "crossTopic": [
+    "relative-pronouns",
+    "defining-relative-clauses",
+    "wh-questions",
+    "passive-present-simple"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "neutral",
+      "focus"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "first-conditional",
   "title": {
-    "en": "",
+    "en": "First Conditional",
     "ru": "First Conditional"
   },
   "cefr": "A2",
@@ -16,19 +16,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conditionals",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "branch",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "The first conditional talks about a **real, possible future**: something may happen, and if it does, there will be a result. Build it with `if` + the present simple in the condition, and `will` + the base verb in the result: `If it rains, I will stay home.`\n\nThe key rule: use the **present simple after `if`**, even though you mean the future. Never put `will` in the if-clause. Write `If it rains, I'll stay home`, not `If it will rain...`.\n\nWord order is free, and it controls the comma. When the if-clause comes first, put a comma after it: `If you help me, I will help you.` When the result comes first, drop the comma: `I will help you if you help me.`\n\nUse the short forms in speech and informal writing: `will` becomes `'ll` (`I'll`, `you'll`, `she'll`), and `will not` becomes `won't` (`I won't come if it rains`). For negatives and questions, the present simple in the if-clause uses `don't`/`doesn't`, and the result uses `will`: `If you don't hurry, you'll miss the bus`; `What will you do if it rains?`",
         "ru": "**First conditional** (первое условное) — это предложение про **реальное будущее**. Что-то может случиться, и если случится, будет результат.\n\n**Формула:** `If + Present Simple, will + базовая форма глагола`\n\n- `If it rains, I will stay home.` (Если пойдёт дождь, я останусь дома.)\n- `If you study, you will pass the exam.` (Если будешь учиться, ты сдашь экзамен.)\n\n**Главная ошибка** русских студентов: они ставят `will` после `if`. Это неправильно.\n- Неправильно: ❌ `If it will rain, I will stay home.`\n- Правильно: ✅ `If it rains, I will stay home.`\n\nПосле `if` — **Present Simple**, даже если речь о будущем. Это правило.\n\n**Где будущее, а где условие:**\n- Условие (if-часть) — `Present Simple`: `If it rains,…`\n- Результат (главная часть) — `will + глагол`: `…I will stay home.`\n\n**Короткие формы:**\n- `will` → `'ll`: `I'll`, `you'll`, `he'll`, `she'll`, `we'll`, `they'll`\n- `will not` → `won't`: `I won't come if it rains.`\n\n**Запятая:** если `if` в начале — ставь запятую. Если в середине — не ставь:\n- `If you help me, I will help you.`\n- `I will help you if you help me.`\n\n**Отрицание и вопрос:**\n- `If you don't hurry, you will miss the bus.` (Если не поспешишь, опоздаешь на автобус.)\n- `What will you do if it rains?` (Что будешь делать, если пойдёт дождь?)\n\nFirst conditional — это про **реальные, возможные** будущие ситуации. В отличие от Second conditional (про нереальные)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "If + subject + present simple, subject + will + base verb",
+        "ru": "If + подлежащее + Present Simple, подлежащее + will + базовая форма глагола"
       },
       "examples": [
         {
@@ -37,11 +39,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "If you don't eat, you'll be hungry.",
-          "ru": "Если не поешь, будешь голодным."
+          "ru": "Если не поешь, будешь голодным.",
+          "note": {
+            "en": "negative if-clause",
+            "ru": "отрицание в if-части"
+          }
         },
         {
           "en": "She will be angry if you're late.",
-          "ru": "Она будет злиться, если ты опоздаешь."
+          "ru": "Она будет злиться, если ты опоздаешь.",
+          "note": {
+            "en": "result first, no comma",
+            "ru": "результат первым, без запятой"
+          }
         },
         {
           "en": "If it's sunny tomorrow, we'll go to the park.",
@@ -49,23 +59,45 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Will you help me if I ask?",
-          "ru": "Ты мне поможешь, если я попрошу?"
+          "ru": "Ты мне поможешь, если я попрошу?",
+          "note": {
+            "en": "question form",
+            "ru": "вопросительная форма"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Не ставь will после if — только Present Simple: if it rains, I will stay home."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If it will rain, I will stay home.",
+          "right": "If it rains, I will stay home.",
+          "why": {
+            "en": "Use the present simple after `if`, never `will` in the if-clause.",
+            "ru": "После if ставится Present Simple, а не will."
+          }
+        },
+        {
+          "wrong": "If you will come, I will cook dinner.",
+          "right": "If you come, I will cook dinner.",
+          "why": {
+            "en": "The condition takes the present simple; only the result clause gets `will`.",
+            "ru": "В условии — Present Simple; will идёт только в главной части."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the first conditional widens beyond plain `will`. The result clause can take a **modal** that adds a shade of meaning: `may`/`might` for possibility (`If you study hard, you may pass`; `If you ask, he might help`), `can` for permission or ability (`If you need help, you can call me`), and `should` for advice (`If you want to succeed, you should work harder`). The result clause can also be an **imperative**: `If you see John, tell him to call me`; `If it rains, take an umbrella.`\n\nLearn the alternative links. `Unless` means `if not` and is followed by an **affirmative** verb: `Unless you hurry, you'll miss the train` = `If you don't hurry...`. Contrast `if` with `in case`: `if` states a condition (you act only when it happens — `Take an umbrella if it rains`), while `in case` is a **precaution** taken in advance (`Take an umbrella in case it rains`). After `in case`, use the present simple, not `will`.\n\nKeep `when` and `if` apart. `When I see him, I'll tell him` treats the event as **certain**; `If I see him, I'll tell him` treats it as a **possibility**. The same English present-tense rule applies after all of these connectors — no `will` in the subordinate clause.",
         "ru": "На B1 First conditional расширяется: появляются модалы в главной части, разница с Zero conditional, и альтернативные союзы.\n\n**Модальные глаголы вместо will:**\nВ главной части можно использовать `may`, `might`, `can`, `should` — они добавляют оттенок:\n- `If you study hard, you may pass.` (Если будешь усердно учиться, возможно, сдашь.) — вероятность.\n- `If you ask, he might help.` (Если попросишь, он может помочь.) — слабая возможность.\n- `If you need help, you can call me.` (Если нужна помощь, можешь позвонить.) — разрешение.\n- `If you want to succeed, you should work harder.` (Если хочешь преуспеть, стоит работать усерднее.) — совет.\n\n**Императив в главной части:**\n- `If you see John, tell him to call me.` (Если увидишь Джона, скажи, чтобы позвонил.)\n- `If it rains, take an umbrella.` (Если пойдёт дождь, возьми зонт.)\n\n**Unless = if not:**\n- `Unless you hurry, you'll miss the train.` = `If you don't hurry, you'll miss the train.`\n- `I won't go unless you come with me.` (Я не пойду, если ты не пойдёшь со мной.)\n\nПосле `unless` — утвердительный глагол, не отрицание.\n\n**In case vs if — важная разница:**\n- `If` — условие: что-то случится или не случится.\n- `In case` — предосторожность: на всякий случай.\n\nСравни:\n- `Take an umbrella if it rains.` (Возьми зонт, если пойдёт дождь — возьмёшь, только если дождь будет.)\n- `Take an umbrella in case it rains.` (Возьми зонт на случай, если пойдёт дождь — берёшь сейчас, на всякий случай.)\n\nПосле `in case` идёт **Present Simple** (про будущее), не `will`.\n\n**When vs if — certainty vs possibility:**\n- `When I see him, I'll tell him.` (Когда увижу — увижу точно.)\n- `If I see him, I'll tell him.` (Если увижу — может, не увижу.)\n\n`When` — **уверенность** в событии. `If` — **возможность**. В русском часто одно слово «когда/если», но в английском разница важна.\n\n**Типичные ошибки:**\n- `if…will`: ❌ `If you will come, I will cook.` → ✅ `If you come, I will cook.`\n- Двойной `will`: ❌ `I will will help.` → ✅ `I will help.`\n- `when` вместо `if` для условия: ❌ `When you are free, call me.` — это звучит как уверенность. Если неуверен, скажи `If you are free…`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "If / Unless / When / In case + present simple, will / may / might / can / should / imperative",
+        "ru": "If / Unless / When / In case + Present Simple, will / may / might / can / should / повелительное"
       },
       "examples": [
         {
@@ -74,11 +106,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Unless we get tickets, we won't go to the concert.",
-          "ru": "Если не достанем билеты, не пойдём на концерт."
+          "ru": "Если не достанем билеты, не пойдём на концерт.",
+          "note": {
+            "en": "unless = if not",
+            "ru": "unless = if not"
+          }
         },
         {
           "en": "Take some cash in case the card doesn't work.",
-          "ru": "Возьми наличные на случай, если карта не сработает."
+          "ru": "Возьми наличные на случай, если карта не сработает.",
+          "note": {
+            "en": "in case (precaution)",
+            "ru": "in case (предосторожность)"
+          }
         },
         {
           "en": "If you need anything, just call me.",
@@ -86,23 +126,45 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "When I finish work, I'll meet you.",
-          "ru": "Когда закончу работу, встречусь с тобой."
+          "ru": "Когда закончу работу, встречусь с тобой.",
+          "note": {
+            "en": "when (certainty)",
+            "ru": "when (уверенность)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "In case — предосторожность (возьми сейчас); if — условие (возьми, только если случится)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Unless you don't hurry, you'll miss the train.",
+          "right": "Unless you hurry, you'll miss the train.",
+          "why": {
+            "en": "`Unless` already means `if not`, so a second negative is wrong.",
+            "ru": "Unless уже значит «если не», поэтому второе отрицание ошибочно."
+          }
+        },
+        {
+          "wrong": "Take an umbrella in case it will rain.",
+          "right": "Take an umbrella in case it rains.",
+          "why": {
+            "en": "After `in case` use the present simple for the future, not `will`.",
+            "ru": "После in case для будущего используется Present Simple, а не will."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the first conditional gains stronger and more formal substitutes for `if`. `Provided (that)` / `providing (that)` set a condition as a **requirement** (`You can borrow the car provided that you return it by 6`). `As long as` means the same when it marks a condition (`I'll help you as long as you're honest`). `On condition that` is the formal equivalent (`He agreed on condition that his name wouldn't be published`).\n\nTo float a hypothesis, use `suppose` / `supposing` or `what if`: `Suppose you find the money — what will you do?`; `What if he doesn't come?`\n\nThe if-clause is not limited to the present simple. **Continuous** and **perfect** present forms are allowed when they pin down the timing more precisely: `If you're leaving tomorrow, we should have dinner tonight`; `If you've finished, you can leave.` This is still a first conditional in meaning — just a sharper temporal frame.\n\nThere is one genuine exception that lets `will` follow `if`: a very **polite request**, where `will` signals willingness, not future time — `If you'll wait a moment, I'll check`; `If you'll just sign here, sir.` Finally, note that `unless` is usually swappable with `if not`, but it works best when the condition is the **single exception** (`The picnic will be held, unless it rains`); for feelings that depend on the negative event, prefer `if not` (`I'll be upset if you don't come`, not `unless you come`).",
         "ru": "На B2 First conditional обогащается тонкими модальными оттенками и альтернативами `if` из формального регистра.\n\n**Provided (that) / Providing (that) — при условии, что:**\nЭто более сильное условие, чем просто `if`. Используется, когда условие ставится как требование:\n- `You can borrow the car provided (that) you return it by 6.` (Можешь взять машину при условии, что вернёшь к 6.)\n- `We'll hire you providing you pass the interview.` (Мы тебя наймём при условии, что пройдёшь собеседование.)\n\n**As long as — пока/при условии:**\n- `I'll help you as long as you're honest with me.` (Я тебе помогу, пока ты честен со мной.)\n- `You can stay as long as you want.` (Можешь оставаться столько, сколько хочешь.)\n\n**On condition that — формальное «при условии»:**\n- `He agreed on condition that his name would not be published.` (Он согласился при условии, что его имя не будет опубликовано.)\n\n**Suppose / Supposing / What if — гипотетическое предложение:**\n- `Suppose you find the money. What will you do?` (Допустим, ты найдёшь деньги. Что сделаешь?)\n- `What if he doesn't come?` (А что, если он не придёт?)\n\n**Continuous формы в if-клаузе:**\n- `If you're leaving tomorrow, we should have dinner tonight.` (Если ты уезжаешь завтра, надо поужинать сегодня.)\n- `If you're thinking of buying a car, check reviews first.` (Если ты собираешься купить машину, сначала проверь отзывы.)\n\n**Perfect формы в if-клаузе:**\n- `If you've finished, you can leave.` (Если ты закончил, можешь идти.)\n- `If he's called, I haven't heard about it.` (Если он звонил, я об этом не слышал.)\n\nЭто всё ещё First conditional по смыслу — просто более точная темпоральная привязка.\n\n**Will в if-клаузе — исключение для вежливости:**\nВ очень вежливых просьбах `will` допустимо после `if`:\n- `If you'll wait a moment, I'll check.` (Если вы подождёте минутку, я проверю.)\n- `If you'll just sign here, sir.` (Если вы только распишетесь здесь, сэр.)\n\nЗдесь `will` выражает не будущее, а **готовность/желание**. Это тонкий регистр — формальный и вежливый.\n\n**Unless vs if not — нюанс:**\n`Unless` обычно взаимозаменяем с `if not`, но в некоторых контекстах не работает:\n- ✅ `I'll be upset if you don't come.` — чувство, зависящее от невыхода.\n- ❌ `I'll be upset unless you come.` — звучит странно, лучше `if not`.\n\n`Unless` лучше работает, когда условие — **единственное исключение**: `The picnic will be held, unless it rains.`\n\n**Типичная продвинутая ошибка:** смешение First и Second conditional по регистру. Если ты хочешь звучать менее категорично, сдвигаешься к Second: `If he comes, I'll ask him` vs `If he came, I would ask him` (более вежливо, менее уверенно)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Provided (that) / As long as / On condition that + present (simple / continuous / perfect), will-clause; polite: If + subject + will ...",
+        "ru": "Provided (that) / As long as / On condition that + настоящее (Simple / Continuous / Perfect), will-предложение; вежливое: If + подлежащее + will ..."
       },
       "examples": [
         {
@@ -111,48 +173,94 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "As long as you pay rent on time, there won't be any problems.",
-          "ru": "Пока ты вовремя платишь аренду, проблем не будет."
+          "ru": "Пока ты вовремя платишь аренду, проблем не будет.",
+          "note": {
+            "en": "as long as = condition",
+            "ru": "as long as = условие"
+          }
         },
         {
           "en": "Suppose the meeting is cancelled — what will we do then?",
-          "ru": "Допустим, встречу отменят — что мы тогда будем делать?"
+          "ru": "Допустим, встречу отменят — что мы тогда будем делать?",
+          "note": {
+            "en": "suppose (hypothesis)",
+            "ru": "suppose (гипотеза)"
+          }
         },
         {
           "en": "If you'll follow me, I'll show you to your table.",
-          "ru": "Если вы пройдёте за мной, я провожу вас к столику."
+          "ru": "Если вы пройдёте за мной, я провожу вас к столику.",
+          "note": {
+            "en": "polite will after if",
+            "ru": "вежливое will после if"
+          }
         },
         {
           "en": "If you're planning to leave early, let me know.",
-          "ru": "Если ты собираешься уйти рано, дай знать."
+          "ru": "Если ты собираешься уйти рано, дай знать.",
+          "note": {
+            "en": "continuous if-clause",
+            "ru": "Continuous в if-части"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Provided и as long as — более сильные альтернативы if, когда условие ставится как требование."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "We'll hire you provided that you will pass the interview.",
+          "right": "We'll hire you provided that you pass the interview.",
+          "why": {
+            "en": "`Provided (that)` follows the same rule as `if`: present tense, no `will`.",
+            "ru": "Provided (that) подчиняется тому же правилу, что и if: настоящее время, без will."
+          }
+        },
+        {
+          "wrong": "I'll be upset unless you come.",
+          "right": "I'll be upset if you don't come.",
+          "why": {
+            "en": "When the feeling depends on the negative event, `unless` sounds odd; use `if not`.",
+            "ru": "Когда чувство зависит от ненаступления события, unless звучит странно — используйте if not."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the first conditional is a precision tool for marking probability, register and politeness. Put `should` in the if-clause to add light distance — 'unlikely, but possible': `If you should see him, tell him`; `If anyone should ask, say I'm out.` The event is still real, just less expected. The **formal inversion** drops `if` and fronts `should`: `Should you need assistance, please don't hesitate to ask`; `Should the deal fall through, we have a backup plan.` This is standard in business writing, instructions and presentations.\n\nGrade the result with the right modal: `will` is confident (`...he'll help`), `should` is expected but not guaranteed (`...he should help`), `may` is roughly even odds, `might` is lower, and `could` marks a hypothetical option. Choosing precisely is the C1 skill.\n\nFormal British politeness uses `if you'll...` / `if you would...` as near-instructions rather than real conditions: `If you'll take a seat, the doctor will be with you shortly.` Academic and business prose grade the condition with `provided`, `assuming` and `given (that)`: `Assuming the data is accurate, our conclusions stand.`\n\nFinally, recognise the **pragmatic functions** the first conditional performs — threat (`If you tell anyone, I'll never forgive you`), promise (`If you help me, I'll owe you one`), warning (`If you don't study, you'll fail`), and advice through consequence (`If you leave now, you'll catch the last train`). A C1 speaker matches modal, lexis and tone to the function, and may even slide toward the second conditional to soften a request.",
         "ru": "На C1 First conditional — инструмент тонкой маркировки вероятности, вежливости и регистра.\n\n**1. Should в if-клаузе — лёгкая дистанция:**\n- `If you should see him, tell him.` (Если вдруг увидишь его, скажи.)\n- `If anyone should ask, say I'm out.` (Если кто-то вдруг спросит, скажи, что меня нет.)\n\n`Should` добавляет оттенок «маловероятно, но возможно». Это не Second conditional — событие реально, но менее ожидаемо.\n\n**2. Inversion с should (formal):**\n- `Should you need assistance, please don't hesitate to ask.` (Если вам понадобится помощь, пожалуйста, обращайтесь.)\n- `Should the deal fall through, we have a backup plan.` (Если сделка сорвётся, у нас есть запасной план.)\n\nИнверсия формальна, типична для делового письма, инструкций, презентаций. Заменяет `If…should…`.\n\n**3. Оттенки вероятности через модалы:**\n- `will` — уверенное будущее: `If you ask, he'll help.`\n- `should` — ожидаемое, но не гарантированное: `If you ask, he should help.` (Ожидается, что поможет.)\n- `may` — возможно: `If you ask, he may help.` (50/50.)\n- `might` — меньше шансов: `If you ask, he might help.` (Возможно, но необязательно.)\n- `could` — гипотетическая возможность: `If you ask, he could help.` (Есть такой вариант.)\n\nC1-писатель выбирает модал точно, показывая степень уверенности.\n\n**4. Politeness if-clauses:**\nБританский формальный регистр использует `if you'll…`, `if you would…`:\n- `If you'll take a seat, the doctor will be with you shortly.`\n- `If you would kindly complete this form.`\n\nЭто почти не условие, а вежливая просьба-инструкция.\n\n**5. Gradation с provided/assuming/given:**\n- `Provided we have the resources, we'll proceed.` (При наличии ресурсов продолжим.)\n- `Assuming the data is accurate, our conclusions stand.` (Предполагая, что данные точны, наши выводы верны.)\n- `Given that the market recovers, sales will improve.` (При условии восстановления рынка продажи улучшатся.)\n\nЭти формы распространены в академическом и деловом регистрах.\n\n**6. Pragmatic functions:**\nFirst conditional часто функционирует не как условие, а как:\n- Угроза: `If you tell anyone, I'll never forgive you.`\n- Обещание: `If you help me, I'll owe you one.`\n- Предупреждение: `If you don't study, you'll fail.`\n- Совет через последствие: `If you leave now, you'll catch the last train.`\n\nC1-говорящий осознаёт прагматическую функцию и выбирает интонацию, лексику и модалы соответственно.\n\n**7. Смешение First и Second для регистровой тонкости:**\nИногда говорящий намеренно использует Second conditional там, где First логичнее, — чтобы смягчить просьбу:\n- `If you come to the party, bring wine.` — прямо.\n- `If you came to the party, you would love it.` — мягко, менее настойчиво."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "If + subject + should + base verb, ...; Should + subject + base verb, ... (inversion); Assuming / Given (that) / Provided + clause",
+        "ru": "If + подлежащее + should + базовый глагол, ...; Should + подлежащее + базовый глагол, ... (инверсия); Assuming / Given (that) / Provided + придаточное"
       },
       "examples": [
         {
           "en": "Should the circumstances change, we will revise the plan accordingly.",
-          "ru": "Если обстоятельства изменятся, мы соответственно пересмотрим план."
+          "ru": "Если обстоятельства изменятся, мы соответственно пересмотрим план.",
+          "note": {
+            "en": "should-inversion",
+            "ru": "инверсия с should"
+          }
         },
         {
           "en": "Assuming the funding comes through, the project will launch in June.",
-          "ru": "При условии получения финансирования проект стартует в июне."
+          "ru": "При условии получения финансирования проект стартует в июне.",
+          "note": {
+            "en": "assuming (graded condition)",
+            "ru": "assuming (градация условия)"
+          }
         },
         {
           "en": "If you should encounter any difficulties, contact the help desk.",
-          "ru": "Если возникнут трудности, свяжитесь со службой поддержки."
+          "ru": "Если возникнут трудности, свяжитесь со службой поддержки.",
+          "note": {
+            "en": "should in if-clause",
+            "ru": "should в if-части"
+          }
         },
         {
           "en": "Provided the experiment replicates, the hypothesis holds.",
@@ -160,23 +268,45 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "If you would be so kind as to wait, I'll fetch the manager.",
-          "ru": "Если вы будете столь любезны подождать, я приведу менеджера."
+          "ru": "Если вы будете столь любезны подождать, я приведу менеджера.",
+          "note": {
+            "en": "formal politeness",
+            "ru": "формальная вежливость"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Should you need help — формальная инверсия, стандарт для делового и инструктивного регистра."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Should you to encounter difficulties, contact the help desk.",
+          "right": "Should you encounter difficulties, contact the help desk.",
+          "why": {
+            "en": "After inverted `should` the verb is a bare infinitive — no `to`.",
+            "ru": "После инверсии с should идёт инфинитив без to."
+          }
+        },
+        {
+          "wrong": "Should you will need assistance, please ask.",
+          "right": "Should you need assistance, please ask.",
+          "why": {
+            "en": "The `should`-inversion already carries the conditional; no extra `will` follows.",
+            "ru": "Инверсия с should уже выражает условие — лишнее will не ставится."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the first conditional is a nuanced marker of probability, register and pragmatic function, and your choice of form signals the speaker's stance. In speeches and essays it often frames an argument rather than predicting an event: `If we ignore climate change, we will pay a heavy price`; `If society fails its children, it fails its future` — an ethical generalisation cast as a condition.\n\nWatch the **tautological** uses (`If you want something done right, you'll do it yourself`; `If you're not ready, you're not ready`), which hover between zero and first depending on whether you see a rule or a specific case. Read `will` in the result subtly: it can mark **willingness** (`If you insist, I'll come`), **habit** — close to 'always' (`If you ask him, he'll always say no`), or **prediction** (`If the rate drops, inflation will follow`).\n\nUse inversion for a literary or solemn register (`Should fate intervene, none of us can foresee the outcome`; `Should you choose to accept this mission...`), and know the fixed polite formulas (`If you would be good enough to...`). Build **conditional chains** to drive an argument — `If X occurs, Y will follow; if Y follows, Z becomes inevitable` — and manage the ambiguity between first and zero (`If water freezes, the pipe will burst` may be a one-off prediction or a general law; context decides). The C2 mark is fluent switching between first, second and third within a single stretch of discourse, controlling register and certainty at each step.",
         "ru": "На C2 First conditional — нюансированный маркер вероятности, регистра и прагматической функции. Твой выбор формы отражает позицию говорящего.\n\n**1. Условие как риторический приём:**\nВ речах и эссе First conditional часто используется не для описания возможного события, а для построения аргумента:\n- `If we ignore climate change, we will pay a heavy price.` (Если проигнорируем изменение климата, дорого за это заплатим.)\n- `If society fails its children, it fails its future.` (Если общество не справляется со своими детьми, оно не справляется со своим будущим.)\n\nЭто не прогноз — это этическое обобщение в форме условия.\n\n**2. Tautological и quasi-tautological uses:**\n- `If you want something done right, you'll do it yourself.` (Хочешь сделать хорошо — сделай сам.)\n- `If you're not ready, you're not ready.` — риторическая истина.\n\nЭта форма балансирует между Zero и First в зависимости от того, видит ли говорящий событие как закономерность или как возможный конкретный случай.\n\n**3. Тонкая интерпретация will:**\n`Will` в главной части может означать не будущее, а:\n- Волю: `If you insist, I'll come.` (Раз настаиваешь — приду.)\n- Привычку: `If you ask him, he'll always say no.` (Если его спросишь, он всегда скажет «нет».) — здесь `will` почти как `usually`.\n- Предсказание: `If the rate drops, inflation will follow.`\n\nРазличение — признак зрелости владения.\n\n**4. Inversion в литературном и публицистическом регистре:**\n- `Should fate intervene, none of us can foresee the outcome.`\n- `Should you choose to accept this mission…`\n\nВ драматичных и литературных контекстах инверсия создаёт торжественность или формальность.\n\n**5. If-clauses с субъективными модалами:**\n- `If you will have noticed…` — формальное «если вы заметили» (скорее Future Perfect-оттенок).\n- `If you would be good enough to…` — устойчивое вежливое выражение.\n\nC2-пользователь знает эти устоявшиеся формулы и применяет их уместно.\n\n**6. Conditional chains:**\nВ сложных аргументах C2-писатель строит цепочки условий:\n- `If X occurs, Y will follow. If Y follows, then Z becomes inevitable. And if Z becomes inevitable, we must prepare.`\n\nУправление когерентностью таких цепочек — навык академической и аналитической письменной речи.\n\n**7. Ambiguity между First и Zero:**\nФраза `If water freezes, the pipe will burst` — это First (один конкретный прогноз) или Zero (общее правило)? Интерпретация зависит от контекста. C2-слушатель улавливает, про что речь: про этот конкретный дом сегодня или про принцип в целом.\n\n**8. Interplay с other conditionals:**\nВ продвинутом дискурсе First свободно переключается с Second/Third:\n- `If he comes tomorrow, I'll tell him; but if he came today, I wouldn't bother him; and if he had come yesterday, I would have cancelled the meeting.`\n\nУправление этими регистровыми переключениями — маркер C2."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "If + present, will-clause (= willingness / habit / prediction); conditional chains: If X, will Y; if Y, then Z; Should + subject + base verb (literary inversion)",
+        "ru": "If + настоящее, will-предложение (= воля / привычка / прогноз); цепочки условий: If X, will Y; if Y, then Z; Should + подлежащее + базовый глагол (литературная инверсия)"
       },
       "examples": [
         {
@@ -185,27 +315,79 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Should circumstances dictate otherwise, the contingency plan will take effect.",
-          "ru": "Если обстоятельства продиктуют иное, вступит в силу план действий на случай непредвиденных ситуаций."
+          "ru": "Если обстоятельства продиктуют иное, вступит в силу план действий на случай непредвиденных ситуаций.",
+          "note": {
+            "en": "literary inversion",
+            "ru": "литературная инверсия"
+          }
         },
         {
           "en": "If you insist on knowing, I'll tell you — but you won't like it.",
-          "ru": "Если настаиваешь на том, чтобы узнать, я скажу — но тебе это не понравится."
+          "ru": "Если настаиваешь на том, чтобы узнать, я скажу — но тебе это не понравится.",
+          "note": {
+            "en": "will = willingness",
+            "ru": "will = воля"
+          }
         },
         {
           "en": "Ask him, and he'll always give the same answer.",
-          "ru": "Спроси его — он всегда даст один и тот же ответ."
+          "ru": "Спроси его — он всегда даст один и тот же ответ.",
+          "note": {
+            "en": "will = habit (always)",
+            "ru": "will = привычка (always)"
+          }
         },
         {
           "en": "If the market recovers, confidence returns; if confidence returns, investment follows.",
-          "ru": "Если рынок восстановится, вернётся уверенность; если вернётся уверенность, последуют инвестиции."
+          "ru": "Если рынок восстановится, вернётся уверенность; если вернётся уверенность, последуют инвестиции.",
+          "note": {
+            "en": "conditional chain",
+            "ru": "цепочка условий"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Will в главной части First conditional может означать волю, привычку или прогноз — контекст решает."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Should circumstances will dictate otherwise, the plan changes.",
+          "right": "Should circumstances dictate otherwise, the plan changes.",
+          "why": {
+            "en": "Inverted `should` is followed by a bare infinitive, never `will`.",
+            "ru": "После инверсии с should идёт инфинитив без to, а не will."
+          }
+        },
+        {
+          "wrong": "If we will fail to act, future generations will suffer.",
+          "right": "If we fail to act, future generations will suffer.",
+          "why": {
+            "en": "Even in rhetorical, argument-framing conditionals, the if-clause stays in the present.",
+            "ru": "Даже в риторических условиях для аргумента if-часть остаётся в настоящем времени."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "zero-conditional",
+    "second-conditional",
+    "adverbial-clauses-condition",
+    "future-simple-will"
+  ],
+  "crossTopic": [
+    "subordinating-conjunctions",
+    "result-clauses",
+    "may-might",
+    "should-ought-to"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "if + present",
+      "will + base verb",
+      "real future",
+      "no will after if"
+    ]
+  }
 };

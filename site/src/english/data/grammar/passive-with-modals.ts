@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "passive-with-modals",
   "title": {
-    "en": "",
+    "en": "Passive with Modals",
     "ru": "Passive With Modals"
   },
   "cefr": "B2",
@@ -14,122 +14,280 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "passive",
+  "egp": [
+    "EGP:can/could/may/might/must/should/have to + be + past participle",
+    "EGP:modal + have been + past participle"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "A modal passive combines a modal verb with the passive voice. The pattern is fixed: modal + be + past participle (V3). The modal stays bare (no -s, no to), be never changes form, and the participle carries the meaning: This should be done. / Helmets must be worn. / The form can be downloaded. Use it to describe rules, instructions, possibilities and advice when the doer is unknown, obvious, or deliberately left out. The modal keeps the same meaning it has in the active: can = possibility/ability, may = permission/possibility, must = obligation/strong certainty, should = advice, have to = external necessity, ought to = moral duty. For the past, replace be with have been: modal + have been + V3 (This should have been done yesterday. / The letter must have been lost.). Negatives and questions follow the modal: Food must not be taken inside. / Can this be fixed? / Should the window be closed? The single most common error is dropping be (must be done, never must done) or adding to after the modal (must be done, never must to be done).",
         "ru": "**Passive с модальными глаголами** — пассив после `can, could, may, might, must, should, have to, ought to, need to, will, would`. \n\n**Формула:** `modal + be + V3`.\n\n- `This should be done carefully.` (Это должно быть сделано аккуратно.)\n- `Safety helmets must be worn.` (Каски должны носиться.)\n- `The form can be downloaded online.` (Форму можно скачать онлайн.)\n- `Mistakes may be made.` (Ошибки могут быть допущены.)\n\n**Значения в пассиве те же, что и в активе:**\n\n| Модал | Значение | Пример |\n|---|---|---|\n| can | возможность, способность | It can be done. (Это можно сделать.) |\n| could | прошлая возможность / вежливость | It could be arranged. (Это можно организовать.) |\n| may | разрешение, возможность | Applications may be submitted online. |\n| might | слабая возможность | The flight might be delayed. |\n| must | обязательство, уверенность | Passports must be shown. |\n| should | совет, долженствование | This should be avoided. |\n| have to | внешняя необходимость | The rules have to be followed. |\n| ought to | моральный долг | This ought to be reported. |\n\n**Modal perfect passive:** `modal + have been + V3` — для прошлого.\n- `This should have been done yesterday.` (Это должно было быть сделано вчера.)\n- `The letter must have been lost.` (Письмо, должно быть, потерялось.)\n- `It could have been avoided.` (Этого можно было избежать.)\n- `She might have been informed already.` (Её, возможно, уже проинформировали.)\n\n**Когда использовать modal passives:**\n\n1. **Правила и инструкции:** `Food must be stored in the fridge.`\n2. **Советы:** `This should be avoided.`\n3. **Разрешение:** `Photos may be taken in this area.`\n4. **Возможность:** `The file can be accessed from any computer.`\n5. **Догадки о прошлом:** `The door must have been left open.`\n\n**Типичные ошибки русских учеников:**\n- ❌ `This can done.` → ✅ `This can be done.` (нужно be после модала!)\n- ❌ `It must to be done.` → ✅ `It must be done.` (after must — без to)\n- ❌ `This should being done.` → ✅ `This should be done.` (be, не being)\n- ❌ `It must has been done.` → ✅ `It must have been done.` (после модала — have, не has)\n- ❌ `Двойной модал: will must be done.` → ✅ Выбери один: `will be done` или `must be done`.\n\n**Отрицание и вопрос:**\n- `Food must not be taken into the library.` (Нельзя приносить еду в библиотеку.)\n- `Should the window be closed?` (Окно закрыть?)\n- `Can this problem be solved?` (Можно ли решить эту проблему?)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "modal + be + past participle (V3); for the past: modal + have been + V3",
+        "ru": "модал + be + причастие прошедшего времени (V3); для прошлого: модал + have been + V3"
       },
       "examples": [
         {
           "en": "This should be done carefully.",
-          "ru": "Это нужно делать аккуратно."
+          "ru": "Это нужно делать аккуратно.",
+          "note": {
+            "en": "advice",
+            "ru": "совет"
+          }
         },
         {
           "en": "Helmets must be worn on the construction site.",
-          "ru": "На стройке должны носиться каски."
+          "ru": "На стройке должны носиться каски.",
+          "note": {
+            "en": "rule",
+            "ru": "правило"
+          }
         },
         {
           "en": "The report can be submitted by email.",
-          "ru": "Отчёт можно отправить по электронной почте."
+          "ru": "Отчёт можно отправить по электронной почте.",
+          "note": {
+            "en": "possibility",
+            "ru": "возможность"
+          }
         },
         {
           "en": "The letter must have been lost in the post.",
-          "ru": "Письмо, должно быть, потерялось на почте."
+          "ru": "Письмо, должно быть, потерялось на почте.",
+          "note": {
+            "en": "past guess",
+            "ru": "догадка о прошлом"
+          }
         },
         {
           "en": "This mistake could have been avoided.",
-          "ru": "Эту ошибку можно было избежать."
+          "ru": "Эту ошибку можно было избежать.",
+          "note": {
+            "en": "missed possibility",
+            "ru": "упущенная возможность"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Modal + be + V3. Для прошлого: modal + have been + V3. Never modal + to be."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "This can done.",
+          "right": "This can be done.",
+          "why": {
+            "en": "A modal passive always needs be before the participle.",
+            "ru": "В пассиве после модала всегда нужен be перед причастием."
+          }
+        },
+        {
+          "wrong": "It must to be done.",
+          "right": "It must be done.",
+          "why": {
+            "en": "No to after a core modal like must, can, should, may.",
+            "ru": "После настоящего модала (must, can, should, may) частица to не ставится."
+          }
+        },
+        {
+          "wrong": "This should being done.",
+          "right": "This should be done.",
+          "why": {
+            "en": "Use the bare infinitive be, not being, after the modal.",
+            "ru": "После модала используется инфинитив be, а не being."
+          }
+        },
+        {
+          "wrong": "It must has been done.",
+          "right": "It must have been done.",
+          "why": {
+            "en": "After a modal the form is have been, never has been.",
+            "ru": "После модала ставится have been, а не has been."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the modal passive becomes a tool of register, criticism, prediction and polite distance. The perfect form (modal + have been + V3) does most of the heavy lifting. Use should/ought to have been + V3 to criticise a past action without naming a culprit: This should have been done last week. / She ought to have been consulted. Use must/may/might/could/can't have been + V3 to guess about the past along a confidence scale, from sure (must have been) to tentative (might have been) to ruled out (can't have been): The file must have been deleted by accident. / He might have been told already. Regulatory and technical writing leans on the present modal passive for rules and standards: Equipment must be inspected before use. / Forms shall be completed in block capitals. (here shall = legal obligation, not future). Academic and diplomatic prose uses it to hedge: It could be argued that... / Attention should be drawn to... Note the near-synonyms needs to be repaired (formal) and needs repairing (more conversational). The progressive passive after a modal (might be being interviewed) is grammatical but vanishingly rare, so rephrase. Watch for double modals: not will must be done but will have to be done, or pick one modal. And in a corporate email a bare modal passive (The report should be sent) can read as passive-aggressive, so prefer Could you send the report?",
         "ru": "На C1 modal passives становятся инструментом **критики, прогноза, регуляции и вежливой дистанции**. Особое внимание — perfect passive modals, которые выражают упрёк, сожаление, догадку о прошлом.\n\n**1. Modal perfect passive — упрёк и критика:**\n- `This should have been done last week.` (Это должно было быть сделано на прошлой неделе — упрёк.)\n- `The error could have been prevented.` (Эту ошибку можно было предотвратить.)\n- `She ought to have been consulted.` (С ней должны были проконсультироваться.)\n- `The documents should not have been released.` (Документы не должны были быть опубликованы.)\n\nЭта форма — **главный способ критиковать прошлые действия без прямых обвинений**. Агент часто не называется, что смягчает тон.\n\n**2. Modal perfect passive — догадка о прошлом:**\n- `The file must have been deleted by accident.` (Файл, должно быть, удалили случайно.)\n- `The letter may have been intercepted.` (Письмо могло быть перехвачено.)\n- `He might have been told already.` (Ему, возможно, уже сказали.)\n- `It can't have been forgotten so soon.` (Этого не могли забыть так быстро.)\n\nТон: от уверенного (`must have been`) к неуверенному (`might have been`).\n\n**3. Regulatory and technical writing:**\n- `Equipment must be inspected before use.`\n- `Forms shall be completed in block capitals.` (`shall` — юридическое обязательство.)\n- `Copies may be retained for reference.`\n- `The data should be encrypted during transmission.`\n\nМодальные пассивы — основной грамматический инструмент правил, стандартов, ISO-документов.\n\n**4. Hedging and politeness:**\n- `Consideration might be given to alternative approaches.` (Можно рассмотреть альтернативные подходы.)\n- `It could be argued that...` (Можно утверждать, что...)\n- `Attention should be drawn to several issues.` (Следует обратить внимание на несколько вопросов.)\n\nАкадемический и дипломатический регистр: выражает мысль без прямого присвоения её автору.\n\n**5. Need to be + V3:**\n- `The roof needs to be repaired.` (Крышу нужно починить.)\n- Alternative: `The roof needs repairing.` (Крышу нужно починить — герундий.)\n\nОба варианта корректны, но `need + V-ing` звучит естественнее в разговорной речи, а `need to be + V3` — более формально.\n\n**6. Might be being (rare and avoided):**\nТехнически возможна конструкция `might be being + V3` для процесса в настоящем с оттенком возможности:\n- `The suspect might be being interviewed right now.` — возможно, грамматически корректно, но носители предпочитают: `The suspect might be under interview right now.` или `They might be interviewing the suspect right now.`\n\n**7. Legal and formal register:**\n- `The contract shall be governed by English law.` (Договор регулируется английским правом.)\n- `Amendments must not be made without consent.` (Изменения не могут быть внесены без согласия.)\n- `Notice is to be given in writing.` (Уведомление направляется в письменной форме.)\n\n`Shall` в этом контексте выражает обязательство, не будущее.\n\n**8. Common C1 errors:**\n- **Неправильная форма перфектного пассива:** ❌ `It should has been done` → ✅ `It should have been done`.\n- **Double modal:** ❌ `It will must be done` → ✅ `It will have to be done` (или выбирай один модал).\n- **Wrong participle:** ❌ `can be speak` → ✅ `can be spoken`.\n- **Missing be:** ❌ `This should done` → ✅ `This should be done`.\n\n**9. Russian-English mapping:**\n- Рус: «можно сделать» → Eng: `can be done` / `may be done`.\n- Рус: «нужно делать» → Eng: `needs to be done` / `should be done`.\n- Рус: «должно быть сделано» → Eng: `must be done` / `should be done`.\n- Рус: «могло быть сделано» (возможность в прошлом) → Eng: `could have been done`.\n- Рус: «следовало бы сделать» (упрёк) → Eng: `should have been done`.\n\n**10. Style check:**\nМодальный пассив делает текст безличным. В корпоративных e-mail это часто избыточно: `The report should be sent` звучит пассивно-агрессивно. Лучше: `Please send the report` или `Could you send the report?`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "modal + have been + past participle (V3) for reproach or past deduction; modal + be + V3 for rules and hedging",
+        "ru": "модал + have been + V3 для упрёка или догадки о прошлом; модал + be + V3 для правил и смягчения"
       },
       "examples": [
         {
           "en": "The protocol must be followed at all times.",
-          "ru": "Протокол должен соблюдаться постоянно."
+          "ru": "Протокол должен соблюдаться постоянно.",
+          "note": {
+            "en": "regulation",
+            "ru": "регламент"
+          }
         },
         {
           "en": "The incident should have been reported immediately.",
-          "ru": "О происшествии следовало доложить немедленно."
+          "ru": "О происшествии следовало доложить немедленно.",
+          "note": {
+            "en": "reproach",
+            "ru": "упрёк"
+          }
         },
         {
           "en": "It could be argued that both sides share responsibility.",
-          "ru": "Можно утверждать, что обе стороны несут ответственность."
+          "ru": "Можно утверждать, что обе стороны несут ответственность.",
+          "note": {
+            "en": "academic hedge",
+            "ru": "академическое смягчение"
+          }
         },
         {
           "en": "The file may have been corrupted during transfer.",
-          "ru": "Файл мог повредиться при передаче."
+          "ru": "Файл мог повредиться при передаче.",
+          "note": {
+            "en": "past deduction",
+            "ru": "догадка о прошлом"
+          }
         },
         {
           "en": "New regulations need to be introduced before next quarter.",
-          "ru": "Новые правила должны быть введены до следующего квартала."
+          "ru": "Новые правила должны быть введены до следующего квартала.",
+          "note": {
+            "en": "necessity",
+            "ru": "необходимость"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Modal + have been + V3 — упрёк или догадка о прошлом: should have been done, must have been lost."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It should has been done.",
+          "right": "It should have been done.",
+          "why": {
+            "en": "The perfect after a modal is have been, regardless of person.",
+            "ru": "Перфект после модала — have been, независимо от лица."
+          }
+        },
+        {
+          "wrong": "It will must be done.",
+          "right": "It will have to be done.",
+          "why": {
+            "en": "Two core modals cannot stack; replace one with a semi-modal (have to).",
+            "ru": "Два настоящих модала не сочетаются; один заменяется на полу-модал (have to)."
+          }
+        },
+        {
+          "wrong": "The report can be speak.",
+          "right": "The report can be spoken.",
+          "why": {
+            "en": "The passive needs the past participle (V3), not the base form.",
+            "ru": "В пассиве нужна третья форма глагола (V3), а не инфинитив."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the modal passive is a precision instrument across legal, technical, academic and journalistic writing, calibrating obligation, evaluation and probability with deliberate care. Legal English relies on shall, must, may and will in the passive: The parties shall be bound by the terms hereof. / No variation shall be made except in writing. (in plain English, shall is increasingly replaced by must or will). Scientific prose hedges with it: Several factors should be considered. / Further research must be undertaken. The perfect passive (should/ought to have been + V3) is the standard language of post-mortem critique, showing what went wrong without a personal attack: The policy should have been revised years ago. The epistemic perfect passive forms a graded confidence scale: must have been (sure) > will have been (almost sure) > may/might have been (possible) > could have been (theoretical) > can't / couldn't have been (ruled out); a mature writer deploys these deliberately. The mandative subjunctive surfaces in formal clauses: It is imperative that action be taken. / It was recommended that the proposal be reconsidered. (note the bare be). Headline and tight prose compress further: Deal to be signed next week. / Victims are said to have been drugged. Crucially, you recognise the manipulative euphemistic passive (Mistakes were made) that dodges agency, and you choose it only when you genuinely want that effect. The progressive passive after a modal (might be being discussed) is a corpus rarity best paraphrased (might currently be under discussion). At this level each modal passive is a conscious choice: might have been informed is softer than was probably informed, and should have been done remains the key tool of civilised criticism.",
         "ru": "На C2 модальные пассивы — **тонкий риторический инструмент** в юридических, технических, академических и публицистических текстах. Они выражают обязательства, оценки и догадки с точной степенью уверенности и эмоциональной окраски.\n\n**1. Legal and technical passive modals:**\nЮридический английский полагается на `shall`, `must`, `may`, `will` в пассиве:\n- `The parties shall be bound by the terms hereof.` (Стороны обязуются соблюдать условия настоящего документа.)\n- `No variation shall be made except in writing.` (Никакие изменения не могут быть внесены, кроме как в письменной форме.)\n- `Notice may be given by email or by post.` (Уведомление может быть направлено по электронной или обычной почте.)\n- `The contract shall be construed in accordance with English law.` (Договор толкуется в соответствии с английским правом.)\n\nПодсказка: в современном plain English `shall` часто заменяется на `must` или `will`. Но в традиционных юридических документах `shall` остаётся.\n\n**2. Scientific and analytical hedging:**\n- `Several factors should be considered.`\n- `Further research must be undertaken to confirm these results.`\n- `The hypothesis can be extended to related phenomena.`\n- `Alternative explanations ought to be examined.`\n\nМодальный пассив в академическом стиле — способ изложить рекомендации без прямого «я считаю, что».\n\n**3. Reproach and regret (modal perfect passive):**\n- `The policy should have been revised years ago.` (Политику следовало пересмотреть много лет назад.)\n- `More attention ought to have been paid to the warnings.` (Следовало уделить больше внимания предупреждениям.)\n- `The decision need not have been made so hastily.` (Решение не нужно было принимать так поспешно.)\n\nВ публицистике эти формы — основной язык post-mortem анализа и критики: показать, что было сделано неправильно, не нападая лично.\n\n**4. Epistemic perfect passive — уверенность в прошлом:**\nШкала уверенности в модальных пассивах:\n- `The document must have been destroyed.` (Наверняка уничтожен.) — сильная уверенность.\n- `The document will have been destroyed.` (Скорее всего уничтожен — future perfect passive в эпистемическом смысле.) — почти уверенность.\n- `The document may/might have been destroyed.` (Возможно, уничтожен.) — слабая уверенность.\n- `The document could have been destroyed.` (Мог быть уничтожен — возможность.) — теоретическая возможность.\n- `The document can't have been destroyed.` (Не мог быть уничтожен.) — отрицание возможности.\n- `The document couldn't have been destroyed.` — то же, но мягче.\n\nЗрелый автор использует эти градации осознанно.\n\n**5. Complex clauses with modal passive:**\n- `It is imperative that action be taken.` (Subjunctive + passive: важно, чтобы меры были приняты.)\n- `It was recommended that the proposal be reconsidered.` (Рекомендовалось пересмотреть предложение.)\n\nMandative subjunctive в пассиве встречается в официальных документах, университетских правилах, резолюциях.\n\n**6. Modal passive in headlines and tight prose:**\n- `Reforms must be accelerated, says minister.`\n- `Deal to be signed next week.` (Заголовочная форма be + to + be + V3 — компактная формулировка.)\n- `Victims are said to have been drugged.` (Сообщается, что жертвам подсыпали наркотики.)\n\n**7. Dysphemistic vs euphemistic passives:**\n- `Mistakes were made.` (classic political passive — избегание ответственности.)\n- `It must be acknowledged that errors have been committed.` (Более тяжеловесная версия — ещё больше дистанции.)\n- `It must be admitted that we erred.` (Актив с «we» — прямая ответственность.)\n\nНа C2 ты распознаёшь манипулятивные формы и не используешь их неосознанно в собственной речи, если не хочешь этого эффекта.\n\n**8. Might be being — корпусная редкость:**\nФорма `might be being + V3` существует, но встречается в одном-двух случаях на миллион. Носители её избегают. Если смысл требует — перефразируй: вместо `The issue might be being discussed right now` → `The issue might currently be under discussion`.\n\n**9. Cross-linguistic refinement:**\nРусское «нужно бы было сделать» — это почти точное `should have been done`. «Можно было избежать» — `could have been avoided`. «Должно быть, случилось» — `must have happened` (или для транзитива — `must have been X-ed`). Русский часто безличен и легко переходит в пассив; английский требует явной формы модал + be + V3.\n\n**10. Mastery:**\nНа C2 каждый модальный пассив — сознательный выбор. Ты знаешь, что `might have been informed` мягче, чем `was probably informed`, что `shall be` сильнее, чем `will be`, и что `should have been done` — ключевой инструмент цивилизованной критики. Ты используешь эти формы с точностью часовщика."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "modal/shall + be + V3 (rules, law); modal + have been + V3 (graded past deduction, reproach); that-clause + bare be + V3 (mandative subjunctive)",
+        "ru": "модал/shall + be + V3 (правила, право); модал + have been + V3 (градуированная догадка о прошлом, упрёк); придаточное that + bare be + V3 (mandative subjunctive)"
       },
       "examples": [
         {
           "en": "The contract shall be construed in accordance with the laws of England and Wales.",
-          "ru": "Договор толкуется в соответствии с законодательством Англии и Уэльса."
+          "ru": "Договор толкуется в соответствии с законодательством Англии и Уэльса.",
+          "note": {
+            "en": "legal register",
+            "ru": "юридический регистр"
+          }
         },
         {
           "en": "The warnings ought to have been heeded before the incident occurred.",
-          "ru": "К предупреждениям следовало прислушаться до инцидента."
+          "ru": "К предупреждениям следовало прислушаться до инцидента.",
+          "note": {
+            "en": "reproach",
+            "ru": "упрёк"
+          }
         },
         {
           "en": "It is imperative that the new procedure be adopted without delay.",
-          "ru": "Необходимо, чтобы новая процедура была принята без промедления."
+          "ru": "Необходимо, чтобы новая процедура была принята без промедления.",
+          "note": {
+            "en": "mandative subjunctive",
+            "ru": "mandative subjunctive"
+          }
         },
         {
           "en": "The suspect can't have been in two places at once.",
-          "ru": "Подозреваемый не мог находиться в двух местах одновременно."
+          "ru": "Подозреваемый не мог находиться в двух местах одновременно.",
+          "note": {
+            "en": "ruled out",
+            "ru": "невозможность"
+          }
         },
         {
           "en": "Alternative approaches should be considered before the policy is finalised.",
-          "ru": "Прежде чем финализировать политику, следует рассмотреть альтернативные подходы."
+          "ru": "Прежде чем финализировать политику, следует рассмотреть альтернативные подходы.",
+          "note": {
+            "en": "recommendation",
+            "ru": "рекомендация"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Шкала уверенности в прошлом: must have been (уверен) > may/might have been (возможно) > can't have been (невозможно)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is imperative that action is taken.",
+          "right": "It is imperative that action be taken.",
+          "why": {
+            "en": "After mandative expressions the subjunctive uses the bare be, not is.",
+            "ru": "После mandative-выражений subjunctive использует bare be, а не is."
+          }
+        },
+        {
+          "wrong": "The issue might be being discussed right now.",
+          "right": "The issue might currently be under discussion.",
+          "why": {
+            "en": "The modal + progressive passive is a corpus rarity; native writers paraphrase it.",
+            "ru": "Модал + длительный пассив встречается крайне редко; носители его перефразируют."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "modal-perfect",
+    "passive-present-simple",
+    "passive-past-simple",
+    "passive-future"
+  ],
+  "crossTopic": [
+    "must-have-to",
+    "should-ought-to",
+    "may-might",
+    "causative-have-get"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "modal",
+      "be",
+      "past participle (V3)"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "reflexive-pronouns",
   "title": {
-    "en": "",
+    "en": "Reflexive Pronouns",
     "ru": "Reflexive Pronouns"
   },
   "cefr": "A2",
@@ -16,19 +16,24 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "pronouns",
+  "egp": [
+    "EGP:A2:can-use-reflexive-pronouns-myself-yourself-etc",
+    "EGP:B1:can-use-reflexive-pronouns-for-emphasis",
+    "EGP:B2:can-use-by-myself-and-reflexive-idioms",
+    "EGP:C1:can-distinguish-reflexive-from-emphatic-and-avoid-hypercorrection"
+  ],
+  "archetype": "cycle",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "A reflexive pronoun shows that the action turns back on the doer: the subject and the object are the same person. English uses one word ending in -self (singular) or -selves (plural): myself, yourself, himself, herself, itself, ourselves, yourselves, themselves.\n\nUse a reflexive pronoun when someone does something to themselves: 'I hurt myself.' 'She cut herself.' 'The cat is cleaning itself.' Here the reflexive is the object of the verb, and it must match the subject.\n\nThe pattern 'by + reflexive pronoun' means 'alone' or 'without help': 'I live by myself.' 'He did it by himself.'\n\nA few fixed expressions also use -self: 'Help yourself!' (at the table), 'Enjoy yourself!', 'Make yourself at home.', 'Behave yourself!'\n\nNever start a sentence with a reflexive pronoun as the subject. Not 'Myself did it' but 'I did it myself.'",
         "ru": "Возвратные местоимения в английском — это слова, которые обозначают, что **действие направлено на самого себя**. В русском мы добавляем «-ся» или «-сь» (моюсь, одеваюсь, режусь), а в английском есть отдельное слово с окончанием `-self` или `-selves`.\n\n**Все возвратные местоимения:**\n\n- `myself` — себя (я)\n- `yourself` — себя (ты)\n- `himself` — себя (он)\n- `herself` — себя (она)\n- `itself` — себя (оно, неживое)\n- `ourselves` — себя (мы)\n- `yourselves` — себя (вы, множественное)\n- `themselves` — себя (они)\n\nОбрати внимание: в единственном числе — `-self`, во множественном — `-selves`. Два разных окончания.\n\n**Когда используем возвратное местоимение:** когда кто-то делает что-то с собой. Подлежащее и объект — один и тот же человек.\n\n- `I hurt myself.` (Я ударился / поранил себя.)\n- `She cut herself while cooking.` (Она порезалась, когда готовила.)\n- `Be careful, don't burn yourself!` (Будь осторожен, не обожгись!)\n- `The cat is cleaning itself.` (Кот моется.)\n- `We taught ourselves English.` (Мы сами научили себя английскому.)\n\n**Выражение `by + возвратное местоимение` = один / в одиночку:**\n- `I live by myself.` (Я живу один.)\n- `She went to the cinema by herself.` (Она пошла в кино одна.)\n- `He did it by himself.` (Он сделал это сам.)\n- `They were by themselves at home.` (Они были дома одни.)\n\n**Устойчивые выражения с `-self`:**\n- `Enjoy yourself!` (Повеселись!) — на вечеринке или в путешествии.\n- `Help yourself!` (Угощайся!) — за столом.\n- `Behave yourself!` (Веди себя хорошо!) — ребёнку.\n- `Make yourself at home.` (Располагайся как дома.)\n\n**Важно:** не ставь возвратное местоимение в начало предложения как подлежащее. Неправильно: `Myself did it.` Правильно: `I did it myself.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb + reflexive pronoun (myself / yourself / himself / herself / itself / ourselves / yourselves / themselves)",
+        "ru": "подлежащее + глагол + возвратное местоимение (myself / yourself и т. д.)"
       },
       "examples": [
         {
@@ -45,40 +50,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Help yourself to some cake.",
-          "ru": "Угощайся тортом."
+          "ru": "Угощайся тортом.",
+          "note": {
+            "en": "fixed phrase",
+            "ru": "устойчивая фраза"
+          }
         },
         {
           "en": "They live by themselves in the mountains.",
-          "ru": "Они живут одни в горах."
+          "ru": "Они живут одни в горах.",
+          "note": {
+            "en": "by + self = alone",
+            "ru": "by + self = один"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "By + myself / yourself = один, без чужой помощи."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Myself did the work.",
+          "right": "I did the work myself.",
+          "why": {
+            "en": "A reflexive pronoun cannot be the subject; use 'I' and put 'myself' after the verb or at the end.",
+            "ru": "Возвратное местоимение не может быть подлежащим."
+          }
+        },
+        {
+          "wrong": "I live by my own.",
+          "right": "I live by myself.",
+          "why": {
+            "en": "'Alone' is 'by myself' or 'on my own', never 'by my own'.",
+            "ru": "«Один» — это by myself или on my own, но не by my own."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the same -self words take on a second, emphatic job: they stress that this person (and no one else) did the action. This is not reflexive — the pronoun is not the object of the verb, it just reinforces the subject.\n\nThe emphatic reflexive can go right after the subject or at the end of the clause; both are correct, the difference is only where the stress falls: 'The teacher herself told us.' / 'I fixed the car myself.'\n\nCompare the two functions: 'She hurt herself' (reflexive — object of the verb) vs 'She herself told me' (emphatic — reinforces the subject).\n\nMany verbs that take '-ся' in Russian need NO reflexive in English: I wash, he shaves, she dresses, I feel tired, they relax / hurry / concentrate / meet. Adding 'myself' here is a classic Russian-speaker error: say 'I concentrate on my work', not 'I concentrate myself'. The exceptions are cut, burn, hurt, where the reflexive is needed to show who got hurt: 'I cut myself.'",
         "ru": "На уровне B1 мы учимся использовать возвратные местоимения для **эмфатического подчёркивания** — «сам, лично». Это другая функция, отличная от возвратной.\n\n**Эмфатическое использование:** здесь возвратное местоимение не обозначает, что действие направлено на себя. Оно просто подчёркивает, что именно этот человек, никто другой, сделал действие.\n\n- `I did it myself.` (Я сам это сделал.) — никто мне не помог.\n- `She wrote the letter herself.` (Она сама написала письмо.)\n- `The president himself came to the meeting.` (Сам президент пришёл на встречу.)\n- `The problem itself is simple.` (Сама проблема проста.)\n\n**Где ставить эмфатическое `-self`?**\n\n- Сразу после подлежащего: `The teacher herself told us.` (Сама учительница нам сказала.)\n- В конце предложения: `I fixed the car myself.` (Я сам починил машину.)\n\nОба варианта правильные. Разница только в акценте — где именно ты делаешь паузу.\n\n**Сравни эмфатическое и возвратное:**\n- `She hurt herself.` (Она поранилась.) — возвратное, действие на себя.\n- `She herself told me.` (Она сама мне сказала.) — эмфатическое, подчёркивание.\n\nВ первом случае `herself` — это объект глагола (кого она поранила? — себя). Во втором случае `herself` — это усиление подлежащего (не кто-то другой, а именно она).\n\n**Глаголы, которые почти всегда идут без возвратного в английском** (в отличие от русского):\n- `wash` — `I wash every morning.` (Я моюсь каждое утро.) — не нужно `myself`.\n- `shave` — `He shaves every day.` (Он бреется каждый день.) — без `himself`.\n- `dress` — `She dresses quickly.` (Она быстро одевается.) — без `herself`.\n- `feel` — `I feel tired.` (Я чувствую себя уставшим.) — без `myself`.\n- `concentrate`, `relax`, `hurry`, `meet` — тоже без возвратного.\n\nЭто одна из главных ошибок русских студентов: мы автоматически добавляем `myself`, `yourself` там, где англичанин сказал бы глагол без возвратного. `I concentrate on my work.` — правильно. `I concentrate myself on my work.` — неправильно.\n\n**Исключение:** `cut, burn, hurt` — здесь возвратное нужно: `I cut myself.` — иначе непонятно, кого порезал.\n\n**Выражения с `by + возвратное`:** `by myself/yourself` = «в одиночку», «сам, без чужой помощи». Можно заменить на `alone`, `on my own`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "emphatic: subject + (reflexive) + verb ... + (reflexive)   |   reflexive object: subject + verb + reflexive",
+        "ru": "эмфатическое: подлежащее + (-self) + глагол ... + (-self); возвратное: подлежащее + глагол + -self"
       },
       "examples": [
         {
           "en": "I built this house myself.",
-          "ru": "Я сам построил этот дом."
+          "ru": "Я сам построил этот дом.",
+          "note": {
+            "en": "emphatic",
+            "ru": "эмфатическое"
+          }
         },
         {
           "en": "The queen herself attended the ceremony.",
-          "ru": "Сама королева посетила церемонию."
+          "ru": "Сама королева посетила церемонию.",
+          "note": {
+            "en": "emphatic (after subject)",
+            "ru": "эмфатическое (после подлежащего)"
+          }
         },
         {
           "en": "I always wash before breakfast.",
-          "ru": "Я всегда моюсь перед завтраком."
+          "ru": "Я всегда моюсь перед завтраком.",
+          "note": {
+            "en": "no reflexive needed",
+            "ru": "без возвратного"
+          }
         },
         {
           "en": "He concentrates on his studies.",
@@ -92,17 +135,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "С wash, shave, dress, relax, concentrate возвратное местоимение не нужно."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I concentrate myself on my work.",
+          "right": "I concentrate on my work.",
+          "why": {
+            "en": "Verbs like concentrate, relax, wash, shave, dress, feel, hurry take no reflexive in English.",
+            "ru": "Глаголы concentrate, relax, wash и т. п. в английском идут без возвратного."
+          }
+        },
+        {
+          "wrong": "He shaves himself every morning.",
+          "right": "He shaves every morning.",
+          "why": {
+            "en": "Grooming verbs are intransitive in English unless you want special emphasis.",
+            "ru": "Глаголы ухода за собой в английском обычно без возвратного."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you widen the range: 'get + reflexive', set idioms, and the hypercorrection trap.\n\n'Get + reflexive' is common and informal: 'Get yourself a coffee.' 'She got herself a new job.' 'Get yourself together.' 'I need to get myself ready.'\n\nHigh-frequency idioms to learn whole: pull yourself together, help yourself to something, behave yourself, make yourself at home, keep to yourself, find yourself doing something, see yourself out, give yourself a break, kick yourself, enjoy yourself. Note also 'find myself + -ing / adjective': 'I find myself agreeing with her.' 'She found herself in a strange city.'\n\nThe big B2 error is hypercorrection — swapping 'me' for 'myself' to sound more polished: NOT 'Please contact myself', but 'Please contact me'. The rule: 'myself' is only correct when the subject of the same clause is 'I'. If the subject is different, use 'me': 'I made myself coffee' (subject I), 'He made me coffee' (subject he) — never 'He made myself coffee'.\n\nWhen gender is unknown or not relevant, modern English allows singular 'themself' or 'themselves': 'Someone has hurt themself/themselves.' Also note 'between ourselves' = 'just between us'.",
         "ru": "На B2 мы расширяем репертуар возвратных местоимений: **`get + возвратное`, идиоматика, речевые обороты**.\n\n**`get + возвратное` — сделать что-то для/с собой, часто разговорно:**\n- `Get yourself a coffee.` (Возьми себе кофе.)\n- `She got herself a new job.` (Она нашла себе новую работу.)\n- `Get yourself together.` (Возьми себя в руки.)\n- `I need to get myself ready.` (Мне нужно собраться.)\n\n**Идиомы с `-self`, которые часто встречаются:**\n- `pull yourself together` (соберись, возьми себя в руки) — в трудной ситуации.\n- `help yourself to something` (угощайся) — за столом.\n- `behave yourself` (веди себя прилично).\n- `make yourself at home` (чувствуй себя как дома).\n- `keep to yourself` (держись особняком, не лезь ко всем).\n- `find yourself doing something` (вдруг обнаружить, что делаешь что-то).\n- `see yourself out` (сам выйди, провожать не буду) — прощание в разговоре.\n- `give yourself a break` (дай себе отдохнуть, не будь таким строгим к себе).\n- `kick yourself` (ругать себя, жалеть).\n- `enjoy yourself` (повеселись).\n\n**`find myself + gerund / adjective`:**\n- `I find myself agreeing with her.` (Я вдруг обнаруживаю, что согласен с ней.)\n- `She found herself in a strange city.` (Она оказалась в странном городе.)\n- `He found himself alone.` (Он обнаружил себя одного.)\n\n**Разговорные ошибки и гиперкоррекция:**\n\nДаже носители иногда заменяют `me` на `myself` в попытке звучать «умнее». Это называется **гиперкоррекция**.\n- Неправильно: `Please contact myself if you have questions.` ❌\n- Правильно: `Please contact me if you have questions.` ✅\n\nПомни правило: `myself` требует, чтобы подлежащее в том же предложении было `I`. Если подлежащее другое, значит, нужна простая форма `me`.\n- `I made myself coffee.` ✅ (подлежащее `I`, объект тоже я)\n- `He made me coffee.` ✅ (подлежащее `he`, объект `me`)\n- `He made myself coffee.` ❌ (подлежащее `he`, а `myself` требует `I`)\n\n**Спор `himself` vs `themself`:** когда пол не важен или не известен, в современном английском принято `themself` (ед.ч.) или `themselves` (форма в стиле множественного, но применяется к одному лицу):\n- `Someone has hurt themself.` (приемлемо, ед.ч. форма)\n- `Someone has hurt themselves.` (более распространено).\n\nОба варианта встречаются; `themselves` более консервативно.\n\n**Устойчивые фразы `between ourselves / yourselves`** = «между нами говоря»: `Between ourselves, I don't trust him.` (Между нами говоря, я ему не доверяю.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "get + reflexive + noun/adjective  |  find + reflexive + -ing/adjective",
+        "ru": "get + возвратное + существительное/прилагательное; find + возвратное + -ing/прилагательное"
       },
       "examples": [
         {
@@ -115,11 +176,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Please contact me directly, not myself.",
-          "ru": "Свяжитесь со мной напрямую."
+          "ru": "Свяжитесь со мной напрямую.",
+          "note": {
+            "en": "hypercorrection fixed",
+            "ru": "исправленная гиперкоррекция"
+          }
         },
         {
           "en": "Pull yourself together and try again.",
-          "ru": "Соберись и попробуй ещё раз."
+          "ru": "Соберись и попробуй ещё раз.",
+          "note": {
+            "en": "idiom",
+            "ru": "идиома"
+          }
         },
         {
           "en": "Between ourselves, the plan is risky.",
@@ -129,22 +198,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Не заменяй me на myself из вежливости — это гиперкоррекция, ошибка."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Please contact myself if you have questions.",
+          "right": "Please contact me if you have questions.",
+          "why": {
+            "en": "Hypercorrection: 'myself' needs the subject 'I' in the same clause; here the subject is 'you' (imperative), so use 'me'.",
+            "ru": "Гиперкоррекция: myself требует подлежащего I в том же предложении."
+          }
+        },
+        {
+          "wrong": "He bought myself a ticket.",
+          "right": "He bought me a ticket.",
+          "why": {
+            "en": "The subject is 'he', not 'I', so the object is 'me', not 'myself'.",
+            "ru": "Подлежащее — he, а не I, поэтому объект — me, а не myself."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the skill is judgement: knowing when a reflexive adds meaning and when it just sounds heavy or unnatural.\n\nMany verbs that once needed a reflexive are now self-sufficient: 'She dressed in a hurry' is more natural than 'She dressed herself in a hurry'. Train the instinct that wash, shave, dress, relax, concentrate, meet, hide, feel, behave normally take no reflexive.\n\nBut the reflexive can add nuance: 'He hides behind the wall' (literal) vs 'He hides himself from reality' (metaphorical, deliberate). 'She dressed' (plain) vs 'She dressed herself with great care' (conscious attention).\n\nThe emphatic 'the X itself' is a precise analytical tool: 'The task itself is not difficult; its execution is.' 'The building itself dates from the 16th century.'\n\nFormal impersonal 'oneself' appears in careful writing: 'One should learn to rely on oneself.' Inclusive 'themself' (singular) is now accepted by major style guides for a person of unknown or non-binary gender, alongside the more traditional 'themselves'.\n\nTypical C1 errors: using 'myself' as a genteel 'me' in email ('Please CC myself' → 'Please CC me'), redundant reflexives ('I relax myself on weekends' → 'I relax on weekends'), and 'between you and myself' (correct: 'between you and me'). The more fluent you are, the more sparingly you reach for the reflexive.",
         "ru": "На уровне C1 мы работаем с **тонкими различиями** — когда возвратное добавляет смысл, а когда создаёт избыточность или неестественность.\n\n**Оптическое vs реальное возвратное:**\n- `She dressed herself in a hurry.` — возможно, но звучит так, будто она помогала какому-то другому «я» одеться.\n- `She dressed in a hurry.` — нейтрально, естественно.\n\nВ современном английском многие глаголы, которые раньше требовали возвратного, стали самодостаточными. Тренируй интуицию: `wash, shave, dress, relax, concentrate, meet, hide, feel, behave` обычно без возвратного.\n\n**Когда возвратное добавляет нюанс:**\n- `He hides behind the wall.` (Он прячется за стеной.) — обычное действие.\n- `He hides himself from reality.` (Он прячется от реальности.) — метафорический, более глубокий смысл.\n- `She dressed.` (Она оделась.) — обыденно.\n- `She dressed herself with great care.` (Она одевала себя с большой тщательностью.) — подчёркивает осознанное внимание.\n\nВ более сложных и литературных контекстах возвратное появляется для усиления и нюанса.\n\n**Emphatic `-self` в книжной речи:**\n- `The task itself is not difficult; its execution is.` (Сама задача не сложна; сложно её исполнение.)\n- `The building itself dates from the 16th century.` (Само здание относится к XVI веку.)\n- `It is the fact itself that surprises me.` (Меня удивляет сам этот факт.)\n\nКонструкция `the X itself` часто используется в академическом и аналитическом стиле для вычленения сути.\n\n**Inclusive и non-binary формы:**\n- `themself` — приемлемо, растущее употребление, для одного лица неопределённого или небинарного пола.\n- `themselves` — традиционно для множественного, но также используется для singular they.\n- Оба варианта признаются крупными стилевыми руководствами (Merriam-Webster, Chicago Manual of Style).\n\nВ академическом и журналистском письме всё чаще встречается `themself` как осознанный выбор.\n\n**`by oneself` в формальной безличной конструкции:**\n- `One should learn to rely on oneself.` (Следует научиться полагаться на себя.)\n- `To appreciate art, one must study it for oneself.` (Чтобы оценить искусство, нужно изучать его самому.)\n\nОчень формально, редко в речи.\n\n**Типичные ошибки на C1:**\n- Использование `myself` как вежливой формы `me` в электронной почте: `Please CC myself on the email.` — профессиональная ошибка. Правильно: `Please CC me.`\n- Избыточное возвратное: `I relax myself on weekends.` → `I relax on weekends.`\n- Путание `between you and me` (правильно) и `between you and myself` (неправильно).\n\n**Стилистический вкус:** чем свободнее ты владеешь языком, тем реже ты используешь возвратное без причины. Возвратное — это точный инструмент, не стилистическая «смазка»."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "the + noun + itself (emphatic) | one + verb + ... + oneself (formal impersonal)",
+        "ru": "the + существительное + itself (эмфатическое); one + глагол + ... + oneself (формальное безличное)"
       },
       "examples": [
         {
           "en": "The data itself is not conclusive.",
-          "ru": "Сами данные не окончательны."
+          "ru": "Сами данные не окончательны.",
+          "note": {
+            "en": "emphatic 'itself'",
+            "ru": "эмфатическое itself"
+          }
         },
         {
           "en": "She dedicated herself to her research.",
@@ -152,11 +243,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "One must educate oneself through reading.",
-          "ru": "Надо обучать себя через чтение."
+          "ru": "Надо обучать себя через чтение.",
+          "note": {
+            "en": "formal impersonal",
+            "ru": "формальное безличное"
+          }
         },
         {
           "en": "The candidate introduced themself to the panel.",
-          "ru": "Кандидат представился комиссии."
+          "ru": "Кандидат представился комиссии.",
+          "note": {
+            "en": "singular themself",
+            "ru": "ед. ч. themself"
+          }
         },
         {
           "en": "He found himself reflecting on his choices.",
@@ -166,30 +265,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Не добавляй -self «для красоты» — оно работает только тогда, когда действительно усиливает смысл."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Please CC myself on the email.",
+          "right": "Please CC me on the email.",
+          "why": {
+            "en": "'Myself' is not a more polite 'me'; with no 'I' subject in the clause, use 'me'.",
+            "ru": "Myself не вежливая форма me; без подлежащего I в предложении нужно me."
+          }
+        },
+        {
+          "wrong": "between you and myself",
+          "right": "between you and me",
+          "why": {
+            "en": "After a preposition use the object pronoun 'me', not the reflexive.",
+            "ru": "После предлога нужна объектная форма me, а не возвратное."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 reflexive pronouns become a register tool — for rhetorical prose, philosophical discourse, and literary style, where 'oneself / himself / herself' sounds exact rather than redundant: 'To know oneself is the beginning of wisdom.' 'He was estranged from himself.' 'The self, as we know it, is a construction.'\n\nLearn the fixed literary and idiomatic phrases whole: be beside oneself (with joy/anger), come to oneself, lose oneself in something, cut oneself off from, fancy oneself (as), avail oneself of (very formal), a law unto himself, not oneself today.\n\nSome verbs almost always require a reflexive and often carry an evaluative or ironic colour: pride oneself on, flatter oneself, brace oneself for, busy oneself with, acquit oneself well/badly, perjure oneself, give oneself up. 'He prides himself on his humility' invites an ironic reading.\n\nMind the singular/plural choice with 'they': 'Each student should consider themselves lucky' (traditional plural form with 'each') vs 'themself' (newer, marked singular). Both appear in authoritative editions; 'themself' is increasingly normative for singular they with an indefinite or non-binary referent.\n\nFinally, a sentence-final reflexive often carries an emphatic charge realised by stress in speech: 'I did it myself' (heavy stress on 'myself') = make no mistake, it was me. 'Oneself' as a generic stays literary; spoken and most journalistic English replaces it with 'yourself' or 'themselves'.",
         "ru": "На уровне C2 возвратные местоимения становятся инструментом **риторической прозы, философского дискурса и художественной литературы**. Здесь важно чувствовать регистр и стилистический эффект.\n\n**Философский и рефлексивный стиль:**\n- `The self, as we know it, is a construction.` (Само «я», каким мы его знаем, — это конструкция.)\n- `He was estranged from himself.` (Он был отчуждён от самого себя.)\n- `To know oneself is the beginning of wisdom.` (Познать самого себя — начало мудрости.) — классическая философская формула.\n\nВ таких контекстах `oneself / himself / herself` звучит глубоко и естественно. Это не стилистическая избыточность, а точный выбор.\n\n**Литературные устойчивые обороты:**\n- `be beside oneself (with joy/anger)` (быть вне себя от радости / гнева)\n- `come to oneself` (прийти в себя)\n- `lose oneself in something` (увлечься чем-то до забвения)\n- `cut oneself off from` (отрезать себя от)\n- `fancy oneself (as)` (воображать о себе)\n- `avail oneself of` (воспользоваться чем-то — очень формально)\n- `a law unto himself` (сам себе закон)\n- `not oneself today` (сегодня я сам не свой)\n\n**`avail oneself of`** — исключительно формальное выражение, встречается в юридических и бюрократических текстах: `The guest may avail themselves of the hotel's amenities.`\n\n**Ирония и дистанция:**\n- `He prides himself on his humility.` (Он гордится своей скромностью.) — часто используется с ироничным подтекстом.\n- `She flatters herself that she is indispensable.` (Она льстит себе, полагая, что незаменима.)\n\nТакие глаголы (`pride, flatter, perjure, brace, absent, acquit, busy, distinguish`) почти всегда требуют возвратного и часто несут оценочный оттенок.\n\n**Нюансы singular `themself` vs `themselves`:**\n- `Each student should consider themselves lucky.` (традиционное, множественная форма `-selves` применяется к `each`).\n- `Each student should consider themself lucky.` (новое, с маркером единственного числа `-self`).\n\nОба варианта встречаются в авторитетных изданиях. `Themself` быстро закрепляется как форма для singular they с неопределённым или небинарным референтом. В академических текстах 2020-х годов вполне нормативно.\n\n**Фразовые глаголы с возвратным:**\n- `to give oneself up` (сдаться)\n- `to brace oneself for` (собраться духом перед)\n- `to busy oneself with` (занять себя чем-то)\n- `to acquit oneself well/badly` (проявить себя хорошо/плохо)\n- `to perjure oneself` (лжесвидетельствовать)\n\nЭти глаголы обычно не работают без возвратного. Их надо учить целиком.\n\n**Интонационное выделение:** возвратное в конце предложения часто несёт эмфатический заряд, который в устной речи подчёркивается ударением: `I did it myself.` (с сильным ударением на `myself`) = не сомневайтесь, именно я.\n\n**Редкие архаические формы:** `oneself` в обобщающем смысле остаётся литературным; в современной разговорной и большинстве журналистских текстов заменяется на `yourself` или `themselves`. `Oneself` появляется в эссе, философии, официальных обращениях."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + oneself + (preposition) — fixed reflexive verbs: pride oneself on, avail oneself of, brace oneself for",
+        "ru": "глагол + oneself + (предлог) — устойчивые возвратные глаголы: pride oneself on, avail oneself of"
       },
       "examples": [
         {
           "en": "He prides himself on his discretion.",
-          "ru": "Он гордится своей сдержанностью."
+          "ru": "Он гордится своей сдержанностью.",
+          "note": {
+            "en": "evaluative/ironic",
+            "ru": "оценочное/ироничное"
+          }
         },
         {
           "en": "Guests may avail themselves of the library.",
-          "ru": "Гости могут пользоваться библиотекой."
+          "ru": "Гости могут пользоваться библиотекой.",
+          "note": {
+            "en": "very formal",
+            "ru": "очень формально"
+          }
         },
         {
           "en": "She was beside herself with grief.",
-          "ru": "Она была вне себя от горя."
+          "ru": "Она была вне себя от горя.",
+          "note": {
+            "en": "fixed idiom",
+            "ru": "устойчивый оборот"
+          }
         },
         {
           "en": "To know oneself is a lifelong pursuit.",
@@ -197,15 +326,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Each contributor acquitted themself admirably.",
-          "ru": "Каждый участник показал себя достойно."
+          "ru": "Каждый участник показал себя достойно.",
+          "note": {
+            "en": "singular themself",
+            "ru": "ед. ч. themself"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Avail oneself of, pride oneself on, be beside oneself — устойчивые обороты, нельзя разъединять."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He availed of the offer.",
+          "right": "He availed himself of the offer.",
+          "why": {
+            "en": "'Avail' in this formal sense is obligatorily reflexive: avail oneself of.",
+            "ru": "Avail в этом формальном значении обязательно возвратный: avail oneself of."
+          }
+        },
+        {
+          "wrong": "She prides on her work.",
+          "right": "She prides herself on her work.",
+          "why": {
+            "en": "'Pride' as a verb cannot stand alone; it requires the reflexive: pride oneself on.",
+            "ru": "Глагол pride не работает без возвратного: pride oneself on."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "personal-pronouns",
+    "reciprocal-pronouns",
+    "possessive-pronouns",
+    "indefinite-pronouns"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "prepositions-after-verbs",
+    "verb-plus-gerund"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "subject acts",
+      "action loops back",
+      "same person is object"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "prepositions-of-movement",
   "title": {
-    "en": "",
+    "en": "Prepositions of Movement",
     "ru": "Prepositions Of Movement"
   },
   "cefr": "A2",
@@ -16,32 +16,46 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "prepositions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "map",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Prepositions of movement answer **where to?** — the direction something or someone moves. At A2, master the core set.\n\n**`to` = a destination.** It marks the place you end up: `I go to school.`, `She travels to Germany.`, `He returned to Moscow.`\n\n**`into` = movement from outside to inside.** Use it to enter an enclosed space: `The cat jumped into the box.`, `She walked into the room.`\n\n**`out of` = movement from inside to outside** — the opposite of `into`: `He came out of the house.`, `Take the keys out of your bag.`\n\n**`onto` = movement to a surface:** `The cat jumped onto the table.`, `She put the book onto the shelf.`\n\n**`off` = movement away from a surface:** `The cat jumped off the chair.`, `Take the vase off the table.`\n\n**`from` = the starting point:** `I come from Russia.`, `The train goes from London to Paris.`\n\n**Watch the place / direction split.** `in` and `on` are static — they say where something *is*. `into` and `onto` are dynamic — they say where something *moves*. So `The book is on the table` (position) but `Put the book onto the table` (movement).\n\n**Learn the bare-preposition exceptions.** A few common destinations take no `to`: `go home`, `go there`, `go abroad`, `go upstairs`. And the verb `enter` already means \"go into\", so it needs no preposition: `enter the room`, not `enter into the room`.",
         "ru": "Предлоги движения показывают **направление** — куда едет, идёт, летит что-то или кто-то. На A2 выучи базовые.\n\n**`to` = к, в (пункт назначения):**\n- `I go to school.` (Я иду в школу.)\n- `She travels to Germany.` (Она едет в Германию.)\n- `He returned to Moscow.` (Он вернулся в Москву.)\n\n**`into` = внутрь** (движение снаружи внутрь):\n- `The cat jumped into the box.` (Кот прыгнул в коробку.)\n- `She walked into the room.` (Она вошла в комнату.)\n\n**`out of` = наружу** (изнутри наружу):\n- `He came out of the house.` (Он вышел из дома.)\n- `Take the keys out of your bag.` (Достань ключи из сумки.)\n\n**`onto` = на поверхность** (движение на):\n- `The cat jumped onto the table.` (Кот прыгнул на стол.)\n- `She put the book onto the shelf.` (Она положила книгу на полку.)\n\n**`off` = с поверхности** (движение с):\n- `The cat jumped off the chair.` (Кот спрыгнул со стула.)\n- `Take the vase off the table.` (Сними вазу со стола.)\n\n**`from` = из, от** (точка начала):\n- `I come from Russia.` (Я из России.)\n- `The train goes from London to Paris.` (Поезд идёт из Лондона в Париж.)\n\n**Частые ошибки русскоязычных:**\n1. `go to home` — НЕПРАВИЛЬНО. `home` — особое слово, идёт без `to`: `go home` (идти домой).\n2. `enter to / in` — НЕПРАВИЛЬНО. Глагол `enter` не требует предлога: `enter the room` (войти в комнату).\n3. `arrive to` — НЕПРАВИЛЬНО. Используй `arrive at` (маленькое место) или `arrive in` (город, страна).\n\nЗапоминай исключения: `go home`, `go there`, `go abroad` — без `to`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb of motion + to / into / out of / onto / off / from + place",
+        "ru": "подлежащее + глагол движения + to / into / out of / onto / off / from + место"
       },
       "examples": [
         {
           "en": "I go to work every day.",
-          "ru": "Я хожу на работу каждый день."
+          "ru": "Я хожу на работу каждый день.",
+          "note": {
+            "en": "to = destination",
+            "ru": "to = пункт назначения"
+          }
         },
         {
           "en": "The cat jumped into the box.",
-          "ru": "Кот прыгнул в коробку."
+          "ru": "Кот прыгнул в коробку.",
+          "note": {
+            "en": "into = enter",
+            "ru": "into = внутрь"
+          }
         },
         {
           "en": "She came out of the shop.",
-          "ru": "Она вышла из магазина."
+          "ru": "Она вышла из магазина.",
+          "note": {
+            "en": "out of = exit",
+            "ru": "out of = наружу"
+          }
         },
         {
           "en": "Put your phone on the desk.",
@@ -49,73 +63,153 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I go home at six.",
-          "ru": "Я иду домой в шесть."
+          "ru": "Я иду домой в шесть.",
+          "note": {
+            "en": "home: no to",
+            "ru": "home: без to"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "go HOME без to! Arrive at / arrive in, НЕ arrive to."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I go to home after work.",
+          "right": "I go home after work.",
+          "why": {
+            "en": "`home` is a bare destination word and takes no `to`; the same is true for `there` and `abroad`.",
+            "ru": "`home` — особое слово назначения и идёт без `to`; так же `there` и `abroad`."
+          }
+        },
+        {
+          "wrong": "She entered into the room.",
+          "right": "She entered the room.",
+          "why": {
+            "en": "The verb `enter` already contains \"into\", so no preposition follows it.",
+            "ru": "Глагол `enter` уже означает \"войти в\", поэтому предлог не нужен."
+          }
+        },
+        {
+          "wrong": "We arrived to Paris at noon.",
+          "right": "We arrived in Paris at noon.",
+          "why": {
+            "en": "`arrive` never takes `to` — use `arrive in` (a town or country) or `arrive at` (a small place).",
+            "ru": "`arrive` не берёт `to` — нужно `arrive in` (город, страна) или `arrive at` (маленькое место)."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 you draw finer lines between paths that look similar in your first language.\n\n**`across` vs `through`.** `across` means from one side to the other over a flat surface: `walk across the street`, `swim across the river`. `through` means passing inside or amongst something three-dimensional: `walk through the forest`, `go through the tunnel`. Compare `We walked across the park` (open ground) with `We walked through the forest` (in among the trees).\n\n**`along` = following the length of something:** `We walked along the river.`, `He drove along the coast.`\n\n**`towards` = in the direction of, without necessarily reaching it:** `She walked towards me.`, `The ship sailed towards the island.` This is the key B1 contrast with `to`: `I walked to the shop` means I got there; `I walked towards the shop` only says which way I went.\n\n**`away from` = in the opposite direction, leaving a place:** `He ran away from the dog.`, `Move away from the edge.`\n\n**`past` = moving by something and continuing on:** `We walked past the shop.`, `A car drove past us.`\n\n**`over` = across the top of, often clearing an obstacle:** `The bird flew over the house.`, `Jump over the fence.`\n\n**`round` / `around` = in a circle or curve:** `We walked around the lake.`, `The earth moves around the sun.`\n\n**`up` / `down` = to a higher or lower place:** `She climbed up the stairs.`, `He ran down the hill.`",
         "ru": "На B1 уточняй тонкие различия направлений.\n\n**`across` vs `through`:**\n- `across` = с одной стороны на другую (по поверхности): `walk across the street`, `swim across the river`.\n- `through` = сквозь, насквозь: `walk through the forest`, `go through the tunnel`.\n\nПример разницы:\n- `We walked across the park.` (Прошли через парк — по открытой территории.)\n- `We walked through the forest.` (Прошли через лес — между деревьями.)\n\n**`along` = вдоль:**\n- `We walked along the river.` (Мы шли вдоль реки.)\n- `He drove along the coast.` (Он ехал вдоль побережья.)\n\n**`towards` = в сторону, по направлению к** (без достижения):\n- `She walked towards me.` (Она шла в мою сторону.)\n- `The ship sailed towards the island.` (Корабль плыл к острову.)\n\n**`away from` = прочь от:**\n- `He ran away from the dog.` (Он убежал от собаки.)\n- `Move away from the edge.` (Отойди от края.)\n\n**`past` = мимо:**\n- `We walked past the shop.` (Мы прошли мимо магазина.)\n- `A car drove past us.` (Машина проехала мимо нас.)\n\n**`over` = через, поверх (часто с препятствием):**\n- `The bird flew over the house.` (Птица пролетела над домом.)\n- `Jump over the fence.` (Перепрыгни через забор.)\n\n**`round` / `around` = вокруг:**\n- `We walked around the lake.` (Мы обошли вокруг озера.)\n- `The earth moves around the sun.` (Земля вращается вокруг солнца.)\n\n**`up` / `down` = вверх / вниз:**\n- `She climbed up the stairs.` (Поднялась по лестнице.)\n- `He ran down the hill.` (Сбежал с холма.)\n\n**`to` vs `towards`:**\n- `to` подразумевает достижение цели: `I walked to the shop.` (Дошёл до магазина.)\n- `towards` — движение в направлении, не обязательно дойти: `I walked towards the shop.` (Шёл в сторону магазина.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb of motion + across / through / along / towards / past / over / around / up / down + noun",
+        "ru": "глагол движения + across / through / along / towards / past / over / around / up / down + существительное"
       },
       "examples": [
         {
           "en": "We walked through the old part of town.",
-          "ru": "Мы прошли через старую часть города."
+          "ru": "Мы прошли через старую часть города.",
+          "note": {
+            "en": "through = inside",
+            "ru": "through = сквозь"
+          }
         },
         {
           "en": "The dog ran across the field.",
-          "ru": "Собака побежала через поле."
+          "ru": "Собака побежала через поле.",
+          "note": {
+            "en": "across = side to side",
+            "ru": "across = с края на край"
+          }
         },
         {
           "en": "She walked along the beach at sunset.",
-          "ru": "Она шла по пляжу на закате."
+          "ru": "Она шла по пляжу на закате.",
+          "note": {
+            "en": "along = the length",
+            "ru": "along = вдоль"
+          }
         },
         {
           "en": "The plane flew over the mountains.",
-          "ru": "Самолёт пролетел над горами."
+          "ru": "Самолёт пролетел над горами.",
+          "note": {
+            "en": "over = above",
+            "ru": "over = над"
+          }
         },
         {
           "en": "He walked past me without saying hello.",
-          "ru": "Он прошёл мимо, не здороваясь."
+          "ru": "Он прошёл мимо, не здороваясь.",
+          "note": {
+            "en": "past = by and on",
+            "ru": "past = мимо"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "across = по поверхности с одного края на другой; through = сквозь (лес, тоннель)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "We swam through the river to the other bank.",
+          "right": "We swam across the river to the other bank.",
+          "why": {
+            "en": "Crossing from one side to the other over a surface is `across`; `through` would mean moving inside the water mass, not reaching the far bank.",
+            "ru": "Пересечение с одного берега на другой — `across`; `through` означало бы движение внутри толщи воды."
+          }
+        },
+        {
+          "wrong": "She walked to me with a smile.",
+          "right": "She walked towards me with a smile.",
+          "why": {
+            "en": "Use `towards` for the direction of approach; `to me` sounds like she arrived at and stopped exactly at the speaker.",
+            "ru": "Для направления приближения нужно `towards`; `to me` звучит так, будто она дошла и остановилась прямо у говорящего."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 movement prepositions carry **implicature** and a wealth of figurative meaning that you read off context.\n\n**`to` vs `towards`: the implicature of arrival.** `I walked to the park` implies I got there; `I walked towards the park` leaves it open (perhaps I never arrived). In formal writing both `towards` (BrE) and `toward` (AmE) are correct — match your variety.\n\n**`into` goes metaphorical:** `get into trouble`, `run into an old friend` (meet by chance), `look into the matter` (investigate), `turn into` (become).\n\n**`out of` goes metaphorical:** `out of control`, `out of date`, `out of breath`, `out of the blue` (unexpectedly).\n\n**`onto` figuratively:** `hold onto` (cling to), `move onto the next topic`, `log onto the system`.\n\n**`off` figuratively, usually in phrasal verbs:** `take a day off`, `call off` (cancel), `kick off` (start), `tell someone off` (reprimand).\n\n**`across` meaning \"all over\":** `across the country`, `across the board` (universally).\n\n**Path vs direction adverbs.** A noun phrase keeps the preposition (`go up the stairs`, `walk down the road`), but the bare adverb drops it (`go upstairs`, `come downstairs`). Don't mix the two.\n\n**Travel-writing precision** comes from picking the path word that fits: `through the countryside` (cutting amongst fields and woods), `across the countryside` (side to side), `along the countryside road` (following it), `into the countryside` (heading out from the town).\n\n**The classic error — direction vs location.** `She is going in the shop` mistakes a static `in` for movement. Say `She is going into the shop` (direction) or `She is in the shop` (already inside).",
         "ru": "На B2 разбирай implicature и семантические оттенки.\n\n**`to` vs `towards`: implicature достижения:**\n- `I walked to the park.` — я дошёл.\n- `I walked towards the park.` — я шёл в ту сторону (возможно, не дошёл).\n- В формальном письме `towards` (BrE) / `toward` (AmE). Оба правильно.\n\n**`into` + метафорически:**\n- `get into trouble` (попасть в беду)\n- `run into an old friend` (случайно встретить)\n- `look into the matter` (изучить вопрос)\n- `turn into` (превратиться в)\n\n**`out of` метафорически:**\n- `out of control` (вне контроля)\n- `out of date` (устаревший)\n- `out of breath` (запыхавшийся)\n- `out of the blue` (неожиданно)\n\n**`onto` в метафоре:**\n- `hold onto` (держаться за, цепляться)\n- `move onto the next topic` (перейти к следующей теме)\n- `log onto the system` (войти в систему)\n\n**`off` в метафоре:**\n- `take a day off` (взять выходной)\n- `call off` (отменить)\n- `kick off` (начать)\n- `tell someone off` (отчитать)\n\n**`across` как \"по всему\":**\n- `across the country` (по всей стране)\n- `across the board` (повсеместно, всеобщим образом).\n\n**Direction vs path:**\n- `go up the stairs` (путь — вверх по лестнице)\n- `go upstairs` (наречие — наверх).\n- `walk down the road` (путь по дороге вниз).\n\n**Travel writing precision:**\nВыбирай предлог по точному смыслу:\n- `through the countryside` — пересекая поля, леса.\n- `across the countryside` — с одного края на другой.\n- `along the countryside` — вдоль (например, вдоль дороги).\n- `into the countryside` — въезжая из города.\n\n**Ошибка direction vs location:**\n- ✗ `She is going in the shop.` (location in ≠ direction)\n- ✓ `She is going into the shop.` (направление внутрь) или `She is in the shop.` (уже внутри)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "to vs towards (arrival vs direction); into / out of / onto / off in figurative phrases; up the stairs (path) vs upstairs (adverb)",
+        "ru": "to против towards (достижение против направления); into / out of / onto / off в переносном значении; up the stairs (путь) против upstairs (наречие)"
       },
       "examples": [
         {
           "en": "She walked towards the exit but turned back.",
-          "ru": "Она пошла к выходу, но вернулась."
+          "ru": "Она пошла к выходу, но вернулась.",
+          "note": {
+            "en": "towards = not arrived",
+            "ru": "towards = не дошла"
+          }
         },
         {
           "en": "We ran into each other at the conference.",
-          "ru": "Мы случайно встретились на конференции."
+          "ru": "Мы случайно встретились на конференции.",
+          "note": {
+            "en": "run into = meet",
+            "ru": "run into = встретить"
+          }
         },
         {
           "en": "The company expanded across Europe.",
-          "ru": "Компания расширилась по всей Европе."
+          "ru": "Компания расширилась по всей Европе.",
+          "note": {
+            "en": "across = all over",
+            "ru": "across = по всей"
+          }
         },
         {
           "en": "He took a week off to travel.",
@@ -123,36 +217,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We need to move onto the next item.",
-          "ru": "Нам нужно перейти к следующему пункту."
+          "ru": "Нам нужно перейти к следующему пункту.",
+          "note": {
+            "en": "move onto = switch topic",
+            "ru": "move onto = перейти"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Направление: into (внутрь), onto (на), out of (из), off (с). Место: in, on."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He is going in the bank to cash a cheque.",
+          "right": "He is going into the bank to cash a cheque.",
+          "why": {
+            "en": "Movement from outside to inside needs `into`; `in` here marks position only, so it clashes with the verb of motion.",
+            "ru": "Движение снаружи внутрь требует `into`; `in` обозначает только положение и конфликтует с глаголом движения."
+          }
+        },
+        {
+          "wrong": "Let's move onto upstairs to talk.",
+          "right": "Let's move upstairs to talk.",
+          "why": {
+            "en": "`upstairs` is already an adverb of direction, so it takes no preposition.",
+            "ru": "`upstairs` — наречие направления и не требует предлога."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you work with **the path as a metaphor**: movement words map onto abstract processes, and you control register and dialect.\n\n**`up` / `down` figuratively:** `go down in history`, `look up to someone` (admire), `look down on someone` (despise), `come up with` (invent), `break down` (fail, or collapse emotionally).\n\n**`along` in lines of reasoning:** `along these lines` (in this vein), `go along with something` (agree to), `play along` (cooperate).\n\n**`towards` in argument:** `a step towards reconciliation`, `contribute towards a goal`.\n\n**`through` meaning \"by means of\" or \"all the way to the end\":** `through hard work, she succeeded`, `he went through a difficult time` (endured), `read through a document` (in full).\n\n**Directional prefixes give formal pairs:** `enter` / `exit`, `ascend` / `descend`, `advance` / `retreat` — the elevated equivalents of `go in` / `go out` and so on.\n\n**`past` vs `by`:** `walk past` stresses the motion; `walk by` is the more casual variant; `drop by` (call in briefly) is idiomatic, not literal passing.\n\n**`round` vs `around`:** in BrE `round` is neutral and `around` also works; in AmE `around` dominates and `round` sounds dated: `go round the world` (BrE) / `go around the world` (AmE).\n\n**`via` = through an intermediate point on a route:** `We flew to Tokyo via Dubai.` — formal, common in logistics and itineraries. The French-derived `en route` means \"on the way\": `We'll call you en route.`\n\n**Movement phrasal verbs:** `set off` / `set out` (depart), `head for` / `head back`, `veer off` (swerve sharply). And the elevated participles `bound for` (`a train bound for Berlin`) and `headed to` (`a ship headed to the Arctic`).",
         "ru": "На C1 работай с **путём как метафорой** — движение часто описывает абстрактные процессы.\n\n**`up` / `down` метафорически:**\n- `go down in history` (войти в историю)\n- `look up to someone` (уважать)\n- `look down on someone` (смотреть свысока)\n- `come up with` (придумать)\n- `break down` (сломаться, эмоционально тоже)\n\n**`along` в путях рассуждения:**\n- `along these lines` (в этом направлении — о размышлении)\n- `go along with something` (соглашаться с чем-то)\n- `play along` (подыгрывать)\n\n**`towards` в аргументации:**\n- `a step towards reconciliation` (шаг к примирению)\n- `contribute towards a goal` (способствовать цели)\n\n**`through` как \"посредством, через процесс\":**\n- `through hard work, she succeeded` (благодаря упорному труду)\n- `he went through a difficult time` (пережил трудное время)\n- `read through a document` (прочитать целиком)\n\n**Directional prefixes:**\nМногие глаголы движения имеют префиксы, меняющие направление:\n- `enter` / `exit`, `ascend` / `descend`, `advance` / `retreat`.\n- Формальные эквиваленты `go in` / `go out` и т.д.\n\n**Nuance `past` vs `by`:**\n- `walk past` — пройти мимо (акцент на движение).\n- `walk by` — то же, но разговорнее.\n- `drop by` (зайти ненадолго) — идиома, не буквально мимо.\n\n**`round` vs `around`:**\nBrE: `round` нейтрально, `around` тоже ок.\nAmE: `around` доминирует, `round` звучит устаревше.\n- `go round the world` (BrE) / `go around the world` (AmE).\n\n**`via` = через (путь через точку):**\n- `We flew to Tokyo via Dubai.` (Мы летели в Токио через Дубай.)\n- Формально, часто в логистике и маршрутах.\n\n**`en route` (по пути — формальное, из французского):**\n- `We’ll call you en route.` (Мы позвоним по пути.)\n\n**Phrasal verbs движения:**\n- `set off` (отправиться)\n- `set out` (выдвинуться в путь, начать)\n- `head for` (направиться к)\n- `veer off` (свернуть резко)\n- `head back` (возвращаться).\n\n**Редкие, но полезные:**\n- `bound for` (направляющийся к): `a train bound for Berlin`.\n- `headed to` (направляющийся): `a ship headed to the Arctic`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "figurative path verbs (go down in history / read through); via + intermediate point; set off / head for / veer off; bound for + destination",
+        "ru": "переносные глаголы пути (go down in history / read through); via + промежуточная точка; set off / head for / veer off; bound for + место назначения"
       },
       "examples": [
         {
           "en": "Through perseverance, she achieved her goal.",
-          "ru": "Благодаря упорству она достигла цели."
+          "ru": "Благодаря упорству она достигла цели.",
+          "note": {
+            "en": "through = by means of",
+            "ru": "through = посредством"
+          }
         },
         {
           "en": "They went along with the plan reluctantly.",
-          "ru": "Они неохотно согласились с планом."
+          "ru": "Они неохотно согласились с планом.",
+          "note": {
+            "en": "go along with = agree",
+            "ru": "go along with = согласиться"
+          }
         },
         {
           "en": "We flew to Paris via Amsterdam.",
-          "ru": "Мы летели в Париж через Амстердам."
+          "ru": "Мы летели в Париж через Амстердам.",
+          "note": {
+            "en": "via = intermediate",
+            "ru": "via = через точку"
+          }
         },
         {
           "en": "His comments are along the same lines as mine.",
@@ -160,36 +288,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The ship set off for the Arctic at dawn.",
-          "ru": "Корабль отправился в Арктику на рассвете."
+          "ru": "Корабль отправился в Арктику на рассвете.",
+          "note": {
+            "en": "set off = depart",
+            "ru": "set off = отправиться"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "via = через (промежуточная точка пути). Through = сквозь или посредством."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "We flew to Tokyo through Dubai.",
+          "right": "We flew to Tokyo via Dubai.",
+          "why": {
+            "en": "For an intermediate stop on a route the idiom is `via`; `through` would suggest flying inside Dubai itself.",
+            "ru": "Для промежуточной точки маршрута используется `via`; `through` означало бы движение сквозь сам Дубай."
+          }
+        },
+        {
+          "wrong": "The train set off to Berlin at dawn.",
+          "right": "The train set off for Berlin at dawn. / The train bound for Berlin set off at dawn.",
+          "why": {
+            "en": "After `set off` and `head` the destination is marked by `for`, not `to`.",
+            "ru": "После `set off` и `head` направление обозначается через `for`, а не `to`."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 movement is **a tool of style and precision**: you grade synonyms by register, exploit metaphor clusters, and control the orthographic splits.\n\n**Register gradation of motion verbs:** `go` (neutral) / `proceed` (formal) / `head` (informal, with a direction) / `make one's way` (stylistic) / `wend one's way` (literary); `enter` (neutral-formal) / `step into` (casual) / `venture into` (with a hint of daring) / `intrude into` (with a hint of trespass).\n\n**Metaphor clusters** map spatial movement onto: time (`move forward`, `go back in time`), progress (`advance`, `make strides`, `forge ahead`), understanding (`grasp`, `get the point across`, `catch on`), and emotion (`fall into despair`, `rise to the occasion`).\n\n**Elevated idioms:** `beat a retreat`, `tread carefully`, `forge ahead`, `veer off course`, `cross the Rubicon` (pass a point of no return).\n\n**Archaic reduplications:** `hither and thither` (literary) and `to and fro` (poetic-neutral) both mean back and forth: `The pendulum swung to and fro.`\n\n**Stacked prepositions for complex paths:** `up through the ranks`, `out across the lake`, `back along the path we had come`.\n\n**`onto` vs `on to`.** Write `onto` (one word) for direction — `jump onto the table` — where `upon` could substitute. Write `on to` (two words) where `on` is the adverb \"continuing\" and `to` introduces a goal: `move on to the next topic`.\n\n**`into` vs `in to`.** Same logic: `She walked into the room` (direction) but `She came in to say hello` (`in` = the adverb \"inside\", `to + infinitive` = purpose).\n\n**Literary fronting** puts the path first for effect: `Into the valley of Death rode the six hundred.` (Tennyson); `Out of the frying pan, into the fire.`\n\n**Deixis — `come` vs `go`** turns on the speaker's vantage point: `come here` (toward the speaker) vs `go there` (away from the speaker).\n\n**Nautical precision:** `aboard` / `on board` (`go aboard the ship` = `go on board`); `ashore` / `on shore`. The final discipline: a precise preposition beats a sprawling clause — `He slipped into the room` outperforms a long descriptive paraphrase.",
         "ru": "На C2 используй движение как **инструмент стиля и точности**.\n\n**Register сравнение синонимов движения:**\n- `go` (нейтрально) / `proceed` (формально) / `head` (разговорно, с направлением) / `make one’s way` (стилистически) / `wend one’s way` (литературно).\n- `enter` (нейтрально/формально) / `step into` (разговорно) / `venture into` (с оттенком смелости) / `intrude into` (с оттенком нарушения).\n\n**Metaphor clusters:**\nДвижение в пространстве мапится на:\n- Время: `move forward`, `go back in time`.\n- Прогресс: `advance`, `make strides`, `forge ahead`.\n- Понимание: `grasp`, `get the point across`, `catch on`.\n- Эмоции: `fall into despair`, `rise to the occasion`.\n\n**Высокие идиомы с движением:**\n- `beat a retreat` (отступить, поспешно)\n- `tread carefully` (действовать осторожно)\n- `forge ahead` (решительно двигаться вперёд)\n- `veer off course` (отклониться от курса)\n- `cross the Rubicon` (пересечь рубикон — точку невозврата)\n\n**`hither and thither` (туда-сюда — литературно, архаично):**\n- `Papers flew hither and thither in the wind.`\n\n**`to and fro` (туда-сюда — нейтрально поэтично):**\n- `The pendulum swung to and fro.`\n\n**Сложные направления через несколько предлогов:**\n- `up through the ranks` (через ряды вверх — по служебной лестнице)\n- `out across the lake` (наружу и через озеро)\n- `back along the path we had come` (назад по пути, которым пришли)\n\n**`onto` vs `on to`:**\n- `onto` = предлог направления: `jump onto the table`.\n- `on to` = наречие `on` + предлог `to`: `move on to the next topic` (переход, не буквальное движение).\n\nПроверка: если можно подставить `upon`, пиши слитно `onto`. Если `on` означает \"далее, продолжая\" + `to` указывает цель — пиши раздельно.\n\n**`into` vs `in to`:**\nТо же различие:\n- `She walked into the room.` (направление).\n- `She came in to say hello.` (`in` — наречие \"внутрь\", `to + infinitive` — цель). Не путать!\n\n**Literary fronting:**\n- `Into the valley of Death rode the six hundred.` (*Tennyson*)\n- `Out of the frying pan, into the fire.` (идиома).\n\n**Deictic movement:**\n- `come` vs `go` — выбор зависит от точки зрения говорящего.\n- `come here` (сюда, к говорящему) vs `go there` (туда, от говорящего).\n- В диалоге: `Are you coming to my place?` (говорящий ждёт), но рассказывая третьему: `I went to his place.`\n\n**Technical / nautical precision:**\n- `aboard` (на борту) vs `on board` (то же, раздельно): `go aboard the ship` = `go on board`.\n- `ashore` (на берег) vs `on shore` (на берегу, раздельно).\n\n**Final style note:** В высоком стиле предпочитай точные предлоги развёрнутым конструкциям. `He slipped into the room` сильнее, чем `He quietly went inside the room by opening the door carefully`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "register-graded motion verb (proceed / wend one's way) + path; onto / into (direction, one word) vs on to / in to (adverb + goal, two words); fronted path for effect",
+        "ru": "глагол движения по регистру (proceed / wend one's way) + путь; onto / into (направление, слитно) против on to / in to (наречие + цель, раздельно); вынос пути вперёд для эффекта"
       },
       "examples": [
         {
           "en": "The fleet forged ahead through the storm.",
-          "ru": "Флот решительно двигался вперёд сквозь шторм."
+          "ru": "Флот решительно двигался вперёд сквозь шторм.",
+          "note": {
+            "en": "forge ahead = progress",
+            "ru": "forge ahead = двигаться вперёд"
+          }
         },
         {
           "en": "He crossed the Rubicon when he signed the contract.",
-          "ru": "Подписав контракт, он перешёл точку невозврата."
+          "ru": "Подписав контракт, он перешёл точку невозврата.",
+          "note": {
+            "en": "cross the Rubicon",
+            "ru": "cross the Rubicon"
+          }
         },
         {
           "en": "Into the mist they rode, undeterred.",
-          "ru": "В туман они ехали, не колеблясь."
+          "ru": "В туман они ехали, не колеблясь.",
+          "note": {
+            "en": "fronted path",
+            "ru": "вынос пути вперёд"
+          }
         },
         {
           "en": "The discussion veered off course halfway through.",
@@ -197,15 +359,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Let’s move on to the final item on the agenda.",
-          "ru": "Перейдём к последнему пункту повестки."
+          "ru": "Перейдём к последнему пункту повестки.",
+          "note": {
+            "en": "move on to (two words)",
+            "ru": "move on to (раздельно)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Слитно onto/into для направления; раздельно on to/in to когда это наречие + предлог цели."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Let's move onto the final item on the agenda.",
+          "right": "Let's move on to the final item on the agenda.",
+          "why": {
+            "en": "Here `on` is the adverb \"continuing\" and `to` introduces the goal, so it is two words; reserve one-word `onto` for physical direction (`jump onto the stage`).",
+            "ru": "Здесь `on` — наречие \"продолжая\", а `to` вводит цель, поэтому раздельно; слитное `onto` — только для физического направления."
+          }
+        },
+        {
+          "wrong": "She came into the kitchen to say hello, then walked in to the garden.",
+          "right": "She came in to say hello, then walked into the garden.",
+          "why": {
+            "en": "`in to` is the adverb `in` plus purpose `to`; one-word `into` marks direction, so the kitchen entrance and the garden entrance are swapped.",
+            "ru": "`in to` — наречие `in` плюс цель `to`; слитное `into` обозначает направление, поэтому два примера перепутаны местами."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "prepositions-of-place",
+    "at-in-on-place",
+    "prepositions-in-phrases",
+    "phrasal-verbs-with-in-out"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "past-simple",
+    "verb-plus-infinitive"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "to = destination",
+      "into / out of = enter / exit",
+      "across / through / along = path",
+      "towards = direction (not arrival)"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "wh-questions",
   "title": {
-    "en": "",
+    "en": "Wh- Questions",
     "ru": "Wh Questions"
   },
   "cefr": "A1",
@@ -17,24 +17,33 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "questions",
+  "egp": [
+    "EGP:A1.questions.wh",
+    "EGP:A2.questions.wh-do-did",
+    "EGP:B1.questions.subject-vs-object",
+    "EGP:B2.questions.preposition-position"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "A wh-question opens with a question word: what, where, when, who, why, how. At A1, focus on word order with the verb be. The wh-word comes first, then am/is/are, then the subject: What is your name? Where is the book? Who is she? How are you? Use who for people and what for things. The biggest trap for many learners is keeping statement order (Where you are?) instead of inverting the verb and subject (Where are you?). English always inverts; the wh-word does not change that rule. Practise short answers too: What is this? - It's a book.",
         "ru": "**Wh-вопросы** — это вопросы, которые начинаются со специальных слов: `what` (что), `where` (где), `when` (когда), `who` (кто), `why` (почему), `how` (как).\n\nНа A1 главное — **порядок слов** в таких вопросах:\n\n**Wh-слово + be + подлежащее:**\n- `What is your name?` (Как тебя зовут?)\n- `Where is the book?` (Где книга?)\n- `Who is she?` (Кто она?)\n- `How old are you?` (Сколько тебе лет?)\n\n**Схема:** wh-слово идёт первым, потом `am/is/are`, потом подлежащее.\n\n**Полезные вопросы на каждый день:**\n- `What is this?` (Что это?) — для предметов.\n- `Where are you?` (Ты где?) — о местоположении.\n- `Who is this?` (Кто это?) — о человеке.\n- `How are you?` (Как ты?) — стандартное приветствие.\n\n**Типичные ошибки русскоговорящего:**\n- Неправильно: `Where you are?` (прямой порядок слов).\n- Правильно: `Where are you?`\n\nВ русском «Где ты?» не требует особого порядка. В английском всегда `wh-слово + глагол + подлежащее`.\n\n**Короткие ответы:**\n- `What is this?` — `It's a book.` (Это книга.)\n- `Where is she?` — `She's at home.` (Она дома.)\n\n**Не путай who и what:**\n- `Who` — о людях: `Who is your teacher?` (Кто твой учитель?)\n- `What` — о предметах: `What is your favourite colour?` (Какой твой любимый цвет?)\n\nНа A1 тренируй эти пять слов: `what`, `where`, `who`, `how`, `why`. Это основа."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Wh-word + be (am/is/are) + subject?",
+        "ru": "Wh-слово + be (am/is/are) + подлежащее?"
       },
       "examples": [
         {
           "en": "What is your name?",
-          "ru": "Как тебя зовут?"
+          "ru": "Как тебя зовут?",
+          "note": {
+            "en": "asking a name",
+            "ru": "спрашиваем имя"
+          }
         },
         {
           "en": "Where is my bag?",
@@ -46,7 +55,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "How are you today?",
-          "ru": "Как ты сегодня?"
+          "ru": "Как ты сегодня?",
+          "note": {
+            "en": "greeting",
+            "ru": "приветствие"
+          }
         },
         {
           "en": "Why are you sad?",
@@ -56,17 +69,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Wh-слово всегда первое, потом глагол be, потом подлежащее: Where are you?"
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Where you are?",
+          "right": "Where are you?",
+          "why": {
+            "en": "After the wh-word, invert the verb be and the subject; do not keep statement order.",
+            "ru": "После wh-слова глагол be и подлежащее меняются местами; нельзя оставлять прямой порядок слов."
+          }
+        },
+        {
+          "wrong": "What she is?",
+          "right": "Who is she?",
+          "why": {
+            "en": "Ask about a person with who, and put is before the subject.",
+            "ru": "О человеке спрашиваем who, и is ставим перед подлежащим."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "When the sentence has an ordinary verb (not be), wh-questions need the auxiliary do, does, or did. The pattern is wh-word + do/does/did + subject + base verb: Where do you live? What does she want? Where did you go? The single most common A2 error is leaving the past tense on the main verb after did: write What did you see?, not What did you saw? - the tense already lives in did, so the main verb stays in its base form. Use how + adjective for measurements (How old are you? How far is it?), how much with uncountable nouns and how many with countable nouns. Note that meaning verbs still need does: What does this word mean?, not What means this word?",
         "ru": "На A2 добавляем wh-вопросы с `do`, `does`, `did`. Это нужно, когда в предложении обычный глагол (не `be`).\n\n**Схема:** `wh + do/does/did + подлежащее + базовая форма глагола`\n\n**Настоящее время:**\n- `Where do you live?` (Где ты живёшь?)\n- `What does she want?` (Что она хочет?)\n- `When do they arrive?` (Когда они приезжают?)\n\n**Прошедшее время:**\n- `Where did you go yesterday?` (Куда ты вчера ходил?)\n- `What did she say?` (Что она сказала?)\n- `Why did he leave?` (Почему он ушёл?)\n\n**Очень важно:** после `did` глагол в **базовой форме**, не в прошедшем времени.\n- Неправильно: `What did you saw?`\n- Правильно: `What did you see?`\n\nЭто одна из самых частых ошибок на A2.\n\n**How + прилагательное:**\n- `How old are you?` (Сколько тебе лет?)\n- `How tall is he?` (Какого он роста?)\n- `How far is it?` (Как далеко это?)\n- `How long is the film?` (Как долго идёт фильм?)\n\n**How much / how many:**\n- `How much` — с неисчисляемыми: `How much water do you drink?` (Сколько воды ты пьёшь?)\n- `How many` — с исчисляемыми: `How many books do you have?` (Сколько у тебя книг?)\n\n**What time vs when:**\n- `What time is it?` (Который час?) — точное время.\n- `When does the film start?` (Когда начинается фильм?) — может быть общее время.\n\n**Частая ошибка:**\n- `What means this word?` — неправильно.\n- `What does this word mean?` — правильно. Нужен `does`.\n\nВ русском «Что это значит?» — прямой порядок, но в английском без `do/does` нельзя."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Wh-word + do/does/did + subject + base verb?",
+        "ru": "Wh-слово + do/does/did + подлежащее + базовая форма глагола?"
       },
       "examples": [
         {
@@ -75,15 +106,27 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "What did he say?",
-          "ru": "Что он сказал?"
+          "ru": "Что он сказал?",
+          "note": {
+            "en": "past, base verb",
+            "ru": "прошедшее, базовая форма"
+          }
         },
         {
           "en": "How much does this cost?",
-          "ru": "Сколько это стоит?"
+          "ru": "Сколько это стоит?",
+          "note": {
+            "en": "how much + uncountable",
+            "ru": "how much + неисчисляемое"
+          }
         },
         {
           "en": "How many brothers do you have?",
-          "ru": "Сколько у тебя братьев?"
+          "ru": "Сколько у тебя братьев?",
+          "note": {
+            "en": "how many + countable",
+            "ru": "how many + исчисляемое"
+          }
         },
         {
           "en": "When does the shop open?",
@@ -93,26 +136,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "После did глагол в базовой форме: What did you see? — не saw."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "What did you saw?",
+          "right": "What did you see?",
+          "why": {
+            "en": "Did already carries past tense, so the main verb stays in the base form.",
+            "ru": "Did уже выражает прошедшее время, поэтому основной глагол остаётся в базовой форме."
+          }
+        },
+        {
+          "wrong": "What means this word?",
+          "right": "What does this word mean?",
+          "why": {
+            "en": "Ordinary verbs need do/does in questions; do not drop the auxiliary.",
+            "ru": "Обычным глаголам нужен do/does в вопросе; нельзя опускать вспомогательный глагол."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "B1 adds subject questions and prepositions. When the wh-word is itself the subject, you drop the auxiliary: Who broke the window? What happened? Which team won? Compare an object question, which still needs did: Who did you see? (you is the subject) versus Who saw you? (who is the subject). In everyday English the preposition usually stays at the end: Who are you talking to? What are you looking at? Where are you from? The formal pied-piped alternative (To whom are you talking?) sounds stiff in speech. Learn how come, which takes statement order with no auxiliary (How come you didn't call?), and the key contrast What is he like? (describe his character) versus How is he? (his current state). Whose asks about possession: Whose car is this?",
         "ru": "На B1 добавляем **вопросы к подлежащему** и работу с предлогами.\n\n**Вопросы к подлежащему (без do/does):**\nКогда wh-слово — это само подлежащее, вспомогательный глагол **не нужен**.\n\n- `Who broke the window?` (Кто разбил окно?) — `who` = подлежащее.\n- `What happened?` (Что случилось?) — `what` = подлежащее.\n- `Which team won?` (Какая команда выиграла?) — `which team` = подлежащее.\n\nСравни с вопросом к дополнению:\n- `Who did you see?` (Кого ты видел?) — `you` подлежащее, нужен `did`.\n- `Who saw you?` (Кто тебя видел?) — `who` подлежащее, `did` не нужен.\n\nЭто тонкое различие. В русском оно делается падежами: «кто» vs «кого».\n\n**Предлоги в wh-вопросах:**\nВ разговорном английском предлог часто остаётся в конце предложения.\n\n- `Who are you talking to?` (С кем ты разговариваешь?) — разговорный вариант.\n- `To whom are you talking?` — формальный, редкий.\n- `What are you looking at?` (На что ты смотришь?)\n- `Where are you from?` (Откуда ты?)\n- `Who did you go with?` (С кем ты пошёл?)\n\nПредлог в конце — нормальная, частая форма в современном английском.\n\n**How long / how often / how come:**\n- `How long have you been here?` (Как долго ты здесь?) — продолжительность.\n- `How often do you exercise?` (Как часто ты занимаешься спортом?)\n- `How come you didn't call?` (Как так, что ты не позвонил?) — удивление, разговорная форма. После `how come` — **прямой** порядок слов, без `do/did`.\n\n**Why vs how come:**\n- `Why didn't you come?` — нейтрально.\n- `How come you didn't come?` — удивление, неформально.\n\n**What…like vs how:**\n- `What is he like?` (Какой он человек? Опиши его.)\n- `How is he?` (Как он? О его состоянии сейчас.)\n\nЭто важное различие. Русское «Какой он?» переводится `What is he like?`, а не `How is he?`.\n\n**Whose — вопрос о принадлежности:**\n- `Whose car is this?` (Чья это машина?)\n- `Whose are these keys?` (Чьи это ключи?)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Subject question: Wh-subject + verb? (no auxiliary). Object question: Wh-word + aux + subject + verb ... + preposition?",
+        "ru": "Вопрос к подлежащему: Wh-подлежащее + глагол? (без вспомогательного). Вопрос к дополнению: Wh-слово + вспом. + подлежащее + глагол ... + предлог?"
       },
       "examples": [
         {
           "en": "Who called you this morning?",
-          "ru": "Кто тебе звонил сегодня утром?"
+          "ru": "Кто тебе звонил сегодня утром?",
+          "note": {
+            "en": "subject question",
+            "ru": "вопрос к подлежащему"
+          }
         },
         {
           "en": "What are you looking at?",
-          "ru": "На что ты смотришь?"
+          "ru": "На что ты смотришь?",
+          "note": {
+            "en": "preposition at end",
+            "ru": "предлог в конце"
+          }
         },
         {
           "en": "How long have you been studying English?",
@@ -120,7 +189,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "What is your new teacher like?",
-          "ru": "Какой твой новый учитель?"
+          "ru": "Какой твой новый учитель?",
+          "note": {
+            "en": "what...like = character",
+            "ru": "what...like = характер"
+          }
         },
         {
           "en": "Whose bag is on the table?",
@@ -130,26 +203,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Когда who/what — это подлежащее, вспомогательный глагол не нужен: Who called? Не Who did call?"
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Who did call you this morning?",
+          "right": "Who called you this morning?",
+          "why": {
+            "en": "When who is the subject, drop the auxiliary did and use the plain verb.",
+            "ru": "Когда who — подлежащее, вспомогательный глагол did опускается, ставится простой глагол."
+          }
+        },
+        {
+          "wrong": "How is your new teacher? (meaning: describe him)",
+          "right": "What is your new teacher like?",
+          "why": {
+            "en": "To ask for a description of character, use what ... like; how asks about a current state.",
+            "ru": "Чтобы попросить описание характера, используют what ... like; how спрашивает о состоянии сейчас."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "B2 focuses on preposition position and variation in wh-constructions. Two patterns coexist: the conversational Who did you give it to? and the formal To whom did you give it? Reserve whom plus a fronted preposition for reports, legal writing, and academic prose; in casual speech whom sounds archaic except in fixed phrases like to whom it may concern. Master wh-words with the to-infinitive in embedded clauses: I don't know what to do; Do you know how to fix this? - note that why does not take this pattern (use why I should, not why to). Distinguish which (a choice from a limited set: Which do you want, tea or coffee?) from what (open-ended: What do you want to eat?). Echo questions keep the wh-word in situ for surprise (She said WHAT?), and multiple-wh questions front one wh-word and leave the rest in place (Who said what?). Watch for the spare to: write Where can I find...?, not Where can I to find...?",
         "ru": "На B2 фокус на **позиции предлога** и **вариативности wh-конструкций**.\n\n**Два варианта с предлогом:**\n- Разговорный: `Who did you give it to?` (Кому ты это отдал?)\n- Формальный: `To whom did you give it?`\n\nВ формальной письменной речи (отчёты, деловые письма, академические тексты) часто выбирают `whom` + предлог в начале. В разговорной — всегда `who` + предлог в конце.\n\n**Whom — статус:**\n- `Whom` сейчас звучит архаично в большинстве контекстов.\n- В академическом и юридическом тексте — норма.\n- В разговоре с друзьями `Whom did you call?` прозвучит странно, вычурно.\n- Исключение: фиксированные фразы `to whom it may concern` (к тому, кого это может касаться).\n\n**Wh-вопросы с инфинитивом:**\n- `I don't know what to do.` (Я не знаю, что делать.)\n- `She didn't tell me where to go.` (Она не сказала мне, куда идти.)\n- `Do you know how to fix this?` (Ты знаешь, как это починить?)\n\nЭто встроенные вопросы с `to`-инфинитивом. `Why` так не используется: не `why to do`, а `why I should do`.\n\n**Which vs what:**\n- `What` — открытый вопрос, без ограниченного выбора: `What do you want to eat?`\n- `Which` — выбор из ограниченного множества: `Which do you want, tea or coffee?`\n\nЕсли варианты чётко ограничены — `which`. Если нет — `what`.\n\n**Эхо-вопросы:**\n- `She said WHAT?` (Она сказала ЧТО?) — удивление.\n- `You went WHERE?` — полуприкрыто-удивлённо.\n- Wh-слово остаётся на своём месте в структуре, но интонационно выделяется.\n\n**Двойные wh-вопросы (multiple wh):**\n- `Who said what?` (Кто что сказал?) — бывает в расследованиях, обсуждениях.\n- `Who's going where?` (Кто куда идёт?)\n\nВ английском допускается один wh-слово во фронте, остальные остаются на своих местах.\n\n**Типичная ошибка B2:**\n- `Where can I to find…?` — лишний `to`. Правильно: `Where can I find…?`\n- Путаница `how long` (для продолжительности) vs `how long ago` (для момента в прошлом): `How long did you wait?` vs `How long ago did you arrive?`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Formal: To whom + aux + subject + verb? / Conversational: Wh + aux + subject + verb ... + preposition? / Embedded: ... wh-word + to-infinitive",
+        "ru": "Формально: To whom + вспом. + подлежащее + глагол? / Разговорно: Wh + вспом. + подлежащее + глагол ... + предлог? / Встроенно: ... wh-слово + to-инфинитив"
       },
       "examples": [
         {
           "en": "To whom should I address this letter?",
-          "ru": "Кому я должен адресовать это письмо?"
+          "ru": "Кому я должен адресовать это письмо?",
+          "note": {
+            "en": "formal, fronted prep",
+            "ru": "формально, предлог впереди"
+          }
         },
         {
           "en": "I don't know what to say.",
-          "ru": "Я не знаю, что сказать."
+          "ru": "Я не знаю, что сказать.",
+          "note": {
+            "en": "wh + to-infinitive",
+            "ru": "wh + to-инфинитив"
+          }
         },
         {
           "en": "Which of these options do you prefer?",
@@ -157,7 +256,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "You did what? I can't believe it.",
-          "ru": "Ты ЧТО сделал? Поверить не могу."
+          "ru": "Ты ЧТО сделал? Поверить не могу.",
+          "note": {
+            "en": "echo question",
+            "ru": "эхо-вопрос"
+          }
         },
         {
           "en": "How long ago did you move to Berlin?",
@@ -167,30 +270,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В разговорной речи предлог в конце и who; в формальной — предлог в начале и whom."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Where can I to find the station?",
+          "right": "Where can I find the station?",
+          "why": {
+            "en": "After a modal like can, use the bare infinitive; do not add to.",
+            "ru": "После модального глагола can используется голый инфинитив; to не добавляется."
+          }
+        },
+        {
+          "wrong": "I don't know why to do it.",
+          "right": "I don't know why I should do it.",
+          "why": {
+            "en": "Wh-words take the to-infinitive, but why does not; use why + clause instead.",
+            "ru": "Wh-слова сочетаются с to-инфинитивом, но why — нет; используйте why + придаточное."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, wh-forms operate at the level of discourse and speaker stance. Echo questions become tools of clarification and irony, keeping the wh-word in situ with marked intonation (You want me to do WHAT?). Wh-clefts turn a question word into the spine of an emphatic statement: What I need is a break; What surprises me is his silence - use them for rhythm and focus, but sparingly. The -ever forms build free relative clauses meaning any X (Tell me whatever you want; Go wherever you like). Wh-stance markers soften proposals (What if we tried a different approach? How about a shorter break?). In formal registers the wh-infinitive nominalises a question (The question of where to draw the line remains open). Academic questioning has its own formulas: To what extent does X contribute to Y? In what ways does the policy affect...? The choice between Why do we accept this? and Why shouldn't we accept it? quietly shifts the tone of an entire argument.",
         "ru": "На C1 wh-вопросы работают на уровне **дискурса и позиционирования говорящего**.\n\n**Эхо-вопросы как средство уточнения и иронии:**\n- `She moved to WHERE?` (Она переехала куда?) — выразительное недоумение.\n- `You want me to do WHAT?` (Ты хочешь, чтобы я сделал ЧТО?) — отказ через переспрос.\n- `He said he would arrive when?` — спокойное переспрашивание.\n\nЭхо-вопрос оставляет wh-слово на месте составляющей, но интонационно выделяет его. В транскрипте это часто капитализируют.\n\n**Wh-cleft sentences (псевдорасщеплённые):**\n- `What I need is a break.` (То, что мне нужно — это передышка.)\n- `What surprises me is his silence.` (Что меня удивляет, так это его молчание.)\n\nЭто стилистический приём, где wh-вопрос становится частью утверждения. На C1 важно уметь использовать его осознанно — для акцента, ритма.\n\n**Free relative clauses:**\n- `Tell me whatever you want.` (Скажи мне что угодно.)\n- `Go wherever you like.` (Иди куда хочешь.)\n- `I'll do whichever is easier.` (Я сделаю то, что легче.)\n\nWh-слова с суффиксом `-ever` формируют «любое X» — свободные относительные предложения.\n\n**Stance markers с wh:**\n- `What if we tried a different approach?` (Что если мы попробуем другой подход?) — мягкое предложение.\n- `How about a shorter break?` (Как насчёт более короткого перерыва?) — бытовое предложение.\n- `What say we leave now?` (Что скажешь, если мы сейчас уйдём?) — разговорный.\n\n**Wh-infinitive в формальном регистре:**\n- `The question of where to draw the line remains open.` (Вопрос о том, где провести черту, остаётся открытым.)\n- `She pondered what to say next.`\n\n**Academic questioning:**\n- `To what extent does X contribute to Y?` (В какой мере X способствует Y?) — классическая формула исследовательского вопроса.\n- `In what ways does the policy affect…?` (Каким образом политика влияет…?)\n- `Why is it that we assume…?` (Почему же мы полагаем…?)\n\n**Разница `why vs why not vs how` в аргументации:**\n- `Why do we accept this premise?` — нейтральный вопрос.\n- `Why shouldn't we accept it?` — провокационный.\n- `How might we verify this?` — предлагающий, конструктивный.\n\nВыбор между этими формами меняет тон всего абзаца."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Wh-cleft: What + subject + verb + is/was + focus. Free relative: wh + -ever + clause. Stance: What if / How about ...?",
+        "ru": "Wh-cleft: What + подлежащее + глагол + is/was + фокус. Свободное относительное: wh + -ever + придаточное. Установка: What if / How about ...?"
       },
       "examples": [
         {
           "en": "What I appreciate most is your honesty.",
-          "ru": "Что я ценю больше всего, так это твою честность."
+          "ru": "Что я ценю больше всего, так это твою честность.",
+          "note": {
+            "en": "wh-cleft for emphasis",
+            "ru": "wh-cleft для акцента"
+          }
         },
         {
           "en": "To what extent can we trust these findings?",
-          "ru": "В какой мере мы можем доверять этим данным?"
+          "ru": "В какой мере мы можем доверять этим данным?",
+          "note": {
+            "en": "academic formula",
+            "ru": "академическая формула"
+          }
         },
         {
           "en": "She'll eat whatever you put in front of her.",
-          "ru": "Она съест всё, что ты перед ней поставишь."
+          "ru": "Она съест всё, что ты перед ней поставишь.",
+          "note": {
+            "en": "free relative (-ever)",
+            "ru": "свободное относительное (-ever)"
+          }
         },
         {
           "en": "What if we reconsidered the proposal?",
@@ -204,26 +337,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "What I need is… — wh-cleft. Используй для акцента, но не злоупотребляй — быстро становится шаблонным."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "What I need is to a break.",
+          "right": "What I need is a break.",
+          "why": {
+            "en": "In a wh-cleft, the focus follows is directly; do not insert a stray preposition.",
+            "ru": "В wh-cleft фокус идёт прямо после is; лишний предлог не вставляется."
+          }
+        },
+        {
+          "wrong": "Whatever you want it, tell me.",
+          "right": "Tell me whatever you want.",
+          "why": {
+            "en": "The -ever clause is the object itself; do not add a resumptive pronoun like it.",
+            "ru": "Придаточное с -ever само является дополнением; не добавляйте местоимение-повтор вроде it."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, wh-constructions become a matter of syntactic play and genre control. The pied-piping versus preposition-stranding choice is now stylistic: The principle upon which the ruling rests (formal) against The principle the ruling rests on (neutral). The eighteenth-century taboo against stranding has lapsed even in academic prose, but pied-piping still signals high register in legal and diplomatic writing. Long-distance wh-movement is grammatical yet cognitively heavy (What did the professor say that the student believed Kate had claimed?); native speakers avoid such chains in speech but may deploy them in literature for effect. Island constraints block extraction in some structures, and a C2 speaker feels intuitively where wh-movement is licit. English fronts only one wh-element and leaves the rest in situ (Who said what to whom?), unlike languages that allow multiple fronting. Rhetorical wh-questions mobilise an audience (Who among us has not felt this?), and compressed formulas like To what end? or By what authority? are reflex markers of an elevated register. At this level the wh-question is less a grammatical pattern than a rhetorical instrument.",
         "ru": "На C2 wh-конструкции выходят на уровень **синтаксической игры и жанровой виртуозности**.\n\n**Pied-piping vs preposition stranding — жанровый выбор:**\n- `The book to which she refers is out of print.` (formal, pied-piping)\n- `The book she refers to is out of print.` (neutral, stranding)\n- `The book she's talking about…` (разговорное)\n\nВ современной академической практике stranding допустим — табу, навязанное пуристами XVIII века, снимается. Но в юридическом тексте и дипломатической переписке pied-piping остаётся маркером регистра.\n\n**Long-distance wh-movement:**\n- `What did the professor say that the student believed that Kate had claimed?` — легальная, но когнитивно сложная конструкция.\n- В устной речи носители избегают таких цепочек; в литературе — могут использовать для психологического эффекта.\n\n**Islands и их нарушения:**\n- `*Who did you see the man who hit ___?` — ungrammatical (complex NP island).\n- `Who did you say [___ hit John]?` — OK.\n\nНа C2 носитель интуитивно чувствует, где wh-экстракция возможна, а где нет. Иностранцу полезно знать базовые случаи, но глубокое синтактическое понимание — задача лингвиста, не обычного учащегося.\n\n**Множественное wh-fronting:**\nВ английском допустим только один wh-член на фронте; остальные остаются in situ.\n- `Who said what to whom?` — каноническая форма.\n- В русском можно: «Кто что кому сказал?» — все три wh на фронте. В английском такая конструкция некорректна.\n\n**Риторические wh-questions в публичной речи:**\n- `Who among us has not felt this?` (Кто среди нас не чувствовал этого?)\n- `Where were you when the walls fell?`\n- `How long shall we tolerate this injustice?` (цитата из MLK-style риторики).\n\nВысокий стиль, мобилизующая функция. В обычной речи звучит пафосно.\n\n**Negated wh-questions:**\n- `What don't you understand?` (Что тебе непонятно?) — уточнение.\n- `Why wouldn't you tell me?` (Почему ты бы мне не сказал?) — упрёк.\n\n**Литературные wh в несобственно-прямой речи:**\n- `Where had he gone? What was he doing? She couldn't know.` — внутренняя речь, свободный косвенный стиль.\n\n**Политико-дипломатические wh-формулы:**\n- `To what end?` (С какой целью?) — предельно сжато.\n- `By what authority?` (На каком основании?)\n- `At whose bidding?` (По чьему указанию?)\n\nЭто рефлекторные фразы высокого регистра, узнаваемые носителями C2.\n\n**Финал:** на C2 wh-вопрос — уже не грамматическая конструкция, а риторический инструмент. Выбор pied-piping или stranding, длины wh-цепочки, использование эхо- или риторических форм — всё это маркирует не знание грамматики, а стилистическую точность."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Pied-piping: prep + wh-word + clause. Stranding: wh-word + clause ... + prep. Multiple wh: one wh-word fronted, the rest in situ.",
+        "ru": "Pied-piping: предлог + wh-слово + придаточное. Stranding: wh-слово + придаточное ... + предлог. Множественное wh: одно wh-слово впереди, остальные на местах."
       },
       "examples": [
         {
           "en": "The principle upon which the ruling rests is contested.",
-          "ru": "Принцип, на котором основано решение, оспаривается."
+          "ru": "Принцип, на котором основано решение, оспаривается.",
+          "note": {
+            "en": "pied-piping (formal)",
+            "ru": "pied-piping (формально)"
+          }
         },
         {
           "en": "Who said what to whom, and when?",
-          "ru": "Кто что кому сказал, и когда?"
+          "ru": "Кто что кому сказал, и когда?",
+          "note": {
+            "en": "multiple wh, one fronted",
+            "ru": "множественное wh, одно впереди"
+          }
         },
         {
           "en": "By what authority does the tribunal act?",
@@ -235,15 +394,56 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "To what end are these measures being imposed?",
-          "ru": "С какой целью вводятся эти меры?"
+          "ru": "С какой целью вводятся эти меры?",
+          "note": {
+            "en": "compressed high register",
+            "ru": "сжатый высокий регистр"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Pied-piping (to which, at whom) — маркер формального регистра; stranding (which…to) — нейтрального и разговорного."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Who what said to whom?",
+          "right": "Who said what to whom?",
+          "why": {
+            "en": "English fronts only one wh-element; the others stay in their normal positions.",
+            "ru": "В английском впереди ставится только одно wh-слово; остальные остаются на своих местах."
+          }
+        },
+        {
+          "wrong": "The principle which the ruling rests upon on is contested.",
+          "right": "The principle upon which the ruling rests is contested.",
+          "why": {
+            "en": "With pied-piping the preposition fronts with the wh-word; do not also strand a copy at the end.",
+            "ru": "При pied-piping предлог уходит вперёд вместе с wh-словом; нельзя дублировать его в конце."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "yes-no-questions",
+    "subject-vs-object-questions",
+    "question-words",
+    "negative-questions",
+    "tag-questions"
+  ],
+  "crossTopic": [
+    "indirect-questions",
+    "reported-questions",
+    "cleft-sentences",
+    "relative-pronouns"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Wh-word",
+      "Auxiliary",
+      "Subject",
+      "Verb"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "adjective-vs-adverb",
   "title": {
-    "en": "",
+    "en": "Adjective vs Adverb",
     "ru": "Adjective Vs Adverb"
   },
   "cefr": "A2",
@@ -16,19 +16,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "adverbs",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "The core question: when do you use an adjective, and when an adverb?\n\nAn **adjective** describes a noun (a person or thing): `a happy girl`, `a fast car`. An **adverb** describes how an action is done: `speak happily`, `drive fast`.\n\nBut some verbs are **linking verbs**, and they take an **adjective**, not an adverb. The main ones are `be`, `seem`, `look`, `feel`, `taste`, `smell`, and `sound`. After them the word points back to the subject, so it stays an adjective:\n- `She is happy.` (not `happily`)\n- `He seems tired.` (not `tiredly`)\n- `The soup tastes good.` (not `well`)\n- `You look nice.` (not `nicely`)\n\nWith ordinary **action verbs**, use an adverb to say how: `She sings beautifully.`, `He drives carefully.`, `They work hard.`\n\nA classic trap: `I feel bad.` (= I'm sorry / upset) is correct, not `I feel badly`. After `feel`, use an adjective, just like after `am`.",
         "ru": "Главный вопрос: когда использовать прилагательное, а когда — наречие?\n\n**Правило:**\n- **Прилагательное** описывает существительное (кто/что): `happy girl`, `fast car`.\n- **Наречие** описывает глагол (как делают): `speak happily`, `drive fast`.\n\n**Но есть особые глаголы — `linking verbs` (связочные):**\nС ними идёт **прилагательное**, а не наречие.\n\n**Главные linking verbs:**\n- `be` — быть\n- `seem` — казаться\n- `look` — выглядеть\n- `feel` — чувствовать\n- `taste` — иметь вкус\n- `smell` — пахнуть\n- `sound` — звучать\n\n**Правильные примеры:**\n- `She is happy.` (не `happily`)\n- `He seems tired.` (не `tiredly`)\n- `The soup tastes good.` (не `well`)\n- `You look nice.` (не `nicely`)\n- `The music sounds beautiful.` (не `beautifully`)\n\n**С action verbs — наречие:**\n- `She sings beautifully.` (Она поёт красиво.)\n- `He drives carefully.` (Он водит осторожно.)\n- `They work hard.` (Они работают усердно.)\n\n**Частая ошибка:**\n- Wrong: `I feel badly.` — это значит «моё чувство плохо работает» (не то, что нужно).\n- Right: `I feel bad.` (Мне плохо / Я расстроен.)\n\nПомни: после `feel` — прилагательное, как после `am`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "linking verb (be / seem / look / feel) + adjective; action verb + adverb (-ly)",
+        "ru": "связочный глагол (be / seem / look / feel) + прилагательное; глагол действия + наречие (-ly)"
       },
       "examples": [
         {
@@ -37,11 +39,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The cake smells delicious.",
-          "ru": "Торт пахнет вкусно."
+          "ru": "Торт пахнет вкусно.",
+          "note": {
+            "en": "smell = linking",
+            "ru": "smell как связочный"
+          }
         },
         {
           "en": "He drives carefully in the rain.",
-          "ru": "Он осторожно водит в дождь."
+          "ru": "Он осторожно водит в дождь.",
+          "note": {
+            "en": "action + adverb",
+            "ru": "действие + наречие"
+          }
         },
         {
           "en": "You look tired — go to bed.",
@@ -55,26 +65,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Linking verbs (be, feel, look, seem, taste) + прилагательное. Action verbs + наречие."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The soup tastes well.",
+          "right": "The soup tastes good.",
+          "why": {
+            "en": "`taste` is a linking verb here, so it takes an adjective.",
+            "ru": "`taste` здесь связочный глагол, поэтому берёт прилагательное."
+          }
+        },
+        {
+          "wrong": "She sings beautiful.",
+          "right": "She sings beautifully.",
+          "why": {
+            "en": "`sing` is an action verb, so use an adverb to say how.",
+            "ru": "`sing` — глагол действия, нужно наречие, чтобы сказать «как»."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Now refine the **sense verbs**: `look`, `sound`, `smell`, `taste`, `feel`. They are two-faced.\n\nWhen they describe an **impression** received by the subject, they are linking verbs and take an adjective:\n- `The soup tastes good.`, `She looks sad.`, `The music sounds loud.`, `The blanket feels soft.`\n\nWhen they describe an **action** that someone actively performs (looking, listening, touching), they are ordinary verbs and take an adverb:\n- `She looked carefully at the photo.`, `He listened attentively.`, `She felt the cloth gently.`\n\nCompare: `She smells nice.` (her scent is good — impression) vs `She smelled the flower carefully.` (she sniffed it — action).\n\nWatch three confusable pairs:\n- `well` is usually an adverb (`she sings well`), but means *healthy* as an adjective: `I don't feel well today.` Contrast `I feel good.` (mood) with `I feel well.` (health).\n- `hard` vs `hardly`: `He works hard.` (with effort) but `He hardly works.` (= almost not at all) — completely different meanings.\n- `late` vs `lately`: `He arrived late.` (not on time) but `I haven't seen him lately.` (= recently).",
         "ru": "На B1 уточни **сенсорные глаголы** (sense verbs) и их двойственную природу.\n\n**Sense verbs: `look`, `sound`, `smell`, `taste`, `feel`**\n\nКогда они описывают **впечатление** — linking verb + adj:\n- `The soup tastes good.` (вкус как впечатление)\n- `She looks sad.` (выглядит грустной)\n- `The music sounds loud.` (звучит громко)\n- `The flower smells sweet.` (пахнет сладко)\n- `The blanket feels soft.` (на ощупь мягкое)\n\nКогда они описывают **действие** (кто-то активно смотрит / слушает / щупает) — action verb + adverb:\n- `She looked carefully at the photo.` (активно смотрела)\n- `He listened attentively.` (активно слушал — используй `listen`, а не `sound`).\n- `She felt the cloth gently.` (ощупала ткань)\n- `He tasted the soup carefully.` (осторожно попробовал)\n\n**Сравни:**\n- `She smells nice.` (запах хороший — впечатление)\n- `She smelled the flower carefully.` (она нюхала — действие)\n\n**Исключение: `well` как adjective.**\n`Well` обычно adverb (`she sings well`), но в значении «здоровый» — это прилагательное:\n- `I don’t feel well today.` (Я нездоров.) — здесь `well` = прилагательное.\n- `She looks well after the holiday.` (Она выглядит здоровой.)\n\nРазличие:\n- `I feel good.` = настроение хорошее.\n- `I feel well.` = здоров.\n\n**`Bad` vs `badly`:**\n- `I feel bad about it.` = сожалею / расстроен. (adj после feel)\n- `I feel badly.` = моё осязание плохо работает (редко и странно).\nПиши `I feel bad`.\n\n**`Hard` vs `hardly`:**\n- `He works hard.` (усердно)\n- `He hardly works.` = едва работает (разные смыслы!).\n\n**`Late` vs `lately`:**\n- `He arrived late.` (поздно)\n- `I haven’t seen him lately.` (в последнее время)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "sense verb + adjective = impression; sense verb + adverb = deliberate action",
+        "ru": "глагол восприятия + прилагательное = впечатление; глагол восприятия + наречие = осознанное действие"
       },
       "examples": [
         {
           "en": "The tea tastes strong.",
-          "ru": "Чай крепкий на вкус."
+          "ru": "Чай крепкий на вкус.",
+          "note": {
+            "en": "impression",
+            "ru": "впечатление"
+          }
         },
         {
           "en": "She listened carefully to the instructions.",
-          "ru": "Она внимательно слушала инструкции."
+          "ru": "Она внимательно слушала инструкции.",
+          "note": {
+            "en": "action",
+            "ru": "действие"
+          }
         },
         {
           "en": "I feel bad about missing your birthday.",
@@ -86,28 +122,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He hardly eats breakfast.",
-          "ru": "Он почти не ест завтрак."
+          "ru": "Он почти не ест завтрак.",
+          "note": {
+            "en": "hardly = almost not",
+            "ru": "hardly = почти не"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Sense verb + adj = впечатление. Sense verb + adv = действие."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I feel badly about it.",
+          "right": "I feel bad about it.",
+          "why": {
+            "en": "`feel` (emotion) is linking, so use the adjective `bad`; `badly` would mean your sense of touch works poorly.",
+            "ru": "`feel` (эмоция) связочный, нужно прилагательное `bad`; `badly` значило бы, что осязание плохо работает."
+          }
+        },
+        {
+          "wrong": "He works hardly every day.",
+          "right": "He works hard every day.",
+          "why": {
+            "en": "`hard` means *with effort*; `hardly` means *almost not*, the opposite of what's meant.",
+            "ru": "`hard` значит «усердно»; `hardly` значит «едва», что противоположно смыслу."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "Add the **change-of-state verbs** and keep them apart from manner adverbs.\n\n`become`, `get`, `grow`, `turn`, `go`, and `fall` mark a move into a new state, so they take an **adjective**:\n- `She grew tired.`, `He became angry.`, `The sky turned dark.`, `The milk went sour.`, `She fell silent.`, `It's getting cold.`\n\nNote idioms with `go`: `go bad`, `go crazy`, `go red`, `go blind` — never `go badly` in this sense. `turn` can go either way: `turn red / pale / cold` (adjective, change of colour) vs `turn quickly` (adverb, a movement). Context decides.\n\nThere is also the **depictive** structure, where an adjective describes the subject's state during another action:\n- `She arrived exhausted.` (state) vs `She arrived late.` (when — adverb). `The guests left happy.`\n\nA classic B2 trap is **hypercorrection** — over-applying `-ly` after sense and emotion verbs: write `I feel bad for her.`, not `I feel badly for her.`\n\nFinally, beware adjectives that already end in `-ly`: `friendly`, `lovely`, `silly`, `lonely`, `ugly` are adjectives, not adverbs. There is no word `friendlily`. So use a paraphrase: `He smiled in a friendly way.`, not `He smiled friendly.`",
         "ru": "На B2 добавь **глаголы изменения состояния** и разграничь их с manner adverbs.\n\n**`Become`, `get`, `grow`, `turn`, `go`, `fall` — change of state + adjective:**\nЭти глаголы указывают на переход в состояние → после них прилагательное:\n- `She grew tired.` (Она устала.)\n- `He became angry.` (Он разозлился.)\n- `The sky turned dark.` (Небо потемнело.)\n- `The milk went sour.` (Молоко прокисло.)\n- `She fell silent.` (Она замолчала.)\n- `It’s getting cold.` (Становится холодно.)\n\n**`Go` в этих контекстах:**\n- `go bad` (испортиться), `go crazy`, `go red` (покраснеть), `go blind`.\nНе: `go badly`, `go crazily`.\n\n**`Turn`:**\n- `turn red / pale / cold` — изменение цвета/температуры (+adj).\n- `turn quickly` — action (+adv).\nКонтекст решает.\n\n**Двойная интерпретация:**\n- `She arrived exhausted.` (прибыла измотанной — состояние).\n- `She arrived late.` (прибыла поздно — когда, adv).\n- `The guests left happy.` (гости ушли счастливыми — состояние после ухода).\n\nЭто structure называется **resultative / depictive** — описывает состояние субъекта в момент действия.\n\n**Hypercorrection — типичная ошибка:**\nУченики, выучив про наречия, начинают неверно адверблизовать:\n- Wrong: `I feel badly for her.` — это значит плохо работает осязание.\n- Right: `I feel bad for her.` (сожалею)\n- Wrong: `She tastes sweetly.` — редкая архаика.\n- Right: `She tastes sweet.` (если говорим о её вкусе — обычно о еде).\n\n**Drive / fly / run + flat adverb (US colloquial):**\n- `Drive safe.` (разговорное US — не `safely`).\n- `Come quick.` (разговорное — не `quickly`).\n- `Fly high.` (идиома).\n\nВ formal writing — избегай.\n\n**Adjective + `ly` = может быть adj или adv:**\n- `friendly`, `lovely`, `silly`, `lonely`, `ugly` — это прилагательные!\n  - Wrong: `He smiled friendly.` → Right: `He smiled in a friendly way.`\n  - Нельзя сказать `friendlily` — такого слова нет.\n- Аналогично: `She smiled in a lovely manner.` вместо `*lovelily`.\n\n**Итог:** linking/change-of-state + adj; action + adv; но проверяй по смыслу (впечатление vs действие)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "become / get / grow / turn / go / fall + adjective (change of state); -ly adjective → use \"in a … way\"",
+        "ru": "become / get / grow / turn / go / fall + прилагательное (смена состояния); прилагательное на -ly → оборот «in a … way»"
       },
       "examples": [
         {
           "en": "She grew tired of waiting.",
-          "ru": "Она устала ждать."
+          "ru": "Она устала ждать.",
+          "note": {
+            "en": "grow = change of state",
+            "ru": "grow = смена состояния"
+          }
         },
         {
           "en": "The leaves turned yellow in autumn.",
@@ -115,7 +177,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He arrived home exhausted.",
-          "ru": "Он пришёл домой измотанный."
+          "ru": "Он пришёл домой измотанный.",
+          "note": {
+            "en": "depictive state",
+            "ru": "депиктивное состояние"
+          }
         },
         {
           "en": "The milk has gone sour.",
@@ -123,32 +189,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She smiled at me in a friendly way.",
-          "ru": "Она дружелюбно улыбнулась мне."
+          "ru": "Она дружелюбно улыбнулась мне.",
+          "note": {
+            "en": "friendly is an adjective",
+            "ru": "friendly — прилагательное"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Grow / get / turn / go + adjective. Friendly / lovely — это adj, не adv."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The milk has gone sourly.",
+          "right": "The milk has gone sour.",
+          "why": {
+            "en": "`go` here is change-of-state, so it takes an adjective, not an adverb.",
+            "ru": "`go` здесь смена состояния, нужно прилагательное, не наречие."
+          }
+        },
+        {
+          "wrong": "He smiled friendly at me.",
+          "right": "He smiled in a friendly way at me.",
+          "why": {
+            "en": "`friendly` is an adjective and has no adverb form, so paraphrase it.",
+            "ru": "`friendly` — прилагательное, у него нет формы наречия, поэтому используем оборот."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the prescriptive rule and real usage start to diverge.\n\n**Prescriptive vs descriptive.** Traditional grammar insists on `feel well` (health) vs `feel good` (mood), yet corpus data shows `feel good` is widely used for health too. In academic prose keep `feel well` for health; in speech `feel good` is fine.\n\n**Depictive vs resultative.** A depictive describes the subject's state during the action (`She left the room angry.` — she was angry while leaving). A resultative describes the result the action produces (`She painted the wall red.` — the wall became red). Both take adjectives: `He hammered the metal flat.` (resultative — the metal ended up flat), not `flatly`.\n\n**Attributive vs predicative position.** Some adjectives are predicative only: `afraid`, `asleep`, `alive`, `alone`. So `the child is afraid` is fine, but `an afraid child` is not — use `a frightened child`.\n\n**Verbs that allow both.** `appear` (`She appears calm.` linking / `She appeared suddenly.` action), `prove` (`He proved intelligent.` / `He proved it quickly.`), `remain` (`She remained silent.`). When they are linking, they take an adjective.\n\n**Adverbs modifying adjectives.** After a linking verb, an adverb can sit before the adjective to grade it: `She is incredibly smart.`, `The film was surprisingly good.` Don't mistake that adverb (modifying the adjective) for the verb's complement.",
         "ru": "На C1 прескриптивное давление и реальное употребление расходятся.\n\n**Prescriptive vs descriptive:**\nГрамматисты XX века настаивали на `feel well` (здоров) vs `feel good` (настроение). Corpus-данные показывают, что `feel good` в значении «здоров» тоже используется.\n\n- Strict: `I feel well.` (health).\n- Common: `I feel good.` (both health and mood).\n\nВ академическом письме — `feel well` для здоровья. В разговоре — `feel good` допустимо.\n\n**Resultatives vs depictives:**\n- **Depictive** (описание субъекта в момент действия): `She left the room angry.` (была злая, когда уходила).\n- **Resultative** (описание результата действия): `She painted the wall red.` (стена стала красной).\n\nРазница критична:\n- `He hammered the metal flat.` (resultative — металл стал плоским).\n- `He hammered the metal flatly.` — *необычно, редко.\n\n**Adjective в атрибутивной vs предикативной позиции:**\n- `A good doctor.` (attributive — перед noun).\n- `She is a good doctor.` (predicative — после be).\n\nНекоторые прилагательные только predicative: `afraid`, `asleep`, `alive`, `alone`.\n- Wrong: `an afraid child` → Right: `a frightened child` / `the child is afraid`.\n\n**Verbs that allow both — subtle shift:**\n- `appear`: `She appears calm.` (кажется — linking) vs `She appeared suddenly.` (появилась — action).\n- `prove`: `He proved intelligent.` (оказался умным) vs `He proved it quickly.` (доказал).\n- `remain`: `She remained silent.` (осталась молчаливой).\n\nКогда remain/appear/prove — linking, они берут adj.\n\n**Adverbs that modify adjectives:**\n- `She is incredibly smart.` (adverb + adj).\n- `The film was surprisingly good.`\nНе путай: если после be идёт adj, перед adj может быть adv (`very`, `incredibly`, `surprisingly`).\n\n**Sensory vs cognitive verbs:**\n- Sensory: `look`, `sound`, `taste`, `smell`, `feel` → adj (impression).\n- Cognitive: `seem`, `appear`, `prove` → adj (evaluation).\n- Action alternatives: `see`, `hear`, `touch`, `sniff` → adv (action).\n\n**Fronted adjective as depictive:**\n- `Exhausted, she fell onto the bed.` (literary).\n- `Furious, he slammed the door.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "depictive: subject + verb + adjective (state); resultative: subject + verb + object + adjective (result)",
+        "ru": "депиктив: подлежащее + глагол + прилагательное (состояние); результатив: подлежащее + глагол + дополнение + прилагательное (результат)"
       },
       "examples": [
         {
           "en": "She painted the wall red in just an hour.",
-          "ru": "Она покрасила стену в красный за час."
+          "ru": "Она покрасила стену в красный за час.",
+          "note": {
+            "en": "resultative",
+            "ru": "результатив"
+          }
         },
         {
           "en": "He remained calm throughout the crisis.",
-          "ru": "Он сохранял спокойствие во время кризиса."
+          "ru": "Он сохранял спокойствие во время кризиса.",
+          "note": {
+            "en": "remain = linking",
+            "ru": "remain как связочный"
+          }
         },
         {
           "en": "The evidence proved conclusive beyond doubt.",
@@ -156,7 +252,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Exhausted, she collapsed onto the sofa.",
-          "ru": "Измотанная, она рухнула на диван."
+          "ru": "Измотанная, она рухнула на диван.",
+          "note": {
+            "en": "fronted depictive",
+            "ru": "вынесенный депиктив"
+          }
         },
         {
           "en": "The proposal seemed reasonable at first.",
@@ -166,22 +266,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Resultative (painted it red) vs depictive (left angry) — оба с adj, не adv."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She painted the wall redly.",
+          "right": "She painted the wall red.",
+          "why": {
+            "en": "A resultative names the resulting state of the object, so it is an adjective.",
+            "ru": "Результатив называет итоговое состояние объекта, поэтому это прилагательное."
+          }
+        },
+        {
+          "wrong": "He proved intelligently in the debate.",
+          "right": "He proved intelligent in the debate.",
+          "why": {
+            "en": "When `prove` means *turn out to be*, it is linking and takes an adjective.",
+            "ru": "Когда `prove` значит «оказаться», он связочный и берёт прилагательное."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the adjective/adverb choice is about precision in formal prose.\n\n**Predicate complement vs adjunct.** `She arrived happy.` (complement — describes her state) vs `She arrived happily.` (adjunct — describes the manner). The difference is subtle but matters in careful writing.\n\n**Fixed positional and change structures** take an adjective, and breaking them is an error: `She stood still.`, `He went quiet.`, `The door swung open.`, `The lecture ran long.`\n\n**Prescriptive debates and signage.** Flat adverbs (`Drive safe`, `Go slow`) are accepted in signs and informal speech, but academic prose uses only the `-ly` form (`safely`, `slowly`).\n\n**`well` attributively** is redundant: write `a healthy child`, not `a well child`, though the compound `a well-known writer` is fine; predicatively `The child is well.` is correct.\n\n**Double predicates** describe states at the moment of an event: `She was born blind.`, `He grew old.`, `It stands empty.`\n\nA practical test: if you can drop the word into `The book is X` with an adjective (`hot`, `good`, `empty`), it's a complement and stays an adjective; if the word genuinely answers *how the action was done*, use the adverb. In high-register prose, watch linking-like verbs such as `hold`, `emerge`, and `stand`: `The theory held true for a century.`, `Her reputation emerged unscathed.`, `The evidence stood uncontested.`",
         "ru": "На C2 выбор между adj и adv — вопрос **точности в формальной прозе**.\n\n**Predicate complement vs adjunct:**\n- `She arrived happy.` (complement — её состояние).\n- `She arrived happily.` (adjunct — образ прибытия).\n\nРазница тонкая, но в formal writing важна.\n\n**Archaic / literary structures:**\n- `She stood still.` (still — adj, не adv; `stand still` = стой неподвижно).\n- `He went quiet.` (quiet — adj после change-of-state).\n- `The door swung open.` (open — adj).\n- `The lecture ran long.` (long — adj, не adv).\n\nЭто устойчивые структуры, нарушать их — ошибка.\n\n**Prescriptive debates:**\n- `Drive safely` vs `Drive safe` — safe как flat adverb в знаках.\n- `Go slow` vs `Go slowly` — знаки на дорогах используют `slow`.\n- В academic: только -ly формы. В signage: flat adverbs исторически приняты.\n\n**`Well` в атрибутивной позиции:**\n- Wrong: `a well child` (redundant).\n- Right: `a healthy child`.\n- Right: `a well-known writer` (compound attributive).\n- В predicative — `The child is well.` (здоров).\n\n**Double predicates:**\n- `She was born blind.` — статус при рождении.\n- `He grew old.` — изменение.\n- `It stands empty.` — текущее состояние + positional verb.\n\n**Stylistic concern:**\nВ academic prose хорошая идея — заменять adj/adv через номинализацию:\n- Weak: `The argument was surprisingly convincing.`\n- Formal: `The convincingness of the argument was notable.`\n- Лучший вариант: `The argument was compelling.` (один сильный adj).\n\n**Corpus pattern:**\nТоп linking verbs в academic: `be`, `seem`, `appear`, `prove`, `remain`, `become`.\nТоп linking adj: `clear`, `evident`, `significant`, `consistent`, `apparent`.\n\n**`Feel` — две плоскости:**\n- `I feel happy.` (эмоция — adj).\n- `I feel for you.` (сочувствую — idiom).\n- `I feel the fabric.` (ощупываю — action + object).\n- `I feel strongly about this.` (sentence + adverb as adjunct).\n\nОсторожно: в последнем `strongly` — adverb, но не описывает ощупывание; описывает интенсивность убеждения.\n\n**Final test:**\nЕсли после be / seem / feel можно подставить прилагательное в предложение «The book is X» (`happy`, `hot`, `good`) — используй adj. Если невозможно (ибо это действие) — adv.\n\n**Nuanced predicates в formal writing:**\n- `The evidence stood uncontested.` (linking `stood` + adj).\n- `Her reputation emerged unscathed.` (`emerged` как linking в высоком стиле).\n- `The theory held true for decades.` (`hold` + adj)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "positional / change verb (stand / swing / run / be born) + adjective (state), not adverb",
+        "ru": "позиционный/переходный глагол состояния (stand / swing / run / be born) + прилагательное (состояние), не наречие"
       },
       "examples": [
         {
           "en": "She stood still at the edge of the cliff.",
-          "ru": "Она стояла неподвижно на краю утёса."
+          "ru": "Она стояла неподвижно на краю утёса.",
+          "note": {
+            "en": "stand + still (adj)",
+            "ru": "stand + still (прил.)"
+          }
         },
         {
           "en": "The door swung open without a sound.",
@@ -193,19 +315,61 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The theory has held true for a century.",
-          "ru": "Теория оставалась верной в течение века."
+          "ru": "Теория оставалась верной в течение века.",
+          "note": {
+            "en": "hold + true (adj)",
+            "ru": "hold + true (прил.)"
+          }
         },
         {
           "en": "He was born blind but became a celebrated musician.",
-          "ru": "Он родился слепым, но стал прославленным музыкантом."
+          "ru": "Он родился слепым, но стал прославленным музыкантом.",
+          "note": {
+            "en": "born + blind (adj)",
+            "ru": "born + blind (прил.)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Stand still, swing open, run long — adj после positional/change verbs, не adv."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The theory has held truly for a century.",
+          "right": "The theory has held true for a century.",
+          "why": {
+            "en": "`hold true` is a fixed linking-like structure; the complement is the adjective `true`.",
+            "ru": "`hold true` — устойчивая связочная структура; дополнение — прилагательное `true`."
+          }
+        },
+        {
+          "wrong": "She stood stilly at the edge.",
+          "right": "She stood still at the edge.",
+          "why": {
+            "en": "`stand still` takes the adjective `still`; there is no adverb `stilly` in this sense.",
+            "ru": "`stand still` берёт прилагательное `still`; наречия `stilly` в этом значении нет."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "adverbs-of-manner",
+    "participle-adjectives",
+    "gradable-vs-ungradable-adjectives",
+    "intensifiers"
+  ],
+  "crossTopic": [
+    "adverbs-of-manner",
+    "present-simple",
+    "comparative-adjectives",
+    "word-order-svoa"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "adjective + noun / linking verb",
+      "adverb + action verb"
+    ]
+  }
 };

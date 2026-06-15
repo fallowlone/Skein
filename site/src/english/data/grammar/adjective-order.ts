@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "adjective-order",
   "title": {
-    "en": "",
+    "en": "Adjective Order",
     "ru": "Adjective Order"
   },
   "cefr": "B1",
@@ -15,32 +15,46 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "adjectives",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "When several **adjectives** sit in front of a noun, English fixes their order. You cannot say `blue big car` — only `big blue car`. The order is not a matter of taste; native speakers feel a wrong sequence as clearly broken.\n\nThe usual memory aid is **OSASCOMP**, naming the slots from left to right:\n1. **O**pinion — `beautiful`, `nice`, `horrible`\n2. **S**ize — `big`, `small`, `tiny`\n3. **A**ge — `old`, `new`, `young`\n4. **S**hape — `round`, `square`, `long`\n5. **C**olour — `red`, `blue`, `black`\n6. **O**rigin — `German`, `Italian`, `Russian`\n7. **M**aterial — `wooden`, `metal`, `leather`\n8. **P**urpose — `sleeping` (bag), `running` (shoes)\n\nAll eight slots in one phrase is real but rare: `a lovely little old round red Italian wooden cooking spoon`. In normal speech and writing, two or three adjectives is the practical limit — more than that sounds artificial.\n\nCommon two-adjective pairings: `a nice new car` (opinion + age), `a small black bag` (size + colour), `an old wooden table` (age + material), `a big round table` (size + shape).\n\nA quick note on commas: when adjectives belong to the **same** category (both describing the weather, both describing mood), separate them with a comma or `and` — `a cold, windy day`. When they come from **different** OSASCOMP slots, use no comma — `a big old house`.",
         "ru": "Когда перед существительным стоит несколько **прилагательных**, их порядок в английском фиксированный. Нельзя сказать `blue big car` — только `big blue car`.\n\n**Мнемоника OSASCOMP** (запомни порядок):\n1. **O**pinion — мнение: `beautiful`, `nice`, `horrible`\n2. **S**ize — размер: `big`, `small`, `tiny`\n3. **A**ge — возраст: `old`, `new`, `young`\n4. **S**hape — форма: `round`, `square`, `long`\n5. **C**olour — цвет: `red`, `blue`, `black`\n6. **O**rigin — происхождение: `German`, `Italian`, `Russian`\n7. **M**aterial — материал: `wooden`, `metal`, `leather`\n8. **P**urpose — назначение: `sleeping` (bag), `running` (shoes)\n\n**Пример со всеми категориями:**\n- `a lovely little old round red Italian wooden cooking spoon`\n\nНа практике три прилагательных подряд — уже максимум. Больше — звучит неестественно.\n\n**Типичные сочетания:**\n- `a nice new car` (opinion + age)\n- `a small black bag` (size + colour)\n- `an old wooden table` (age + material)\n- `a big round table` (size + shape)\n\n**Ошибки, которых следует избегать:**\n- `a blue big car` — неправильно (нарушен порядок size → colour).\n- `an Italian old man` — неправильно (age идёт раньше origin).\n- `a leather brown jacket` — неправильно (colour раньше material).\n\n**Запятые:** между прилагательными одной категории — запятая или `and`:\n- `a cold, windy day` (оба — описание погоды)\n- `a big old house` (размер + возраст — без запятой, разные категории)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "(opinion) + (size) + (age) + (shape) + (colour) + (origin) + (material) + (purpose) + NOUN",
+        "ru": "(мнение) + (размер) + (возраст) + (форма) + (цвет) + (происхождение) + (материал) + (назначение) + существительное"
       },
       "examples": [
         {
           "en": "She bought a beautiful small black dress.",
-          "ru": "Она купила красивое маленькое чёрное платье."
+          "ru": "Она купила красивое маленькое чёрное платье.",
+          "note": {
+            "en": "opinion + size + colour",
+            "ru": "мнение + размер + цвет"
+          }
         },
         {
           "en": "I have an old wooden chair.",
-          "ru": "У меня старый деревянный стул."
+          "ru": "У меня старый деревянный стул.",
+          "note": {
+            "en": "age + material",
+            "ru": "возраст + материал"
+          }
         },
         {
           "en": "He drives a new red Italian car.",
-          "ru": "Он водит новую красную итальянскую машину."
+          "ru": "Он водит новую красную итальянскую машину.",
+          "note": {
+            "en": "age + colour + origin",
+            "ru": "возраст + цвет + происхождение"
+          }
         },
         {
           "en": "We saw a tall young German student.",
@@ -54,34 +68,68 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Mнение → размер → возраст → форма → цвет → происхождение → материал → назначение."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "a blue big car",
+          "right": "a big blue car",
+          "why": {
+            "en": "Size comes before colour in OSASCOMP.",
+            "ru": "Размер идёт раньше цвета по OSASCOMP."
+          }
+        },
+        {
+          "wrong": "a leather brown jacket",
+          "right": "a brown leather jacket",
+          "why": {
+            "en": "Colour precedes material; material is closest to the noun.",
+            "ru": "Цвет идёт раньше материала; материал ближе всего к существительному."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, sharpen the comma rule by separating **coordinate** from **cumulative** adjectives.\n\n**Coordinate adjectives** each describe the noun independently, so you can reorder them or join them with `and`: `a cold, dark night` = `a dark, cold night` = `a cold and dark night`. Use a **comma**.\n\n**Cumulative adjectives** follow OSASCOMP; each one modifies the whole group to its right, so they cannot be reordered: `a small black leather bag`, never `a leather black small bag`. Use **no comma**.\n\n**The test:** if you can drop `and` between two adjectives and the meaning survives, they are coordinate — add a comma. If `and` sounds wrong, they are cumulative — no comma.\n\nNumbers and quantifiers sit **before** the whole adjective chain: `three beautiful old houses`, `both small wooden boxes`.\n\nWhen stacked adjectives form a single modifier in front of a noun, **hyphenate** them: `a ten-year-old boy`, `a well-known author`, `a state-of-the-art device`. But when the same words come after the noun (predicatively), drop the hyphens: `The boy is ten years old.`\n\nWriters sometimes break OSASCOMP for effect; treat that as marked, non-standard usage and stick to the canonical order in your own writing. A few fixed collocations also deviate — `a big bad wolf` — and idiomatic pairs like `nice and warm` or `good and hot` are not adjective stacks at all.",
         "ru": "На B2 добавь различие между **cumulative** и **coordinate** прилагательными — это решает вопрос с запятыми.\n\n**Coordinate adjectives** (равноправные):\nКаждое прилагательное отдельно описывает существительное. Можно переставить местами или вставить `and`.\n- `a cold, dark night` = `a dark, cold night` = `a cold and dark night`\n- Ставится **запятая**.\n\n**Cumulative adjectives** (кумулятивные, по OSASCOMP):\nКаждое следующее прилагательное модифицирует всю группу справа. Нельзя переставить.\n- `a small black leather bag` (не `a leather black small bag`)\n- **Без запятой.**\n\n**Тест:** если можно вставить `and` между прилагательными и смысл сохраняется — ставь запятую. Если нет — не ставь.\n\n**Числа и количественные слова** идут **перед** всей цепочкой:\n- `three beautiful old houses`\n- `both small wooden boxes`\n\n**Hyphenation при стекинге:**\nКогда прилагательные формируют сложный модификатор перед существительным, используй дефисы:\n- `a ten-year-old boy` (не `a ten year old boy`)\n- `a well-known author`\n- `a state-of-the-art device`\n\nНо: `The boy is ten years old.` — без дефисов (не перед существительным).\n\n**Порядок нарушается ради эмоции:**\nПисатели иногда меняют порядок для эффекта — это маркированное, ненормативное употребление. В учебных текстах держись OSASCOMP.\n\n**Исключения-коллокации:**\n- `a big bad wolf` (отклонение, но привычная фраза)\n- `nice and warm`, `good and hot` — идиоматические пары (не стандартный порядок)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "coordinate: adj, adj + NOUN  |  cumulative: adj + adj + NOUN (no comma)",
+        "ru": "равноправные: прил., прил. + сущ.  |  кумулятивные: прил. + прил. + сущ. (без запятой)"
       },
       "examples": [
         {
           "en": "It was a cold, dark, stormy night.",
-          "ru": "Была холодная, тёмная, грозовая ночь."
+          "ru": "Была холодная, тёмная, грозовая ночь.",
+          "note": {
+            "en": "coordinate (commas)",
+            "ru": "равноправные (запятые)"
+          }
         },
         {
           "en": "She carried a small black leather handbag.",
-          "ru": "Она несла маленькую чёрную кожаную сумку."
+          "ru": "Она несла маленькую чёрную кожаную сумку.",
+          "note": {
+            "en": "cumulative (no comma)",
+            "ru": "кумулятивные (без запятой)"
+          }
         },
         {
           "en": "He is a ten-year-old boy with brown eyes.",
-          "ru": "Он десятилетний мальчик с карими глазами."
+          "ru": "Он десятилетний мальчик с карими глазами.",
+          "note": {
+            "en": "hyphenated modifier",
+            "ru": "дефисный модификатор"
+          }
         },
         {
           "en": "The coffee is nice and hot.",
-          "ru": "Кофе приятный и горячий."
+          "ru": "Кофе приятный и горячий.",
+          "note": {
+            "en": "idiom, not a stack",
+            "ru": "идиома, не стек"
+          }
         },
         {
           "en": "We need three large wooden crates.",
@@ -91,30 +139,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Запятая — между равноправными прилагательными; порядок OSASCOMP — без запятой."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "a small, black, leather bag",
+          "right": "a small black leather bag",
+          "why": {
+            "en": "These are cumulative (different OSASCOMP slots), so no commas.",
+            "ru": "Они кумулятивные (разные слоты OSASCOMP), значит запятых нет."
+          }
+        },
+        {
+          "wrong": "a ten year old boy",
+          "right": "a ten-year-old boy",
+          "why": {
+            "en": "A compound modifier before a noun needs hyphens.",
+            "ru": "Сложный модификатор перед существительным требует дефисов."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, adjective order becomes a **stylistic tool** rather than a rigid rule. The main job is keeping heavy stacks readable.\n\nWhen more than three adjectives crowd a noun, break the stack: split it into two phrases (`a beautiful old oak table` → `a beautiful old table, made of oak`), use a relative clause (`a large wooden box which was painted red`), or shift part of it into postposition (`a box, large and wooden, painted red`).\n\nEnglish normally puts adjectives before the noun, but several patterns place them **after** it: fixed expressions (`attorney general`, `court martial`); the obligatory postposition after `-body`, `-one`, `-thing` (`someone interesting`, `anything special`); and a literary placement for emphasis (`a man tall and proud` instead of `a tall, proud man`).\n\nWhen two adjectives compete for one slot, focus and rhythm decide: `a cold wet morning` and `a wet cold morning` are both possible, and reading aloud picks the better one.\n\nRegister matters. Academic writing tends to drop subjective (opinion) adjectives for objectivity — `the significant recent changes`, not `the nice recent changes`. Legal and formal prose keeps strict OSASCOMP with few opinion words; journalism compresses with compound modifiers (`a 50-year-old French-born engineer`); literary prose is freer and tolerates postposition.",
         "ru": "На C1 порядок прилагательных становится **инструментом стиля**, а не жёстким правилом.\n\n**Перестройка тяжёлых стеков:**\nЕсли перед существительным больше трёх прилагательных, читать становится трудно. Решения:\n1. Разделить на две фразы: `a beautiful old oak table` → `a beautiful old table, made of oak`.\n2. Использовать относительное придаточное: `a large wooden box which was painted red`.\n3. Вынести часть в постпозицию: `a box, large and wooden, painted red`.\n\n**Постпозиция прилагательных:**\nВ английском прилагательное обычно перед существительным, но есть случаи **после**:\n- Фиксированные выражения: `attorney general`, `court martial`, `something important`, `nothing new`.\n- После `-body`, `-one`, `-thing`: `someone interesting`, `anything special`.\n- В литературном стиле для emphasis: `a man tall and proud` (вместо `a tall, proud man`).\n\n**Emphasis через инверсию:**\nВыделение через смену порядка встречается у писателей:\n- `a house, old and crumbling` (акцент на `old and crumbling`).\n- `a voice, deep and resonant, filled the room`.\n\n**Semantic categories внутри одной группы:**\nНекоторые прилагательные конкурируют за одну позицию. Тогда важнее становится фокус:\n- `a cold wet morning` / `a wet cold morning` — оба возможны, решает ритм и акцент.\n\n**Хеджинг и subjective ordering:**\nВ академическом письме subjective (opinion) прилагательные часто опускают для объективности:\n- `the significant recent changes` (acceptable) vs `the nice recent changes` (opinion — избыточно).\n\n**Register-sensitive ordering:**\n- Formal/legal: строгий OSASCOMP, минимум opinion-слов.\n- Journalistic: сокращение через compound modifiers (`a 50-year-old French-born engineer`).\n- Literary: свободнее, постпозиция допустима."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "DET + adj-stack + NOUN  →  NOUN (, adj and adj) / NOUN + relative clause",
+        "ru": "опред. + стек прил. + сущ.  →  сущ. (, прил. и прил.) / сущ. + относительное придаточное"
       },
       "examples": [
         {
           "en": "She had a face, pale and drawn, from sleepless nights.",
-          "ru": "У неё было лицо, бледное и измождённое, от бессонных ночей."
+          "ru": "У неё было лицо, бледное и измождённое, от бессонных ночей.",
+          "note": {
+            "en": "postposition for emphasis",
+            "ru": "постпозиция для акцента"
+          }
         },
         {
           "en": "He handed me something heavy wrapped in cloth.",
-          "ru": "Он вручил мне что-то тяжёлое, завёрнутое в ткань."
+          "ru": "Он вручил мне что-то тяжёлое, завёрнутое в ткань.",
+          "note": {
+            "en": "after -thing",
+            "ru": "после -thing"
+          }
         },
         {
           "en": "The attorney general announced the decision.",
-          "ru": "Генеральный прокурор объявил решение."
+          "ru": "Генеральный прокурор объявил решение.",
+          "note": {
+            "en": "fixed expression",
+            "ru": "фиксированное выражение"
+          }
         },
         {
           "en": "We admired the ancient Roman marble statue.",
@@ -122,40 +200,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "It was a 50-year-old Italian-designed racing car.",
-          "ru": "Это был 50-летний итальянский гоночный автомобиль."
+          "ru": "Это был 50-летний итальянский гоночный автомобиль.",
+          "note": {
+            "en": "compound modifiers",
+            "ru": "сложные модификаторы"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Больше трёх прилагательных — переписывай через относительное придаточное или постпозицию."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "a tall, proud, kind, old, wise man",
+          "right": "an old, wise man, tall and proud",
+          "why": {
+            "en": "More than three pre-nominal adjectives clog the phrase; move some into postposition.",
+            "ru": "Больше трёх прилагательных перед существительным перегружают фразу; часть выноси в постпозицию."
+          }
+        },
+        {
+          "wrong": "something interesting was happening, an interesting something",
+          "right": "something interesting",
+          "why": {
+            "en": "After -thing/-one/-body the adjective must follow, not precede.",
+            "ru": "После -thing/-one/-body прилагательное идёт после, а не перед."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, adjective order is a balance between **journalistic compression** and **reader clarity**.\n\nTo pack in information, journalists build long hyphenated attributive chains: `a 45-year-old mother-of-three former Labour MP`, `the Moscow-based, Russian-owned, oil-producing subsidiary`. This is grammatical but taxing to read, and the better outlets break such stacks apart.\n\nWithin a single semantic category the order encodes **communicative focus**: the adjective nearest the noun feels closest to its essence. `a charming old English cottage` works (it is essentially a cottage, English being its nearest attribute), while `an old charming English cottage` jars because `charming` is opinion and belongs first.\n\nHigh literary style allows postposition and reduced relatives for pacing and rhythm: `The mountains, vast and silent, stretched to the horizon.` This is a rhetorical device, not a neutral default.\n\nSome adjective pairs are frozen by the history of the language and override OSASCOMP: `bad old days` (not `old bad days`), `great big smile`, `little old lady`. Treat them as single units. The same goes for `and`-binomials — `nice and easy`, `bright and early`.\n\nFinally, English favours a short vowel before a long one in fixed pairs (the **ablaut reduplication** pattern I-A-O): `big bad wolf`, not `bad big wolf`. The editorial reflex in serious prose: trim adjectives to two, hunt for a precise noun instead of a stack, respect frozen collocations, and unfold hyphenated compounds out of headlines into the body. The acid test is reading aloud — if the tongue trips over a stack, rewrite it.",
         "ru": "На C2 порядок прилагательных — вопрос **журналистской компрессии vs читательской ясности**.\n\n**Compound pre-modifiers в журналистике:**\nЧтобы сжать информацию, журналисты создают длинные атрибутивные цепочки с дефисами:\n- `a 45-year-old mother-of-three former Labour MP`\n- `the Moscow-based, Russian-owned, oil-producing subsidiary`\n\nЭто законно, но затрудняет чтение. В качественной прессе (*The Economist*, *The Guardian*) такие стеки разбивают.\n\n**Semantic hierarchy подвижна:**\nКогда два прилагательных принадлежат к одной категории, порядок решает **коммуникативный акцент**. Последнее перед существительным — ближе к \"сути\":\n- `a charming old English cottage` (главное — это cottage, английский — ближайший признак).\n- `an old charming English cottage` (звучит неестественно, `charming` — opinion, должно быть первым).\n\n**Постпозиция и reduced relatives:**\nВ высоком литературном стиле встречается постпозиция + свёрнутые относительные:\n- `The mountains, vast and silent, stretched to the horizon.`\n- `A decision, final and irreversible, was made.`\n\nЭто риторический приём, не нейтральный. Используется для pacing и rhythm.\n\n**Collocations vs order:**\nНекоторые пары прилагательных зафиксированы историей языка и нарушают OSASCOMP:\n- `bad old days` (не `old bad days`).\n- `great big smile` (не `big great smile`).\n- `little old lady` (не `old little lady`).\n\nЭти пары работают как единые единицы.\n\n**Binomials с `and`:**\n- `nice and easy`, `good and ready`, `bright and early` — не следуют OSASCOMP, это идиомы.\n\n**Information structure и ablaut reduplication:**\nАнглийский предпочитает короткий гласный перед длинным в парах: `tick-tock`, `chit-chat`, `flip-flop`. Это влияет и на порядок прилагательных в некоторых коллокациях: `big bad wolf` (не `bad big wolf`) — фонетический шаблон I-A-O.\n\n**Редакторское решение:**\nКогда пишешь serious prose:\n1. Сокращай число прилагательных до двух.\n2. Если больше — ищи точное существительное вместо стека.\n3. Проверяй, не нарушает ли твой порядок фиксированные коллокации.\n4. В заголовках допустимы compound modifiers с дефисами, в тексте — разворачивай их.\n\n**Тонкий тест:** читай вслух. Если на стеке прилагательных язык спотыкается — перепиши."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "frozen collocation (adj+adj) as one unit  |  N-word hyphenated compound + NOUN",
+        "ru": "застывшая коллокация (прил.+прил.) как единое целое  |  N-словный дефисный композит + сущ."
       },
       "examples": [
         {
           "en": "A great big beautiful smile spread across her face.",
-          "ru": "Огромная прекрасная улыбка расплылась по её лицу."
+          "ru": "Огромная прекрасная улыбка расплылась по её лицу.",
+          "note": {
+            "en": "frozen + ablaut",
+            "ru": "застывшая + аблаут"
+          }
         },
         {
           "en": "Those bad old days are behind us.",
-          "ru": "Те плохие старые времена позади."
+          "ru": "Те плохие старые времена позади.",
+          "note": {
+            "en": "frozen collocation",
+            "ru": "застывшая коллокация"
+          }
         },
         {
           "en": "The Moscow-based, state-owned oil company reported losses.",
-          "ru": "Московская государственная нефтяная компания сообщила об убытках."
+          "ru": "Московская государственная нефтяная компания сообщила об убытках.",
+          "note": {
+            "en": "compound modifiers",
+            "ru": "сложные модификаторы"
+          }
         },
         {
           "en": "A silence, deep and profound, fell over the room.",
-          "ru": "Глубокая и всеобъемлющая тишина воцарилась в комнате."
+          "ru": "Глубокая и всеобъемлющая тишина воцарилась в комнате.",
+          "note": {
+            "en": "postposition, literary",
+            "ru": "постпозиция, литературно"
+          }
         },
         {
           "en": "It was a little old lady with a great big hat.",
@@ -165,9 +281,50 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Коллокации (bad old days, big bad wolf) бьют OSASCOMP — выучи их как единицы."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "the bad big wolf came",
+          "right": "the big bad wolf came",
+          "why": {
+            "en": "Ablaut reduplication (I-A-O) freezes the order; size-then-opinion is overruled.",
+            "ru": "Аблаут-редупликация (I-A-O) фиксирует порядок; размер-затем-мнение здесь не работает."
+          }
+        },
+        {
+          "wrong": "an old bad days nostalgia",
+          "right": "a bad old days nostalgia",
+          "why": {
+            "en": "`bad old days` is a fixed collocation that overrides the OSASCOMP age/opinion order.",
+            "ru": "`bad old days` — застывшая коллокация, она перекрывает порядок возраст/мнение в OSASCOMP."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "comparative-adjectives",
+    "superlative-adjectives",
+    "participle-adjectives",
+    "gradable-vs-ungradable-adjectives"
+  ],
+  "crossTopic": [
+    "noun-phrases",
+    "indefinite-article",
+    "compound-nouns",
+    "reduced-relative-clauses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Opinion",
+      "Size",
+      "Age",
+      "Shape",
+      "Colour",
+      "Origin",
+      "Material",
+      "Purpose",
+      "NOUN"
+    ]
+  }
 };

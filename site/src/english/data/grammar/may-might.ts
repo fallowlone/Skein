@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "may-might",
   "title": {
-    "en": "",
+    "en": "May and Might",
     "ru": "May Might"
   },
   "cefr": "A2",
@@ -16,19 +16,25 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "modals",
+  "egp": [
+    "EGP:A2:MODALITY:may for possibility",
+    "EGP:A2:MODALITY:may for polite permission requests",
+    "EGP:B1:MODALITY:might for present/future possibility",
+    "EGP:B2:MODALITY:may/might + have + past participle for past possibility",
+    "EGP:C1:MODALITY:may/might in concessive and hedging structures"
+  ],
+  "archetype": "scale",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Use **may** and **might** to say that something is **possible but not certain** — the idea English often expresses with \"maybe\" or \"perhaps\".\n\nThe key pattern is simple: **may/might + the base verb, with no `to`**:\n- `It may rain.` (possible)\n- `It might rain.` (possible)\n\nAt A2 the difference is tiny: both mean \"possibly\". `Might` sounds a little less sure, `may` a little more formal. Treat them as the same for now.\n\n`May` and `might` never take `-s` and never change form: `He may come` (not `He mays come`).\n\n**Negative:** add `not` after the modal — `It may not rain.`, `She might not come.` These are not contracted in normal speech (forms like `mayn't` are rare).\n\nWe almost never form a question with `May it...?` for possibility. Instead say `Do you think it might rain?`\n\n**Polite permission with may:** `May I...?` is a very polite way to ask permission — more formal than `Can I...?`: `May I come in?`, `May I ask a question?`",
         "ru": "**May** и **might** — это модальные глаголы, которые показывают, что что-то **возможно, но не точно**.\n\nПо-русски мы часто говорим «может быть», «возможно». В английском для этого есть `may` и `might`.\n\n**Главное правило:** после `may` и `might` идёт глагол **без `to`**:\n- `It may rain.` (Возможно, пойдёт дождь.)\n- `It might rain.` (Возможно, пойдёт дождь.)\n\nНа уровне A2 разницы между `may` и `might` почти нет — оба значат «возможно». `Might` чуть менее уверенный, `may` чуть более формальный.\n\n**Отрицание:**\n- `It may not rain.` (Возможно, дождя не будет.)\n- `She might not come.` (Возможно, она не придёт.)\n\n**Внимание:** `may not` и `might not` **не сокращаются** в разговоре (формы `mayn't` и `mightn't` очень редки).\n\n**Вопросы с `may`/`might` для возможности — редкие.** Обычно мы используем `do you think...?`:\n- ❌ `May it rain?` (странно)\n- ✅ `Do you think it might rain?` (Думаешь, может пойти дождь?)\n\n**May для вежливого разрешения:**\nMay часто используется, когда ты просишь разрешения у кого-то формально:\n- `May I come in?` (Можно мне войти?) — более вежливо, чем `Can I come in?`\n- `May I ask a question?` (Могу я задать вопрос?)\n\nВ школе, в офисе с начальником, в официальной ситуации `may` звучит вежливее, чем `can`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + may / might + base verb",
+        "ru": "подлежащее + may / might + глагол без to"
       },
       "examples": [
         {
@@ -41,11 +47,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "May I use your phone?",
-          "ru": "Можно воспользоваться твоим телефоном?"
+          "ru": "Можно воспользоваться твоим телефоном?",
+          "note": {
+            "en": "polite request",
+            "ru": "вежливая просьба"
+          }
         },
         {
           "en": "They may not come to the party.",
-          "ru": "Возможно, они не придут на вечеринку."
+          "ru": "Возможно, они не придут на вечеринку.",
+          "note": {
+            "en": "negative",
+            "ru": "отрицание"
+          }
         },
         {
           "en": "I might go to bed early.",
@@ -55,17 +69,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "May и might оба значат «возможно» — на A2 используй их как синонимы."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He mays come tomorrow.",
+          "right": "He may come tomorrow.",
+          "why": {
+            "en": "Modals never take third-person -s.",
+            "ru": "Модальные глаголы не получают окончание -s в 3-м лице."
+          }
+        },
+        {
+          "wrong": "She might to go home.",
+          "right": "She might go home.",
+          "why": {
+            "en": "No `to` after a modal — use the bare base verb.",
+            "ru": "После модального глагола нет to — идёт глагол без частицы."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, separate the two main jobs of `may`/`might`: **possibility** and **permission**.\n\n**1. Possibility (epistemic):** `He may be sick.`, `She might come later.` `Might` often feels slightly less likely than `may`, but the gap is small.\n\n**2. Permission (deontic, formal):** `may` grants or states formal permission — in schools, offices, notices: `Students may leave after the exam.` In everyday speech, `can` is the normal choice: `You can leave now` (neutral) vs `You may leave now` (formal, \"I permit it\").\n\n**3. `Might` is NOT a past tense here.** Although `might` was historically the past of `may`, today both refer to the **present or future**: `He might call tomorrow.`, `She may arrive later.` For past possibility you need `may/might have + past participle` (see B2).\n\n**4. `may not` vs `might not`:** `might not` only means \"possibly not\". `may not` can mean \"possibly not\" or, in older formal use, \"not allowed to\" — so for clear prohibition prefer `cannot` or `must not`.\n\n**5. `Might` in the second conditional:** `If you asked her, she might help you.`\n\nWatch the spelling split: **maybe** (one word) is the adverb \"perhaps\"; **may be** (two words) is the modal `may` + `be`.",
         "ru": "На B1 важно понять **разные функции** `may` и `might` и различие между **возможностью** и **разрешением**.\n\n**1. Возможность (epistemic use):**\n- `He may be sick.` (Возможно, он болен.)\n- `She might come later.` (Возможно, она придёт позже.)\n\nНа B1 `might` чаще воспринимается как «менее вероятно», чем `may` — но разница очень маленькая.\n\n**2. Разрешение (deontic use, formal):**\n`May` для формального разрешения — в школе, офисе, официальных документах:\n- `Students may leave after the exam.` (Ученики могут уйти после экзамена.)\n- `You may now board the plane.` (Теперь вы можете подняться на борт самолёта.)\n\nВ повседневной речи для разрешения чаще используется `can`:\n- `You can leave now.` — нейтрально.\n- `You may leave now.` — формально, с оттенком «я разрешаю».\n\n**3. Важное правило: might НЕ является прошлой формой may в современном английском.**\n\nХотя исторически `might` — прошедшее от `may`, сейчас оба используются для настоящей или будущей возможности:\n- `He might call tomorrow.` (Возможно, он позвонит завтра.) — будущее!\n- `She may arrive later.` (Возможно, она приедет позже.) — будущее!\n\nДля прошлой возможности используй **may/might have + past participle** (см. B2).\n\n**4. Разница may not vs might not:**\n- `She may not come.` — возможно, не придёт (epistemic) ИЛИ ей не разрешено прийти (deontic, устаревшее).\n- `She might not come.` — возможно, не придёт (только epistemic).\n\nИз-за этой двусмысленности `may not` в значении «не разрешено» сейчас встречается редко. Для прохибитива используй `cannot` или `must not`.\n\n**5. Might в условных предложениях:**\n- `If you asked her, she might help you.` (Если бы ты её попросил, она, возможно, тебе помогла бы.) — второе условное с might.\n\n**6. Типичные ошибки:**\n- ❌ `He mays come.` → ✅ `He may come.` (без -s)\n- ❌ `She might to go.` → ✅ `She might go.` (без to)\n- ❌ `Maybe he will come` путаем с `May be he will come` — **maybe** (одно слово) = возможно, наречие; **may be** (два слова) = модальный + be."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + may / might (+ not) + base verb",
+        "ru": "подлежащее + may / might (+ not) + глагол без to"
       },
       "examples": [
         {
@@ -74,7 +106,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Students may use dictionaries during the test.",
-          "ru": "Ученикам разрешается пользоваться словарями во время теста."
+          "ru": "Ученикам разрешается пользоваться словарями во время теста.",
+          "note": {
+            "en": "permission",
+            "ru": "разрешение"
+          }
         },
         {
           "en": "It might snow at the weekend.",
@@ -86,36 +122,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "May I speak to the manager, please?",
-          "ru": "Могу я поговорить с менеджером, пожалуйста?"
+          "ru": "Могу я поговорить с менеджером, пожалуйста?",
+          "note": {
+            "en": "polite request",
+            "ru": "вежливая просьба"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Maybe (одно слово) = наречие «возможно»; may be (два слова) = модальный глагол + be."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "May be he will come.",
+          "right": "Maybe he will come.",
+          "why": {
+            "en": "The adverb \"perhaps\" is one word: maybe. Two words (may be) is modal + be.",
+            "ru": "Наречие «возможно» пишется одним словом — maybe; два слова (may be) — это модальный + be."
+          }
+        },
+        {
+          "wrong": "She might came yesterday.",
+          "right": "She might have come yesterday.",
+          "why": {
+            "en": "`Might` refers to present/future; for the past, use might + have + past participle.",
+            "ru": "Might относится к настоящему/будущему; для прошлого нужно might + have + причастие."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "B2 adds the **modal perfect** and a sharper feel for register.\n\n**1. `may/might have + past participle` — guessing about the past:** `She may have forgotten the meeting.`, `He might have missed the bus.` The speaker is unsure about something that has already happened.\n\n**2. `might have` for a missed chance / reproach:** `You might have told me!` (you could have, but didn't). It overlaps with `could have` but carries more emotion and blame.\n\n**3. Past negatives:** `She may not have seen the email.`, `He might not have understood.` Both are uncertain guesses about the past.\n\n**4. Present `may not` vs `might not`:** the difference is slight, but many course books note that `might not` tends to suggest lower probability.\n\n**5. In subordinate clauses:** `I'm worried he may fail the exam.`; the formal `Whatever she may say, I don't believe her.`\n\n**6. `may/might as well`** — \"there's no reason not to / we have nothing better to do\": `We may as well go now.`, `You might as well ask.`\n\n**7. Academic hedging:** `The data may suggest a pattern.` In academic English, `may` is the standard cautious way to claim something without overstating it.",
         "ru": "На B2 появляется **modal perfect** с `may/might`, **тонкая разница** между ними и **might have** для упущенных возможностей.\n\n**1. May have / might have + past participle (предположение о прошлом):**\n- `She may have forgotten about the meeting.` (Возможно, она забыла о собрании.)\n- `He might have missed the bus.` (Возможно, он опоздал на автобус.)\n\nЭто догадки о том, что уже произошло. Говорящий не уверен.\n\n**2. Might have + pp для упущенной возможности (reproach):**\n- `You might have told me!` (Мог бы мне сказать!) — укор: ты мог, но не сказал.\n- `She might have warned us.` (Могла бы нас предупредить.)\n\nЗдесь `might have` близко по значению к `could have`, но более эмоционально, с оттенком упрёка.\n\n**3. May not have vs might not have (past):**\n- `She may not have seen the email.` (Возможно, она не видела письмо.)\n- `He might not have understood.` (Возможно, он не понял.)\n\nОба означают неуверенное предположение о прошлом.\n\n**4. Тонкая разница may not vs might not в настоящем:**\n\nРассмотрим:\n- `She may not be home.` — возможно, её нет дома. (50/50)\n- `She might not be home.` — возможно, её нет дома. (Чуть менее вероятно.)\n\nРазница небольшая, но на B2 многие учебники отмечают, что `might not` чаще подразумевает более низкую вероятность.\n\n**5. May/might в придаточных предложениях:**\n- `I'm worried he may fail the exam.` (Я боюсь, что он может провалить экзамен.)\n- `Whatever she may say, I don't believe her.` (Что бы она ни сказала, я ей не верю.) — формальный оборот.\n\n**6. May as well / might as well:**\nИдиома: «с тем же успехом можно», «почему бы и нет»:\n- `We may as well go now.` (Можем пойти прямо сейчас — всё равно ничего другого не делаем.)\n- `You might as well ask.` (Можешь спросить — хуже не будет.)\n\n**7. Академический hedging с may:**\n- `The data may suggest a pattern.` (Данные, возможно, указывают на закономерность.)\n- `Such findings may have implications for policy.` (Такие выводы, возможно, имеют значение для политики.)\n\nВ академическом английском `may` — стандартный способ сказать «возможно» осторожно и объективно.\n\n**8. Типичные ошибки B2:**\n- ❌ `He may came.` → ✅ `He may have come.`\n- ❌ `might of` (устная ошибка) → ✅ `might have`\n- ❌ `She might be working yesterday.` → ✅ `She might have been working yesterday.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + may / might + have + past participle",
+        "ru": "подлежащее + may / might + have + причастие прошедшего времени"
       },
       "examples": [
         {
           "en": "You might have called before coming.",
-          "ru": "Мог бы позвонить, прежде чем прийти."
+          "ru": "Мог бы позвонить, прежде чем прийти.",
+          "note": {
+            "en": "reproach",
+            "ru": "упрёк"
+          }
         },
         {
           "en": "He may have forgotten our appointment.",
-          "ru": "Возможно, он забыл о нашей встрече."
+          "ru": "Возможно, он забыл о нашей встрече.",
+          "note": {
+            "en": "past guess",
+            "ru": "догадка о прошлом"
+          }
         },
         {
           "en": "We might as well leave early.",
-          "ru": "Можем с тем же успехом уйти пораньше."
+          "ru": "Можем с тем же успехом уйти пораньше.",
+          "note": {
+            "en": "may/might as well",
+            "ru": "с тем же успехом"
+          }
         },
         {
           "en": "The weather may not improve this week.",
@@ -129,26 +199,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Might have + past participle выражает как предположение о прошлом, так и мягкий упрёк."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He may came earlier.",
+          "right": "He may have come earlier.",
+          "why": {
+            "en": "For past possibility use may/might + have + past participle, not the past tense.",
+            "ru": "Для возможности в прошлом — may/might + have + причастие, а не прошедшее время."
+          }
+        },
+        {
+          "wrong": "She might of forgotten.",
+          "right": "She might have forgotten.",
+          "why": {
+            "en": "\"might of\" is a misspelling of the spoken \"might've\" — it is always have.",
+            "ru": "«might of» — ошибочная запись разговорного «might've»; правильно — have."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, `may`/`might` are precision tools for **epistemic modality** and **academic hedging**.\n\n**1. The certainty scale:** from weak to strong — `might` (~weak) < `may` (~neutral) < `should` (expectation) < `must` (logical deduction) < `will` (confident prediction). You pick the modal deliberately to signal exactly how sure you are.\n\n**2. Hedging clusters:** `It may be argued that...`, `This finding may have significant implications.`, `Such an approach may not be entirely adequate.` In academic prose, `may` is almost obligatory for softening claims in conclusions and discussions.\n\n**3. Concessive structures:** the fronted, formal patterns `Difficult as it may seem, the solution is straightforward.`, `Try as he might, he could not open the door.`, and `Be that as it may, the decision stands.`\n\n**4. Pragmatic `might`:** very polite suggestion (`You might want to check the date.`), tentative criticism (`You might consider revising the introduction.`), polite disagreement (`One might argue otherwise.`).\n\n**5. Continuous past speculation — `may/might have been + -ing`:** `She may have been working late.`, `He might have been sleeping when you called.`\n\n**6. Register:** `may` reads as more formal; `might` is slightly less formal and commoner in speech.\n\n**7. Optative `may` (set wishes):** `May you have a long and happy life!`, `Long may she reign.` — an elevated register for speeches and ceremonies.",
         "ru": "На C1 `may/might` — инструменты **академического hedging** и **эпистемической модальности**.\n\n**1. Epistemic strength scale:**\nОт слабой к сильной уверенности:\n- `might` — слабая возможность (~30%)\n- `may` — нейтральная возможность (~50%)\n- `could` — возможность с оттенком способности\n- `should` — ожидание (~80%)\n- `must` — логический вывод (~95%)\n- `will` — уверенное предсказание (~100%)\n\nНа C1 ты выбираешь модальный глагол осознанно, чтобы выразить точную степень уверенности.\n\n**2. Academic hedging clusters:**\n- `It may be argued that...` (Можно утверждать, что...)\n- `This finding may have significant implications.` (Это открытие, возможно, имеет значимые последствия.)\n- `Such an approach may not be entirely adequate.` (Такой подход, возможно, не вполне адекватен.)\n\n`May` в академическом английском почти обязателен для избегания категоричных утверждений, особенно в выводах и обсуждениях результатов.\n\n**3. May в concessive clauses:**\n- `Difficult as it may seem, the solution is straightforward.` (Как бы ни казалось это трудным, решение простое.)\n- `Try as he might, he could not open the door.` (Как он ни старался, он не мог открыть дверь.) — литературный оборот.\n- `Be that as it may, the decision stands.` (Как бы там ни было, решение в силе.) — формальный.\n\n**4. Might + subtle pragmatic functions:**\n- **Suggestion:** `You might want to check the date.` (Возможно, тебе стоит проверить дату.) — очень вежливое предложение.\n- **Tentative criticism:** `You might consider revising the introduction.` (Возможно, стоит пересмотреть введение.)\n- **Polite disagreement:** `One might argue otherwise.` (Можно было бы поспорить.)\n\n**5. May/might в формальных просьбах и разрешениях:**\n- `If I may say so, this is an excellent point.` (Если позволите, это прекрасное замечание.)\n- `May I have your attention, please?` (Могу я привлечь ваше внимание?)\n- `Visitors may not bring food into the gallery.` (Посетителям не разрешается приносить еду в галерею.)\n\n**6. May/might have been + -ing:**\n- `She may have been working late.` (Возможно, она работала допоздна.) — неуверенное предположение о продолжительном действии в прошлом.\n- `He might have been sleeping when you called.` (Возможно, он спал, когда ты позвонил.)\n\n**7. Stylistic register:**\n`May` звучит более формально и официально. `Might` — чуть менее формально, более распространено в речи. В академическом письме и официальных документах предпочтение отдаётся `may`.\n\n**8. May в благих пожеланиях (optative):**\n- `May you have a long and happy life!` (Пусть у вас будет долгая и счастливая жизнь!)\n- `Long may she reign.` (Да здравствует её правление долго.)\n\nЭто возвышенный регистр, характерный для речей и торжественных поводов."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "(Adjective / Try) as + subject + may / might + ...; subject + may / might + have been + -ing",
+        "ru": "(прилагательное / Try) as + подлежащее + may / might + ...; подлежащее + may / might + have been + -ing"
       },
       "examples": [
         {
           "en": "Be that as it may, we must proceed with caution.",
-          "ru": "Как бы там ни было, мы должны действовать осторожно."
+          "ru": "Как бы там ни было, мы должны действовать осторожно.",
+          "note": {
+            "en": "concessive idiom",
+            "ru": "уступительный оборот"
+          }
         },
         {
           "en": "The evidence may suggest a causal link, but further research is needed.",
-          "ru": "Доказательства, возможно, указывают на причинную связь, но нужны дальнейшие исследования."
+          "ru": "Доказательства, возможно, указывают на причинную связь, но нужны дальнейшие исследования.",
+          "note": {
+            "en": "academic hedge",
+            "ru": "академический hedge"
+          }
         },
         {
           "en": "You might want to reconsider your position.",
@@ -160,32 +256,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Try as we might, we could not replicate the results.",
-          "ru": "Как бы мы ни старались, мы не могли повторить результаты."
+          "ru": "Как бы мы ни старались, мы не могли повторить результаты.",
+          "note": {
+            "en": "literary concessive",
+            "ru": "литературный оборот"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В академическом письме may — стандартный hedge для выводов: may suggest, may indicate, may imply."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Although it may seems hard, try.",
+          "right": "Although it may seem hard, try.",
+          "why": {
+            "en": "After a modal the verb stays in its bare form — no -s on seem.",
+            "ru": "После модального глагол остаётся без окончания — никакого -s у seem."
+          }
+        },
+        {
+          "wrong": "She might been working late.",
+          "right": "She might have been working late.",
+          "why": {
+            "en": "Continuous past speculation needs the full chain: might + have + been + -ing.",
+            "ru": "Для предположения о длительном действии в прошлом нужна цепочка might + have + been + -ing."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, `may`/`might` are fine stylistic instruments across four registers: **epistemic hedging**, **literary/optative**, **deontic formality**, and **fossilized idiom**.\n\n**1. Fossilized optatives (archaic inversion):** `May God have mercy on your soul.`, `May he rest in peace.`, `May the force be with you.`, `Long may she live.` — preserved in solemn, religious, and ceremonial speech.\n\n**2. Academic moves:** `The author may be overstating the case.` (gentle critique), `These results may not generalize to other populations.` (limitations), `One might therefore suggest that...` (careful proposal). In skilled hands `may` is not weakness but a strategy to avoid categorical claims.\n\n**3. Register choice:** `may` for formal/legal/academic, `might`/`could` for neutral journalism and general prose, `could`/`maybe + indicative` for the colloquial.\n\n**4. Counterfactual speculation — `might have been + past participle`:** `Had she arrived earlier, she might have been included.`, `The outcome might have been different under other circumstances.`\n\n**5. `Might` as distancing deixis:** `Some might suggest that the policy has failed.` — the writer holds the opinion at arm's length.\n\n**6. Concessive idioms:** `Be that as it may, the facts remain.`, `Come what may, I will stand by you.`, `Whatever the reason may be...`\n\n**7. Deontic `may` in legal texts:** `The Board may, at its discretion, waive this requirement.` In legal English `may` = a permissive (discretionary) provision, in contrast to `shall` = mandatory; confusing them has real consequences.\n\n**8. Mock-politeness / irony:** `You might at least say thank you.`, `One might have thought he'd learn by now.` — reproach or sarcasm dressed as suggestion.",
         "ru": "На C2 `may/might` — тонкие стилистические инструменты с четырьмя основными функциями: **epistemic hedging**, **literary register**, **deontic formality** и **fossilized idioms**.\n\n**1. Fossilized optative constructions:**\n- `May God have mercy on your soul.` (Да помилует Бог твою душу.)\n- `May he rest in peace.` (Да покоится он с миром.)\n- `May the force be with you.` (Да пребудет с тобой сила.)\n- `Long may she live.` (Да живёт она долго.)\n\nЭто архаический синтаксис (инверсия), сохранившийся в торжественной речи, некрологах, религиозных контекстах.\n\n**2. May/might в academic moves:**\nВ академическом письме `may` создаёт аккуратную дистанцию:\n- `The author may be overstating the case.` (Автор, возможно, преувеличивает.) — мягкая критика.\n- `These results may not generalize to other populations.` (Эти результаты, возможно, не распространяются на другие группы.) — limitation section.\n- `One might therefore suggest that...` (Поэтому можно было бы предположить, что...) — careful proposal.\n\nВ опытных руках `may` — не признак неуверенности, а стратегия избежать категоричности и оставить читателю пространство для оценки.\n\n**3. Stylistic choice between may, might, could:**\n- **Formal register:** предпочтение `may` (academic, legal, official).\n- **Neutral register:** `might`, `could` (journalism, general prose).\n- **Colloquial:** `could`, `maybe` + indicative.\n\nПрофессиональный писатель чувствует эти регистровые различия и смешивает их сознательно.\n\n**4. Might have + been + pp (counterfactual speculation):**\n- `Had she arrived earlier, she might have been included in the discussion.` (Если бы она пришла раньше, её могли бы включить в дискуссию.)\n- `The outcome might have been different under other circumstances.` (Исход мог бы быть другим при иных обстоятельствах.)\n\nЭто стандартный counterfactual в аналитическом письме.\n\n**5. Might-as-distal deixis:**\nВ полит-корректном и дипломатическом письме `might` создаёт максимальную дистанцию:\n- `Some might suggest that the policy has failed.` (Некоторые могут сказать, что политика провалилась.) — автор отмежёвывается от этого мнения.\n\n**6. Concessive idioms with may:**\n- `Be that as it may, the facts remain.` (Как бы там ни было, факты остаются.)\n- `Come what may, I will stand by you.` (Что бы ни случилось, я буду с тобой.)\n- `Whatever the reason may be...` (Какова бы ни была причина...)\n\nЭти обороты — часть высокого регистра; использование демонстрирует владение литературным английским.\n\n**7. Deontic may в правовых текстах:**\n- `The Board may, at its discretion, waive this requirement.` (Совет может, по своему усмотрению, отменить это требование.)\n\nВ юридическом английском `may` = permissive provision (дискреция), в отличие от `shall` = mandatory. На C2 нужно понимать это чётко — смешение имеет практические последствия.\n\n**8. May not в двойственных контекстах:**\n- `You may not bring pets.` — может быть запрет или неуверенное предположение. В современном английском для однозначного запрета предпочитают `must not`, `cannot`, `are not allowed to`.\n\n**9. Pragmatic mock-politeness:**\n- `You might at least say thank you.` (Мог бы хотя бы спасибо сказать.) — упрёк в форме совета.\n- `One might have thought he'd learn by now.` (Можно было бы подумать, что он уже научился.) — сарказм.\n\nНа C2 ты чувствуешь этот иронический регистр и умеешь его создавать."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "May + subject + base verb (optative); subject + might + have + been + past participle (counterfactual)",
+        "ru": "May + подлежащее + глагол (пожелание); подлежащее + might + have + been + причастие (контрфактив)"
       },
       "examples": [
         {
           "en": "Come what may, the truth will emerge.",
-          "ru": "Что бы ни случилось, правда откроется."
+          "ru": "Что бы ни случилось, правда откроется.",
+          "note": {
+            "en": "concessive idiom",
+            "ru": "уступительный оборот"
+          }
         },
         {
           "en": "The Commission may, in exceptional circumstances, grant an extension.",
-          "ru": "Комиссия может, в исключительных обстоятельствах, предоставить продление."
+          "ru": "Комиссия может, в исключительных обстоятельствах, предоставить продление.",
+          "note": {
+            "en": "legal discretion",
+            "ru": "юридическая дискреция"
+          }
         },
         {
           "en": "One might have hoped for a more nuanced reading.",
@@ -193,7 +319,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "May the best candidate win.",
-          "ru": "Пусть победит лучший кандидат."
+          "ru": "Пусть победит лучший кандидат.",
+          "note": {
+            "en": "optative wish",
+            "ru": "пожелание"
+          }
         },
         {
           "en": "Skeptical as one might be, the evidence is compelling.",
@@ -203,9 +333,45 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В юридическом английском may = discretion, shall = obligation — не путайте эти регистры."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The Board shall, at its discretion, waive this.",
+          "right": "The Board may, at its discretion, waive this.",
+          "why": {
+            "en": "In legal English `shall` is mandatory; discretion is expressed with `may`.",
+            "ru": "В юридическом английском shall — обязательство; дискреция выражается через may."
+          }
+        },
+        {
+          "wrong": "May the best candidate wins.",
+          "right": "May the best candidate win.",
+          "why": {
+            "en": "The optative `May ...` takes the bare base verb, never an inflected form.",
+            "ru": "Оптативная конструкция May ... берёт глагол без окончания, не его изменённую форму."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "can-could",
+    "should-ought-to",
+    "must-have-to",
+    "modal-perfect",
+    "shall"
+  ],
+  "crossTopic": [
+    "second-conditional",
+    "passive-with-modals",
+    "adverbs-of-frequency",
+    "reported-statements"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "might (weaker)",
+      "may (neutral possibility)",
+      "may/might + permission/wishes"
+    ]
+  }
 };

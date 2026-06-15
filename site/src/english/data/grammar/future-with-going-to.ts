@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "future-with-going-to",
   "title": {
-    "en": "",
+    "en": "Future with Going To",
     "ru": "Future With Going To"
   },
   "cefr": "A2",
@@ -16,28 +16,41 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:A2:can use 'be going to' to talk about plans and intentions",
+    "EGP:A2:can use 'be going to' to make predictions based on present evidence",
+    "EGP:B1:can contrast 'going to', 'will' and present continuous for future",
+    "EGP:B2:can use 'was/were going to' for unfulfilled plans"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Use **be going to** to talk about the future when you already have a **plan** or when you can see **evidence** right now that something will happen.\n\n**Form:** subject + am/is/are + going to + base verb.\n\n- I **am going to** work (often I'm going to work)\n- She **is going to** study (often she's going to study)\n- They **are going to** travel (often they're going to travel)\n\n**Two main uses:**\n\n1. **Plans and intentions** (already decided): *I'm going to learn German. We're going to buy a house.*\n2. **Predictions from present evidence** (you can see it now): *Look at those clouds! It's going to rain. Watch out — you're going to fall!*\n\n**Negative:** am/is/are + not going to → *I'm not going to study tonight. She isn't going to come.*\n\n**Question:** Am/Is/Are + subject + going to + verb → *Are you going to eat that? What are you going to do?*\n\n**be going to vs will:** use **be going to** when the decision was made *before* now; use **will** for a decision made *at the moment of speaking* (*The phone's ringing. I'll answer it.*).\n\nKeep the base verb after *going to*: I'm going to **go**, never I'm going to going. The spoken reduction *gonna* exists, but in writing always use *going to*.",
         "ru": "**`Be going to`** — это способ говорить о будущем, когда у тебя есть **план** или ты видишь **доказательства** того, что что-то случится.\n\n**Форма:** `am/is/are` + `going to` + базовая форма глагола\n\n- `I am going to work` (часто `I'm going to work`)\n- `She is going to study` (часто `she's going to study`)\n- `They are going to travel` (часто `they're going to travel`)\n\n**Когда использовать:**\n\n1. **Планы и намерения (уже решённые):**\n   - `I'm going to learn German.` (Я собираюсь учить немецкий.)\n   - `We're going to buy a house.` (Мы собираемся купить дом.)\n\n2. **Предсказания на основе того, что видно сейчас:**\n   - `Look at those clouds! It's going to rain.` (Смотри на тучи! Будет дождь.)\n   - `Watch out! You're going to fall!` (Осторожно! Ты упадёшь!)\n\n**Отрицание:** `am/is/are not going to`\n- `I'm not going to study tonight.` (Я не буду учиться сегодня вечером.)\n- `She isn't going to come.` (Она не придёт.)\n\n**Вопрос:** `Am/Is/Are` + subject + `going to` + verb\n- `Are you going to eat that?` (Ты это будешь есть?)\n- `What are you going to do?` (Что ты собираешься делать?)\n\n**Разница с `will`:**\n- `be going to` — уже решил раньше, есть план.\n- `will` — решаю прямо сейчас, в момент речи.\n\nСравни:\n- `I'm going to call him tomorrow.` (Уже решил.)\n- `The phone is ringing. I'll answer it.` (Решил в этот момент.)\n\n**Time markers:**\n- `tomorrow`, `next week`, `soon`, `this evening`\n- `in an hour`\n\n**Типичные ошибки:**\n- Пропустить `am/is/are`: ❌ `I going to go` → ✅ `I'm going to go`.\n- После `going to` — всегда базовая форма: ❌ `going to going` (очень распространённая ошибка!) → ✅ `going to go`.\n- ❌ `She is going to works` → ✅ `She is going to work`.\n\n**Разговорное `gonna`:** `I'm gonna` = `I'm going to`. Это неформально — для письма используй `going to`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + am/is/are + going to + base verb",
+        "ru": "подлежащее + am/is/are + going to + базовая форма глагола"
       },
       "examples": [
         {
           "en": "I'm going to visit my grandma this weekend.",
-          "ru": "Я собираюсь навестить бабушку в эти выходные."
+          "ru": "Я собираюсь навестить бабушку в эти выходные.",
+          "note": {
+            "en": "plan",
+            "ru": "план"
+          }
         },
         {
           "en": "It's going to be hot tomorrow.",
-          "ru": "Завтра будет жарко."
+          "ru": "Завтра будет жарко.",
+          "note": {
+            "en": "prediction",
+            "ru": "предсказание"
+          }
         },
         {
           "en": "We're going to have dinner at 8.",
@@ -45,36 +58,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She isn't going to like this.",
-          "ru": "Ей это не понравится."
+          "ru": "Ей это не понравится.",
+          "note": {
+            "en": "negative",
+            "ru": "отрицание"
+          }
         },
         {
           "en": "What are you going to wear?",
-          "ru": "Что ты собираешься надеть?"
+          "ru": "Что ты собираешься надеть?",
+          "note": {
+            "en": "question",
+            "ru": "вопрос"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "be going to + базовая форма: I'm going to GO, не I'm going to going."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I going to go.",
+          "right": "I'm going to go.",
+          "why": {
+            "en": "Do not drop the am/is/are — be going to needs the verb 'be'.",
+            "ru": "Нельзя пропускать am/is/are — нужна форма глагола be."
+          }
+        },
+        {
+          "wrong": "She is going to going.",
+          "right": "She is going to go.",
+          "why": {
+            "en": "Use the base verb after 'going to', not the -ing form.",
+            "ru": "После going to идёт базовая форма, не -ing."
+          }
+        },
+        {
+          "wrong": "She is going to works.",
+          "right": "She is going to work.",
+          "why": {
+            "en": "The verb after 'going to' takes no -s; it stays in the base form.",
+            "ru": "После going to глагол без -s, в базовой форме."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the skill is choosing between **be going to**, **will** and the present continuous, because they signal different things about the future.\n\n**be going to — intentions and plans:** *I'm going to apply for that job* (already decided). *She's going to study abroad next year.*\n\n**be going to — evidence-based predictions:** when you see the signs now. *The sky is dark — it's going to rain. She's driving too fast — she's going to have an accident.*\n\n**will — predictions based on opinion or belief:** *I think it will rain tomorrow. I'm sure she'll pass.* Use **will** when there is no visible evidence, just your opinion.\n\n**Present continuous — fixed arrangements:** when a plan is confirmed with details (time, place, tickets). *I'm meeting John at 3. We're flying to Rome on Friday.*\n\n**Spontaneous decision vs plan:** a decision made on the spot takes **will** (*The phone's ringing. I'll get it.*); a decision made earlier takes **be going to** (*I'm going to go to bed early tonight.*).\n\nThe spoken form *gonna* is everywhere in speech but stays out of writing — write *going to*.",
         "ru": "На B1 важно различать `be going to`, `will` и Present Continuous для будущего — они выражают разные смыслы.\n\n**`be going to` — намерения и планы:**\n- `I'm going to apply for that job.` (Собираюсь подать заявку — уже решил.)\n- `She's going to study abroad next year.` (Собирается учиться за границей.)\n\n**`be going to` — предсказания на основе доказательств:**\n- `The sky is dark — it's going to rain.` (Тёмное небо — значит, будет дождь.)\n- `She's driving too fast. She's going to have an accident.` (Едет слишком быстро — попадёт в аварию.)\n\n**`will` — предсказания на основе мнения/знания:**\n- `I think it will rain tomorrow.` (Я думаю, завтра пойдёт дождь.)\n- `I'm sure she'll pass the exam.` (Уверен, она сдаст экзамен.)\n\n**Present Continuous — чёткие договорённости:**\n- `I'm meeting John at 3.` (Договорились с Джоном в 3.)\n- `We're flying to Rome on Friday.` (Билеты уже куплены.)\n\n**Сравнение:**\n- `I'll call her later.` (Сейчас решил.)\n- `I'm going to call her later.` (Уже решил раньше.)\n- `I'm calling her at 5.` (Договорились на 5.)\n\n**Спонтанное решение vs план:**\n- `The phone is ringing. I'll get it.` (Спонтанно.)\n- `I think I'll go to bed early tonight.` (Спонтанно, решение в момент.)\n- `I'm going to go to bed early tonight.` (Запланировал раньше.)\n\n**Evidence-based prediction:**\nКогда видишь признаки сейчас — `be going to`:\n- `Look! The kids are going to fall into the water!` (Видишь, что упадут.)\n- `Your plants need water — they're going to die.` (Видно, что засохнут.)\n\nБез видимых признаков — `will`:\n- `She'll probably be happy.` (Просто предположение.)\n- `I think it'll snow this winter.` (Мнение.)\n\n**Разговорная форма:**\n- `gonna` — произносится как одно слово. В устной речи носители постоянно говорят `I'm gonna`, `she's gonna`. В письме — только `going to`.\n\n**Типичные ошибки B1:**\n- Использовать `going to` для всех будущих ситуаций: не для каждого будущего подходит.\n- Путаница с Present Continuous для личных договорённостей.\n- Забывать `be`: ❌ `She going to come` → ✅ `She is going to come`.\n- `will` для уже запланированного: ❌ `I will go to Paris next month` (если уже решил) → ✅ `I'm going to Paris` / `I'm going to go to Paris`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "be going to (plan/evidence) vs will (opinion) vs am/is/are + V-ing (arrangement)",
+        "ru": "be going to (план/признаки) против will (мнение) против am/is/are + V-ing (договорённость)"
       },
       "examples": [
         {
           "en": "I'm going to start a new diet on Monday.",
-          "ru": "Я собираюсь сесть на новую диету в понедельник."
+          "ru": "Я собираюсь сесть на новую диету в понедельник.",
+          "note": {
+            "en": "intention",
+            "ru": "намерение"
+          }
         },
         {
           "en": "Watch out! That glass is going to fall.",
-          "ru": "Осторожно! Этот стакан упадёт."
+          "ru": "Осторожно! Этот стакан упадёт.",
+          "note": {
+            "en": "evidence",
+            "ru": "признаки"
+          }
         },
         {
           "en": "We're going to move to a bigger apartment.",
@@ -82,7 +137,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Don't worry, I'll help you with that.",
-          "ru": "Не волнуйся, я тебе с этим помогу."
+          "ru": "Не волнуйся, я тебе с этим помогу.",
+          "note": {
+            "en": "will: offer",
+            "ru": "will: предложение"
+          }
         },
         {
           "en": "She's going to be furious when she finds out.",
@@ -92,26 +151,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "be going to — план или предсказание по признакам; will — спонтанное решение или мнение."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She going to come.",
+          "right": "She is going to come.",
+          "why": {
+            "en": "Keep the verb 'be' — be going to is never reduced to just 'going to' in writing.",
+            "ru": "Сохраняй глагол be — в письме going to не используется без be."
+          }
+        },
+        {
+          "wrong": "I will go to Paris next month. (already decided)",
+          "right": "I'm going to go to Paris next month.",
+          "why": {
+            "en": "For a plan made earlier, use be going to, not will.",
+            "ru": "Для заранее принятого плана используй be going to, а не will."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, **be going to** adds a key past form: **was/were going to**, used for a plan that did not happen.\n\n**Unfulfilled plans:** *I was going to call you, but I forgot. We were going to have a picnic, but it rained.* This is the natural way to explain why an intention fell through.\n\n**Reported intentions in the past:** *He said he was going to quit his job. They told me they were going to move.*\n\n**will vs be going to — nuance:** **be going to** points to something already decided or already visible in the evidence (*Watch out — you're going to fall!*); **will** carries opinion, decision or promise (*I'm sure you'll do great!*). In confident, grounded predictions **be going to** sounds stronger than **will**: *The economy is going to crash* feels more certain than *The economy will crash.*\n\n**was going to vs would:** *I was going to call, but I couldn't* focuses on a concrete abandoned plan; *I said I would call* reports a past promise.\n\n**be going to vs be about to:** *I'm about to leave* means in seconds/minutes; *I'm going to leave* means a planned (possibly later) intention. Stative verbs combine freely with going to (*She's going to love it. We're going to need help.*). The reduction *gonna* stays informal and spoken only.",
         "ru": "На B2 `be going to` получает дополнительную форму: **`was/were going to`** для планов, которые не исполнились.\n\n**1. `Was/were going to` — отменённый план:**\n- `I was going to call you, but I forgot.` (Я собирался тебе позвонить, но забыл.)\n- `We were going to have a picnic, but it rained.` (Мы собирались на пикник, но пошёл дождь.)\n- `She was going to join us, but she got sick.` (Она собиралась к нам присоединиться, но заболела.)\n\nЭто важная конструкция для объяснения, почему план не был реализован.\n\n**2. `Be going to` в past reporting:**\n- `He said he was going to quit his job.` (Он сказал, что собирается уволиться.)\n- `They told me they were going to move.` (Они мне сказали, что собираются переезжать.)\n\n**3. Nuance между `will` и `be going to`:**\n\n| `be going to` | `will` |\n|---|---|\n| Уже решил раньше | Решаю сейчас |\n| Доказательства сейчас | Мнение/знание |\n| Надёжное предсказание | Обычное предсказание |\n| Внешние причины | Решение/обещание |\n\nПримеры:\n- `Watch out — you're going to fall!` (Сейчас упадёшь — вижу признаки.)\n- `I'm sure you'll do great!` (Мнение, поддержка.)\n\n**4. Predictions — когда `be going to` сильнее:**\n- `The economy is going to crash.` (Уверенное предсказание с основанием.)\n- `The economy will crash.` (Менее уверенное, обычное мнение.)\n\nВ журналистике `be going to` часто используется для сценариев и угроз.\n\n**5. Разговорные редукции:**\n- `gonna` — широко используется в устной речи: `What are you gonna do?`, `I'm gonna be late.`\n- Это только **неформально**, не для письма или академических текстов.\n- Некоторые говорящие избегают `gonna` в профессиональной речи.\n\n**6. Stative verbs и `be going to`:**\n- `I'm going to know the truth soon.` (Узнаю правду — приемлемо.)\n- `She's going to love it.` (Ей понравится — приемлемо.)\n- `We're going to need help.` (Нам понадобится помощь.)\n\nStative verbs свободно сочетаются с `going to`.\n\n**7. `Was going to` vs `would`:**\n- `I was going to call, but I couldn't.` (Конкретный отменённый план.)\n- `I said I would call.` (Обещал, что позвоню.)\n\n`Was going to` фокусируется на незавершённом намерении; `would` — на прошлом обещании или гипотетике.\n\n**8. Questions:**\n- `What are you going to do about it?` (Что ты собираешься с этим делать?)\n- `Why are you going to leave?` (Почему ты собираешься уходить?)\n- `Are you going to be there?` (Ты там будешь?)\n\n**9. Типичные ошибки B2:**\n- Путать `was going to` с Past Continuous: первое — несостоявшийся план, второе — процесс в прошлом.\n- Использовать `going to` для планов без действительного намерения: говори так только если намерение реально.\n- Путаница с `about to`: `I'm about to leave` (вот-вот уйду, моментально) vs `I'm going to leave` (собираюсь — может быть в ближайшее время)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "was/were going to + base verb (unfulfilled past plan)",
+        "ru": "was/were going to + базовая форма (несостоявшийся план в прошлом)"
       },
       "examples": [
         {
           "en": "I was going to buy tickets, but they sold out.",
-          "ru": "Я собирался купить билеты, но их распродали."
+          "ru": "Я собирался купить билеты, но их распродали.",
+          "note": {
+            "en": "unfulfilled",
+            "ru": "несбывшийся план"
+          }
         },
         {
           "en": "She's going to regret this decision.",
-          "ru": "Она пожалеет об этом решении."
+          "ru": "Она пожалеет об этом решении.",
+          "note": {
+            "en": "prediction",
+            "ru": "предсказание"
+          }
         },
         {
           "en": "What are you going to do when you graduate?",
@@ -119,7 +204,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "They said they were going to apologise, but they never did.",
-          "ru": "Они сказали, что извинятся, но так и не извинились."
+          "ru": "Они сказали, что извинятся, но так и не извинились.",
+          "note": {
+            "en": "reported",
+            "ru": "косвенная речь"
+          }
         },
         {
           "en": "It's going to be a long, difficult negotiation.",
@@ -129,30 +218,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "was/were going to — план, который не исполнился: I was going to call, but I forgot."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I was going to the gym, but I forgot. (meaning: I planned to but didn't)",
+          "right": "I was going to go to the gym, but I forgot.",
+          "why": {
+            "en": "Without 'go', 'was going to the gym' reads as past continuous (movement), not an abandoned plan.",
+            "ru": "Без go конструкция читается как Past Continuous (движение), а не несостоявшийся план."
+          }
+        },
+        {
+          "wrong": "I'm about to quit next year.",
+          "right": "I'm going to quit next year.",
+          "why": {
+            "en": "'be about to' means imminent (seconds/minutes), so it cannot take a distant time like 'next year'.",
+            "ru": "be about to означает мгновенное будущее и не сочетается с отдалённым 'next year'."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, **be going to** becomes a tool for precise forecasting and for shading degrees of commitment.\n\n**Commitment gradient:** *I will do it* (promise, possibly spontaneous) → *I am going to do it* (settled intention) → *I am doing it* (fixed arrangement) → *I plan to / I intend to do it* (formal, stronger commitment).\n\n**Forecasting and analysis:** with grounding evidence, **be going to** sounds more authoritative than **will**: *The data suggest the economy is going to contract. Based on current trends, populations are going to shift.*\n\n**Narrative 'was going to' (thwarted plans):** *I was going to confront him, but I lost my nerve. They were going to emigrate, but the war changed everything.*\n\n**Aspect interaction (rarer):** *I'm going to have finished by Friday* (going to + perfect); *She's going to be working late tonight* (going to + continuous). Use sparingly.\n\n**Register:** in formal writing, raw **be going to** can read as conversational; prefer *We intend to…*, *It is our intention to…*, *The company plans to…*. Recognise *gonna* by ear, but never write it.\n\n**Imminence alternatives:** *be about to* = within seconds/minutes; *on the verge of / on the point of* are more literary (*The company is on the verge of bankruptcy. She was on the point of leaving when he arrived.*).",
         "ru": "На C1 `be going to` становится инструментом точного прогноза и дифференциации оттенков обязательства.\n\n**1. Subtle commitment differences:**\n\n| Форма | Оттенок |\n|---|---|\n| `I will do it` | Обещание, может быть спонтанное |\n| `I am going to do it` | План, намерение, уже решено |\n| `I am doing it` | Договорённость, конкретные параметры |\n| `I will be doing it` | В ходе событий |\n| `I plan to do it` | Формальное намерение |\n| `I intend to do it` | Высокое, формальное намерение |\n\n**2. `Be going to` в прогнозах и анализе:**\n- `The data suggest the economy is going to contract.` (Данные предполагают, что экономика сократится.)\n- `Based on current trends, populations are going to shift.` (Исходя из текущих тенденций, население будет мигрировать.)\n\nВ аналитике `be going to` прозвучит увереннее, чем `will` — основание прогноза уже существует.\n\n**3. `Be going to` в angles of news reporting:**\n- `The government is going to announce new measures.` (Правительство готовится объявить — inside information.)\n- `Stocks are going to be volatile.` (Акции будут волатильны — на основе текущих факторов.)\n\n**4. `Was going to` for thwarted plans — narrative uses:**\n- `I was going to confront him, but I lost my nerve.` (Собирался противостоять ему, но струсил.)\n- `They were going to emigrate, but the war changed everything.` (Они собирались эмигрировать, но война всё изменила.)\n\n**5. `Be going to` + aspect interaction:**\n- `I'm going to have finished by Friday.` (Собираюсь закончить к пятнице — редкая конструкция.)\n- `She's going to be working late tonight.` (Будет работать допоздна — план + процесс.)\n\nЭти конструкции встречаются, но не перегружай ими речь.\n\n**6. Formal alternatives to `be going to`:**\n- `We intend to...` (Мы намерены...)\n- `It is our intention to...` (В наши намерения входит...)\n- `The company plans to...` (Компания планирует...)\n\nВ формальном регистре `be going to` может звучать слишком casual.\n\n**7. `Gonna` — awareness only:**\nНа C1 ты должен понимать `gonna` на слух (очень частое в речи), но в письме и формальной устной речи — полное `going to`.\n\n**8. Subtle differences in predictions:**\n- `It's going to rain.` (Смотрю на небо — уверенное предсказание.)\n- `It will rain.` (Общее предсказание, может быть абстрактное.)\n- `It's raining.` (Уже идёт.)\n- `It's about to rain.` (Вот-вот начнётся.)\n\n**9. `About to` vs `going to`:**\n- `about to + V` — моментальное будущее (через секунды/минуты): `The train is about to leave.`\n- `going to + V` — ближайшее или отдалённое намерение: `I'm going to quit next year.`\n\n**10. `On the verge of`, `on the point of`:**\n- `The company is on the verge of bankruptcy.` (Компания на грани банкротства.)\n- `She was on the point of leaving when he arrived.` (Она уже собиралась уходить, когда он пришёл.)\n\nЭто более формальные, литературные альтернативы.\n\n**11. Typical C1 errors:**\n- Злоупотребление `be going to` в формальном письме — звучит разговорно.\n- Путаница `was going to` и `would have`: первое — план, второе — гипотетический результат.\n- Избыток `will` там, где нужен более конкретный `be going to` или Present Continuous."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "be going to + have + past participle / be + V-ing (going to across aspects)",
+        "ru": "be going to + have + причастие II / be + V-ing (going to в сочетании с видами)"
       },
       "examples": [
         {
           "en": "Current indicators suggest unemployment is going to rise in the coming quarter.",
-          "ru": "Текущие индикаторы указывают на рост безработицы в следующем квартале."
+          "ru": "Текущие индикаторы указывают на рост безработицы в следующем квартале.",
+          "note": {
+            "en": "data forecast",
+            "ru": "прогноз по данным"
+          }
         },
         {
           "en": "We were going to expand internationally, but the funding fell through.",
-          "ru": "Мы собирались расширяться на международном рынке, но финансирование сорвалось."
+          "ru": "Мы собирались расширяться на международном рынке, но финансирование сорвалось.",
+          "note": {
+            "en": "thwarted plan",
+            "ru": "несостоявшийся план"
+          }
         },
         {
           "en": "The company intends to launch the product by year's end.",
-          "ru": "Компания намерена запустить продукт к концу года."
+          "ru": "Компания намерена запустить продукт к концу года.",
+          "note": {
+            "en": "formal intend",
+            "ru": "формальное intend"
+          }
         },
         {
           "en": "Be careful — that ladder's going to collapse.",
@@ -166,34 +285,68 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В формальном письме вместо be going to чаще уместно intend to или plan to."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "In our quarterly report, the firm is going to expand into Asia.",
+          "right": "In our quarterly report, the firm intends to expand into Asia.",
+          "why": {
+            "en": "In formal writing, prefer 'intend to'/'plan to' — bare 'be going to' sounds conversational.",
+            "ru": "В формальном письме лучше intend to / plan to — голое be going to звучит разговорно."
+          }
+        },
+        {
+          "wrong": "I was going to apologise. (no continuation)",
+          "right": "I was going to apologise, but I never got the chance.",
+          "why": {
+            "en": "'was going to' usually needs a clause explaining what stopped the plan; otherwise it sounds incomplete.",
+            "ru": "После was going to обычно нужно объяснение, что помешало, иначе фраза звучит незаконченной."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, **be going to** sits inside a fine-grained future system, and the choice is driven by register, pragmatics and stylistic effect.\n\n**Collocational instinct:** *She's going to make it* (confident, involved), *She will make it* (more formal or detached), *She's making it* (arranged or in progress) — all grammatical, but only one rings idiomatic in a given moment.\n\n**Register switching with 'gonna':** neutral and standard in casual speech (*I'm gonna grab some coffee*), full form in a meeting (*I'm going to review the data*), never written except to render speech in dialogue or fiction.\n\n**Prediction confidence scale:** *is bound to / is certain to* (absolute) → *is going to* (very high, evidence-based) → *will* (confident) → *will probably* (medium) → *might / could* (low). You select across this whole spectrum.\n\n**Formal stylistic alternatives:** *It is expected that…, The forecast indicates…, Projections suggest…, The data point to….*\n\n**Emotional/narrative force of 'was/were going to':** it carries strong feeling about the unrealised — *I was going to say something, but the words wouldn't come. We were going to be happy, weren't we?* In narrative, past **going to** often signals foreboding or fate (*Something terrible was going to happen.*).\n\n**Cross-tense reach:** *He's going to have regretted it by next year* (going to + future perfect) — rare but available for a motivated future completion.",
         "ru": "На C2 `be going to` встроено в тонкую систему выражения будущего. Выбор мотивирован регистром, прагматикой и стилистическим эффектом.\n\n**1. Collocational naturalness:**\nНоситель чувствует, какая форма естественнее в конкретном контексте:\n- `She's going to make it.` (Она справится — уверенное обещание/предсказание.)\n- `She will make it.` (Более формально или менее вовлечённо.)\n- `She's making it.` (Делает сейчас или договорилась.)\n\nЛюбая грамматически верна, но только одна звучит идиоматично в конкретной ситуации.\n\n**2. `Gonna` — cultural and register signals:**\n- В разговорной речи: `I'm gonna grab some coffee.` — нейтрально, стандартно.\n- В деловой встрече: `I'm going to review the data.` — полная форма, уместная.\n- В письменной речи: `going to` — никогда `gonna`, кроме как в диалоге или транскрипции.\n- В литературе: `gonna` используется для передачи речи персонажа.\n\nНа C2 ты гибко переключаешься между этими регистрами.\n\n**3. Subtle prediction nuances:**\n- `I'm telling you, she's going to win.` (Уверенное, почти гарантированное предсказание — personal conviction.)\n- `She's likely to win.` (Объективное, взвешенное.)\n- `She'll win.` (Нейтральное предсказание.)\n- `She might win.` (Возможность.)\n- `She's going to win if nothing unexpected happens.` (Уверенное, с оговоркой.)\n\n**4. Stylistic alternatives in formal writing:**\n- `It is expected that...` (Ожидается, что...)\n- `The forecast indicates...` (Прогноз указывает...)\n- `Projections suggest...` (Проекции предполагают...)\n- `The data point to...` (Данные указывают на...)\n\nВ академическом и финансовом письме `be going to` уместно, но альтернативы часто звучат строже.\n\n**5. `Was/were going to` — emotional and narrative force:**\n- `I was going to say something, but the words wouldn't come.` (Хотел сказать, но слова не шли.)\n- `They were going to marry, until the family intervened.` (Собирались пожениться, пока не вмешалась семья.)\n- `We were going to be happy, weren't we?` (Мы ведь собирались быть счастливы, не так ли?)\n\nЭта форма несёт сильный эмоциональный заряд о несбывшемся.\n\n**6. Cross-tense interactions:**\n- `He's going to have regretted it by next year.` (К следующему году он об этом пожалеет — Future Perfect в рамках going to.)\n- `By the time we meet, she's going to have changed her mind.` — редко, но возможно.\n\nТакие формы встречаются в разговорной речи и выражают мотивированное будущее совершение.\n\n**7. Literary uses:**\n- `There was going to be a reckoning, and everyone knew it.` (Будет расплата — и все это знали.)\n- `Something terrible was going to happen.` (Должно было случиться что-то ужасное.)\n\nВ нарративе past going to часто передаёт предчувствие, судьбу.\n\n**8. Prediction confidence scale:**\n\n| Уверенность | Форма |\n|---|---|\n| Абсолютная | `is certain to`, `is bound to` |\n| Очень высокая | `is going to` (evidence-based) |\n| Высокая | `will` (confident) |\n| Средняя | `will probably` |\n| Низкая | `might`, `could` |\n| Очень низкая | `might conceivably` |\n\nНа C2 ты выбираешь из всего спектра.\n\n**9. Common near-native errors:**\n- Использование `going to` в формальных резюме, где `will` или `intend to` более уместно.\n- `Was going to` без продолжения объяснения, что помешало: неполное предложение.\n- Избыток `be going to` делает текст разговорным без мотивации.\n- Путаница с `be about to`: `about to` — мгновенное, `going to` — запланированное.\n\n**10. Mastery test:**\nНа C2 ты не выбираешь между `will` и `be going to` наугад. Ты чувствуешь, какая форма передаёт:\n- Намерение или мнение.\n- Планирование или спонтанность.\n- Доказательную базу или абстрактность.\n- Разговорный или формальный регистр.\n\nЭтот выбор — часть стилистической зрелости."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "(was/were) going to + V / + have + V-ed / + be + V-ing — full register-graded system",
+        "ru": "(was/were) going to + V / + have + V-ed / + be + V-ing — полная система с градацией регистра"
       },
       "examples": [
         {
           "en": "I was going to speak up, but something held me back.",
-          "ru": "Я хотел высказаться, но что-то удержало меня."
+          "ru": "Я хотел высказаться, но что-то удержало меня.",
+          "note": {
+            "en": "narrative force",
+            "ru": "нарративная сила"
+          }
         },
         {
           "en": "The forecast suggests that temperatures are going to break records.",
-          "ru": "Прогноз указывает, что температуры побьют рекорды."
+          "ru": "Прогноз указывает, что температуры побьют рекорды.",
+          "note": {
+            "en": "formal forecast",
+            "ru": "формальный прогноз"
+          }
         },
         {
           "en": "She's going to make it to the top — mark my words.",
-          "ru": "Она дойдёт до вершины — помяни моё слово."
+          "ru": "Она дойдёт до вершины — помяни моё слово.",
+          "note": {
+            "en": "conviction",
+            "ru": "убеждённость"
+          }
         },
         {
           "en": "There was going to be trouble, and everyone felt it.",
-          "ru": "Должны были быть неприятности — все это чувствовали."
+          "ru": "Должны были быть неприятности — все это чувствовали.",
+          "note": {
+            "en": "foreboding",
+            "ru": "предчувствие"
+          }
         },
         {
           "en": "By the time the decision comes, we're going to have exhausted every option.",
@@ -203,9 +356,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "I was going to... — сильная эмоциональная окраска несбывшегося намерения."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is going to be a great honour to address you. (formal CV/speech opener)",
+          "right": "It will be a great honour to address you.",
+          "why": {
+            "en": "In a polished formal register, 'will' (or 'intend to') reads better than 'be going to', which sounds conversational.",
+            "ru": "В выверенном формальном регистре уместнее will (или intend to) — be going to звучит разговорно."
+          }
+        },
+        {
+          "wrong": "The train is going to leave any second now.",
+          "right": "The train is about to leave.",
+          "why": {
+            "en": "For something imminent (seconds away), 'be about to' is the idiomatic choice, not 'be going to'.",
+            "ru": "Для мгновенного будущего идиоматично be about to, а не be going to."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "future-simple-will",
+    "future-with-present-continuous",
+    "present-continuous",
+    "shall"
+  ],
+  "crossTopic": [
+    "first-conditional",
+    "adverbial-clauses-time",
+    "reported-statements",
+    "wh-questions"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "NOW (decision/evidence)",
+      "FUTURE (planned action)"
+    ]
+  }
 };

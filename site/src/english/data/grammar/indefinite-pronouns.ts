@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "indefinite-pronouns",
   "title": {
-    "en": "",
+    "en": "Indefinite Pronouns",
     "ru": "Indefinite Pronouns"
   },
   "cefr": "A2",
@@ -16,196 +16,406 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "pronouns",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Indefinite pronouns talk about a person, thing, or place without naming exactly who, what, or where. They are built from two parts: a prefix (some-, any-, no-, every-) plus an ending that shows the category. For people use -one or -body (someone = somebody, anyone = anybody, no one = nobody, everyone = everybody) — the two endings mean the same thing. For things use -thing (something, anything, nothing, everything). For places use -where (somewhere, anywhere, nowhere, everywhere). The core choice is some- versus any-: use some- in positive statements (Someone is at the door), and any- in questions (Is anyone at the door?) and in negatives (There isn't anyone here). The biggest trap for learners is the double negative. English allows only one negative word in a clause: say I don't know anything OR I know nothing — never I don't know nothing. Finally, every indefinite pronoun takes a singular verb, even when the meaning feels plural: Everyone is here (not are), Nobody knows the answer (knows, not know), Something is wrong.",
         "ru": "Неопределённые местоимения — это слова, которые говорят **о ком-то или чём-то, не называя точно** кто или что. По-русски это похоже на «кто-то», «что-то», «никто», «все».\n\n**Для людей:** окончание `-one` или `-body` (одно и то же значение):\n- `someone / somebody` — кто-то (в утверждениях)\n- `anyone / anybody` — кто-нибудь, никто (в вопросах и отрицаниях)\n- `no one / nobody` — никто\n- `everyone / everybody` — все, каждый\n\n**Для предметов:** окончание `-thing`:\n- `something` — что-то (в утверждениях)\n- `anything` — что-нибудь, ничего (в вопросах и отрицаниях)\n- `nothing` — ничего\n- `everything` — всё\n\n**Для мест:** окончание `-where`:\n- `somewhere` — где-то\n- `anywhere` — где-нибудь, нигде\n- `nowhere` — нигде\n- `everywhere` — везде\n\n**Главное правило выбора `some-` vs `any-`:**\n\n- **В утверждениях** (`+`) — используй `some-`: `Someone is at the door.` (Кто-то у двери.)\n- **В вопросах** (`?`) — обычно `any-`: `Is anyone at the door?` (Кто-нибудь у двери?)\n- **В отрицаниях** (`−`) — тоже `any-`: `There isn't anyone at the door.` (У двери никого нет.)\n\n**Одно отрицание в английском — главное правило!**\n\nВ английском НЕЛЬЗЯ говорить два отрицания, как в русском. Русское «я ничего не знаю» в английском — либо `I know nothing.`, либо `I don't know anything.` — выбирай одно из двух, но не оба.\n\n- Неправильно: `I don't know nothing.` ❌\n- Правильно: `I don't know anything.` ✅\n- Правильно: `I know nothing.` ✅\n\n**Согласование с глаголом** — всегда единственное число:\n- `Everyone is here.` (Все здесь.) — `is`, не `are`.\n- `Nobody knows the answer.` (Никто не знает ответа.) — `knows`, а не `know`.\n- `Something is wrong.` (Что-то не так.)\n\nДаже если по смыслу там несколько человек (`everyone`), глагол остаётся в единственном числе."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "prefix (some/any/no/every) + ending (-one/-body people, -thing things, -where places); some- in (+), any- in (?) and (−); singular verb",
+        "ru": "приставка (some/any/no/every) + окончание (-one/-body люди, -thing вещи, -where места); some- в (+), any- в (?) и (−); глагол в ед. ч."
       },
       "examples": [
         {
           "en": "Someone is calling you.",
-          "ru": "Кто-то тебе звонит."
+          "ru": "Кто-то тебе звонит.",
+          "note": {
+            "en": "some- in a statement",
+            "ru": "some- в утверждении"
+          }
         },
         {
           "en": "Is there anything to eat?",
-          "ru": "Есть что-нибудь поесть?"
+          "ru": "Есть что-нибудь поесть?",
+          "note": {
+            "en": "any- in a question",
+            "ru": "any- в вопросе"
+          }
         },
         {
           "en": "Nobody likes the rain.",
-          "ru": "Никто не любит дождь."
+          "ru": "Никто не любит дождь.",
+          "note": {
+            "en": "one negative word",
+            "ru": "одно отрицание"
+          }
         },
         {
           "en": "Everyone is happy today.",
-          "ru": "Все сегодня счастливы."
+          "ru": "Все сегодня счастливы.",
+          "note": {
+            "en": "singular verb (is)",
+            "ru": "глагол в ед. ч. (is)"
+          }
         },
         {
           "en": "I can't find my keys anywhere.",
-          "ru": "Я нигде не могу найти ключи."
+          "ru": "Я нигде не могу найти ключи.",
+          "note": {
+            "en": "any- in a negative",
+            "ru": "any- в отрицании"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В утверждениях — some-; в вопросах и отрицаниях — any-."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I don't know nothing.",
+          "right": "I don't know anything. / I know nothing.",
+          "why": {
+            "en": "Standard English allows only one negative word per clause: use any- after don't, or use nothing without don't.",
+            "ru": "В стандартном английском в одной части предложения только одно отрицание: либо any- после don't, либо nothing без don't."
+          }
+        },
+        {
+          "wrong": "Everyone are happy.",
+          "right": "Everyone is happy.",
+          "why": {
+            "en": "Indefinite pronouns are grammatically singular, so they take a singular verb (is, not are).",
+            "ru": "Неопределённые местоимения грамматически в ед. ч., поэтому глагол в ед. ч. (is, а не are)."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 you learn the situations where the simple some-/any- rule bends. The main exception is offers and requests: although they are questions, they use some- because you expect a yes — Would you like something to drink? (offer), Can I have some water? (request). Compare the neutral Do you have anything to drink? where you genuinely do not know. Next, every and each both mean 'each member', but with a difference: every views the group as a whole (Every student has a book — thinking of the class together), while each focuses on members one by one (Each student has their own book). For only two items use each or both, never every. Both still take a singular verb (Every child needs love, Each one speaks a different language). A key B1 habit is singular they: after a singular indefinite pronoun, English now uses they/their/them to refer back without choosing a gender — Everyone has their own opinion; Somebody called, but they didn't leave a name. This is fully standard, even in formal writing. Finally, the negative pronouns equal not + any-: no one / nobody = not anyone, nothing = not anything, nowhere = not anywhere — so use one form, not both (Nobody came, not Nobody didn't come).",
         "ru": "На уровне B1 мы уточняем правила для **предложений и просьб**, работаем со сложными формами и учимся согласовывать глагол.\n\n**Исключение из правила `any/some` — предложения и просьбы:**\n\nХотя в вопросах обычно `any-`, в **предложениях что-либо дать, угостить, предложить** используется `some-`:\n- `Would you like something to drink?` (Не хотите ли что-нибудь выпить?) — предлагаешь.\n- `Can I have some water?` (Можно мне воды?) — просишь, ожидаешь «да».\n- `Would you like someone to help you?` (Хотите, чтобы кто-то помог?) — предлагаешь помощь.\n\nСравни:\n- `Do you have anything to drink?` (У тебя есть что выпить?) — нейтральный вопрос, ты не знаешь ответ.\n- `Would you like something to drink?` — ты угощаешь, ожидаешь согласия.\n\n**`Every` vs `each` — оба значат «каждый», но по-разному:**\n\n- `every` — обобщение группы, «все вместе по очереди»: `Every student has a book.` (У каждого студента есть книга.) — ты думаешь о группе.\n- `each` — индивидуально, «каждый по отдельности»: `Each student has their own book.` (У каждого своя книга.) — ты думаешь о каждом отдельно.\n\n`Every` нельзя использовать для двоих: `each of the twins` — да, `every of the twins` — нет. Для двух — только `each` или `both`.\n\n**Оба требуют единственный глагол:**\n- `Every child needs love.` ✅\n- `Each one speaks a different language.` ✅\n\n**Согласование с `everyone / everybody`:**\n\nПо форме — единственное число (глагол `is`, `has`). Но для отсылки к нему в дальнейшем предложении обычно используют `they / their / them`:\n\n- `Everyone has their own opinion.` (У каждого своё мнение.)\n- `Somebody called, but they didn't leave a name.` (Кто-то звонил, но они не оставили имени.)\n\nРаньше предписывали `his/her`, но сейчас `they` в такой функции признано стандартом даже в формальном письме.\n\n**Отрицательные местоимения — правильное использование:**\n\n- `No one / nobody` = `not anyone / not anybody`.\n- `Nothing` = `not anything`.\n- `Nowhere` = `not anywhere`.\n\nМожно сказать только один из вариантов, не оба сразу:\n- `Nobody came.` ✅ или `There wasn't anybody who came.` ✅\n- `Nobody didn't come.` ❌ (двойное отрицание — ошибка).\n\n**Разница `-one` vs `-body`:** почти никакой. `Somebody` чуть более разговорный, `someone` чуть более нейтральный. Оба можно использовать взаимозаменяемо. В одной фразе лучше держать одну форму для стиля."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "offers/requests use some- in a question; every (group as a whole) vs each (one by one); singular they to refer back; no- = not + any-",
+        "ru": "предложения/просьбы используют some- в вопросе; every (группа целиком) vs each (по одному); singular they для отсылки; no- = not + any-"
       },
       "examples": [
         {
           "en": "Would you like some coffee?",
-          "ru": "Не хотите ли кофе?"
+          "ru": "Не хотите ли кофе?",
+          "note": {
+            "en": "offer → some-",
+            "ru": "предложение → some-"
+          }
         },
         {
           "en": "Every student must bring a pencil.",
-          "ru": "Каждый ученик должен принести карандаш."
+          "ru": "Каждый ученик должен принести карандаш.",
+          "note": {
+            "en": "every + singular noun",
+            "ru": "every + сущ. в ед. ч."
+          }
         },
         {
           "en": "Each of us has a different story.",
-          "ru": "У каждого из нас своя история."
+          "ru": "У каждого из нас своя история.",
+          "note": {
+            "en": "each of + plural",
+            "ru": "each of + мн. ч."
+          }
         },
         {
           "en": "Everyone has their own reasons.",
-          "ru": "У каждого свои причины."
+          "ru": "У каждого свои причины.",
+          "note": {
+            "en": "singular they",
+            "ru": "singular they"
+          }
         },
         {
           "en": "No one came to the meeting.",
-          "ru": "Никто не пришёл на встречу."
+          "ru": "Никто не пришёл на встречу.",
+          "note": {
+            "en": "no one = not anyone",
+            "ru": "no one = not anyone"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В предложениях (would you like) используй some-, даже если это вопрос."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Would you like anything to drink?",
+          "right": "Would you like something to drink?",
+          "why": {
+            "en": "Offers and requests use some- because you expect a positive answer, even though the form is a question.",
+            "ru": "Предложения и просьбы используют some-, потому что ждёшь утвердительного ответа, хотя по форме это вопрос."
+          }
+        },
+        {
+          "wrong": "Every of the twins got a present.",
+          "right": "Each of the twins got a present.",
+          "why": {
+            "en": "For only two items use each (or both); every is for groups of three or more.",
+            "ru": "Для двух предметов используют each (или both); every — для групп от трёх и больше."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you sharpen quantity and register. Non-standard double negatives (I ain't got no money, We don't need no education) belong to dialects and songs — recognise them, but in academic, business, or exam English write I have no money / I don't have any money. Quantity pronouns split by countability: many and a few/few go with countable nouns (many books, a few friends), while much and a little/little go with uncountable nouns (much time, a little sugar). The article makes a real difference: a few / a little are positive ('some, enough') while few / little are negative ('almost none'): I have a few friends (good) versus I have few friends (a complaint). Distinguish nothing (zero of an unspecified thing — Nothing is impossible) from none (not one of a known group — None of the students passed). With none of + plural, formal writing prefers a singular verb (None of them is here) but speech allows the plural (None of them are here) — both are accepted. Use no before a noun (I have no money) and none on its own (I have none), never no alone. The -ever pronouns whoever/whatever/whichever generalise to 'any person/thing at all': Whoever wins, I'll be happy; Take whatever you want.",
         "ru": "На уровне B2 мы работаем с **согласованием, двойным отрицанием в нестандартных диалектах** и количественными словами (`few, little, a few, a little, much, many`).\n\n**Осторожно: двойное отрицание в разговорной речи и диалектах.** В стандартном английском оно неправильно, но в некоторых диалектах (African American Vernacular English, Cockney, рэп-культура) двойное отрицание встречается как стилистическая черта:\n- `I ain't got no money.` (У меня нет денег.) — разговорно/диалектно.\n- `We don't need no education.` (из песни Pink Floyd) — намеренно диалектно.\n\nВ стандартном (академическом, деловом, экзаменационном) английском избегай двойного отрицания: `I have no money.` или `I don't have any money.`\n\n**Количественные местоимения:** отличие между исчисляемыми и неисчисляемыми существительными:\n\n- `many` — много (исчисляемых): `many books, many people`.\n- `much` — много (неисчисляемых): `much water, much time, much money`.\n- `a few` — несколько (исчисляемых, с позитивным смыслом): `a few friends`.\n- `few` — мало (исчисляемых, с негативным смыслом): `few friends` — подчёркивает нехватку.\n- `a little` — немного (неисчисляемых, позитивно): `a little sugar` (немного сахара, достаточно).\n- `little` — мало (неисчисляемых, негативно): `little hope` — нехватка надежды.\n\nРазница `a few` и `few`, `a little` и `little` — это разница между «есть немного» и «почти нет». Тонкая, но важная.\n\n- `I have a few friends.` (У меня есть несколько друзей — хорошо.)\n- `I have few friends.` (У меня мало друзей — плохо.)\n- `There is a little hope.` (Есть немного надежды.)\n- `There is little hope.` (Надежды мало.)\n\n**`Nothing` vs `none`:**\n- `Nothing` — ничего (абстрактно): `Nothing is impossible.`\n- `None` — ни один/ни одна из группы: `None of the students passed.`\n\n`None of + множественное` — в формальном письме единственный глагол (`None of them is here.`), в разговорной речи — множественный (`None of them are here.`). Оба правильны.\n\n**`No + существительное` vs `none`:**\n- `I have no money.` ✅ — `no` перед существительным.\n- `I have none.` ✅ — `none` вместо существительного.\n- `I have no.` ❌ — без существительного после `no` так нельзя.\n\n**Местоимения `whoever, whatever, whichever`:** обобщающие, «кто угодно, что угодно, какой угодно»:\n- `Whoever wins, I'll be happy.` (Кто бы ни победил, я буду рад.)\n- `Take whatever you want.` (Бери что хочешь.)\n- `Whichever you choose is fine.` (Какой бы ты ни выбрал — хорошо.)\n\n**Негативный формальный оттенок:** в академическом письме `nothing` и `no one` сильнее звучат в начале предложения:\n- `No one anticipated the outcome.` (Никто не предвидел исход.) — формально.\n- `Nothing prepared us for this.` (Ничто нас к этому не подготовило.) — драматично."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "avoid double negatives in standard English; many/few + countable, much/little + uncountable; a few/a little (+) vs few/little (−); nothing vs none of; no + noun, none alone; whoever/whatever/whichever",
+        "ru": "избегать двойного отрицания в стандартном английском; many/few + исчисляемые, much/little + неисчисляемые; a few/a little (+) vs few/little (−); nothing vs none of; no + сущ., none без сущ.; whoever/whatever/whichever"
       },
       "examples": [
         {
           "en": "I have few friends in this town.",
-          "ru": "У меня здесь мало друзей."
+          "ru": "У меня здесь мало друзей.",
+          "note": {
+            "en": "few = almost none (negative)",
+            "ru": "few = почти нет (негатив)"
+          }
         },
         {
           "en": "There's a little milk left.",
-          "ru": "Осталось немного молока."
+          "ru": "Осталось немного молока.",
+          "note": {
+            "en": "a little = some (positive)",
+            "ru": "a little = немного (позитив)"
+          }
         },
         {
           "en": "None of the candidates was suitable.",
-          "ru": "Ни один из кандидатов не подошёл."
+          "ru": "Ни один из кандидатов не подошёл.",
+          "note": {
+            "en": "none of + group",
+            "ru": "none of + группа"
+          }
         },
         {
           "en": "Whoever calls, take a message.",
-          "ru": "Кто бы ни позвонил, запиши сообщение."
+          "ru": "Кто бы ни позвонил, запиши сообщение.",
+          "note": {
+            "en": "whoever = any person",
+            "ru": "whoever = кто угодно"
+          }
         },
         {
           "en": "He ain't got nothing to say.",
-          "ru": "Ему нечего сказать."
+          "ru": "Ему нечего сказать.",
+          "note": {
+            "en": "dialectal double negative",
+            "ru": "диалектное двойное отрицание"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Few = «мало, нехватка»; a few = «несколько, достаточно» — разница важная."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I have a much money.",
+          "right": "I have a lot of money. / I don't have much money.",
+          "why": {
+            "en": "much is for uncountable nouns and is used mainly in questions and negatives; in positive statements prefer a lot of.",
+            "ru": "much — для неисчисляемых и используется в основном в вопросах и отрицаниях; в утверждениях лучше a lot of."
+          }
+        },
+        {
+          "wrong": "None of the students passed the exam, they all failed it though.",
+          "right": "None of the students passed the exam.",
+          "why": {
+            "en": "none means 'not one of the group'; use it for a known set, and do not pad it with a redundant double-negative restatement.",
+            "ru": "none значит «ни один из группы»; используйте для известного множества и не дублируйте отрицание лишним повтором."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the indefinite pronoun becomes a register and cohesion choice. Singular they is now the default neutral reference after a singular indefinite — Each applicant must submit their documents; If anyone has questions, they can contact the office — and it is endorsed by the Chicago Manual, APA, and exam boards; the older he or she and s/he sound clumsy. For general statements, formal writing swaps conversational you for one or an impersonal construction (One never knows; It can be seen that...). The some/any contrast outside questions becomes meaningful: any means 'it doesn't matter which' (You can buy this in any bookstore), while some points to a particular but unidentified one (in some bookstore I can't recall). On agreement, none of + plural permits either verb: the etymological reading (none = not one) takes a singular (None of the arguments is convincing), while the collective reading takes a plural (None of the arguments are convincing) — choose per your style guide and stay consistent. Negative pronouns drive emphatic fronting and inversion: Never did anyone imagine such a result; Little did I know what awaited me; Few would disagree with this statement. Academic prose also prefers precision over vague everyone — write all participants or each participant rather than everyone in the study.",
         "ru": "На уровне C1 мы углубляемся в **согласование singular they, регистр и формальные конструкции**, а также играем с тонкими смысловыми различиями.\n\n**Singular `they` в академическом письме:**\n\nРаньше учебники требовали `he`, потом `he or she`, потом `s/he`. Все эти варианты звучат громоздко или устарело. Современный стандарт — singular `they`:\n- `Each applicant must submit their documents.` (формально приемлемо)\n- `If anyone has questions, they can contact the office.` (стандартно)\n- `A good teacher knows their students.` (нейтрально, без гендерных предположений)\n\nChicago Manual of Style, APA и Merriam-Webster признали singular `they` нормативным. В экзаменах (IELTS, Cambridge) эта конструкция тоже принимается.\n\n**Формальное избегание `you`:** для обобщения вместо `you` в академическом письме используется `one`, `people`, или безличная конструкция:\n- `You can see that...` → `One can see that...` или `It can be seen that...`\n- `You never know.` → `One never knows.` (формально)\n\n**Тонкая разница `some` vs `any` вне вопросов:**\n\n- `You can find this in any bookstore.` (в любом магазине — универсально)\n- `You can find this in some bookstore.` (в каком-то конкретном, но неопределённом магазине)\n\n`Any` означает «любой, все подходят». `Some` — «какой-то определённый, один из».\n\n**Согласование `none` в формальном письме:**\n\nТрадиционная (этимологическая) интерпретация: `none = not one`, поэтому единственный глагол:\n- `None of the arguments is convincing.` (формально)\n\nСовременная интерпретация: `none` ассоциируется с группой, поэтому множественный глагол:\n- `None of the arguments are convincing.` (разговорно, всё чаще — и формально)\n\nОба варианта грамматически допустимы. В академическом письме выбор зависит от стилевого руководства.\n\n**Конструкции с отрицанием в начале для эмфазы:** инверсия подлежащего и глагола:\n- `No one could predict the outcome.` (нейтрально)\n- `Never did anyone imagine such a result.` (формально, эмфатически — глагол впереди подлежащего)\n- `Nothing did he say.` (архаично-поэтически)\n- `Not a single person came.` (эмфатически, неинвертированно)\n\n**Неопределённые с более тонкими смыслами:**\n- `anyone / anybody` в утверждениях = «кто угодно»: `Anyone can do this.` (Любой может это сделать.)\n- `someone / somebody` в вопросах (редко) = «какой-то конкретный»: `Is someone here?` (звонит в дверь, ожидаешь конкретного человека).\n\n**Стиль избегания `everybody/everyone` через перефразирование:**\n- `All the students passed.` вместо `Everyone in the class passed.`\n- `Each member of staff...` — для индивидуального подхода.\n\nВ академическом стиле предпочитают точность (`all participants, each participant`), а не расплывчатое `everyone`.\n\n**`Little` и `few` без артикля — эмфатическая негативная позиция:**\n- `Little did he know that...` (Он и не подозревал, что...) — литературный оборот с инверсией.\n- `Few would disagree with this statement.` (Мало кто не согласился бы.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "singular they as neutral reference; one / impersonal for general 'you'; any = whichever vs some = a particular one; none of + plural → singular or plural; negative-fronting inversion (Little did I know...)",
+        "ru": "singular they как нейтральная отсылка; one / безличное вместо обобщающего you; any = любой vs some = некий конкретный; none of + мн. → ед. или мн.; инверсия при выносе отрицания (Little did I know...)"
       },
       "examples": [
         {
           "en": "Each participant must identify themselves at the desk.",
-          "ru": "Каждый участник должен представиться у стойки."
+          "ru": "Каждый участник должен представиться у стойки.",
+          "note": {
+            "en": "themselves = singular they",
+            "ru": "themselves = singular they"
+          }
         },
         {
           "en": "None of the evidence is conclusive.",
-          "ru": "Ни одно из доказательств не является окончательным."
+          "ru": "Ни одно из доказательств не является окончательным.",
+          "note": {
+            "en": "none + singular (formal)",
+            "ru": "none + ед. ч. (формально)"
+          }
         },
         {
           "en": "Little did I know what awaited me.",
-          "ru": "Я и не знал, что меня ждёт."
+          "ru": "Я и не знал, что меня ждёт.",
+          "note": {
+            "en": "Little did I know (inversion)",
+            "ru": "Little did I know (инверсия)"
+          }
         },
         {
           "en": "One should always double-check one's sources.",
-          "ru": "Всегда следует перепроверять источники."
+          "ru": "Всегда следует перепроверять источники.",
+          "note": {
+            "en": "one ... one's (impersonal)",
+            "ru": "one ... one's (безличное)"
+          }
         },
         {
           "en": "Few can claim such expertise.",
-          "ru": "Мало кто может заявить о подобной квалификации."
+          "ru": "Мало кто может заявить о подобной квалификации.",
+          "note": {
+            "en": "Few = almost no one",
+            "ru": "Few = почти никто"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В формальном письме принято singular they как нейтральная форма для неопределённого лица."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Little I knew what awaited me.",
+          "right": "Little did I know what awaited me.",
+          "why": {
+            "en": "When a negative or restrictive word is fronted for emphasis, subject and auxiliary invert (did I know).",
+            "ru": "При выносе отрицательного/ограничительного слова вперёд подлежащее и вспомогательный глагол меняются местами (did I know)."
+          }
+        },
+        {
+          "wrong": "Each applicant must submit his or her or their documents.",
+          "right": "Each applicant must submit their documents.",
+          "why": {
+            "en": "Modern formal English uses a single singular they; stacking he or she or their is redundant.",
+            "ru": "Современный формальный английский использует одно singular they; нагромождение he or she or their избыточно."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the indefinite pronoun is a stylistic instrument. Archaic generalisers survive only in elevated or stylised text: aught ('anything'), naught/nought ('nothing', as in all for naught), and one and all ('absolutely everyone') — avoid them in ordinary prose. Rhetorical inversion with negative pronouns lends solemnity to essays, speeches, and literature: Never has anyone spoken so eloquently; Nowhere else will you find such beauty; Not a soul stirred. The paired some ... others structures argument: Some argue for reform; others oppose it. The emphatic postmodifier whatsoever pushes a negation to the absolute and is common in legal English (no evidence whatsoever; any claim whatsoever), with whosoever as its archaic personal cousin. Literary choice between anyone / somebody / no one shapes nuance — Anyone could have done it (nothing special) versus Somebody did it (mysterious, specific but unknown) versus No one could have done it (impossibility) — the engine of detective fiction. Inclusive everyone and no one fuel slogans and rights language: Everyone deserves dignity; No one shall be subjected to torture. Note that neither and either are formally singular (Neither explanation is satisfactory; Either of the options works), though speech often slips to the plural. The C2 cautions are stylistic: do not mix everyone and everybody in one breath, keep singular they consistent within a paragraph, and never drop dialectal double negatives into formal text.",
         "ru": "На C2 мы работаем с **стилистическими нюансами** и редкими конструкциями, где выбор неопределённого местоимения несёт смысловую и регистровую окраску.\n\n**Архаические обобщающие формы:**\n- `aught` — что-либо (устарело): `If aught should happen to me...` — только в стилизации.\n- `naught / nought` — ничто: `All for naught.` (Всё напрасно.) — литературно.\n- `one and all` — все до единого: `One and all agreed.` (Все как один согласились.)\n\nЭти формы встречаются в высоком регистре, поэзии или архаизирующих текстах. В обычной прозе избегай.\n\n**Риторические инверсии с отрицательными местоимениями:**\n- `Never has anyone spoken so eloquently.` (Никогда никто не говорил так красноречиво.)\n- `Nowhere else will you find such beauty.` (Нигде больше ты не найдёшь такой красоты.)\n- `Not a soul stirred.` (Ни одна душа не шелохнулась.) — литературный оборот.\n\nИнверсия создаёт торжественный тон и встречается в эссеистике, литературе, речах.\n\n**Формальные контрасты `some ... others`:**\n- `Some argue for reform; others oppose it.` (Одни выступают за реформу; другие — против.)\n- `Some of the data support the hypothesis; none of the rest does.` (Часть данных поддерживает гипотезу; остальные — нет.)\n\nЭто парность типична для академической и публицистической аргументации.\n\n**`Whatsoever / whosoever` — эмфатические расширения:**\n- `There is no reason whatsoever to worry.` (Нет вообще никаких причин беспокоиться.)\n- `Whosoever enters these halls must be of pure heart.` (архаично, стилизация)\n\n`Whatsoever` в постпозиции усиливает отрицание до абсолюта; часто в юридических текстах: `any claim whatsoever`, `no evidence whatsoever`.\n\n**Тонкое различие `anyone / no one / somebody` в литературе:**\n- `Anyone could have done it.` (Кто угодно мог это сделать.) — с оттенком «ничего уникального, мог любой».\n- `Somebody did it.` (Кто-то это сделал.) — с загадочностью, конкретный, но неизвестный.\n- `No one could have done it.` (Никто не мог бы это сделать.) — отрицание возможности.\n\nВ детективах эти различия создают драматургию подозрения.\n\n**Обобщающее `everyone` в политической риторике:**\n- `Everyone deserves dignity.` (Каждый заслуживает достоинства.) — призывное обобщение.\n- `No one should be left behind.` (Никто не должен остаться в стороне.) — инклюзивный призыв.\n\nТакие фразы становятся слоганами.\n\n**Юридический язык с неопределёнными:**\n- `Any person who violates this provision shall be fined.` (Любое лицо, нарушающее это положение, будет оштрафовано.)\n- `No one shall be subjected to torture.` (Никто не должен подвергаться пыткам.) — Всеобщая декларация прав человека.\n\nЗдесь `any / no` работают как универсальные квантификаторы с особой юридической силой.\n\n**Обороты с `neither ... nor` и `either ... or`:**\n- `Neither explanation is satisfactory.` (Ни одно объяснение не удовлетворительно.)\n- `Either of the options works.` (Любой из вариантов подходит.)\n\n`Neither` и `either` формально требуют единственного глагола, хотя в разговорной речи часто встречается множественный.\n\n**Ловушки стиля:**\n- Избегай избыточного `everyone and everybody` в одной фразе — выбирай одну форму.\n- Не смешивай уровни: `Nobody ain't gonna...` — диалект в формальном тексте звучит как ошибка.\n- Следи за `they / he or she`: переключение в пределах одного абзаца выглядит неопрятно.\n\nНа C2 выбор неопределённого местоимения — это почти всегда стилистическое решение. Выбирай осознанно, под тон текста."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "archaic aught/naught/one and all; negative-pronoun inversion (Never has anyone...); some ... others; whatsoever after a negation; neither/either + singular verb",
+        "ru": "архаичные aught/naught/one and all; инверсия с отрицательным местоимением (Never has anyone...); some ... others; whatsoever после отрицания; neither/either + глагол в ед. ч."
       },
       "examples": [
         {
           "en": "Any claim whatsoever must be supported by evidence.",
-          "ru": "Любое утверждение должно быть подкреплено доказательствами."
+          "ru": "Любое утверждение должно быть подкреплено доказательствами.",
+          "note": {
+            "en": "whatsoever = absolute negation",
+            "ru": "whatsoever = абсолютное отрицание"
+          }
         },
         {
           "en": "Some embrace change; others resist it.",
-          "ru": "Одни принимают перемены; другие сопротивляются."
+          "ru": "Одни принимают перемены; другие сопротивляются.",
+          "note": {
+            "en": "some ... others (contrast)",
+            "ru": "some ... others (контраст)"
+          }
         },
         {
           "en": "Never had anyone seen such a sight.",
-          "ru": "Никто никогда не видел такого зрелища."
+          "ru": "Никто никогда не видел такого зрелища.",
+          "note": {
+            "en": "Never has anyone (inversion)",
+            "ru": "Never has anyone (инверсия)"
+          }
         },
         {
           "en": "No one shall be denied their basic rights.",
-          "ru": "Никому не должно быть отказано в основных правах."
+          "ru": "Никому не должно быть отказано в основных правах.",
+          "note": {
+            "en": "no one shall (legal/rights)",
+            "ru": "no one shall (право)"
+          }
         },
         {
           "en": "All for naught, I fear.",
-          "ru": "Всё напрасно, боюсь."
+          "ru": "Всё напрасно, боюсь.",
+          "note": {
+            "en": "naught = nothing (archaic)",
+            "ru": "naught = ничто (архаизм)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Whatsoever после отрицания усиливает его до абсолюта: no reason whatsoever."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "There is no reason what so ever to worry.",
+          "right": "There is no reason whatsoever to worry.",
+          "why": {
+            "en": "whatsoever is one word and is placed right after the negated noun to intensify the negation.",
+            "ru": "whatsoever пишется одним словом и ставится сразу после отрицаемого существительного для усиления."
+          }
+        },
+        {
+          "wrong": "Neither of the explanations are satisfactory in this formal report.",
+          "right": "Neither of the explanations is satisfactory.",
+          "why": {
+            "en": "In formal English neither and either take a singular verb, even when followed by a plural of-phrase.",
+            "ru": "В формальном английском neither и either требуют глагол в ед. ч., даже после of-фразы во мн. ч."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "personal-pronouns",
+    "reflexive-pronouns",
+    "demonstrative-pronouns",
+    "reciprocal-pronouns"
+  ],
+  "crossTopic": [
+    "countable-uncountable-nouns",
+    "negative-sentences",
+    "yes-no-questions",
+    "relative-pronouns-who-which-that-whose"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "some- (statements)",
+      "any- (questions / negatives)",
+      "no- (one negative word)",
+      "every- (the whole group)"
+    ]
+  }
 };

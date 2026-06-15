@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "mixed-conditionals",
   "title": {
-    "en": "",
+    "en": "Mixed Conditionals",
     "ru": "Mixed Conditionals"
   },
   "cefr": "B2",
@@ -14,28 +14,38 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conditionals",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "branch",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "A mixed conditional joins two different time frames in one sentence: the time of the condition and the time of the result do not match. You combine pieces of the second and third conditional when a cause sits in one era and its effect in another.\n\nThere are two patterns.\n\nType 1 — past condition, present result. Use it when something that did (or did not) happen in the past still shapes the present: `If I had studied medicine, I would be a doctor now.` The condition is past (you didn't study), the consequence is present (you aren't a doctor today). Form: `If + past perfect, would + base verb`.\n\nType 2 — present condition, past result. Use it when a permanent state or character trait explains a single past action: `If I were rich, I would have bought that house.` The condition is a lasting quality (being rich in general), the result is past (the purchase). Form: `If + past simple, would have + past participle`.\n\nTime markers are your guide. Words like `now`, `today`, `still`, `at the moment` in the main clause point to a present result, so reach for Type 1. A general, timeless quality (`brave`, `patient`, `shy`) in the if-clause with a past result signals Type 2.\n\nCompare with the plain third conditional, where both halves stay in the past: third — `If I had studied, I would have become a doctor` (closed, all past); mixed — `If I had studied, I would be a doctor now` (past cause, living present effect). Besides `would`, the result clause can take `could`, `might` or `should` to soften certainty.",
         "ru": "**Mixed conditionals** (смешанные условные) — это когда **время условия** и **время результата** не совпадают. Мы смешиваем Second и Third conditional, чтобы точнее выразить связь прошлого с настоящим или настоящего с прошлым.\n\nВ обычных условных:\n- Second: нереальное настоящее → нереальное настоящее/будущее.\n- Third: нереальное прошлое → нереальное прошлое.\n\nВ mixed мы комбинируем разные временные оси.\n\n**Тип 1: Прошлое условие → настоящий результат**\n\n**Формула:** `If + Past Perfect, would + базовая форма`\n\n- `If I had studied medicine, I would be a doctor now.` (Если бы я изучал медицину [в прошлом], я был бы сейчас врачом.)\n- `If she hadn't missed the train, she would be here.` (Если бы она не опоздала на поезд, она была бы здесь сейчас.)\n\nЗдесь условие — в прошлом (не изучал медицину), а последствие — в настоящем (не врач сейчас).\n\n**Тип 2: Настоящее условие → прошлый результат**\n\n**Формула:** `If + Past Simple, would have + V3`\n\n- `If I were rich, I would have bought that house.` (Если бы я был богат [постоянное качество], я бы купил тот дом [в прошлом].)\n- `If he weren't so stubborn, he would have apologised.` (Если бы он не был таким упрямым [вообще], он бы извинился [тогда].)\n\nЗдесь условие — постоянное качество или настоящее состояние, а действие — прошлое.\n\n**Когда использовать mixed:**\n\n1. Когда последствие прошлого длится до сих пор: `If I had learned English as a child, I would speak it fluently now.`\n2. Когда качество характера повлияло на конкретное прошлое действие: `If she were more patient, she would have finished the project.`\n\n**Разница с обычным Third:**\n- Third: `If I had studied, I would have become a doctor.` (Всё в прошлом: не изучал → не стал.)\n- Mixed Type 1: `If I had studied, I would be a doctor now.` (Прошлое действие → настоящий результат.)\n\n**Маркеры времени помогают различать:**\n- `now`, `today`, `these days`, `still`, `at the moment` — указывают на настоящий результат → Mixed Type 1.\n- Постоянные качества характера (`brave`, `patient`, `rich`, `tall`) в if-части + результат в прошлом → Mixed Type 2.\n\n**Главные ошибки:**\n- Смешение результата и условия в неверном порядке.\n- Неправильное согласование времён: ❌ `If I studied, I would be a doctor now.` — нужно `If I had studied`, потому что это прошлое действие.\n- Перевод из русского напрямую: русский часто не различает эти оттенки, и студенты используют Second там, где нужен mixed."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Type 1: If + past perfect, would + base verb. Type 2: If + past simple, would have + past participle.",
+        "ru": "Тип 1: If + Past Perfect, would + базовая форма. Тип 2: If + Past Simple, would have + V3."
       },
       "examples": [
         {
           "en": "If I had gone to bed earlier, I wouldn't be tired now.",
-          "ru": "Если бы я лёг раньше, я бы сейчас не был уставшим."
+          "ru": "Если бы я лёг раньше, я бы сейчас не был уставшим.",
+          "note": {
+            "en": "past → present (Type 1)",
+            "ru": "прошлое → настоящее (Тип 1)"
+          }
         },
         {
           "en": "If she were a better manager, the project would have succeeded.",
-          "ru": "Если бы она была лучшим руководителем, проект бы удался."
+          "ru": "Если бы она была лучшим руководителем, проект бы удался.",
+          "note": {
+            "en": "present quality → past (Type 2)",
+            "ru": "настоящее качество → прошлое (Тип 2)"
+          }
         },
         {
           "en": "If we hadn't missed the flight, we would be in Paris right now.",
@@ -53,30 +63,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Маркер now/today в главной части + had + V3 в if-части — это Mixed Type 1 (прошлое условие → настоящий результат)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If I studied medicine, I would be a doctor now.",
+          "right": "If I had studied medicine, I would be a doctor now.",
+          "why": {
+            "en": "A finished past cause needs the past perfect (had + V3), not the past simple, when the result is present.",
+            "ru": "Для завершённого прошлого условия нужен Past Perfect (had + V3), а не Past Simple."
+          }
+        },
+        {
+          "wrong": "If I had studied, I would be a doctor yesterday.",
+          "right": "If I had studied, I would be a doctor now.",
+          "why": {
+            "en": "A present-result clause cannot take a past time marker like `yesterday`; use `now`, `today`, `still`.",
+            "ru": "Результат в настоящем не сочетается с маркером прошлого."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 mixed conditionals become a precision tool for analysing how past, present, character and circumstance interact, and you handle them in formal registers.\n\nModal shading: replace `would` in the result clause with `could`, `might` or `should` to grade certainty — `would` is confident, `could` flags possibility, `might` is tentative, `should` marks a logically expected outcome (`If I had taken that opportunity, I could be running my own company now`).\n\nFormal inversion: drop `if` and front the auxiliary in either type — `Had I listened to advice, I would not be in this situation` (Type 1) and `Were I more diplomatic, I would not have made that remark` (Type 2). This belongs to academic, legal and diplomatic prose.\n\nLayered time axes: you can chain a third conditional, a mixed Type 1 and another clause across one sentence, keeping the temporal logic coherent — the mark of advanced control.\n\n`But for + noun` and `Were it not for + noun` introduce a mixed condition compactly: `But for his mistake, the team would be in the finals` (past cause, present result). Mixed conditionals also drive psychological and biographical analysis (`If he had been less ambitious as a young man, he would be a kinder person today`) and let a writer contrast viewpoints deliberately: `If I were you, I would have said yes` (my hypothetical self judging your past choice) versus `If I had been you, I would have said yes` (a pure third conditional). Avoid clashing time markers and resist over-using mixed forms where a plain second or third conditional already works.",
         "ru": "На C1 Mixed conditionals становятся инструментом тонкого анализа причинно-следственных связей между временами, характером и обстоятельствами.\n\n**1. Детализация модалов:**\nВ результативной части вместо `would` можно использовать `could`, `might`, `should`:\n- `If I had taken that opportunity, I could be running my own company now.` (Если бы я воспользовался тем шансом, я мог бы сейчас руководить своей компанией.)\n- `If she were more careful, she might not have lost her keys.` (Если бы она была более внимательной, возможно, не потеряла бы ключи.)\n- `If he hadn't ignored the signs, he should be healthy now.`\n\nКаждый модал сдвигает оттенок: `would` — уверенно, `could` — возможно, `might` — может быть, `should` — логически ожидаемо.\n\n**2. Inversion в mixed:**\nФормальная инверсия работает и в mixed:\n- `Had I listened to advice, I would not be in this situation.` (Mixed Type 1 с инверсией.)\n- `Were I more diplomatic, I would not have made that remark.` (Mixed Type 2 с инверсией.)\n\nЭто высокий регистр — академический, деловой, дипломатический.\n\n**3. Комплексные комбинации временных осей:**\nC1-уровень — это умение осознанно строить цепочки:\n- `Had she accepted the offer when it came, she would be running the department, and the company would have grown faster.`\n\nЗдесь одновременно Third, Mixed Type 1 и снова Third. Управление такой структурой — признак продвинутого анализа.\n\n**4. But for и were it not for в mixed:**\n- `But for his mistake, the team would be in the finals.` (Если бы не его ошибка [прошлое], команда была бы в финале [настоящее].)\n- `Were it not for her caution, we would have lost everything.` (Если бы не её осторожность [постоянное], мы бы всё потеряли [прошлое].)\n\n**5. Mixed для психологической интерпретации:**\nMixed conditionals часто появляются в описании характеров и биографий:\n- `If he had been less ambitious as a young man, he would be a kinder person today.` (Если бы в молодости он был менее амбициозным, сегодня он был бы более добрым человеком.)\n\nЭто глубокий причинно-следственный анализ личности.\n\n**6. Контрастное употребление с Second и Third:**\nC1-писатель осознанно выбирает:\n- `If I were you, I would have said yes.` — Mixed Type 2: моё гипотетическое я сейчас оценивает твоё прошлое решение.\n- `If I had been you, I would have said yes.` — Third: в тот момент, на твоём месте.\n- `If I were you, I would say yes.` — Second: сейчас, на твоём месте.\n\nВыбор меняет точку зрения говорящего.\n\n**7. Регретное и критическое использование:**\n- `If I had realised earlier what I wanted, I would be happier now.` (Если бы я раньше понял, чего хочу, сейчас был бы счастливее.) — регрет.\n- `If the manager were more decisive, the crisis would have been averted.` (Если бы менеджер был решительнее, кризиса бы удалось избежать.) — критика.\n\n**8. Типичные ошибки на C1:**\n- Смешение маркеров времени: ❌ `If I had studied, I would be a doctor yesterday.` — маркер прошлого не сочетается с настоящим результатом.\n- Ненужное использование mixed там, где работает Third или Second.\n- Перегрузка сложными формами в коротких высказываниях.\n\n**9. Academic hedging через mixed:**\n- `Had the hypothesis been formulated differently, our interpretation of the current data would be more coherent.`\n- `If the methodology were more rigorous, the earlier findings would have received wider acceptance.`\n\nЭтот регистр — стандарт научной критики."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Result clause: would / could / might / should (+ have + V3). Inversion: Had + subject + V3, ... / Were + subject ..., ...",
+        "ru": "Результативная часть: would / could / might / should (+ have + V3). Инверсия: Had + подлежащее + V3, ... / Were + подлежащее ..., ..."
       },
       "examples": [
         {
           "en": "Had I invested wisely, I would be financially independent today.",
-          "ru": "Если бы я вкладывался разумно, сегодня я был бы финансово независим."
+          "ru": "Если бы я вкладывался разумно, сегодня я был бы финансово независим.",
+          "note": {
+            "en": "Had-inversion (Type 1)",
+            "ru": "инверсия Had (Тип 1)"
+          }
         },
         {
           "en": "Were she less reserved, she might have made more friends at university.",
-          "ru": "Если бы она была менее сдержанной, она могла бы обзавестись большим количеством друзей в университете."
+          "ru": "Если бы она была менее сдержанной, она могла бы обзавестись большим количеством друзей в университете.",
+          "note": {
+            "en": "Were-inversion + might",
+            "ru": "инверсия Were + might"
+          }
         },
         {
           "en": "But for the early rejection, he would be a recognised author now.",
-          "ru": "Если бы не раннее отвержение, он был бы сейчас признанным автором."
+          "ru": "Если бы не раннее отвержение, он был бы сейчас признанным автором.",
+          "note": {
+            "en": "but for",
+            "ru": "but for"
+          }
         },
         {
           "en": "If the policy had been implemented in time, the economy would be recovering faster.",
@@ -90,22 +130,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Инверсии Had I… и Were I… работают и в mixed conditionals — это стандарт академической письменной речи."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Had I to listen to advice, I would not be in this situation.",
+          "right": "Had I listened to advice, I would not be in this situation.",
+          "why": {
+            "en": "Inverted `had` is the past-perfect auxiliary, so it takes the past participle directly — no `to`.",
+            "ru": "Инверсия Had — это вспомогательный Past Perfect, за ним идёт V3 без to."
+          }
+        },
+        {
+          "wrong": "But for his mistake, the team would have been in the finals now.",
+          "right": "But for his mistake, the team would be in the finals now.",
+          "why": {
+            "en": "With a present result (`now`) use `would + base verb`, not `would have + V3`.",
+            "ru": "Для результата в настоящем нужно would + базовая форма, а не would have + V3."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 mixed conditionals are a subtle instrument for complex causality, psychological analysis and rhetoric; you move between time axes freely.\n\nTriple-layered counterfactuals: build sentences that span several frames at once — `Had the company diversified a decade ago, it would now be dominating the market, and the current restructuring would not have been necessary` (past condition → present consequence → avoided past). Holding all three coherent is the highest-level skill.\n\nPolitical and philosophical discourse leans on mixed forms to argue about alternative histories: `Had leaders heeded the warnings of the last generation, we would be living in a more just society.`\n\nCompression and ellipsis: the condition is often implied — `A word of warning, and the mistake would be avoided now`; `More foresight, and she would still be in business`; `Given better timing, the deal would have closed and we would be celebrating.`\n\nNarrative prose uses them to comment on a character's fate (`Had Emma listened to her sister, she would not now be writing these letters...`). Refined modal choice carries meaning: `would` is categorical, `could` an unrealised possibility, `might` a probability, while `would still` stresses continuity and `would by now` pins it to this moment.\n\nInversion (`Had the treaty been honoured, this region would today enjoy stability`) and pragmatic markers combine smoothly: `Arguably, had the approach been different, we would be witnessing a different outcome.` In analytical writing mixed conditionals test a hypothesis by counter-to-fact reasoning: `If the theory were sound, earlier experiments would have confirmed it` — they did not. The deeper point is stylistic: choosing mixed over third or second keeps the past alive in the present, binding the two eras together.",
         "ru": "На C2 Mixed conditionals — тонкий инструмент выражения сложной каузальности, психологического анализа и риторики. Ты оперируешь временными осями свободно.\n\n**1. Triple-layered counterfactuals:**\nC2-писатель строит сложные конструкции с несколькими временными осями:\n- `Had the company diversified a decade ago, it would now be dominating the market, and the current restructuring would not have been necessary.`\n\nЗдесь три уровня: прошлое условие → настоящее последствие → прошлое избегание. Управление когерентностью — признак высшего уровня.\n\n**2. Philosophical и political uses:**\nMixed conditionals часто используются в политическом и философском дискурсе:\n- `Had leaders heeded the warnings of the last generation, we would be living in a more just society.`\n- `If humanity were more cooperative by nature, wars would have ended long ago.`\n\nЭто язык анализа альтернативных историй и утопий.\n\n**3. Compression и elision:**\nНа C2 mixed conditionals часто компрессированы:\n- `A word of warning, and the mistake would be avoided now.` — контекстуальный Mixed Type 1.\n- `More foresight, and she would still be in business.` — имплицитное условие.\n- `Given better timing, the deal would have closed and we would be celebrating.`\n\nЭти формы — признак стилистической зрелости.\n\n**4. Narrative use в литературе:**\nMixed conditionals позволяют писателям комментировать судьбу персонажей:\n- `Had Emma listened to her sister, she would not now be writing these letters from a distant convent.`\n- `If he were less proud, the fortune he lost that day would have been his to enjoy for decades.`\n\nЭто стандарт викторианской и современной литературной прозы.\n\n**5. Sophisticated модальный выбор:**\n- `would` — категоричное контрфактуальное заявление.\n- `could` — возможность, не актуализированная.\n- `might` — вероятность.\n- `would still` — подчёркивает продолжительность: `would still be working`.\n- `would by now` — акцент на текущем моменте: `would by now have retired`.\n\n**6. Inversion в литературном и академическом регистре:**\n- `Had the treaty been honoured, this region would today enjoy stability.`\n- `Were I less invested in the outcome, I would have walked away years ago.`\n- `Had it not been for the intervention of chance, the result would be markedly different.`\n\n**7. Interaction с pragmatic markers:**\nC2-говорящий использует хеджи, усилители и stance adverbs вместе с mixed:\n- `Arguably, had the approach been different, we would be witnessing a different outcome.`\n- `One might suggest that, if the culture were more transparent, the scandal would never have surfaced.`\n- `Frankly, had we known then what we know now, the decision would be different.`\n\n**8. Counter-to-fact reasoning в логических рассуждениях:**\nВ аналитической прозе mixed conditionals используются для проверки гипотез:\n- `If the theory were sound, earlier experiments would have confirmed it.` — проверка: они не подтвердили.\n- `Had the principle held universally, we would now observe its effects in these cases.` — принцип не универсален.\n\nЭто инструмент опровержения.\n\n**9. Переключение между mixed и obычными формами:**\nC2-писатель плавно переходит:\n- `If I had known — and believe me, I would know by now if anyone had told me — I would have warned you sooner, and you would be safe today.`\n\nТакая гибкость требует полного контроля над темпоральной логикой.\n\n**10. Stylistic и rhetorical impact:**\nВыбор mixed вместо Third или Second меняет восприятие:\n- Third `If I had saved, I would have been comfortable` — замкнутое прошлое.\n- Mixed `If I had saved, I would be comfortable now` — открытое настоящее, живая связь.\n\nMixed — это форма, которая **связывает эпохи**. На C2 ты используешь её, чтобы показать: прошлое живёт в настоящем."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Multi-frame: Had + subject + V3, ... would now + base verb, ... would not have + V3. Compressed: [implied condition], and + subject + would (have) ...",
+        "ru": "Несколько осей: Had + подлежащее + V3, ... would now + базовая форма, ... would not have + V3. Компрессия: [имплицитное условие], and + подлежащее + would (have) ..."
       },
       "examples": [
         {
           "en": "Had the accord been ratified in time, the region would today be recovering rather than rebuilding.",
-          "ru": "Если бы соглашение было ратифицировано вовремя, регион сегодня восстанавливался бы, а не отстраивался заново."
+          "ru": "Если бы соглашение было ратифицировано вовремя, регион сегодня восстанавливался бы, а не отстраивался заново.",
+          "note": {
+            "en": "inversion, past → present",
+            "ru": "инверсия, прошлое → настоящее"
+          }
         },
         {
           "en": "Were he less dogmatic, his colleagues would have accepted the proposal without hesitation.",
@@ -113,11 +175,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "One might argue that, had the institution been more accountable, public trust would not be in such decline.",
-          "ru": "Можно утверждать, что, будь учреждение более подотчётным, общественное доверие не находилось бы в таком упадке."
+          "ru": "Можно утверждать, что, будь учреждение более подотчётным, общественное доверие не находилось бы в таком упадке.",
+          "note": {
+            "en": "hedge + inversion",
+            "ru": "хедж + инверсия"
+          }
         },
         {
           "en": "A moment's pause, and the outcome would be entirely different today.",
-          "ru": "Минута размышления — и результат сегодня был бы совершенно иным."
+          "ru": "Минута размышления — и результат сегодня был бы совершенно иным.",
+          "note": {
+            "en": "compressed / elided condition",
+            "ru": "сжатое / эллиптичное условие"
+          }
         },
         {
           "en": "Had I possessed then the clarity I have now, the choices I regret would never have been made.",
@@ -127,9 +197,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Mixed conditionals связывают эпохи: прошлое условие → настоящее следствие или настоящее качество → прошлое действие. Это форма, показывающая, что прошлое живёт в настоящем."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Had the accord been ratified in time, the region would today have been recovering.",
+          "right": "Had the accord been ratified in time, the region would today be recovering.",
+          "why": {
+            "en": "When the result is present (`today`), keep `would + be`; `would have been` would push the result back into the past and break the mix.",
+            "ru": "При результате в настоящем (today) остаётся would + be, а не would have been."
+          }
+        },
+        {
+          "wrong": "If the theory was sound, earlier experiments would have confirmed it.",
+          "right": "If the theory were sound, earlier experiments would have confirmed it.",
+          "why": {
+            "en": "The present-condition half of a Type 2 mix takes the subjunctive `were` for a counter-to-fact state, not `was`.",
+            "ru": "В настоящем условии Типа 2 для нереального состояния используется сослагательное were, а не was."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "second-conditional",
+    "third-conditional",
+    "inversion",
+    "modal-perfect"
+  ],
+  "crossTopic": [
+    "adverbial-clauses-condition",
+    "modal-perfect",
+    "passive-perfect-tenses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "past condition",
+      "present result",
+      "present condition / quality",
+      "past result"
+    ]
+  }
 };

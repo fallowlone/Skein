@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "mixed-tenses",
   "title": {
-    "en": "",
+    "en": "Mixed Tenses",
     "ru": "Mixed Tenses"
   },
   "cefr": "B1",
@@ -15,32 +15,46 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Mixed tenses is not a separate tense. It is the skill of combining different tenses correctly inside one sentence or one story, so that the times of the actions line up logically.\n\nTwo past events. Use the Past Continuous for the background action that was already in progress and the Past Simple for the shorter event that interrupted it: I was reading when the phone rang. When one past action happened before another, mark the earlier one with the Past Perfect: When she arrived, we had already eaten.\n\nTime clauses about the future. After when, if, as soon as, until, before and after, use the Present Simple, not will. The will goes only in the main clause: I'll call you when I arrive (NOT when I will arrive); If it rains, we'll stay home (NOT If it will rain).\n\nReported speech. When you report what someone said, the tenses usually shift one step back: \"I am tired\" becomes She said she was tired; \"I went home\" becomes He said he had gone home; \"I will call\" becomes She said she would call.\n\nUse time adverbs as anchors. yesterday, last week, in 2015 pull the verb into the Past Simple. today, this week, so far often pair with the Present Perfect. now, at the moment go with the Present Continuous. tomorrow, next year point to the future.\n\nThe simplest approach: pick one main tense for the story (Past Simple for narration, Present Simple for description) and stay in it. Only switch when the meaning genuinely requires it.",
         "ru": "**Mixed tenses** — это не отдельное время, а умение **правильно сочетать разные времена** в одном предложении или рассказе.\n\n**Базовое правило:** времена должны согласовываться друг с другом по смыслу и по времени действия.\n\n**Два события в прошлом:**\n- `I was reading when the phone rang.` (Я читал — процесс; телефон зазвонил — событие.)\n- `When she arrived, we had already eaten.` (Она приехала; мы ели до этого.)\n\n**Two-clause stories:**\nПростые истории часто имеют два предложения с разными временами:\n- `I was walking home, and it started to rain.` (Past Continuous + Past Simple.)\n- `When I got home, she had already left.` (Past Simple + Past Perfect.)\n\n**Time clauses с будущим:**\nПосле `when`, `if`, `as soon as`, `until`, `before`, `after` — **Present Simple**, не `will`:\n- ✅ `I'll call you when I arrive.`\n- ❌ `I'll call you when I will arrive.`\n- ✅ `If it rains, we'll stay home.`\n- ❌ `If it will rain, we'll stay home.`\n\nЭто важное правило: будущее смысл — Present форма в придаточном, `will` — в главном.\n\n**Reported speech:**\nКогда передаёшь чужие слова, времена «сдвигаются» назад:\n- `\"I am tired.\"` → `She said she was tired.` (Present → Past)\n- `\"I went home.\"` → `He said he had gone home.` (Past → Past Perfect)\n- `\"I will call.\"` → `She said she would call.` (will → would)\n\n**Quote или narrative present:**\nВ живом рассказе иногда используют Present Simple даже про прошлое:\n- `So yesterday I'm in the café, and this guy comes up to me...`\n\nЭто разговорный приём для драматизации.\n\n**Простые time adverbs — якоря:**\n- `yesterday`, `last week`, `in 2015` → Past Simple.\n- `today`, `this week`, `so far` → часто Present Perfect.\n- `now`, `at the moment` → Present Continuous.\n- `tomorrow`, `next year` → будущее.\n\n**Типичные ошибки:**\n- Случайные скачки между временами: `I am walking home when it started to rain.` (Смешение Present и Past.)\n- `will` после when/if в будущем.\n- Забывать backshift в reported speech.\n- Present Perfect с конкретным прошлым: ❌ `I have seen him yesterday.`\n\n**Простой подход:** выбери основное время рассказа (Past Simple для историй, Present Simple для описаний) и придерживайся его. Отклонения должны быть мотивированы смыслом."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Past Continuous (background) + Past Simple (event) | main clause = will, time clause = Present Simple",
+        "ru": "Past Continuous (фон) + Past Simple (событие) | главное = will, придаточное = Present Simple"
       },
       "examples": [
         {
           "en": "When I arrived, she was cooking dinner.",
-          "ru": "Когда я пришёл, она готовила ужин."
+          "ru": "Когда я пришёл, она готовила ужин.",
+          "note": {
+            "en": "background + event",
+            "ru": "фон + событие"
+          }
         },
         {
           "en": "I'll tell him when I see him.",
-          "ru": "Я скажу ему, когда его увижу."
+          "ru": "Я скажу ему, когда его увижу.",
+          "note": {
+            "en": "future time clause",
+            "ru": "придаточное будущего"
+          }
         },
         {
           "en": "He said he had never been to Paris.",
-          "ru": "Он сказал, что никогда не был в Париже."
+          "ru": "Он сказал, что никогда не был в Париже.",
+          "note": {
+            "en": "reported speech",
+            "ru": "косвенная речь"
+          }
         },
         {
           "en": "I was walking home, and suddenly it started to rain.",
@@ -48,40 +62,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "By the time we got there, the show had already started.",
-          "ru": "Когда мы приехали, шоу уже началось."
+          "ru": "Когда мы приехали, шоу уже началось.",
+          "note": {
+            "en": "earlier past",
+            "ru": "более раннее прошлое"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После when, if для будущего — Present Simple, не will: when I arrive, not when I will arrive."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'll call you when I will arrive.",
+          "right": "I'll call you when I arrive.",
+          "why": {
+            "en": "After when/if for the future, use the Present Simple in the time clause, not will.",
+            "ru": "После when/if для будущего в придаточном — Present Simple, не will."
+          }
+        },
+        {
+          "wrong": "I have seen him yesterday.",
+          "right": "I saw him yesterday.",
+          "why": {
+            "en": "A finished time word like yesterday forces the Past Simple, not the Present Perfect.",
+            "ru": "Слово завершённого времени yesterday требует Past Simple, а не Present Perfect."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 tense mixing becomes more flexible: longer narratives, several time layers at once, and switches that are justified by meaning rather than accidental.\n\nLong narratives with several tenses. A single sentence can stack durations and events: I had been studying for three hours when she came home — Past Perfect Continuous for the duration up to a point, then Past Simple for the event. Keep the main storyline in the Past Simple, the background in the Past Continuous, and anything that happened earlier in the Past Perfect or Past Perfect Continuous.\n\nFull backshift in reported speech. Present Simple to Past Simple, Present Continuous to Past Continuous, Present Perfect to Past Perfect, Past Simple to Past Perfect, will to would, can to could, must to had to: \"I have been working on this for weeks\" becomes She said she had been working on it for weeks. Exception: if the statement is still true now, backshift is optional — He said the earth is round; She told me she lives in Berlin (if she still does).\n\nTime clauses, expanded. when + Past Simple with a Past Simple main clause (When I saw him, I waved); while + Past Continuous (While I was reading, he called); as soon as + Past Simple; by the time + Past Simple with a Past Perfect main clause (By the time I got there, they had left).\n\nMixing with modals. I should have called (past regret); He might be sleeping (present possibility); She must have forgotten (past deduction).\n\nThe core B2 discipline is consistency: every tense in a subordinate clause must relate logically to the tense in the main clause, and you should not jump between Present and Past without a reason.",
         "ru": "На B2 смешение времён становится более гибким: более длинные рассказы, несколько уровней времени, оправданные переключения.\n\n**Длинные повествования с несколькими временами:**\n- `I had been studying for three hours when she came home. We chatted for a while, and then I went back to work.`\n- Past Perfect Continuous (длительность до точки) → Past Simple (событие) → Past Simple (последовательность).\n\n**Narrative tense shifts — когда и зачем:**\n- Основная линия рассказа: Past Simple.\n- Фон: Past Continuous.\n- Более раннее событие: Past Perfect / Past Perfect Continuous.\n- Прямая речь персонажа: Present Simple или Past Simple.\n- Комментарий рассказчика о настоящем: Present Simple.\n\nПример:\n> `It was late. The wind was howling. Sarah had locked the doors hours earlier, but she didn't feel safe. \"I can still hear something outside,\" she thought. Now, looking back, I realise she was right to be afraid.`\n\n**Reported speech — полный backshift:**\n- Present Simple → Past Simple.\n- Present Continuous → Past Continuous.\n- Present Perfect → Past Perfect.\n- Past Simple → Past Perfect.\n- will → would.\n- can → could.\n- must → had to.\n\nПример:\n- Прямая: `\"I have been working on this for weeks.\"`\n- Косвенная: `She said she had been working on it for weeks.`\n\n**Исключения из backshift:**\n- Если утверждение остаётся верным в настоящем, backshift не обязателен:\n- `He said the earth is round.` (Не обязательно `was round` — это вечная истина.)\n- `She told me she lives in Berlin.` (Если она и сейчас там живёт.)\n\n**Present в story quotes:**\n- `In Chapter 3, Raskolnikov confesses to the crime.` (Литературный анализ — Present.)\n- `Dickens writes about poverty.` (О тексте и идеях автора — Present.)\n\n**Типичные structural errors B2:**\n- Random jumps между временами без причины.\n- Backshift inconsistency: `He said he is tired and he was sick.` (Смешаны Present и Past без логики.)\n- Present Perfect с finished time: `Yesterday I have eaten out.` — ошибка.\n- Sequence of tenses in complex sentences: время в придаточном должно соотноситься с временем в главном.\n\n**Time clauses — расширенные правила:**\n- `when` + Past Simple, главное в Past Simple: `When I saw him, I waved.`\n- `while` + Past Continuous, главное в Past Simple: `While I was reading, he called.`\n- `as soon as` + Past Simple, главное в Past Simple: `As soon as he arrived, we left.`\n- `by the time` + Past Simple, главное в Past Perfect: `By the time I got there, they had left.`\n\n**Смешение с модалами:**\n- `I should have called.` (Past modal — сожаление.)\n- `He might be sleeping.` (Present modal.)\n- `She must have forgotten.` (Past deduction.)\n\n**Коррекция typical mistakes:**\n- ❌ `I have seen him when I was in Paris.` → ✅ `I saw him when I was in Paris.`\n- ❌ `He said he is coming tomorrow.` (формально нужен backshift) → ✅ `He said he was coming tomorrow.`\n- ❌ `If I will have time, I will call.` → ✅ `If I have time, I will call.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Past Perfect (Continuous) earlier → Past Simple main → Past Continuous background; reported = one step back",
+        "ru": "Past Perfect (Continuous) раньше → Past Simple основное → Past Continuous фон; косвенная речь = на шаг назад"
       },
       "examples": [
         {
           "en": "By the time she realised the mistake, she had already sent the email.",
-          "ru": "Когда она осознала ошибку, она уже отправила письмо."
+          "ru": "Когда она осознала ошибку, она уже отправила письмо.",
+          "note": {
+            "en": "by the time + Past Perfect",
+            "ru": "by the time + Past Perfect"
+          }
         },
         {
           "en": "He told me he had been working on the project for months.",
-          "ru": "Он мне сказал, что работал над проектом несколько месяцев."
+          "ru": "Он мне сказал, что работал над проектом несколько месяцев.",
+          "note": {
+            "en": "reported, full backshift",
+            "ru": "косвенная речь, полный backshift"
+          }
         },
         {
           "en": "While I was waiting, I saw someone I hadn't seen for years.",
-          "ru": "Пока я ждал, я увидел того, кого не видел много лет."
+          "ru": "Пока я ждал, я увидел того, кого не видел много лет.",
+          "note": {
+            "en": "while + two past layers",
+            "ru": "while + два пласта прошлого"
+          }
         },
         {
           "en": "When the movie ends, we'll grab some dinner.",
-          "ru": "Когда фильм закончится, мы поедем поесть."
+          "ru": "Когда фильм закончится, мы поедем поесть.",
+          "note": {
+            "en": "future time clause",
+            "ru": "придаточное будущего"
+          }
         },
         {
           "en": "She said she was tired because she had been up all night.",
@@ -91,34 +143,68 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Backshift в reported speech: Present → Past, Past → Past Perfect, will → would."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I have seen him when I was in Paris.",
+          "right": "I saw him when I was in Paris.",
+          "why": {
+            "en": "A definite past frame (when I was in Paris) rules out the Present Perfect; use the Past Simple.",
+            "ru": "Определённый прошедший контекст (when I was in Paris) исключает Present Perfect — нужен Past Simple."
+          }
+        },
+        {
+          "wrong": "He said he is tired and he was sick.",
+          "right": "He said he was tired and he was sick.",
+          "why": {
+            "en": "Backshift must be consistent — do not mix reported Present and Past for the same speaker.",
+            "ru": "Backshift должен быть последовательным — нельзя смешивать Present и Past для одного говорящего."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 tense mixing becomes a matter of style. You consciously decide when to keep a tense, when to shift it, and when to layer several together.\n\nHistorical present. In literary and academic analysis the Present is used even about the past: Hamlet hesitates, and the moment passes; In 1453, Constantinople falls. Choose one register and stay in it — flipping between Past and historical Present without motivation reads as clumsy.\n\nAuthor stance. Separate the work, which still acts on the reader, from the biographical fact: Orwell warns us against totalitarianism (Present) versus Orwell wrote 1984 in 1948 (Past).\n\nComplex time clauses and conditionals. I will have finished by the time you arrive (Future Perfect + Present Simple); Had I known, I would have come (Past Perfect with inversion); If I had studied harder, I would be a lawyer now (mixed conditional — past cause, present result).\n\nReported speech, subtle choices. Backshift is usually neutral (He said the earth was round), but you may keep the Present for an eternal truth (He said the earth is round). Whether you say She said she lives in Berlin or She said she lived in Berlin signals whether the statement is still true — so the choice carries information.\n\nNarrative past with Perfect layering. She walked into the room (Past Simple, main line) where she had spent her childhood (Past Perfect, earlier). Nothing had changed since she left. In academic reporting, use the Present for general conclusions (The study shows that...), the Past Simple for specific methods (We administered the test to 50 participants), and the Present Perfect for the field as a whole (Research has shown that...).\n\nTypical C1 errors are inconsistent historical present, wrong backshift when a situation is still current, and overusing the Past Perfect where the sequence is already clear.",
         "ru": "На C1 смешение времён становится частью стилистики. Ты сознательно выбираешь, когда оставить, когда сместить, когда смешать.\n\n**1. Historical present:**\nВ литературном и академическом анализе используется Present даже про прошлое:\n- `Hamlet hesitates, and the moment passes.` (Литературный анализ.)\n- `In 1453, Constantinople falls.` (Исторический живой стиль.)\n\nВажно: последовательно выбирай один регистр. Переключение между Past и Historical Present без мотивации звучит неуклюже.\n\n**2. Author stance:**\n- `Orwell warns us against totalitarianism.` (Present — его текст всё ещё действует.)\n- `Orwell wrote 1984 in 1948.` (Past — биографический факт.)\n\nЭти два плана нужно разделять.\n\n**3. Free indirect discourse:**\nВ современной прозе мысли персонажа часто передаются без кавычек, смешивая времена:\n- `He stood at the window. The world was cold. Nothing would ever be right again. He lit another cigarette.`\n\nBackshift соблюдается (`would` вместо `will`), но внутреннее состояние персонажа передаётся без явной границы с внешним повествованием.\n\n**4. Complex time clauses:**\n- `I will have finished by the time you arrive.` (Future Perfect + Present Simple.)\n- `Had I known, I would have come.` (Past Perfect + would have — инверсия.)\n- `If I had studied harder, I would be a lawyer now.` (Mixed conditional — прошлое action, настоящее result.)\n\n**5. Reported speech — subtle choices:**\n- Вечные истины: Present можно сохранить: `He said the earth is round.`\n- Но обычно backshift: `He said the earth was round.` — нейтрально.\n- Если действие продолжается: `She said she lives in Berlin` (всё ещё живёт) vs `She said she lived in Berlin` (возможно, уже не живёт).\n\nВыбор несёт информацию о временной верности утверждения.\n\n**6. Narrative past + Perfect layering:**\n- `She walked into the room where she had spent her childhood. Nothing had changed since she left.`\n- Past Simple (walked) — основная линия.\n- Past Perfect (had spent, had changed) — более ранние события.\n- Past Simple (left) — ещё одна точка.\n\n**7. Sequence of tenses в сложных условиях:**\n- `If he had listened, he would have known that the problem had already existed.` (3-й conditional + Past Perfect — глубокая ретроспектива.)\n- `Suppose we accepted the offer. Would we be happier today?` (2-й conditional с настоящим результатом.)\n\n**8. Academic и reporting conventions:**\n- Present: для выводов и общих утверждений. `The study shows that...`\n- Past Simple: для конкретных методов и экспериментов. `We administered the test to 50 participants.`\n- Present Perfect: для области исследований. `Research has shown that...`\n- Past Perfect: для сравнения исследований разных эпох.\n\n**9. Typical C1 errors:**\n- Непоследовательность в historic present: начал в Past, переключился на Present без мотивации.\n- Неправильный backshift в reported speech, когда ситуация ещё актуальна.\n- Смешение academic regristов: статистика в Past, выводы в Present — правильно; смешение нарушает ритм.\n- Слишком много Past Perfect там, где последовательность ясна без него.\n\n**10. Exam focus:**\nНа C1-экзаменах (CAE, IELTS 7+) тестируются: conditional sentences, reported speech, time clauses, narrative past coherence."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "register-driven: Present (analysis/truth) vs Past (history/biography); Past Perfect layers under Past Simple line",
+        "ru": "выбор по регистру: Present (анализ/истина) vs Past (история/биография); Past Perfect под линией Past Simple"
       },
       "examples": [
         {
           "en": "Dickens reminds us that injustice breeds resentment, a theme he developed throughout his career.",
-          "ru": "Диккенс напоминает нам, что несправедливость порождает негодование — тема, которую он развивал всю свою карьеру."
+          "ru": "Диккенс напоминает нам, что несправедливость порождает негодование — тема, которую он развивал всю свою карьеру.",
+          "note": {
+            "en": "historical present + Past",
+            "ru": "historical present + Past"
+          }
         },
         {
           "en": "Had she been informed earlier, she would have acted differently.",
-          "ru": "Если бы её проинформировали раньше, она бы повела себя иначе."
+          "ru": "Если бы её проинформировали раньше, она бы повела себя иначе.",
+          "note": {
+            "en": "inverted 3rd conditional",
+            "ru": "инвертированный 3-й conditional"
+          }
         },
         {
           "en": "Research shows that reading improves cognition; earlier studies had suggested the same.",
-          "ru": "Исследования показывают, что чтение улучшает когнитивные функции; ранние работы предполагали то же самое."
+          "ru": "Исследования показывают, что чтение улучшает когнитивные функции; ранние работы предполагали то же самое.",
+          "note": {
+            "en": "academic register layering",
+            "ru": "академический регистр, наслоение"
+          }
         },
         {
           "en": "The witness claimed he had not seen the defendant before the incident.",
-          "ru": "Свидетель утверждал, что не видел подсудимого до инцидента."
+          "ru": "Свидетель утверждал, что не видел подсудимого до инцидента.",
+          "note": {
+            "en": "reported speech, backshift",
+            "ru": "косвенная речь, backshift"
+          }
         },
         {
           "en": "By the time the book ends, the protagonist has understood what the reader has suspected all along.",
@@ -128,30 +214,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В обсуждении текста — Present; в обсуждении автора и эпохи — Past. Разделяй регистры."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Hamlet hesitates, and then the moment passed.",
+          "right": "Hamlet hesitates, and the moment passes.",
+          "why": {
+            "en": "Once you choose the historical present for analysis, keep it; do not drop back into the Past mid-sentence.",
+            "ru": "Выбрав historical present для анализа, держись его; не переходи в Past посреди предложения."
+          }
+        },
+        {
+          "wrong": "She walked in and saw that nothing changed since she left.",
+          "right": "She walked in and saw that nothing had changed since she left.",
+          "why": {
+            "en": "An event that precedes the narrative past needs the Past Perfect to mark the earlier time.",
+            "ru": "Событие, предшествующее повествовательному прошлому, требует Past Perfect для более раннего времени."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 tense mixing is an instrument of high stylistic competence. In advanced prose and journalism, tenses are switched deliberately for effect.\n\nTense orchestration in fiction. Modern authors blend tenses within a single scene: main action in the Past, direct speech in the Present, retrospection in the Past Perfect, and universal truths in the Present. She opened the letter. The words were familiar; she had read them a hundred times. \"You never understood me,\" he had written. He was right. Some things never change.\n\nJournalistic conventions. Headlines use the Present Simple (Minister resigns); the lead uses the Past Simple or Present Perfect (Police have arrested a suspect); the body runs in the Past Simple with the Past Perfect for background; closing commentary returns to the Present.\n\nEvidentiality through tense. He claims the earth is flat (Present — the speaker distances themselves, or is neutral/ironic); He claimed the earth was flat (neutral backshift); He is claiming the earth is flat (emphasis on the ongoing assertion).\n\nAdvanced sequence of tenses. She was going to tell him that she had known all along, but she didn't (future-in-the-past + Past Perfect + Past Simple); He would have said that no one had ever doubted him, had he been asked (conditional perfect + Past Perfect + conditional inversion).\n\nRhetorical shifts for force. You think he wouldn't have helped? He would have. He did (second to third conditional to Past Simple). Imagine you're there. The wind is cold. You realise: you've been here before.\n\nNear-native mastery shows in seamless transitions the reader does not notice, in every switch being motivated, in the chosen genre's register being respected, and in the ability to orchestrate several time planes at once — the author's now, the era of the events, the character's inner world, and the eternal truths.",
         "ru": "На C2 смешение времён — инструмент высокой стилистической компетенции. В продвинутой прозе и журналистике времена переключаются сознательно для эффекта.\n\n**1. Tense orchestration в advanced fiction:**\nСовременные авторы часто смешивают времена внутри одной сцены:\n- Основное действие в Past.\n- Прямая речь в Present.\n- Внутренний монолог в Past или смешанном.\n- Ретроспекция в Past Perfect.\n- Универсальные истины — Present (persistent truths).\n\nПример:\n> `She opened the letter. The words were familiar; she had read them a hundred times. \"You never understood me,\" he had written. He was right. Some things never change.`\n\n**2. Journalistic conventions:**\n- Headlines: Present Simple (`Minister resigns`).\n- Lead paragraph: Past Simple или Present Perfect (`Police have arrested a suspect`).\n- Body: Past Simple, Past Perfect для предыстории.\n- Quotes: Past Simple introduction + prямой Present.\n- Ending commentary: Present Simple, Present Perfect.\n\nЭтот конвенциональный поток нужно соблюдать.\n\n**3. Shifted reporting and evidentiality:**\n- `He claims the earth is flat.` (Present — говорящий не разделяет; ирония или нейтральность.)\n- `He claimed the earth was flat.` (Past — нейтральный backshift.)\n- `He is claiming the earth is flat.` (Present Continuous — акцент на текущем утверждении.)\n\n**4. Advanced sequence of tenses:**\n- `She was going to tell him that she had known all along, but she didn't.` (Future in the past + Past Perfect + Past Simple.)\n- `He would have said that no one had ever doubted him, had he been asked.` (Conditional Perfect + Past Perfect + conditional inversion.)\n\n**5. Rhetorical tense shifts for effect:**\n- `You think he wouldn't have helped? He would have. He did.` (Second conditional → Third conditional → Past Simple.)\n- `Imagine you're there. The wind is cold. You realise: you've been here before.` (Present Simple → Present Continuous → Present Perfect.)\n\nТакие переходы придают ораторскую силу.\n\n**6. Historic present in academic prose:**\n- `Kant argues that...` (Академический анализ философа в Present.)\n- `Kant argued that...` (Биографический или исторический контекст.)\n- Смешение: `Kant, writing in the late 18th century, argued for...` (Past Continuous для исторического контекста + Past Simple для содержания.)\n\n**7. Complex backshift с modals:**\n- `She said he might have been lying.` (Present: he might be lying.)\n- `They wondered if it could have been prevented.` (Present: could it be prevented?)\n- `I thought you would have left by now.` (Ожидание в прошлом относительно «сейчас».)\n\n**8. Multiple-layer conditionals:**\n- `If he had said what he thought, everything would be different now, and we would have avoided the crisis that has been unfolding for years.` — Third + Mixed + Past Perfect + Present Perfect Continuous.\n\nЭто техническое упражнение, редко нужно, но показывает владение.\n\n**9. Common near-native errors:**\n- Смешение регистров (journalism + academic) без мотивации.\n- Непоследовательный нарративный present.\n- Избыточный Past Perfect там, где Past Simple достаточен.\n- Неправильное согласование в сложных reported speech с множественными уровнями.\n\n**10. Stylistic diagnostic:**\nНа C2 владение смешением времён проявляется в:\n- Плавности переходов, которые читатель не замечает.\n- Мотивированности каждого переключения.\n- Соблюдении регистра выбранного жанра.\n- Умении оркестрировать несколько временных планов одновременно (сейчас автор, эпоха события, внутренний мир персонажа, вечные истины).\n\nЭто вершина грамматической и стилистической зрелости."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "deliberate multi-plane shifts: narrative Past + Present speech/truth + Past Perfect retrospection + future-in-the-past",
+        "ru": "сознательные многоплановые переключения: Past повествования + Present речи/истины + Past Perfect ретроспекция + future-in-the-past"
       },
       "examples": [
         {
           "en": "By the time the narrator returns to the city where he had grown up, everything he remembers has vanished.",
-          "ru": "К тому моменту, когда рассказчик возвращается в город, где вырос, всё, что он помнит, исчезает."
+          "ru": "К тому моменту, когда рассказчик возвращается в город, где вырос, всё, что он помнит, исчезает.",
+          "note": {
+            "en": "historic present + layered past",
+            "ru": "historic present + наслоённое прошлое"
+          }
         },
         {
           "en": "Had she known what he was going to do, she would have warned the others before it was too late.",
-          "ru": "Знай она, что он собирается сделать, она бы предупредила остальных, пока не стало слишком поздно."
+          "ru": "Знай она, что он собирается сделать, она бы предупредила остальных, пока не стало слишком поздно.",
+          "note": {
+            "en": "inverted conditional + Past Perfect",
+            "ru": "инверсия + Past Perfect"
+          }
         },
         {
           "en": "Kant, writing in the late 18th century, argues that reason is universal — a claim that has been debated ever since.",
-          "ru": "Кант, писавший в конце 18 века, утверждает, что разум универсален — это утверждение с тех пор является предметом дискуссий."
+          "ru": "Кант, писавший в конце 18 века, утверждает, что разум универсален — это утверждение с тех пор является предметом дискуссий.",
+          "note": {
+            "en": "author stance, mixed planes",
+            "ru": "позиция автора, смешанные планы"
+          }
         },
         {
           "en": "The witness maintained that he had not been present when the events had taken place.",
@@ -159,15 +275,55 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "You think she would have stayed silent? She wouldn't have. She didn't.",
-          "ru": "Думаешь, она промолчала бы? Не промолчала бы. Не промолчала."
+          "ru": "Думаешь, она промолчала бы? Не промолчала бы. Не промолчала.",
+          "note": {
+            "en": "rhetorical conditional shift",
+            "ru": "риторический сдвиг conditional"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Продвинутая проза оркеструет несколько временных планов: эпоха события, эпоха повествования, вечные истины."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Police arrests a suspect after the bank was robbed last night.",
+          "right": "Police have arrested a suspect after a robbery at the bank last night.",
+          "why": {
+            "en": "Mixing a headline-style Present with a finished past frame breaks journalistic register; keep the report consistent.",
+            "ru": "Смешение Present в стиле заголовка с завершённым прошлым нарушает журналистский регистр — держи отчёт последовательным."
+          }
+        },
+        {
+          "wrong": "She was going to tell him that she knew all along, but she didn't.",
+          "right": "She was going to tell him that she had known all along, but she didn't.",
+          "why": {
+            "en": "An action completed before the past reference point takes the Past Perfect, not the Past Simple.",
+            "ru": "Действие, завершённое до прошедшей точки отсчёта, требует Past Perfect, а не Past Simple."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "past-perfect-simple",
+    "past-continuous",
+    "present-perfect-simple",
+    "reported-statements"
+  ],
+  "crossTopic": [
+    "backshift-of-tenses",
+    "adverbial-clauses-time",
+    "first-conditional",
+    "third-conditional"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "earlier event",
+      "main event",
+      "now",
+      "future"
+    ]
+  }
 };

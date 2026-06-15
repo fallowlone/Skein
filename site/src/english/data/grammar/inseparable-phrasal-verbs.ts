@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "inseparable-phrasal-verbs",
   "title": {
-    "en": "",
+    "en": "Inseparable Phrasal Verbs",
     "ru": "Inseparable Phrasal Verbs"
   },
   "cefr": "B1",
@@ -15,19 +15,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "phrasal-verbs",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "An inseparable phrasal verb is one where the verb and its particle act as a single unit: you can never push the object between them. The object always comes after the particle, whether it is a noun or a pronoun. So you say look after the children and look after them, but never look the children after or look them after. This is the opposite of separable phrasal verbs (turn the light off), where a short object can sit in the middle. A useful rule of thumb is that a verb followed by a true preposition is almost always inseparable: look at, listen to, wait for, depend on, talk about. The reliable way to know which verbs are inseparable is to learn each one as a fixed chunk together with its particle, and good dictionaries mark them as [T insep]. The most common error for Russian speakers is dropping the particle entirely, because the equivalent Russian verb takes a direct case: English keeps the preposition, so it is always wait for the bus and depend on her, never wait the bus or depend her.",
         "ru": "**Inseparable phrasal verbs** — это такие, между которыми **нельзя** вставить object. Глагол и частица всегда вместе.\n\n**Структура:** verb + particle + object.\nНикаких вставок. Object всегда после particle.\n\n**Частые inseparable phrasal verbs на B1:**\n- `look after` — заботиться о: `She looks after the children.` / `She looks after them.`\n- `look for` — искать: `I'm looking for my keys.`\n- `look like` — выглядеть как: `She looks like her mother.`\n- `get on` — ладить (with); садиться (транспорт): `I get on with my sister.`\n- `get off` — выходить (транспорт): `Get off the bus at the next stop.`\n- `get in / out of` — войти / выйти (car): `Get in the car.`\n- `run out of` — заканчиваться: `We ran out of milk.`\n- `come across` — наткнуться: `I came across an old photo.`\n- `take after` — быть похожим на (родителя): `She takes after her father.`\n- `go through` — пройти через (опыт): `He went through a tough time.`\n- `stand for` — символизировать, поддерживать: `USA stands for...`\n- `wait for` — ждать: `I'm waiting for the bus.`\n- `listen to` — слушать: `Listen to me!`\n- `look at` — смотреть на: `Look at this picture.`\n- `talk about` — говорить о: `Let's talk about it.`\n- `depend on` — зависеть от: `It depends on you.`\n\n**Ключевое правило:** местоимение идёт ПОСЛЕ particle, не до:\n- ✓ `Look after him.`\n- ✗ `Look him after.`\n- ✓ `Listen to me.`\n- ✗ `Listen me to.`\n\n**Как отличить inseparable от separable?**\nТолько запоминанием. Как правило:\n- Verb + preposition (look at, listen to, wait for, depend on) — inseparable.\n- Verb + particle/adverb (turn on, pick up, put off) — часто separable.\n\nГраница не идеальна. Словари (например, Cambridge Phrasal Verbs Dictionary) указывают [T sep] или [T insep].\n\n**Частая ошибка русскоговорящего:** пропускать preposition.\n- ✗ `I'm waiting the bus.`\n- ✓ `I'm waiting for the bus.`\n- ✗ `Depend her.`\n- ✓ `Depend on her.`\n\nРусский «ждать + accusative» (жду автобус). Английский всегда `wait FOR`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + particle + object (+ pronoun also goes after the particle)",
+        "ru": "глагол + частица + дополнение (местоимение тоже идёт после частицы)"
       },
       "examples": [
         {
@@ -36,15 +38,27 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She takes after her mother.",
-          "ru": "Она похожа на свою мать."
+          "ru": "Она похожа на свою мать.",
+          "note": {
+            "en": "resemble (parent)",
+            "ru": "быть похожим на родителя"
+          }
         },
         {
           "en": "We ran out of bread.",
-          "ru": "У нас закончился хлеб."
+          "ru": "У нас закончился хлеб.",
+          "note": {
+            "en": "run out of",
+            "ru": "закончиться"
+          }
         },
         {
           "en": "He doesn't get on with his boss.",
-          "ru": "Он не ладит со своим начальником."
+          "ru": "Он не ладит со своим начальником.",
+          "note": {
+            "en": "get on with",
+            "ru": "ладить с"
+          }
         },
         {
           "en": "I came across this book in the library.",
@@ -54,26 +68,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Inseparable = нельзя разделить. Object всегда ПОСЛЕ particle: look after them, не *look them after."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Look the children after.",
+          "right": "Look after the children. / Look after them.",
+          "why": {
+            "en": "Look after is inseparable, so the object can never split the verb and particle.",
+            "ru": "Look after неразделимо, поэтому дополнение нельзя вставлять между глаголом и частицей."
+          }
+        },
+        {
+          "wrong": "I'm waiting the bus.",
+          "right": "I'm waiting for the bus.",
+          "why": {
+            "en": "Wait keeps its preposition for; do not drop it as Russian drops the equivalent.",
+            "ru": "После wait сохраняется предлог for; его нельзя опускать, как опускается в русском."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you expand your stock of inseparable phrasal verbs and start meeting figurative meanings: come across as confident, put up with the noise, run into an old friend, look down on someone, count on me, deal with a problem, get over a breakup. A key new pattern is the inseparable verb followed by a gerund, where the final particle is a preposition rather than an infinitive marker, so the next verb must take -ing: look forward to seeing you, feel like eating, insist on paying, object to working late, get used to driving here. A quick test tells the preposition from the infinitive marker: try replacing the particle plus its object with it. Look forward to it works, which proves to is a preposition, so you need an -ing form after it (looking forward to seeing). With try to it does not work, which proves to is an infinitive marker (try to see). Many of these verbs are also polysemous: get over can mean recover from an illness, survive an emotional blow, or physically climb a barrier, and come over can mean visit or wash over you as a feeling. The classic B2 mistake is treating an inseparable verb as separable, so write look after it, never look it after.",
         "ru": "На B2 расширяй словарь inseparable phrasal verbs.\n\n**Новые inseparable:**\n- `come across` — 1) наткнуться, 2) показаться (impression): `She comes across as confident.`\n- `count on` — рассчитывать на: `You can count on me.`\n- `deal with` — иметь дело с: `I can deal with this.`\n- `fall for` — влюбиться / попасться на уловку: `I fell for her. / I fell for the scam.`\n- `feel like` — хотеть (+ gerund): `I feel like eating.`\n- `get over` — пережить, преодолеть: `He got over the breakup.`\n- `get through` — пройти (трудное): `She got through the exam.`\n- `go for` — выбирать, стремиться к: `I'll go for the chicken.`\n- `go with` — подходить (цвет): `This tie goes with that shirt.`\n- `look into` — изучать, расследовать: `The police are looking into the case.`\n- `look up to` — уважать: `I look up to my teacher.`\n- `look down on` — презирать: `Don't look down on her.`\n- `look forward to` — предвкушать (+ gerund): `I look forward to seeing you.`\n- `put up with` — мириться с: `I can't put up with the noise.`\n- `run into` — случайно встретить: `I ran into Tom yesterday.`\n- `see about` — заняться (делом): `I'll see about that tomorrow.`\n- `stand by` — поддерживать: `I'll stand by you.`\n\n**Inseparable verb + gerund patterns:**\n- `look forward to + -ing`: `I'm looking forward to meeting you.`\n- `feel like + -ing`: `I don't feel like going.`\n- `insist on + -ing`: `He insisted on paying.`\n- `object to + -ing`: `She objected to working late.`\n- `get used to + -ing`: `I got used to driving here.`\n- `give up + -ing` (actually separable, but often appears post-verb): `She gave up smoking.`\n\n**Private: `to` как предлог, не инфинитив:**\nТрюк для идентификации — замени `to + something` на `to it`. Если работает — это предлог + -ing после.\n- `look forward to seeing` — `look forward to it` ✓ — to = preposition.\n- `try to see` — `try to it` ✗ — to = infinitive marker.\n\n**Polysemy (множество значений):**\n- `get over`: 1) пережить (emotion), 2) перелезть через (barrier), 3) donnere to, 4) recover from illness.\n- `go over`: 1) пересмотреть, 2) перейти куда-то, 3) быть принятым (идея): `My joke didn't go over well.`\n- `come over`: 1) зайти в гости, 2) нахлынуть (feeling): `A strange feeling came over me.`\n\n**Частая ошибка B2:** разделять inseparable.\n- ✗ `Look it after.` (для look after.)\n- ✓ `Look after it.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + particle + object  /  verb + preposition-particle + -ing (look forward to seeing)",
+        "ru": "глагол + частица + дополнение / глагол + частица-предлог + -ing (look forward to seeing)"
       },
       "examples": [
         {
           "en": "I can't put up with this noise any longer.",
-          "ru": "Я больше не могу терпеть этот шум."
+          "ru": "Я больше не могу терпеть этот шум.",
+          "note": {
+            "en": "put up with",
+            "ru": "мириться с"
+          }
         },
         {
           "en": "She comes across as very knowledgeable.",
-          "ru": "Она производит впечатление очень осведомлённой."
+          "ru": "Она производит впечатление очень осведомлённой.",
+          "note": {
+            "en": "come across as",
+            "ru": "производить впечатление"
+          }
         },
         {
           "en": "We ran into an old friend at the airport.",
@@ -81,7 +121,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I'm looking forward to meeting your parents.",
-          "ru": "Я с нетерпением жду встречи с твоими родителями."
+          "ru": "Я с нетерпением жду встречи с твоими родителями.",
+          "note": {
+            "en": "+ gerund",
+            "ru": "+ герундий"
+          }
         },
         {
           "en": "Don't look down on people who are different.",
@@ -91,17 +135,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Look forward TO + gerund: to здесь предлог, поэтому после него -ing: I look forward to SEEING (не to see)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Look it after.",
+          "right": "Look after it.",
+          "why": {
+            "en": "Inseparable verbs keep the pronoun after the particle, the same as a full noun.",
+            "ru": "У неразделимых глаголов местоимение остаётся после частицы, как и существительное."
+          }
+        },
+        {
+          "wrong": "I look forward to meet you.",
+          "right": "I look forward to meeting you.",
+          "why": {
+            "en": "Here to is a preposition, so a gerund follows: look forward to meeting.",
+            "ru": "Здесь to — предлог, поэтому после него герундий: look forward to meeting."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you handle subtle distinctions and a more formal, less transparent layer of inseparable verbs: abide by the rules, adhere to principles, call for action, cope with stress, dispense with formalities, draw on experience, embark on a project, live up to expectations, make do with what you have, resort to violence, revert to an old method, stick to the plan, subscribe to a view. Grammarians sometimes split these into true phrasal verbs (particle plus object) and prepositional verbs (preposition plus object), but for learners both behave identically: the object follows the whole unit and cannot break it. Inseparable verbs also passivise cleanly, with the preposition stranded at the end: this matter must be dealt with, she is widely looked up to, the noise could not be put up with. Watch the preposition itself, since a change of preposition changes the meaning: agree with a person, agree to a proposal, agree on a topic; depend on (not depend from, a common L1 slip). Register matters too: rely upon is a shade more formal than rely on, and one root verb takes several particles for unrelated meanings, as in bear with me (be patient), bear out (confirm, separable), and bear down on (approach with pressure).",
         "ru": "На C1 различай subtle nuances и продвинутые inseparable structures.\n\n**Prepositional verb vs phrasal verb:**\n- `look at` (look = action, at = preposition for direction): technically phrasal verb.\n- Некоторые грамматисты различают \"phrasal verb\" (particle + object after) vs \"prepositional verb\" (preposition + object).\n- В практике обе категории behave similarly для EFL — inseparable.\n\n**Advanced inseparable phrasal verbs:**\n- `abide by` — соблюдать: `abide by the rules`.\n- `adhere to` — придерживаться: `adhere to principles`.\n- `bank on` — рассчитывать (стронг): `You can bank on her honesty.`\n- `call for` — требовать: `This situation calls for action.`\n- `come by` — раздобыть / зайти: `Hard to come by / Come by tomorrow.`\n- `come to (a conclusion)` — прийти к: `We came to a decision.`\n- `cope with` — справляться с: `cope with stress`.\n- `dispense with` — обходиться без: `We can dispense with formalities.`\n- `draw on` — использовать (ресурс): `She draws on her experience.`\n- `embark on` — начать, предпринять: `embark on a journey / project`.\n- `enlarge on / upon` — развернуть (тему): `Could you enlarge on that point?`\n- `lean on` — рассчитывать / давить: `I lean on my friends. / Don't lean on him for a decision.`\n- `live up to` — оправдать (ожидания): `The film lived up to the hype.`\n- `make do with` — обходиться чем-то: `We'll make do with what we have.`\n- `rely on / upon` — полагаться на.\n- `resort to` — прибегнуть к (extreme measure): `resort to violence`.\n- `revert to` — вернуться к: `revert to the old method`.\n- `stick to` — придерживаться: `stick to the plan`.\n- `subscribe to` — подписываться / разделять взгляды: `subscribe to a magazine / subscribe to that view`.\n\n**Passive voice works with inseparable:**\n- `This matter must be dealt with.` (from 'deal with'.)\n- `She is respected / looked up to.`\n- `The noise cannot be put up with.`\n- Preposition stays at end; subject moves to front.\n\n**Common C1 errors:**\n- Using wrong preposition: `agree with` (a person / opinion) vs `agree to` (a proposal) vs `agree on` (topic of agreement).\n- Dropping preposition: ✗ `explain me`, ✓ `explain to me`.\n- Wrong preposition from L1 interference: Russian «зависит от» = `depend on` (not `depend from`).\n\n**Register-sensitive choices:**\n- Formal: `rely upon / rely on`. Upon slightly more formal.\n- Formal: `depart from / deviate from`.\n- Informal: `stick with it / go along with it`.\n\n**Subtle meaning shift:**\n- `bear with me` — потерпи меня (just wait).\n- `bear out` — подтвердить (evidence bears out the claim) — separable.\n- `bear down on` — давить, приближаться: `The deadline is bearing down on us.`\n\nОдин корневой глагол, разные particles — разные meanings."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + be + past participle + stranded preposition  /  The matter must be dealt with",
+        "ru": "подлежащее + be + причастие II + предлог в конце — The matter must be dealt with"
       },
       "examples": [
         {
@@ -110,7 +172,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She drew on her years of experience to solve the problem.",
-          "ru": "Она использовала свои годы опыта, чтобы решить проблему."
+          "ru": "Она использовала свои годы опыта, чтобы решить проблему.",
+          "note": {
+            "en": "draw on = use",
+            "ru": "draw on = использовать"
+          }
         },
         {
           "en": "The company had to dispense with three senior managers.",
@@ -118,7 +184,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The film didn't live up to the critics' praise.",
-          "ru": "Фильм не оправдал похвалы критиков."
+          "ru": "Фильм не оправдал похвалы критиков.",
+          "note": {
+            "en": "live up to",
+            "ru": "оправдать ожидания"
+          }
         },
         {
           "en": "We'll have to make do with what we have.",
@@ -128,26 +198,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Passive возможен с inseparable phrasal verbs: The problem must be dealt with. Preposition остаётся в конце."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "This factor depends from the budget.",
+          "right": "This factor depends on the budget.",
+          "why": {
+            "en": "Depend always takes on in English; depend from is interference from another language.",
+            "ru": "Depend всегда требует on; depend from — интерференция из другого языка."
+          }
+        },
+        {
+          "wrong": "The matter must be dealt.",
+          "right": "The matter must be dealt with.",
+          "why": {
+            "en": "In the passive of an inseparable verb the preposition stays stranded at the end.",
+            "ru": "В пассиве неразделимого глагола предлог остаётся в конце предложения."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the work becomes pointillist: you pick the exact particle for a fine shade of meaning and you switch register at will. Minimal pairs hinge on a single particle, so time is running on (continuing) contrasts with time is running out (ending), and hold on, hold off and hold out mean wait, delay and resist. You also command noun-incorporating idioms (bring something to an end, put a stop to something, take issue with something) and fixed expressions (bring to light, come into play, do away with, stand up for, rise above). Particles carry recurring flavours that native speakers feel rather than recite: up signals completion (drink up, finish up), out signals distribution (hand out, spread out), through signals endurance (get through, see through), over signals survey or repetition (go over, look over). Context disambiguates, since he got over the fence is physical while he got over the breakup is emotional. The decisive C2 skill is register control: very informal phrasals (chicken out, goof up, fess up) never enter formal prose, while in academic and business writing a single Latinate verb is often preferred for gravitas, so look into becomes investigate, bring about becomes cause, come up with becomes devise, and come across (meet) becomes encounter. Mastery is knowing both registers and choosing deliberately.",
         "ru": "На C2 работа с phrasal verbs становится pointillist — точно выбирай particle для mini-meaning shifts.\n\n**Minimal pairs with particle switches:**\n- `run on` vs `run out of`: `Time is running on.` (continues) vs `Time is running out.` (ending).\n- `hold on` vs `hold off` vs `hold out`: wait / delay / resist.\n- `break into` vs `break in`: enter forcibly / begin interrupting.\n- `pass for` vs `pass as`: be mistaken for / be accepted as.\n\n**Complex inseparable with nominalization:**\n- `to bring something to an end` — завершить.\n- `to put a stop to something` — положить конец.\n- `to make allowance for something` — учесть.\n- `to take issue with something` — возразить.\n- Complex noun-incorporating idioms.\n\n**Particle as meaning modifier:**\n- `up` often signals completion, thoroughness: drink up, fill up, clean up.\n- `out` often signals extension or distribution: spread out, hand out, die out.\n- `off` often signals separation or completion: cut off, finish off, pay off.\n- `through` often signals endurance: get through, see through.\n- `over` often signals repetition or survey: go over, look over, run over.\n- Patterns are tendencies, not rules; native speakers feel them.\n\n**Fixed expressions:**\n- `come to pass` — случиться (archaic).\n- `bring to light` — выявить.\n- `come into play` — вступить в игру.\n- `do away with` — отменить, уничтожить.\n- `rise above` — превзойти (моральный смысл).\n- `stand up for / stand up to` — защищать / противостоять.\n\n**Ambiguity and context:**\n- `He got over the fence.` (физически перелез.)\n- `He got over the breakup.` (эмоционально пережил.)\n- Context needed for disambiguation; mistake can cause humor.\n\n**Register-ceiling phrasal verbs:**\nSome phrasal verbs are so informal they don't translate into academic / formal writing even for native speakers:\n- `chicken out` — струсить.\n- `goof up` — облажаться.\n- `fess up` — признаться.\n\nЭти строго разговорные; в формальном — other words.\n\n**Political / business jargon:**\n- `roll out` (a product, a plan) — запустить.\n- `ramp up` (production) — усилить.\n- `scale up / down` — расширить / сократить.\n- `hedge against` — страховать от.\n- Know domain-specific phrasal verb usage.\n\n**Stylistic avoidance:**\nВ очень высоком формальном регистре phrasal verbs часто заменяются single verbs:\n- `look into` → `investigate`.\n- `bring about` → `cause`.\n- `come up with` → `devise / propose`.\n- `put forward` → `propose / submit`.\n- `come across` (meet) → `encounter`.\n- Academic / business writing may prefer single-verb equivalents for precision and gravitas.\n\n**Multi-particle traps:**\n- `put up with it` — 3 elements inseparable from each other.\n- `look forward to seeing` — cannot rearrange.\n- Learn as chunks.\n\n**C2 decision framework:**\nЧем выше регистр, тем меньше phrasal verbs. Чем ниже — тем больше. Mastery = знание обоих registrов и умение переключаться."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "phrasal verb (informal) ↔ single Latinate verb (formal)  /  look into ↔ investigate",
+        "ru": "phrasal verb (разговорный) ↔ однословный латинский глагол (формальный) — look into ↔ investigate"
       },
       "examples": [
         {
           "en": "The CEO dispensed with the usual formalities and addressed employees directly.",
-          "ru": "Генеральный директор обошёлся без обычных формальностей и обратился к сотрудникам напрямую."
+          "ru": "Генеральный директор обошёлся без обычных формальностей и обратился к сотрудникам напрямую.",
+          "note": {
+            "en": "dispense with",
+            "ru": "обойтись без"
+          }
         },
         {
           "en": "His research draws upon decades of archival work.",
-          "ru": "Его исследование опирается на десятилетия архивной работы."
+          "ru": "Его исследование опирается на десятилетия архивной работы.",
+          "note": {
+            "en": "draw upon = formal",
+            "ru": "draw upon = формально"
+          }
         },
         {
           "en": "The committee resolved to dispense with the traditional procedure.",
@@ -155,7 +251,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We must abide by the terms of the agreement.",
-          "ru": "Мы должны соблюдать условия соглашения."
+          "ru": "Мы должны соблюдать условия соглашения.",
+          "note": {
+            "en": "abide by",
+            "ru": "соблюдать"
+          }
         },
         {
           "en": "The professor elaborated on his thesis with compelling examples.",
@@ -165,9 +265,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В formal writing consider: come up with → propose, bring about → cause, look into → investigate. Single-word equivalents звучат academic."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The audit committee will look into the discrepancy. (in a formal report)",
+          "right": "The audit committee will investigate the discrepancy.",
+          "why": {
+            "en": "In high-register prose the single Latinate verb is preferred over the phrasal verb for precision and gravitas.",
+            "ru": "В высоком регистре однословный латинский глагол предпочтительнее phrasal verb для точности и весомости."
+          }
+        },
+        {
+          "wrong": "The minister had to chicken out of the agreement.",
+          "right": "The minister had to back out of the agreement.",
+          "why": {
+            "en": "Chicken out is too colloquial for diplomatic register; back out of fits the neutral-formal level.",
+            "ru": "Chicken out слишком разговорно для дипломатического регистра; back out of подходит по уровню."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "separable-phrasal-verbs",
+    "three-word-phrasal-verbs",
+    "phrasal-verbs-formal-informal",
+    "common-phrasal-verb-groups-by-topic"
+  ],
+  "crossTopic": [
+    "prepositions-after-verbs",
+    "verb-plus-gerund",
+    "passive-present-simple",
+    "personal-pronouns"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "verb",
+      "particle",
+      "object"
+    ]
+  }
 };

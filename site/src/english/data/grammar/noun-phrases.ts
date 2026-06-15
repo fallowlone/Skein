@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "noun-phrases",
   "title": {
-    "en": "",
+    "en": "Noun Phrases",
     "ru": "Noun Phrases"
   },
   "cefr": "B1",
@@ -15,24 +15,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "nouns",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "A noun phrase (NP) is a head noun plus everything that describes it. The basic B1 pattern puts the modifiers in front of the noun (pre-modification): determiner + adjective(s) + noun. The determiner comes first and sets the noun up: an article (a, an, the), a possessive (my, your, his, her), a demonstrative (this, that, these, those), a quantifier (some, any, many, few, a lot of), or a number (one, two, three). After the determiner, adjectives follow a fixed order that English speakers keep without thinking: opinion, then size, then age, then colour, then origin, then material. So you say a beautiful old red French car (opinion, age, colour, origin), never a French red old beautiful car. Two rules cause most B1 errors. First, a noun normally takes only one main determiner: say my book, not the my book. Second, a singular countable noun needs a determiner, so say I have a car, not I have car. With plural nouns used for generalisations, use no article at all: Big dogs need more food. Keep your phrases clear — at B1, two or three words of description before the noun is plenty; if the phrase grows past five or six words, split it into another sentence.",
         "ru": "**Именная группа** (noun phrase, NP) — это существительное вместе со всеми словами, которые его описывают.\n\n**Основной шаблон (pre-modification):** `определитель + прилагательное + существительное`.\n\n**Определители (determiners):**\n- Артикли: `a`, `an`, `the`\n- Притяжательные: `my`, `your`, `his`, `her`\n- Указательные: `this`, `that`, `these`, `those`\n- Количественные: `some`, `any`, `many`, `few`, `a lot of`\n- Числительные: `one`, `two`, `three`\n\n**Порядок прилагательных (для B1 — упрощённый):**\nОбычно прилагательные ставятся в таком порядке:\n1. Мнение/оценка (`nice`, `beautiful`, `terrible`)\n2. Размер (`big`, `small`, `tall`)\n3. Возраст (`old`, `new`, `young`)\n4. Цвет (`red`, `blue`, `black`)\n5. Происхождение (`French`, `Russian`, `American`)\n6. Материал (`wooden`, `plastic`, `gold`)\n\nПример: `a beautiful old red French car` (оценка, возраст, цвет, происхождение).\n\n**Простые именные группы:**\n- `a book` — определитель + сущ.\n- `an old book` — определитель + прил. + сущ.\n- `my favourite book` — возможно два прилагательных.\n- `those three blue cars` — указательное + число + цвет + сущ.\n\n**Типичные ошибки B1:**\n- Неправильный порядок: `a red big car` → правильно `a big red car`.\n- Пропуск артикля: `I have car` → `I have a car`.\n- Двойной определитель: `the my book` → `my book` (нельзя оба).\n\n**Правило:** у одного существительного — один основной определитель. Нельзя `the my`, но можно `this book of mine` (другая конструкция).\n\n**Практические комбинации B1:**\n- `my new phone` (мой новый телефон)\n- `this old book` (эта старая книга)\n- `her best friend` (её лучший друг)\n- `some tired students` (какие-то уставшие студенты)\n- `three little kittens` (три маленьких котёнка)\n\nПопробуй сам собрать 5-10 таких фраз и проверь, что у тебя ровно один определитель перед прилагательными. Это основное умение B1 — строить ясные именные группы без лишних слов.\n\n**Внимание к артиклю:** если ты говоришь во множественном числе про обобщение, артикль не нужен совсем: `Big dogs need more food.` (без `the` в начале).\n\n**Простой тест:** посчитай слова в твоей именной группе. На B1 лучше держать NP в пределах 5-6 слов. Если получается больше — разбей на два предложения или используй предложную фразу `of`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "determiner + (opinion + size + age + colour + origin + material) adjective(s) + head noun",
+        "ru": "определитель + (оценка + размер + возраст + цвет + происхождение + материал) прилагательное(ые) + главное существительное"
       },
       "examples": [
         {
           "en": "She has a beautiful new dress.",
-          "ru": "У неё красивое новое платье."
+          "ru": "У неё красивое новое платье.",
+          "note": {
+            "en": "opinion + age",
+            "ru": "оценка + возраст"
+          }
         },
         {
           "en": "My old friend called yesterday.",
@@ -40,11 +46,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We bought three big red apples.",
-          "ru": "Мы купили три больших красных яблока."
+          "ru": "Мы купили три больших красных яблока.",
+          "note": {
+            "en": "number + size + colour",
+            "ru": "число + размер + цвет"
+          }
         },
         {
           "en": "That small wooden box is mine.",
-          "ru": "Та маленькая деревянная коробка моя."
+          "ru": "Та маленькая деревянная коробка моя.",
+          "note": {
+            "en": "demonstrative + material",
+            "ru": "указательное + материал"
+          }
         },
         {
           "en": "His best friend lives in Kazan.",
@@ -54,63 +68,127 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Порядок: определитель → размер → возраст → цвет → происхождение → материал → существительное."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "We bought three red big apples.",
+          "right": "We bought three big red apples.",
+          "why": {
+            "en": "Adjective order is fixed: size comes before colour.",
+            "ru": "Порядок прилагательных фиксирован: размер идёт перед цветом."
+          }
+        },
+        {
+          "wrong": "She showed me the my new dress.",
+          "right": "She showed me my new dress.",
+          "why": {
+            "en": "A noun takes only one main determiner — drop the article when a possessive is already there.",
+            "ru": "У существительного один основной определитель — убери артикль, если уже есть притяжательное."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you add post-modification — description that comes after the head noun — and combine it with the pre-modifiers you already know. The commonest post-modifiers are: a prepositional phrase (the book on the table, the key to success), a relative clause (the man who lives next door, the book that I bought yesterday), an infinitive (the first person to arrive, a good place to live), and a reduced relative clause, where you drop who/which/that + be. The reduced form is what makes B2 writing tighter: the woman standing at the door (from who is standing), the novel written by Tolstoy (from that was written). An -ing participle reduces an active clause; a past participle (V3) reduces a passive one. Punctuation marks a real meaning difference in relative clauses: defining clauses identify which one and take no commas (The book I bought is here); non-defining clauses add extra information and are set off by commas (This book, which I bought yesterday, is excellent). When you build a complex NP, fix the head noun first, then add modifiers to the left (determiner, adjectives) and to the right (prepositional phrases, participles, relative clauses), and check the reader can still find the centre of the phrase. Watch out for the dangling modifier — an -ing phrase whose subject is unclear, as in Walking down the street, the tree looked tall, where the tree is not walking.",
         "ru": "На B2 добавляем **post-modification** — описания, которые идут **после** существительного.\n\n**Предложные фразы после существительного:**\n- `the book on the table` (книга на столе)\n- `the man in the blue jacket` (мужчина в синей куртке)\n- `a story about courage` (рассказ о смелости)\n- `the key to success` (ключ к успеху)\n\n**Относительные клаузы (relative clauses):**\n- `the man who lives next door` (мужчина, который живёт по соседству)\n- `the book that I bought yesterday` (книга, которую я купил вчера)\n- `the place where we met` (место, где мы встретились)\n\n**Сокращённые относительные (reduced relatives):**\nЧасто относительную клаузу с `who/that + be` можно сократить:\n- `the woman (who is) standing at the door` → `the woman standing at the door`\n- `the book (that was) written by Tolstoy` → `the book written by Tolstoy`\n- `the students (who were) chosen for the team` → `the students chosen for the team`\n\nАктивное причастие (`-ing`) сокращает активную клаузу. Пассивное (`V3`) — пассивную.\n\n**Инфинитив после существительного:**\n- `the first person to arrive` (первый, кто прибыл)\n- `a book to read` (книга для чтения)\n- `a good place to live` (хорошее место для жизни)\n- `the next train to leave` (следующий поезд, который отправляется)\n\n**Сочетание pre- и post-modification:**\n- `a small old wooden box on the shelf that I found yesterday` — несколько слоёв модификации.\n\n**Типичные ошибки B2:**\n- Повисающий модификатор (dangling modifier): `Walking down the street, the tree looked tall.` — непонятно, кто идёт. Правильно: `Walking down the street, I thought the tree looked tall.`\n- Неправильный порядок нескольких модификаторов: лучше разбить на несколько предложений.\n\n**Запятые в относительных:**\n- Ограничительные (defining) — без запятых, важная информация: `The book I bought is here.`\n- Неограничительные (non-defining) — с запятыми, дополнительная информация: `This book, which I bought yesterday, is excellent.`\n\n**Комбинированные примеры B2:**\n- `a small wooden box on the shelf` (pre + post).\n- `the man wearing the blue shirt who is my neighbour` (два слоя post-modification).\n- `a recent study examining the effect of screen time on children` (модификатор с герундием).\n\n**Практический совет:** когда собираешь сложную NP, сначала определи главное слово, потом добавляй описания слева (определители, прилагательные) и справа (предложные фразы, причастия, относительные клаузы). Проверь, чтобы читатель легко мог найти центр фразы.\n\n**Порядок прилагательных — полное правило B2:**\n1. Мнение (nice, horrible)\n2. Размер (big, tiny)\n3. Возраст (old, new)\n4. Форма (round, square)\n5. Цвет (red, blue)\n6. Происхождение (French, Italian)\n7. Материал (wooden, plastic)\n8. Назначение (running, kitchen)\n\nПример: `a lovely little old round brown French wooden dining table` — формально это возможно, но в жизни такая цепочка редка. Обычно максимум 2-3 прилагательных."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "[determiner + adjective(s)] + HEAD + [prepositional phrase / relative clause / infinitive / reduced -ing or V3]",
+        "ru": "[определитель + прилагательное(ые)] + ГЛАВНОЕ + [предложная фраза / относительная клауза / инфинитив / сокращённое -ing или V3]"
       },
       "examples": [
         {
           "en": "The book on the shelf is mine.",
-          "ru": "Книга на полке — моя."
+          "ru": "Книга на полке — моя.",
+          "note": {
+            "en": "prepositional phrase",
+            "ru": "предложная фраза"
+          }
         },
         {
           "en": "She is the woman standing at the bus stop.",
-          "ru": "Это та женщина, что стоит на остановке."
+          "ru": "Это та женщина, что стоит на остановке.",
+          "note": {
+            "en": "reduced relative (-ing)",
+            "ru": "сокращённая относительная (-ing)"
+          }
         },
         {
           "en": "He was the first person to notice the mistake.",
-          "ru": "Он первым заметил ошибку."
+          "ru": "Он первым заметил ошибку.",
+          "note": {
+            "en": "infinitive post-modifier",
+            "ru": "инфинитив-постмодификатор"
+          }
         },
         {
           "en": "The novel written by Dostoevsky is famous.",
-          "ru": "Роман, написанный Достоевским, знаменит."
+          "ru": "Роман, написанный Достоевским, знаменит.",
+          "note": {
+            "en": "reduced relative (V3)",
+            "ru": "сокращённая относительная (V3)"
+          }
         },
         {
           "en": "My brother, who lives in Moscow, is visiting us.",
-          "ru": "Мой брат, живущий в Москве, приезжает к нам."
+          "ru": "Мой брат, живущий в Москве, приезжает к нам.",
+          "note": {
+            "en": "non-defining (commas)",
+            "ru": "неограничительная (запятые)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Post-modification: сокращённые -ing/V3 формы экономят слова: the man running, the book written."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The novel writing by Tolstoy is famous.",
+          "right": "The novel written by Tolstoy is famous.",
+          "why": {
+            "en": "A passive reduced relative uses the past participle (V3), not the -ing form.",
+            "ru": "Пассивная сокращённая относительная берёт причастие прошедшего времени (V3), а не форму -ing."
+          }
+        },
+        {
+          "wrong": "The book, that I bought, is here.",
+          "right": "The book that I bought is here.",
+          "why": {
+            "en": "A defining relative clause identifies the noun and takes no commas; commas would make it non-defining.",
+            "ru": "Ограничительная относительная клауза определяет существительное и идёт без запятых; запятые сделали бы её неограничительной."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you build dense noun phrases with several layers of modification — the kind that carry the weight of essays, reports and news writing — while keeping them transparent. A multi-layered NP such as the recent government decision to postpone the controversial tax reform affecting small businesses has a head (decision), pre-modification (the recent government) and post-modification (to postpone... affecting...). Three compression techniques do the heavy lifting: attribute stacking, where a noun modifies a noun (government decision, screen time); participle reduction, where reform affecting businesses replaces reform that affects businesses; and the infinitive of content or purpose, where decision to postpone replaces decision that they should postpone. Academic English leans on a few reliable frames — the importance of consistent terminology in legal documents, the role of NGOs in human rights advocacy, studies examining the correlation between exercise and cognitive function. Determiners can also stack in a fixed order: predeterminer (all, both, half) + central determiner (the, these) + postdeterminer (three, many, first) + modifiers + noun, giving all these many different possible approaches. The governing principle is clear reference: every modifier must obviously attach to the right word. The man with the hat in the photo that I showed you is ambiguous; the man wearing the hat in the photo I showed you is not. Compression is prized, but not past the point of clarity — if an NP runs beyond about ten to twelve words, consider splitting the sentence.",
         "ru": "На C1 собираем **плотные именные группы** с несколькими слоями модификации — характерные для эссе, отчётов, новостей.\n\n**Многослойная NP:**\n- `the recent government decision to postpone the controversial tax reform affecting small businesses`\n- Разбор:\n  - Центр: `decision`\n  - Pre-mod: `the recent government`\n  - Post-mod: `to postpone the controversial tax reform affecting small businesses`\n\n**Техника сжатия:**\nЧтобы написать плотно, но ясно, используй:\n1. Attribute stacking: `government + decision` (noun as modifier).\n2. Participle: `reform affecting businesses` (вместо `reform that affects`).\n3. Инфинитив цели/содержания: `decision to postpone` (вместо `decision that they should postpone`).\n\n**Ясная референция (clear reference):**\nВ плотных NP важно, чтобы было понятно, к чему относится каждое описание.\n- Неясно: `the man with the hat in the photo that I showed you` — шляпа на фото или на мужчине? Фото, которое я показал, или сам мужчина?\n- Ясно: `the man wearing the hat in the photo I showed you` — структура прозрачнее.\n\n**Академические модели NP:**\n- `the importance of consistent terminology in legal documents`\n- `the role of non-governmental organisations in human rights advocacy`\n- `studies examining the correlation between exercise and cognitive function`\n\nЭти конструкции — норма в academic writing. На C1 умей их читать и создавать.\n\n**Сложные цепочки определителей:**\n- `all these many different possible approaches`\n- `both of these last two chapters`\n- Порядок: predeterminer (`all`, `both`, `half`) + determiner (`the`, `these`) + postdeterminer (`three`, `many`, `first`) + modifiers + noun.\n\n**Редукция клауз в NP:**\n- Полная: `the report that was written by the committee that was established in 2020 to investigate corruption`\n- Редуцированная: `the report written by the committee established in 2020 to investigate corruption`\n- Ещё плотнее: `the 2020 anti-corruption committee's report`\n\nКаждая редукция меняет ритм и читаемость. В академических текстах компрессия ценится, но не до потери ясности.\n\n**Типичные проблемы C1:**\n- Слишком длинные цепочки модификаторов — читатель теряет связь.\n- Неоднозначная atта́чмент (какое слово к какому относится).\n- Избыток пассивных причастий: `the document reviewed submitted revised approved` — непонятно и коряво.\n\n**Правило прозрачности:** после финальной правки NP должна читаться линейно, без повторных перечитываний. Если в NP больше 10-12 слов, подумай, не лучше ли разбить на два предложения.\n\n**Практика C1:** возьми академическую статью и выпиши длинные NP. Попробуй перестроить их в две-три более коротких предложения без потери смысла. Это упражнение развивает чувство меры и позволит тебе самому писать плотно, но при этом понятно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "predeterminer + determiner + postdeterminer + adjective(s) + HEAD + participle / infinitive / prepositional layers",
+        "ru": "предопределитель + определитель + постопределитель + прилагательное(ые) + ГЛАВНОЕ + причастные / инфинитивные / предложные слои"
       },
       "examples": [
         {
           "en": "The government's recent decision to postpone the reform affecting small businesses caused concern.",
-          "ru": "Недавнее решение правительства отложить реформу, затрагивающую малый бизнес, вызвало обеспокоенность."
+          "ru": "Недавнее решение правительства отложить реформу, затрагивающую малый бизнес, вызвало обеспокоенность.",
+          "note": {
+            "en": "multi-layer NP",
+            "ru": "многослойная NP"
+          }
         },
         {
           "en": "The role of NGOs in protecting human rights cannot be overstated.",
-          "ru": "Роль НКО в защите прав человека нельзя переоценить."
+          "ru": "Роль НКО в защите прав человека нельзя переоценить.",
+          "note": {
+            "en": "noun-as-modifier + of-phrase",
+            "ru": "существительное-модификатор + of-фраза"
+          }
         },
         {
           "en": "Studies examining the link between diet and longevity are inconclusive.",
@@ -118,27 +196,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "All these many different approaches have merit.",
-          "ru": "Все эти многочисленные различные подходы имеют смысл."
+          "ru": "Все эти многочисленные различные подходы имеют смысл.",
+          "note": {
+            "en": "stacked determiners",
+            "ru": "цепочка определителей"
+          }
         },
         {
           "en": "The 2020 anti-corruption report received mixed reviews.",
-          "ru": "Антикоррупционный отчёт 2020 года получил смешанные отзывы."
+          "ru": "Антикоррупционный отчёт 2020 года получил смешанные отзывы.",
+          "note": {
+            "en": "compressed noun stack",
+            "ru": "сжатая цепочка существительных"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Плотная NP: noun + noun модификаторы, причастия, инфинитив цели — но не больше 10-12 слов."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "the reform which affects small businesses and which the government decided to postpone recently",
+          "right": "the recent government decision to postpone the reform affecting small businesses",
+          "why": {
+            "en": "Reduce full relative clauses to participles and infinitives to pack the NP densely yet clearly.",
+            "ru": "Сокращай полные относительные клаузы до причастий и инфинитивов, чтобы NP была плотной, но ясной."
+          }
+        },
+        {
+          "wrong": "the man with the hat in the photo that I showed you",
+          "right": "the man wearing the hat in the photo I showed you",
+          "why": {
+            "en": "Ambiguous attachment confuses the reader; a participle makes which word each modifier belongs to transparent.",
+            "ru": "Неоднозначное присоединение путает читателя; причастие делает прозрачным, к какому слову относится модификатор."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, working with the noun phrase is really managing the information structure of the sentence — deciding what comes first, what comes last, and where the weight falls. Two principles guide native-like placement. End-weight: heavy, complex elements prefer the end of the sentence, so rather than front a long subject NP (The man who had been waiting for hours to see the doctor arrived) you postpone the bulk or use extraposition (There arrived a man who had been waiting...). End-focus: new or important information lands at the end, where it gets natural stress — compare The committee rejected the proposal yesterday (focus on yesterday) with Yesterday the committee rejected the proposal (focus on the proposal). To rebalance a sentence you can use it-extraposition (It was embarrassing that he arrived late, instead of the heavy subject That he arrived late was embarrassing), the passive, fronting, or a cleft (It was the manager who approved the decision; What he said was surprising). Apposition lets one NP rename another: non-defining apposition takes commas (Tolstoy, the great Russian novelist, wrote War and Peace), defining apposition does not (My friend John arrived). Position can even change meaning: the visible stars (those that are visible in general) versus the stars visible from here (in this situation), a responsible person (a trait) versus the person responsible (the one who is to blame). At this level the NP is a rhetorical instrument: nominalisation (The implementation of the reform faced resistance) projects objectivity and hides the agent, while the full verbal version (When they tried to implement the reform, people resisted) sounds more human. The C2 skill is knowing when to compress and when to unpack.",
         "ru": "На C2 работа с именной группой — это **управление информационной структурой предложения**: что в начале, что в конце, какая часть несёт вес.\n\n**Принцип end-weight:**\nТяжёлые (длинные, сложные) элементы предпочитают стоять в конце. Лёгкие — в начале.\n- Плохо: `The man who had been waiting for hours to see the doctor for his chronic back pain arrived.`\n- Лучше: `The man arrived, who had been waiting for hours to see the doctor for his chronic back pain.` — или перестроить через extraposition: `There arrived a man who had been waiting...`\n\n**Принцип end-focus:**\nНовая или важная информация — в конце предложения, где она получает естественное ударение.\n- `The committee rejected the proposal yesterday.` — фокус: `yesterday`.\n- `Yesterday, the committee rejected the proposal.` — фокус: `the proposal`.\n- Выбор порядка зависит от темы/ремы.\n\n**Topic-comment structure:**\n- Тема (то, о чём говорим) — в начале.\n- Комментарий (что нового) — в конце.\n\nИспользуй пассив, фронтинг или клефтинг для перестройки NP:\n- `It was the manager who approved the decision.` (клефт — акцент на менеджера).\n- `What he said was surprising.` (псевдо-клефт — акцент на суть сказанного).\n\n**Extraposition с `it`:**\n- Вместо: `That he arrived late was embarrassing.` (тяжёлое подлежащее).\n- Лучше: `It was embarrassing that he arrived late.` (псевдо-подлежащее `it`, суть — в конце).\n\n**Информационная плотность в академическом стиле:**\n- `The inadequacy of existing theoretical frameworks in accounting for recent empirical findings has been widely discussed.` — длинная NP подлежащего, но читается, потому что структура параллельна.\n\nНа C2 нужно уметь строить такие NP и знать, когда их разбить.\n\n**Аппозиция (apposition):**\n- `Tolstoy, the great Russian novelist, wrote War and Peace.` — `the great Russian novelist` — аппозитив, уточняет `Tolstoy`.\n- Неограничительная аппозиция отделяется запятыми.\n- Ограничительная — без запятых: `My friend John arrived.` (`John` уточняет, какого именно друга).\n\n**Модификаторы, меняющие смысл при смене позиции:**\n- `the visible stars` (звёзды, которые видны) vs `the stars visible from here` (звёзды, видимые отсюда).\n- `a responsible person` (ответственный человек — черта) vs `the person responsible` (человек, несущий ответственность за что-то).\n- `a present member` (присутствующий член — временно) vs `the current member` (нынешний — статус).\n\nРусскому студенту особенно полезно помнить, что пост-позиция часто подразумевает ограничение или конкретную ситуацию.\n\n**Риторические эффекты noun phrases:**\n- Nominalizations в публицистике создают ощущение «объективности»: `The implementation of the reform faced resistance.` — избегает прямого указания на субъект.\n- Возвращение к полному глагольному виду более человечно: `When they tried to implement the reform, people resisted.`\n\n**Финал:** NP на C2 — это инструмент, которым автор управляет вниманием читателя. Хороший стилист знает, где сократить, где развернуть, где поставить в конец. Это уже не грамматика — это риторика."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "end-weight (heavy NP last) + end-focus (new info last); rebalance with it-extraposition / cleft / passive / apposition",
+        "ru": "end-weight (тяжёлая NP в конец) + end-focus (новое в конец); перестройка через it-extraposition / клефт / пассив / аппозицию"
       },
       "examples": [
         {
@@ -147,27 +251,79 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "It was surprising that the minister resigned.",
-          "ru": "Удивительно, что министр ушёл в отставку."
+          "ru": "Удивительно, что министр ушёл в отставку.",
+          "note": {
+            "en": "it-extraposition",
+            "ru": "it-extraposition"
+          }
         },
         {
           "en": "Tolstoy, the great Russian novelist, died in 1910.",
-          "ru": "Толстой, великий русский писатель, умер в 1910 году."
+          "ru": "Толстой, великий русский писатель, умер в 1910 году.",
+          "note": {
+            "en": "non-defining apposition",
+            "ru": "неограничительная аппозиция"
+          }
         },
         {
           "en": "The inadequacy of current frameworks has been widely noted.",
-          "ru": "Неадекватность нынешних рамок широко отмечена."
+          "ru": "Неадекватность нынешних рамок широко отмечена.",
+          "note": {
+            "en": "nominalised subject NP",
+            "ru": "номинализованное подлежащее-NP"
+          }
         },
         {
           "en": "The person responsible for the error has apologised.",
-          "ru": "Человек, ответственный за ошибку, извинился."
+          "ru": "Человек, ответственный за ошибку, извинился.",
+          "note": {
+            "en": "post-position = the one to blame",
+            "ru": "постпозиция = тот, кто отвечает"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "End-weight: тяжёлые NP — в конец; end-focus: новое — в конец; используй it-extraposition для баланса."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "That the minister resigned was surprising.",
+          "right": "It was surprising that the minister resigned.",
+          "why": {
+            "en": "A heavy clausal subject is awkward up front; it-extraposition obeys end-weight and end-focus.",
+            "ru": "Тяжёлое придаточное подлежащее неуклюже в начале; it-extraposition соблюдает end-weight и end-focus."
+          }
+        },
+        {
+          "wrong": "The responsible person for the error has apologised.",
+          "right": "The person responsible for the error has apologised.",
+          "why": {
+            "en": "Post-position (person responsible) means the one to blame in this case; pre-position (a responsible person) names a character trait.",
+            "ru": "Постпозиция (person responsible) означает виновного в данном случае; препозиция (a responsible person) называет черту характера."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "compound-nouns",
+    "adjective-order",
+    "defining-relative-clauses",
+    "reduced-relative-clauses"
+  ],
+  "crossTopic": [
+    "definite-article",
+    "indefinite-article",
+    "relative-pronouns",
+    "prepositions-of-place"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "determiner",
+      "+ pre-modifiers",
+      "+ HEAD noun",
+      "+ post-modifiers"
+    ]
+  }
 };

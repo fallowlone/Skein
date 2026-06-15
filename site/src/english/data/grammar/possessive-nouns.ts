@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "possessive-nouns",
   "title": {
-    "en": "",
+    "en": "Possessive Nouns",
     "ru": "Possessive Nouns"
   },
   "cefr": "A1",
@@ -17,19 +17,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "nouns",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "The possessive shows who something belongs to. In English you add 's (apostrophe + s) to the owner, not to the thing owned: Anna's book, Tom's car, my sister's phone, the dog's tail. There is only one form here, 's, and it is very common, so learn it early. Keep three things in mind at A1. First, don't put the in front of a name before 's: say Anna's house, not the Anna's house. Second, for people and animals almost always use 's: my brother's room, my cat's bowl. Third, for things that are not alive we usually prefer of instead: the roof of the house, the colour of the sky, the end of the film. With the question Whose? you can answer short, without repeating the noun: Whose bag is this? It's Maria's.",
         "ru": "**Притяжательный падеж** показывает, кому что-то принадлежит. В английском мы ставим **'s** (апостроф + s) после имени или слова-владельца.\n\nФормула: `владелец + 's + предмет`.\n\n- `Anna's book` (книга Анны)\n- `Tom's car` (машина Тома)\n- `my sister's phone` (телефон моей сестры)\n- `the dog's tail` (хвост собаки)\n\nСравни с русским: «книга Анны» или «Аннина книга». В английском нет другого способа — только `'s`.\n\n**Правило: 's ставится к владельцу, не к предмету.**\n- `the boy's ball` (мяч мальчика) — `'s` у `boy`.\n- Неправильно: `the boy ball's`.\n\n**Перед `'s` не нужен артикль у владельца, если это имя:**\n- Правильно: `Anna's house`.\n- Неправильно: `the Anna's house`.\n\n**С одушевлёнными (люди, животные) — почти всегда `'s`:**\n- `my brother's room`, `my cat's bowl`.\n\n**Для неживых предметов** обычно используют `of` вместо `'s`:\n- `the roof of the house` (крыша дома), а не `the house's roof` (хотя такое тоже встречается).\n- `the colour of the sky`, `the end of the film`.\n\nНа A1 тренируй `'s` в простых фразах с людьми и животными. Не ставь `'s` на предметы.\n\n**Чему соответствует `'s` в русском:**\n- Родительный падеж: «книга Анны» → `Anna's book`.\n- Притяжательное прилагательное: «Аннина книга» → `Anna's book`.\n- Простой вопрос: «Чья это книга? — Анны» → `Anna's`.\n\nВ английском только одна форма `'s`, и она закрывает все эти русские конструкции. Это делает её очень частой и полезной — выучи сразу.\n\n**С вопросом Whose:**\n- `Whose bag is this?` (Чья это сумка?) — `It's Maria's.` (Это сумка Марии.)\n- Можно отвечать коротко, без повторения существительного."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "owner + 's + thing owned",
+        "ru": "владелец + 's + предмет"
       },
       "examples": [
         {
@@ -42,7 +44,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The dog's name is Rex.",
-          "ru": "Собаку зовут Рекс."
+          "ru": "Собаку зовут Рекс.",
+          "note": {
+            "en": "animal owner",
+            "ru": "владелец-животное"
+          }
         },
         {
           "en": "Tom's mother is a doctor.",
@@ -56,17 +62,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Ставь 's сразу после имени владельца: Anna's book, Tom's car."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "the boy ball's",
+          "right": "the boy's ball",
+          "why": {
+            "en": "'s attaches to the owner (boy), never to the thing owned (ball).",
+            "ru": "'s ставится к владельцу (boy), а не к предмету (ball)."
+          }
+        },
+        {
+          "wrong": "the Anna's house",
+          "right": "Anna's house",
+          "why": {
+            "en": "No article before a name with 's.",
+            "ru": "Перед именем с 's артикль не нужен."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2 you add the possessive to plural nouns. With regular plurals ending in -s, add only an apostrophe, with no extra s: the boys' room, my parents' house, the students' books. With irregular plurals (no -s), add 's just as for the singular: children's toys, women's clothes, men's shoes, people's opinions. Compare carefully: the boy's book (one boy) vs the boys' book (several boys), and the child's toy vs the children's toy (children is already plural, so 's). A classic mistake is the childrens' toys, double-plural; the correct form is the children's toys. The possessive also names shops and services with the noun left out: at the doctor's, at the hairdresser's, at my friend's. Pronunciation follows the same rule as plural and third-person -s: /s/ after voiceless sounds (Jack's), /z/ after voiced sounds and vowels (Dan's, Maria's), and /ɪz/ after sibilants as an extra syllable (James's /ˈdʒeɪmzɪz/). Sometimes nothing follows 's because the thing is understood: This pen is Maria's.",
         "ru": "На A2 учимся ставить притяжательный падеж к **множественному числу** — правильному и неправильному.\n\n**Правильное множественное (с -s):**\n- Ставим только **апостроф** после `s`, без дополнительной `s`.\n- `the boys' room` (комната мальчиков) — много мальчиков.\n- `my parents' house` (дом родителей).\n- `the students' books` (книги студентов).\n- `the teachers' meeting` (собрание учителей).\n\n**Неправильное множественное (без -s):**\n- Ставим `'s`, как для единственного: `children`, `men`, `women`, `people`, `feet`.\n- `children's toys` (игрушки детей).\n- `women's clothes` (женская одежда).\n- `men's shoes` (мужская обувь).\n- `people's opinions` (мнения людей).\n\n**Сравни:**\n- `the boy's book` (книга одного мальчика) — `'s`.\n- `the boys' book` (книга нескольких мальчиков) — `s'`.\n- `the child's toy` (игрушка одного ребёнка) — `'s`.\n- `the children's toy` (игрушка детей) — `'s`, потому что `children` — неправильное множественное.\n\n**Типичная ошибка:** `the childrens' toys` (двойное множественное). Правильно: `the children's toys`.\n\n**Магазины и заведения:** часто используется притяжательный без существительного:\n- `I'm going to the dentist's.` (я иду к стоматологу, в смысле в его клинику).\n- `at the doctor's`, `at my friend's`, `at the hairdresser's`.\n\n**Произношение `'s`:**\n- После глухих согласных (p, t, k, f, th /θ/) — звук /s/: `Jack's`, `Mat's`.\n- После звонких согласных и гласных — звук /z/: `Dan's`, `Maria's`, `Tom's`.\n- После шипящих (s, sh, ch, z) — /ɪz/, добавляется отдельный слог: `Charles's` /ˈtʃɑːlzɪz/, `James's` /ˈdʒeɪmzɪz/.\n\nЭто те же правила, что и для множественного `-s` и глагольного третьего лица — удобно, что одна схема покрывает сразу три грамматических случая.\n\n**Несколько владельцев подряд:**\n- `my sister's friend's birthday` (день рождения друга моей сестры) — цепочки с `'s` возможны, но читаются тяжело.\n- На A2 лучше избегать больше одного `'s` в одной фразе. Если нужно перечислить — используй `of` или раздели предложение.\n\n**Пустота после `'s`:** иногда после `'s` ничего не идёт, потому что предмет подразумевается:\n- `This pen is Maria's.` (эта ручка — Марии, слово «ручка» не повторяется).\n- `Whose jacket? Tom's.` (чья куртка? Тома.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "regular plural + ' (apostrophe only) | irregular plural + 's",
+        "ru": "правильное мн.ч. + ' (только апостроф) | неправильное мн.ч. + 's"
       },
       "examples": [
         {
@@ -75,7 +99,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Children's books are on the top shelf.",
-          "ru": "Детские книги на верхней полке."
+          "ru": "Детские книги на верхней полке.",
+          "note": {
+            "en": "irregular plural",
+            "ru": "неправильное мн.ч."
+          }
         },
         {
           "en": "I bought some women's shoes.",
@@ -87,23 +115,45 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She is at the hairdresser's.",
-          "ru": "Она в парикмахерской."
+          "ru": "Она в парикмахерской.",
+          "note": {
+            "en": "place implied",
+            "ru": "место подразумевается"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Множественное на -s → только апостроф; children, men, women → 's как обычно."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "the childrens' toys",
+          "right": "the children's toys",
+          "why": {
+            "en": "children is already plural, so add 's, not s'.",
+            "ru": "children уже множественное, поэтому 's, а не s'."
+          }
+        },
+        {
+          "wrong": "my parents's house",
+          "right": "my parents' house",
+          "why": {
+            "en": "A regular plural ending in -s takes only an apostrophe.",
+            "ru": "Правильное мн.ч. на -s берёт только апостроф."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the possessive covers time and duration, a frequent and useful pattern. For time: yesterday's news, today's paper, tomorrow's meeting, last week's episode, next year's budget. For duration: a day's work, an hour's delay, two weeks' holiday (plural, apostrophe only), a month's notice, a year's experience. Watch the article: a day's work, not day's work. There is a parallel form with a hyphen, and there the noun loses its -s: two weeks' holiday = a two-week holiday, a five-minute break. Avoid the mixed wrong form a two weeks holiday; choose either a two-week holiday or two weeks' holiday. Fixed time phrases are common: in a month's time, in two years' time. The possessive also reaches places, especially in journalism: Germany's economy, America's problems, though the population of Moscow can sound more natural than Moscow's population. Finally, master its vs it's: its is the possessive for things (The dog is in its basket); it's is short for it is or it has (It's a sunny day). If you can expand it to it is, write it's; otherwise write its with no apostrophe.",
         "ru": "На B1 добавляем **время и продолжительность** в притяжательном падеже — частая и полезная модель.\n\n**Время:**\n- `yesterday's news` (вчерашние новости)\n- `today's paper` (сегодняшняя газета)\n- `tomorrow's meeting` (завтрашнее собрание)\n- `last week's episode` (эпизод прошлой недели)\n- `next year's budget` (бюджет следующего года)\n\n**Продолжительность:**\n- `a day's work` (дневная работа)\n- `an hour's delay` (задержка на час)\n- `two weeks' holiday` (двухнедельный отпуск) — множественное, только апостроф.\n- `a month's notice` (предупреждение за месяц)\n- `a year's experience` (годовой опыт)\n\nОбрати внимание на артикль: `a day's work`, а не `day's work` без артикля.\n\n**Альтернатива через `of` или дефис:**\n- `two weeks' holiday` = `a two-week holiday` (с дефисом, без `-s`).\n- `a five-minute break` (пятиминутный перерыв) = `a break of five minutes`.\n- В конструкции с дефисом существительное **теряет `-s`**: `a two-week` (не `two-weeks`).\n\n**Типичная ошибка:** `a two weeks holiday` (без дефиса и без апострофа) — неправильно. Выбери: `a two-week holiday` или `two weeks' holiday`.\n\n**Время с `'s` в повседневных оборотах:**\n- `today's special` (спецпредложение дня), `this week's issue` (выпуск этой недели), `last night's game` (вчерашний матч).\n- `in a month's time` (через месяц), `in two years' time` (через два года) — устойчивые формулы для будущего времени.\n- `within an arm's reach` (на расстоянии вытянутой руки) — идиома.\n\n**Место:**\n- `Moscow's population` (население Москвы) — возможно, но `the population of Moscow` звучит естественнее.\n- В современной журналистике `'s` к городам и странам стал обычным: `Germany's economy`, `America's problems`.\n\n**Важная пара: `its` vs `it's`:**\n- `its` — притяжательное местоимение «его/её» для вещей: `The dog is in its basket.`\n- `it's` — сокращение от `it is` или `it has`: `It's a sunny day.`, `It's been a long time.`\n\nЭто самая распространённая ошибка англоязычных носителей и тем более неносителей. Правило простое: если можешь заменить на `it is` — ставь апостроф. Если нет — пиши `its` без апострофа. `Its` — единственное притяжательное без апострофа, и это специально: апостроф тут зарезервирован под сокращение."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "time/duration noun + 's (+ thing) | a + number + -unit (hyphen) + thing",
+        "ru": "слово времени/срока + 's (+ предмет) | a + число + -единица (через дефис) + предмет"
       },
       "examples": [
         {
@@ -112,11 +162,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She took two weeks' holiday in July.",
-          "ru": "Она взяла двухнедельный отпуск в июле."
+          "ru": "Она взяла двухнедельный отпуск в июле.",
+          "note": {
+            "en": "duration, plural",
+            "ru": "срок, мн.ч."
+          }
         },
         {
           "en": "Germany's economy is growing.",
-          "ru": "Экономика Германии растёт."
+          "ru": "Экономика Германии растёт.",
+          "note": {
+            "en": "place",
+            "ru": "место"
+          }
         },
         {
           "en": "We need a month's notice before moving.",
@@ -130,26 +188,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Для временных отрезков: a day's work, two weeks' holiday, yesterday's news."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "a two weeks holiday",
+          "right": "a two-week holiday",
+          "why": {
+            "en": "Either hyphenate and drop -s, or use the possessive two weeks'.",
+            "ru": "Либо дефис без -s, либо притяжательное two weeks'."
+          }
+        },
+        {
+          "wrong": "The dog is in it's basket.",
+          "right": "The dog is in its basket.",
+          "why": {
+            "en": "its is possessive; it's only means it is / it has.",
+            "ru": "its — притяжательное; it's значит только it is / it has."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you choose deliberately between 's and of. Prefer 's for people and animals (Maria's idea, the cat's bowl), organisations and teams (the company's policy, the team's captain), countries and cities (France's president, London's museums), and time (tomorrow's meeting). Prefer of for inanimate objects (the roof of the house), long or complex phrases (the title of the book that I bought yesterday), abstract relations (the importance of the matter), and when the owner is general or indefinite (the smell of the coffee). Often both work with a shade of difference: the car's engine highlights a feature, while the engine of the car is neutral. Note the double genitive, a/some/any + noun + of + possessor's, which means one of several: a friend of mine, a friend of my sister's, a photo of John's. Names ending in -s have two styles: James's car /ˈdʒeɪmzɪz/ is the modern norm, while James' car is older and still seen in classical writing; classical names keep the bare apostrophe by tradition: Jesus' teachings, Moses' laws, Socrates' philosophy. Pick one style and keep it consistent. When unsure between 's and of, read both aloud: a small, animate, specific owner usually takes 's; a large, inanimate, or abstract one usually takes of.",
         "ru": "На B2 учимся выбирать между **`'s` и `of`** — двумя способами выразить принадлежность.\n\n**Когда предпочитаем `'s`:**\n- Люди и животные: `Maria's idea`, `the cat's bowl`.\n- Организации, команды: `the company's policy`, `the team's captain`.\n- Страны, города: `France's president`, `London's museums`.\n- Время: `tomorrow's meeting`.\n\n**Когда предпочитаем `of`:**\n- Неодушевлённые предметы: `the roof of the house` (лучше, чем `the house's roof`).\n- Длинные, сложные группы: `the title of the book that I bought yesterday`.\n- Абстрактные отношения: `the importance of the matter`, `the cause of the problem`.\n- Когда владелец неопределён или общий: `the smell of the coffee`.\n\n**Оба варианта возможны, но разные оттенки:**\n- `the car's engine` (подчёркивает характеристику) / `the engine of the car` (нейтрально).\n- `the book's cover` / `the cover of the book` — почти взаимозаменяемо.\n- `my father's friend` (ближе, «знакомый отца») / `a friend of my father's` (один из его друзей).\n\n**Двойной притяжательный (double genitive):**\n- `a friend of mine` (мой друг, но не единственный)\n- `a friend of my sister's` (друг моей сестры, один из)\n- `a photo of John's` (одна из фотографий Джона)\n\nЭта конструкция — `a/some/any + N + of + possessor's/possessive pronoun` — даёт оттенок «один из многих, имеющихся у владельца».\n\n**Джеймс и другие имена на -s:**\n- `James's car` (произносится /ˈdʒeɪmzɪz/) — современная норма.\n- `James' car` — более старая, встречается, особенно в классических текстах.\n- Оба допустимы; выбирай один стиль.\n\n**Другие случаи с классическими именами на -s:**\n- `Jesus' teachings` (не `Jesus's` — традиция).\n- `Moses' laws` (традиционно без дополнительной `s`).\n- `Socrates' philosophy` (тоже традиция).\n\nДля современных имён используется `'s`: `Charles's`, `Chris's`, `Doris's`, `Lewis's`. Стайл-гайды (Chicago, AP, Oxford) между собой расходятся, но большинство современных норм предпочитают полную форму `'s` для ясности произношения. Если пишешь для конкретного издания, сверяйся с его правилами.\n\n**Ещё одна проверка B2:** когда не уверен между `'s` и `of`, попробуй прочитать вслух обе версии. Та, что звучит естественнее для твоего контекста, обычно и будет правильной. Плюс: если объект получился неживой и большой (здание, географический объект, абстрактное понятие) — чаще предпочитают `of`. Если живой и конкретный (человек, животное, компания как группа людей) — `'s`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "owner + 's vs the + thing + of + owner | a/some + N + of + owner's (double genitive)",
+        "ru": "владелец + 's против the + предмет + of + владелец | a/some + N + of + владелец's (двойной генитив)"
       },
       "examples": [
         {
           "en": "The roof of the old church needs repair.",
-          "ru": "Крыша старой церкви нуждается в ремонте."
+          "ru": "Крыша старой церкви нуждается в ремонте.",
+          "note": {
+            "en": "of (inanimate)",
+            "ru": "of (неживое)"
+          }
         },
         {
           "en": "A colleague of my brother's visited us.",
-          "ru": "Один из коллег моего брата навестил нас."
+          "ru": "Один из коллег моего брата навестил нас.",
+          "note": {
+            "en": "double genitive",
+            "ru": "двойной генитив"
+          }
         },
         {
           "en": "James's book is on the table.",
@@ -167,26 +251,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "'s — для людей и организаций; of — для предметов и абстрактных понятий."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "the house's roof of the church",
+          "right": "the roof of the church",
+          "why": {
+            "en": "For inanimate things prefer of; don't stack both forms.",
+            "ru": "Для неживого предпочтительнее of; не совмещай обе формы."
+          }
+        },
+        {
+          "wrong": "a friend of my sister",
+          "right": "a friend of my sister's",
+          "why": {
+            "en": "The double genitive needs the possessive: of my sister's.",
+            "ru": "Двойной генитив требует притяжательного: of my sister's."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you distinguish joint from separate possession and handle heavier structures. With joint possession (two owners, one shared thing), add 's only to the last owner: Ann and Bob's house, Tom and Jerry's adventures. With separate possession (each owns their own), add 's to both: Ann's and Bob's cars, John's and Mary's opinions. The form itself signals whether the object is shared or distinct. Chains of owners are possible but clumsy: my sister's husband's office reads better as the office of my sister's husband, or my brother-in-law's office; if a chain runs past two 's, rephrase with of. The double genitive continues to add nuance: That comment of John's was harsh stresses one of several. Institutional and geographic possessives are common: the government's decision (neutral) vs the decision of the government (more formal), society's expectations, the nation's memory. The possessive before a gerund is a refined option: I don't like John's being late is formal, while the conversational I don't like John being late is also accepted. A quick test for joint vs separate: if the object is singular (one house, one wedding), use joint possession; if plural (cars, opinions), separate possession is usually right.",
         "ru": "На C1 разбираем **совместное и раздельное обладание**, а также более сложные конструкции.\n\n**Совместное обладание (joint possession):**\nКогда два владельца обладают одним и тем же предметом, `'s` ставится только **у последнего**.\n- `Ann and Bob's house` (дом Анны и Боба — один общий дом).\n- `Tom and Jerry's adventures` (приключения Тома и Джерри — совместные).\n\n**Раздельное обладание (separate possession):**\nКогда каждый владеет своим предметом, `'s` ставится **у обоих**.\n- `Ann's and Bob's cars` (машины Анны и Боба — у каждого своя).\n- `John's and Mary's opinions` (разные мнения).\n\nРазличие важно: форма подсказывает, идёт ли речь об общем или разных предметах.\n\n**Цепочки владельцев:**\n- `my sister's husband's office` (офис мужа моей сестры) — возможно, но звучит громоздко.\n- Лучше: `the office of my sister's husband`. Или: `my brother-in-law's office`.\n\nПравило: если цепочка длиннее двух `'s`, переформулируй через `of`.\n\n**Двойной притяжательный (продолжение):**\n- `That comment of John's was harsh.` (Тот его комментарий был резким.) — подчёркивает один из многих.\n- `Any idea of yours is welcome.` — подобная конструкция с местоимением.\n- Без двойного: `That comment from John`, `John's comment` — разные оттенки.\n\n**Притяжательный от географических и общественных имён:**\n- `the government's decision` — нейтрально.\n- `the decision of the government` — формальнее.\n- `the nation's memory`, `society's expectations` — распространённые в публицистике.\n\n**Притяжательный при герундии:**\n- `I don't like John's being late.` (мне не нравится, что Джон опаздывает) — формально.\n- Разговорно: `I don't like John being late.`\n- Обе формы допустимы; `'s`-форма звучит изысканнее.\n\n**Подсказка для C1:** когда сомневаешься между `Ann and Bob's` и `Ann's and Bob's`, спроси себя, один общий объект или два разных. Если объект в единственном числе (один дом, одна свадьба, один ресторан, который они держат вместе) — используй совместное владение. Если во множественном (машины, мнения, квартиры, биографии) — чаще раздельное.\n\nЭта проверка работает в 90% случаев и поможет сделать правильный выбор не думая об общих правилах."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "joint: A and B's + thing | separate: A's and B's + things | owner's + gerund",
+        "ru": "совместно: A and B's + предмет | раздельно: A's and B's + предметы | владелец's + герундий"
       },
       "examples": [
         {
           "en": "Anna and Max's wedding was beautiful.",
-          "ru": "Свадьба Анны и Макса была прекрасной."
+          "ru": "Свадьба Анны и Макса была прекрасной.",
+          "note": {
+            "en": "joint (one wedding)",
+            "ru": "совместно (одна свадьба)"
+          }
         },
         {
           "en": "Anna's and Max's opinions differ.",
-          "ru": "Мнения Анны и Макса различаются."
+          "ru": "Мнения Анны и Макса различаются.",
+          "note": {
+            "en": "separate (two opinions)",
+            "ru": "раздельно (два мнения)"
+          }
         },
         {
           "en": "A friend of my father's called yesterday.",
@@ -194,7 +304,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The committee appreciated John's being on time.",
-          "ru": "Комитет оценил то, что Джон пришёл вовремя."
+          "ru": "Комитет оценил то, что Джон пришёл вовремя.",
+          "note": {
+            "en": "possessive + gerund",
+            "ru": "притяжательное + герундий"
+          }
         },
         {
           "en": "That remark of hers surprised everyone.",
@@ -204,26 +318,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Ann and Bob's house — один общий; Ann's and Bob's cars — каждый свой."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Ann's and Bob's house (one shared house)",
+          "right": "Ann and Bob's house",
+          "why": {
+            "en": "One shared object = joint possession, 's on the last owner only.",
+            "ru": "Один общий объект = совместное владение, 's только у последнего."
+          }
+        },
+        {
+          "wrong": "my sister's husband's colleague's office",
+          "right": "the office of my sister's husband's colleague",
+          "why": {
+            "en": "More than two 's in a chain: rephrase with of.",
+            "ru": "Больше двух 's подряд — перефразируй через of."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the choice between possessive forms becomes stylistic. Careful prose rewrites long 's chains for clarity: my wife's brother's colleague's wedding reads better as the wedding of my wife's brother's colleague, or the wedding of a colleague of my brother-in-law; strict stylists avoid more than two 's in a row. Group owners allow both forms: the United States' policy is acceptable, the policy of the United States more formal; The New York Times' editorial coexists with the AmE The New York Times's editorial. The animate/inanimate boundary has blurred, so society's ills, history's lessons, and nature's beauty are standard, yet the table's leg still sounds odd next to the leg of the table, and The Tower of London is fixed, not London's Tower. Often the cleanest move is to avoid the possessive altogether: a two-day conference, an employee benefit, a study on climate change. Rhetorical and idiomatic uses survive: death's door, time's arrow, for heaven's sake, for goodness' sake. Subtle contrasts matter too: children's literature (a genre) vs literature for children, women's rights (a movement) vs the rights of women (descriptive). Historically 's descends from the Old English genitive -es, the apostrophe marking a dropped vowel from the seventeenth century; that history explains why modern style guides still disagree. At C2, choose the form that lets the reader move without stumbling: clean style outranks bare correctness.",
         "ru": "На C2 выбираешь между **притяжательными конструкциями по стилистическим основаниям**. Часто в формальной прозе цепочки с `'s` переписываются ради ясности.\n\n**Проблемные стеки:**\n- `my wife's brother's colleague's wedding` — читается трудно.\n- Лучше: `the wedding of my wife's brother's colleague` — уже яснее.\n- Ещё лучше: `the wedding of a colleague of my brother-in-law`.\n\nСтрогие стилисты избегают более двух `'s` подряд. В журналистике допустимо, в академическом тексте — нежелательно.\n\n**Группы-владельцы:**\n- `The United States' policy` — допустимо, но формальнее: `the policy of the United States`.\n- `the Netherlands' contribution` / `the contribution of the Netherlands`.\n- `The New York Times' editorial` — с `'s` после `s'` возможен; AmE часто: `The New York Times's editorial`.\n\n**Генитив у абстрактных и неодушевлённых:**\n- Исторически `'s` предпочитался для одушевлённых. Сейчас граница размыта: `society's ills`, `history's lessons`, `nature's beauty` — норма.\n- Но: `the table's leg` звучит странно — предпочти `the leg of the table`.\n- `London's Tower` — необычно. `The Tower of London` — фиксировано.\n\n**Стилистические альтернативы вместо притяжательного:**\n- Сложные прилагательные: `a two-day conference` вместо `a conference of two days / two days' conference`.\n- Сложные существительные: `an employee benefit` вместо `an employee's benefit` (в общем смысле).\n- Предложные фразы: `a study on climate change` вместо `a study of climate change's effects`.\n\n**Риторическое использование:**\n- `death's door`, `night's embrace`, `time's arrow` — поэтические образы.\n- `for heaven's sake`, `for God's sake`, `for goodness' sake` — устойчивые эмоциональные выражения.\n\n**Очень тонкие дистинкции:**\n- `a child's cry` (плач одного ребёнка) vs `a child cry` (не стандартно; `a child's cry` — норма).\n- `children's literature` (детская литература как жанр) vs `literature for children` (литература, предназначенная для детей).\n- `women's rights` (права женщин как движение/тема) vs `the rights of women` (права женщин, нейтрально-описательно).\n\nНа C2 выбирай конструкцию так, чтобы читатель не спотыкался. Чистота стиля важнее «правильности».\n\n**Исторический нюанс:** исходно `'s` был остатком от древнеанглийского окончания `-es` родительного падежа. Апостроф возник в XVII веке как знак выпавшей гласной. Отсюда и современные колебания: в текстах Шекспира формы вроде `Adam his house` = `Adam's house` (ошибочная теория «his-genitive» была популярна в ту эпоху). На C2 понимание истории помогает разобраться в противоречиях современных стайл-гайдов."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "stylistic choice: owner's + thing vs the + thing + of + owner vs compound (no possessive)",
+        "ru": "стилистический выбор: владелец's + предмет против the + предмет + of + владелец против сложного слова (без притяжательного)"
       },
       "examples": [
         {
           "en": "The New York Times's editorial board issued a statement.",
-          "ru": "Редакционная коллегия The New York Times выпустила заявление."
+          "ru": "Редакционная коллегия The New York Times выпустила заявление.",
+          "note": {
+            "en": "group owner (-s name)",
+            "ru": "владелец-организация (имя на -s)"
+          }
         },
         {
           "en": "For goodness' sake, listen to me.",
-          "ru": "Ради всего святого, выслушай меня."
+          "ru": "Ради всего святого, выслушай меня.",
+          "note": {
+            "en": "fixed idiom",
+            "ru": "устойчивая идиома"
+          }
         },
         {
           "en": "The colleague of my sister's husband flew in yesterday.",
@@ -241,9 +381,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Больше двух 's подряд — перепиши через of, иначе читателю тяжело."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "for goodness's sake",
+          "right": "for goodness' sake",
+          "why": {
+            "en": "This fixed idiom keeps the bare apostrophe.",
+            "ru": "В этой устойчивой идиоме сохраняется только апостроф."
+          }
+        },
+        {
+          "wrong": "London's Tower",
+          "right": "the Tower of London",
+          "why": {
+            "en": "This name is fixed with of; the possessive sounds wrong.",
+            "ru": "Это название закреплено с of; притяжательное звучит неправильно."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "possessive-pronouns",
+    "compound-nouns",
+    "countable-uncountable-nouns",
+    "singular-plural-nouns"
+  ],
+  "crossTopic": [
+    "definite-article",
+    "prepositions-of-time",
+    "relative-pronouns-who-which-that-whose",
+    "noun-phrases"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "owner",
+      "'s",
+      "thing owned"
+    ]
+  }
 };

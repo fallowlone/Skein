@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "adverbial-clauses-time",
   "title": {
-    "en": "",
+    "en": "Adverbial Clauses of Time",
     "ru": "Adverbial Clauses Time"
   },
   "cefr": "A2",
@@ -16,19 +16,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conjunctions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "A time clause answers the question \"when?\". It is joined to the main clause by a time conjunction: `when`, `while`, `before`, `after`, `until/till`, `as soon as`.\n\nThe time clause can come first or second. When it comes first, put a comma after it: `When I woke up, I made coffee.` When it comes second, no comma: `I made coffee when I woke up.`\n\nThe key rule: in a time clause, do NOT use `will`, even when you mean the future. Use the Present Simple instead, and keep `will` in the main clause only:\n- ✗ `When I will arrive, I will call you.`\n- ✓ `When I arrive, I will call you.`\n\nSo the pattern is: time clause -> present, main clause -> future. The same applies after `before`, `after`, `until`, and `as soon as`: `I'll stay here until he comes` (not `will come`).",
         "ru": "**Придаточные времени** отвечают на вопрос «когда?». Они соединяются с главным предложением с помощью временны́х союзов.\n\nОсновные союзы на A2:\n- `when` — когда: `When I saw her, I smiled.`\n- `while` — пока, в то время как (процесс): `While I was cooking, the phone rang.`\n- `before` — до того, как: `I wash my hands before I eat.`\n- `after` — после того, как: `After she finished her homework, she watched TV.`\n- `until / till` — пока не: `Stay here until I come back.`\n- `as soon as` — как только: `Call me as soon as you arrive.`\n\n**Порядок.** Придаточное может стоять до или после главного. Если до — ставь запятую: `When I woke up, I made coffee.` Если после — без запятой: `I made coffee when I woke up.`\n\n**Самое важное правило.** В придаточных времени **НЕ** используй `will`, даже если речь о будущем. Вместо этого используй Present Simple.\n\n- ✗ `When I will arrive, I will call you.`\n- ✓ `When I arrive, I will call you.` (Когда я приеду, я тебе позвоню.)\n\nРусский говорит «когда приеду» — будущее в обеих частях. Английский говорит: придаточное → present, главное → future. Это отличие — частая ошибка.\n\nДругие примеры без will:\n- `I'll stay here until he comes.` (не will come)\n- `Before you leave, close the window.` (не will leave)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "(when / while / before / after / until / as soon as) + subject + present verb , subject + will + verb",
+        "ru": "(when / while / before / after / until / as soon as) + подлежащее + глагол в Present , подлежащее + will + глагол"
       },
       "examples": [
         {
@@ -37,7 +39,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I read a book while I wait for the bus.",
-          "ru": "Я читаю книгу, пока жду автобус."
+          "ru": "Я читаю книгу, пока жду автобус.",
+          "note": {
+            "en": "while = process",
+            "ru": "while = длительность"
+          }
         },
         {
           "en": "After we have dinner, we watch a movie.",
@@ -45,36 +51,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I will call you as soon as I get home.",
-          "ru": "Я тебе позвоню, как только приду домой."
+          "ru": "Я тебе позвоню, как только приду домой.",
+          "note": {
+            "en": "future: no will here",
+            "ru": "будущее: без will здесь"
+          }
         },
         {
           "en": "Wait here until I come back.",
-          "ru": "Жди здесь, пока я не вернусь."
+          "ru": "Жди здесь, пока я не вернусь.",
+          "note": {
+            "en": "until = up to that point",
+            "ru": "until = до того момента"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В придаточных времени не используй will — всегда Present Simple, даже если смысл будущий."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "When I will see her, I will tell her.",
+          "right": "When I see her, I will tell her.",
+          "why": {
+            "en": "No `will` inside a time clause; use the Present Simple even for future meaning.",
+            "ru": "Внутри придаточного времени нет will; для будущего используется Present Simple."
+          }
+        },
+        {
+          "wrong": "I made coffee, when I woke up.",
+          "right": "I made coffee when I woke up.",
+          "why": {
+            "en": "When the time clause comes second, do not put a comma before it.",
+            "ru": "Когда придаточное стоит после главного, запятая перед ним не ставится."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, widen your set of time conjunctions and learn to choose them by nuance: `since` (often with the Present Perfect in the main clause), `by the time`, `once`, `whenever`, and `the moment (that)`.\n\nTense after the conjunction depends on the meaning:\n- After `when / as soon as / before / after` + Present Simple for the future: `I'll leave when she comes.`\n- After `since`, usually the Past Simple for the start point: `We've been friends since we met in 2010.`\n- After `by the time`, Present Simple for the future: `By the time we finish, it'll be dark.`\n- After `while`, usually the Past Continuous for a longer background process: `While I was cooking, they arrived.`\n\n`When` marks short events and points in time; `while` marks longer, ongoing actions. `As` (\"as / while\") highlights two simultaneous processes: `As we drove past, we waved.`\n\nA common Russian-speaker error is over-using the Past Perfect. With `before` or `after`, two Past Simple verbs are usually enough, because the conjunction already shows the order: `He left after I arrived.`",
         "ru": "На B1 расширяй репертуар временных союзов и учись выбирать их по нюансам.\n\n**Новые союзы:**\n- `since` — с тех пор, как: `I haven't seen him since he moved.` С Present Perfect в главном предложении.\n- `by the time` — к тому моменту, когда: `By the time you arrive, dinner will be ready.`\n- `once` — один раз когда, как только: `Once you learn this, it's easy.`\n- `whenever` — всякий раз, когда: `Call me whenever you need help.`\n- `the moment (that)` — в ту минуту, когда: `The moment I heard her voice, I knew.`\n\n**Времена после союзов:**\n- После `when / as soon as / before / after + Present Simple` — для будущего: `I'll leave when she comes.`\n- После `since` — обычно Past Simple для момента начала: `We've been friends since we met in 2010.`\n- После `by the time` — Present Simple (или Present Perfect) для будущего: `By the time we finish, it'll be dark.`\n- После `while` — обычно Past Continuous для длительного процесса: `While I was cooking, they arrived.`\n\n**When vs While.** `When` для коротких событий и моментов, `while` — для длительных:\n- `When I saw her, I smiled.` (короткое)\n- `While I was reading, the phone rang.` (фон — длительный)\n\n**As vs When.** `As` (когда, по мере того как) — одновременные процессы: `As we drove past, we waved.` `When` — более общий.\n\n**Типичная ошибка русскоговорящего:** ставить Past Perfect там, где не нужно. Если два действия с before или after, часто достаточно двух Past Simple: `He left after I arrived.` (Past Perfect необязателен, потому что `after` уже указывает последовательность.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "(since / by the time / once / whenever / the moment) + subject + verb , main clause (often present perfect / future)",
+        "ru": "(since / by the time / once / whenever / the moment) + подлежащее + глагол , главное предложение (часто Present Perfect / будущее)"
       },
       "examples": [
         {
           "en": "I've been waiting since 8 o'clock.",
-          "ru": "Я жду с 8 часов."
+          "ru": "Я жду с 8 часов.",
+          "note": {
+            "en": "since + present perfect",
+            "ru": "since + Present Perfect"
+          }
         },
         {
           "en": "By the time we arrived, the show had started.",
-          "ru": "К тому моменту, когда мы приехали, представление уже началось."
+          "ru": "К тому моменту, когда мы приехали, представление уже началось.",
+          "note": {
+            "en": "by the time + past perfect",
+            "ru": "by the time + Past Perfect"
+          }
         },
         {
           "en": "Once you press this button, the machine starts.",
@@ -82,7 +122,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "While she was studying, her cat slept on the desk.",
-          "ru": "Пока она училась, её кот спал на столе."
+          "ru": "Пока она училась, её кот спал на столе.",
+          "note": {
+            "en": "while + past continuous",
+            "ru": "while + Past Continuous"
+          }
         },
         {
           "en": "The moment I entered the room, everyone turned.",
@@ -92,26 +136,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "By the time + Present Simple → будущее в главном: By the time you come, I'll be ready."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He had left after I had arrived.",
+          "right": "He left after I arrived.",
+          "why": {
+            "en": "`After` already shows the sequence, so two Past Simple verbs are enough; the Past Perfect is unnecessary here.",
+            "ru": "After уже показывает последовательность, поэтому достаточно двух Past Simple; Past Perfect не нужен."
+          }
+        },
+        {
+          "wrong": "While I cooked, the phone was ringing.",
+          "right": "While I was cooking, the phone rang.",
+          "why": {
+            "en": "`While` usually takes the Past Continuous for the longer background action; the interrupting event takes the Past Simple.",
+            "ru": "После while обычно Past Continuous для длительного фона; прерывающее событие — в Past Simple."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, focus on tense agreement and finer connectors.\n\n`No sooner ... than` and `Hardly ... when` are formal ways to say \"barely had X happened when Y\". When they start the sentence, they trigger inversion: `No sooner had I sat down than the phone rang.`; `Hardly had she opened the door when the dog ran out.`\n\n`Just as` stresses the exact moment: `Just as I was leaving, the rain started.` `Now that` is a cause-and-time link (\"now that / given that\") and is not interchangeable with plain `when`: `Now that you're here, we can begin.`\n\nIn past contexts, the Past Perfect can show that one action came earlier: `When I arrived, she had already left.` In reported speech, future-from-the-past uses `would`: `She said she would call when she got home.`\n\nReduced time clauses drop the subject and auxiliary, leaving a participle: `When walking home, I found a wallet.`; `Before leaving, she closed all windows.`; `Once finished, submit the form.` This only works when the subject of the time clause and the main clause is the same.\n\nDo not confuse `while` (time or contrast) with `whereas` (contrast only, formal). And avoid a double future: `When I have finished` is correct, not `When I will have finished` — use the Present Perfect for completion in a future context.",
         "ru": "На B2 важно освоить согласование времён и тонкие нюансы.\n\n**No sooner ... than / Hardly ... when.** Формальные способы сказать «едва ... как». Требуют инверсии, если стоят в начале:\n- `No sooner had I sat down than the phone rang.` (Едва я сел, как зазвонил телефон.)\n- `Hardly had she opened the door when the dog ran out.` (Едва она открыла дверь, как собака выбежала.)\n\n**Just as.** Подчёркивает точность момента: `Just as I was leaving, the rain started.`\n\n**Now that.** Теперь, когда (причинно-временной): `Now that you're here, we can begin.` Не заменимо simple `when`.\n\n**Согласование в past contexts.**\n- `When I arrived, she had already left.` (Past Perfect показывает предшествование.)\n- `She said she would call when she got home.` (reported — would + Past Simple.)\n\n**Редуцированные временные придаточные.** В формальном стиле можно опустить подлежащее и вспомогательный глагол, оставив participle:\n- `When walking home, I found a wallet.` = `When I was walking home, ...`\n- `Before leaving, she closed all windows.` = `Before she left, ...`\n- `Once finished, submit the form.` = `Once you are finished, ...`\n\nРедукция работает только когда подлежащее придаточного и главного совпадает.\n\n**While vs Whereas.** Не путай: `while` (time или contrast), `whereas` (только contrast, формальный): `Whereas Paul is quiet, his brother is loud.`\n\n**Ошибка B2:** использовать будущее будущее время. `When I will have finished` → `When I have finished` (Present Perfect для завершённости в future context)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "No sooner + had + subject + past participle + than + clause  /  (When / Before / Once) + participle , main clause",
+        "ru": "No sooner + had + подлежащее + 3-я форма + than + предложение  /  (When / Before / Once) + причастие , главное предложение"
       },
       "examples": [
         {
           "en": "No sooner had the guests arrived than the rain began.",
-          "ru": "Едва гости приехали, как начался дождь."
+          "ru": "Едва гости приехали, как начался дождь.",
+          "note": {
+            "en": "inversion",
+            "ru": "инверсия"
+          }
         },
         {
           "en": "Now that we've moved, we need new furniture.",
-          "ru": "Теперь, когда мы переехали, нам нужна новая мебель."
+          "ru": "Теперь, когда мы переехали, нам нужна новая мебель.",
+          "note": {
+            "en": "now that = cause + time",
+            "ru": "now that = причина + время"
+          }
         },
         {
           "en": "Just as I was about to leave, the boss called me.",
@@ -119,40 +189,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "When asked about the plan, she refused to comment.",
-          "ru": "Когда её спросили о плане, она отказалась комментировать."
+          "ru": "Когда её спросили о плане, она отказалась комментировать.",
+          "note": {
+            "en": "reduced (passive)",
+            "ru": "редуцированное (пассив)"
+          }
         },
         {
           "en": "Once completed, the project will be reviewed.",
-          "ru": "После завершения проект будет проверен."
+          "ru": "После завершения проект будет проверен.",
+          "note": {
+            "en": "reduced (passive)",
+            "ru": "редуцированное (пассив)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Редуцированные временные придаточные требуют, чтобы подлежащее главного и придаточного совпадало: When walking home, I saw... (I walked и I saw)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "When I will have finished, I will send it.",
+          "right": "When I have finished, I will send it.",
+          "why": {
+            "en": "A time clause uses the Present Perfect for completion in the future; `will` stays only in the main clause.",
+            "ru": "Придаточное времени использует Present Perfect для завершённости в будущем; will остаётся только в главном."
+          }
+        },
+        {
+          "wrong": "When walking home, the wallet was found by me.",
+          "right": "When walking home, I found a wallet.",
+          "why": {
+            "en": "A reduced time clause needs the same subject in both clauses; otherwise it dangles.",
+            "ru": "Редуцированное придаточное требует одного подлежащего в обеих частях; иначе оборот «повисает»."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, work with fine aspectual distinctions and stylistic variants.\n\nFormal inversion follows negative or restrictive time adverbials placed at the front: `Not until last week did I realize the truth.`; `Never had I seen such a performance.`; `Only after they left did we start.`; `Seldom have I encountered such talent.`\n\nKeep the senses of `since` apart: time reference (`since 2020`, `since Monday`), duration (which uses `for ten years`), and the causal `since you're here ...` (\"since / because\"), which is not a time use.\n\nFor habitual or repeated events use `whenever` and `every time`: `Whenever I visit, he's always busy.`; `Every time he called, she was out.` For future-in-the-past, use `would`: `He said he would help when he had finished.`\n\nThe continuous aspect with `as` describes parallel processes: `As the sun set, the sky turned red.` Literary, emphatic openers include `The instant ...`, `Scarcely had ... when ...`, and `From the moment (that) ...`.\n\nA common C1 trap is mixing `while` (a simultaneous process, used with a clause) and `during` (a preposition before a noun phrase): `During the meeting` or `While the meeting was going on`, never `While the meeting`.",
         "ru": "На C1 работай с тонкими различиями аспекта и стилистическими вариантами.\n\n**Formal inversion после negative time adverbials.** Когда временное выражение с отрицательным оттенком стоит в начале, используется инверсия:\n- `Not until last week did I realize the truth.`\n- `Never had I seen such a performance.`\n- `Only after they left did we start.`\n- `Seldom have I encountered such talent.`\n\n**Nuance between 'since' uses.**\n- Time reference: `since 2020`, `since Monday` — с определённого момента.\n- Duration: `for ten years` — промежуток.\n- Causal: `since you're here...` — поскольку (не путай с временным).\n\n**Habitual/repeated past.**\n- `Whenever I visit, he's always busy.` (для повторяющегося + Present Simple.)\n- `Every time he called, she was out.` (повторяющееся в прошлом.)\n\n**Future in the past.** Когда говоришь о будущем из прошлой точки зрения, используй would:\n- `He said he would help when he had finished.` (reported.)\n- `We planned to call as soon as we arrived.`\n\n**Continuous aspect с `as` для параллельных процессов в описаниях:**\n- `As the sun set, the sky turned red.`\n- `As we were discussing the plan, she took notes.`\n\n**Literary / emphatic constructions:**\n- `The instant she entered, all conversation stopped.`\n- `Scarcely had we begun when we were interrupted.`\n- `From the moment (that) I met him, I knew he was special.`\n\n**Common C1 trap:** смешение `while` (simultaneous process) и `during` (noun, time period). `While the meeting` — неправильно; `During the meeting` или `While the meeting was going on` — правильно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Not until / Never / Only after / Seldom + auxiliary + subject + verb (inversion)",
+        "ru": "Not until / Never / Only after / Seldom + вспомогательный глагол + подлежащее + глагол (инверсия)"
       },
       "examples": [
         {
           "en": "Not until I read the contract did I understand the terms.",
-          "ru": "Только когда я прочитал договор, я понял условия."
+          "ru": "Только когда я прочитал договор, я понял условия.",
+          "note": {
+            "en": "fronted negative + inversion",
+            "ru": "вынос отрицания + инверсия"
+          }
         },
         {
           "en": "Whenever she visited, the house filled with laughter.",
-          "ru": "Всякий раз, когда она приезжала, дом наполнялся смехом."
+          "ru": "Всякий раз, когда она приезжала, дом наполнялся смехом.",
+          "note": {
+            "en": "whenever = repeated",
+            "ru": "whenever = повторение"
+          }
         },
         {
           "en": "As the negotiations progressed, tensions rose.",
-          "ru": "По мере того как переговоры развивались, напряжение росло."
+          "ru": "По мере того как переговоры развивались, напряжение росло.",
+          "note": {
+            "en": "as = parallel process",
+            "ru": "as = параллельный процесс"
+          }
         },
         {
           "en": "He promised to write as soon as he had settled in.",
@@ -160,40 +268,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Scarcely had the meeting started when the fire alarm went off.",
-          "ru": "Едва совещание началось, как сработала пожарная сигнализация."
+          "ru": "Едва совещание началось, как сработала пожарная сигнализация.",
+          "note": {
+            "en": "scarcely ... when + inversion",
+            "ru": "scarcely ... when + инверсия"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Not until в начале предложения требует инверсии: Not until I saw it did I believe it."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "While the meeting, I took notes.",
+          "right": "During the meeting, I took notes.",
+          "why": {
+            "en": "`While` introduces a clause; before a noun phrase use the preposition `during`.",
+            "ru": "While вводит придаточное; перед существительным используется предлог during."
+          }
+        },
+        {
+          "wrong": "Not until I read the contract I understood the terms.",
+          "right": "Not until I read the contract did I understand the terms.",
+          "why": {
+            "en": "A fronted `Not until ...` forces inversion (auxiliary before the subject) in the main clause.",
+            "ru": "Вынесенное вперёд Not until требует инверсии (вспомогательный глагол перед подлежащим) в главном предложении."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, time clauses become a tool for rhythm and register.\n\nAspectual precision comes from the connector you choose: `during the time (that)` is heavy and rare (prefer `while`); `in the course of + gerund` is formal (`In the course of preparing the report, she found an error`); `at the point at which` is very formal and legalistic; `at the time of` pins a moment (`At the time of the incident, she was abroad`).\n\nLiterary fronting with inversion adds drama: `Only when all had left did he speak.`; `Little did she know that the decision would haunt her.`; `No sooner had he put down the receiver than it rang again.` The historical present after `when` can dramatize narration: `When suddenly, out of nowhere, comes this huge dog ...`\n\nEllipsis lets you drop `when / while` in a terse style: `(When) returning home, I found the door open.`; `(While) in Paris, she learned French.`\n\nWatch the aspectual contrast with `by the time`: `By the time he arrived, dinner was over` (just finished) vs. `By the time he arrived, dinner had been over for an hour` (finished well before) vs. `By the time he arrives, dinner will be over` (future) vs. `By the time he arrives, dinner will have been over for an hour` (future perfect).\n\nIdiomatic equivalents of \"the instant\" include `the minute (that)`, `the second (that)`, and `the instant (that)`; `as long as` is both temporal and conditional. For register, `when` is neutral, `as` more literary, and `upon + gerund` very formal: `Upon hearing the news, she fainted.`",
         "ru": "На C2 использование временных придаточных становится инструментом тонкого ритма и регистровой адаптации.\n\n**Aspectual precision через выбор союза:**\n- `During the time (that)` — напыщенно, редко используется; лучше `while`.\n- `In the course of + gerund` — формально: `In the course of preparing the report, she discovered an error.`\n- `At the point at which` — очень формально, юридический стиль.\n- `At the time (of)` — указание момента: `At the time of the incident, she was abroad.`\n\n**Literary fronting с inversion:**\n- `Only when all had left did he speak.`\n- `Little did she know that the decision would haunt her for years.`\n- `No sooner had he put down the receiver than it rang again.`\n\n**Historical present after 'when' for dramatic storytelling:**\n- `When suddenly, out of nowhere, comes this huge dog...` — разговорный нарратив в настоящем времени.\n\n**Ellipsis in time clauses:** в очень кратком стиле можно опустить `when / while`:\n- `(When) returning home, I found the door open.`\n- `(While) in Paris, she learned French.`\n\n**Aspectual contrast:**\n- `By the time he arrived, dinner was over.` (событие до момента)\n- `By the time he arrived, dinner had been over for an hour.` (событие завершилось задолго до)\n- `By the time he arrives, dinner will be over.` (будущее из настоящей точки)\n- `By the time he arrives, dinner will have been over for an hour.` (future perfect для «уже давно завершено к моменту»).\n\n**Idiomatic patterns:**\n- `the minute (that)`, `the second (that)`, `the instant (that)` — все = «в тот момент».\n- `as long as` — и временной (пока), и условный (при условии).\n\n**Register stratification:** `when` нейтрален. `as` более литературный. `upon + gerund` — очень формальный: `Upon hearing the news, she fainted.` Используй для писем, отчётов, литературы."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Upon + gerund , main clause  /  Little + auxiliary + subject + verb (inversion)",
+        "ru": "Upon + герундий , главное предложение  /  Little + вспомогательный глагол + подлежащее + глагол (инверсия)"
       },
       "examples": [
         {
           "en": "Upon receiving the letter, she immediately packed her bags.",
-          "ru": "Получив письмо, она немедленно собрала вещи."
+          "ru": "Получив письмо, она немедленно собрала вещи.",
+          "note": {
+            "en": "upon + gerund = very formal",
+            "ru": "upon + герундий = очень формально"
+          }
         },
         {
           "en": "By the time the jury returned, the defendant had been waiting for hours.",
-          "ru": "К тому моменту как присяжные вернулись, подсудимый ждал уже несколько часов."
+          "ru": "К тому моменту как присяжные вернулись, подсудимый ждал уже несколько часов.",
+          "note": {
+            "en": "future perfect contrast",
+            "ru": "контраст Future Perfect"
+          }
         },
         {
           "en": "Little did we know that day would be our last together.",
-          "ru": "Мало мы знали, что тот день будет нашим последним вместе."
+          "ru": "Мало мы знали, что тот день будет нашим последним вместе.",
+          "note": {
+            "en": "little did ... + inversion",
+            "ru": "little did ... + инверсия"
+          }
         },
         {
           "en": "In the course of conducting the experiment, the researcher noticed an anomaly.",
-          "ru": "В процессе проведения эксперимента исследователь заметил аномалию."
+          "ru": "В процессе проведения эксперимента исследователь заметил аномалию.",
+          "note": {
+            "en": "in the course of + gerund",
+            "ru": "in the course of + герундий"
+          }
         },
         {
           "en": "The instant the opportunity arose, she seized it.",
@@ -203,9 +349,46 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Upon + gerund — очень формальная замена when-clause: Upon hearing / Upon arriving / Upon completion."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Upon to hear the news, she fainted.",
+          "right": "Upon hearing the news, she fainted.",
+          "why": {
+            "en": "`Upon` is followed by a gerund (-ing), not an infinitive.",
+            "ru": "После upon идёт герундий (-ing), а не инфинитив."
+          }
+        },
+        {
+          "wrong": "Little she knew that the decision would haunt her.",
+          "right": "Little did she know that the decision would haunt her.",
+          "why": {
+            "en": "A fronted negative-emphatic adverbial like `Little` triggers subject-auxiliary inversion.",
+            "ru": "Вынесенное вперёд эмфатическое отрицание Little требует инверсии подлежащего и вспомогательного глагола."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "adverbial-clauses-condition",
+    "adverbial-clauses-reason",
+    "adverbial-clauses-contrast",
+    "subordinating-conjunctions"
+  ],
+  "crossTopic": [
+    "future-simple-will",
+    "present-perfect-simple",
+    "past-perfect-simple",
+    "past-continuous"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "before",
+      "when / as soon as",
+      "while",
+      "after",
+      "until"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "adverbs-of-degree",
   "title": {
-    "en": "",
+    "en": "Adverbs of Degree",
     "ru": "Adverbs Of Degree"
   },
   "cefr": "A2",
@@ -16,19 +16,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "adverbs",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "scale",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Adverbs of degree say how much. They scale up or down an adjective or another adverb. Put the common ones (very, quite, too, so, a bit / a little) directly before the word they modify: very hot, quite tall, too heavy, a little tired. Two of these are easy to confuse: very just means a strong amount (The tea is very hot, but I can drink it), while too means more than you want or need (The tea is too hot to drink). One word breaks the pattern: enough goes after the adjective or adverb, not before it. Say big enough, old enough, fast enough — never enough big.",
         "ru": "Наречия степени показывают, **насколько** (сколько) чего-то. Они стоят перед прилагательным или наречием.\n\n**Главные слова:**\n- `very` — очень\n- `quite` — довольно\n- `too` — слишком\n- `so` — так, настолько\n- `a bit / a little` — немного\n\n**Примеры с прилагательным:**\n- `The coffee is very hot.` (Кофе очень горячий.)\n- `She is quite tall.` (Она довольно высокая.)\n- `The box is too heavy.` (Коробка слишком тяжёлая.)\n- `I am a little tired.` (Я немного устал.)\n\n**Примеры с наречием:**\n- `He speaks very slowly.`\n- `She sings quite well.`\n\n**Важно: `too` vs `very`:**\n- `very` — просто сильный признак: `The tea is very hot.` (но я пью).\n- `too` — слишком, больше, чем нужно: `The tea is too hot.` (пить нельзя!).\n\nНе путай: `very hot` ≠ `too hot`.\n\n**`Enough` — «достаточно»:**\nСтавится **после** прилагательного / наречия, не перед:\n- `The room is big enough.` (Комната достаточно большая.) — не `enough big`.\n- `He is old enough to drive.` (Он достаточно взрослый, чтобы водить.)\n- `She runs fast enough.`\n\n**Правило позиции:**\n- `very / quite / too / so` — **перед** прилагательным: `very happy`, `too small`.\n- `enough` — **после** прилагательного: `big enough`, `old enough`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "very / quite / too / so + adjective; adjective + enough",
+        "ru": "very / quite / too / so + прилагательное; прилагательное + enough"
       },
       "examples": [
         {
@@ -37,7 +39,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The bag is too heavy for me.",
-          "ru": "Сумка слишком тяжёлая для меня."
+          "ru": "Сумка слишком тяжёлая для меня.",
+          "note": {
+            "en": "too = more than wanted",
+            "ru": "too = больше, чем нужно"
+          }
         },
         {
           "en": "She is quite friendly.",
@@ -45,7 +51,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He is tall enough to reach the shelf.",
-          "ru": "Он достаточно высокий, чтобы достать до полки."
+          "ru": "Он достаточно высокий, чтобы достать до полки.",
+          "note": {
+            "en": "enough after adj",
+            "ru": "enough после прилагательного"
+          }
         },
         {
           "en": "I feel a little tired today.",
@@ -55,30 +65,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Very / too / quite — ПЕРЕД прилагательным. Enough — ПОСЛЕ (big enough)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The room is enough big.",
+          "right": "The room is big enough.",
+          "why": {
+            "en": "enough comes after an adjective, not before it.",
+            "ru": "Enough ставится после прилагательного, а не перед."
+          }
+        },
+        {
+          "wrong": "This tea is too hot, but I love it.",
+          "right": "This tea is very hot, but I love it.",
+          "why": {
+            "en": "too means more than you want (a problem); a positive strong amount is very.",
+            "ru": "Too значит «больше, чем нужно» (проблема); для сильного признака без проблемы — very."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 you connect degree words to a purpose with an infinitive. Use too + adjective + to + verb to say something is more than is workable: The box is too heavy to lift; I am too tired to go out. Use adjective + enough + to + verb to say there is sufficient amount for the purpose: He is old enough to vote; the water is warm enough to swim in. Put enough before a noun (enough money, enough time). For quantity, choose by countability: too much + uncountable (too much noise), too many + countable plural (too many people), with too little / too few as their opposites. Among the mild intensifiers, fairly < quite < very < extremely; rather often signals something unexpected or unwelcome (rather cold), while pretty (good, cold) is the informal version of quite.",
         "ru": "На B1 освой конструкции **`too … to`** и **`enough … to`** с инфинитивом.\n\n**`too + adjective + to + verb`** — слишком, чтобы:\n- `The box is too heavy to lift.` (Коробка слишком тяжёлая, чтобы поднять.)\n- `I am too tired to go out.` (Я слишком устал, чтобы выйти.)\n- `She is too young to drive.`\n\n**`adjective + enough + to + verb`** — достаточно, чтобы:\n- `He is old enough to vote.` (Он достаточно взрослый, чтобы голосовать.)\n- `The water is warm enough to swim in.` (Вода достаточно тёплая, чтобы в ней плавать.)\n- `She speaks English well enough to work abroad.`\n\n**`enough + noun`:**\n`Enough` перед существительным:\n- `We have enough money.` (достаточно денег)\n- `There isn’t enough time.`\n\n**`Too much` / `too many` / `too little` / `too few`:**\n- `too much` + uncountable: `too much sugar`, `too much noise`.\n- `too many` + countable plural: `too many people`, `too many problems`.\n- `too little / too few` — противоположности: `too little time`, `too few chairs`.\n\n**`Rather` vs `quite`:**\nОба означают «довольно», но:\n- `quite` — нейтрально и чуть позитивно: `quite nice` (довольно хороший).\n- `rather` — часто с негативным оттенком или неожиданностью: `rather cold` (довольно холодно, хотя ожидалось тепло).\n\n**`Pretty` как intensifier (informal):**\n- `pretty good` = довольно хороший (разговорно).\n- `pretty cold` = довольно холодно.\n\nФормально лучше `quite` или `fairly`.\n\n**`Fairly` — «довольно, неплохо»:**\n- `fairly easy` — довольно лёгкий (нейтрально-слабо).\n- Шкала силы: `a bit < fairly < quite < very < extremely`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "too + adjective + to + verb; adjective + enough + to + verb; enough + noun",
+        "ru": "too + прилагательное + to + глагол; прилагательное + enough + to + глагол; enough + существительное"
       },
       "examples": [
         {
           "en": "The soup is too hot to eat.",
-          "ru": "Суп слишком горячий, чтобы его есть."
+          "ru": "Суп слишком горячий, чтобы его есть.",
+          "note": {
+            "en": "too ... to",
+            "ru": "too ... to"
+          }
         },
         {
           "en": "She is old enough to make her own decisions.",
-          "ru": "Она достаточно взрослая, чтобы принимать собственные решения."
+          "ru": "Она достаточно взрослая, чтобы принимать собственные решения.",
+          "note": {
+            "en": "enough ... to",
+            "ru": "enough ... to"
+          }
         },
         {
           "en": "There are too many people in this room.",
-          "ru": "В этой комнате слишком много людей."
+          "ru": "В этой комнате слишком много людей.",
+          "note": {
+            "en": "too many + plural",
+            "ru": "too many + мн. число"
+          }
         },
         {
           "en": "We don’t have enough time to finish.",
@@ -92,26 +132,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Too + adj + to + inf = слишком ... чтобы (too heavy to lift). Adj + enough + to + inf = достаточно ... чтобы (old enough to vote)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "There is too much people here.",
+          "right": "There are too many people here.",
+          "why": {
+            "en": "people is a countable plural, so it takes too many, not too much.",
+            "ru": "People — исчисляемое во мн. числе, поэтому too many, а не too much."
+          }
+        },
+        {
+          "wrong": "He is enough old to vote.",
+          "right": "He is old enough to vote.",
+          "why": {
+            "en": "enough follows the adjective: old enough to vote.",
+            "ru": "Enough идёт после прилагательного: old enough to vote."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the choice of intensifier depends on whether the adjective is gradable or ungradable. Gradable adjectives describe a point on a scale (tired, hot, happy, expensive) and pair with very, quite, fairly, rather. Ungradable adjectives are already at the extreme or are absolute (exhausted, boiling, delighted, free) and pair with absolutely, completely, totally, utterly — so absolutely exhausted, not very exhausted. Quite is two-faced: with a gradable adjective it weakens (quite tired = a bit tired), but with an ungradable one it maximises (quite amazing = absolutely amazing). Learn the fixed collocations rather than guessing: highly likely / unlikely / recommended, deeply concerned / sorry, bitterly disappointed / cold, fully aware / booked. To soften, reach for somewhat, slightly, or moderately. Note too / enough / so split the work: too hot = a problem, hot enough = sufficient for the goal, so hot = an emotional or result-level degree, which extends to so + adjective + that (so cold that the lake froze).",
         "ru": "На B2 уточни **коллокации intensifiers** и разграничь gradable/ungradable adjectives.\n\n**Gradable vs ungradable:**\n- Gradable adj (можно больше/меньше): `tired`, `hot`, `happy`, `expensive`.\n- Ungradable adj (уже абсолютные): `exhausted`, `boiling`, `delighted`, `free`.\n\n**С gradable → `very`, `quite`, `fairly`, `rather`:**\n- `very tired`, `quite hot`, `fairly happy`.\n\n**С ungradable → `absolutely`, `completely`, `totally`, `utterly`:**\n- `absolutely exhausted`, `completely free`, `totally wrong`.\n- Wrong: `very exhausted`, `very perfect` — ungradable + `very` обычно ошибка.\n\n**`Quite` — двойная природа:**\n- С gradable: `quite tired` = довольно устал (не сильно).\n- С ungradable: `quite amazing` = абсолютно удивительно (сильно!).\n\nТо же `quite cold` (довольно, средне) vs `quite freezing` (совершенно — редко, но встречается).\n\n**Strong intensifiers:**\n- `highly likely`, `highly recommended`, `highly unlikely` — `highly` коллоцирует с абстрактными adj.\n- `deeply concerned`, `deeply sorry` — эмоциональные состояния.\n- `bitterly disappointed`, `bitterly cold` — фиксированные коллокации.\n- `fully aware`, `fully booked`, `fully equipped`.\n\n**Weakened intensifiers:**\n- `somewhat` — в некоторой степени (формально): `somewhat surprising`.\n- `slightly` — чуть-чуть: `slightly unusual`.\n- `moderately` — умеренно.\n\n**UK vs US `quite`:**\n- В UK: `quite good` часто = «средне, неплохо» (слабо позитивно).\n- В US: `quite good` = «действительно хорошо» (сильнее).\n\nЭто может путать; в письме лучше уточнить с помощью контекста.\n\n**`Very` с ungradable — исключения:**\nНекоторые устойчивые комбинации допустимы: `very dead` (эмфатично-юмористично), `very unique` (критикуется, но встречается).\n\n**Разница `too` vs `enough` vs `so`:**\n- `too hot` = больше, чем нужно (негативно).\n- `hot enough` = достаточно для цели.\n- `so hot` = настолько горячий (эмоция / уровень).\n\n**`So … that`:**\n- `It was so cold that the lake froze.` (Было так холодно, что озеро замёрзло.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "gradable adj + very / quite / fairly; ungradable adj + absolutely / completely / totally",
+        "ru": "градуируемое прил. + very / quite / fairly; неградуируемое прил. + absolutely / completely / totally"
       },
       "examples": [
         {
           "en": "I am absolutely exhausted after the trip.",
-          "ru": "Я совершенно измотан после поездки."
+          "ru": "Я совершенно измотан после поездки.",
+          "note": {
+            "en": "ungradable + absolutely",
+            "ru": "неградуируемое + absolutely"
+          }
         },
         {
           "en": "The weather is bitterly cold today.",
-          "ru": "Сегодня ужасно холодно."
+          "ru": "Сегодня ужасно холодно.",
+          "note": {
+            "en": "fixed collocation",
+            "ru": "устойчивая коллокация"
+          }
         },
         {
           "en": "It is highly unlikely that he will come.",
@@ -123,36 +189,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "It was so hot that we couldn’t sleep.",
-          "ru": "Было так жарко, что мы не могли уснуть."
+          "ru": "Было так жарко, что мы не могли уснуть.",
+          "note": {
+            "en": "so ... that",
+            "ru": "so ... that"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Gradable + very / quite; ungradable + absolutely / completely. Не говори very perfect — говори absolutely perfect."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I am very exhausted after the trip.",
+          "right": "I am absolutely exhausted after the trip.",
+          "why": {
+            "en": "exhausted is ungradable, so it takes a maximiser (absolutely / completely), not very.",
+            "ru": "Exhausted — неградуируемое, поэтому берёт максимайзер (absolutely / completely), а не very."
+          }
+        },
+        {
+          "wrong": "The result is very unlikely highly.",
+          "right": "It is highly unlikely that he will come.",
+          "why": {
+            "en": "highly is the collocating intensifier with likely / unlikely and goes before the adjective.",
+            "ru": "С likely / unlikely коллоцирует highly, и оно стоит перед прилагательным."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you control intensifiers by class and by collocation. Maximizers push to the limit (absolutely, completely, utterly, entirely, thoroughly); boosters raise the level strongly but not to the ceiling (very, highly, greatly, extremely, deeply); moderators sit mid-scale (quite, fairly, rather, reasonably, pretty); diminishers pull down (slightly, somewhat, a bit, marginally). Each class still has fixed partners: entirely agree, thoroughly enjoyed, utterly ridiculous, wholly dependent — a collocations dictionary, not logic, decides which fits. In careful prose, treat most ungradables as already absolute: prefer unique or almost unique over very unique, essential or absolutely essential over very essential; almost / nearly / virtually + ungradable stay legitimate (virtually impossible). Match register to context (academic markedly different, journalistic hugely popular, conversational super cool), never double-modify (not very absolutely), and remember some modifiers can precede the article: quite a mess, rather a shame, such a pity. British usage often understates through diminishers — a bit cold can mean very cold.",
         "ru": "На C1 работа с ungradable adj и modificatori — точная.\n\n**Maximizers vs boosters:**\n- **Maximizers** (до предела): `absolutely`, `completely`, `totally`, `utterly`, `entirely`, `thoroughly`.\n- **Boosters** (сильно, но не до предела): `very`, `highly`, `greatly`, `extremely`, `deeply`.\n- **Moderators** (средне): `quite`, `fairly`, `rather`, `reasonably`, `pretty`.\n- **Diminishers** (ослабление): `slightly`, `somewhat`, `a bit`, `marginally`.\n\n**Коллокационные ограничения:**\n- `entirely + agree`: `entirely agree` (OK), `utterly agree` (необычно).\n- `thoroughly + enjoy`: `thoroughly enjoyed` (OK), `thoroughly happy` (странно).\n- `utterly + ridiculous / different / impossible`.\n- `wholly + satisfied / different / dependent`.\n\nВ Oxford Collocations Dictionary — какие intensifier идут с каким adj.\n\n**Modifier + ungradable в academic:**\nПуристы считают `*very unique`, `*very essential`, `*more perfect` ошибками. В формальном письме:\n- Wrong (strict): `very unique`. Right: `unique` or `almost unique`.\n- Wrong: `very essential`. Right: `essential` or `absolutely essential`.\n\nНо `almost`, `nearly`, `virtually` + ungradable — легитимны: `almost perfect`, `virtually impossible`.\n\n**Register differences:**\n- Academic: `highly significant`, `markedly different`, `considerably more`.\n- Journalistic: `hugely popular`, `massively successful`.\n- Conversational: `super cool`, `really amazing`.\n- Literary: `utterly ruined`, `profoundly moved`.\n\n**Intensifier creep:**\nВ разговорной речи `really` / `so` размывают силу:\n- `I’m so tired.` (эмоционально), `I’m really tired.` (акцент, но почти = `very`).\n- `I’m very tired.` звучит суше, нейтральнее.\n\n**`A bit` / `somewhat` hedging:**\nВ академическом стиле diminishers смягчают утверждения:\n- `The result is somewhat surprising.` (мягче, чем `surprising`).\n- `a bit of a problem` (эвфемизм).\n\n**Double modification (ошибка):**\n- Wrong: `very absolutely`, `quite completely`.\n- Right: выбери один.\n\n**Position subtleties:**\nИногда modifier может занимать позицию перед артиклем:\n- `quite a mess`, `quite a day`, `rather a shame`, `such a pity`.\n- Но: `*very a day` — impossible.\n\n**Understatement через diminishers:**\nBritish English часто hedges через `a bit`:\n- `It’s a bit cold.` = очень холодно (understatement).\n- `I’m slightly annoyed.` = сильно раздражён (ирония)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "maximizer / booster / moderator / diminisher + adjective (by collocation)",
+        "ru": "максимайзер / бустер / модератор / даунтонер + прилагательное (по коллокации)"
       },
       "examples": [
         {
           "en": "The findings are highly significant and entirely consistent.",
-          "ru": "Выводы крайне значимы и полностью согласуются."
+          "ru": "Выводы крайне значимы и полностью согласуются.",
+          "note": {
+            "en": "booster + maximizer",
+            "ru": "бустер + максимайзер"
+          }
         },
         {
           "en": "His argument is wholly dependent on the first premise.",
-          "ru": "Его аргумент полностью зависит от первой посылки."
+          "ru": "Его аргумент полностью зависит от первой посылки.",
+          "note": {
+            "en": "wholly + dependent",
+            "ru": "wholly + dependent"
+          }
         },
         {
           "en": "It’s a bit cold — bring a coat.",
-          "ru": "Здесь прохладно — возьми пальто."
+          "ru": "Здесь прохладно — возьми пальто.",
+          "note": {
+            "en": "understatement",
+            "ru": "преуменьшение"
+          }
         },
         {
           "en": "She was thoroughly enjoying the evening.",
@@ -166,30 +266,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Выучи коллокации: utterly ridiculous, deeply concerned, highly unlikely."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "This solution is very unique.",
+          "right": "This solution is unique.",
+          "why": {
+            "en": "unique is ungradable and absolute; in careful prose it takes no booster, or almost / virtually.",
+            "ru": "Unique — неградуируемое и абсолютное; в аккуратной речи без бустера или с almost / virtually."
+          }
+        },
+        {
+          "wrong": "The plan is quite completely ready.",
+          "right": "The plan is completely ready.",
+          "why": {
+            "en": "do not stack two degree adverbs; pick one (a moderator or a maximizer, not both).",
+            "ru": "Нельзя ставить два наречия степени подряд; выбери одно (модератор ИЛИ максимайзер)."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 degree adverbs become a tool for understatement, hedging, and pragmatic colour. Litotes negates a low point to assert the high one: not bad = good, not a little annoyed = very annoyed, not entirely sure = uncertain — a marker of British politeness and restraint. In academic prose, hedges (somewhat, rather, relatively, arguably, comparatively) make claims precise rather than weak: the correlation is somewhat weaker in older data. Watch intensifier inflation: awesome, amazing, really really big have lost force, so strong writing swaps them for one exact word (vast, immense, grief-stricken). For drama, front the intensifier (Utterly exhausted, she collapsed). Mind colligation with participles: utterly defeated / broken (negative), thoroughly rehearsed (achievement), deeply moved (emotion), greatly appreciated (formal gratitude). Idiomatic enough — oddly enough, fair enough, sure enough — and ironic intensifiers — awfully nice, terribly sorry — round out the range. Editor's move: count your intensifiers; more than three per hundred words means you should replace one with a precise word or cut it.",
         "ru": "На C2 adverbs of degree — инструмент **understatement, hedging и pragmatic colour**.\n\n**Litotes (mock-understatement):**\n- `not bad` = good (разговорный litotes).\n- `not entirely sure` = uncertain.\n- `not altogether pleased` = displeased.\n- `not a little annoyed` = very annoyed.\n\nB британской риторике litotes — признак вежливости и сдержанности.\n\n**Hedging в научном стиле:**\n- `somewhat`, `rather`, `relatively`, `arguably`, `comparatively` — академически приемлемы.\n- `The correlation is somewhat weaker in older data.` — precise.\n- `It is arguably the strongest case.` — авторская осторожность.\n\n**Intensifier inflation:**\nCulturally: `awesome`, `amazing`, `incredible` — потеряли силу через overuse. В сильной прозе избегают.\n- Вместо `really really big` → `vast`, `immense`.\n- Вместо `very very sad` → `grief-stricken`, `despondent`.\n\n**Fronted intensifiers:**\n- `Utterly exhausted, she collapsed on the sofa.`\n- `Completely unaware of the danger, he walked on.`\nДля drama в narrative prose.\n\n**Colligation with participles:**\nОпределённые intensifiers collocate с participial adjectives:\n- `utterly + ruined / defeated / broken` (negative).\n- `thoroughly + enjoyed / rehearsed / prepared` (achievement).\n- `deeply + moved / troubled / concerned` (emotion).\n- `greatly + appreciated / admired / influenced` (formal gratitude / reception).\n\n**Corpus findings:**\n- Top academic boosters: `highly`, `significantly`, `markedly`, `substantially`.\n- Top hedge: `somewhat`, `relatively`, `fairly`, `to some extent`.\n- Conversational: `really`, `pretty`, `so`, `totally`.\n\n**Problematic `very`:**\nВ formal prose `very` считается слабым. Замени конкретикой:\n- `very good` → `excellent`, `outstanding`.\n- `very small` → `minute`, `tiny`.\n- `very tired` → `exhausted`.\n- `very angry` → `furious`, `livid`.\n\n**`Enough` quirks:**\n- `He is not well enough to travel.` — стандарт.\n- `Oddly enough, she agreed.` — idiomatic (странно, но).\n- `Fair enough.` — разговорное принятие.\n- `Sure enough, it happened.` — подтверждение ожидания.\n\n**Ironic intensifiers:**\n- `Awfully nice of you.` = very nice (ironic `awfully`).\n- `Terribly sorry.` = very sorry (ironic).\n- `Frightfully clever.` — British irony.\n\n**Final editor move:** перечитай, сосчитай intensifiers. Если на 100 слов больше 3 — проза слабеет. Замени intensifier точным словом или убери."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "not + diminisher / negative (litotes); fronted intensifier + participle adjective",
+        "ru": "not + даунтонер / отрицание (литота); вынесенный вперёд интенсификатор + причастное прилагательное"
       },
       "examples": [
         {
           "en": "Not a little annoyed, she rose and left.",
-          "ru": "Сильно раздражённая, она встала и ушла."
+          "ru": "Сильно раздражённая, она встала и ушла.",
+          "note": {
+            "en": "litotes",
+            "ru": "литота"
+          }
         },
         {
           "en": "The results are arguably the most compelling to date.",
-          "ru": "Результаты, пожалуй, самые убедительные на сегодня."
+          "ru": "Результаты, пожалуй, самые убедительные на сегодня.",
+          "note": {
+            "en": "academic hedge",
+            "ru": "академическое смягчение"
+          }
         },
         {
           "en": "Awfully nice of you to come.",
-          "ru": "Очень мило с твоей стороны прийти."
+          "ru": "Очень мило с твоей стороны прийти.",
+          "note": {
+            "en": "ironic awfully",
+            "ru": "ироничное awfully"
+          }
         },
         {
           "en": "He was utterly defeated by the end of the match.",
@@ -203,9 +333,47 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Не злоупотребляй very — замени сильным словом: very tired → exhausted."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The town centre was very very big and amazing.",
+          "right": "The town centre was vast.",
+          "why": {
+            "en": "doubling and worn intensifiers weaken prose; replace them with one precise word.",
+            "ru": "Удвоение и стёртые интенсификаторы ослабляют текст; замени одним точным словом."
+          }
+        },
+        {
+          "wrong": "She was not bad annoyed by the delay.",
+          "right": "She was not a little annoyed by the delay.",
+          "why": {
+            "en": "litotes uses a fixed frame (not a little = very); not bad stands alone as 'quite good'.",
+            "ru": "Литота имеет устойчивую рамку (not a little = very); not bad самостоятельно значит «неплохо»."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "intensifiers",
+    "gradable-vs-ungradable-adjectives",
+    "adverbs-of-manner",
+    "adverbs-of-frequency"
+  ],
+  "crossTopic": [
+    "comparative-adjectives",
+    "result-clauses",
+    "adjective-plus-infinitive",
+    "participle-adjectives"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "a bit",
+      "fairly",
+      "quite",
+      "very",
+      "extremely",
+      "absolutely"
+    ]
+  }
 };

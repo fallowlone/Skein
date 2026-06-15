@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "fronting",
   "title": {
-    "en": "",
+    "en": "Fronting",
     "ru": "Fronting"
   },
   "cefr": "B2",
@@ -14,122 +14,257 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "word-order",
+  "egp": [
+    "EGP:C1: Can move a clause element to the front of a clause to mark it as the topic or for emphasis.",
+    "EGP:B2: Can front adverbials (time, place, manner, comment) to set context, usually marked off by a comma."
+  ],
+  "archetype": "swap",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "Fronting means moving a non-subject element — an object, an adverbial, an adjective, or a participle phrase — to the front of the clause for emphasis, to set up the topic, or for stylistic effect. The most common kind is adverbial fronting: a time, place, manner, or frequency phrase opens the sentence to set the scene before the main action (\"Yesterday, I met an old friend\"; \"In the garden, there's a fountain\"). Comment adverbials work the same way to signal your attitude up front (\"Honestly, I don't know\"; \"Frankly, this is unacceptable\"). You can also front an object when it is the topic — something already under discussion (\"This book I like very much\") — or front a participle or adjective phrase that describes the subject (\"Exhausted, she collapsed\"; \"Hidden in the attic, the letters were found\"). The key thing to know at B2: most fronting does NOT change word order — the subject and verb stay in their normal places. Only negative or restrictive adverbials trigger inversion (\"Never have I seen such beauty\"), and that belongs to a separate pattern. Put a comma after a fronted phrase or clause; with a single short adverb the comma is optional.",
         "ru": "**Fronting** — это перемещение неподлежащих элементов (объекта, обстоятельства, прилагательного) в начало предложения для эмфазы, тематической организации или стилистического эффекта.\n\n**Типы fronting:**\n\n**1. Object fronting:**\n- Neutral: `I like this book very much.`\n- Fronted: `This book I like very much.` (topic: this book; comment: I like it.)\n\nИспользуется, когда object — topic (уже обсуждаемое).\n\n**2. Adverbial fronting (most common):**\n- Time: `Yesterday, I met an old friend.` (vs `I met an old friend yesterday.`)\n- Place: `In the garden, there's a small fountain.`\n- Manner: `Slowly and carefully, she opened the box.`\n- Frequency: `Every morning, he goes jogging.`\n\n**3. Comment / viewpoint fronting:**\n- `Honestly, I don't know.`\n- `Frankly, this is unacceptable.`\n- `To be fair, he did try.`\n- `In my opinion, the plan is good.`\n\n**4. Complement fronting:**\n- `A brilliant scholar she became.` (emphatic; literary.)\n- `Happy I am not!` (very formal / literary.)\n\n**5. Participle / adjective fronting:**\n- `Exhausted, she collapsed on the sofa.`\n- `Hidden in the attic, the old letters were found.`\n- `Tired but determined, he pressed on.`\n\n**6. Negative / restrictive fronting (triggers inversion — see inversion topic):**\n- `Never have I seen such beauty.`\n- `Only then did I understand.`\n\n**Reasons to front:**\n- Provide context before main action.\n- Set topic before comment.\n- Emphasize or contrast.\n- Improve rhythm / flow.\n\n**Без inversion (для positive adverbials, topics):**\nMost fronting does NOT trigger inversion. Only negative / restrictive adverbials require it.\n- `Yesterday, she called.` (no inversion.)\n- `In the park, we played.` (no inversion.)\n- BUT: `Never did she call.` (inversion after negative.)\n\n**Частая ошибка русскоговорящего:** забывать запятую после fronted element.\n- ✗ `In the park we met.` (нужна запятая для long fronted phrases.)\n- ✓ `In the park, we met.` (для длинных — с запятой.)\n\nДля коротких — запятая опциональна: `Yesterday we met.` / `Yesterday, we met.`\n\n**Как отличать от простого reordering:**\nFronting имеет семантическую / дискурсивную функцию — обеспечивает topic-comment, emphasis, flow. Чисто произвольное rearranging может создавать awkward prose."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Fronted element (object / adverbial / participle) + (,) + subject + verb + ...",
+        "ru": "Вынесенный элемент (дополнение / обстоятельство / причастие) + (,) + подлежащее + глагол + ..."
       },
       "examples": [
         {
           "en": "Yesterday, I saw an amazing sunset.",
-          "ru": "Вчера я видел потрясающий закат."
+          "ru": "Вчера я видел потрясающий закат.",
+          "note": {
+            "en": "time adverbial",
+            "ru": "обстоятельство времени"
+          }
         },
         {
           "en": "In the garden, a small child was playing.",
-          "ru": "В саду играл маленький ребёнок."
+          "ru": "В саду играл маленький ребёнок.",
+          "note": {
+            "en": "place adverbial",
+            "ru": "обстоятельство места"
+          }
         },
         {
           "en": "Slowly, the door began to open.",
-          "ru": "Медленно дверь начала открываться."
+          "ru": "Медленно дверь начала открываться.",
+          "note": {
+            "en": "manner adverbial",
+            "ru": "обстоятельство образа действия"
+          }
         },
         {
           "en": "Exhausted from the journey, they fell asleep.",
-          "ru": "Измотанные путешествием, они уснули."
+          "ru": "Измотанные путешествием, они уснули.",
+          "note": {
+            "en": "participle phrase",
+            "ru": "причастный оборот"
+          }
         },
         {
           "en": "Frankly, I don't think it will work.",
-          "ru": "Честно говоря, я не думаю, что это сработает."
+          "ru": "Честно говоря, я не думаю, что это сработает.",
+          "note": {
+            "en": "comment adverbial",
+            "ru": "вводное слово / оценка"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Adverbial fronting для setting context: Yesterday, / In the park, / Slowly, / Frankly, ... Большинство fronting НЕ требует inversion."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "In the park we met yesterday morning the new neighbours.",
+          "right": "In the park, we met the new neighbours yesterday morning.",
+          "why": {
+            "en": "After a longer fronted phrase, mark the boundary with a comma so the reader sees where the main clause starts.",
+            "ru": "После длинного вынесенного оборота ставится запятая, чтобы было видно, где начинается главная часть."
+          }
+        },
+        {
+          "wrong": "Never I have seen such beauty.",
+          "right": "Never have I seen such beauty.",
+          "why": {
+            "en": "A fronted negative adverbial forces subject-auxiliary inversion; ordinary positive fronting does not.",
+            "ru": "Вынесенное отрицательное обстоятельство требует инверсии вспомогательного глагола; обычное положительное вынесение — нет."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, use fronting deliberately for cohesion and stylistic effect, not just for variety. Front a known or just-mentioned object to keep the topic in focus across sentences (\"These details, I'll address later\"; \"That proposal, we've rejected already\"). Use topic-establishing openers to flag what a sentence is about before you comment on it: \"As for the budget, ...\", \"When it comes to food, ...\", \"Regarding your email, ...\". This supports given-new ordering: put known or contextual information at the front and save the new, important information for the end (end-focus). Several advanced patterns appear here: participial fronting for reason or sequence (\"Running late, she took a taxi\"; \"Having finished, she relaxed\"), absolute constructions (\"Her homework done, she watched TV\"; \"Weather permitting, we'll hike\"), and concessive fronting (\"Although exhausted, she continued\"). Note which patterns trigger inversion: fronted locatives (\"Under the table lay the key\"), so/such + complement (\"So important is this issue that...\"), and conditional fronting that drops if (\"Had I known, I would have helped\"; \"Should you need help, call me\"). Use a comma after longer fronted phrases to disambiguate, and avoid stacking a heavy front onto a heavy subject — restructure instead. Excessive fronting reads as pretentious; mix it with default SVO.",
         "ru": "На C1 расширяй fronting для cohesion и stylistic effect.\n\n**Advanced fronting types:**\n\n**Object fronting — topic continuity:**\n- `The book I mentioned yesterday, I finally found it.`\n- `These details, I'll address later.`\n- `That proposal, we've rejected already.`\n\nTopics that are known or just-mentioned can be fronted to maintain cohesion.\n\n**Prepositional phrase fronting:**\n- `Under the table lay the missing key.` (locative inversion — triggers inversion.)\n- `Through the forest ran a small stream.`\n- `With great joy, she accepted the prize.` (no inversion, emphatic manner.)\n- `In spite of the risks, they proceeded.`\n\n**Subject-complement fronting (with inversion):**\n- `So important is this issue that we cannot ignore it.`\n- `So beautiful was the melody that everyone paused.`\n- `Such was her disappointment that she left.`\n\n**Participial fronting:**\n- Present participle: `Running late, she took a taxi.` (reason.)\n- Past participle: `Exhausted by the ordeal, they slept.`\n- Perfect: `Having finished the project, she relaxed.`\n\n**Absolute construction fronting:**\n- `Her homework done, she watched TV.`\n- `The rain having stopped, we continued our walk.`\n- `Weather permitting, we'll hike tomorrow.`\n\n**Conditional fronting (inversion):**\n- `Had I known, I would have helped.`\n- `Were she here, things would be different.`\n- `Should you need help, call me.`\n\n**Concessive fronting:**\n- `Although exhausted, she continued.`\n- `Despite the difficulties, they succeeded.`\n- `Cold though it was, we persevered.`\n\n**Discourse-level fronting functions:**\n\n**1. Topic establishment:**\n- `As for the salary, we'll discuss it later.`\n- `When it comes to food, I'm not picky.`\n- `Regarding your email, I'll respond shortly.`\n\n**2. Given-new ordering:**\nFronted information = known / contextual; end-focus = new / important.\n- `Yesterday, we visited the museum.` (yesterday known, museum new.)\n\n**3. Cohesion via fronted anaphoric:**\n- `This argument, I find unconvincing.`\n- `Such behaviour, we cannot tolerate.`\n- `Those days, I remember fondly.`\n\n**Balance and rhythm:**\n- Shorter fronting (one adverb): no comma needed.\n- Longer fronting (phrase / clause): comma for clarity.\n- Heavy fronting + heavy subject + long verb — awkward. Restructure.\n\n**Ambiguity avoidance:**\n- `Yesterday John saw Mary.` — can be parsed two ways.\n- `Yesterday, John saw Mary.` — clearly adverbial.\n- Comma disambiguates fronting.\n\n**Comparison with inversion:**\n- Fronting alone: `Yesterday, I saw her.` (no inversion.)\n- Fronting + inversion: `Never before had I seen such a sight.` (negative trigger + inversion.)\n- Not all fronting triggers inversion — only negative / restrictive adverbials do.\n\n**Stylistic subtlety at C1:**\n- Excessive fronting sounds awkward or pretentious.\n- Mix fronting with default SVO.\n- Use fronting when genuinely needed: for emphasis, flow, cohesion.\n- Short simple sentences don't need fronting."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Topic / participle / absolute / concessive front + (,) + (inversion if locative / so-such / if-less conditional) + main clause",
+        "ru": "Вынесенная тема / причастие / абсолютная или уступительная конструкция + (,) + (инверсия для локатива / so-such / бессоюзного условия) + главная часть"
       },
       "examples": [
         {
           "en": "As for the budget, we'll discuss it next week.",
-          "ru": "Что касается бюджета, мы обсудим его на следующей неделе."
+          "ru": "Что касается бюджета, мы обсудим его на следующей неделе.",
+          "note": {
+            "en": "topic opener",
+            "ru": "ввод темы"
+          }
         },
         {
           "en": "Having reviewed the data, the committee reached a decision.",
-          "ru": "Изучив данные, комитет принял решение."
+          "ru": "Изучив данные, комитет принял решение.",
+          "note": {
+            "en": "perfect participle",
+            "ru": "перфектное причастие"
+          }
         },
         {
           "en": "This argument, I find compelling.",
-          "ru": "Этот аргумент я нахожу убедительным."
+          "ru": "Этот аргумент я нахожу убедительным.",
+          "note": {
+            "en": "fronted object",
+            "ru": "вынесенное дополнение"
+          }
         },
         {
           "en": "Weather permitting, the ceremony will proceed outdoors.",
-          "ru": "Если погода позволит, церемония пройдёт на открытом воздухе."
+          "ru": "Если погода позволит, церемония пройдёт на открытом воздухе.",
+          "note": {
+            "en": "absolute construction",
+            "ru": "абсолютная конструкция"
+          }
         },
         {
           "en": "In response to your enquiry, we enclose the requested documents.",
-          "ru": "В ответ на ваш запрос мы прилагаем запрошенные документы."
+          "ru": "В ответ на ваш запрос мы прилагаем запрошенные документы.",
+          "note": {
+            "en": "formal PP front",
+            "ru": "формальный предложный оборот"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Fronting устанавливает topic / setting: As for X, ... / Regarding Y, ... / Having done Z, ... Используй для cohesion между предложениями."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Had I knew, I would have helped.",
+          "right": "Had I known, I would have helped.",
+          "why": {
+            "en": "If-less conditional fronting keeps the past participle (had + known), not the past simple, and inverts the subject and auxiliary.",
+            "ru": "При бессоюзном вынесении условия используется причастие прошедшего времени (had + known), не past simple, с инверсией."
+          }
+        },
+        {
+          "wrong": "So the issue is important that we cannot ignore it.",
+          "right": "So important is this issue that we cannot ignore it.",
+          "why": {
+            "en": "When so + adjective is fronted, the verb inverts with the subject; you cannot leave normal word order.",
+            "ru": "Когда вынесено so + прилагательное, глагол ставится перед подлежащим — обычный порядок слов недопустим."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, fronting is a fine-grained information-packaging device, chosen for discourse effect across registers. Use contrastive fronting to set two halves against each other (\"In public he was polite; in private, rude\"; \"On paper, the plan was flawless; in practice, it fell apart\"). Use thematic fronting to chain sentences: end one sentence on an item, then front the same idea to open the next, keeping the given information first and the new information at the end. Several elevated patterns combine fronting with inversion — rhetorical (\"Little did anyone suspect the truth\"; \"No sooner had the decision been made than opposition arose\"), literary (\"Gone were the days of innocence\"; \"Deep within the cave lay the treasure\"), and academic (\"Of particular interest is the relationship between X and Y\"; \"At the heart of the debate lies the question of...\"). Match the pattern to register: formal academic prose favours fronted prepositional phrases (\"In light of X, ...\"), legal text uses technical clause fronting (\"Subject to approval, ...\", \"Pursuant to the agreement, ...\"), journalism fronts time and place, and conversation uses topic fronting and left-dislocation (\"My uncle, he's a dentist\"). The decisive question is always: what is my topic, and what is my focus? Front what is known or contextual; reserve end-weight for what is new or focal. Watch three classic traps: a dangling fronted participle whose subject does not match the main clause, an overloaded front with too many stacked phrases, and missed or misplaced inversion — including never inverting inside an embedded clause.",
         "ru": "На C2 fronting — тонкий дискурсивный инструмент.\n\n**Sophisticated fronting types:**\n\n**Contrastive fronting:**\n- `For some it was a disaster, for others an opportunity.`\n- `In public he was polite; in private, rude.`\n- `On paper, the plan was flawless; in practice, it fell apart.`\n\n**Thematic fronting for information structure:**\nGiven information → front; new information → end.\n- `As you may recall, the project began in 2019. In that year, funding was secured.` (linked via fronted anaphoric.)\n\n**Rhetorical inversion + fronting:**\n- `Such were the consequences that reforms became inevitable.`\n- `Little did anyone suspect the truth.`\n- `No sooner had the decision been made than opposition arose.`\n\n**Literary fronting:**\n- `Gone were the days of innocence.`\n- `Lost in thought, she stared out the window.`\n- `Alone he stood, against the tide.`\n- `Deep within the cave lay the treasure.`\n\n**Political / rhetorical:**\n- `For decades, this issue has been ignored. No longer.`\n- `Our values we will defend, whatever the cost.`\n- `To those who doubt us, I say: watch and see.`\n\n**Legal / contractual fronting:**\n- `Subject to approval by the committee, the project shall proceed.`\n- `In accordance with Article 5, all parties are bound.`\n- `Pursuant to the agreement, payments shall be made monthly.`\n\n**Pragmatic functions:**\n\n**1. Discourse continuity:**\n- End of previous sentence → start of next.\n- `The project was approved. Funding for it, however, remains uncertain.`\n\n**2. Contrast / emphasis:**\n- `Traditional farming relies on manual labour. Modern farming, in contrast, uses automation.`\n\n**3. Setting topic for elaboration:**\n- `The budget question is critical. As for spending cuts, three options exist.`\n\n**Negative fronting nuances:**\n- `Not for nothing did they call him a genius.` (= For good reason...)\n- `Nowhere was the distress more evident than in rural communities.`\n- `Least of all do we wish to offend anyone.`\n- `Much though I dislike the idea...`\n\n**Extreme literary fronting:**\n- `Dark the night, cold the wind.` (paratactic, poetic.)\n- `Slow and steady was her approach.`\n- `Three times she called; three times no answer.`\n\n**Head-driven fronting (spoken English):**\n- `What annoys me, people who don't listen.` (informal — topic fronting without linker.)\n- `My uncle, he's a dentist.` (left-dislocation with resumptive pronoun — often casual.)\n\n**Academic fronting:**\n- `Of particular interest is the relationship between X and Y.`\n- `Central to this argument is the assumption that...`\n- `At the heart of the debate lies the question of...`\n\n**Cleft vs fronting:**\n- Cleft: `It is X that Y.` — more elaborated, emphatic.\n- Fronting: `X, Y.` — subtler, topical.\n- `It is freedom that we defend.` (cleft.)\n- `Freedom, we defend.` (fronting — more terse, literary.)\n\n**Register distribution:**\n- Formal academic: fronted prepositional phrases (`In light of X, Y.`).\n- Literary / poetic: inverted, dramatic fronting.\n- Journalistic: fronted time / place adverbials.\n- Legal: technical fronted clauses (`Subject to X, Y.`).\n- Conversational: topic fronting (`As for that, ...`).\n\n**Common C2 pitfalls:**\n\n**1. Dangling fronted participle:**\n- ✗ `Walking down the street, the hat blew off.` (hat didn't walk.)\n- ✓ `Walking down the street, I lost my hat.` (subject matches.)\n\n**2. Overloaded front:**\n- Too many fronted elements → parsing difficulty.\n- `In spite of the difficulties, after much deliberation, and notwithstanding the opposition, we proceeded.` — heavy start. Restructure.\n\n**3. Inversion triggers missed:**\n- ✗ `Never I have seen such a sight.`\n- ✓ `Never have I seen such a sight.`\n\n**4. Fronting in subordinate clauses:**\n- Avoid fronting-inversion in embedded clauses: `I know that never have I seen...` — wrong.\n- Keep inversion in main clause: `I know that I have never seen...`\n\n**Final C2 principle:**\nFronting = an information-packaging device. Ask: what is my topic? What is my focus? If something is known / contextual → front it. If something is new / focal → end-weight. Fronting at C2 shows you understand discourse, not just grammar."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Contrastive / thematic / rhetorical / literary / academic front + (,) + (inversion where triggered) + clause carrying end-focus",
+        "ru": "Контрастивное / тематическое / риторическое / литературное / академическое вынесение + (,) + (инверсия там, где она нужна) + часть с конечным фокусом"
       },
       "examples": [
         {
           "en": "At the heart of this controversy lies a fundamental misunderstanding.",
-          "ru": "В основе этого противоречия лежит фундаментальное недопонимание."
+          "ru": "В основе этого противоречия лежит фундаментальное недопонимание.",
+          "note": {
+            "en": "academic + inversion",
+            "ru": "академическое + инверсия"
+          }
         },
         {
           "en": "Of particular significance are the findings regarding climate change.",
-          "ru": "Особую значимость имеют выводы относительно изменения климата."
+          "ru": "Особую значимость имеют выводы относительно изменения климата.",
+          "note": {
+            "en": "of-phrase + inversion",
+            "ru": "of-оборот + инверсия"
+          }
         },
         {
           "en": "Gone are the days when a single profession sufficed for a lifetime.",
-          "ru": "Прошли те дни, когда одной профессии хватало на всю жизнь."
+          "ru": "Прошли те дни, когда одной профессии хватало на всю жизнь.",
+          "note": {
+            "en": "literary gone-front",
+            "ru": "литературное gone-вынесение"
+          }
         },
         {
           "en": "For those willing to look closely, the patterns become clear.",
-          "ru": "Для тех, кто готов смотреть внимательно, закономерности становятся ясны."
+          "ru": "Для тех, кто готов смотреть внимательно, закономерности становятся ясны.",
+          "note": {
+            "en": "for-those front",
+            "ru": "for-those вынесение"
+          }
         },
         {
           "en": "Subject to the terms set forth herein, the parties hereby agree.",
-          "ru": "В соответствии с условиями, изложенными в настоящем документе, стороны настоящим соглашаются."
+          "ru": "В соответствии с условиями, изложенными в настоящем документе, стороны настоящим соглашаются.",
+          "note": {
+            "en": "legal subject-to front",
+            "ru": "юридическое subject-to вынесение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Academic fronting: Of particular note / At the heart of / Central to — элегантные началах для complex sentence. Fronting управляет информационной структурой."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Walking down the street, the hat blew off.",
+          "right": "Walking down the street, I lost my hat.",
+          "why": {
+            "en": "A fronted participle must share its subject with the main clause; the hat did not walk, so the participle dangles.",
+            "ru": "Вынесенное причастие должно относиться к подлежащему главной части; шляпа не шла, поэтому причастие повисает."
+          }
+        },
+        {
+          "wrong": "I know that never have I seen such a sight.",
+          "right": "I know that I have never seen such a sight.",
+          "why": {
+            "en": "Keep fronting-inversion in the main clause; inside an embedded clause use ordinary word order.",
+            "ru": "Инверсию с вынесением сохраняют в главной части; во вложенном придаточном используют обычный порядок слов."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "inversion",
+    "cleft-sentences",
+    "word-order-svoa",
+    "ellipsis-and-substitution"
+  ],
+  "crossTopic": [
+    "adverbs-of-frequency",
+    "participle-adjectives",
+    "third-conditional",
+    "reduced-relative-clauses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "default S-V-O",
+      "fronted element first",
+      "comma boundary",
+      "emphasis / topic"
+    ]
+  }
 };
