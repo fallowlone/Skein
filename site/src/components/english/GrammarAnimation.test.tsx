@@ -9,7 +9,7 @@
 // of the base bundle; the mock lets us assert the loadAnimation options and the
 // reduced-motion static-frame hold without a real renderer / SVG.
 import { render } from "preact";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { axisScene, doc } from "~/english/animations/builder";
 
 const loadAnimation = vi.fn();
@@ -34,6 +34,11 @@ beforeEach(() => {
   goToAndStop.mockClear();
   host = document.createElement("div");
   document.body.appendChild(host);
+});
+
+afterEach(() => {
+  render(null, host); // unmount (idempotent) so cleanup effects run
+  host.remove();
 });
 
 describe("GrammarAnimation", () => {
