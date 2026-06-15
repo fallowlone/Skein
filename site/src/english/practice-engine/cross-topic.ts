@@ -1,7 +1,7 @@
 import type { TopicGenSpec, GrammarTopic } from "~/english/grammar-types";
 import { grammarById } from "~/english/data/grammar/index";
 import type { GeneratedExercise } from "./types";
-import { generateFromSpec, type GenerateOpts } from "./generate";
+import { generateFromSpec, generateSetFromSpec, type CompositeSupplier, type GenerateOpts } from "./generate";
 
 // Map a slot morphology feature to the coarse grammatical tag a topic lists in `features`.
 function featureToTag(feature: string): string {
@@ -33,4 +33,21 @@ export function composite(primaryId: string, secondaryId: string, opts: Omit<Gen
   if (!p?.gen || !s?.gen) return [];
   if (!p.crossTopic.includes(secondaryId) && !s.crossTopic.includes(primaryId)) return [];
   return compositeFromSpecs(primaryId, p.gen, secondaryId, s.gen, opts);
+}
+
+/** Corpus-backed: native gen for `topicId`, topped up with composites against its
+ *  crossTopic siblings until `count` is reached. Final items carry the focus topicId. */
+export function generateTopicSet(topicId: string, opts: GenerateOpts): GeneratedExercise[] {
+  const topic = grammarById.get(topicId);
+  if (!topic?.gen) return [];
+  const supplier: CompositeSupplier = (id, seed) => {
+    const peers = topic.crossTopic ?? [];
+    const acc: GeneratedExercise[] = [];
+    const per = Math.ceil(opts.count / Math.max(1, peers.length));
+    for (let k = 0; k < peers.length && acc.length < opts.count; k++) {
+      acc.push(...composite(id, peers[k], { count: per, seed: seed + k * 1000 }));
+    }
+    return acc;
+  };
+  return generateSetFromSpec(topicId, topic.gen, opts, supplier);
 }
