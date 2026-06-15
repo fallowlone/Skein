@@ -235,3 +235,28 @@ export function adjForm(lemma: string, form: "base" | "comparative" | "superlati
   if (w.endsWith("e")) return `${w}st`;
   return `${w}est`;
 }
+
+// --- selection helpers (ported from steep transforms.ts) ---
+function is3sgSubject(subject: string): boolean {
+  const s = subject.trim().toLowerCase();
+  if (/^(i|you|we|they)\b/.test(s)) return false;
+  if (/^(my parents|the students|the children|the teachers)\b/.test(s)) return false;
+  return !/s$/.test(s); // a singular noun phrase is 3sg unless plural-marked
+}
+
+export function negate(lemma: string, tense: "present" | "past", subject: string): string {
+  const base = verbForm(lemma, "base");
+  if (tense === "past") return `didn't ${base}`;
+  return is3sgSubject(subject) ? `doesn't ${base}` : `don't ${base}`;
+}
+
+export function questionAux(tense: "present" | "past", subject: string): string {
+  if (tense === "past") return "Did";
+  return is3sgSubject(subject) ? "Does" : "Do";
+}
+
+export function possessive(noun: string): string {
+  const w = noun.trim();
+  if (w.length === 0) return "'s";
+  return w.slice(-1).toLowerCase() === "s" ? `${w}'` : `${w}'s`;
+}
