@@ -21,7 +21,8 @@ export const topic: GrammarTopic = {
     "egp.c1.conditionals.inverted-conditionals-no-if",
     "egp.c2.word-order.inversion-after-negative-adverbials",
     "egp.c2.word-order.inversion-after-fronted-adjuncts",
-    "egp.c2.conditionals.inverted-conditionals-formal"
+    "egp.c2.conditionals.inverted-conditionals-formal",
+    "egp.c1.word-order.inversion-in-comparative-and-conditional-clauses"
   ],
   "archetype": "swap",
   "lessons": {

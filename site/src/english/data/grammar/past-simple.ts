@@ -26,7 +26,9 @@ export const topic: GrammarTopic = {
     "egp.a2.tenses-aspect.past-simple-regular-negatives-questions",
     "egp.a2.tenses-aspect.used-to-past-habits",
     "egp.b1.tenses-aspect.present-perfect-vs-past-simple",
-    "egp.b2.tenses-aspect.used-to-vs-would-past-habits"
+    "egp.b2.tenses-aspect.used-to-vs-would-past-habits",
+    "egp.a1.verbs.be-past-was-were",
+    "egp.a2.verbs.common-irregular-past"
   ],
   "archetype": "timeline",
   "lessons": {

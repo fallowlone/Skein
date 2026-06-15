@@ -20,7 +20,9 @@ export const topic: GrammarTopic = {
     "egp.b1.word-order.order-of-adjectives",
     "egp.b2.adjectives-adverbs.adjective-order-multiple",
     "egp.c1.adjectives-adverbs.participle-adjectives-and-compound-adjectives",
-    "egp.c2.clauses.reduced-and-verbless-clauses"
+    "egp.c2.clauses.reduced-and-verbless-clauses",
+    "egp.a1.adjectives-adverbs.adjective-before-noun",
+    "egp.a2.adjectives-adverbs.adjective-order-basic"
   ],
   "archetype": "slot-fill",
   "lessons": {
