@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "used-to",
   "title": {
-    "en": "",
+    "en": "Used To",
     "ru": "Used To"
   },
   "cefr": "A2",
@@ -16,32 +16,46 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Use **used to** to talk about a **past habit** or a **past state** that is no longer true now.\n\n**Form:** `used to` + **base verb** (no `-s`, no `-ing`).\n- `I used to smoke.` — but I don't now.\n- `She used to live in Paris.` — but she doesn't now.\n- `We used to play football every weekend.` — but we don't now.\n\nThe core meaning is simple: it **was true in the past, but it isn't anymore**. You can use it for repeated actions (`I used to go to the gym.`), states (`He used to be shy.`), and places (`They used to live here.`).\n\n**Spelling is the tricky part — watch the `d`:**\n- Positive: `used to` (with `d`).\n- Negative: `didn't use to` (no `d`, because `didn't` already carries the past).\n- Question: `Did you use to...?` (no `d`, same reason).\n\nSo: `I didn't use to like coffee, but now I love it.` and `Did you use to play tennis?` Never add `-ing` after `used to`, and never write `I use to...` for the past.",
         "ru": "**Used to** — это структура для описания **прошлых привычек** и **прошлых состояний**, которых больше нет.\n\n**Форма:** `used to` + глагол **без -s**.\n\n- `I used to smoke.` (Я раньше курил.) — сейчас не курю.\n- `She used to live in Paris.` (Она раньше жила в Париже.) — сейчас не живёт.\n- `We used to play football every weekend.` (Мы раньше играли в футбол каждые выходные.) — сейчас нет.\n\n**Главная идея:** `used to` говорит о том, что было **правдой в прошлом, но больше нет**.\n\n**Что можно описывать с `used to`:**\n\n1. **Привычки:** `I used to go to the gym.` (Я раньше ходил в спортзал.)\n2. **Состояния:** `He used to be shy.` (Он раньше был застенчивым.)\n3. **Места:** `They used to live here.` (Они раньше здесь жили.)\n4. **Любые повторяющиеся действия:** `She used to read every night.` (Она раньше читала каждую ночь.)\n\n**Отрицание: `didn't use to`** (без `d` в `use`):\n- `I didn't use to like coffee, but now I love it.` (Я раньше не любил кофе, а сейчас обожаю.)\n- `He didn't use to have a beard.` (У него раньше не было бороды.)\n\n**Вопрос: `Did you use to...?`** (тоже без `d`):\n- `Did you use to play tennis?` (Ты раньше играл в теннис?)\n- `Where did you use to live?` (Где ты раньше жил?)\n\n**Правописание — очень важно:**\n- Утверждение: `used to` (с `d`)\n- Отрицание: `didn't use to` (без `d` после didn't)\n- Вопрос: `Did you use to...?` (без `d` после did)\n\n**Частые ошибки:**\n- ❌ `I use to smoke.` → ✅ `I used to smoke.`\n- ❌ `I used to smoking.` → ✅ `I used to smoke.` (без -ing!)\n- ❌ `I am used to go to school.` → смысл другой (см. B1).\n- ❌ `Did you used to...?` → ✅ `Did you use to...?`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + used to + base verb  (neg: didn't use to + base; question: Did ... use to + base?)",
+        "ru": "подлежащее + used to + глагол в начальной форме (отриц.: didn't use to + глагол; вопрос: Did ... use to + глагол?)"
       },
       "examples": [
         {
           "en": "I used to have long hair.",
-          "ru": "У меня раньше были длинные волосы."
+          "ru": "У меня раньше были длинные волосы.",
+          "note": {
+            "en": "past state",
+            "ru": "прошлое состояние"
+          }
         },
         {
           "en": "She didn't use to like vegetables.",
-          "ru": "Она раньше не любила овощи."
+          "ru": "Она раньше не любила овощи.",
+          "note": {
+            "en": "negative",
+            "ru": "отрицание"
+          }
         },
         {
           "en": "Did you use to read fairy tales as a child?",
-          "ru": "Ты читал сказки в детстве?"
+          "ru": "Ты читал сказки в детстве?",
+          "note": {
+            "en": "question",
+            "ru": "вопрос"
+          }
         },
         {
           "en": "We used to live in a small flat.",
@@ -55,17 +69,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Used to = то, что было раньше, но сейчас уже не так: I used to smoke, but I quit."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I use to smoke.",
+          "right": "I used to smoke.",
+          "why": {
+            "en": "The positive form keeps the `d`: `used to`, not `use to`.",
+            "ru": "В утверждении сохраняется d: used to, а не use to."
+          }
+        },
+        {
+          "wrong": "I used to smoking.",
+          "right": "I used to smoke.",
+          "why": {
+            "en": "`Used to` is followed by the base verb, never `-ing`.",
+            "ru": "После used to идёт глагол в начальной форме, никогда -ing."
+          }
+        },
+        {
+          "wrong": "Did you used to play tennis?",
+          "right": "Did you use to play tennis?",
+          "why": {
+            "en": "After `did`, drop the `d`: `use to`, because `did` already marks the past.",
+            "ru": "После did d убирается: use to, так как did уже передаёт прошедшее время."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, separate three look-alike structures.\n\n**1. used to + base = past habit/state:** `I used to drink coffee every morning.` — past, not now.\n\n**2. be used to + -ing/noun = be accustomed (it feels normal now):** `I'm used to drinking coffee.` / `I'm used to the noise.` Here `used` is an adjective and `to` is a preposition, so a verb after it takes `-ing`.\n\n**3. get used to + -ing/noun = become accustomed (the process of adapting):** `I'm getting used to the new schedule.` / `You'll get used to it.`\n\nThe split that catches learners: **`used to do`** takes the **base verb**, but **`be/get used to doing`** takes **`-ing`** (or a noun). So `I used to get up early` (past habit) versus `I'm used to getting up early` (it feels normal now).\n\n**used to vs would for past habits:** `used to` works for both actions and states, but `would` works only for **repeated actions**, not states. So `I used to live in Moscow` (state) is fine, but `I would live in Moscow` is not. At B1, prefer `used to` — it covers every case.\n\n**No present form:** there is no `use to` for present habits. For things you do now, use `usually`: `I usually drink coffee in the morning.`",
         "ru": "На B1 появляются три похожие структуры: **used to do**, **be used to -ing**, **get used to -ing**. Не путай их!\n\n**1. Used to + base (past habit):**\n- `I used to drink coffee every morning.` (Я раньше пил кофе каждое утро.) — прошлое, сейчас нет.\n\n**2. Be used to + -ing (быть привычным к чему-то):**\n- `I'm used to drinking coffee.` (Я привык пить кофе.) — это для меня нормально, привычно сейчас.\n- `She's used to working late.` (Она привыкла работать допоздна.)\n\nПосле `be used to` — либо существительное, либо глагол с `-ing`:\n- `I'm used to noise.` (Я привык к шуму.)\n- `I'm used to working in noisy places.` (Я привык работать в шумных местах.)\n\n**3. Get used to + -ing (привыкать, процесс):**\n- `I'm getting used to the new schedule.` (Я привыкаю к новому расписанию.) — процесс адаптации.\n- `You'll get used to it.` (Ты привыкнешь.) — будущее.\n- `It took me a month to get used to Russian winters.` (Мне понадобился месяц, чтобы привыкнуть к русской зиме.)\n\n**Сравнительная таблица:**\n\n| Структура | Значение | Пример |\n|---|---|---|\n| used to do | раньше делал | I used to smoke. |\n| be used to doing | уже привык делать | I'm used to smoking. |\n| get used to doing | привыкаю делать | I'm getting used to smoking. |\n\n**Частая ошибка русских:** смешение этих структур.\n\n- ❌ `I'm used to go to gym.` → ✅ `I'm used to going to the gym.` (с -ing!)\n- ❌ `I used to getting up early.` → ✅ `I used to get up early.` (без -ing!)\n- ❌ `I'm getting used to speak English.` → ✅ `I'm getting used to speaking English.`\n\n**Правило:**\n- `used to` (прошлая привычка) + base verb.\n- `be/get used to` (привычка, адаптация) + -ing или noun.\n\n**4. Used to vs would для прошлых привычек:**\n- `used to` работает и для **действий**, и для **состояний**.\n- `would` — только для **действий**, не для состояний.\n\n✅ `I used to live in Moscow.` (состояние — жить)\n❌ `I would live in Moscow.` (неправильно для состояния)\n\n✅ `I used to play football every Sunday.` (действие — играть)\n✅ `I would play football every Sunday.` (тоже правильно)\n\nНа B1 используй `used to` — оно более универсально.\n\n**5. Used to — только прошлое:**\nНет `use to` для настоящего. Для настоящих привычек используй `usually`:\n- ❌ `I use to drink coffee every morning.` (если это сейчас)\n- ✅ `I usually drink coffee every morning.`\n\nПутаница `used to` и `usually` — классическая ошибка."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "used to + base = past habit; be/get used to + -ing or noun = (become) accustomed",
+        "ru": "used to + глагол = прошлая привычка; be/get used to + -ing или сущ. = (стать) привычным"
       },
       "examples": [
         {
@@ -74,15 +114,27 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She's used to getting up early.",
-          "ru": "Она привыкла вставать рано."
+          "ru": "Она привыкла вставать рано.",
+          "note": {
+            "en": "be used to + -ing",
+            "ru": "be used to + -ing"
+          }
         },
         {
           "en": "It's taking me time to get used to the new system.",
-          "ru": "Мне нужно время, чтобы привыкнуть к новой системе."
+          "ru": "Мне нужно время, чтобы привыкнуть к новой системе.",
+          "note": {
+            "en": "get used to (process)",
+            "ru": "get used to (процесс)"
+          }
         },
         {
           "en": "Did you use to be afraid of the dark?",
-          "ru": "Ты раньше боялся темноты?"
+          "ru": "Ты раньше боялся темноты?",
+          "note": {
+            "en": "past state, question",
+            "ru": "прошлое состояние, вопрос"
+          }
         },
         {
           "en": "He's not used to such cold weather.",
@@ -92,26 +144,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Used to + base (раньше делал); be/get used to + -ing (привык / привыкаю) — не смешивай!"
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'm used to go to the gym.",
+          "right": "I'm used to going to the gym.",
+          "why": {
+            "en": "After `be used to`, the `to` is a preposition, so the verb takes `-ing`.",
+            "ru": "После be used to идёт предлог to, поэтому глагол ставится в форме -ing."
+          }
+        },
+        {
+          "wrong": "I used to getting up early.",
+          "right": "I used to get up early.",
+          "why": {
+            "en": "Past-habit `used to` takes the base verb, not `-ing`.",
+            "ru": "used to (прошлая привычка) требует начальной формы глагола, а не -ing."
+          }
+        },
+        {
+          "wrong": "I use to drink coffee every morning.",
+          "right": "I usually drink coffee every morning.",
+          "why": {
+            "en": "There is no present `use to`; for present habits use `usually`.",
+            "ru": "Настоящего use to не существует; для настоящих привычек используй usually."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, refine the **forms**, **register**, and the **contrast with `would`**.\n\n**used to vs would (detailed).** Both express past habits. `used to` covers any past situation — states, actions, possession: `I used to be afraid of dogs.`, `He used to have a beard.` `Would`, however, is limited to **repeated actions**, not states: `We would visit her every summer` is fine, but `I would be afraid of dogs` and `He would have a beard` are wrong in this sense. A natural narrative pattern opens with `used to` to set the scene, then continues with `would` for the recurring details: `When I was a child, we used to spend summers at my grandmother's house. She would bake pies every Friday.`\n\n**Negatives — three options, different tone:** `didn't use to` (neutral, standard), `never used to` (emphatic, often implying *and now it's different*), and `used not to` (old-fashioned, formal, rare). Stick to the first two.\n\n**used to + be + adjective/noun** is extremely common: `I used to be shy.`, `This used to be a library.`, `It used to be easier.`\n\n**Don't confuse three different things:** `I'm used to it.` (accustomed now) vs `I used to do it.` (past habit) vs `I use it often.` (the plain verb *use*).\n\n**Questions:** the correct form is `Did you use to...?` (no `d`). `Did you used to...?` is heard informally but is non-standard — avoid it in writing. The archaic `Used you to...?` is no longer used.\n\n**Pronunciation note:** in connected speech `used to` is pronounced with a voiceless /s/ — roughly \"yoost-to\" — not \"yoozd-to\".",
         "ru": "На B2 углубляются **формы**, **регистры** и **контраст с would** для прошлых привычек.\n\n**1. Used to vs would — detailed comparison:**\n\nОба выражают прошлые привычки. Ключевые различия:\n\n- **Used to** — любая ситуация: состояния, действия, отношения:\n  - `I used to be afraid of dogs.` (состояние — OK)\n  - `We used to visit her every summer.` (действие — OK)\n  - `He used to have a beard.` (обладание — OK)\n\n- **Would** — только **повторяющиеся действия**, не состояния:\n  - ✅ `We would visit her every summer.` (действие)\n  - ❌ `I would be afraid of dogs.` (состояние — неправильно в этом значении)\n  - ❌ `He would have a beard.` (обладание — неправильно)\n\n**Would** часто используется в литературном повествовании:\n- `Every Sunday, Father would wake us at dawn.` (Каждое воскресенье отец будил нас на рассвете.)\n\nStart with `used to` to set the scene, continue with `would` for details:\n- `When I was a child, we used to spend summers at my grandmother's house. She would bake pies every Friday, and we would all help.`\n\n**2. Questions with did ... use to...?:**\nФормально правильная форма:\n- `Did you use to smoke?` (without 'd')\n\nНо в неформальной речи иногда пишут `Did you used to smoke?` — грамматически неверно, но встречается. На B2 придерживайся нормы: `Did you use to...?`\n\n**3. Didn't use to vs never used to vs used not to:**\nВсе три означают «раньше не делал»:\n- `I didn't use to like spicy food.` — стандарт.\n- `I never used to like spicy food.` — эмфатично, «совсем не любил».\n- `I used not to like spicy food.` — устаревшее, формальное, редкое.\n\nНа B2 используй первые две формы.\n\n**4. Used to + be + adjective:**\n- `I used to be shy.` (Я раньше был застенчивым.)\n- `This used to be a library.` (Это раньше была библиотека.)\n- `It used to be easier.` (Раньше было проще.)\n\nЭто очень частая конструкция.\n\n**5. Never used to — emphatic:**\n- `He never used to lie.` (Он раньше никогда не лгал.) — подразумевается: а теперь лжёт.\n- `She never used to drink.` (Она раньше никогда не пила.)\n\nЧасто с импликацией контраста с настоящим.\n\n**6. Common confusions:**\n- `I'm used to it.` (Я к этому привык.) — сейчас привычно.\n- `I used to do it.` (Я раньше это делал.) — прошлое.\n- `I use it often.` (Я часто это использую.) — просто глагол use.\n\nНе путай эти три разные вещи!\n\n**7. Pronunciation note:**\n- `used to` в речи произносится [juːst tu] — с глухим /s/, как «юст-ту».\n- Многие учащиеся произносят «юзд-ту» — это менее естественно.\n\n**8. Used to в informal questions:**\n- `You didn't use to like him, did you?` (Ты раньше его не любил, да?)\n- `Used you to go there often?` — архаично, не используй.\n\n**9. Typical B2 errors:**\n- ❌ `I'm use to walking.` → ✅ `I'm used to walking.`\n- ❌ `He used to smoked.` → ✅ `He used to smoke.`\n- ❌ `Would you be afraid of dogs when young?` (state) → ✅ `Were you afraid of dogs when young?` or `Did you use to be afraid of dogs?`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "used to = any past situation; would + base = repeated past actions only (not states); never used to = emphatic negative",
+        "ru": "used to = любая ситуация в прошлом; would + глагол = только повторяющиеся действия (не состояния); never used to = эмфатическое отрицание"
       },
       "examples": [
         {
           "en": "I never used to enjoy classical music, but now I do.",
-          "ru": "Я раньше никогда не любил классическую музыку, а теперь люблю."
+          "ru": "Я раньше никогда не любил классическую музыку, а теперь люблю.",
+          "note": {
+            "en": "never used to (emphatic)",
+            "ru": "never used to (эмфатично)"
+          }
         },
         {
           "en": "Every summer, we would travel to the countryside to visit our grandparents.",
-          "ru": "Каждое лето мы ездили в деревню к дедушке с бабушкой."
+          "ru": "Каждое лето мы ездили в деревню к дедушке с бабушкой.",
+          "note": {
+            "en": "would for repeated action",
+            "ru": "would для повторяющегося действия"
+          }
         },
         {
           "en": "Did you use to play any sports at school?",
@@ -119,7 +205,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "This building used to be a cinema.",
-          "ru": "Это здание раньше было кинотеатром."
+          "ru": "Это здание раньше было кинотеатром.",
+          "note": {
+            "en": "used to + be (past state)",
+            "ru": "used to + be (прошлое состояние)"
+          }
         },
         {
           "en": "He's not used to being criticised.",
@@ -129,17 +219,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Would для повторяющихся действий в прошлом — не для состояний; used to — для всех ситуаций."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Every summer we would be at the seaside.",
+          "right": "Every summer we used to be at the seaside.",
+          "why": {
+            "en": "`Would` cannot express a past state; use `used to` for states like `be`.",
+            "ru": "Would не выражает прошлое состояние; для состояний (быть) нужно used to."
+          }
+        },
+        {
+          "wrong": "He used to smoked.",
+          "right": "He used to smoke.",
+          "why": {
+            "en": "`Used to` is always followed by the base verb, never a past form.",
+            "ru": "После used to всегда идёт начальная форма, а не прошедшая."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, control `used to` across **narrative style**, **negation nuance**, and **register**.\n\n**Discourse function in storytelling.** The classic sequence is `used to` (opens, sets the background) → `would` (develops the recurring detail) → `past simple` (a single decisive event): `When I was young, we used to live in a small village. Every morning, I would walk to school through the fields. But one day, everything changed.`\n\n**Negation patterns, by tone:** `didn't use to` (neutral, factual), `never used to` (emphatic, usually implying a contrast with now), `used not to` (literary, old-fashioned, British-formal).\n\n**Past facts and vanished realities:** `There used to be a pub on this corner.` `There used to be` is the standard way to describe something that no longer exists.\n\n**Then-vs-now rhetoric** is a staple of essays and journalism: `People used to write letters; today, they send emails.`, `We used to believe the earth was flat. Now we know better.`\n\n**Formal synonym — be accustomed to (+ -ing/noun):** preferred in academic and formal writing: `She was accustomed to working alone.`, `I'm not accustomed to being interrupted.`\n\n**Pragmatic implication.** `used to` quietly signals *but not anymore*, which can carry reproach or regret: `I used to enjoy our conversations.` / `He used to be such a nice man.` Use this implied contrast deliberately.\n\n**`could` for past possibility/permission overlaps with `used to`:** `You used to be able to smoke in restaurants.` — the standard way to say *it was once possible*.",
         "ru": "На C1 `used to` рассматривается в контексте **narrative style**, **negation patterns** и **informal speech variations**.\n\n**1. Discourse function в storytelling:**\n- **Opening:** `When I was young, we used to live in a small village.` — устанавливает фон.\n- **Development:** `Every morning, I would walk to school through the fields.` — продолжение с would.\n- **Contrast:** `But one day, everything changed.` — переход в past simple для конкретного события.\n\nНа C1 ты знаешь этот нарративный паттерн: `used to` → `would` → `past simple`.\n\n**2. Negation patterns:**\nТри основные формы, с разной тональностью:\n- `didn't use to` — нейтрально, стандартно.\n- `never used to` — эмфатически, часто с импликацией.\n- `used not to` — архаично, литературно, по-британски формально.\n\nПримеры:\n- `She didn't use to care about fashion.` (Она раньше не интересовалась модой.) — factual.\n- `She never used to care about fashion.` (Раньше её никогда не интересовала мода.) — emphatic, contrast with now.\n- `She used not to care about fashion.` (Она не имела обыкновения интересоваться модой.) — literary/old-fashioned.\n\n**3. Past facts and states:**\n- `There used to be a pub on this corner.` (На этом углу раньше был паб.)\n- `Money used to mean something in those days.` (Деньги раньше что-то значили.)\n\nКонструкция `There used to be` — стандартный способ описать исчезнувшую реальность.\n\n**4. Used to в контрастных риторических построениях:**\n- `We used to believe that the earth was flat. Now we know better.` (Мы когда-то верили, что Земля плоская. Теперь мы знаем лучше.)\n- `People used to write letters; today, they send emails.` (Люди раньше писали письма; сегодня они отправляют имейлы.)\n\nЭто стандартный риторический паттерн «тогда vs сейчас» в эссе и журналистике.\n\n**5. Get used to — process verbs variation:**\n- `I'm getting used to it.` (Я привыкаю.)\n- `You'll soon get used to the routine.` (Ты скоро привыкнешь к рутине.)\n- `She found it hard to get used to the cold.` (Ей было трудно привыкнуть к холоду.)\n- `I can't get used to the noise.` (Я не могу привыкнуть к шуму.)\n\n**6. Be accustomed to (formal synonym of be used to):**\n- `I'm not accustomed to being interrupted.` (Я не привык, чтобы меня перебивали.)\n- `She was accustomed to working alone.` (Она привыкла работать одна.)\n\n`Be accustomed to` — более формальный вариант `be used to`. В academic и formal writing предпочтителен.\n\n**7. Subtle implications:**\n- `I used to enjoy our conversations.` — подразумевает: сейчас уже не так (тонкий упрёк, намёк, сожаление).\n- `He used to be such a nice man.` — подразумевает: сейчас изменился, обычно к худшему.\n\nНа C1 ты чувствуешь эти прагматические импликации и используешь их сознательно.\n\n**8. Didn't used to — prescriptively wrong but common:**\nВ informal письме и в некоторых диалектах встречается `didn't used to smoke` вместо `didn't use to smoke`. Строго говоря, это ошибка, но настолько частая, что некоторые словари её отмечают как допустимую.\n\nВ formal writing — **только `didn't use to`**.\n\n**9. Could + historical state:**\nВ некоторых контекстах `could` перекрывается с `used to` для состояний:\n- `In those days, you could buy a loaf for a penny.` (Тогда можно было купить буханку за пенс.)\n- `You used to be able to smoke in restaurants.` (Раньше можно было курить в ресторанах.)\n\nЭто стандартный паттерн для «раньше было возможно»."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "narrative chain: used to (scene) -> would (recurring detail) -> past simple (single event); be accustomed to + -ing = formal synonym of be used to",
+        "ru": "повествовательная цепочка: used to (фон) -> would (повторяющаяся деталь) -> past simple (единичное событие); be accustomed to + -ing = формальный синоним be used to"
       },
       "examples": [
         {
@@ -148,11 +256,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She never used to speak to me that way.",
-          "ru": "Она раньше никогда так со мной не разговаривала."
+          "ru": "Она раньше никогда так со мной не разговаривала.",
+          "note": {
+            "en": "never used to (emphatic)",
+            "ru": "never used to (эмфатично)"
+          }
         },
         {
           "en": "There used to be a thriving marketplace where the shopping centre now stands.",
-          "ru": "Раньше там, где сейчас торговый центр, был оживлённый рынок."
+          "ru": "Раньше там, где сейчас торговый центр, был оживлённый рынок.",
+          "note": {
+            "en": "There used to be",
+            "ru": "There used to be"
+          }
         },
         {
           "en": "It took me months to get used to the climate.",
@@ -160,36 +276,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He is not accustomed to criticism of his work.",
-          "ru": "Он не привык к критике своей работы."
+          "ru": "Он не привык к критике своей работы.",
+          "note": {
+            "en": "be accustomed to (formal)",
+            "ru": "be accustomed to (формально)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Be accustomed to — формальный синоним be used to для academic и formal register."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'm accustomed to work alone.",
+          "right": "I'm accustomed to working alone.",
+          "why": {
+            "en": "Like `be used to`, `be accustomed to` takes `-ing` (or a noun), not the base verb.",
+            "ru": "Как и be used to, оборот be accustomed to требует -ing (или существительное), а не начальной формы."
+          }
+        },
+        {
+          "wrong": "There used to a pub on this corner.",
+          "right": "There used to be a pub on this corner.",
+          "why": {
+            "en": "Don't drop `be`: the fixed frame is `There used to be...`.",
+            "ru": "Нельзя опускать be: устойчивая конструкция — There used to be..."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, `used to` is a precision instrument for **temporal contrast**, **nostalgia**, and **discourse framing**.\n\n**Choosing among paraphrases for past habit,** by register: `used to` (neutral, universal); `would` + habitual action (literary narrative, actions only); `in those days` / `back then` + past simple (factual / colloquial); `was in the habit of + -ing` and `had a habit of + -ing` (formal-to-neutral); `it was not uncommon for X to...` (academic, descriptive). All can render *I walked to school as a child.*\n\n**Implied contrast vs plain fact.** `I smoked in my twenties.` is a bare fact; `I used to smoke in my twenties.` adds the emphasis *and no longer*. Reach for `used to` precisely when that contrast with the present matters.\n\n**Literary and generational tropes:** `This used to be a proper bookshop, before the chains took over.`, the cliché `They don't make them like they used to.`, and `Young people used to respect their elders.` At C2 you recognise these as culturally loaded — and the risk that generational `used to` can read as a complaint.\n\n**Passive `used to`:** `It used to be thought that the earth was the centre of the universe.` — the standard historical-passive frame.\n\n**Aphoristic `get used to`:** `You never get used to losing.`, `One gets used to anything, given time.`\n\n**Counterfactual and conditional uses:** `If he used to care, he certainly doesn't now.`; `Had she been used to such rigour, she would have managed better.`\n\n**Fixed expressions:** `It's not what it used to be.`, `I'm not as young as I used to be.`, `It used to be said that...`\n\n**Archaic inversion** — recognise but don't write: `Used he to come here?` (19th-century).",
         "ru": "На C2 `used to` — инструмент **nuanced temporal contrast**, **literary nostalgia** и **discourse framing**.\n\n**1. Nuanced paraphrases for past habits:**\nНа C2 ты свободно выбираешь между эквивалентами `used to` в зависимости от регистра и оттенка:\n\n- `used to` — neutral, universal.\n- `would` + habitual action — literary, narrative, only for actions.\n- `in those days` + past simple — factual, journalistic.\n- `back then` + past simple — informal, colloquial.\n- `it was common for X to...` — descriptive, academic.\n- `X was in the habit of + -ing` — formal, slightly dated.\n- `had a habit of + -ing` — neutral.\n- `would habitually + base` — literary emphasis.\n\nПример, все эквиваленты:\n- `I used to walk to school.`\n- `I would walk to school every day.`\n- `In those days, I walked to school.`\n- `I was in the habit of walking to school.`\n- `It was not uncommon for me to walk to school.`\n\n**2. Literary nostalgia с used to:**\n- `This used to be a proper bookshop, before the chains took over.` (Это был настоящий книжный магазин, пока его не захватили сети.) — ностальгия + социальный комментарий.\n- `They don't make them like they used to.` (Сейчас такого уже не делают.) — клише ностальгии.\n\nНа C2 ты распознаёшь эти культурные тропы и используешь их с сознательной иронией или искренностью.\n\n**3. Literary opening с used to:**\n- `My father used to say that patience is a virtue.` — типичное начало мемуарной прозы.\n- `She used to tell us stories about her childhood in the village.` — сенсорное, меморативное письмо.\n\nОткрытие с `used to` сразу устанавливает ретроспективный взгляд и эмоциональную дистанцию.\n\n**4. Used to vs past simple — subtle choice:**\n- `I smoked in my twenties.` — факт.\n- `I used to smoke in my twenties.` — факт + подчёркивание «больше не».\n\n`Used to` всегда несёт имплицированное противопоставление с настоящим. Используй его, когда это противопоставление важно.\n\n**5. Never used to — emphatic pattern:**\n- `He never used to complain like this.` — сейчас жалуется, и это перемена.\n- `People never used to lock their doors.` — ностальгия, социальный комментарий о потере доверия.\n\n**6. Used to в generational discourse:**\n- `Our generation used to know how to...` (Наше поколение умело...)\n- `Young people used to respect their elders.` — стандартный паттерн generational critique.\n\nТоже клише; на C2 ты понимаешь и функцию, и потенциальную риторическую опасность (звучит как старческая жалоба).\n\n**7. Passive used to:**\n- `It used to be thought that the earth was the centre of the universe.` (Раньше считалось, что Земля — центр Вселенной.)\n- `Jews used to be persecuted in many countries.` — исторический пассив.\n\n**8. Getting used to — nuanced process semantics:**\n- `I've been getting used to it gradually.` — продолжительная адаптация.\n- `You never get used to losing.` (К проигрышам никогда не привыкаешь.) — generic statement, афоризм.\n- `One gets used to anything, given time.` (Ко всему привыкаешь, если дать время.) — формальный афоризм.\n\n**9. Used to + inversion (archaic):**\nЛитературная, почти исчезнувшая форма:\n- `Used he to come here?` (Имел ли он обыкновение сюда приходить?) — XIX век, редко в современной прозе.\n\nНа C2 ты узнаёшь эту форму в classic literature, но не используешь в современном письме.\n\n**10. Distinguishing register in formal academic writing:**\n- Academic formal: `It was formerly the case that X did Y.` / `In earlier times, X commonly did Y.`\n- Academic informal: `Researchers used to believe that...`\n- Academic neutral: `Previously, scholars held the view that...`\n\nВыбор маркирует уровень формальности работы.\n\n**11. Used to в counterfactual reasoning:**\n- `If he used to care, he certainly doesn't now.` — условное с used to.\n- `Had she been used to such rigour, she would have managed better.` — counterfactual с be used to.\n\n**12. Fixed expressions:**\n- `It's not what it used to be.` (Уже не то, что раньше.)\n- `It used to be said that...` (Раньше говорили, что...)\n- `I'm not as young as I used to be.` (Я уже не так молод, как раньше.)\n- `Things aren't what they used to be.` (Всё уже не то, что раньше.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "used to (neutral) / would + action (literary) / was in the habit of + -ing (formal) / in those days + past simple (factual) -- register-graded paraphrases; it used to be thought that... = passive",
+        "ru": "used to (нейтрально) / would + действие (литературно) / was in the habit of + -ing (формально) / in those days + past simple (фактологично) -- парафразы по регистру; it used to be thought that... = пассив"
       },
       "examples": [
         {
           "en": "My grandfather would sit by the fire for hours, recounting stories we'd heard a hundred times.",
-          "ru": "Мой дедушка часами сидел у камина, рассказывая истории, которые мы слышали уже сотню раз."
+          "ru": "Мой дедушка часами сидел у камина, рассказывая истории, которые мы слышали уже сотню раз.",
+          "note": {
+            "en": "would, literary narrative",
+            "ru": "would, литературное повествование"
+          }
         },
         {
           "en": "It used to be thought that the Atlantic was uncrossable.",
-          "ru": "Раньше считалось, что Атлантику нельзя пересечь."
+          "ru": "Раньше считалось, что Атлантику нельзя пересечь.",
+          "note": {
+            "en": "passive used to",
+            "ru": "пассив с used to"
+          }
         },
         {
           "en": "She was in the habit of taking a walk before breakfast.",
-          "ru": "У неё было обыкновение гулять перед завтраком."
+          "ru": "У неё было обыкновение гулять перед завтраком.",
+          "note": {
+            "en": "was in the habit of + -ing",
+            "ru": "was in the habit of + -ing"
+          }
         },
         {
           "en": "Things are not what they used to be in this town.",
@@ -197,15 +347,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "One never quite gets used to the bureaucracy, does one?",
-          "ru": "К бюрократии ведь так и не привыкаешь, правда?"
+          "ru": "К бюрократии ведь так и не привыкаешь, правда?",
+          "note": {
+            "en": "aphoristic get used to",
+            "ru": "афористичное get used to"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Used to несёт имплицированное противопоставление с настоящим — используй для nostalgic или generational discourse."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She was in the habit of take a walk before breakfast.",
+          "right": "She was in the habit of taking a walk before breakfast.",
+          "why": {
+            "en": "After `in the habit of`, the verb takes `-ing`.",
+            "ru": "После in the habit of глагол ставится в форме -ing."
+          }
+        },
+        {
+          "wrong": "It used to be think that the Atlantic was uncrossable.",
+          "right": "It used to be thought that the Atlantic was uncrossable.",
+          "why": {
+            "en": "The passive frame `used to be thought` needs the past participle `thought`.",
+            "ru": "Пассивная конструкция used to be thought требует причастия thought."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "past-simple",
+    "will-would",
+    "verb-plus-gerund",
+    "stative-verbs"
+  ],
+  "crossTopic": [
+    "past-simple",
+    "past-continuous",
+    "adverbs-of-frequency",
+    "adverbial-clauses-time"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "past: true then (habit / state)",
+      "now: no longer true"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "coordinating-conjunctions",
   "title": {
-    "en": "",
+    "en": "Coordinating Conjunctions",
     "ru": "Coordinating Conjunctions"
   },
   "cefr": "A2",
@@ -16,36 +16,54 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conjunctions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Coordinating conjunctions join two parts of equal weight — two words, two phrases, or two whole sentences — without making either one depend on the other. At A2 you need just three: 'and', 'but', and 'or'. Use 'and' to add similar ideas ('I like tea and coffee.'), 'but' to show a contrast ('I want to go, but I'm tired.'), and 'or' to offer a choice ('Tea or coffee?'). You can connect equal things at any level: word + word ('big and small'), phrase + phrase ('in the morning and in the evening'), or sentence + sentence ('I cook, and she cleans.'). The comma rule is simple: put a comma before the conjunction only when it links two complete sentences ('I was hungry, and I ate a sandwich.'); leave it out when you are only joining words or short phrases ('I like coffee and tea.'). One frequent error is joining two full sentences with just a comma and no conjunction — that is wrong. Fix it by adding a conjunction or splitting into two sentences.",
         "ru": "**Coordinating conjunctions** (сочинительные союзы) соединяют две равные части предложения. Две идеи одного уровня — ни одна не подчиняется другой.\n\nНа A2 хватает трёх главных союзов: **and**, **but**, **or**.\n\n**And = и:**\nСоединяет похожие идеи.\n- `I like tea and coffee.` (Я люблю чай и кофе.)\n- `She is tall and thin.` (Она высокая и худая.)\n- `We went home and watched TV.` (Мы пошли домой и смотрели телевизор.)\n\n**But = но:**\nПоказывает контраст, противоположность.\n- `I want to go, but I am tired.` (Я хочу пойти, но я устал.)\n- `He is rich but unhappy.` (Он богатый, но несчастный.)\n\n**Or = или:**\nПоказывает выбор.\n- `Do you want tea or coffee?` (Ты хочешь чай или кофе?)\n- `We can walk or take the bus.` (Мы можем пойти пешком или сесть на автобус.)\n\n**Соединяем одинаковые вещи:**\n- Слово + слово: `big and small`.\n- Фраза + фраза: `in the morning and in the evening`.\n- Предложение + предложение: `I cook, and she cleans.`\n\n**Запятая:**\nМежду двумя полными предложениями ставим запятую перед союзом:\n- `I was hungry, and I ate a sandwich.`\n\nЕсли это просто два слова или короткая фраза — запятая не нужна:\n- `I like coffee and tea.`\n\n**Частая ошибка:** русский студент иногда пишет два предложения только с запятой, без союза. Это ошибка:\n- ❌ `I was tired, I went home.`\n- ✅ `I was tired, and I went home.`\n- ✅ `I was tired. I went home.`\n\nНа A2 достаточно уверенно пользоваться and, but, or. Этого хватит для 80% бытовой речи."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "word/phrase/clause + and / but / or + word/phrase/clause   (comma before the conjunction only between two full clauses)",
+        "ru": "слово/фраза/предложение + and / but / or + слово/фраза/предложение   (запятая перед союзом только между двумя полными предложениями)"
       },
       "examples": [
         {
           "en": "I have a brother and a sister.",
-          "ru": "У меня есть брат и сестра."
+          "ru": "У меня есть брат и сестра.",
+          "note": {
+            "en": "and = add",
+            "ru": "and = добавление"
+          }
         },
         {
           "en": "The movie was long but interesting.",
-          "ru": "Фильм был долгий, но интересный."
+          "ru": "Фильм был долгий, но интересный.",
+          "note": {
+            "en": "but = contrast",
+            "ru": "but = контраст"
+          }
         },
         {
           "en": "Would you like tea or juice?",
-          "ru": "Ты хочешь чай или сок?"
+          "ru": "Ты хочешь чай или сок?",
+          "note": {
+            "en": "or = choice",
+            "ru": "or = выбор"
+          }
         },
         {
           "en": "She called me, and I answered.",
-          "ru": "Она позвонила мне, и я ответил."
+          "ru": "Она позвонила мне, и я ответил.",
+          "note": {
+            "en": "comma + clause",
+            "ru": "запятая + предложение"
+          }
         },
         {
           "en": "He is kind but shy.",
@@ -55,30 +73,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "And — похожие идеи, but — контраст, or — выбор. Это минимум для A2."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I was tired, I went home.",
+          "right": "I was tired, and I went home.",
+          "why": {
+            "en": "Two complete sentences need a conjunction, not just a comma (this is a comma splice).",
+            "ru": "Два полных предложения нужно соединять союзом, а не одной запятой."
+          }
+        },
+        {
+          "wrong": "I like coffee, and tea.",
+          "right": "I like coffee and tea.",
+          "why": {
+            "en": "Do not put a comma before 'and' when it only joins two words or short phrases.",
+            "ru": "Не ставь запятую перед 'and', когда он соединяет только два слова или короткие фразы."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 you add 'so' and 'yet' to 'and / but / or', and you sharpen the punctuation. 'So' introduces a result: the cause comes first, the consequence after ('It was raining, so I took an umbrella.'). Do not confuse it with 'because', which puts the reason after it ('I stayed home because I was tired.') — pick one direction; never write 'Because I was tired, so I stayed home.' 'Yet' is a slightly more formal 'but' ('He is young, yet very experienced.'). Punctuation: use a comma before the conjunction when both sides are complete clauses (subject + verb on each side: 'I like coffee, and she likes tea.'), but omit it when one subject governs both verbs ('I like coffee and tea.'). The classic mistake is the comma splice — gluing two clauses with only a comma ('It was cold, we stayed inside.'); fix it with a conjunction or a full stop. When the subject is the same, you can drop the second subject ('I came home and ate dinner.'); when subjects differ, keep both ('I came home, and she left.').",
         "ru": "На B1 к трём базовым союзам добавляются **so** и **yet**, и уточняются правила пунктуации.\n\n**So = поэтому, так что (результат):**\n- `It was raining, so I took an umbrella.` (Шёл дождь, поэтому я взял зонт.)\n- `She was tired, so she went to bed.` (Она устала, поэтому легла спать.)\n\nВажно: `so` — это **результат**, не причина. Причина идёт перед `so`, следствие — после.\n\n**Yet = но всё же (более формальный контраст):**\n- `He is young, yet very experienced.` (Он молод, но очень опытен.)\n- `The test was hard, yet she passed.` (Тест был сложный, но она прошла.)\n\n`Yet` звучит чуть более книжно, чем `but`. В разговорной речи чаще `but`.\n\n**Правило запятой перед союзом:**\nЕсли соединяем два **полных** предложения (с подлежащим + глаголом с обеих сторон), ставим запятую:\n- `I like coffee, and she likes tea.` — два полных предложения.\n- `I like coffee and tea.` — одно предложение, два объекта → без запятой.\n\n**Comma splice — типичная ошибка:**\nНельзя соединять два предложения одной запятой, без союза:\n- ❌ `It was cold, we stayed inside.`\n- ✅ `It was cold, so we stayed inside.`\n- ✅ `It was cold. We stayed inside.`\n\nЭто называется **comma splice**, и это частая ошибка русских студентов.\n\n**So vs because — разные направления:**\n- `because` ставит **причину** после себя: `I stayed home because I was tired.`\n- `so` ставит **результат** после себя: `I was tired, so I stayed home.`\n\nОба варианта правильны, но не смешивай: `Because I was tired, so I stayed home` — ошибка в английском (двойной союз).\n\n**And/but с одинаковым подлежащим:**\nМожно не повторять подлежащее:\n- `I came home and ate dinner.` (не нужно `I came home and I ate dinner`.)\n- `She smiled but said nothing.`\n\nНо если подлежащие разные — повторяй:\n- `I came home, and she left.`\n\n**Типичные ошибки B1:**\n- `Although…but`: ❌ `Although it was late, but we continued.` → ✅ `Although it was late, we continued.` (Один союз достаточно.)\n- Двойной `because…so`: ❌ `Because I was tired, so I slept.` → ✅ `Because I was tired, I slept.` или `I was tired, so I slept.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "clause , (and / but / or / so / yet) clause   |   clause + (and / but) + verb phrase (shared subject, no comma)",
+        "ru": "предложение , (and / but / or / so / yet) предложение   |   предложение + (and / but) + глагольная фраза (общее подлежащее, без запятой)"
       },
       "examples": [
         {
           "en": "I studied hard, so I passed the exam.",
-          "ru": "Я много учился, поэтому сдал экзамен."
+          "ru": "Я много учился, поэтому сдал экзамен.",
+          "note": {
+            "en": "so = result",
+            "ru": "so = результат"
+          }
         },
         {
           "en": "He was hungry, yet he didn't eat.",
-          "ru": "Он был голоден, но всё же не ел."
+          "ru": "Он был голоден, но всё же не ел.",
+          "note": {
+            "en": "yet = formal but",
+            "ru": "yet = формальный but"
+          }
         },
         {
           "en": "We went to the store, and we bought milk.",
-          "ru": "Мы пошли в магазин и купили молоко."
+          "ru": "Мы пошли в магазин и купили молоко.",
+          "note": {
+            "en": "comma + clause",
+            "ru": "запятая + предложение"
+          }
         },
         {
           "en": "It was late, but we weren't tired.",
@@ -86,36 +134,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "You can call me or send a message.",
-          "ru": "Ты можешь позвонить мне или написать сообщение."
+          "ru": "Ты можешь позвонить мне или написать сообщение.",
+          "note": {
+            "en": "or = choice",
+            "ru": "or = выбор"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Comma splice запрещён: между двумя полными предложениями нужен союз, а не только запятая."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It was cold, we stayed inside.",
+          "right": "It was cold, so we stayed inside.",
+          "why": {
+            "en": "A comma alone cannot join two clauses; add a coordinating conjunction (comma splice).",
+            "ru": "Одна запятая не может соединять два предложения; добавь сочинительный союз."
+          }
+        },
+        {
+          "wrong": "Because I was tired, so I slept.",
+          "right": "Because I was tired, I slept.",
+          "why": {
+            "en": "Do not pair 'because' with 'so'; one conjunction is enough.",
+            "ru": "Не сочетай 'because' с 'so'; достаточно одного союза."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you master the full set of seven, remembered as FANBOYS: For, And, Nor, But, Or, Yet, So. 'For' means 'because' but is formal and literary ('She stayed home, for she was ill.') — in speech use 'because'. 'Nor' adds a second negative and forces question-style inversion after it: 'nor + auxiliary + subject' ('He doesn't smoke, nor does he drink.'). Punctuation hardens into three rules: (1) between two independent clauses, put a comma before the conjunction ('The rain stopped, but the ground was wet.'); (2) when joining single words or phrases with one shared subject, use no comma ('The rain stopped but started again.'); (3) in a list of three or more, the Oxford comma before the final conjunction is optional but recommended for clarity ('apples, bananas, and oranges'). Coordination also demands parallelism: the items you join must share grammatical form ('She likes swimming and running.', not 'swimming and to run'). And despite what you may have been taught, you may begin a sentence with And/But/So in journalism and narrative prose, though formal academic writing still avoids it.",
         "ru": "На B2 изучается полный набор **FANBOYS** — запоминалка для всех семи сочинительных союзов: **F**or, **A**nd, **N**or, **B**ut, **O**r, **Y**et, **S**o.\n\n**For = потому что (формально-книжно):**\n- `She stayed home, for she was ill.` (Она осталась дома, ибо была больна.)\n\nВ современном английском `for` в этом значении почти не используется в речи. Только в литературе и формальных текстах. В обычной речи — `because`.\n\n**Nor = и не, ни (после отрицания):**\n- `He doesn't smoke, nor does he drink.` (Он не курит и не пьёт.)\n- `She didn't call, nor did she write.` (Она не позвонила и не написала.)\n\nВажно: после `nor` идёт **инверсия** (как в вопросе): `nor + вспомогательный глагол + подлежащее`. Без инверсии звучит неправильно.\n\n`Nor` обычно следует за отрицательным предложением: `I don't like it, nor does she.`\n\n**Правила пунктуации FANBOYS — полная таблица:**\n\n1. Соединяет два **независимых** предложения (у каждого своё подлежащее и глагол) → **запятая** перед союзом:\n   - `The rain stopped, but the ground was still wet.`\n\n2. Соединяет **однородные члены** (слова, фразы) → **без запятой**:\n   - `The rain stopped but started again.` (одно подлежащее, два глагола)\n   - `I like coffee and tea.`\n\n3. В списке из трёх и более элементов — **Oxford comma** (по выбору, но лучше ставить):\n   - `I bought apples, bananas, and oranges.` — с Oxford comma.\n   - `I bought apples, bananas and oranges.` — без Oxford comma.\n\n**Параллелизм (parallelism) в сочинении:**\nКогда соединяешь через and/or/but, структуры с двух сторон должны быть **одинаковыми**:\n- ❌ `She likes swimming and to run.` — смешаны герундий и инфинитив.\n- ✅ `She likes swimming and running.`\n- ✅ `She likes to swim and to run.`\n\nТо же для существительных, прилагательных, фраз:\n- ❌ `The car is fast, reliable, and it costs little.` — два прилагательных + предложение.\n- ✅ `The car is fast, reliable, and inexpensive.`\n\n**Начинать предложение с And/But/So:**\nМногим русским студентам учителя запрещали это. На самом деле — **можно**, особенно в журналистике и художественной прозе:\n- `And then she left.`\n- `But that's not the point.`\n- `So what happened next?`\n\nВ формальном академическом тексте всё же избегай, но в обычном письме это нормально.\n\n**Типичная B2-ошибка — nor без инверсии:**\n- ❌ `He doesn't like coffee, nor he likes tea.`\n- ✅ `He doesn't like coffee, nor does he like tea.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "clause , (For/And/Nor/But/Or/Yet/So) clause   |   Nor + auxiliary + subject + verb   |   A, B, (and) C  (Oxford comma optional)",
+        "ru": "предложение , (For/And/Nor/But/Or/Yet/So) предложение   |   Nor + вспом. глагол + подлежащее + глагол   |   A, B, (and) C  (Oxford comma по выбору)"
       },
       "examples": [
         {
           "en": "The task was difficult, yet rewarding.",
-          "ru": "Задача была сложной, но при этом благодарной."
+          "ru": "Задача была сложной, но при этом благодарной.",
+          "note": {
+            "en": "yet + phrase",
+            "ru": "yet + фраза"
+          }
         },
         {
           "en": "She neither called nor wrote, nor did she send any message.",
-          "ru": "Она ни позвонила, ни написала, ни отправила ни одного сообщения."
+          "ru": "Она ни позвонила, ни написала, ни отправила ни одного сообщения.",
+          "note": {
+            "en": "nor + inversion",
+            "ru": "nor + инверсия"
+          }
         },
         {
           "en": "The team worked quickly, efficiently, and accurately.",
-          "ru": "Команда работала быстро, эффективно и точно."
+          "ru": "Команда работала быстро, эффективно и точно.",
+          "note": {
+            "en": "Oxford comma list",
+            "ru": "список с Oxford comma"
+          }
         },
         {
           "en": "He wanted to join us, but he had too much work.",
@@ -123,36 +205,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I must leave now, for the train departs at six.",
-          "ru": "Я должен уйти сейчас, ибо поезд отправляется в шесть."
+          "ru": "Я должен уйти сейчас, ибо поезд отправляется в шесть.",
+          "note": {
+            "en": "for = formal because",
+            "ru": "for = формальный because"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "FANBOYS: For, And, Nor, But, Or, Yet, So. После nor обязательна инверсия: nor does he, nor did they."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He doesn't like coffee, nor he likes tea.",
+          "right": "He doesn't like coffee, nor does he like tea.",
+          "why": {
+            "en": "After 'nor' invert auxiliary and subject, as in a question.",
+            "ru": "После 'nor' нужна инверсия вспомогательного глагола и подлежащего, как в вопросе."
+          }
+        },
+        {
+          "wrong": "She likes swimming and to run.",
+          "right": "She likes swimming and running.",
+          "why": {
+            "en": "Coordinated items must share the same grammatical form (parallelism).",
+            "ru": "Соединяемые члены должны иметь одинаковую грамматическую форму (параллелизм)."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the focus shifts from the conjunctions themselves to parallelism, correlative pairs, and rhetorical balance. Enforce strict parallelism across every item in a list: 'The candidate is intelligent, experienced, and trustworthy.' (three adjectives), not a mix of adjective + verb phrase. Correlative conjunctions come in fixed pairs that must frame parallel structures: 'both...and', 'either...or', 'neither...nor', 'not only...but also', 'whether...or' ('She is both talented and hardworking.'). When 'not only' opens the clause, invert: 'Not only did she win, but she also broke the record.'; in mid-sentence no inversion is needed ('She is not only brilliant but also kind.'). Coordination supports ellipsis — gapping and VP-ellipsis let you omit repeated material ('I can swim, and she can too.'; 'He likes jazz, and she rock.'). Mind register: 'so' is conversational, while 'therefore' is a formal adverb (a connective, not a coordinator) that needs a semicolon or full stop, never a comma ('It was raining; therefore, we cancelled the picnic.'). The signature C1 slip is losing parallelism in long lists, so audit each element for matching form.",
         "ru": "На C1 фокус — **параллелизм**, **риторический баланс** и сложные списки.\n\n**1. Строгий параллелизм в перечислениях:**\nC1-писатель следит, чтобы каждый элемент списка имел одинаковую структуру:\n\n- ❌ `The candidate is intelligent, has experience, and trustworthy.` — смешаны прилагательное + глагольная фраза + прилагательное.\n- ✅ `The candidate is intelligent, experienced, and trustworthy.` — три прилагательных.\n\n- ❌ `We discussed increasing prices, to hire more staff, and the marketing budget.`\n- ✅ `We discussed increasing prices, hiring more staff, and reviewing the marketing budget.` — три герундия.\n\n**2. Correlative conjunctions — парные связки:**\n- `both…and`: `She is both talented and hardworking.`\n- `either…or`: `You can either stay or leave.`\n- `neither…nor`: `He is neither wealthy nor famous.`\n- `not only…but also`: `Not only did she win, but she also broke the record.`\n- `whether…or`: `I don't know whether to laugh or cry.`\n\nЭти пары требуют параллельных структур с обеих сторон:\n- ❌ `She is both a singer and dances.`\n- ✅ `She is both a singer and a dancer.`\n\n**3. Not only…but also с инверсией:**\nКогда `not only` стоит в начале, следует инверсия:\n- `Not only did he apologize, but he also offered compensation.`\n- `Not only is she brilliant, but she is also kind.`\n\nБез инверсии (в середине фразы) инверсия не нужна:\n- `She is not only brilliant but also kind.`\n\n**4. Сочинение длинных предложений — ритм:**\nВ академическом и художественном письме сочинительные союзы создают ритм:\n- `The theory is elegant, yet it fails to account for observation X.`\n- `He spoke softly, but every word carried weight.`\n\nВыбор между `but` и `yet` — вопрос регистра: `yet` звучит более формально и драматично.\n\n**5. Сочинение с опущением (ellipsis в coordination):**\nКогда подлежащее и часть глагольной фразы повторяются, их можно опустить:\n- `I can swim, and she can too.` — опущен `swim` после `can`.\n- `He likes jazz, and she rock.` — опущен `likes` во второй части.\n\nЭто **gapping** и **VP-ellipsis**, типично для продвинутой речи.\n\n**6. So vs therefore — регистр:**\n- `so` — разговорный, неформальный.\n- `therefore` — формальный, академический; это не союз, а наречие, поэтому нужна точка с запятой или точка:\n  - ✅ `It was raining; therefore, we cancelled the picnic.`\n  - ❌ `It was raining, therefore we cancelled the picnic.` — comma splice.\n\n**7. Typical C1 ошибка:**\nПотеря параллелизма в длинных списках:\n- ❌ `The report addresses production issues, the problem of staffing, and recommending new software.`\n- ✅ `The report addresses production issues, staffing problems, and new software recommendations.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "both / either / neither / not only + X ... and / or / nor / but also + X (parallel)   |   Not only + auxiliary + subject ... , but ... also   |   clause ; therefore, clause",
+        "ru": "both / either / neither / not only + X ... and / or / nor / but also + X (параллельно)   |   Not only + вспом. глагол + подлежащее ... , but ... also   |   предложение ; therefore, предложение"
       },
       "examples": [
         {
           "en": "She is both an accomplished scientist and a gifted teacher.",
-          "ru": "Она и состоявшийся учёный, и одарённый педагог."
+          "ru": "Она и состоявшийся учёный, и одарённый педагог.",
+          "note": {
+            "en": "both...and",
+            "ru": "both...and"
+          }
         },
         {
           "en": "Not only did the plan fail, but it also damaged the company's reputation.",
-          "ru": "План не только провалился, но ещё и навредил репутации компании."
+          "ru": "План не только провалился, но ещё и навредил репутации компании.",
+          "note": {
+            "en": "not only + inversion",
+            "ru": "not only + инверсия"
+          }
         },
         {
           "en": "The data is comprehensive, the analysis is rigorous, and the conclusions are clear.",
-          "ru": "Данные исчерпывающие, анализ строгий, а выводы ясные."
+          "ru": "Данные исчерпывающие, анализ строгий, а выводы ясные.",
+          "note": {
+            "en": "parallel list",
+            "ru": "параллельный список"
+          }
         },
         {
           "en": "He spoke briefly, yet every word was chosen with care.",
@@ -160,40 +276,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Neither the manager nor the employees were informed.",
-          "ru": "Ни руководитель, ни сотрудники не были проинформированы."
+          "ru": "Ни руководитель, ни сотрудники не были проинформированы.",
+          "note": {
+            "en": "neither...nor",
+            "ru": "neither...nor"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Correlative pairs (both…and, not only…but also) требуют параллельных структур с обеих сторон."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She is both a singer and dances.",
+          "right": "She is both a singer and a dancer.",
+          "why": {
+            "en": "Correlative pairs require the same grammatical form on both sides.",
+            "ru": "Парные союзы требуют одинаковой грамматической формы с обеих сторон."
+          }
+        },
+        {
+          "wrong": "It was raining, therefore we cancelled the picnic.",
+          "right": "It was raining; therefore, we cancelled the picnic.",
+          "why": {
+            "en": "'Therefore' is a connective adverb, not a coordinator, so it needs a semicolon, not a comma.",
+            "ru": "'Therefore' — это соединительное наречие, а не союз, поэтому нужна точка с запятой, а не запятая."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 coordinating conjunctions are instruments of rhetoric and style: they govern rhythm, emphasis, and the balance of an argument, not just the link between ideas. Two deliberate stylistic devices stand out: polysyndeton, the repetition of conjunctions for momentum ('She ran and jumped and laughed and danced.'), and asyndeton, the omission of them for terse force ('I came, I saw, I conquered.'). Coordination also builds rhetorical cadence through binary structures ('He came and he conquered.') and ternary ones ('of the people, by the people, for the people.'); writers cluster ideas in threes — 'faith, hope, and love' — for classical effect. 'Yet' at the head of a sentence carries more drama and concession than 'but' ('The evidence is compelling. Yet doubts remain.'), and compact contradictory pairs ('Simple, yet profound.'; 'Harsh, but fair.') compress a whole judgment into two words. Repeated 'nor' creates a crescendo of negation ('He did not speak, nor did he move, nor did he seem to breathe.'). Sentence-initial 'But' is a powerful pivot in argumentative prose, replaced by 'However,' in formal registers. Beware coordination ambiguities that trip even native speakers: misplaced 'only', uncertain scope of 'not' over 'and', and faulty parallelism that creeps in as lists grow longer.",
         "ru": "На C2 сочинительные союзы — инструмент **риторики** и **стиля**. Не просто связь идей, а управление ритмом, акцентом и балансом аргументов.\n\n**1. Polysyndeton и asyndeton:**\n- **Polysyndeton** — избыточное повторение союзов для эмфазы: `She ran and jumped and laughed and danced.` Создаёт энергичность, поток.\n- **Asyndeton** — пропуск союзов ради напора: `I came, I saw, I conquered.` Создаёт лапидарность, силу.\n\nВыбор — стилистический, а не грамматический. C2-писатель использует осознанно.\n\n**2. Ритмика через binary и ternary structures:**\n- Binary: `He came and he conquered.` — два элемента создают баланс.\n- Ternary: `Government of the people, by the people, for the people.` — три элемента классический риторический приём (Цицерон, Линкольн).\n\nC2-писатель строит фразы тройками для риторической силы: `faith, hope, and love`; `life, liberty, and the pursuit of happiness`.\n\n**3. Yet как маркер концессии в аргументе:**\n`Yet` в начале предложения — более драматичный, чем `but`:\n- `The evidence is compelling. Yet, doubts remain.`\n- `She had every reason to refuse. Yet she accepted.`\n\nИспользуется, когда противопоставление важно и требует паузы.\n\n**4. Strategic contradictory pairs:**\n- `Simple, yet profound.`\n- `Harsh, but fair.`\n- `Brilliant, yet flawed.`\n\nC2-писатель использует эту конструкцию для ёмких характеристик. Запятая создаёт паузу, контраст работает как риторический приём.\n\n**5. Nor для нарастания отрицания:**\n- `He did not speak, nor did he move, nor did he seem to breathe.`\n\nТройное `nor` создаёт драматическое нарастание неподвижности. Типично для литературной прозы.\n\n**6. Sentence-initial but в аргументативной прозе:**\n`But` в начале абзаца — сильный маркер поворота мысли:\n> `The proposal has merits. It addresses a real problem. It respects budget constraints. But it overlooks one crucial factor.`\n\nЭтот приём создаёт драматичный сдвиг. В формальном академическом тексте заменяется на `However,` но в публицистике `But` сильнее.\n\n**7. And как маркер накопления:**\nВ литературе `and` без запятых создаёт поток сознания:\n- `The day was long and hot and endless and I wanted to go home.`\n\nВ деловом и академическом тексте это неуместно, но в художественном — мощный приём.\n\n**8. Coordination failures — частые даже у носителей:**\n- Misplaced `only`: `She only eats vegetables and bread.` (Неясно: только овощи и хлеб, или только ест их?)\n- Ambiguous scope of `not`: `I don't like cheese and wine.` (Не люблю ни сыр, ни вино? Или не люблю их сочетание?)\n- Faulty parallelism in long lists: чем длиннее список, тем легче потерять параллель.\n\nC2-редактор улавливает эти двусмысленности и перепишет фразу.\n\n**9. Regiстрал shifts:**\nВыбор между `and/but/so` и более формальными `moreover/however/consequently` маркирует регистр:\n- Разговор: `I was tired, so I left.`\n- Академия: `The sample was contaminated; consequently, the results are invalid.`\n\nC2-пользователь переключается между регистрами осознанно и в рамках одного текста."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "X and Y and Z (polysyndeton)   |   X, Y, Z (asyndeton)   |   adj , yet / but adj (contradictory pair)   |   ..., nor + aux + subject, nor + aux + subject",
+        "ru": "X and Y and Z (полисиндетон)   |   X, Y, Z (асиндетон)   |   прил. , yet / but прил. (противопоставление)   |   ..., nor + вспом. + подлежащее, nor + вспом. + подлежащее"
       },
       "examples": [
         {
           "en": "Simple, yet profound; concise, yet complete.",
-          "ru": "Простой, но глубокий; лаконичный, но полный."
+          "ru": "Простой, но глубокий; лаконичный, но полный.",
+          "note": {
+            "en": "contradictory pair",
+            "ru": "противопоставление"
+          }
         },
         {
           "en": "The nation mourned, and the nation endured, and the nation rebuilt.",
-          "ru": "Нация скорбела, и нация выстояла, и нация отстроилась заново."
+          "ru": "Нация скорбела, и нация выстояла, и нация отстроилась заново.",
+          "note": {
+            "en": "polysyndeton",
+            "ru": "полисиндетон"
+          }
         },
         {
           "en": "He was brilliant, ruthless, and utterly sincere.",
-          "ru": "Он был блистательным, беспощадным и совершенно искренним."
+          "ru": "Он был блистательным, беспощадным и совершенно искренним.",
+          "note": {
+            "en": "ternary rhythm",
+            "ru": "тройной ритм"
+          }
         },
         {
           "en": "Not a sound was heard, nor a movement seen, nor a breath drawn.",
-          "ru": "Ни звука не было слышно, ни движения не было видно, ни вздоха не слышалось."
+          "ru": "Ни звука не было слышно, ни движения не было видно, ни вздоха не слышалось.",
+          "note": {
+            "en": "crescendo of nor",
+            "ru": "нарастание с nor"
+          }
         },
         {
           "en": "Good policy is simple in principle, yet complex in application.",
@@ -203,9 +357,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Polysyndeton (and…and…and) и asyndeton (came, saw, conquered) — риторические приёмы, выбираемые осознанно."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She is bright, kindness, and works hard.",
+          "right": "She is bright, kind, and hardworking.",
+          "why": {
+            "en": "In a coordinated list every item must share the same grammatical form, even under stylistic flourish.",
+            "ru": "В сочинительном списке каждый элемент должен иметь одинаковую грамматическую форму, даже при стилистических приёмах."
+          }
+        },
+        {
+          "wrong": "He did not speak, nor he moved.",
+          "right": "He did not speak, nor did he move.",
+          "why": {
+            "en": "Each clause after 'nor' keeps subject-auxiliary inversion, including in a rhetorical crescendo.",
+            "ru": "Каждое предложение после 'nor' сохраняет инверсию подлежащего и вспомогательного глагола, в том числе в риторическом нарастании."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "subordinating-conjunctions",
+    "adverbial-clauses-contrast",
+    "adverbial-clauses-reason",
+    "ellipsis-and-substitution"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "past-simple",
+    "negative-sentences",
+    "inversion"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "clause",
+      "conjunction",
+      "clause"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "prepositions-in-relative-clauses",
   "title": {
-    "en": "",
+    "en": "Prepositions in Relative Clauses",
     "ru": "Prepositions In Relative Clauses"
   },
   "cefr": "B2",
@@ -14,36 +14,54 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "relative-clauses",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "swap",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "When a relative pronoun is the object of a preposition (to, with, for, about, in, on, at), the preposition can sit in two places.\n\n**1. End-position (informal, most common):** the preposition stays at the end of the relative clause, and the pronoun is usually dropped.\n- `The person (who) I spoke to is my friend.`\n- `The house (that) I grew up in was small.`\n- `The book (which) she's looking for is old.`\nThis is the default for speech, fiction, and everyday writing.\n\n**2. Front-position (formal):** the preposition moves in front of the pronoun.\n- `The person to whom I spoke is my friend.`\n- `The house in which I grew up was small.`\n- `The book for which she is looking is old.`\nIn front-position three rules are fixed: the pronoun can NOT be dropped; use `whom` for people (not `who`); use `which` for things; and never use `that` after a fronted preposition (`The person to that I spoke` is wrong).\n\n**Which one to choose:** end-position for conversation and informal writing; front-position for academic, legal, or formal text; business and neutral registers usually mix the two. Both are fully grammatical.",
         "ru": "Когда relative pronoun связан с предлогом (to, with, for, about, in, on, at), предлог может стоять в двух местах: в конце придаточного или перед pronoun.\n\n**Два варианта:**\n\n**1. End-position (informal, common):**\n- `The person (who) I spoke to is my friend.`\n- `The house (that) I grew up in was small.`\n- `The book (which) she's looking for is old.`\n\nВ этом варианте pronoun часто опускается. Это стандарт для разговорной речи.\n\n**2. Front-position (formal):**\n- `The person to whom I spoke is my friend.`\n- `The house in which I grew up was small.`\n- `The book for which she is looking is old.`\n\nВ formal position:\n- Pronoun нельзя опустить.\n- Для людей — `whom` (не who).\n- Для вещей — `which` (не that).\n- НИКОГДА `that` в front-position: ✗ `The person to that I spoke.`\n\n**Когда использовать каждый вариант:**\n- Informal / conversation / fiction: end-position.\n- Formal writing / academic / legal: front-position.\n- Business / neutral: обычно mix.\n\n**Примеры с разными предлогами:**\n- About: `The topic (which) we talked about.` / `The topic about which we talked.`\n- With: `The people (who) I work with.` / `The people with whom I work.`\n- For: `The reason (that) we're here for.` / `The reason for which we're here.`\n- At: `The restaurant (that) we ate at.` / `The restaurant at which we ate.`\n- To: `The person (who) I gave it to.` / `The person to whom I gave it.`\n\n**Private relative pronoun drop:**\nВ разговорной речи после preposition в конце relative можно опустить:\n- `The man I talked to.` (без pronoun.)\n- `The place I come from.`\n- `The thing I'm looking for.`\n\n**Частая ошибка русскоговорящего:** use `that` after front-position preposition.\n- ✗ `The person to that I spoke.`\n- ✓ `The person to whom I spoke.` или `The person (that) I spoke to.`\n\nВ формальной речи: `to whom`. В разговорной: drop + end preposition."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "[noun] + (relative pronoun) + clause + preposition  |  [noun] + preposition + whom/which + clause",
+        "ru": "[существительное] + (относительное местоимение) + придаточное + предлог  |  [существительное] + предлог + whom/which + придаточное"
       },
       "examples": [
         {
           "en": "The friend I'm writing to lives in Paris.",
-          "ru": "Друг, которому я пишу, живёт в Париже."
+          "ru": "Друг, которому я пишу, живёт в Париже.",
+          "note": {
+            "en": "end-position",
+            "ru": "предлог в конце"
+          }
         },
         {
           "en": "This is the author whose book I told you about.",
-          "ru": "Это автор, чью книгу я тебе упоминал."
+          "ru": "Это автор, чью книгу я тебе упоминал.",
+          "note": {
+            "en": "whose + about",
+            "ru": "whose + about"
+          }
         },
         {
           "en": "The company for which he works is international.",
-          "ru": "Компания, на которую он работает, международная."
+          "ru": "Компания, на которую он работает, международная.",
+          "note": {
+            "en": "front-position",
+            "ru": "предлог впереди"
+          }
         },
         {
           "en": "The hotel that we stayed at was expensive.",
-          "ru": "Отель, в котором мы остановились, был дорогим."
+          "ru": "Отель, в котором мы остановились, был дорогим.",
+          "note": {
+            "en": "end-position",
+            "ru": "предлог в конце"
+          }
         },
         {
           "en": "She's the person I'd most like to work with.",
@@ -53,26 +71,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "End-position preposition = informal / разговорное. Front-position with whom/which = formal / письменное."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The person to that I spoke is my friend.",
+          "right": "The person to whom I spoke is my friend.",
+          "why": {
+            "en": "After a fronted preposition use whom/which, never that.",
+            "ru": "После вынесенного вперёд предлога ставится whom/which, но никогда that."
+          }
+        },
+        {
+          "wrong": "The colleague to who I gave it left early.",
+          "right": "The colleague to whom I gave it left early.",
+          "why": {
+            "en": "After a preposition the object form whom is required, not who.",
+            "ru": "После предлога нужна объектная форма whom, а не who."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, control register deliberately by choosing where the preposition goes.\n\n**Extended formal set (front-position):** `in / of / from / to / by / with / on / under / over / through / without / despite + which`, plus heavier connectors like `by virtue of which`, `on account of which`, `in spite of which`.\n- `The principles on which the theory rests are questionable.`\n- `The period during which the incident occurred was brief.`\n- `The means by which they achieved victory remain secret.`\n\n**Defining vs non-defining:** in non-defining clauses both positions work but commas are obligatory — `The park, to which we often go, is beautiful` / `The park, which we often go to, is beautiful`. In defining clauses there are no commas and the pronoun is usually dropped — `The park we often go to is beautiful`.\n\n**Multi-word prepositional connectors** (`with respect to which`, `by means of which`, `as a result of which`, `because of which`) carry a formal, often legal register; long fronted phrases get clumsy, so restructure or strand the preposition when they pile up.\n\n**Fixed formal patterns:** `To whom it may concern`, `the conditions under which`, `the standards against which`, `the framework within which`. And note `whose` for things is fully accepted today (`the building whose walls are crumbling`); the older `the walls of which` is more formal but heavier.",
         "ru": "На C1 различай nuances регистра и выбирай сознательно.\n\n**Formal prepositional relatives — extended list:**\n- `in which`, `of which`, `from which`, `to which`, `by which`, `with which`, `on which`, `under which`, `over which`, `through which`, `without which`, `despite which`.\n- Complex: `by virtue of which`, `on account of which`, `in spite of which`.\n\nExamples:\n- `The principles on which the theory rests are questionable.`\n- `The laws under which we operate are strict.`\n- `The period during which the incident occurred.`\n- `The means by which they achieved victory.`\n\n**Preposition + pronoun in non-defining:**\n- `The park, to which we often go, is beautiful.` (non-defining, front pos.)\n- `The park, which we often go to, is beautiful.` (non-defining, end pos — both OK, commas required.)\n- `The park we often go to is beautiful.` (defining — no commas, pronoun dropped.)\n\n**Complex prepositions:**\n- `with respect to which` / `in regard to which` (formal): `The issue with respect to which we disagree...`\n- `by means of which` — посредством чего.\n- `as a result of which` — в результате чего.\n- `because of which` — из-за чего.\n\nВсе эти длинные prepositional phrases usually приносят formal, often legal register.\n\n**Preposition + whom — fixed formal:**\n- `To whom it may concern.` (standard letter opening.)\n- `For whom the bell tolls.` (literary reference.)\n- `With whom were you seen?` (formal question.)\n- `Of whom are you speaking?` (very formal.)\n\n**Preposition + which — academic / legal:**\n- `The conditions under which the agreement was signed...`\n- `The standards against which performance is measured...`\n- `The framework within which we operate...`\n\n**Avoiding awkward front-position:**\nИногда front preposition громоздка:\n- ✗ `The man that I've been in touch with all these years about whom I was speaking.`\n- Better: restructure or use end preposition.\n\n**Rhythmic considerations:**\n- End preposition creates natural speech rhythm in English.\n- Front preposition feels formal, measured, careful.\n- Выбирай по окружающему тексту.\n\n**Winston Churchill quote:**\n«This is the sort of English up with which I will not put.» — Churchill mocking the prescriptive rule against ending with preposition. Современный English comfortable with end prepositions.\n\n**Never strand in fixed phrases:**\nНекоторые prepositions grammatically require front-position:\n- `*due to which → as a result of which`.\n- `*according to which → in accordance with which` (for certain meanings.)\n\n**Confusable pronouns:**\n- `whose` vs `of which`: `The building whose walls are crumbling` vs `The building the walls of which are crumbling.` (The latter is formal; `whose` simpler.)\n- For inanimate, `whose` was disputed in old prescriptive grammar, now fully accepted."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "[noun] (+ ,) + preposition (+ phrase) + which/whom + clause",
+        "ru": "[существительное] (+ ,) + предлог (+ оборот) + which/whom + придаточное"
       },
       "examples": [
         {
           "en": "To whom it may concern: This letter is a recommendation for Jane Smith.",
-          "ru": "Кого это может касаться: это письмо — рекомендация для Джейн Смит."
+          "ru": "Кого это может касаться: это письмо — рекомендация для Джейн Смит.",
+          "note": {
+            "en": "fixed phrase",
+            "ru": "устойчивая фраза"
+          }
         },
         {
           "en": "The conditions under which the treaty was signed remain disputed.",
-          "ru": "Условия, при которых был подписан договор, остаются спорными."
+          "ru": "Условия, при которых был подписан договор, остаются спорными.",
+          "note": {
+            "en": "under which",
+            "ru": "under which"
+          }
         },
         {
           "en": "The hypothesis against which we tested our data proved robust.",
@@ -80,36 +124,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The reforms, as a result of which unemployment dropped, were praised.",
-          "ru": "Реформы, в результате которых безработица упала, получили похвалу."
+          "ru": "Реформы, в результате которых безработица упала, получили похвалу.",
+          "note": {
+            "en": "as a result of which",
+            "ru": "as a result of which"
+          }
         },
         {
           "en": "He's the colleague with whom I've collaborated for years.",
-          "ru": "Это коллега, с которым я сотрудничал годами."
+          "ru": "Это коллега, с которым я сотрудничал годами.",
+          "note": {
+            "en": "with whom",
+            "ru": "with whom"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "In accordance with which / by means of which / as a result of which — формальные connectors для academic / legal письма."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The park to which we often go is beautiful.",
+          "right": "The park, to which we often go, is beautiful.",
+          "why": {
+            "en": "A non-defining relative clause needs commas around it.",
+            "ru": "Неограничительное придаточное обособляется запятыми."
+          }
+        },
+        {
+          "wrong": "It depends on the way in which on which we measure it.",
+          "right": "It depends on the way in which we measure it.",
+          "why": {
+            "en": "Use one fronted preposition, not a doubled one.",
+            "ru": "Выносится один предлог, а не два подряд."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, the choice is a fine stylistic tool, not a rule.\n\n**Pied-piping** drags the whole preposition + pronoun to the front of the clause — `She's the person from whom I learned the most`; `That's the theory upon which everything rests`. It reads formal, measured, and weighty (legal, contractual, scholarly).\n\n**Stranding** leaves the preposition at the end — `She's the person (who) I learned the most from`; `That's the theory everything rests on`. It is universally accepted across all registers and creates natural flow. Major style guides (Chicago, MLA, APA) endorse it; Churchill's mock 'English up with which I will not put' parodies the old prohibition.\n\n**Register matrix:** legal/contractual favours pied-piping; academic prose alternates (pied-piping for elevation, stranding for narrative); journalism and conversation lean to stranding.\n\n**Workhorse academic frames** are pied-piped by convention: `the extent to which`, `the degree to which`, `the manner in which`, `the means by which`, `the conditions under which`, `the process by which`.\n\n**Reduced relatives** drop the pronoun and `be` after a prepositional phrase — `items on sale` (= which are on sale), `people in power` (= who are in power).\n\n**Archaic legal adverbs** (`thereof, therein, thereunder, thereby`) compress 'of/in/under it' and survive mainly in contracts. Finally, always check that the preposition is semantically bound to the relative pronoun, not to the main verb, before fronting it.",
         "ru": "На C2 предложный выбор — тонкий stylistic инструмент.\n\n**Preposition pied-piping — formal English canon:**\nВся noun phrase + preposition вытягивается к началу clause:\n- `She's the person from whom I learned the most.`\n- `That's the theory upon which everything rests.`\n\nFormal, often in legal, academic, formal speech.\n\n**Preposition stranding — modern universal:**\nPreposition остаётся в конце:\n- `She's the person (who) I learned the most from.`\n- `That's the theory everything rests on.`\n\nМожет использоваться во всех регистрах; universally accepted in modern English.\n\n**Register matrix:**\n- Legal / contractual: pied-piping.\n- Academic scholarly: pied-piping для elevated sections, stranding для narrative.\n- Journalism: mostly stranding, occasional pied-piping.\n- Fiction / creative: either, by rhythm.\n- Conversation: stranding dominant.\n\n**Stranding creates flow:**\n`The issue (that) I've been thinking about for weeks demands attention.` — natural, flowing.\n\n**Pied-piping creates weight:**\n`The issue about which I've been thinking for weeks demands attention.` — formal, measured.\n\n**Complex stacked prepositional relatives:**\n- `The department (that) the decision (which) we disagreed about came from was restructured.` — stacked, confusing.\n- Restructure for clarity.\n\n**Rare archaic constructions:**\n- `Thereof / thereon / thereto / therein / thereby / therefore (as adverb)`: legal / formal English.\n- `The contract and the terms thereof...` = `of the contract`.\n- `The law and provisions therein...` = `in it`.\n- Almost exclusively legal / formal now.\n\n**Double-pied-piping:**\n- `The methods by means of which we conducted the study are novel.`\n- Very formal, often in scientific writing. Simpler: `The methods we used in the study are novel.`\n\n**Preposition stranding acceptability in strict prose:**\nOlder prescriptivism forbade ending sentences with prepositions. Modern style guides (Chicago, MLA, APA) accept it. Но в очень формальных documents pied-piping traditional.\n\n**Specific idiomatic patterns:**\n- `the extent to which`: standard academic.\n- `the degree to which`: standard academic.\n- `the manner in which`: formal narrative.\n- `the means by which`: formal.\n- `the conditions under which`: academic / scientific.\n- `the process by which`: scientific / descriptive.\n\nЭти шаблоны — workhorses of academic English.\n\n**Reduced relative + preposition:**\n- `Items on sale...` (= which are on sale.)\n- `People in power...` (= who are in power.)\n- Работает когда adjective или `be + prepositional phrase`.\n\n**Misplaced preposition trap:**\nПроверяй logical attachment:\n- `The man she was talking about was her boss.` (about = связан с talking, man = objects of the preposition.)\n- `*The man about whom she was talking was her boss.` (correct pied-piping version.)\n- Ensure preposition semantically bound to relative, not main verb."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "pied-piping: [noun] + (multi-word) preposition + whom/which + clause  |  stranding: [noun] + (pronoun) + clause + preposition",
+        "ru": "вынос: [существительное] + (составной) предлог + whom/which + придаточное  |  стрэндинг: [существительное] + (местоимение) + придаточное + предлог"
       },
       "examples": [
         {
           "en": "The principles by means of which the system operates are transparent.",
-          "ru": "Принципы, посредством которых работает система, прозрачны."
+          "ru": "Принципы, посредством которых работает система, прозрачны.",
+          "note": {
+            "en": "double pied-piping",
+            "ru": "двойной вынос"
+          }
         },
         {
           "en": "The period during which the reforms took place was turbulent.",
-          "ru": "Период, в течение которого проводились реформы, был бурным."
+          "ru": "Период, в течение которого проводились реформы, был бурным.",
+          "note": {
+            "en": "during which",
+            "ru": "during which"
+          }
         },
         {
           "en": "The author whose work I most admire lived in the 19th century.",
@@ -117,19 +195,60 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The treaty and the obligations thereunder were ratified unanimously.",
-          "ru": "Договор и обязательства по нему были ратифицированы единогласно."
+          "ru": "Договор и обязательства по нему были ратифицированы единогласно.",
+          "note": {
+            "en": "archaic legal",
+            "ru": "архаичный юридический"
+          }
         },
         {
           "en": "It's a theory (that) I've devoted years of research to.",
-          "ru": "Это теория, которой я посвятил годы исследований."
+          "ru": "Это теория, которой я посвятил годы исследований.",
+          "note": {
+            "en": "stranding",
+            "ru": "стрэндинг"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "На C2 preposition stranding acceptable in most contexts; pied-piping reserved для formal / literary elevation. Choose deliberately."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The man about whom she was talking to was her boss.",
+          "right": "The man about whom she was talking was her boss.",
+          "why": {
+            "en": "Pied-pipe the preposition or strand it, not both at once.",
+            "ru": "Предлог либо выносится вперёд, либо остаётся в конце, но не оба сразу."
+          }
+        },
+        {
+          "wrong": "The methods by means of which we used are novel.",
+          "right": "The methods we used are novel.",
+          "why": {
+            "en": "Don't bolt a formal pied-piped frame onto a verb that takes a direct object.",
+            "ru": "Не присоединяйте формальный вынесенный оборот к глаголу, требующему прямого дополнения."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "defining-relative-clauses",
+    "non-defining-relative-clauses",
+    "relative-pronouns",
+    "reduced-relative-clauses"
+  ],
+  "crossTopic": [
+    "prepositions-after-verbs",
+    "prepositions-after-adjectives",
+    "relative-pronouns-who-which-that-whose"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "End-position (informal)",
+      "Front-position (formal)"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "passive-present-simple",
   "title": {
-    "en": "",
+    "en": "Passive: Present Simple",
     "ru": "Passive Present Simple"
   },
   "cefr": "B1",
@@ -15,24 +15,31 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "passive",
+  "egp": [
+    "EGP:can-form-the-present-simple-passive",
+    "EGP:can-use-the-passive-to-focus-on-the-action-or-when-the-agent-is-unknown-or-unimportant"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Use the present simple passive when the action matters more than who does it. Form it with **am / is / are + past participle (V3)**: *English is spoken here.* The object of an active sentence becomes the subject of the passive one, and the doer (the agent) is either dropped or added with **by**: *The letters are written by the secretary.* Choose the passive when the agent is unknown or unimportant (*My car is repaired every year.*), for general rules and notices (*Shoes must be removed.*), and in news and announcements. Make negatives and questions on the **be** verb, not the participle: *Coffee isn't grown here.* / *Is English spoken in India?* The most common mistake is using the base verb instead of V3 (*is spoke* → *is spoken*).",
         "ru": "**Passive Voice (present simple)** — страдательный залог в настоящем простом времени. Используется, когда **важно не кто делает**, а **что происходит с объектом**.\n\n**Форма:** `am/is/are` + **past participle** (3-я форма глагола, V3).\n\n- `I am invited.` (Меня приглашают.)\n- `He is invited.` (Его приглашают.)\n- `They are invited.` (Их приглашают.)\n\n**Active vs Passive:**\n- Active: `People speak English here.` (Люди здесь говорят по-английски.)\n- Passive: `English is spoken here.` (Здесь говорят по-английски.)\n\nВ пассиве **объект** из активного предложения становится **подлежащим**. Тот, кто делает действие (agent), либо опускается, либо идёт с `by`:\n- `The letters are written by the secretary.` (Письма пишет секретарь.)\n\n**Когда использовать пассив:**\n1. **Агент неизвестен или неважен:** `My car is repaired every year.` (Машину ремонтируют каждый год.)\n2. **Общие правила, инструкции:** `Shoes must be removed.` (Обувь снимается.)\n3. **Новости, объявления:** `The president is elected every four years.` (Президента избирают каждые четыре года.)\n\n**Типичные ошибки русских учеников:**\n- ❌ `English is speak here.` → ✅ `English is spoken here.` (нужна V3, не база глагола)\n- ❌ `She is invite.` → ✅ `She is invited.` (забыли окончание)\n- ❌ `The book is write by him.` → ✅ `The book is written by him.`\n\n**Отрицание и вопрос:**\n- `Coffee isn't grown here.` (Здесь не выращивают кофе.)\n- `Is English spoken in India?` (В Индии говорят по-английски?)\n\n**Важно:** русский пассив чаще выражается через \"-ся\" глаголы (\"строится\", \"говорится\"), а английский — через `be + V3`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + am/is/are + past participle (+ by + agent)",
+        "ru": "подлежащее + am/is/are + причастие прошедшего времени (V3) (+ by + деятель)"
       },
       "examples": [
         {
           "en": "English is spoken in many countries.",
-          "ru": "На английском говорят во многих странах."
+          "ru": "На английском говорят во многих странах.",
+          "note": {
+            "en": "agent dropped",
+            "ru": "деятель опущен"
+          }
         },
         {
           "en": "The office is cleaned every evening.",
@@ -44,36 +51,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The letters are sent by email.",
-          "ru": "Письма отправляют по электронной почте."
+          "ru": "Письма отправляют по электронной почте.",
+          "note": {
+            "en": "agent kept",
+            "ru": "деятель указан"
+          }
         },
         {
           "en": "Is breakfast served at 8?",
-          "ru": "Завтрак подают в 8?"
+          "ru": "Завтрак подают в 8?",
+          "note": {
+            "en": "question",
+            "ru": "вопрос"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Passive = be + V3. Не забудь третью форму глагола: spoken, written, made."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "English is speak here.",
+          "right": "English is spoken here.",
+          "why": {
+            "en": "The passive needs the past participle (V3), not the base verb.",
+            "ru": "В пассиве нужна третья форма глагола (V3), а не база."
+          }
+        },
+        {
+          "wrong": "She is invite.",
+          "right": "She is invited.",
+          "why": {
+            "en": "Don't drop the -ed/V3 ending on the participle.",
+            "ru": "Нельзя терять окончание причастия (-ed / V3)."
+          }
+        },
+        {
+          "wrong": "These cars make in Germany.",
+          "right": "These cars are made in Germany.",
+          "why": {
+            "en": "A passive subject still needs the be verb (am/is/are).",
+            "ru": "При пассивном подлежащем нужен глагол be (am/is/are)."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the question shifts from *how* to *when* native speakers actually prefer the passive. Master the impersonal passive that hides the source in academic and news writing: *It is said that...*, *It is believed that...*, *It is known that...*. Learn the passive of reporting, where the subject of the original idea is raised: *He is said to be a genius.* / *The drug is known to cause side effects.* Match the form to register: science (*Water is boiled and then cooled.*), news (*Three suspects are questioned by police.*), instructions and notices (*The form is filled out in black ink.*). Keep the **by**-agent only when it is new or important information (*The theory was developed by Einstein.*) and drop it when the doer is obvious. Notice the state-vs-action ambiguity of *The door is closed* — context decides. The key B2 discipline is restraint: where the agent is known and important, or where speech is informal, prefer the active voice.",
         "ru": "На B2 уровне важно понимать, **когда носители предпочитают пассив**, а когда — актив. Русскоязычные часто переусердствуют с пассивом, потому что русский допускает его легко (\"рассматривается\", \"предполагается\").\n\n**1. Impersonal passives (безличные конструкции):**\nВ академических текстах, новостях, официальных документах пассив скрывает автора:\n- `It is said that...` (Говорят, что...)\n- `It is believed that...` (Считается, что...)\n- `It is known that...` (Известно, что...)\n- `It is thought that...` (Думают, что...)\n\n**2. Passive of reporting (двойной пассив):**\n- `He is said to be a genius.` (Говорят, что он гений.)\n- `The drug is known to cause side effects.` (Известно, что препарат вызывает побочные эффекты.)\n\nЭта форма звучит формально и встречается в журналистике и науке.\n\n**3. Registers (регистры):**\n- **Наука:** `Water is boiled and then cooled.` — субъект (исследователь) неважен.\n- **Новости:** `Three suspects are questioned by police.` — фокус на событии.\n- **Инструкции:** `The form is filled out in black ink.` — общее правило.\n- **Меню, объявления:** `Dishes are prepared fresh daily.` — безличный, профессиональный тон.\n\n**4. Когда НЕ использовать пассив:**\n- Если агент известен и важен: ✅ `Shakespeare wrote Hamlet.` (не `Hamlet was written by Shakespeare` без причины.)\n- В разговорной речи: чаще используй активную форму.\n- Когда активная форма короче и яснее.\n\n**5. By-agent: когда оставлять, когда убирать:**\n- Оставляй, если агент **новая или важная информация:** `The theory was developed by Einstein.`\n- Убирай, если агент **очевиден или общий:** `The streets are cleaned every morning.` (и так понятно — дворниками.)\n\n**6. State passive vs action passive:**\n- `The door is closed.` — может значить «дверь закрыта» (состояние) или «дверь закрывают» (действие).\n- Контекст решает: `The door is closed at 10 pm.` — действие; `The door is closed, I can't get in.` — состояние.\n\n**7. Русская ловушка:**\nРусский часто использует пассив там, где английский — актив. Сравни:\n- Рус: `Документы подписываются директором.` \n- Англ (актив предпочтительнее): `The director signs the documents.` вместо `The documents are signed by the director.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "It + is + said/believed/known + that-clause; subject + is + said/known + to-infinitive",
+        "ru": "It + is + said/believed/known + that-придаточное; подлежащее + is + said/known + to-инфинитив"
       },
       "examples": [
         {
           "en": "It is believed that the ancient city was destroyed by an earthquake.",
-          "ru": "Считается, что древний город был разрушен землетрясением."
+          "ru": "Считается, что древний город был разрушен землетрясением.",
+          "note": {
+            "en": "impersonal passive",
+            "ru": "безличный пассив"
+          }
         },
         {
           "en": "The politician is said to be involved in a scandal.",
-          "ru": "Говорят, что политик замешан в скандале."
+          "ru": "Говорят, что политик замешан в скандале.",
+          "note": {
+            "en": "reporting passive",
+            "ru": "пассив сообщения"
+          }
         },
         {
           "en": "New vaccines are developed in several labs.",
@@ -81,7 +130,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Breakfast is included in the price.",
-          "ru": "Завтрак включён в стоимость."
+          "ru": "Завтрак включён в стоимость.",
+          "note": {
+            "en": "agentless",
+            "ru": "без деятеля"
+          }
         },
         {
           "en": "The meeting room is booked until 5 pm.",
@@ -91,30 +144,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В академическом и официальном регистре используй безличный пассив: it is said, it is known."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is said that he is a genius. → He is said is a genius.",
+          "right": "He is said to be a genius.",
+          "why": {
+            "en": "The reporting passive raises the subject and uses a to-infinitive, not a finite clause.",
+            "ru": "Пассив сообщения поднимает подлежащее и требует to-инфинитива, а не личной формы."
+          }
+        },
+        {
+          "wrong": "The documents are signed by the director (when the doer matters).",
+          "right": "The director signs the documents.",
+          "why": {
+            "en": "When the agent is known and important, the active is clearer and more natural.",
+            "ru": "Когда деятель известен и важен, актив яснее и естественнее."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the passive is a strategic tool: choosing it signals a rhetorical stance. Use strategic agent omission to avoid blame (*Mistakes were made.*), to stay neutral (*The decision was taken last week.*), or to foreground a process rather than a person (*The budget is reviewed annually.*). Exploit information structure — the passive lets you put given information first and new information last (*The museum was designed by a Russian architect.* when the topic is already the museum). Command advanced reporting passives with verbs like *allege, claim, suppose, expect, understand, report*: *It has been suggested that...*, *He is alleged to have committed fraud.* Know the register signals: scientific method (*Samples were collected and analysed.*), legal and bureaucratic notices (*Applications are processed within 30 days.* / *Smoking is prohibited.*). Be aware modern editing — especially American science writing — increasingly prefers active *we*. Even at this level, over-using the passive weighs the text down; if the active works without loss of meaning, use it.",
         "ru": "На C1 пассив становится **стратегическим инструментом**. Выбор между активом и пассивом показывает твою риторическую позицию.\n\n**1. Strategic agent omission:**\nНосители осознанно убирают агента, чтобы:\n- **Избежать обвинений:** `Mistakes were made.` (Были допущены ошибки.) — классика политической речи, где агент скрыт.\n- **Сохранить нейтральность:** `The decision was taken last week.` (Решение было принято на прошлой неделе.)\n- **Подчеркнуть процесс, а не человека:** `The budget is reviewed annually.`\n\n**2. Information structure (given vs new):**\nПассив позволяет перенести **известное** в начало, а **новое** в конец:\n- Active: `A Russian architect designed the museum.` \n- Passive: `The museum was designed by a Russian architect.` — если контекст уже о музее, пассив естественнее.\n\n**3. Advanced reporting passives:**\n- `It has been suggested that...` (Было высказано предположение...)\n- `He is alleged to have committed fraud.` (Его обвиняют в мошенничестве.)\n- `The report is understood to recommend cuts.` (Понимают, что доклад рекомендует сокращения.)\n\nГлаголы: `allege`, `claim`, `suppose`, `expect`, `understand`, `report`, `rumour`.\n\n**4. Scientific writing conventions:**\nВ науке пассив традиционен для описания методологии:\n- `Samples were collected and analysed.` \n- `The hypothesis is tested under controlled conditions.`\n\nНо современная научная редактура (особенно американская) всё чаще предпочитает актив с `we`: `We collected samples.` Проверяй стиль журнала.\n\n**5. Legal and bureaucratic register:**\n- `The defendant is found guilty.`\n- `Applications are processed within 30 days.`\n- `Smoking is prohibited on the premises.`\n\nПассив придаёт оттенок официальности и общеобязательности.\n\n**6. Distinctions in meaning:**\n- `This is written in English.` (Написано на английском — факт.)\n- `This is being written in English.` (Это пишется сейчас на английском — процесс.)\n- `This has been written many times.` (Это уже много раз писалось — опыт.)\n\n**7. Russian-English contrastive problems:**\nРусский любит безличные обороты (`считается`, `полагается`, `требуется`). На английском это чаще всего — пассив. Но русский также легко использует `они` (`Говорят, что...`), а английский тут предпочитает `It is said that...` или `People say that...`. Выбор между `They say...` и `It is said...` — вопрос регистра: первый — разговорный, второй — формальный.\n\n**8. Overuse warning:**\nДаже на высоком уровне избыток пассива утяжеляет текст. Проверяй: если можно без потери смысла сделать актив — делай."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + is + reported/alleged/understood + to-infinitive; It + has been + suggested/claimed + that-clause",
+        "ru": "подлежащее + is + reported/alleged/understood + to-инфинитив; It + has been + suggested/claimed + that-придаточное"
       },
       "examples": [
         {
           "en": "It is widely assumed that the policy will be revised.",
-          "ru": "Широко предполагается, что политика будет пересмотрена."
+          "ru": "Широко предполагается, что политика будет пересмотрена.",
+          "note": {
+            "en": "hedged assumption",
+            "ru": "осторожное предположение"
+          }
         },
         {
           "en": "The CEO is reported to be considering resignation.",
-          "ru": "Сообщается, что гендиректор рассматривает отставку."
+          "ru": "Сообщается, что гендиректор рассматривает отставку.",
+          "note": {
+            "en": "reporting raise",
+            "ru": "поднятие подлежащего"
+          }
         },
         {
           "en": "Mistakes were made, and lessons must be learned.",
-          "ru": "Были допущены ошибки, и уроки должны быть извлечены."
+          "ru": "Были допущены ошибки, и уроки должны быть извлечены.",
+          "note": {
+            "en": "blame-avoiding",
+            "ru": "уход от ответственности"
+          }
         },
         {
           "en": "New applicants are screened by an independent panel.",
@@ -128,26 +211,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Стратегическое опущение агента (mistakes were made) часто скрывает ответственность — осознавай это."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is widely assumed the policy will revise.",
+          "right": "It is widely assumed that the policy will be revised.",
+          "why": {
+            "en": "The lower verb must also be passive when its subject is the thing acted on.",
+            "ru": "Вложенный глагол тоже должен быть в пассиве, если его подлежащее — объект действия."
+          }
+        },
+        {
+          "wrong": "He is reported being considering resignation.",
+          "right": "The CEO is reported to be considering resignation.",
+          "why": {
+            "en": "The reporting passive takes a to-infinitive, not a bare participle.",
+            "ru": "Пассив сообщения требует to-инфинитива, а не голого причастия."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the present-simple passive is a high-order stylistic choice about tone, distance, and the ethics of utterance. Balance the passive against nominalization and the active — the active often reads tighter (*Chapter 3 addresses the problem.*) than the passive (*The problem is addressed in Chapter 3.*), while heavy nominalization (*The addressing of the problem...*) is bloated. Recognise agentless passive as rhetorical hedging in diplomatic and legal prose (*Concerns have been raised about the treaty.* — deliberately by whom?). Read the ethical signal in *Children are educated in special schools* versus *We educate children...*. Know headline passives that drop *be* (*Minister accused in graft probe*) and the canker of the double passive (*The order is attempted to be carried out* → *An attempt is made to carry out the order*). Distinguish the neutral *is promoted* from the colloquial, often ironic *gets promoted*; and high-register modal passives like *It is to be noted that...* / *The document is to be destroyed.* Above all, read critically: a passive that hides the agent (*Russia is blamed for the incident* — by whom?) can manufacture consensus. Every passive you write should earn its place through information structure, register, responsibility, or rhythm.",
         "ru": "На C2 пассив в Present Simple — это **стилистический выбор высокого порядка**, касающийся тона, дистанции и этики высказывания.\n\n**1. Nominalization vs passive:**\nАнглийский академический стиль часто предпочитает **номинализацию** пассиву:\n- Passive: `The problem is addressed in Chapter 3.`\n- Nominalization: `Chapter 3 addresses the problem.` — актив короче и ярче.\n- Heavy nominalization: `The addressing of the problem is undertaken in Chapter 3.` — избыточно.\n\nКомпетентный автор балансирует: пассив — для безличности, актив — для динамики, номинализация — для концентрации.\n\n**2. Agentless passive as rhetorical hedging:**\nВ дипломатической и юридической речи пассив без агента — инструмент недосказанности:\n- `Concerns have been raised about the treaty.` (Кем? Непонятно — и намеренно.)\n- `It is felt that further discussion is needed.` (Кем именно ощущается? Автор избегает определённости.)\n\n**3. Subtle ethical distinctions:**\n- `Children are educated in special schools.` — нейтральный факт.\n- `Special schools educate children.` — более активное утверждение ответственности.\n- `We educate children in special schools.` — прямая идентификация говорящего.\n\nВыбор формы — это выбор этической позиции.\n\n**4. Passive in headlines and compressed prose:**\nВ газетных заголовках пассив сжимает информацию:\n- `Minister accused in graft probe.` (Headline passive — без `is`, как в заголовках.)\n- `Three injured in crash.`\n\nВ теле статьи эти формы разворачиваются в полный пассив: `The minister is accused of...`\n\n**5. Double passive — опасная конструкция:**\n- `The order is attempted to be carried out.` — грамматически возможно, но тяжеловесно.\n- Лучше: `An attempt is made to carry out the order.` или `We are trying to carry out the order.`\n\nДвойной пассив — признак канцеляризма. Редактируй его.\n\n**6. Get-passive in formal vs informal:**\n- `He is promoted every year.` — нейтральный пассив.\n- `He gets promoted every year.` — разговорный, с оттенком удивления или иронии.\n\nНа C2 выбирай get-passive для устной речи, неформальных текстов, случаев с неожиданным или нежеланным результатом.\n\n**7. Passive and modality interaction:**\n- `It is to be hoped that...` (Остаётся надеяться, что...) — устаревше-формальное.\n- `It is to be noted that...` (Следует отметить, что...) — академическое.\n- `The document is to be destroyed.` (Документ подлежит уничтожению.) — инструктивно-юридическое.\n\nЭти формы сигнализируют высокий регистр.\n\n**8. Critical reading skill:**\nНа C2 ты должен уметь **распознавать манипуляцию пассивом**: когда автор прячет агента, чтобы уйти от ответственности или навязать мнение. Учебник мог писать: `Russia is blamed for the incident.` — кем именно? Этот пассив маскирует источник и создаёт впечатление общепринятого факта.\n\n**9. Mastery:**\nНа высшем уровне ты используешь пассив экономно и осознанно. Каждый пассив в твоём тексте должен иметь причину: информационная структура, регистр, ответственность, ритм. Бездумный пассив — это слабость; выбранный пассив — это стиль."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "It + is to be + noted/hoped + that-clause; subject + gets + past participle (informal); subject + is + V3 + by + agent (rhetorical)",
+        "ru": "It + is to be + noted/hoped + that-придаточное; подлежащее + gets + V3 (разговорно); подлежащее + is + V3 + by + деятель (риторически)"
       },
       "examples": [
         {
           "en": "It is to be noted that the methodology differs from earlier studies.",
-          "ru": "Следует отметить, что методология отличается от более ранних исследований."
+          "ru": "Следует отметить, что методология отличается от более ранних исследований.",
+          "note": {
+            "en": "high-register modal passive",
+            "ru": "модальный пассив высокого регистра"
+          }
         },
         {
           "en": "Concerns are often raised about the transparency of such decisions.",
-          "ru": "Часто возникают вопросы относительно прозрачности таких решений."
+          "ru": "Часто возникают вопросы относительно прозрачности таких решений.",
+          "note": {
+            "en": "rhetorical hedge",
+            "ru": "риторическая недосказанность"
+          }
         },
         {
           "en": "The artefact is dated by radiocarbon analysis.",
@@ -155,7 +264,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Responsibility is widely understood to lie with the board.",
-          "ru": "Широко понимается, что ответственность лежит на совете."
+          "ru": "Широко понимается, что ответственность лежит на совете.",
+          "note": {
+            "en": "reporting passive",
+            "ru": "пассив сообщения"
+          }
         },
         {
           "en": "The clause is interpreted differently in each jurisdiction.",
@@ -165,9 +278,47 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Пассив без агента — риторический выбор: проверь, не прячешь ли ты ответственность неосознанно."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The order is attempted to be carried out.",
+          "right": "An attempt is made to carry out the order.",
+          "why": {
+            "en": "The double passive is heavy bureaucratese; nominalize one verb or rephrase in the active.",
+            "ru": "Двойной пассив — канцеляризм; номинализируй один глагол или перефразируй в активе."
+          }
+        },
+        {
+          "wrong": "It is noted to be that the methodology differs.",
+          "right": "It is to be noted that the methodology differs from earlier studies.",
+          "why": {
+            "en": "The modal passive uses the fixed pattern 'is to be + V3 + that-clause'.",
+            "ru": "Модальный пассив использует устойчивую формулу 'is to be + V3 + придаточное'."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "passive-past-simple",
+    "passive-future",
+    "passive-perfect-tenses",
+    "passive-with-modals"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "causative-have-get",
+    "reported-statements",
+    "it-as-subject"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Active subject",
+      "Verb",
+      "Active object",
+      "Passive subject",
+      "am/is/are + V3",
+      "by + agent"
+    ]
+  }
 };

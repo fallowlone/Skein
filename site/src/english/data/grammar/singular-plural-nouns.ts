@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "singular-plural-nouns",
   "title": {
-    "en": "",
+    "en": "Singular and Plural Nouns",
     "ru": "Singular Plural Nouns"
   },
   "cefr": "A0",
@@ -18,19 +18,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "nouns",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "A0": {
       "cefr": "A0",
       "explain": {
-        "en": "",
+        "en": "English nouns have two forms: one form for a single thing (the singular) and another for more than one (the plural). The basic rule is simple: to talk about more than one, add -s to the end of the word. That little letter changes the meaning of the whole word: a cat (one) becomes two cats, a book becomes three books, an apple becomes five apples. After any number bigger than one, use the -s form. For one thing, put a or an in front (a dog, an egg). When there are many, you no longer need a or an, because the -s already shows there is more than one. A few common words do not take -s and must be learned right away: a child / children, a man / men, a woman / women. Never mix the number and the form: not two cat, not one cats.",
         "ru": "В английском языке слова для предметов и существ бывают в двух формах: когда мы говорим об одном предмете и когда их несколько. Первая форма называется **единственное число** (один). Вторая форма — **множественное число** (два, три, четыре и больше).\n\nСамое главное и простое правило: когда предметов больше одного, мы прибавляем в конце слова букву **-s**. Эта маленькая буква меняет смысл всего слова.\n\n- один кот → `a cat`\n- два кота → `two cats`\n- одна книга → `a book`\n- три книги → `three books`\n- одно яблоко → `an apple`\n- пять яблок → `five apples`\n\nПосле любого числа больше одного (two, three, four, five, ten) всегда нужна форма с **-s**. Если мы говорим о каком-то одном предмете, перед ним ставим маленькое слово `a` или `an`. Если предметов много, то `a` или `an` уже не нужны — теперь у слова есть **-s**, и этого достаточно.\n\nЕсть особые слова, которые не прибавляют **-s**. Их совсем немного, но их надо запомнить сразу:\n- один ребёнок → `a child`, но много детей → `children`\n- один человек / мужчина → `a man`, но много → `men`\n- одна женщина → `a woman`, но много → `women`\n\nНикогда не говори `two cat` или `one cats`. Число и форма слова всегда должны подходить друг другу: один предмет — без **-s**, несколько предметов — с **-s** или в особой форме."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "one + noun  →  number + noun + -s",
+        "ru": "один + существительное  →  число + существительное + -s"
       },
       "examples": [
         {
@@ -47,69 +49,137 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I have a child.",
-          "ru": "У меня один ребёнок."
+          "ru": "У меня один ребёнок.",
+          "note": {
+            "en": "irregular",
+            "ru": "особая форма"
+          }
         },
         {
           "en": "They have two children.",
-          "ru": "У них двое детей."
+          "ru": "У них двое детей.",
+          "note": {
+            "en": "irregular",
+            "ru": "особая форма"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Если предметов больше одного — добавь -s в конце слова."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I have two cat.",
+          "right": "I have two cats.",
+          "why": {
+            "en": "After a number greater than one, the noun needs the plural -s.",
+            "ru": "После числа больше одного существительному нужно окончание -s."
+          }
+        },
+        {
+          "wrong": "two childs",
+          "right": "two children",
+          "why": {
+            "en": "Child has the irregular plural children, not childs.",
+            "ru": "У слова child особая форма множественного — children, а не childs."
+          }
+        }
+      ]
     },
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "Most plurals just add -s (book → books, car → cars), but a few spelling rules keep you from making mistakes. Add -es after nouns ending in -s, -sh, -ch, -x, -z (bus → buses, dish → dishes, box → boxes, watch → watches), and after some nouns in -o (potato → potatoes, tomato → tomatoes — but photo → photos, piano → pianos). When a noun ends in a consonant + -y, the y changes to -ies (baby → babies, city → cities, story → stories); after a vowel + -y, just add -s (boy → boys, day → days, key → keys). A small set of irregular plurals must be memorised in pairs: man → men, woman → women, child → children, foot → feet, tooth → teeth, mouse → mice, person → people. A few nouns do not change at all (sheep → sheep, fish → fish, deer → deer); the number then shows in the determiner and verb (one fish is, two fish are).",
         "ru": "Во множественном числе обычно просто добавляем в конце **-s**: `book → books`, `car → cars`, `friend → friends`. Но есть несколько маленьких, важных правил правописания, которые помогут тебе не делать ошибок.\n\n**Когда мы добавляем -es вместо -s:**\n- Слова, которые заканчиваются на -s, -sh, -ch, -x, -z: `bus → buses` (автобусы), `dish → dishes` (тарелки), `box → boxes` (коробки), `watch → watches` (часы).\n- Некоторые слова на -o: `potato → potatoes` (картошка), `tomato → tomatoes` (помидоры). Но `photo → photos`, `piano → pianos` — здесь просто +s.\n\n**Когда буква -y превращается в -ies:**\n- Если перед **-y** стоит согласная буква, то `-y` меняется на `-ies`: `baby → babies` (малыши), `city → cities` (города), `story → stories` (истории).\n- Если перед **-y** стоит гласная (a, e, i, o, u), то просто добавляем +s без изменений: `boy → boys`, `day → days`, `key → keys`.\n\n**Неправильные формы — их надо выучить наизусть парами:**\n- `man → men` (мужчина → мужчины)\n- `woman → women` (женщина → женщины)\n- `child → children` (ребёнок → дети)\n- `foot → feet` (нога → ноги)\n- `tooth → teeth` (зуб → зубы)\n- `mouse → mice` (мышь → мыши)\n- `person → people` (человек → люди)\n\nЭти слова не подчиняются правилу с **-s**. Таких слов в английском не очень много — примерно 10-15 часто употребляемых, — но они встречаются буквально везде. Самый быстрый путь — учить их сразу парами в коротких фразах: `one foot / two feet`, `one child / many children`.\n\n**Слова, у которых форма не меняется:**\n- `sheep → sheep` (овца/овцы — одинаково)\n- `fish → fish` (рыба/рыбы — в большинстве случаев)\n- `deer → deer` (олень/олени)\n\nДля таких слов число показывается определителем и глаголом: `one fish is`, `two fish are`. Не говори `fishes` в обычном смысле — эта форма бывает только для разных видов рыб в биологии."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "noun + -s / -es / -ies  (or irregular / no change)",
+        "ru": "существительное + -s / -es / -ies  (или особая форма / без изменений)"
       },
       "examples": [
         {
           "en": "My feet are cold.",
-          "ru": "Мои ноги холодные."
+          "ru": "Мои ноги холодные.",
+          "note": {
+            "en": "foot → feet",
+            "ru": "foot → feet"
+          }
         },
         {
           "en": "I brush my teeth every day.",
-          "ru": "Я чищу зубы каждый день."
+          "ru": "Я чищу зубы каждый день.",
+          "note": {
+            "en": "tooth → teeth",
+            "ru": "tooth → teeth"
+          }
         },
         {
           "en": "There are two buses on the street.",
-          "ru": "На улице два автобуса."
+          "ru": "На улице два автобуса.",
+          "note": {
+            "en": "bus → buses",
+            "ru": "bus → buses"
+          }
         },
         {
           "en": "She has three babies.",
-          "ru": "У неё трое малышей."
+          "ru": "У неё трое малышей.",
+          "note": {
+            "en": "baby → babies",
+            "ru": "baby → babies"
+          }
         },
         {
           "en": "The men are tired.",
-          "ru": "Мужчины устали."
+          "ru": "Мужчины устали.",
+          "note": {
+            "en": "man → men",
+            "ru": "man → men"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Запомни пять особых пар: man/men, woman/women, child/children, foot/feet, tooth/teeth."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "two babys",
+          "right": "two babies",
+          "why": {
+            "en": "After a consonant + y, change y to -ies.",
+            "ru": "После согласной + y окончание меняется на -ies."
+          }
+        },
+        {
+          "wrong": "two foots",
+          "right": "two feet",
+          "why": {
+            "en": "Foot has the irregular plural feet.",
+            "ru": "У слова foot особая форма множественного — feet."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Quantifiers tell you roughly how many, and several of them force a plural noun. Use many, a few, several, and some with countable plurals (many books, a few apples, several ideas, some cars) — the noun always keeps its -s. Subject-verb agreement matters too: a plural subject takes a plural verb (the dog is here vs the dogs are here; my friend lives vs my friends live). Notice the mirror pattern — the noun gains -s in the plural, while the present-tense verb loses its -s. Some nouns are always plural: scissors, trousers, glasses, jeans, clothes; they take are (my glasses are new) and are counted with a pair of (two pairs of trousers). With there, the number is shown by is or are: there is a book vs there are three books — keep them in agreement with the noun.",
         "ru": "На этом уровне мы добавляем **квантификаторы** — это слова, которые показывают примерное количество. Они требуют от нас правильной формы существительного.\n\n**С множественным числом (предметы, которые можно посчитать):**\n- `many` (много): `many books`, `many friends`, `many questions`\n- `a few` (несколько, немного): `a few apples`, `a few days`\n- `several` (несколько): `several ideas`, `several problems`\n- `some` (некоторые, какие-то): `some cars`, `some people`\n\nПосле всех этих слов всегда нужна форма с **-s**. Говори `many books`, а не `many book`. Русскому студенту это особенно важно — в русском слово «много» не требует специального окончания, в английском требует.\n\n**Согласование с глаголом.** Если подлежащее (то, что делает действие) стоит во множественном числе, глагол тоже меняет форму:\n- `The dog is here.` (собака одна → `is`)\n- `The dogs are here.` (собак много → `are`)\n- `My friend lives in Berlin.` (один друг → `lives`)\n- `My friends live in Berlin.` (друзей много → `live`, без `-s` в глаголе)\n\nОбрати внимание на эту зеркальную закономерность: у существительного во множ. числе есть `-s`, а у глагола в настоящем времени наоборот — `-s` исчезает.\n\n**Слова, которые всегда во множественном:**\n- `scissors` (ножницы), `trousers` (брюки), `glasses` (очки), `jeans` (джинсы), `clothes` (одежда).\n- С ними всегда `are`: `My glasses are new.`, `These trousers are expensive.`\n- Чтобы посчитать: `a pair of scissors`, `two pairs of trousers`.\n\n**Типичная ошибка:** после `many` забыть **-s**. Неправильно: `I have many car.` Правильно: `I have many cars.`\n\n**Маленький нюанс с глаголом `to be`:**\n- Для одной вещи: `There is a book on the table.`\n- Для нескольких: `There are three books on the table.`\n\nСлово `there` само по себе не говорит о числе — число показывает `is` или `are`. Следи, чтобы они согласовались: если дальше идёт множественное с **-s**, значит `are`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "many / a few / several / some + plural noun + plural verb",
+        "ru": "many / a few / several / some + множественное число + глагол во мн. ч."
       },
       "examples": [
         {
           "en": "I have many friends in Moscow.",
-          "ru": "У меня много друзей в Москве."
+          "ru": "У меня много друзей в Москве.",
+          "note": {
+            "en": "many + plural",
+            "ru": "many + мн. ч."
+          }
         },
         {
           "en": "She bought a few apples.",
@@ -121,7 +191,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "My trousers are black.",
-          "ru": "Мои брюки чёрные."
+          "ru": "Мои брюки чёрные.",
+          "note": {
+            "en": "always plural",
+            "ru": "всегда мн. ч."
+          }
         },
         {
           "en": "Several people were waiting.",
@@ -131,17 +205,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "После many, a few, several — всегда множественное число с -s."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I have many car.",
+          "right": "I have many cars.",
+          "why": {
+            "en": "After many, the countable noun must be plural.",
+            "ru": "После many исчисляемое существительное должно стоять во множественном числе."
+          }
+        },
+        {
+          "wrong": "My trousers is black.",
+          "right": "My trousers are black.",
+          "why": {
+            "en": "Trousers is always plural and takes are.",
+            "ru": "Trousers всегда во множественном числе и требует are."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 you separate ordinary plurals from collective nouns — words for a single group of people or things, such as team, family, class, government, staff, audience. They look singular but mean many members. You can treat the group either as one unit or as separate individuals: the team is winning (one unit) vs the team are arguing (individual members); my family is large vs my family are all teachers. British English often prefers the plural verb, American English the singular — pick one style and keep it consistent. Watch the fixed agreement traps: police and people are always plural (the police are here), while news is always singular (the news is bad). Every/each + noun takes a singular verb (every student has a book). And contrast a number of students are absent (plural) with the number of students is growing (singular). Note too that a plural-looking amount can act as one whole: two hours is a long time, ten dollars is enough, five miles is not far.",
         "ru": "На уровне B1 важно различать **множественное число** и **собирательные существительные** (collective nouns), потому что они ведут себя похоже, но не одинаково, и часто создают путаницу.\n\n**Собирательные существительные** — это слова для целой группы людей, животных или вещей: `team` (команда), `family` (семья), `class` (класс), `government` (правительство), `staff` (персонал), `audience` (аудитория). Внешне они выглядят как существительные в единственном числе, но по смыслу означают много людей.\n\nВ единственном числе они могут обозначать группу либо как единое целое, либо как набор отдельных людей:\n- `The team is winning.` (команда как единое целое играет)\n- `The team are arguing with each other.` (участники команды спорят по отдельности)\n- `My family is large.` (семья как единица)\n- `My family are all teachers.` (каждый член семьи — учитель)\n\nВ британском английском чаще выбирают множественный глагол (`are`), в американском — единственный (`is`). Для экзаменов и письма выбери один стиль и придерживайся его всё предложение.\n\n**Ловушки согласования, которые надо знать:**\n- `Police` всегда во множественном: `The police are here.`, никогда `The police is here.`\n- `People` тоже всегда множественное: `People are friendly here.`\n- `News` всегда в единственном: `The news is bad today.`\n- `Every / each + существительное` → всегда единственный глагол: `Every student has a book.`, `Each child gets a present.`\n- `A number of students are absent.` (множественный — «ряд студентов») vs `The number of students is growing.` (единственный — «число растёт»).\n\n**Выражения с множественной формой, но единичным смыслом:**\n- `Two hours is a long time.` (два часа воспринимаются как один отрезок времени)\n- `Ten dollars is enough.` (сумма денег — единое целое)\n- `Five miles is not far.` (расстояние как единица).\n\nОбращай внимание на то, что ты хочешь подчеркнуть: группу как целое или отдельных её членов. От этого зависит выбор формы глагола."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "collective noun + singular verb (whole) / plural verb (members)",
+        "ru": "собирательное существительное + глагол в ед. ч. (как целое) / во мн. ч. (по отдельности)"
       },
       "examples": [
         {
@@ -154,11 +246,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The police have arrived.",
-          "ru": "Полиция прибыла."
+          "ru": "Полиция прибыла.",
+          "note": {
+            "en": "always plural",
+            "ru": "всегда мн. ч."
+          }
         },
         {
           "en": "Three weeks is not enough time.",
-          "ru": "Трёх недель недостаточно."
+          "ru": "Трёх недель недостаточно.",
+          "note": {
+            "en": "amount = one unit",
+            "ru": "сумма = единое целое"
+          }
         },
         {
           "en": "A number of students have complained.",
@@ -168,26 +268,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Police, people — всегда множественное; news, information — всегда единственное."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The police is here.",
+          "right": "The police are here.",
+          "why": {
+            "en": "Police always takes a plural verb.",
+            "ru": "Police всегда сочетается с глаголом во множественном числе."
+          }
+        },
+        {
+          "wrong": "The news are bad today.",
+          "right": "The news is bad today.",
+          "why": {
+            "en": "News is an uncountable singular and takes is.",
+            "ru": "News неисчисляемое и единственное число, требует is."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "B2 covers plurals of compound nouns and stylistic spelling variation. The general principle for open compounds: the head noun goes into the plural, not the first word — passer-by → passers-by, mother-in-law → mothers-in-law, runner-up → runners-up, commander-in-chief → commanders-in-chief. Some compounds are felt as single words and take -s at the end (cupfuls, grown-ups, take-offs; spoonfuls and spoonsful are both accepted). Closed compounds (written as one word) follow the ordinary rule, pluralising at the very end: toothbrush → toothbrushes, bookshelf → bookshelves. Stylistically, formal and academic prose favours the full irregular forms (children, women, men) over casual reductions, and journalism uses bare plurals for generalisations (Doctors urge caution). Many Greek- and Latin-origin nouns now allow an English plural beside the classical one: formulas / formulae, indexes / indices, appendixes / appendices — the first is neutral, the second formal or technical.",
         "ru": "На B2 появляется более тонкая тема — **множественное число у составных существительных** (compound nouns) — и стилистические варианты написания.\n\n**Где ставить -s в составных словах?** Общий принцип: во множественное число переходит **главное** слово (head noun), а не первое. Первое слово в составе — это описание, оно не должно меняться.\n\n- `passer-by → passers-by` (прохожие, а не `passer-bys`)\n- `mother-in-law → mothers-in-law` (тёщи или свекрови, а не `mother-in-laws`)\n- `runner-up → runners-up` (финалисты)\n- `commander-in-chief → commanders-in-chief` (главнокомандующие)\n- `sister-in-law → sisters-in-law` (золовки)\n- `editor-in-chief → editors-in-chief` (главные редакторы)\n\nИсключения, где **-s** ставится в конце всего слова, потому что составное уже воспринимается как единое слово: `spoonfuls / spoonsful` (обе формы допустимы), `cupfuls`, `grown-ups`, `stand-bys`, `take-offs`.\n\n**Закрытые составные (пишутся в одно слово)** — у них обычное правило, множественное в самом конце: `toothbrush → toothbrushes`, `bookshelf → bookshelves`, `schoolteacher → schoolteachers`.\n\n**Стилистические особенности, которые надо чувствовать:**\n- В академической и формальной речи предпочитают полные неправильные формы: `children`, `women`, `men`, а не разговорные упрощения.\n- В журналистике можно встретить нулевой артикль + множественное для обобщений: `Parents want safer schools.`, `Doctors urge caution.`\n- Некоторые слова греческого или латинского происхождения начинают принимать английское множественное рядом с классическим: `formulas / formulae`, `indexes / indices`, `appendixes / appendices`. Первое — нейтральное и распространённое, второе — формальное, математическое или медицинское.\n\n**Типичная ошибка даже у продвинутых учеников:** ставить **-s** у первого элемента составного: `mother-in-laws` вместо `mothers-in-law`. Если сомневаешься, спроси себя: какое слово здесь главное, кто именно становится множественным?"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "head noun + -s inside the compound (passers-by, mothers-in-law)",
+        "ru": "главное слово + -s внутри составного (passers-by, mothers-in-law)"
       },
       "examples": [
         {
           "en": "My two sisters-in-law live in Canada.",
-          "ru": "Две мои золовки живут в Канаде."
+          "ru": "Две мои золовки живут в Канаде.",
+          "note": {
+            "en": "head = sister",
+            "ru": "главное слово — sister"
+          }
         },
         {
           "en": "The passers-by stopped to help.",
-          "ru": "Прохожие остановились, чтобы помочь."
+          "ru": "Прохожие остановились, чтобы помочь.",
+          "note": {
+            "en": "head = passer",
+            "ru": "главное слово — passer"
+          }
         },
         {
           "en": "Both runners-up received medals.",
@@ -199,36 +325,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We need new bookshelves.",
-          "ru": "Нам нужны новые книжные полки."
+          "ru": "Нам нужны новые книжные полки.",
+          "note": {
+            "en": "closed compound",
+            "ru": "слитное составное"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В составных существительных -s ставится у главного слова, а не у первого."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "two mother-in-laws",
+          "right": "two mothers-in-law",
+          "why": {
+            "en": "Pluralise the head noun (mother), not the trailing modifier.",
+            "ru": "Множественное ставится у главного слова (mother), а не у замыкающего."
+          }
+        },
+        {
+          "wrong": "two passer-bys",
+          "right": "two passers-by",
+          "why": {
+            "en": "The head noun passer takes -s, giving passers-by.",
+            "ru": "Окончание -s ставится у главного слова passer — passers-by."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you handle borrowed Latin and Greek plurals, which matter most in academic, scientific, and formal writing, where errors stand out. Learn the classical pairs: criterion → criteria, phenomenon → phenomena, datum → data, analysis → analyses, hypothesis → hypotheses, thesis → theses, crisis → crises, basis → bases, medium → media, alumnus → alumni, fungus → fungi, nucleus → nuclei. Mind the agreement: the criteria are clear (not is); this phenomenon is rare vs these phenomena are rare. In formal scientific writing data is treated as plural (the data show a trend), though general and business usage increasingly accepts the singular (the data shows). Media is also drifting toward the singular (the media is), but the traditional norm is plural. English is gradually anglicising these forms — curriculums beside curricula, stadiums beside stadia — so choose the Latin form in academic texts and either form in neutral register. Crucially, never form a double plural: criterias, phenomenas, and datas do not exist.",
         "ru": "На уровне C1 ты сталкиваешься с **заимствованными формами множественного числа** из латыни и греческого — их важно знать в академической, научной и формальной речи, потому что ошибки здесь особенно заметны.\n\n**Классические латино-греческие формы, которые надо запомнить:**\n- `criterion → criteria` (критерий → критерии)\n- `phenomenon → phenomena` (явление → явления)\n- `datum → data` (элемент данных → данные)\n- `analysis → analyses` (анализ → анализы)\n- `hypothesis → hypotheses` (гипотеза → гипотезы)\n- `thesis → theses` (тезис → тезисы), `crisis → crises`, `basis → bases`\n- `medium → media` (средство → средства, например, СМИ)\n- `alumnus → alumni` (выпускник → выпускники, муж.), `alumna → alumnae` (жен.)\n- `fungus → fungi`, `cactus → cacti / cactuses`, `nucleus → nuclei`\n\n**Подводные камни согласования:**\n- `The criteria are clear.` (правильно) — не `the criteria is`, хотя очень хочется по звучанию.\n- `This phenomenon is rare.` (ед.ч.) vs `These phenomena are rare.` (мн.ч.)\n- Слово `data` в формальной и научной речи считается множественным: `The data show a clear trend.` В обычной разговорной речи и бизнесе часто встречается единственное: `The data shows...` — это уже принятая норма, но в академических работах лучше использовать множественное для согласия с классической традицией.\n- `Media` тоже всё чаще используется как единственное (`the media is biased`), но в традиционной норме — множественное (`the media are biased`).\n\n**Эволюция нормы:** английский постепенно англизирует эти формы. Можно встретить `curriculums` наряду с `curricula`, `formulas` вместо `formulae`, `stadiums` рядом с `stadia`. В академических текстах выбирай латинскую форму; в нейтральной речи допустимы обе — подбирай по регистру.\n\nВажно: путать эти формы — типичная черта неносителя языка. Писать `criterias` или `phenomenas` — это двойное множественное, грубая ошибка. То же касается `datas` — такой формы не существует вовсе."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "-on/-um → -a   |   -is → -es   |   -us → -i",
+        "ru": "-on/-um → -a   |   -is → -es   |   -us → -i"
       },
       "examples": [
         {
           "en": "The data suggest a strong correlation.",
-          "ru": "Данные предполагают сильную корреляцию."
+          "ru": "Данные предполагают сильную корреляцию.",
+          "note": {
+            "en": "datum → data",
+            "ru": "datum → data"
+          }
         },
         {
           "en": "Several criteria must be met.",
-          "ru": "Должен быть выполнен ряд критериев."
+          "ru": "Должен быть выполнен ряд критериев.",
+          "note": {
+            "en": "criterion → criteria",
+            "ru": "criterion → criteria"
+          }
         },
         {
           "en": "These phenomena are hard to explain.",
-          "ru": "Эти явления трудно объяснить."
+          "ru": "Эти явления трудно объяснить.",
+          "note": {
+            "en": "phenomenon → phenomena",
+            "ru": "phenomenon → phenomena"
+          }
         },
         {
           "en": "Her analyses were groundbreaking.",
@@ -236,32 +396,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The alumni meet once a year.",
-          "ru": "Выпускники встречаются раз в год."
+          "ru": "Выпускники встречаются раз в год.",
+          "note": {
+            "en": "alumnus → alumni",
+            "ru": "alumnus → alumni"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Criteria, data, phenomena — это уже множественное число; не добавляй ещё -s."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "These criterias are important.",
+          "right": "These criteria are important.",
+          "why": {
+            "en": "Criteria is already plural; adding -s makes a double plural.",
+            "ru": "Criteria уже множественное число; добавление -s даёт двойное множественное."
+          }
+        },
+        {
+          "wrong": "The datas is incomplete.",
+          "right": "The data are incomplete.",
+          "why": {
+            "en": "Datas does not exist; data is the plural and takes are in formal use.",
+            "ru": "Формы datas не существует; data — множественное и в формальной речи требует are."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the issue is the fine line between mass and individuated readings of nouns — many words shift between the two, and native speakers feel the difference intuitively. An uncountable noun can be individuated into countable units, especially in speech: two coffees (two cups or servings), three beers, two sugars, please, three times (separate occasions), French cheeses (varieties). Formal writing tends to avoid this in favour of three cups of coffee or two teaspoons of sugar. A plural can also be a rhetorical device — the sands of time, the snows of yesteryear, the waters of the Baltic, the heavens — which colours the text as literary or elevated and sounds unnatural in a neutral register. Abstract nouns, normally uncountable, become countable in a specific sense: a rare beauty, the beauties of nature; an unforgettable experience, many experiences; an act of kindness or simply a kindness. But some nouns stay firmly uncountable: evidences, informations, advices, and researches are errors — use pieces of evidence, information, advice, research instead.",
         "ru": "На уровне C2 речь идёт о **тонких различиях между массовой и индивидуализированной трактовкой** существительных. Многие слова могут переходить из одной категории в другую, и носители чувствуют эту разницу интуитивно — её сложно объяснить правилом.\n\n**Индивидуализация массового существительного (countable shift):**\n- `coffee` (кофе как напиток или продукт, неисч.) → `two coffees` (две порции или две чашки кофе в кафе)\n- `beer` → `three beers` (три пива)\n- `wine` → `a fine Bordeaux / excellent wines` (конкретные сорта или виды вина)\n- `cheese` → `French cheeses` (разные виды или сорта сыра)\n- `time` → `three times` (три раза как отдельные случаи)\n- `sugar` → `two sugars, please` (два куска или две ложки сахара)\n\nЭтот приём распространён в разговорной речи, особенно в ресторанах и кафе. В формальных и научных текстах его обычно избегают в пользу более точных формулировок: `three cups of coffee`, `two teaspoons of sugar`.\n\n**Множественное как риторический приём:**\n- `the sands of time` (пески времени) — стилистическое усиление, хотя `sand` обычно неисчисляемое.\n- `the snows of yesteryear` (снега минувших лет) — литературный оборот в духе Вийона.\n- `the waters of the Baltic` (воды Балтики) — географический и поэтический стиль.\n- `the heavens` (небеса) — архаично-возвышенное.\n\n**Абстрактные существительные:** обычно они неисчисляемые, но в специализированном, конкретизированном смысле становятся исчисляемыми:\n- `beauty` (красота как качество) — но `a rare beauty` (редкая красавица), `the beauties of nature` (красоты природы).\n- `experience` (опыт, неисч.) — но `an unforgettable experience` (незабываемое переживание), `many experiences` (много переживаний).\n- `kindness` — `an act of kindness` или просто `a kindness` (доброе дело).\n\n**Совет по стилю:** если ты используешь редкое plural mass (`the waters`, `the snows`), это окрашивает текст литературно или торжественно. Для нейтрального регистра это звучит неестественно. Всегда проверяй, соответствует ли стиль жанру текста — в новостной статье такое неуместно, в эссе о природе — нормально.\n\nВ академической прозе избегай искусственного индивидуализирования: `evidences` — это ошибка; правильно — `pieces of evidence`. То же с `informations`, `advices`, `researches` — все они в английском жёстко неисчисляемые."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "uncountable → countable unit/variety (two coffees, French cheeses)",
+        "ru": "неисчисляемое → исчисляемая порция/вид (two coffees, French cheeses)"
       },
       "examples": [
         {
           "en": "Could we have two coffees and a tea, please?",
-          "ru": "Можно нам два кофе и чай, пожалуйста?"
+          "ru": "Можно нам два кофе и чай, пожалуйста?",
+          "note": {
+            "en": "servings",
+            "ru": "порции"
+          }
         },
         {
           "en": "The beauties of the Scottish Highlands are unmatched.",
-          "ru": "Красоты Шотландского высокогорья непревзойдённы."
+          "ru": "Красоты Шотландского высокогорья непревзойдённы.",
+          "note": {
+            "en": "literary plural",
+            "ru": "литературное мн. ч."
+          }
         },
         {
           "en": "She has had many extraordinary experiences.",
@@ -269,7 +459,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The waters of the Baltic Sea are cold.",
-          "ru": "Воды Балтийского моря холодные."
+          "ru": "Воды Балтийского моря холодные.",
+          "note": {
+            "en": "poetic plural",
+            "ru": "поэтическое мн. ч."
+          }
         },
         {
           "en": "Fine wines age for decades.",
@@ -279,9 +473,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Ты можешь сказать two coffees, но не two informations — это фиксированное неисчисляемое."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I have two important informations.",
+          "right": "I have two important pieces of information.",
+          "why": {
+            "en": "Information is fixed uncountable; count it with pieces of information.",
+            "ru": "Information жёстко неисчисляемое; считается через pieces of information."
+          }
+        },
+        {
+          "wrong": "He gave me some good advices.",
+          "right": "He gave me some good advice.",
+          "why": {
+            "en": "Advice has no plural form; advices does not exist.",
+            "ru": "У advice нет формы множественного числа; advices не существует."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "countable-uncountable-nouns",
+    "compound-nouns",
+    "collective-nouns",
+    "possessive-nouns"
+  ],
+  "crossTopic": [
+    "there-is-there-are",
+    "present-simple",
+    "definite-article",
+    "indefinite-article"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "singular",
+      "plural",
+      "add -s / special form"
+    ]
+  }
 };

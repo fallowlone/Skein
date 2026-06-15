@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "subordinating-conjunctions",
   "title": {
-    "en": "",
+    "en": "Subordinating Conjunctions",
     "ru": "Subordinating Conjunctions"
   },
   "cefr": "B1",
@@ -15,159 +15,330 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conjunctions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "tree",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "A subordinating conjunction joins a main clause to a subordinate clause. The subordinate clause cannot stand alone — it depends on the main clause to make sense. On its own, *because I was sick* is a fragment, not a sentence.\n\nThe most common subordinators mark a relationship:\n- reason: `because` (`I stayed home because I was sick.`)\n- time: `when`, `while`, `before`, `after`, `until` (`Call me when you arrive.`)\n- condition: `if` (`If it rains, we'll stay in.`)\n- concession: `although`, `though` (`Although it was cold, we went out.`)\n\n**Word order and the comma.** The subordinate clause can come before or after the main clause. If it comes first, put a comma after it. If it comes second, you usually need no comma:\n- `Because it was raining, we cancelled the picnic.` (comma)\n- `We cancelled the picnic because it was raining.` (no comma)\n\nDon't confuse subordinating conjunctions with coordinating ones (`and`, `but`, `or`, `so`). Coordinators link two equal clauses; subordinators create a hierarchy — one main clause plus one dependent clause.",
         "ru": "**Подчинительные союзы** (subordinating conjunctions) соединяют главное предложение с придаточным. Придаточное не может стоять само — ему нужно главное предложение, чтобы иметь смысл.\n\nСамые частые подчинительные союзы:\n- `because` (потому что) — причина: `I stayed home because I was sick.`\n- `when` (когда) — время: `Call me when you arrive.`\n- `while` (пока, в то время как): `She cooks while I work.`\n- `if` (если) — условие: `If it rains, we'll stay in.`\n- `although / though` (хотя) — уступка: `Although it was cold, we went out.`\n- `since` (с тех пор / поскольку): `I haven't seen him since he moved.`\n- `until` (до тех пор, пока): `Wait until I come back.`\n- `before / after` — последовательность: `Brush your teeth before you go to bed.`\n\n**Порядок частей предложения.** Придаточное может идти до или после главного. Если до — ставь запятую. Если после — запятая обычно не нужна.\n- `Because it was raining, we cancelled the picnic.` (запятая)\n- `We cancelled the picnic because it was raining.` (без запятой)\n\n**Частая ошибка:** использовать подчинительный союз как самостоятельное предложение. `Because I was tired.` — не предложение, а фрагмент. Нужна главная часть: `I went to bed because I was tired.`\n\nНе путай coordinating (and, but, or, so) и subordinating. Coordinating соединяют равные части; subordinating создают иерархию (главное + зависимое)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "main clause + subordinator + clause (subject + verb)  /  Subordinator + clause, + main clause",
+        "ru": "главное + союз + придаточное (подлежащее + глагол)  /  Союз + придаточное, + главное"
       },
       "examples": [
         {
           "en": "I called her because I needed help.",
-          "ru": "Я позвонил ей, потому что мне нужна была помощь."
+          "ru": "Я позвонил ей, потому что мне нужна была помощь.",
+          "note": {
+            "en": "reason",
+            "ru": "причина"
+          }
         },
         {
           "en": "When the bell rings, please sit down.",
-          "ru": "Когда прозвенит звонок, пожалуйста, садитесь."
+          "ru": "Когда прозвенит звонок, пожалуйста, садитесь.",
+          "note": {
+            "en": "time",
+            "ru": "время"
+          }
         },
         {
           "en": "Although he was tired, he finished the work.",
-          "ru": "Хотя он устал, он закончил работу."
+          "ru": "Хотя он устал, он закончил работу.",
+          "note": {
+            "en": "concession",
+            "ru": "уступка"
+          }
         },
         {
           "en": "We waited until the rain stopped.",
-          "ru": "Мы ждали, пока не кончится дождь."
+          "ru": "Мы ждали, пока не кончится дождь.",
+          "note": {
+            "en": "time (until)",
+            "ru": "время (until)"
+          }
         },
         {
           "en": "If you study hard, you will pass.",
-          "ru": "Если ты будешь хорошо учиться, ты сдашь."
+          "ru": "Если ты будешь хорошо учиться, ты сдашь.",
+          "note": {
+            "en": "condition",
+            "ru": "условие"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После подчинительного союза должно идти полное предложение с подлежащим и глаголом — иначе это фрагмент, а не предложение."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Because I was tired.",
+          "right": "I went to bed because I was tired.",
+          "why": {
+            "en": "A subordinate clause alone is a fragment; it needs a main clause.",
+            "ru": "Придаточное само по себе — фрагмент; нужна главная часть."
+          }
+        },
+        {
+          "wrong": "We cancelled the picnic, because it was raining.",
+          "right": "We cancelled the picnic because it was raining.",
+          "why": {
+            "en": "No comma when the subordinate clause follows the main clause.",
+            "ru": "Запятая не нужна, когда придаточное стоит после главного."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, widen your range and choose the subordinator that fits the nuance.\n\n**Reason / explanation:**\n- `because` — direct, neutral reason.\n- `since` — a reason the listener already knows or accepts (`Since you're here, let's start.`).\n- `as` — reason, slightly more formal (`As it was late, we left.`).\n- `given that` — more formal still.\n\n**Concession (contrast):**\n- `although` / `though` — neutral.\n- `even though` — stronger contrast (`Even though I warned him, he went.`).\n- `while` / `whereas` — set two facts side by side (`While my brother likes sports, I prefer books.`).\n\n**Condition:**\n- `unless` = `if not` (`Unless you hurry, you'll miss the train.`).\n- `provided (that)` / `as long as` — on the condition that.\n- `in case` — as a precaution (`Take an umbrella in case it rains.`).\n\n**Time:**\n- `as soon as`, `once`, `by the time`.\n\n**Classic mistake:** confusing `because of` (preposition + noun) with `because` (conjunction + clause). Use `Because of the rain, we cancelled.` with a noun, but `Because it was raining, we cancelled.` with a full clause.",
         "ru": "На B2 расширяй репертуар подчинительных союзов и учись выбирать нюансы.\n\n**Причина / объяснение:**\n- `because` — прямая причина, нейтральный.\n- `since` — причина, которую слушатель уже знает или принимает: `Since you're here, let's start.`\n- `as` — причина, формальнее: `As it was late, we left.`\n- `given that` — с учётом того, что (формальный).\n- `seeing that / seeing as` — разговорный.\n\n**Уступка (concession):**\n- `although / though` — нейтральный: `Although he's young, he's experienced.`\n- `even though` — усиленный контраст: `Even though I warned him, he went.`\n- `while / whereas` — противопоставление: `While my brother likes sports, I prefer books.`\n- `despite the fact that` / `in spite of the fact that` — формальный длинный вариант.\n\n**Условие:**\n- `if` — нейтральный.\n- `unless` = if not: `Unless you hurry, you'll miss the train.`\n- `provided (that) / providing (that)` — при условии, что (формальный).\n- `as long as` — если только: `You can stay as long as you're quiet.`\n- `in case` — на случай: `Take an umbrella in case it rains.`\n\n**Время:**\n- `as soon as` — как только.\n- `once` — один раз когда: `Once you understand this, everything gets easier.`\n- `by the time` — к тому моменту, как.\n\n**Типичная ошибка русскоговорящего:** путать `because of` (предлог + существительное) и `because` (союз + предложение). `Because of the rain, we cancelled.` (noun), но `Because it was raining, we cancelled.` (clause)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subordinator + clause  (because / since / as / unless / provided that / in case + subject + verb)",
+        "ru": "союз + придаточное  (because / since / as / unless / provided that / in case + подлежащее + глагол)"
       },
       "examples": [
         {
           "en": "Since you speak French, could you translate this?",
-          "ru": "Раз ты говоришь по-французски, мог бы ты это перевести?"
+          "ru": "Раз ты говоришь по-французски, мог бы ты это перевести?",
+          "note": {
+            "en": "since = known reason",
+            "ru": "since = известная причина"
+          }
         },
         {
           "en": "Even though she was exhausted, she kept working.",
-          "ru": "Хотя она была измотана, она продолжала работать."
+          "ru": "Хотя она была измотана, она продолжала работать.",
+          "note": {
+            "en": "even though",
+            "ru": "even though"
+          }
         },
         {
           "en": "Unless we leave now, we'll miss the flight.",
-          "ru": "Если мы сейчас не уйдём, мы пропустим рейс."
+          "ru": "Если мы сейчас не уйдём, мы пропустим рейс.",
+          "note": {
+            "en": "unless = if not",
+            "ru": "unless = if not"
+          }
         },
         {
           "en": "Take a jacket in case it gets cold later.",
-          "ru": "Возьми куртку на случай, если потом похолодает."
+          "ru": "Возьми куртку на случай, если потом похолодает.",
+          "note": {
+            "en": "in case",
+            "ru": "in case"
+          }
         },
         {
           "en": "As soon as I finish, I'll call you.",
-          "ru": "Как только закончу, я тебе позвоню."
+          "ru": "Как только закончу, я тебе позвоню.",
+          "note": {
+            "en": "as soon as",
+            "ru": "as soon as"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Unless = if not. Запомни: Unless you hurry = If you don't hurry."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Because of it was raining, we cancelled.",
+          "right": "Because it was raining, we cancelled.",
+          "why": {
+            "en": "`because of` takes a noun; `because` takes a full clause.",
+            "ru": "`because of` идёт с существительным; `because` — с целым предложением."
+          }
+        },
+        {
+          "wrong": "Unless you don't hurry, you'll miss it.",
+          "right": "Unless you hurry, you'll miss it.",
+          "why": {
+            "en": "`unless` already means `if not`, so the verb stays positive.",
+            "ru": "`unless` уже значит `if not`, поэтому глагол остаётся в утвердительной форме."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, master the rarer subordinators and the structures that come with them.\n\n**Formal concession:**\n- `albeit` — *although*, very formal, usually + adjective/phrase rather than a full clause (`The plan was accepted, albeit reluctantly.`).\n- `granted (that)` — *I concede that* (`Granted that he's talented, he still needs training.`).\n- `notwithstanding that` — legalistic.\n\n**Rarer conditionals:**\n- `supposing (that)` / `assuming (that)` — introduce a hypothesis.\n- `on (the) condition that` — formal.\n- `but for` + noun — *if it had not been for* (`But for your help, I would have failed.`).\n\n**Formal/literary time:**\n- `no sooner ... than` and `hardly ... when` — *as soon as*, and both trigger inversion (`No sooner had I arrived than the phone rang.`).\n- `the moment (that)` — the instant something happens.\n\n**Result / consequence:**\n- `so (that)` — purpose or result (`He spoke loudly so (that) everyone could hear.`).\n- `so + adjective + that` and `such + a/an + (adj) noun + that` (`She was so tired that she fell asleep.` / `It was such a long meeting that we missed lunch.`).\n\n**Register scale:** `as` (formal, written) > `since` (neutral) > `because` (all registers). Academic writing leans on `as` and `since`; speech leans on `because`.\n\n**Note:** `despite that` and `in spite that` are wrong as conjunctions — use `despite the fact that` / `in spite of the fact that`, or `despite` + gerund/noun.",
         "ru": "На C1 осваивай редкие подчинительные союзы и сложные структуры.\n\n**Формальные уступительные:**\n- `albeit` — хотя и (очень формально, часто + adj/phrase, не полное предложение): `The plan was accepted, albeit reluctantly.`\n- `notwithstanding that` — несмотря на то, что (юридический стиль).\n- `granted (that)` — признаю, что: `Granted that he's talented, he still needs training.`\n\n**Редкие условные:**\n- `supposing (that)` — предположим, что: `Supposing he refuses, what will we do?`\n- `assuming (that)` — при условии, что (гипотеза).\n- `on (the) condition that` — формальный.\n- `but for` + noun — если бы не: `But for your help, I would have failed.`\n\n**Формальные временные:**\n- `no sooner ... than` — едва ... как (с инверсией): `No sooner had I arrived than the phone rang.`\n- `hardly ... when` — едва ... как.\n- `the moment (that)` — в тот момент, когда: `The moment I saw her, I knew.`\n\n**Результат / следствие:**\n- `so (that)` — чтобы / так что: `He spoke loudly so (that) everyone could hear.`\n- `such ... that` — такой ..., что: `It was such a long meeting that we missed lunch.`\n- `so ... that` — так ..., что: `She was so tired that she fell asleep immediately.`\n\n**Ошибка среднего уровня:** `despite that` — некорректно. Используй `despite the fact that` или просто `despite + gerund/noun`. Аналогично `in spite that` — не бывает.\n\n**Регистровая разница:** `as` (formal, written) > `since` (neutral) > `because` (всех регистров). В академическом письме `as` и `since` чаще. В разговоре `because` доминирует."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "No sooner + had + S + past participle + than + clause  /  so / such + ... + that + clause",
+        "ru": "No sooner + had + подлежащее + причастие II + than + придаточное  /  so / such + ... + that + придаточное"
       },
       "examples": [
         {
           "en": "The decision, albeit controversial, was final.",
-          "ru": "Решение, хотя и спорное, было окончательным."
+          "ru": "Решение, хотя и спорное, было окончательным.",
+          "note": {
+            "en": "albeit + phrase",
+            "ru": "albeit + оборот"
+          }
         },
         {
           "en": "Supposing you won the lottery, what would you do?",
-          "ru": "Предположим, ты выиграл в лотерею, что бы ты сделал?"
+          "ru": "Предположим, ты выиграл в лотерею, что бы ты сделал?",
+          "note": {
+            "en": "supposing = hypothesis",
+            "ru": "supposing = гипотеза"
+          }
         },
         {
           "en": "No sooner had she sat down than the doorbell rang.",
-          "ru": "Едва она села, как зазвонил дверной звонок."
+          "ru": "Едва она села, как зазвонил дверной звонок.",
+          "note": {
+            "en": "no sooner + inversion",
+            "ru": "no sooner + инверсия"
+          }
         },
         {
           "en": "But for her advice, I would have made a terrible mistake.",
-          "ru": "Если бы не её совет, я бы совершил ужасную ошибку."
+          "ru": "Если бы не её совет, я бы совершил ужасную ошибку.",
+          "note": {
+            "en": "but for = if not for",
+            "ru": "but for = если бы не"
+          }
         },
         {
           "en": "He spoke so softly that nobody could hear him.",
-          "ru": "Он говорил так тихо, что никто его не слышал."
+          "ru": "Он говорил так тихо, что никто его не слышал.",
+          "note": {
+            "en": "so ... that",
+            "ru": "so ... that"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "No sooner had + past participle + than — формальный способ сказать «едва ... как»; требует инверсии."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Despite that it was late, we stayed.",
+          "right": "Despite the fact that it was late, we stayed.",
+          "why": {
+            "en": "`despite` cannot take a bare `that`-clause; use `despite the fact that` or `despite` + gerund.",
+            "ru": "`despite` не сочетается с голым `that`; нужно `despite the fact that` или `despite` + герундий."
+          }
+        },
+        {
+          "wrong": "No sooner I had arrived than the phone rang.",
+          "right": "No sooner had I arrived than the phone rang.",
+          "why": {
+            "en": "Front-placed `no sooner` forces subject–auxiliary inversion.",
+            "ru": "Вынесенное вперёд `no sooner` требует инверсии подлежащего и вспомогательного глагола."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, use subordinators for stylistic control and discourse precision.\n\n**Fine distinctions among causal links:**\n- `because` — the reason is new, focal information.\n- `since` / `as` — presupposition: the reason is already shared or accepted.\n- `for` (formal, literary) — like `because`, but only after the main clause (`He left, for he had work to do.`).\n- `inasmuch as` — extremely formal (`Inasmuch as the evidence supports the claim...`).\n\n**Concessive and contrastive shading:**\n- `whilst` (BrE, formal) = `while`.\n- `whereas` — for parallel contrast in academic prose (`Whereas the first study found X, the second observed Y.`).\n- `when (in fact)` — used to rebut (`He claimed to be an expert, when in fact he was a beginner.`).\n\n**Reduced (clipped) clauses** — common in writing when the subjects match:\n- `While walking home, I saw...` = `While I was walking home, I saw...`\n- `Although exhausted, she continued.` = `Although she was exhausted...`\n- `If asked, I would say...` = `If I were asked...`\n\n**Stylistic fronting with inversion:**\n- `Not until I saw the evidence did I believe him.`\n- `Only when we failed did we realize.`\n\n**Idiom:** `now that` = *because now* (`Now that you're here, we can start.`) — don't reduce it to a bare `now`.",
         "ru": "На C2 используй подчинительные союзы для стилистики и дискурсивной точности.\n\n**Нюансы между причинными союзами:**\n- `because` — информативное новое, focal: `I stayed home because I was sick.` (причина — основная информация).\n- `since / as` — пресуппозиция, уже известное: `Since you're tired, let's rest.` (собеседник принимает это как данность).\n- `for` (formal, literary) — как `because`, но только после главного: `He left, for he had work to do.`\n- `inasmuch as` — крайне формальный: `Inasmuch as the evidence supports the claim...`\n\n**Мягкие концессивные обороты:**\n- `whilst` (BrE формальный) = while.\n- `whereas` — для параллельного противопоставления в академическом стиле: `Whereas the first study found X, the second observed Y.`\n- `when in fact` — когда на самом деле (опровержение): `He claimed to be an expert, when in fact he was a beginner.`\n\n**Сжатые формы через reduced clauses:**\n- `While walking home, I saw...` = `While I was walking home, I saw...`\n- `Although exhausted, she continued.` = `Although she was exhausted...`\n- `If asked, I would say...` = `If I were asked, I would say...`\n\nТакие формы часто встречаются в письменной речи.\n\n**Стилистическая фронтация для эффекта:**\n- `Not until I saw the evidence did I believe him.` — формальная инверсия после not until.\n- `Only when we failed did we realize.`\n- `Little did I know that...` — литературная конструкция.\n\n**Дискурсивные маркеры, функционирующие почти как союзы:** `provided` можно сократить до `provided (that)`, но в письме `that` лучше сохранять. `Say` в значении «например» часто без that.\n\n**Идиоматический случай:** `now that` = поскольку теперь: `Now that you're here, we can start.` Не смешивай с простым `now`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Reduced: subordinator + -ing / past participle / adjective (matching subject)  /  Fronted: Not until + clause + did + S + base verb",
+        "ru": "Сжатые: союз + -ing / причастие II / прилагательное (при совпадении подлежащего)  /  Фронтация: Not until + придаточное + did + подлежащее + инфинитив"
       },
       "examples": [
         {
           "en": "Inasmuch as the deadline has passed, we must proceed without him.",
-          "ru": "Поскольку срок прошёл, мы должны продолжить без него."
+          "ru": "Поскольку срок прошёл, мы должны продолжить без него.",
+          "note": {
+            "en": "inasmuch as (formal)",
+            "ru": "inasmuch as (формальный)"
+          }
         },
         {
           "en": "Whilst I appreciate your effort, the result is unacceptable.",
-          "ru": "Хотя я ценю твои усилия, результат неприемлем."
+          "ru": "Хотя я ценю твои усилия, результат неприемлем.",
+          "note": {
+            "en": "whilst = while (BrE)",
+            "ru": "whilst = while (брит.)"
+          }
         },
         {
           "en": "Not until she spoke did I recognize her voice.",
-          "ru": "Только когда она заговорила, я узнал её голос."
+          "ru": "Только когда она заговорила, я узнал её голос.",
+          "note": {
+            "en": "not until + inversion",
+            "ru": "not until + инверсия"
+          }
         },
         {
           "en": "Now that the children have left, the house feels empty.",
-          "ru": "Теперь, когда дети уехали, дом кажется пустым."
+          "ru": "Теперь, когда дети уехали, дом кажется пустым.",
+          "note": {
+            "en": "now that",
+            "ru": "now that"
+          }
         },
         {
           "en": "If asked, he would deny everything.",
-          "ru": "Если спросить, он бы всё отрицал."
+          "ru": "Если спросить, он бы всё отрицал.",
+          "note": {
+            "en": "reduced if-clause",
+            "ru": "сжатое if-придаточное"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Since = уже известная причина, because = новая информация о причине — различай для точного стиля."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Not until she spoke I recognized her voice.",
+          "right": "Not until she spoke did I recognize her voice.",
+          "why": {
+            "en": "Fronting `not until` triggers inversion in the main clause: `did + subject + base verb`.",
+            "ru": "Фронтация `not until` вызывает инверсию в главном предложении: `did + подлежащее + инфинитив`."
+          }
+        },
+        {
+          "wrong": "While I walking home, I saw an accident.",
+          "right": "While walking home, I saw an accident.",
+          "why": {
+            "en": "A reduced time clause drops the subject and uses the -ing form, not a bare subject + participle.",
+            "ru": "Сжатое временное придаточное опускает подлежащее и берёт форму на -ing, а не подлежащее + причастие."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "coordinating-conjunctions",
+    "adverbial-clauses-reason",
+    "adverbial-clauses-time",
+    "adverbial-clauses-contrast"
+  ],
+  "crossTopic": [
+    "first-conditional",
+    "purpose-clauses",
+    "result-clauses",
+    "inversion"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "main clause",
+      "subordinator",
+      "subordinate clause"
+    ]
+  }
 };

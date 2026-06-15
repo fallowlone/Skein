@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "adverbs-of-frequency",
   "title": {
-    "en": "",
+    "en": "Adverbs of Frequency",
     "ru": "Adverbs Of Frequency"
   },
   "cefr": "A1",
@@ -17,19 +17,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "adverbs",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "scale",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "Adverbs of frequency say **how often** something happens. The core set runs from 100% down to 0%: `always`, `usually`, `often`, `sometimes`, `rarely`, `never`.\n\nPosition follows one simple rule, with one exception:\n\n**1. With the verb `be`, put the adverb AFTER it:** `I am always happy.` / `She is never late.` / `They are usually at home.`\n\n**2. With all other verbs, put the adverb BEFORE the main verb:** `I always drink coffee.` / `He never eats meat.` / `We sometimes go to the park.`\n\nDo not put the adverb after the main verb (`I drink always coffee` is wrong) and do not put it before `be` (`She always is happy` is wrong).\n\nAlso, `never` is already negative — do not add `not`. Say `I never eat fish`, never `I don't never eat fish`.",
         "ru": "Наречия частоты говорят, **как часто** что-то происходит.\n\n**Главные слова (от 100% к 0%):**\n- `always` — всегда\n- `usually` — обычно\n- `often` — часто\n- `sometimes` — иногда\n- `rarely` — редко\n- `never` — никогда\n\n**Где ставить — два простых правила:**\n\n**1. С глаголом `be` — ПОСЛЕ глагола:**\n- `I am always happy.` (Я всегда счастлив.)\n- `She is never late.` (Она никогда не опаздывает.)\n- `They are usually at home.` (Они обычно дома.)\n\n**2. С другими глаголами — ПЕРЕД глаголом:**\n- `I always drink coffee.` (Я всегда пью кофе.)\n- `He never eats meat.` (Он никогда не ест мясо.)\n- `We sometimes go to the park.` (Мы иногда ходим в парк.)\n\n**Главная ошибка:**\n- Wrong: `I drink always coffee.` → правильно `I always drink coffee.`\n- Wrong: `She always is happy.` → правильно `She is always happy.`\n\n**`Never` с отрицанием — нельзя:**\n- Wrong: `I don’t never eat fish.`\n- Right: `I never eat fish.`\n\nВ английском `never` уже означает отрицание — не нужно добавлять `not`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + always/usually/never + verb  /  subject + be + always/usually/never",
+        "ru": "подлежащее + always/usually/never + глагол  /  подлежащее + be + always/usually/never"
       },
       "examples": [
         {
@@ -38,7 +40,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She is never late for work.",
-          "ru": "Она никогда не опаздывает на работу."
+          "ru": "Она никогда не опаздывает на работу.",
+          "note": {
+            "en": "after be",
+            "ru": "после be"
+          }
         },
         {
           "en": "We usually eat dinner at seven.",
@@ -50,36 +56,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "They are always friendly.",
-          "ru": "Они всегда дружелюбные."
+          "ru": "Они всегда дружелюбные.",
+          "note": {
+            "en": "after be",
+            "ru": "после be"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "C be — после (is always). С другими глаголами — перед (always drinks)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I drink always coffee.",
+          "right": "I always drink coffee.",
+          "why": {
+            "en": "The frequency adverb goes before the main verb, not after it.",
+            "ru": "Наречие частоты ставится перед основным глаголом, а не после."
+          }
+        },
+        {
+          "wrong": "She always is happy.",
+          "right": "She is always happy.",
+          "why": {
+            "en": "With the verb be the adverb comes after it, not before.",
+            "ru": "С глаголом be наречие ставится после него, а не перед."
+          }
+        },
+        {
+          "wrong": "I don't never eat fish.",
+          "right": "I never eat fish.",
+          "why": {
+            "en": "never is already negative; English does not use double negation here.",
+            "ru": "never уже отрицательное; двойное отрицание здесь не используется."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2, lock in the position and widen the scale. Between 100% and 0% you now have `almost always` (~95%), `usually / normally / generally` (~80%), `often / frequently` (~70%), `sometimes / occasionally` (~50%), `rarely / seldom / hardly ever` (~10%), and `almost never` (~5%).\n\n**Position with two verbs:** put the adverb **between the auxiliary and the main verb** — `I have always wanted to visit Paris.` / `She has never been to Japan.` / `We are always studying in the library.` / `He will never forget this.`\n\n**In questions** the adverb keeps its mid position: `Do you usually work on Saturdays?` / `Does she often travel?` Use `ever` (= at any time) only in questions and negatives: `Have you ever been to Berlin?` / `Nobody ever told me.` Do not use `ever` for a habit — say `I always go to the gym`, not `I ever go to the gym`.\n\n**Definite frequency** (a fixed number of times) goes at the **end** of the clause, not in the middle: `once a week`, `twice a month`, `three times a year`, `every day`. So `I go to the gym twice a week`, not `I twice a week go`. Note the contrast: `always` sits mid-sentence (`I always exercise`) while `every day` goes at the start or end (`Every day I exercise` / `I exercise every day`).",
         "ru": "На A2 укрепи позицию наречия и добавь новые слова.\n\n**Шкала частоты (процент времени):**\n- `always` (100%)\n- `almost always` (95%)\n- `usually / normally / generally` (~80%)\n- `often / frequently` (~70%)\n- `sometimes / occasionally` (~50%)\n- `rarely / seldom / hardly ever` (~10%)\n- `almost never` (~5%)\n- `never` (0%)\n\n**Позиция в сложных временах (с двумя глаголами):**\nНаречие ставится **между вспомогательным и смысловым** глаголами:\n- `I have always wanted to visit Paris.` (present perfect)\n- `She has never been to Japan.`\n- `We are always studying in the library.` (present continuous)\n- `He will never forget this.` (future)\n\n**В вопросах:**\n- `Do you usually work on Saturdays?`\n- `Have you ever been to Berlin?` (`ever` = когда-либо)\n- `Does she often travel?`\n\n**`Ever` — только в вопросах и отрицаниях:**\n- `Have you ever tried sushi?` (Ты когда-нибудь пробовал суши?)\n- `Nobody ever told me.` (Никто мне никогда не говорил.)\n- Wrong: `I ever go to the gym.` → нужно `I always go to the gym.`\n\n**Определённая частота — в конце предложения:**\n- `once a week` (раз в неделю)\n- `twice a month` (дважды в месяц)\n- `three times a year` (три раза в год)\n- `every day`, `every morning`\n\nПримеры:\n- `I go to the gym twice a week.` (не в середине!)\n- `She travels abroad every summer.`\n- `We meet once a month.`\n\n**Разница:** `always` стоит в середине (`I always exercise`), `every day` — в начале или конце (`I exercise every day.` / `Every day I exercise.`)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + auxiliary + always/never + main verb  /  ... + once/twice a week (end)",
+        "ru": "подлежащее + вспом. глагол + always/never + основной глагол  /  ... + once/twice a week (в конце)"
       },
       "examples": [
         {
           "en": "I have always loved chocolate.",
-          "ru": "Я всегда любил шоколад."
+          "ru": "Я всегда любил шоколад.",
+          "note": {
+            "en": "between aux + verb",
+            "ru": "между вспом. и глаголом"
+          }
         },
         {
           "en": "Have you ever been to London?",
-          "ru": "Ты когда-нибудь был в Лондоне?"
+          "ru": "Ты когда-нибудь был в Лондоне?",
+          "note": {
+            "en": "ever in a question",
+            "ru": "ever в вопросе"
+          }
         },
         {
           "en": "She goes swimming twice a week.",
-          "ru": "Она ходит плавать дважды в неделю."
+          "ru": "Она ходит плавать дважды в неделю.",
+          "note": {
+            "en": "definite frequency, end",
+            "ru": "точная частота, в конце"
+          }
         },
         {
           "en": "He is hardly ever at home.",
@@ -87,36 +135,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Every morning I drink coffee.",
-          "ru": "Каждое утро я пью кофе."
+          "ru": "Каждое утро я пью кофе.",
+          "note": {
+            "en": "every + noun, fronted",
+            "ru": "every + сущ., в начале"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Наречие частоты ставь между вспомогательным и основным глаголом: have always wanted, has never been."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She has been never to Japan.",
+          "right": "She has never been to Japan.",
+          "why": {
+            "en": "The adverb goes between the auxiliary and the main verb, not after the participle.",
+            "ru": "Наречие ставится между вспомогательным и основным глаголом, а не после причастия."
+          }
+        },
+        {
+          "wrong": "I ever go to the gym.",
+          "right": "I always go to the gym.",
+          "why": {
+            "en": "ever is for questions and negatives; a habit needs always/usually.",
+            "ru": "ever — для вопросов и отрицаний; для привычки нужно always/usually."
+          }
+        },
+        {
+          "wrong": "I twice a week go to the gym.",
+          "right": "I go to the gym twice a week.",
+          "why": {
+            "en": "Definite-frequency phrases go at the end, not in mid position.",
+            "ru": "Выражения точной частоты ставятся в конце, а не в середине."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, master **definite frequency** phrases and finer position rules. Expressions like `daily / weekly / monthly / annually`, `every Friday`, `every other day`, `once in a while`, `from time to time`, `now and then`, and the formal `on a daily basis` go at the **start or end** of the clause — never in the middle (`We every Friday have a meeting` is wrong).\n\n**`usually` vs `used to`:** `I usually walk to work` is a present habit; `I used to walk to work` is a past habit that has stopped. **`normally` vs `usually`** are near-synonyms; `normally` leans slightly toward \"by default\".\n\n**Emphatic `always`:** with the present continuous it signals annoyance — `She is always complaining!`, `He is always losing his keys!` — implying \"too often\".\n\n**`rarely` / `seldom` / `hardly ever`** all mean \"not often\": `rarely` is neutral and common, `seldom` is more formal and literary, `hardly ever` is informal and expressive.\n\nDon't stack two frequency adverbs (`I always usually drink coffee` is wrong — choose one), and don't front a bare negative adverb at this level (`Never I go there` → `I never go there`; the inversion `Never do I go there` waits for B2).",
         "ru": "На B1 добавь **определённую частоту** (definite frequency) и тонкости позиции.\n\n**Определённые выражения частоты:**\n- `daily / weekly / monthly / annually`\n- `every hour / every Friday / every other day` (через день)\n- `once in a while` (иногда, время от времени)\n- `from time to time` (изредка)\n- `now and then / now and again` (время от времени)\n- `on a daily basis` (ежедневно; формально)\n\n**Позиция — в начале или в конце, не в середине:**\n- `Every Friday we have a meeting.` (начало)\n- `We have a meeting every Friday.` (конец)\n- Wrong: `We every Friday have a meeting.`\n\n**`Usually` vs `used to`:**\n- `I usually walk to work.` (привычка сейчас)\n- `I used to walk to work.` (привычка раньше, сейчас нет)\n\nНе путай: `I used to walk` = прошлая привычка.\n\n**`Normally` vs `usually`:**\nПочти синонимы. `Normally` чуть подчёркивает стандартную ситуацию:\n- `I normally leave at eight.` (по умолчанию)\n- `I usually leave at eight.` (обычно так)\n\n**Эмфатическое `always`:**\n- `She is always complaining!` — раздражённое, подразумевает «слишком часто».\n- Используется с present continuous для жалобы: `He is always losing his keys!`\n\n**`Seldom` / `rarely` / `hardly ever`:**\nВсе означают «редко». Отличия:\n- `rarely` — нейтрально, часто используется.\n- `seldom` — формальнее и звучит более литературно.\n- `hardly ever` — разговорный, экспрессивный.\n\nПримеры:\n- `She rarely goes out on weekdays.`\n- `He seldom speaks in public.`\n- `We hardly ever see them these days.`\n\n**Double frequency — неправильно:**\n- Wrong: `I always usually drink coffee.` → выбери одно.\n- Wrong: `Never I go there.` → перестрой: `I never go there.` или (formal inversion на B2+)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "every Friday / once a week + clause  OR  clause + every Friday / once a week",
+        "ru": "every Friday / once a week + предложение  ИЛИ  предложение + every Friday / once a week"
       },
       "examples": [
         {
           "en": "I used to play the guitar every day.",
-          "ru": "Раньше я играл на гитаре каждый день."
+          "ru": "Раньше я играл на гитаре каждый день.",
+          "note": {
+            "en": "used to = past habit",
+            "ru": "used to = прошлая привычка"
+          }
         },
         {
           "en": "He is always losing his phone!",
-          "ru": "Он вечно теряет телефон!"
+          "ru": "Он вечно теряет телефон!",
+          "note": {
+            "en": "always + continuous = annoyance",
+            "ru": "always + continuous = раздражение"
+          }
         },
         {
           "en": "We seldom eat out on weekdays.",
-          "ru": "Мы редко ходим в ресторан по будням."
+          "ru": "Мы редко ходим в ресторан по будням.",
+          "note": {
+            "en": "seldom (formal)",
+            "ru": "seldom (формальное)"
+          }
         },
         {
           "en": "She meets her friends from time to time.",
@@ -130,22 +220,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Определённая частота (every Friday, twice a week) — в начале или конце."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "We every Friday have a meeting.",
+          "right": "Every Friday we have a meeting.",
+          "why": {
+            "en": "Definite-frequency phrases go at the start or end, not in mid position.",
+            "ru": "Выражения точной частоты ставятся в начале или конце, а не в середине."
+          }
+        },
+        {
+          "wrong": "I always usually drink coffee.",
+          "right": "I usually drink coffee.",
+          "why": {
+            "en": "Use only one frequency adverb per clause; two contradict each other.",
+            "ru": "В одном предложении только одно наречие частоты; два противоречат друг другу."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, add **inversion** and advanced frequency structures. When a negative frequency adverb (`never`, `rarely`, `seldom`, `hardly ever`) is fronted for emphasis, the clause inverts like a question: `Never have I seen such beauty` (not `Never I have seen`), `Rarely do we find such talent`, `Seldom had she been so happy`, `Hardly ever does he complain`. The pattern is **adverb + auxiliary + subject + main verb**. It belongs to literary, formal, or dramatic registers — rare in casual speech.\n\nThe correlatives **`No sooner … than`** and **`Hardly … when`** also invert and describe one event closely following another: `No sooner had I arrived than it started raining.` / `Hardly had we sat down when the phone rang.`\n\n**Scope modifiers** sharpen frequency: `nearly/almost always`, `virtually never`, `practically every day`, `more or less daily`, `invariably` (stronger than `always`: `He invariably forgets`), `consistently` (`She consistently delivers quality work`).\n\nWith several modifiers, follow **manner – place – time** order, keeping frequency near the verb and time at the end: `She works quietly at home every day.` In formal writing prefer `seldom`, `rarely`, `frequently`, `invariably`; in speech, `sometimes`, `often`, `never`, `always`.",
         "ru": "На B2 добавь **инверсию** и продвинутые структуры частоты.\n\n**Инверсия с отрицательными наречиями (formal / emphatic):**\nКогда в начало ставится отрицательное наречие частоты (`never`, `rarely`, `seldom`, `hardly ever`), происходит инверсия — как в вопросе:\n- `Never have I seen such beauty.` (Никогда я не видел такой красоты.) — вместо `I have never seen`.\n- `Rarely do we find such talent.` — вместо `We rarely find`.\n- `Seldom had she been so happy.` — вместо `She had seldom been`.\n- `Hardly ever does he complain.`\n\nФормула: `Adverb + auxiliary + subject + main verb`.\n\nИспользуется в литературе, формальных выступлениях, для dramatic effect. В разговоре — редко.\n\n**`No sooner … than` / `Hardly … when`:**\nТоже с инверсией — о последовательности событий:\n- `No sooner had I arrived than it started raining.` (Не успел я прийти, как начался дождь.)\n- `Hardly had we sat down when the phone rang.` (Едва мы сели, как зазвонил телефон.)\n\n**Scope modifiers:**\n- `nearly / almost always`, `virtually never`.\n- `practically every day`, `more or less daily`.\n- `invariably` (неизменно): `He invariably forgets.` — сильнее, чем `always`.\n- `consistently` (постоянно, последовательно): `She consistently delivers quality work.`\n\n**Двойные наречия:**\nИногда нужны два наречия для точного смысла:\n- `I have nearly always wondered about that.`\n- `We don’t often meet nowadays.` (два — но разные категории: `often` — частота, `nowadays` — время).\n\n**Позиция при нескольких модификаторах:**\nСтандартный порядок: **manner – place – time** (MPT). Frequency обычно ближе к глаголу, time — в конце:\n- `She works quietly at home every day.`\n\n**Stylistic note:**\nВ формальном письме предпочитают `seldom`, `rarely`, `frequently`, `invariably`. В разговорной речи — `sometimes`, `often`, `never`, `always`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Negative adverb + auxiliary + subject + main verb (inversion)",
+        "ru": "отрицательное наречие + вспом. глагол + подлежащее + основной глагол (инверсия)"
       },
       "examples": [
         {
           "en": "Never have I tasted better coffee.",
-          "ru": "Никогда не пробовал лучшего кофе."
+          "ru": "Никогда не пробовал лучшего кофе.",
+          "note": {
+            "en": "inversion after Never",
+            "ru": "инверсия после Never"
+          }
         },
         {
           "en": "Rarely do we get such opportunities.",
@@ -153,11 +265,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "No sooner had the meeting ended than a new one began.",
-          "ru": "Не успело одно совещание закончиться, как началось другое."
+          "ru": "Не успело одно совещание закончиться, как началось другое.",
+          "note": {
+            "en": "No sooner ... than",
+            "ru": "No sooner ... than"
+          }
         },
         {
           "en": "She invariably arrives early.",
-          "ru": "Она неизменно приходит рано."
+          "ru": "Она неизменно приходит рано.",
+          "note": {
+            "en": "invariably > always",
+            "ru": "invariably сильнее always"
+          }
         },
         {
           "en": "We hardly ever disagree.",
@@ -167,22 +287,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Negative adverb в начале → инверсия: Never HAVE I seen."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Never I have seen such beauty.",
+          "right": "Never have I seen such beauty.",
+          "why": {
+            "en": "A fronted negative adverb forces subject-auxiliary inversion.",
+            "ru": "Вынесенное вперёд отрицательное наречие требует инверсии подлежащего и вспомогательного глагола."
+          }
+        },
+        {
+          "wrong": "No sooner I had arrived when it started raining.",
+          "right": "No sooner had I arrived than it started raining.",
+          "why": {
+            "en": "No sooner inverts and pairs with than, not when.",
+            "ru": "No sooner требует инверсии и сочетается с than, а не с when."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, frequency interacts subtly with **modality and scope**. Place the adverb between a modal and the main verb: `You should always check your work.` / `He might sometimes call late.` / `They must never do that again.`\n\n**Scope matters** with stacked adverbs: `She always secretly helps them` (always, and secretly) differs in emphasis from `She secretly always helps them`. Three adverbs in a row read heavily — `I have occasionally seriously considered quitting` is better rewritten as `On occasion, I have seriously considered quitting`, fronting the frequency.\n\n**`ever`** appears in special frames: after comparatives (`better than ever`), after a superlative + relative (`the best I have ever tasted`), in conditionals (`If ever you need help, call me`), and in concessives (`Whatever he does, he always succeeds`).\n\n**Hedging through frequency** softens claims: `tend to` (`I tend to arrive early`), `have a tendency to` (academic), `be inclined to` (formal). Note registers: `routinely` (part of a routine), `habitually` (often pejorative), `customarily` (by tradition).\n\nIn academic writing, absolute `always`/`never` are risky without evidence — prefer hedged `typically`, `in most cases`, `generally`, or discourse markers like `as a rule`, `generally speaking`, `more often than not`.",
         "ru": "На C1 частота работает в **сложном взаимодействии с модальностью и scope**.\n\n**Частота + модальные глаголы:**\nНаречие между модальным и главным:\n- `You should always check your work.` (рекомендация)\n- `He might sometimes call late.` (возможность)\n- `We can usually count on her.` (способность + норма)\n- `They must never do that again.` (запрет)\n\n**Scope ambiguity с несколькими наречиями:**\n- `She always secretly helps them.` — всегда и скрытно.\n- `She secretly always helps them.` — скрытно и всегда.\nРазница в акценте: что модифицирует что.\n\n**Множественные наречия в одной фразе:**\n- `I have occasionally seriously considered quitting.` — три элемента подряд, звучит тяжело.\n- Улучшить: `On occasion, I have seriously considered quitting.` — вынести частоту в начало.\n\n**`Ever` в особых контекстах:**\n- После comparative: `This is better than ever.` (лучше, чем когда-либо).\n- После superlative + relative: `the best I have ever tasted`.\n- В условных: `If ever you need help, call me.` (если когда-нибудь).\n- В concessive: `Whatever he does, he always succeeds.`\n\n**Hedging через частоту:**\n- `tend to` + infinitive: `I tend to arrive early.` (мягче, чем `usually arrive`).\n- `have a tendency to` (академично): `Managers have a tendency to overestimate risk.`\n- `be inclined to` (формально, с лёгким нюансом).\n\n**Subtle differences:**\n- `routinely` — как часть рутины: `He routinely skips breakfast.`\n- `habitually` — как привычка (часто негативно): `She habitually arrives late.`\n- `customarily` — по обычаю/традиции: `We customarily exchange gifts at Christmas.`\n\n**Discourse markers частоты:**\n- `as a rule`, `generally speaking`, `on the whole`, `by and large` — аккуратные generalizations.\n- `more often than not` — чаще, чем нет.\n\n**Частотные кванторы и truth:**\n- `always` и `never` в академическом письме — абсолютны, избегай без доказательств.\n- Предпочитай hedged: `typically`, `in most cases`, `generally`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + modal + always/never/sometimes + main verb",
+        "ru": "подлежащее + модальный глагол + always/never/sometimes + основной глагол"
       },
       "examples": [
         {
           "en": "He tends to underestimate his own abilities.",
-          "ru": "Он склонен недооценивать собственные способности."
+          "ru": "Он склонен недооценивать собственные способности.",
+          "note": {
+            "en": "tend to = hedge",
+            "ru": "tend to = смягчение"
+          }
         },
         {
           "en": "We routinely check the backups every morning.",
@@ -190,11 +332,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "More often than not, the simple solution is correct.",
-          "ru": "Чаще всего простое решение и есть правильное."
+          "ru": "Чаще всего простое решение и есть правильное.",
+          "note": {
+            "en": "more often than not",
+            "ru": "more often than not"
+          }
         },
         {
           "en": "If ever you’re in town, do call me.",
-          "ru": "Если окажешься в городе, обязательно позвони."
+          "ru": "Если окажешься в городе, обязательно позвони.",
+          "note": {
+            "en": "If ever = conditional",
+            "ru": "If ever = условное"
+          }
         },
         {
           "en": "Managers generally have a tendency to delay decisions.",
@@ -204,30 +354,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Academic hedging: tend to, typically, generally — мягче, чем always / never."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "You should check always your work.",
+          "right": "You should always check your work.",
+          "why": {
+            "en": "Frequency goes between the modal and the main verb, not after it.",
+            "ru": "Наречие частоты ставится между модальным и основным глаголом, а не после."
+          }
+        },
+        {
+          "wrong": "The results always confirm the hypothesis.",
+          "right": "The results typically confirm the hypothesis.",
+          "why": {
+            "en": "Absolute always overclaims in academic prose; hedge with typically/generally.",
+            "ru": "Абсолютное always — слишком сильное утверждение в академическом тексте; смягчай через typically/generally."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, frequency adverbs serve **rhythm and information structure**. English keeps short adverbs near the verb and pushes long ones to the periphery: `She rarely complains` vs `She complains on rare occasions`.\n\n**Fronting** carries emphasis and discourse weight: `Never in my life have I witnessed such courage.` / `Only rarely does one encounter such candour.` / `Time and again, she proved us wrong.`\n\n**Layered scope and negation** change meaning precisely: `I didn't always agree` (sometimes I didn't) ≠ `I always didn't agree` (unusual) ≠ `I never disagreed` (I agreed every time).\n\n**Register and corpus notes:** journalism favours `rarely`/`seldom` as signalling words; academic prose often swaps `is often seen` for `frequently observed`. Archaic or literary forms include `oft` (`oft-repeated claim`), `time after time`, `again and again`.\n\n**Syntactic constraints hold firm:** never insert the adverb between a verb and its direct object (`I eat often breakfast` → `I often eat breakfast`), but after a modal it is fine (`She might rarely see him`).\n\n**Information structure** decides placement by what is new: `I go to the gym every day` foregrounds *every day*; `Every day I go to the gym` foregrounds *the gym*. Finally, the pragmatic `always` with the present continuous flags an irritating habit — `He's always losing things` carries a negative tone.",
         "ru": "На C2 наречия частоты — часть **ритма и информационной структуры** предложения.\n\n**Natural rhythm:**\nАнглийский любит помещать короткие наречия ближе к глаголу, длинные — в периферию:\n- `She rarely complains.` (короткое — в середине).\n- `She complains on rare occasions.` (длинное — в конце).\n\n**Fronting для эмфазы и дискурса:**\n- `Never in my life have I witnessed such courage.` — литературно.\n- `Only rarely does one encounter such candour.` — академично.\n- `Time and again, she proved us wrong.` — повтор как эмфаза.\n\n**Многослойные scope и negation:**\n- `I didn’t always agree.` (иногда не соглашался) vs `I always didn’t agree.` (необычно) vs `I never disagreed.` (каждый раз соглашался).\n\n**Корпусные наблюдения:**\n- В журналистике `rarely` и `seldom` — типичные signaling слова для новостей.\n- В академическом письме частотные наречия часто заменяют hedged-фразы: `frequently observed` вместо `is often seen`.\n\n**Subtle registers:**\n- `oft` — архаично/литературно: `oft-repeated claim` (часто повторяемое утверждение).\n- `ever and anon` — архаизм.\n- `time after time`, `again and again` — повторяющиеся события, сильная эмфаза.\n\n**Intransitive constructions:**\n- `She often goes there.` (standard)\n- `She often goes.` — допустимо, если место ясно из контекста.\n- `Often she goes there.` — поэтично, фронтинг.\n\n**Information structure:**\nПравило «new info в конце»:\n- `I go to the gym every day.` (every day — новая информация).\n- `Every day I go to the gym.` (the gym — новая информация).\n\nРасставляя частоту, следи за тем, какая часть — новая.\n\n**Syntactic constraints:**\n- Нельзя между прямым объектом и глаголом: Wrong: `I eat often breakfast.` → Right: `I often eat breakfast.`\n- После модального и перед главным глаголом — нормально: `She might rarely see him.`\n\n**Pragmatic always:**\n- `I’m always forgetting my keys.` — с present continuous + always = irritating habit (раздражающая привычка).\n- `She’s always talking on the phone.` — негативный оттенок.\n\n**Редакторский финиш:**\nПеречитай: если у тебя три наречия в одной фразе — перепиши. Вынеси одно в дискурсивную позицию (начало или конец)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Fronted adverb + auxiliary + subject + verb (rhythm/emphasis)",
+        "ru": "вынесенное наречие + вспом. глагол + подлежащее + глагол (ритм/эмфаза)"
       },
       "examples": [
         {
           "en": "Time and again, history repeats itself.",
-          "ru": "Раз за разом история повторяется."
+          "ru": "Раз за разом история повторяется.",
+          "note": {
+            "en": "repetition emphasis",
+            "ru": "эмфаза через повтор"
+          }
         },
         {
           "en": "Only rarely does such a confluence occur.",
-          "ru": "Лишь в редких случаях наблюдается такое совпадение."
+          "ru": "Лишь в редких случаях наблюдается такое совпадение.",
+          "note": {
+            "en": "Only rarely + inversion",
+            "ru": "Only rarely + инверсия"
+          }
         },
         {
           "en": "He’s always losing things — it’s exhausting.",
-          "ru": "Он вечно теряет вещи — это утомительно."
+          "ru": "Он вечно теряет вещи — это утомительно.",
+          "note": {
+            "en": "always + continuous = irritation",
+            "ru": "always + continuous = раздражение"
+          }
         },
         {
           "en": "Never in her career had she faced such a challenge.",
@@ -235,15 +415,55 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Oft-repeated claims do not become true through repetition.",
-          "ru": "Часто повторяемые утверждения не становятся истиной от повтора."
+          "ru": "Часто повторяемые утверждения не становятся истиной от повтора.",
+          "note": {
+            "en": "oft- (literary)",
+            "ru": "oft- (литературное)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Fronted negative adverb требует инверсии и звучит литературно — используй экономно."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I eat often breakfast.",
+          "right": "I often eat breakfast.",
+          "why": {
+            "en": "The adverb cannot sit between the verb and its direct object.",
+            "ru": "Наречие нельзя ставить между глаголом и его прямым дополнением."
+          }
+        },
+        {
+          "wrong": "Never in my life I have witnessed such courage.",
+          "right": "Never in my life have I witnessed such courage.",
+          "why": {
+            "en": "A fronted negative adverbial triggers inversion even with an added phrase.",
+            "ru": "Вынесенное вперёд отрицательное обстоятельство требует инверсии даже с добавленной фразой."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "adverbs-of-manner",
+    "adverbs-of-degree",
+    "word-order-svoa"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "present-perfect-simple",
+    "inversion"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "always",
+      "usually",
+      "often",
+      "sometimes",
+      "rarely",
+      "never"
+    ]
+  }
 };

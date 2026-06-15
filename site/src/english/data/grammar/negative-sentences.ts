@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "negative-sentences",
   "title": {
-    "en": "",
+    "en": "Negative Sentences",
     "ru": "Negative Sentences"
   },
   "cefr": "A1",
@@ -17,19 +17,24 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "word-order",
+  "egp": [
+    "EGP:A1.negation.do-does-not",
+    "EGP:A2.negation.did-not",
+    "EGP:B1.negation.adverbs",
+    "EGP:C1.negation.inversion"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "English negatives are built differently from many other languages: you cannot just drop a negative word in front of the verb. You almost always need an auxiliary verb.\n\nWith **be**, add **not** straight after am/is/are: I am not happy → I'm not happy; She is not a doctor → She isn't a doctor; They are not here → They aren't here.\n\nWith the modal **can**, add not after it: I can swim → I cannot swim / I can't swim.\n\nWith ordinary verbs you need **do / does** plus not: I like coffee → I don't like coffee; She works here → She doesn't work here. After does, the main verb drops its -s ending: write doesn't work, not doesn't works.\n\nIn speech use contractions: isn't, aren't, don't, doesn't, can't. The core A1 patterns — I'm not…, He isn't…, I don't…, She doesn't…, I can't… — cover most everyday negatives.",
         "ru": "**Отрицательные предложения** в английском строятся по-разному, чем в русском. В русском достаточно поставить «не» перед глаголом. В английском нужен **вспомогательный глагол**.\n\n**С глаголом `be`:**\nДобавляем `not` сразу после `am/is/are`.\n- `I am happy.` → `I am not happy.` / `I'm not happy.` (Я не счастлив.)\n- `She is a doctor.` → `She is not a doctor.` / `She isn't a doctor.`\n- `They are here.` → `They are not here.` / `They aren't here.`\n\n**С модальным `can`:**\n- `I can swim.` → `I cannot swim.` / `I can't swim.` (Я не умею плавать.)\n- `He can speak English.` → `He can't speak English.`\n\n**С обычными глаголами — нужен `do/does`:**\n- `I like coffee.` → `I do not like coffee.` / `I don't like coffee.` (Я не люблю кофе.)\n- `She works here.` → `She does not work here.` / `She doesn't work here.` (Она здесь не работает.)\n- После `does` глагол теряет окончание `-s`: не `doesn't works`, а `doesn't work`.\n\n**Типичная ошибка русскоговорящего:**\n- Неправильно: `I not like coffee.` (прямое «не»).\n- Правильно: `I don't like coffee.`\n\nВ русском «Я не люблю кофе» — просто «не» перед глаголом. В английском всегда нужен вспомогательный.\n\n**Сокращения — используй в разговоре:**\n- `is not` = `isn't`\n- `are not` = `aren't`\n- `do not` = `don't`\n- `does not` = `doesn't`\n- `cannot` = `can't`\n\nНа A1 основные шаблоны: `I'm not…`, `He isn't…`, `I don't…`, `She doesn't…`, `I can't…`. Этого достаточно для большинства отрицаний в повседневной речи."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + do/does + not + base verb  (or  subject + be/can + not)",
+        "ru": "подлежащее + do/does + not + глагол в базовой форме (или подлежащее + be/can + not)"
       },
       "examples": [
         {
@@ -38,7 +43,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She doesn't like tea.",
-          "ru": "Она не любит чай."
+          "ru": "Она не любит чай.",
+          "note": {
+            "en": "does + base verb",
+            "ru": "does + базовый глагол"
+          }
         },
         {
           "en": "We are not students.",
@@ -46,7 +55,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He can't drive.",
-          "ru": "Он не умеет водить."
+          "ru": "Он не умеет водить.",
+          "note": {
+            "en": "can't",
+            "ru": "can't"
+          }
         },
         {
           "en": "They don't speak Russian.",
@@ -56,26 +69,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "С обычными глаголами всегда do/does + not: I don't know, she doesn't care."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I not like coffee.",
+          "right": "I don't like coffee.",
+          "why": {
+            "en": "Ordinary verbs need the auxiliary do; you cannot put not directly before the verb.",
+            "ru": "С обычными глаголами нужен вспомогательный do; нельзя ставить not прямо перед глаголом."
+          }
+        },
+        {
+          "wrong": "She doesn't works here.",
+          "right": "She doesn't work here.",
+          "why": {
+            "en": "After does, the main verb takes its base form and loses the -s.",
+            "ru": "После does основной глагол стоит в базовой форме и теряет -s."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2 you add the past tense and negative adverbs.\n\nPast tense uses **didn't** + base verb: I went → I didn't go; She saw him → She didn't see him. The verb is never doubly marked for past, so write didn't go, not didn't went. With the past of be, use wasn't / weren't: I was tired → I wasn't tired; They were late → They weren't late.\n\n**Negative adverbs** like never already carry the negative, so you don't add a second one: I never eat meat (not I don't never eat meat). The words nothing, nobody, nowhere work the same way and can replace a not…anything structure: I know nothing = I don't know anything.\n\nThe key rule of standard English is **one negative per clause**: say I don't know anything or I know nothing, never I don't know nothing. Note also the contrast between no (before a noun: I have no money) and not (with a verb: I don't have money) — both are correct.",
         "ru": "На A2 добавляем прошедшее время и отрицательные наречия.\n\n**Прошедшее время с `didn't`:**\n- `I went to school.` → `I didn't go to school.` (Я не ходил в школу.)\n- `She saw him.` → `She didn't see him.`\n- После `didn't` глагол в **базовой форме**, не в прошедшем.\n- Неправильно: `I didn't went.`\n- Правильно: `I didn't go.`\n\n**Прошедшее с `was/were`:**\n- `I was tired.` → `I wasn't tired.`\n- `They were late.` → `They weren't late.`\n\n**Отрицательные наречия:**\n\n`never` (никогда):\n- `I never eat meat.` (Я никогда не ем мясо.)\n- После `never` — обычный порядок слов, без `not`.\n- Неправильно: `I don't never eat meat.` (двойное отрицание).\n- Правильно: `I never eat meat.` ИЛИ `I don't eat meat.`\n\n`nothing`, `nobody`, `nowhere`:\n- `I know nothing.` (Я ничего не знаю.) — ИЛИ `I don't know anything.`\n- `Nobody came.` (Никто не пришёл.) — ИЛИ `There wasn't anybody.`\n- `He lives nowhere.` (Он нигде не живёт.) — необычно; обычно `He doesn't live anywhere.`\n\n**Главное правило:** в одном предложении **одно отрицание**.\n- Неправильно: `I don't know nothing.` (в стандартном английском).\n- Правильно: `I don't know anything.` ИЛИ `I know nothing.`\n\nЭто важное отличие от русского, где двойное отрицание норма: «Я ничего не знаю» — два отрицания («ничего» + «не»).\n\n**Контраст `no` vs `not`:**\n- `no` — перед существительным: `I have no money.` (У меня нет денег.)\n- `not` — с глаголом: `I don't have money.` (То же, но через глагол.)\n- Оба варианта правильны.\n\n**Отрицание в Present Continuous:**\n- `I'm working.` → `I'm not working.`\n- `She's sleeping.` → `She isn't sleeping.`\n\n**Отрицание в Going to:**\n- `I'm going to come.` → `I'm not going to come.`\n\n**Типичные ошибки A2:**\n- `I didn't saw.` (нужно `see`).\n- `I don't never.` (двойное отрицание; нужно `I never` или `I don't ever`).\n- `He no understands.` (нужно `doesn't understand`)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + did + not + base verb   |   one negative per clause",
+        "ru": "подлежащее + did + not + глагол в базовой форме | одно отрицание в предложении"
       },
       "examples": [
         {
           "en": "I didn't sleep well last night.",
-          "ru": "Я плохо спал прошлой ночью."
+          "ru": "Я плохо спал прошлой ночью.",
+          "note": {
+            "en": "didn't + base",
+            "ru": "didn't + база"
+          }
         },
         {
           "en": "She never watches TV.",
-          "ru": "Она никогда не смотрит телевизор."
+          "ru": "Она никогда не смотрит телевизор.",
+          "note": {
+            "en": "never = no not",
+            "ru": "never без not"
+          }
         },
         {
           "en": "We weren't at home yesterday.",
@@ -87,23 +126,45 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He has no brothers.",
-          "ru": "У него нет братьев."
+          "ru": "У него нет братьев.",
+          "note": {
+            "en": "no + noun",
+            "ru": "no + существительное"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Одно отрицание в предложении: I never eat meat (а не I don't never eat meat)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I didn't saw him.",
+          "right": "I didn't see him.",
+          "why": {
+            "en": "After didn't the verb returns to its base form; the past is already shown by did.",
+            "ru": "После didn't глагол возвращается в базовую форму; прошедшее уже выражено через did."
+          }
+        },
+        {
+          "wrong": "I don't know nothing.",
+          "right": "I don't know anything.",
+          "why": {
+            "en": "Standard English allows only one negative per clause; use anything after a negative verb.",
+            "ru": "В стандартном английском допускается одно отрицание в предложении; после отрицательного глагола используйте anything."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "B1 focuses on **where the negative sits** and on words that are close to negative.\n\nFrequency and near-negative adverbs (never, rarely, seldom, hardly, barely) go **before the main verb** but **after** an auxiliary or be: I never smoke; He is never late; She has never been to Paris; He can hardly walk. Because hardly, barely, scarcely, seldom and rarely are already negative in meaning, you must not add a second negative: say He hardly eats, not He doesn't hardly eat.\n\nThe quantifiers **little / few** carry a negative shade (She has little patience = almost none), while a little / a few are positive or neutral — the article a flips the meaning.\n\nIn negatives, **some becomes any**: I have some money → I don't have any money. Words such as no one and nothing already contain the negative, so don't add not. Use **either** at the end of a negative clause for too: I don't like coffee either. And **neither…nor…** joins two negatives, with the verb agreeing with the nearer subject: Neither the bus nor the train runs on Sunday.",
         "ru": "На B1 изучаем **нюансы места отрицания** и слова, близкие к отрицанию.\n\n**Позиция `never`, `hardly`, `rarely`:**\nЭти наречия стоят **перед** основным глаголом, но **после** вспомогательного/`be`.\n\n- `I never smoke.` (Я никогда не курю.)\n- `He is never late.` (Он никогда не опаздывает.) — после `is`.\n- `She has never been to Paris.` (Она никогда не была в Париже.) — после `has`.\n- `I have rarely seen such beauty.` (Я редко видел такую красоту.)\n- `He can hardly walk.` (Он едва может ходить.)\n\n**Мягкое отрицание:** `hardly`, `barely`, `scarcely`, `seldom`, `rarely` — не полные отрицания, но близкие к нему.\n- `He hardly eats anything.` (Он почти ничего не ест.)\n- `She rarely complains.` (Она редко жалуется.)\n\nВ сочетании с ними — **не нужно** второе отрицание.\n- Неправильно: `He doesn't hardly eat.`\n- Правильно: `He hardly eats.`\n\n**`Little`, `few` — с оттенком отрицания:**\n- `She has little patience.` (У неё мало терпения.) — близко к «нет терпения».\n- `Few people attended.` (Немного людей пришли.) — подчёркивает малое число.\n\nСравни с более нейтральными:\n- `She has a little patience.` (У неё есть немного терпения.) — положительно.\n- `A few people attended.` (Несколько людей пришли.) — нейтрально.\n\nАртикль `a` меняет смысл с отрицательного на положительный.\n\n**`Any` vs `some` в отрицаниях:**\n- `I have some money.` → `I don't have any money.`\n- `I saw some people.` → `I didn't see any people.`\n- В отрицаниях `some` меняется на `any`.\n\n**No one, nothing — уже содержат отрицание:**\n- `No one likes him.` — нельзя `No one doesn't like him.`\n- `Nothing worked.` — нельзя `Nothing didn't work.`\n\n**Отрицание с `either`:**\n- `I don't like tea. I don't like coffee either.` (Я не люблю чай. Кофе тоже не люблю.)\n- `either` в конце отрицательного предложения = «тоже». В положительных — `too` или `also`.\n\n**Neither…nor…:**\n- `Neither my brother nor my sister speaks English.` (Ни мой брат, ни моя сестра не говорят по-английски.)\n- Глагол согласуется с ближайшим подлежащим (`sister` → `speaks`).\n\n**Типичные B1 ошибки:**\n- `He don't hardly work.` (двойное отрицание).\n- `I haven't no money.` (двойное отрицание).\n- `I don't like coffee too.` (нужно `either`)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + (auxiliary) + never/rarely/hardly + main verb",
+        "ru": "подлежащее + (вспомогательный) + never/rarely/hardly + основной глагол"
       },
       "examples": [
         {
@@ -112,7 +173,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He hardly speaks any English.",
-          "ru": "Он почти не говорит по-английски."
+          "ru": "Он почти не говорит по-английски.",
+          "note": {
+            "en": "near-negative",
+            "ru": "почти отрицание"
+          }
         },
         {
           "en": "Few students passed the exam.",
@@ -120,81 +185,161 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I don't like horror films either.",
-          "ru": "Я тоже не люблю фильмы ужасов."
+          "ru": "Я тоже не люблю фильмы ужасов.",
+          "note": {
+            "en": "either, not too",
+            "ru": "either, не too"
+          }
         },
         {
           "en": "Neither the bus nor the train runs on Sunday.",
-          "ru": "Ни автобус, ни поезд не ходят в воскресенье."
+          "ru": "Ни автобус, ни поезд не ходят в воскресенье.",
+          "note": {
+            "en": "neither…nor",
+            "ru": "neither…nor"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Hardly, rarely, seldom — уже отрицание. Не добавляй don't: I hardly eat meat (не I don't hardly eat)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He doesn't hardly work.",
+          "right": "He hardly works.",
+          "why": {
+            "en": "Hardly is already negative, so a second negative (doesn't) is wrong.",
+            "ru": "Hardly уже отрицательное, поэтому второе отрицание (doesn't) недопустимо."
+          }
+        },
+        {
+          "wrong": "I don't like coffee too.",
+          "right": "I don't like coffee either.",
+          "why": {
+            "en": "In negative clauses too becomes either.",
+            "ru": "В отрицательных предложениях too меняется на either."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "B2 works with **paraphrases of negation** and finer forms.\n\nBoth not…any and no express the same idea, but no is more emphatic in writing: I don't have any friends (neutral) vs I have no friends (stronger). The same applies to not…anybody/anything vs nobody/nothing — and only the nobody/nothing form can be the subject of a clause (Nobody came).\n\nEnglish prefers **transferred (raised) negation**: it moves not onto the main verb of opinion even when it logically belongs to the subordinate clause. Say I don't think he's coming rather than I think he's not coming. This is standard with think, believe, suppose, expect.\n\nWith an infinitive, **not goes before to**: I asked him not to come; She decided not to apply. Double negation can also be a deliberate device — litotes — where two negatives soften a positive: She's not unhappy (= fairly content). Finally, **modal negation** splits meaning: You must not enter is a prohibition, while You don't have to enter just means it isn't required — a classic confusion point. (Note ain't is informal/dialectal and avoided in formal writing.)",
         "ru": "На B2 работаем с **перифразами отрицания** и более тонкими формами.\n\n**`Not…any` vs `no`:**\nЭто два способа сказать одно и то же, но с разным оттенком.\n\n- `I don't have any friends.` — нейтрально.\n- `I have no friends.` — эмфатичнее, драматичнее.\n- `There isn't any milk.` — нейтрально.\n- `There's no milk.` — эмфатичнее.\n\nВ речи обе формы работают; в письме `no` сильнее.\n\n**`Not…anybody/anything/anywhere` vs `nobody/nothing/nowhere`:**\n- `I didn't see anybody.` / `I saw nobody.` — стилистическая разница.\n- Форма с `nobody`/`nothing` как подлежащее — только она: `Nobody came.` (не `Didn't anybody come.` как утверждение).\n\n**Отрицание всего предложения vs части:**\n- `I don't think he's coming.` (Я не думаю, что он придёт.)\n- `I think he's not coming.` (Я думаю, что он не придёт.)\n\nВ английском предпочитают переносить отрицание на главный глагол (`don't think`), даже если по логике оно относится к подчинённому. Это называется **transfer of negation** или **raising**.\n\nСтандартная форма:\n- `I don't think…` (не `I think…not`)\n- `I don't believe…`\n- `I don't suppose…`\n- `I don't expect…`\n\n**Not with infinitive:**\n- `I asked him not to come.` (Я попросил его не приходить.)\n- `She decided not to apply.` (Она решила не подавать заявку.)\n- `not` перед `to`, не между `to` и глаголом (split infinitive избегают в формальной речи).\n\n**Double negation for emphasis:**\nВ стандартном английском двойное отрицание используется для **подтверждения** в логике двух минусов — **плюс**.\n- `She's not unhappy.` (Она не несчастна = она скорее довольна.) — мягче, чем `She's happy.`\n- `He's not without charm.` (Он не без обаяния.) — ироничное признание.\n\nЭто литературный приём — **litotes** (литота). В разговоре редкий, в книжной речи — стилистический инструмент.\n\n**Nonstandard double negation:**\nВ диалектах (AAVE, cockney, южные американские диалекты) двойное отрицание усиливает смысл:\n- `I ain't got no money.` — в этих диалектах = «у меня нет денег».\n- В стандартном английском это ошибка, но в разговорной песне, рэпе, диалоге — узнаваемо.\n\n**Modality + negation:**\n- `You must not enter.` (вам запрещено заходить.) — запрет.\n- `You don't have to enter.` (вам не обязательно заходить.) — отсутствие обязанности.\n\nРазличие между этими двумя модальными отрицаниями — типовая точка спотыкания для русскоговорящего, потому что в русском одним оборотом «не надо» покрывается и «запрещено», и «не обязательно».\n\n**Ain't — регистр:**\n`ain't` — разговорная замена для `am not`, `is not`, `are not`, `have not`, `has not`. В формальной речи не используется, но в диалогах, песнях, фразеологии — естественно.\n- `I ain't ready.` (разговорно)\n- `It ain't over till it's over.` (пословица)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "I don't think + (subject + verb)   |   not + to + base verb",
+        "ru": "I don't think + (подлежащее + глагол) | not + to + базовый глагол"
       },
       "examples": [
         {
           "en": "I don't think she'll come.",
-          "ru": "Я не думаю, что она придёт."
+          "ru": "Я не думаю, что она придёт.",
+          "note": {
+            "en": "raised negation",
+            "ru": "перенос отрицания"
+          }
         },
         {
           "en": "The results are not uninteresting.",
-          "ru": "Результаты не без интереса."
+          "ru": "Результаты не без интереса.",
+          "note": {
+            "en": "litotes",
+            "ru": "литота"
+          }
         },
         {
           "en": "You mustn't tell anyone.",
-          "ru": "Ты не должен никому говорить."
+          "ru": "Ты не должен никому говорить.",
+          "note": {
+            "en": "prohibition",
+            "ru": "запрет"
+          }
         },
         {
           "en": "You don't have to apologise.",
-          "ru": "Тебе не обязательно извиняться."
+          "ru": "Тебе не обязательно извиняться.",
+          "note": {
+            "en": "not required",
+            "ru": "не обязательно"
+          }
         },
         {
           "en": "She asked me not to interfere.",
-          "ru": "Она попросила меня не вмешиваться."
+          "ru": "Она попросила меня не вмешиваться.",
+          "note": {
+            "en": "not + to",
+            "ru": "not + to"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Предпочитай I don't think he will… вместо I think he won't… — так звучит по-английски."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I think he won't come.",
+          "right": "I don't think he'll come.",
+          "why": {
+            "en": "English raises the negative onto verbs of opinion like think.",
+            "ru": "Английский переносит отрицание на глаголы мнения, такие как think."
+          }
+        },
+        {
+          "wrong": "You mustn't apologise. (meaning: it isn't necessary)",
+          "right": "You don't have to apologise.",
+          "why": {
+            "en": "mustn't is a prohibition; lack of obligation is don't have to.",
+            "ru": "mustn't — это запрет; отсутствие обязанности выражается через don't have to."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 negation becomes a **syntactic and stylistic choice**.\n\nThe **scope** of not can be ambiguous: He didn't write the book because he was angry can mean either that he didn't write it (anger being the cause) or that anger wasn't the reason he wrote it. Intonation resolves this in speech; writing often needs rephrasing.\n\nFronted negative adverbs trigger **inversion**: Never have I seen such a thing; Seldom does she complain; Not only did he lie, but he also stole; Under no circumstances should you open this door; Hardly had I arrived when the phone rang. After these openers the auxiliary must come before the subject — a formal, marked device.\n\nC1 also handles **litotes / understatement** (Not bad = quite good; She's no stranger to success) and **implicit negation** in verbs like fail to, refuse to, decline, deny. Prefer no longer or not…anymore for change of state, the nominalised the absence of / a lack of in academic prose, and inverted conditionals such as Had he not called, we wouldn't have known and Were it not for her help…",
         "ru": "На C1 отрицание выходит за рамки слова `not` и становится **синтаксическим и стилистическим выбором**.\n\n**Scope of negation (сфера отрицания):**\nОтрицание может относиться к разным частям предложения, и смысл меняется.\n\n- `He didn't write the book because he was angry.`\n  — Смысл A: «Он не написал книгу (и причина — гнев).»\n  — Смысл B: «Не из-за гнева он написал книгу (а по другой причине).»\n\nВ устной речи интонация снимает неоднозначность; в письменной часто нужен перефраз.\n\n**Negative inversion:**\nНекоторые отрицательные наречия в начале предложения вызывают **инверсию**.\n\n- `Never have I seen such a thing.` (Никогда я не видел такого.)\n- `Seldom does she complain.` (Редко она жалуется.)\n- `Not only did he lie, but he also stole.` (Он не только солгал, но и украл.)\n- `Under no circumstances should you open this door.` (Ни при каких обстоятельствах не открывай эту дверь.)\n- `Hardly had I arrived when the phone rang.` (Едва я пришёл, как зазвонил телефон.)\n\nПосле этих фраз **обязательно** инверсия (вспомогательный глагол перед подлежащим). Это формальный, стилистически заряженный приём. В нейтральной речи лучше прямой порядок.\n\n**Litotes (understatement):**\n- `Not bad.` (Неплохо.) = хорошо или очень хорошо.\n- `It wasn't the worst film I've seen.` — вежливое «так себе».\n- `She's no stranger to success.` — «Ей знаком успех».\n\nАнглоязычная культура (особенно британская) злоупотребляет литотой. Русскоговорящему полезно научиться **распознавать** её: `not bad` — это не критика, а почти похвала.\n\n**Implicit negation (скрытое отрицание):**\nНекоторые слова содержат отрицание без `not`:\n- `fail to` = «не смог»: `He failed to arrive.` (Он не пришёл.)\n- `refuse to`, `decline to`, `deny`, `forbid`.\n- `neither`, `no longer`, `nowhere near`.\n\n**No longer vs not…anymore:**\n- `He no longer works here.` (формально)\n- `He doesn't work here anymore.` (нейтрально/разговорно)\n\n**Nominal negation:**\n- `the absence of evidence` (отсутствие доказательств) — в академическом стиле предпочтительнее, чем `no evidence`.\n- `a lack of interest`, `the failure to respond` — субстантивированное отрицание.\n\nАкадемический стиль любит номинализованные отрицания.\n\n**Negation in conditional sentences:**\n- `Had he not called, we wouldn't have known.` (Если бы он не позвонил, мы бы не знали.)\n- Инверсия с `had` в формальном стиле.\n- `Were it not for her help…` (Если бы не её помощь…)\n\n**Отрицательные риторические вопросы:**\n- `Who doesn't love a good story?` (Кто не любит хорошую историю?) — утверждение.\n- `Isn't it obvious?` (Разве это не очевидно?) — усиление.\n\n**Никогда не говори `no way` в официальной речи** — это разговорный отказ."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Negative adverb + auxiliary + subject + main verb  (inversion)",
+        "ru": "Отрицательное наречие + вспомогательный + подлежащее + основной глагол (инверсия)"
       },
       "examples": [
         {
           "en": "Not only did she finish first, she broke the record.",
-          "ru": "Она не только финишировала первой, но и побила рекорд."
+          "ru": "Она не только финишировала первой, но и побила рекорд.",
+          "note": {
+            "en": "Not only + inversion",
+            "ru": "Not only + инверсия"
+          }
         },
         {
           "en": "Under no circumstances must this information be shared.",
-          "ru": "Ни при каких обстоятельствах нельзя делиться этой информацией."
+          "ru": "Ни при каких обстоятельствах нельзя делиться этой информацией.",
+          "note": {
+            "en": "Under no circumstances",
+            "ru": "Under no circumstances"
+          }
         },
         {
           "en": "The report is not without its flaws.",
-          "ru": "У отчёта не без недостатков."
+          "ru": "У отчёта не без недостатков.",
+          "note": {
+            "en": "litotes",
+            "ru": "литота"
+          }
         },
         {
           "en": "Had I not been warned, I would have signed it.",
-          "ru": "Если бы меня не предупредили, я бы подписал это."
+          "ru": "Если бы меня не предупредили, я бы подписал это.",
+          "note": {
+            "en": "inverted conditional",
+            "ru": "инвертированное условие"
+          }
         },
         {
           "en": "The absence of evidence is not evidence of absence.",
@@ -204,22 +349,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "После Never, Seldom, Not only, Under no circumstances в начале — обязательна инверсия."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Never I have seen such a thing.",
+          "right": "Never have I seen such a thing.",
+          "why": {
+            "en": "A fronted negative adverb forces auxiliary-before-subject inversion.",
+            "ru": "Вынесенное вперёд отрицательное наречие требует инверсии: вспомогательный перед подлежащим."
+          }
+        },
+        {
+          "wrong": "Under no circumstances you should open this.",
+          "right": "Under no circumstances should you open this.",
+          "why": {
+            "en": "Negative fronting requires inversion even with modals (should you).",
+            "ru": "Вынос отрицания требует инверсии даже с модальными глаголами (should you)."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 negation operates at the level of **stylistic precision, genre convention and pragmatic interpretation**.\n\nEnglish politeness often minimises a blunt no: I'm afraid I can't, I don't think that'll work, It's not ideal (= it's bad), I wouldn't say… A flat No or That's wrong can read as abrupt, especially in British register.\n\nFor **emphatic negation** there is a graded toolkit: Not one bit, Not at all, Far from it, By no means, In no way, Nothing could be further from the truth — choose by register. **Stacked negatives** appear in law, logic and philosophy (It is not unreasonable to assume…; Nobody denies that… = everyone admits; None of this is to suggest that…), and a fluent reader unpacks them instantly.\n\nLegal English avoids don't, preferring shall not, may not, must not, each with a distinct legal weight (Nothing herein shall be construed to…). C2 learners also recognise dialect negation (ain't, double negatives in AAVE, the London tag innit) and academic hedging (contrary to common belief…, far from being X…, rather than X), plus paradoxical forms like You're not wrong and I couldn't agree more. The mark of C2 is producing neutral, emphatic, polite or ironic negation at will, and reading not really as a soft no or an evasive maybe depending on context.",
         "ru": "На C2 отрицание работает на уровне **стилистической точности, жанровой конвенции и прагматической интерпретации**.\n\n**Negation и вежливость:**\nАнглийская вежливость часто строится на минимизации прямого отрицания.\n\n- `I'm afraid I can't.` — не «не могу», а «я опасаюсь, что не могу».\n- `I don't think that'll work.` — мягче, чем `That won't work.`\n- `It's not ideal.` — «неидеально» = плохо.\n- `I wouldn't say…` — гипотетическое отрицание.\n\nПрямое отрицание (`No.`, `That's wrong.`) в британской коммуникативной культуре воспринимается как резкое. Русскоговорящему полезно освоить сглаживающие формулы.\n\n**Emphatic negation:**\n- `Not one bit.` (Нисколько.)\n- `Not at all.` (Вовсе нет.)\n- `Far from it.` (Отнюдь нет.)\n- `By no means.` (Никоим образом.)\n- `In no way.` (Ни в коей мере.)\n- `Nothing could be further from the truth.` (Ничего не может быть дальше от истины.)\n\nЭто фразы для эмоциональных или формальных отрицаний. Выбирай в зависимости от регистра.\n\n**Stacked negatives в логике:**\nВ философии, праве, математике встречаются сложные отрицания.\n- `It is not unreasonable to assume that…`\n- `Nobody denies that…` (= все признают)\n- `None of this is to suggest that…` (= я не предлагаю)\n\nНоситель C2 свободно распаковывает двойные и тройные отрицания; для учащегося — это точка сбоя. Полезно читать юридические тексты вслух и проверять себя.\n\n**Negation в юридическом языке:**\n- `The defendant shall not…` (императивный запрет)\n- `Nothing herein shall be construed to…` (стандартная юридическая формула)\n- `Failure to comply shall result in…`\n\nЮридический английский избегает `don't`, предпочитая `shall not`, `may not`, `must not`, каждое с разным правовым весом.\n\n**Dialect negation:**\n- `ain't` — неформальное, AAVE, diaspora.\n- `I don't know nothin'` — разговорное усиление в диалектах.\n- `innit?` — лондонское tag.\n\nУчащийся C2 должен распознавать эти формы в художественной литературе, сериалах, песнях.\n\n**Subtle negation в академическом письме:**\n- `contrary to common belief…` (вопреки распространённому мнению)\n- `far from being X, it is actually Y` (далеко не X, а на самом деле Y)\n- `rather than X` (а не X)\n\nКосвенные отрицания смягчают тон научного текста и позволяют вводить оппозицию без агрессии.\n\n**Negation в поэзии и прозе:**\n- «Not a sound was heard…» — эмфатическое открытие стиха.\n- «Never in my life…» — литературное зачин.\n\n**Paradoxical negation:**\n- `I'm not not saying that…` — разговорная конструкция из TV: я этого не отрицаю, но и не подтверждаю прямо.\n- `You're not wrong.` — согласие, замаскированное под отрицание.\n- `I couldn't agree more.` — я полностью согласен (логически двойное отрицание).\n\n**Typical C2-level competence:**\nУметь произвести нейтральное, эмфатическое, вежливое или ироничное отрицание в зависимости от контекста, без грамматических ошибок. Понимать, когда `not really` означает мягкое «нет», а когда — уклончивое «может быть»."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "by no means / far from it / nothing could be further…  (graded emphatic negation)",
+        "ru": "by no means / far from it / nothing could be further… (градуированное эмфатическое отрицание)"
       },
       "examples": [
         {
           "en": "Nothing could be further from the truth.",
-          "ru": "Ничто не может быть дальше от истины."
+          "ru": "Ничто не может быть дальше от истины.",
+          "note": {
+            "en": "emphatic",
+            "ru": "эмфатично"
+          }
         },
         {
           "en": "It's not that I disagree; it's that I need more evidence.",
@@ -227,23 +394,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The proposal is by no means perfect, but it's workable.",
-          "ru": "Предложение отнюдь не идеально, но работоспособно."
+          "ru": "Предложение отнюдь не идеально, но работоспособно.",
+          "note": {
+            "en": "by no means",
+            "ru": "by no means"
+          }
         },
         {
           "en": "Nothing herein shall be construed as a waiver.",
-          "ru": "Ничто в настоящем документе не должно истолковываться как отказ."
+          "ru": "Ничто в настоящем документе не должно истолковываться как отказ.",
+          "note": {
+            "en": "legalese",
+            "ru": "юридический стиль"
+          }
         },
         {
           "en": "Far from solving the problem, the reform made things worse.",
-          "ru": "Далеко не решив проблему, реформа ухудшила положение."
+          "ru": "Далеко не решив проблему, реформа ухудшила положение.",
+          "note": {
+            "en": "Far from + -ing",
+            "ru": "Far from + -ing"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "На C2 выбирай степень прямоты: by no means — эмфатично, I'm afraid not — вежливо, not really — уклончиво."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "No. That won't work. (in a polite request)",
+          "right": "I'm afraid that may not work.",
+          "why": {
+            "en": "A blunt negation reads as rude in polite or professional register; hedge it.",
+            "ru": "Резкое отрицание звучит грубо в вежливом или деловом регистре; смягчите его."
+          }
+        },
+        {
+          "wrong": "The contract says you don't have to share this. (legal text)",
+          "right": "Nothing herein shall be construed as a waiver.",
+          "why": {
+            "en": "Legal English avoids don't and uses shall not / may not formulas.",
+            "ru": "Юридический английский избегает don't и использует формулы shall not / may not."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "yes-no-questions",
+    "negative-questions",
+    "indefinite-pronouns",
+    "inversion"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "past-simple",
+    "must-have-to",
+    "adverbs-of-frequency"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "positive",
+      "+ auxiliary + not",
+      "negative"
+    ]
+  }
 };

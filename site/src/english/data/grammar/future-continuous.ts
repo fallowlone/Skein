@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "future-continuous",
   "title": {
-    "en": "",
+    "en": "Future Continuous",
     "ru": "Future Continuous"
   },
   "cefr": "B2",
@@ -14,24 +14,31 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:Can use 'will be' + '-ing' to talk about actions in progress at a definite time in the future.",
+    "EGP:Can use the future continuous to make polite enquiries about plans ('Will you be needing anything else?')."
+  ],
+  "archetype": "timeline",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "Use the **future continuous** for an action that **will be in progress** at a specific moment in the future. Picture tomorrow at 10 a.m. — what will you be doing then?\n\n**Form:** `will be` + verb-`ing`. The same form works for every subject: `I/you/she/they will be working` (commonly contracted to `I'll be working`).\n\n**Main uses:**\n1. **In progress at a future point** — `This time tomorrow, I'll be flying to Paris.` / `At 9 p.m. tonight, we'll be watching the match.`\n2. **A future event seen as part of the normal course of things** — `I'll be seeing John tomorrow, so I can tell him.` / `We'll be passing through London next week.`\n3. **Polite enquiries about plans** — `Will you be using the car tonight?` is softer and less demanding than `Will you use the car?`\n\n**Typical time markers:** `at 8 p.m. tomorrow`, `this time next week/year`, `when you arrive`, `in five years`.\n\n**Contrast with `will` (future simple):** `I'll work tomorrow` is a decision or plain fact; `I'll be working at 8 p.m.` zooms in on the action mid-flow.\n\n**Contrast with present continuous for the future:** `I'm meeting John tomorrow` stresses a personal arrangement; `I'll be meeting John tomorrow` is more neutral — just a future event, no emphasis on the arrangement.\n\n**Negative:** `won't be` + `-ing` (`I won't be working tomorrow`). **Question:** `Will` + subject + `be` + `-ing` (`Will you be joining us?`).\n\n**Stative verbs stay simple:** don't use the continuous with verbs like `know`, `love`, `believe` — say `I will know`, not `I will be knowing`. Avoid the continuous for pure predictions: a fact like `I will win the race`, not `I will be winning the race`.",
         "ru": "**Future Continuous** — время для действия, которое **будет в процессе** в конкретный момент в будущем. Представь: завтра в 10 утра — что ты будешь делать?\n\n**Форма:** `will be` + глагол-`ing`\n\n- `I will be working` (часто `I'll be working`)\n- `She will be traveling`\n- `They will be studying`\n\n**Когда использовать:**\n\n1. **Действие в процессе в момент в будущем:**\n   - `This time tomorrow, I'll be flying to Paris.` (В это время завтра я буду лететь в Париж.)\n   - `At 9 pm tonight, we'll be watching the match.` (В 9 вечера мы будем смотреть матч.)\n\n2. **Запланированное или ожидаемое будущее действие:**\n   - `I'll be seeing John tomorrow, I can tell him.` (Я увижу Джона завтра — в обычном ходе событий.)\n   - `We'll be passing through London next week.` (Мы будем проезжать через Лондон.)\n\n3. **Вежливые вопросы:**\n   - `Will you be using the car tonight?` (Ты сегодня вечером будешь пользоваться машиной? — мягкое.)\n   - `Will you be staying long?` (Ты надолго?)\n\n**Time markers:**\n- `at 8 pm tomorrow`\n- `this time next week/year`\n- `when you arrive`\n- `in five years`\n\n**Разница с Future Simple (`will`):**\n- `I'll work tomorrow.` (Завтра буду работать — факт, решение.)\n- `I'll be working at 8 pm.` (Буду в процессе работы в 8 вечера.)\n\n**Разница с Present Continuous для будущего:**\n- `I'm meeting John tomorrow.` (Договорённость с Джоном — личный план.)\n- `I'll be meeting John tomorrow.` (В процессе встречи — или просто будущее событие, без эмфазы договорённости.)\n\nPresent Continuous подчёркивает договорённость, Future Continuous — процесс или нейтральное будущее.\n\n**Stative verbs — НЕ использовать:**\n- ❌ `I will be knowing.` → ✅ `I will know.`\n- ❌ `She will be loving it.` → ✅ `She will love it.`\n\n**Отрицание:** `won't be` + `-ing`\n- `I won't be working tomorrow.`\n\n**Вопрос:** `Will` + subject + `be` + `-ing`\n- `Will you be joining us?`\n\n**Типичные ошибки:**\n- Использование для предсказаний: ❌ `I will be winning the race.` → ✅ `I will win the race.`\n- Stative verbs в Continuous.\n- Путаница с Future Perfect: Continuous — в процессе; Perfect — завершено."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + will be + verb-ing",
+        "ru": "подлежащее + will be + глагол-ing"
       },
       "examples": [
         {
           "en": "This time next week, I'll be lying on a beach.",
-          "ru": "На следующей неделе в это время я буду лежать на пляже."
+          "ru": "На следующей неделе в это время я буду лежать на пляже.",
+          "note": {
+            "en": "future point",
+            "ru": "момент в будущем"
+          }
         },
         {
           "en": "Don't call at 9 — I'll be putting the kids to bed.",
@@ -39,11 +46,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Will you be using the printer?",
-          "ru": "Ты будешь пользоваться принтером?"
+          "ru": "Ты будешь пользоваться принтером?",
+          "note": {
+            "en": "polite enquiry",
+            "ru": "вежливый вопрос"
+          }
         },
         {
           "en": "We'll be passing your house on the way home.",
-          "ru": "Мы будем проезжать мимо твоего дома по пути домой."
+          "ru": "Мы будем проезжать мимо твоего дома по пути домой.",
+          "note": {
+            "en": "in the course of events",
+            "ru": "по ходу событий"
+          }
         },
         {
           "en": "They'll be arriving around noon tomorrow.",
@@ -53,22 +68,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Future Continuous — процесс в конкретный момент будущего: this time tomorrow, I'll be flying."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I will be knowing the answer tomorrow.",
+          "right": "I will know the answer tomorrow.",
+          "why": {
+            "en": "Stative verbs like 'know' aren't used in the continuous; use the simple future.",
+            "ru": "Стативные глаголы вроде know не ставятся в Continuous — нужен Future Simple."
+          }
+        },
+        {
+          "wrong": "I will be winning the race.",
+          "right": "I will win the race.",
+          "why": {
+            "en": "For a one-off prediction or promise, use 'will' + base verb, not the continuous.",
+            "ru": "Для разового предсказания или обещания нужен will + глагол, а не Continuous."
+          }
+        },
+        {
+          "wrong": "I will working at 8 p.m.",
+          "right": "I will be working at 8 p.m.",
+          "why": {
+            "en": "The form needs 'be' before the -ing verb: will + be + working.",
+            "ru": "В формуле обязателен be перед -ing: will + be + working."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the future continuous gains a clear **politeness and distancing function**, and it sets up a future backdrop the way the past continuous sets up a past one.\n\n**Politeness — softening questions and requests:** `Will you be needing anything else?` is maximally polite and unpushy in a service context. Compare the rising softness: `Do you need anything else?` (direct) → `Will you need anything else?` (future, a little distance) → `Will you be needing anything else?` (gentlest). The continuous makes the question feel like it asks nothing of the listener.\n\n**Distance and tact:** `I'll be leaving soon` is a neutral heads-up; `I'll leave soon` sounds more like a firm decision. The continuous reads as *this will simply happen*, the simple as *I have decided*.\n\n**Predicted future routine:** `Next year, I'll be studying abroad.` / `In ten years, I'll be running my own business.` — the continuous frames the action as a stage of life rather than an isolated fact.\n\n**Future backdrop:** `While you're at work, I'll be cleaning the house.` / `When you arrive, we'll be having dinner.` — the continuous establishes an ongoing background against which another event happens.\n\n**Soft enquiries about plans:** `Will you be bringing anything to the party?` / `Will you be attending the meeting?` ask calmly about intentions; `Will you bring...?` would sound more like a request or an expectation.\n\n**Effortless / unavoidable future:** `I'll be seeing her anyway, so I'll tell her.` / `We'll be driving past your office.` — these imply the action happens with no special effort.\n\n**Stative verbs — rare idiomatic exceptions:** `I'll be seeing Jane tomorrow` (`see` = meet) and `We'll be having a meeting` (`have` = hold) are fine, but truly stative `know`, `believe`, `own` always stay simple.\n\n**Watch out:** don't use the continuous for vague future with no specific moment or backdrop (prefer the future simple), and don't confuse it with the future perfect — continuous = in progress, perfect = completed.",
         "ru": "На C1 Future Continuous приобретает важную **политность-функцию** и используется для дистанцирования и вежливости.\n\n**1. Politeness — мягкие вопросы и просьбы:**\n- `Will you be needing anything else?` (Вам ещё что-то нужно? — очень мягко, в сервисном контексте.)\n- `Will you be staying for dinner?` (Вы останетесь на ужин? — ненавязчиво.)\n- `Will you be wanting the usual?` (Вам как обычно? — обслуживание.)\n\nСравни:\n- `Do you need anything else?` — прямо, нейтрально.\n- `Will you need anything else?` — будущее с некоторой дистанцией.\n- `Will you be needing anything else?` — максимально вежливо, не навязчиво.\n\nFuture Continuous создаёт ощущение, что вопрос не требует обязательного обязательства, не давит.\n\n**2. Distance и tact:**\n- `I'll be leaving soon.` (Скоро уйду — нейтральное предупреждение.)\n- `I'll leave soon.` — более категорично, как решение.\n\nContinuous часто звучит как «это естественно случится», Simple — как «я принимаю решение».\n\n**3. Predicted future routine:**\n- `Next year, I'll be studying abroad.` (Буду учиться за границей — как будущий этап жизни.)\n- `In ten years, I'll be running my own business.` (Буду руководить своим бизнесом.)\n\nContinuous подчёркивает процесс как часть жизни, Simple — как отдельный факт.\n\n**4. Future Continuous vs Present Continuous for arrangements:**\n- `I'm meeting him tomorrow.` (Личная договорённость, конкретика.)\n- `I'll be meeting him tomorrow.` (Будущее событие, может быть не обязательно чёткая договорённость — часть графика или привычки.)\n\n**5. Anticipated background event:**\n- `While you're at work, I'll be cleaning the house.` (Пока ты на работе, я буду убираться.)\n- `When you arrive, we'll be having dinner.` (Когда ты приедешь, мы будем ужинать.)\n\nContinuous устанавливает фон в будущем, как Past Continuous устанавливает фон в прошлом.\n\n**6. Softer enquiries — не прямой запрос:**\n- `Will you be bringing anything to the party?` (Будешь что-то приносить? — ненавязчивый вопрос.)\n- `Will you be attending the meeting?` (Вы будете на собрании?)\n\nРазница с `Will you bring...?` — последнее звучит как просьба или ожидание, Continuous — как спокойный вопрос о планах.\n\n**7. Reflexive or unavoidable future:**\n- `I'll be seeing her anyway, so I'll tell her.` (Всё равно увижу — в обычном ходе.)\n- `We'll be driving past your office.` (Будем проезжать — естественно случится.)\n\nЭти формы подразумевают, что действие произойдёт без специального усилия.\n\n**8. Stative verbs в Continuous — редкие случаи:**\n- `I'll be seeing Jane tomorrow.` (`See` в значении «встречаться».)\n- `We'll be having a meeting.` (`Have` в идиоматическом значении.)\n\nСтавтивные `know`, `believe`, `own` — всегда в Simple.\n\n**9. C1 typical errors:**\n- Использование Future Continuous для неопределённого будущего: если нет конкретного момента или фона, лучше Future Simple.\n- Путаница с Future Perfect: Continuous — процесс, Perfect — завершение.\n- Непонимание politeness функции: отказ от Continuous в вежливых запросах звучит грубее."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Will + subject + be + verb-ing? (polite enquiry)",
+        "ru": "Will + подлежащее + be + глагол-ing? (вежливый вопрос)"
       },
       "examples": [
         {
           "en": "Will you be coming to the conference next month?",
-          "ru": "Вы будете на конференции в следующем месяце?"
+          "ru": "Вы будете на конференции в следующем месяце?",
+          "note": {
+            "en": "soft enquiry",
+            "ru": "мягкий вопрос"
+          }
         },
         {
           "en": "Don't worry — I'll be passing the post office, so I'll post the letter.",
@@ -80,32 +125,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "While the kids are at school, we'll be painting the kitchen.",
-          "ru": "Пока дети в школе, мы будем красить кухню."
+          "ru": "Пока дети в школе, мы будем красить кухню.",
+          "note": {
+            "en": "future backdrop",
+            "ru": "фон в будущем"
+          }
         },
         {
           "en": "Will you be requiring any further assistance?",
-          "ru": "Вам потребуется какая-либо дальнейшая помощь?"
+          "ru": "Вам потребуется какая-либо дальнейшая помощь?",
+          "note": {
+            "en": "service register",
+            "ru": "сервисный регистр"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Will you be needing...? — самая вежливая форма запроса в сервисной речи."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Will you bring anything to the party?",
+          "right": "Will you be bringing anything to the party?",
+          "why": {
+            "en": "Plain 'will you bring' can sound like a request or expectation; the continuous makes it a relaxed enquiry about plans.",
+            "ru": "Will you bring звучит как просьба; Continuous делает вопрос спокойным запросом о планах."
+          }
+        },
+        {
+          "wrong": "When you arrive, we'll have dinner already in progress.",
+          "right": "When you arrive, we'll be having dinner.",
+          "why": {
+            "en": "To show an action ongoing at that future moment, use the future continuous, not the simple future.",
+            "ru": "Чтобы показать процесс в тот будущий момент, нужен Future Continuous, а не Simple."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the future continuous is a fine-grained pragmatic instrument, especially in formal, business, and diplomatic registers.\n\n**Naturalness vs. other future forms:** speakers reach for the continuous when they want to avoid sounding like they're *deciding* or *committing*. Compare `I'll talk to him` (a decision) → `I'll be talking to him` (it will happen in the course of events) → `I'm going to talk to him` (intention) → `I'm talking to him later` (a fixed arrangement). The continuous downplays personal will.\n\n**Distancing in sensitive communication:** `We'll be needing your answer by Friday` is softer than `we need it`; `We'll be reviewing your application` feels less personal and confrontational than `we will review`. In business writing the continuous frames the action as an organisational process rather than a personal demand.\n\n**Neutral scheduled future:** `The train will be departing shortly.` / `The committee will be meeting on Tuesday.` — this is the standard register for announcements and notices.\n\n**Maximum-softness requests:** `Will you be wanting...?`, `Will you be requiring...?`, `Will you be staying with us long?` signal that the speaker is neither pushing nor expecting a particular answer.\n\n**Hedged prediction:** `He'll be waiting for us.` / `They'll be arriving soon.` are confident yet gentle, implying the event is predictable in context — unlike the more clipped `he'll wait`.\n\n**Combining precise time with process:** `At this time next week, I'll be flying over the Atlantic for the fifth time this year.`\n\n**Narrative / journalistic future:** `By Friday, we'll be learning whether the deal has been reached.` / `Over the next week, delegates will be debating the proposal.` — the continuous foregrounds the unfolding of events.\n\n**Diplomatic register:** `We'll be monitoring the situation closely.` / `The department will be issuing further guidance in due course.` — polite, distanced, institutional.\n\n**Near-mastery cautions:** overusing the continuous for politeness can sound artificial or evasive; for short factual notices `the meeting starts at 9` or `will start` beats `will be starting`; keep stative verbs simple unless the meaning is genuinely idiomatic; and don't blur `will be working` (in progress at a moment) with `will have been working` (process leading up to a moment).",
         "ru": "На C2 Future Continuous — это тонкий прагматический инструмент, особенно в официальной и дипломатической речи.\n\n**1. Naturalness vs simpler future forms:**\nНоситель выбирает Future Continuous, когда хочет избежать ощущения «решения» или «обязательства». Сравни:\n- `I'll talk to him.` (Решение — я возьму и поговорю.)\n- `I'll be talking to him.` (В ходе событий это произойдёт.)\n- `I'm going to talk to him.` (Намерение.)\n- `I'm talking to him later.` (Конкретная договорённость.)\n\nFuture Continuous особенно полезен, когда говорящий хочет сказать, что действие произойдёт естественно, без педалирования личной воли.\n\n**2. Distancing in sensitive communication:**\n- `We'll be needing your answer by Friday.` (Нам понадобится ваш ответ к пятнице — мягче, чем `we need`.)\n- `We'll be reviewing your application.` (Мы рассмотрим вашу заявку — менее личное, чем `we will review`.)\n\nВ деловой переписке Continuous создаёт ощущение процесса, в который вовлечена организация, а не личное требование.\n\n**3. Scheduled future — нейтрально, без эмоциональной окраски:**\n- `The train will be departing shortly.` (Поезд скоро отправится.)\n- `The committee will be meeting on Tuesday.` (Комитет соберётся во вторник.)\n\nЭто стандартная форма в объявлениях и уведомлениях.\n\n**4. Politeness in requests — maximum softness:**\n- `Will you be wanting...?` (Вы захотите...?)\n- `Will you be requiring...?` (Вам потребуется...?)\n- `Will you be staying with us long?` (Вы надолго остановитесь у нас?)\n\nЭта форма создаёт ощущение, что говорящий не подталкивает и не ожидает конкретного ответа.\n\n**5. Hedged prediction:**\n- `He'll be waiting for us.` (Он будет нас ждать — уверенное, но мягкое предсказание.)\n- `They'll be arriving soon.` (Они скоро прибудут — ожидаемое в контексте.)\n\nВ отличие от `he'll wait`, Continuous часто подразумевает, что это в ходе событий предсказуемо.\n\n**6. Continuous в сложных предложениях с for-phrases:**\n- `At this time next week, I'll be flying over the Atlantic for the fifth time this year.`\n- `By 5pm tomorrow, we'll be still interviewing candidates.`\n\nContinuous позволяет сочетать точное время и процесс.\n\n**7. Subtle vs Present Continuous для будущего:**\nЕсли описать ту же ситуацию разными формами:\n- `I'm seeing the doctor tomorrow.` (Записан, конкретный визит.)\n- `I'll be seeing the doctor tomorrow.` (В ходе дня увижу — возможно плановый визит или случайная встреча.)\n- `I will see the doctor tomorrow.` (Решил — возможно, экстренно.)\n\nНоситель мгновенно различает эти три оттенка.\n\n**8. Narrative future в журналистике:**\n- `By Friday, we'll be learning whether the deal has been reached.` (К пятнице мы узнаем — в процессе получения новостей.)\n- `Over the next week, delegates will be debating the proposal.` (На следующей неделе делегаты будут обсуждать.)\n\nContinuous показывает процесс освещения событий.\n\n**9. Literary and stylistic choices:**\n- `This time next year, many of us will be reading books that haven't been written yet.` (Пророческое, созерцательное.)\n- `One day, we'll be looking back on this.` (Однажды мы будем вспоминать об этом.)\n\n**10. C2 errors and near-mastery:**\n- Избыток Continuous в вежливости может звучать искусственно или evasively.\n- Неуместная Continuous в коротких, фактологических сообщениях: `The meeting will be starting at 9` — лучше `will start` или Present Simple `starts`.\n- Stative verbs в Continuous без осознанного идиоматического значения.\n- Смешение с Future Perfect Continuous: `will be working` vs `will have been working` — Continuous о процессе в момент, Perfect Continuous о процессе, предшествующем моменту.\n\n**11. Political and diplomatic register:**\n- `We'll be monitoring the situation closely.` (Мы будем внимательно следить за ситуацией.)\n- `The department will be issuing further guidance in due course.` (Ведомство выпустит дальнейшие указания в надлежащее время.)\n\nЭти формулы демонстрируют бюрократическую, но вежливо-дистанцированную речь."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "We'll be + verb-ing + ... (distanced, institutional)",
+        "ru": "We'll be + глагол-ing + ... (дистанцированно, официально)"
       },
       "examples": [
         {
           "en": "Will you be requiring a receipt, sir?",
-          "ru": "Вам нужен чек, сэр?"
+          "ru": "Вам нужен чек, сэр?",
+          "note": {
+            "en": "service register",
+            "ru": "сервисный регистр"
+          }
         },
         {
           "en": "This time next decade, we'll be reading texts generated by machines.",
@@ -113,7 +188,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The committee will be reviewing your submission over the coming weeks.",
-          "ru": "Комиссия рассмотрит вашу заявку в ближайшие недели."
+          "ru": "Комиссия рассмотрит вашу заявку в ближайшие недели.",
+          "note": {
+            "en": "business hedge",
+            "ru": "деловое смягчение"
+          }
         },
         {
           "en": "Don't worry — I'll be passing the bank anyway.",
@@ -121,15 +200,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We'll be monitoring the situation and will update you in due course.",
-          "ru": "Мы будем отслеживать ситуацию и проинформируем вас в надлежащее время."
+          "ru": "Мы будем отслеживать ситуацию и проинформируем вас в надлежащее время.",
+          "note": {
+            "en": "diplomatic",
+            "ru": "дипломатично"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В деловой переписке we'll be reviewing — мягче и профессиональнее, чем we will review."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The meeting will be starting at 9.",
+          "right": "The meeting starts at 9.",
+          "why": {
+            "en": "For a short, fixed, factual notice the present simple (or 'will start') is more natural than the continuous.",
+            "ru": "Для короткого фактического сообщения естественнее Present Simple (или will start), а не Continuous."
+          }
+        },
+        {
+          "wrong": "By 5 p.m. I'll be working for six hours straight.",
+          "right": "By 5 p.m. I'll have been working for six hours straight.",
+          "why": {
+            "en": "Duration leading up to a future point needs the future perfect continuous, not the future continuous.",
+            "ru": "Длительность вплоть до будущего момента требует Future Perfect Continuous, а не Future Continuous."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "future-simple-will",
+    "future-perfect",
+    "future-with-going-to",
+    "future-with-present-continuous"
+  ],
+  "crossTopic": [
+    "adverbial-clauses-time",
+    "stative-verbs",
+    "prepositions-of-time"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "now",
+      "future moment",
+      "action in progress",
+      "after"
+    ]
+  }
 };

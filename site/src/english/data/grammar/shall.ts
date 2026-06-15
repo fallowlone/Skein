@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "shall",
   "title": {
-    "en": "",
+    "en": "Shall",
     "ru": "Shall"
   },
   "cefr": "B1",
@@ -15,36 +15,56 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "modals",
+  "egp": [
+    "EGP:Can ask SHALL I/WE to make offers and suggestions.",
+    "EGP:Can use SHALL with first person to talk about formal or determined future intentions.",
+    "EGP:Can recognise SHALL as obligation in legal, regulatory and contractual texts."
+  ],
+  "archetype": "scale",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "In modern English, the most natural use of *shall* is to make offers and suggestions with **I** and **we**. **Shall I ...?** offers to do something yourself (Shall I open the window?); **Shall we ...?** suggests doing something together (Shall we go for dinner?). Only **I** and **we** work here — \"Shall you ...?\" sounds wrong and old-fashioned, so use *will* for other persons. Note the contrast with *will*: \"Will I open the window?\" is a genuine question about the future, while \"Shall I open the window?\" is an offer. You may also meet *shall* in a few formal, slightly literary first-person sentences (I shall never forget this), but in everyday speech *will* is the normal choice. *Shall we?* is also a friendly tag after Let's (Let's go, shall we?). Treat the rest of *shall* as something you recognise rather than produce.",
         "ru": "**Shall** — редкий модальный глагол в современном английском. В основном используется в **предложениях** и **предположениях с I/we**.\n\n**1. Shall I...? / Shall we...? — предложения:**\n- `Shall I open the window?` (Открыть окно?)\n- `Shall we go out for dinner?` (Пойдём поужинаем?)\n- `Shall I help you?` (Помочь тебе?)\n\nЭто вежливый способ предложить что-то сделать. По-русски — «давай сделаем...?» или просто глагол в будущем.\n\n**Важно:** `Shall` в вопросах — только с **I** и **we**. Не говори `Shall you...?`, `Shall he...?` — это старомодно и неправильно для современного английского.\n\n**2. Разница с Will:**\n- `Will I open the window?` — это не предложение, это вопрос о будущем: «Открою ли я окно?»\n- `Shall I open the window?` — это предложение: «Открыть окно?»\n\n**3. Shall в формальных объявлениях (rare):**\nИногда `shall` встречается в формальных контекстах для будущего с `I/we`:\n- `We shall meet again.` (Мы встретимся снова.) — литературно, немного старомодно.\n- `I shall never forget this day.` (Я никогда не забуду этот день.) — торжественно.\n\nВ повседневной речи вместо `shall` используется `will`.\n\n**4. Американский vs британский английский:**\n- **US English:** `shall` почти не используется. Только в формальных или юридических текстах.\n- **UK English:** `shall` иногда встречается в речи, особенно с `I/we`, но тоже редко.\n\nЕсли ты учишь американский английский, `shall` можно почти игнорировать, кроме `Shall we...?`.\n\n**5. Shan't:**\nОтрицательная форма `shan't` (= `shall not`) — очень редкая. Практически только в британском. Не рекомендуется для изучающих.\n\n**6. Let's... — похожая конструкция:**\n- `Let's go out.` (Пойдём.) ≈ `Shall we go out?`\n\nВ речи `Let's` звучит естественнее.\n\n**7. Типичные ошибки:**\n- ❌ `Shall you come?` → ✅ `Will you come?`\n- ❌ `He shall come.` (если это не юридический текст) → ✅ `He will come.`\n- Не заменяй `shall` на `should` — это разные слова."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Shall + I / we + base verb ...?",
+        "ru": "Shall + I / we + инфинитив без to ...?"
       },
       "examples": [
         {
           "en": "Shall we dance?",
-          "ru": "Потанцуем?"
+          "ru": "Потанцуем?",
+          "note": {
+            "en": "suggestion",
+            "ru": "предложение вместе"
+          }
         },
         {
           "en": "Shall I call you later?",
-          "ru": "Позвонить тебе позже?"
+          "ru": "Позвонить тебе позже?",
+          "note": {
+            "en": "offer",
+            "ru": "предложение помощи"
+          }
         },
         {
           "en": "Let's go — shall we?",
-          "ru": "Пойдём, да?"
+          "ru": "Пойдём, да?",
+          "note": {
+            "en": "tag",
+            "ru": "вопросительный хвост"
+          }
         },
         {
           "en": "I shall never forget your kindness.",
-          "ru": "Я никогда не забуду вашу доброту."
+          "ru": "Я никогда не забуду вашу доброту.",
+          "note": {
+            "en": "formal future",
+            "ru": "формальное будущее"
+          }
         },
         {
           "en": "Shall we take a break?",
@@ -54,120 +74,270 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Shall we / Shall I — только для предложений. Shall you не используется в современном английском."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Shall you come to the party?",
+          "right": "Will you come to the party?",
+          "why": {
+            "en": "Question shall is only for I/we; for you/he/she/they use will.",
+            "ru": "Shall в вопросах — только с I/we; для you/he/she/they используется will."
+          }
+        },
+        {
+          "wrong": "I shall help you. (in casual chat)",
+          "right": "I'll help you.",
+          "why": {
+            "en": "In everyday speech will is the natural choice; shall sounds formal or old-fashioned.",
+            "ru": "В повседневной речи естественно will; shall звучит формально или старомодно."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 two further uses of *shall* matter. First, **traditional British first-person future**: older grammar used *I/we shall* but *you/he/she/they will* (I shall be there; he will be there). This distinction has largely vanished — *will* now serves every person — but *I shall / we shall* survives in formal, literary or determined statements (We shall overcome). Second, **legal and regulatory shall**, where it expresses a binding **obligation**, roughly equal to *must*: \"The Tenant shall pay the rent on the first of each month.\" Here it is not a future tense but a duty. Be aware that the *plain-English* movement now recommends replacing this *shall* with *must* or *will* to avoid ambiguity. Avoid three classic traps: don't sprinkle *shall* into ordinary speech (\"I shall go to the shop\" sounds odd); don't use \"You shall ...\" as a casual instruction (it reads as a stern command); and keep using the safe everyday formula \"Let's ..., shall we?\".",
         "ru": "На B2 `shall` рассматривается в **британском будущем первого лица** и появляется в **юридическом английском**.\n\n**1. Shall для UK future with I/we:**\nВ традиционном британском английском `shall` использовалось для 1-го лица, а `will` — для 2-го и 3-го:\n- `I shall be there.` (UK tradition)\n- `You will be there.`\n- `He will be there.`\n\nВ современном английском (и британском, и американском) эта разница почти исчезла. `Will` используется для всех лиц. Но в формальном и литературном британском английском `I shall / we shall` всё ещё встречается:\n- `I shall attend the conference.` — формально, с оттенком решимости.\n- `We shall overcome.` — знаменитый слоган; литературный, торжественный.\n\n**2. Shall в legal documents (mandatory):**\nВ юридическом английском `shall` исторически означает **обязательство** (строго обязан):\n- `The Tenant shall pay the rent on the first of each month.` (Арендатор обязан платить аренду первого числа каждого месяца.)\n- `The Contractor shall deliver the goods within 30 days.` (Подрядчик обязан доставить товар в течение 30 дней.)\n\nЗдесь `shall` — не будущее, а обязательство, эквивалент `must`.\n\n**3. Plain English movement:**\nСовременный подход (plain English) рекомендует заменять `shall` на `must` или `will` в юридических текстах, чтобы избежать двусмысленности:\n- Traditional: `The Lessee shall maintain the property.`\n- Plain English: `The Lessee must maintain the property.` / `The Lessee is responsible for maintaining the property.`\n\n**4. Shall в regulations и statutes:**\n- `No person shall enter without authorization.` (Никто не имеет права входить без разрешения.)\n- `The Commission shall publish the report annually.` (Комиссия должна публиковать отчёт ежегодно.)\n\n**5. Shall в ритуальных и литургических текстах:**\n- `Thou shalt not steal.` (Не укради.) — Библия, архаика.\n- `I shall return.` (Я вернусь.) — знаменитая фраза генерала Макартура; подчёркнутая решимость.\n\n**6. Типичные ошибки B2:**\n- ❌ Использование `shall` в обычной речи: `I shall go to the shop.` — звучит странно и старомодно.\n- ❌ `Shall` в просьбах к третьему лицу: `Shall he come?` (неверно) → `Should he come?` (нормально)\n- ❌ `You shall do this.` (звучит грозно, как приказ) — в большинстве ситуаций не подходит, лучше `You should / must / need to do this.`\n\n**7. Контраст shall vs will в predictions:**\n- `I will help you.` — стандартно, нейтрально.\n- `I shall help you.` — формально, с оттенком торжественности или решимости (UK).\n\n**8. Shall we? в конце утверждений:**\n- `Let's go, shall we?` (Пойдём, да?) — вежливый тэг.\n- `Let's not argue, shall we?` (Давай не будем спорить, ладно?)\n\nЭто стандартное использование `shall we` — даже тот, кто не использует `shall` в других контекстах, знает этот оборот."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Subject + shall + base verb (formal future / contractual duty = must)",
+        "ru": "Подлежащее + shall + инфинитив без to (формальное будущее / договорная обязанность = must)"
       },
       "examples": [
         {
           "en": "The parties shall resolve any disputes through arbitration.",
-          "ru": "Стороны обязаны разрешать любые споры через арбитраж."
+          "ru": "Стороны обязаны разрешать любые споры через арбитраж.",
+          "note": {
+            "en": "legal duty",
+            "ru": "юридическая обязанность"
+          }
         },
         {
           "en": "I shall never agree to such terms.",
-          "ru": "Я никогда не соглашусь на такие условия."
+          "ru": "Я никогда не соглашусь на такие условия.",
+          "note": {
+            "en": "determined future",
+            "ru": "решительное будущее"
+          }
         },
         {
           "en": "No employee shall disclose confidential information.",
-          "ru": "Ни один сотрудник не имеет права разглашать конфиденциальную информацию."
+          "ru": "Ни один сотрудник не имеет права разглашать конфиденциальную информацию.",
+          "note": {
+            "en": "prohibition",
+            "ru": "запрет"
+          }
         },
         {
           "en": "Let's continue, shall we?",
-          "ru": "Продолжим, хорошо?"
+          "ru": "Продолжим, хорошо?",
+          "note": {
+            "en": "tag",
+            "ru": "вопросительный хвост"
+          }
         },
         {
           "en": "We shall overcome these challenges together.",
-          "ru": "Мы вместе преодолеем эти трудности."
+          "ru": "Мы вместе преодолеем эти трудности.",
+          "note": {
+            "en": "rhetorical we",
+            "ru": "торжественное we"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В юридическом shall = обязан (эквивалент must); в живой речи shall редок."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "You shall send me the report by Friday.",
+          "right": "Please send me the report by Friday. / You need to send me the report by Friday.",
+          "why": {
+            "en": "Second-person shall sounds like a stern command or threat; use please / need to / must in normal requests.",
+            "ru": "Shall во 2-м лице звучит как грозный приказ; в обычных просьбах используйте please / need to / must."
+          }
+        },
+        {
+          "wrong": "The tenant shall to pay the rent.",
+          "right": "The tenant shall pay the rent.",
+          "why": {
+            "en": "Like all modals, shall is followed by the bare infinitive, never by to.",
+            "ru": "Как все модальные глаголы, shall требует инфинитива без to."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, *shall* is primarily a feature of **legal, regulatory and elevated** writing, and a deliberate stylistic marker. The legal *shall* is notoriously ambiguous: in one document it can read as duty, future, entitlement or direction (\"The Tenant shall pay the rent\" — obligation? prediction? permission?). For this reason modern plain-English drafting prefers clearer equivalents: *must* for obligations, *must not* for prohibitions, *may* for discretion, *will* for future actions, and *is/are* for declarations — reserving *shall* for the vast body of existing statutes and contracts you must be able to read. Distinguish **regulatory** uses (\"The operator shall comply with all safety regulations\") from **contractual** ones (\"The Seller shall deliver the goods\"). *Shall* also carries an **elevated or biblical** register (Thou shalt not kill; We shall see) and survives in **formal first-person British** academic writing (\"In this paper, I shall examine ...\"), where *I will* is increasingly common but *I shall* is not an error. It appears too in **polite collaborative directives** (\"Shall we say Thursday at three?\"). The advanced learner's pitfall is over-using *shall* to sound formal: \"I shall call you tomorrow\" reads as dated in ordinary business correspondence — *I will* is standard.",
         "ru": "На C1 `shall` — это прежде всего **юридический** и **регуляторный** язык, а также осознанный стилистический маркер.\n\n**1. Legal shall — semantic ambiguity:**\n`Shall` в юридических текстах традиционно означает обязательство, но на практике создаёт проблемы:\n- `The Tenant shall pay the rent.` — обязательство? будущее? разрешение? предсказание?\n\nПо этой причине в США и всё чаще в UK plain English movement рекомендует избегать `shall` в пользу:\n- `must` — для обязательств.\n- `will` — для контрактных обязательств (но не строгих требований).\n- `may` — для разрешения.\n- `is entitled to` — для прав.\n\nНа C1 ты понимаешь: `shall` в контракте — потенциальный источник судебного спора.\n\n**2. Shall в regulatory vs contractual contexts:**\n- **Regulatory:** `The operator shall comply with all safety regulations.` (Оператор обязан соблюдать все правила безопасности.) — устанавливает обязанность.\n- **Contractual:** `The Seller shall deliver the goods.` (Продавец обязан доставить товар.) — обязательство по договору.\n- **Directory (interpretive):** `The Court shall consider...` — может означать «обязан рассмотреть» или «будет рассматривать».\n\n**3. Modern plain-English drafting:**\nСовременная практика:\n- Use `must` for obligations.\n- Use `must not` for prohibitions.\n- Use `may` for discretion.\n- Use `is` / `are` for declarations.\n- Use `will` for future actions.\n- Avoid `shall` where possible.\n\nНо огромный корпус существующих законов и контрактов всё ещё содержит `shall` — на C1 ты умеешь его читать.\n\n**4. Shall в судебных решениях:**\n- `The defendant shall pay costs.` (Ответчик обязан оплатить судебные издержки.)\n- `Bail shall be set at $10,000.` (Залог устанавливается в размере 10 000 долларов.)\n\n**5. Shall в литературном и библейском регистре:**\n- `Thou shalt not kill.` (Не убий.)\n- `Ye shall know them by their fruits.` (По делам их узнаете их.)\n\nЭто архаический английский (King James Bible), сохраняется как культурная цитата.\n\n**6. Ironic or elevated shall:**\n- `And so it shall be.` (И да будет так.) — торжественно, часто иронично.\n- `We shall see.` (Посмотрим.) — слегка высокопарно.\n- `You shall have what you want.` (Ты получишь, что хочешь.) — с оттенком обещания или угрозы.\n\n**7. Shall в UK first-person formal:**\nВ британском академическом и формальном английском `I shall` всё ещё встречается:\n- `In this paper, I shall examine...` — более традиционно, чем `I will examine...`\n- `I shall begin by reviewing the literature.` — формальное introduction.\n\nМолодые авторы чаще используют `I will`, но `I shall` не считается ошибкой.\n\n**8. Shall в polite cooperative directives:**\n- `Shall we say Thursday at three?` (Договоримся на четверг в три?)\n- `Shall we assume, for the sake of argument, that...` (Предположим ради аргумента, что...)\n\nЭто высокоформальный интеллектуальный регистр.\n\n**9. Common ошибки на C1:**\nДля продвинутых студентов типичная ошибка — переиспользование `shall` из стремления звучать формально. `I shall call you tomorrow` в обычной деловой переписке звучит устаревшим. `I will call you tomorrow` — стандартно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Subject + shall + base verb (legal duty / formal first-person future / elevated register)",
+        "ru": "Подлежащее + shall + инфинитив без to (юридическая обязанность / формальное будущее 1-го лица / возвышенный регистр)"
       },
       "examples": [
         {
           "en": "The parties shall be bound by the decision of the arbitrator.",
-          "ru": "Стороны обязаны подчиниться решению арбитра."
+          "ru": "Стороны обязаны подчиниться решению арбитра.",
+          "note": {
+            "en": "contractual duty",
+            "ru": "договорная обязанность"
+          }
         },
         {
           "en": "In this thesis, I shall argue that the standard view is mistaken.",
-          "ru": "В этой работе я буду утверждать, что общепринятая точка зрения ошибочна."
+          "ru": "В этой работе я буду утверждать, что общепринятая точка зрения ошибочна.",
+          "note": {
+            "en": "academic first person",
+            "ru": "академическое 1-е лицо"
+          }
         },
         {
           "en": "Shall we assume the premise holds for the sake of discussion?",
-          "ru": "Предположим, ради обсуждения, что посылка верна?"
+          "ru": "Предположим, ради обсуждения, что посылка верна?",
+          "note": {
+            "en": "collaborative directive",
+            "ru": "вежливое побуждение"
+          }
         },
         {
           "en": "No person shall be deprived of liberty without due process.",
-          "ru": "Никто не может быть лишён свободы без надлежащей правовой процедуры."
+          "ru": "Никто не может быть лишён свободы без надлежащей правовой процедуры.",
+          "note": {
+            "en": "constitutional register",
+            "ru": "конституционный регистр"
+          }
         },
         {
           "en": "The court shall hear the case in camera.",
-          "ru": "Суд рассматривает дело при закрытых дверях."
+          "ru": "Суд рассматривает дело при закрытых дверях.",
+          "note": {
+            "en": "directory regulatory",
+            "ru": "регуляторное предписание"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В legalese shall традиционно = обязан, но plain English рекомендует заменять на must для ясности."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I shall send the invoice this afternoon. (routine business email)",
+          "right": "I'll send the invoice this afternoon.",
+          "why": {
+            "en": "Using shall to sound formal in routine correspondence reads as dated; will is the neutral standard.",
+            "ru": "Shall ради формальности в обычной переписке звучит устаревшим; нейтральный стандарт — will."
+          }
+        },
+        {
+          "wrong": "The contractor shall, and the client may not, terminate at will. (relying on shall for clarity)",
+          "right": "The contractor must, and the client may not, terminate at will.",
+          "why": {
+            "en": "Legal shall is ambiguous; plain-English drafting uses must for obligations to remove doubt.",
+            "ru": "Юридический shall двусмыслен; plain English использует must для обязанностей, чтобы убрать неоднозначность."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, *shall* is a precision instrument of **legal drafting, archaic stylisation and register positioning** — to be wielded knowingly. In contracts a single *shall* may shift, clause by clause, between **duty** (The Seller shall deliver), **future** (This Agreement shall terminate in 2030), **entitlement** (The Buyer shall be entitled to a refund) and **directive** (The Commission shall consider applications); the mature reader tracks these silently. Drafters apply the *shall test*: if *shall* can become *must*, *will*, *may*, or simply *is*, it should — a readability upgrade championed by the ABA and Federal Rules in the US and the Law Commission in the UK. You can even date a contract by its *shall* density: high frequency signals pre-2000 legalese, near-zero the plain-English era. *Shall* also encodes social meaning: in current British speech, *I/we shall* marks an older generation, a higher register, or academic prose, and you deploy it for that signal. It survives in fossilised and biblical phrases (Thou shalt not ...; We shall see; What shall it profit a man ...; I shall return) used for allusion or irony, and in elevated collaborative openings (Shall we begin?; Let us, shall we, consider an alternative). When you yourself draft a statute or contract, prefer the clear modals and treat *shall* as a marked, optional choice rather than a default.",
         "ru": "На C2 `shall` — тонкий инструмент **юридического дизайна**, **архаической стилизации** и **регистрового позиционирования**.\n\n**1. Shall в контрактах — interpretation problems:**\nЮристы десятилетиями спорят о `shall`. Одно и то же слово в одном документе может означать:\n- **Duty:** `The Seller shall deliver the goods.`\n- **Future:** `This Agreement shall terminate in 2030.`\n- **Entitlement:** `The Buyer shall be entitled to a refund.`\n- **Directive:** `The Commission shall consider applications.`\n\nВ крупных fortune 500 контрактах `shall` встречается тысячи раз, но каждый раз в чуть разном значении. На C2 ты видишь эти различия.\n\n**2. Plain English drafting rules:**\nПри пересмотре контрактов профессионалы применяют **`shall` test**: можно ли заменить `shall` на `must`, `will`, или убрать? Если да — заменяют. Это upgrade к читаемости.\n\n- `The Lessee shall have the right to renew.` → `The Lessee may renew.` / `The Lessee has the right to renew.`\n- `Payments shall be made monthly.` → `Payments must be made monthly.`\n- `This Agreement shall commence on 1 January.` → `This Agreement begins on 1 January.`\n\n**3. Archaic and biblical shall:**\n`Thou shalt / ye shall` — из King James Bible. Архаический императив, выражающий максимально серьёзный моральный долг:\n- `Thou shalt not bear false witness.` (Не лжесвидетельствуй.)\n\nВ современной прозе используется иронически или торжественно:\n- `Thou shalt not commit a logical fallacy.` — шуточное правило в учебнике логики.\n- `There shall be light.` — аллюзия на «Let there be light».\n\n**4. UK first-person future с shall — социолингвистический маркер:**\nИспользование `I shall / we shall` в современной британской речи — маркер:\n- Старшего поколения.\n- Высшего или upper-middle class.\n- Формального регистра или академической среды.\n\nНа C2 ты осознаёшь это классовое и поколенческое измерение и используешь `I shall` с пониманием сигнала, который это посылает.\n\n**5. Shall в polite collaborative openings:**\n- `Shall we begin?` (Начнём?) — стандартный формальный опенер встречи, семинара.\n- `Shall we take that as agreed, then?` (Будем считать это согласованным?) — вежливое закрепление соглашения.\n- `Let us, shall we, consider an alternative.` (Давайте, пожалуй, рассмотрим альтернативу.) — intellectual register с двумя hedge-ами.\n\n**6. Contractual rarity в modern plain English:**\nСовременные контракты (особенно составленные после 2010 г.) часто полностью избегают `shall`. Например, в типовых Microsoft или Google соглашениях `shall` встречается 0–2 раза; 15 лет назад — десятки.\n\nНа C2 ты распознаёшь vintage контракта по частоте `shall`:\n- High frequency = traditional legalese (pre-2000).\n- Low or zero frequency = plain English era.\n\n**7. Shall в legal drafting conventions — USA vs UK:**\n- **USA:** ABA (American Bar Association) и Federal Rules отказались от `shall` как проблемного слова.\n- **UK:** postave traditional, но Law Commission также рекомендует избегать.\n- **International contracts:** зависит от governing law; зачастую смешанная картина.\n\n**8. Fossilized and literary expressions:**\n- `We shall see.` (Посмотрим.)\n- `What shall it profit a man...` (Какая польза человеку...) — Библия.\n- `Come what come may, time and the hour runs through the roughest day.` (Shakespeare, Macbeth)\n- `I shall return.` (MacArthur, WWII.)\n\nНа C2 эти фразы — часть культурного канона, который ты узнаёшь и умеешь использовать для allusion.\n\n**9. Lexical survivals:**\n- `shall-we-dance` — иронический compound в статьях о социальной ловкости.\n- `shan't` — сохраняется как подчёркнуто британская форма отказа, часто с нотой детскости или архаики.\n\n**10. Pedagogy для C2 writers:**\nЕсли ты пишешь contract, statute, or formal regulation на C2 уровне:\n- Знай, что `shall` существует и почему он проблемный.\n- Предпочитай `must`, `will`, `may` — ясные эквиваленты.\n- Используй `shall` только если это строго необходимо по convention (например, старые treaty templates, некоторые jurisdictions)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Subject + shall + base verb (replaceable by must / will / may / is in plain-English drafting)",
+        "ru": "Подлежащее + shall + инфинитив без to (в plain English заменяется на must / will / may / is)"
       },
       "examples": [
         {
           "en": "In keeping with plain English drafting, we have replaced 'shall' with 'must' throughout the contract.",
-          "ru": "В соответствии с plain English, мы заменили 'shall' на 'must' по всему контракту."
+          "ru": "В соответствии с plain English, мы заменили 'shall' на 'must' по всему контракту.",
+          "note": {
+            "en": "plain-English edit",
+            "ru": "правка в духе plain English"
+          }
         },
         {
           "en": "Thou shalt not assume causation from correlation.",
-          "ru": "Не предполагай причинности из корреляции."
+          "ru": "Не предполагай причинности из корреляции.",
+          "note": {
+            "en": "ironic biblical",
+            "ru": "ироничная библейская стилизация"
+          }
         },
         {
           "en": "I shall endeavour to complete the assignment by the deadline.",
-          "ru": "Я постараюсь выполнить задание в срок."
+          "ru": "Я постараюсь выполнить задание в срок.",
+          "note": {
+            "en": "formal first person",
+            "ru": "формальное 1-е лицо"
+          }
         },
         {
           "en": "Come what may, the truth shall prevail.",
-          "ru": "Что бы ни случилось, правда восторжествует."
+          "ru": "Что бы ни случилось, правда восторжествует.",
+          "note": {
+            "en": "literary determination",
+            "ru": "литературная решимость"
+          }
         },
         {
           "en": "Shall we, for the sake of argument, grant the premise?",
-          "ru": "Допустим, ради аргумента, посылку?"
+          "ru": "Допустим, ради аргумента, посылку?",
+          "note": {
+            "en": "intellectual hedge",
+            "ru": "интеллектуальное смягчение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Plain English drafting заменяет legal shall на must/will/may — на C2 пиши ясно, а не архаично."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Payments shall be made monthly, and the Lessee shall have the right to renew. (modern draft)",
+          "right": "Payments must be made monthly, and the Lessee may renew.",
+          "why": {
+            "en": "Mixing obligation and entitlement under one shall is ambiguous; the shall test splits them into must and may.",
+            "ru": "Один shall для обязанности и права двусмыслен; shall-тест разводит их на must и may."
+          }
+        },
+        {
+          "wrong": "I shall be popping to the shops in a sec. (casual register)",
+          "right": "I'll be popping to the shops in a sec.",
+          "why": {
+            "en": "Pairing literary I shall with casual idiom is a register clash; match shall to formal or elevated contexts only.",
+            "ru": "Литературное I shall рядом с разговорной идиомой — сбой регистра; используйте shall только в формальном или возвышенном контексте."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "will-would",
+    "should-ought-to",
+    "future-simple-will",
+    "semi-modals"
+  ],
+  "crossTopic": [
+    "yes-no-questions",
+    "future-simple-will",
+    "tag-questions",
+    "passive-with-modals"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "B1 offers",
+      "B2 formal future / legal duty",
+      "C1 regulatory & stylistic",
+      "C2 legal-design instrument"
+    ]
+  }
 };

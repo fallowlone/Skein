@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "reported-statements",
   "title": {
-    "en": "",
+    "en": "Reported Statements",
     "ru": "Reported Statements"
   },
   "cefr": "B1",
@@ -15,28 +15,43 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "reported-speech",
+  "egp": [
+    "EGP:B1 Can report statements using a limited range of reporting verbs (say, tell) with that-clauses.",
+    "EGP:B1 Can backshift present and future tenses into the past in reported statements.",
+    "EGP:B2 Can use a wider range of reporting verbs (admit, deny, claim, mention, explain) with appropriate structures.",
+    "EGP:B2 Can choose whether to backshift depending on whether the reported fact is still true.",
+    "EGP:C1 Can select stance reporting verbs (allege, maintain, assert, concede) to signal the writer's distance from a claim.",
+    "EGP:C2 Can use passive reporting constructions (is said to / is reported to + infinitive) and adverbs (allegedly, reportedly) for evidential distance."
+  ],
+  "archetype": "transformation",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "A reported statement retells what someone said instead of quoting it word for word. Direct speech: He said, \"I am tired.\" Reported: He said (that) he was tired. The word that is optional and is often dropped in speech, though it is usually kept in writing. The key verb pair is say vs tell: tell needs a person object (He told me that...), while say takes no object or uses to (He said that... / He said to me that...). When you move from direct to reported speech, three things shift. Pronouns change to match the new speaker (\"I love you\" becomes He said he loved her). Verb tenses usually shift one step back into the past (am/is becomes was, have becomes had, will becomes would, can becomes could). Time and place words also move (now becomes then, today becomes that day, tomorrow becomes the next day, here becomes there, this becomes that). Example: \"I will call you tomorrow\" becomes He said he would call me the next day.",
         "ru": "**Reported statements** — косвенная речь. Это когда мы **пересказываем чьи-то слова**, а не цитируем их напрямую.\n\n**Прямая речь vs косвенная:**\n- Direct: `He said, \"I am tired.\"` (Он сказал: «Я устал».)\n- Reported: `He said (that) he was tired.` (Он сказал, что он устал.)\n\n**Формула:** `subject + said/told + (that) + clause`.\n\n**Слово `that` необязательно** — его часто опускают в разговоре, но в письме обычно оставляют.\n\n**Say vs tell — важнейшая пара:**\n- `Tell` **требует объекта** (кому сказали): `He told me that...`\n- `Say` **объект не берёт** (или через `to`): `He said that...` / `He said to me that...`\n\nТипичная русская ошибка: ❌ `He said me that he was tired.` → ✅ `He told me that he was tired.` или ✅ `He said that he was tired.`\n\n**Что меняется при переходе в косвенную речь:**\n\n1. **Местоимения** — сдвигаются по смыслу:\n   - `\"I love you.\"` → `He said he loved her.` (I → he, you → her.)\n\n2. **Время глагола** — обычно сдвигается назад (backshift):\n   - `am/is → was`, `are → were`\n   - `have → had`, `love → loved`\n   - `will → would`, `can → could`\n\n3. **Слова времени и места:**\n   - `now → then`\n   - `today → that day`\n   - `tomorrow → the next day`\n   - `yesterday → the day before`\n   - `here → there`\n   - `this → that`\n\n**Примеры трансформации:**\n- `\"I am busy now.\"` → `She said she was busy then.`\n- `\"We live here.\"` → `They said they lived there.`\n- `\"I will call you tomorrow.\"` → `He said he would call me the next day.`\n\n**Типичные ошибки:**\n- ❌ `He said me...` → ✅ `He told me...` / `He said to me...`\n- ❌ `She told that...` (без объекта) → ✅ `She told me/him/us that...`\n- ❌ `He said that he is tired.` (забыл сдвинуть время) → ✅ `He said that he was tired.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + said / told + (somebody) + (that) + backshifted clause",
+        "ru": "подлежащее + said / told + (кому) + (that) + придаточное со сдвигом времени"
       },
       "examples": [
         {
           "en": "She said (that) she was hungry.",
-          "ru": "Она сказала, что голодна."
+          "ru": "Она сказала, что голодна.",
+          "note": {
+            "en": "that dropped",
+            "ru": "that опущено"
+          }
         },
         {
           "en": "He told me he lived in Berlin.",
-          "ru": "Он сказал мне, что живёт в Берлине."
+          "ru": "Он сказал мне, что живёт в Берлине.",
+          "note": {
+            "en": "tell + object",
+            "ru": "tell + объект"
+          }
         },
         {
           "en": "They said they would come the next day.",
@@ -48,23 +63,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "My teacher said I had passed the exam.",
-          "ru": "Учитель сказал, что я сдал экзамен."
+          "ru": "Учитель сказал, что я сдал экзамен.",
+          "note": {
+            "en": "past perfect backshift",
+            "ru": "сдвиг в past perfect"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Tell требует объекта (tell me / tell him), а say — нет. He said (me) → He told me."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He said me that he was tired.",
+          "right": "He told me that he was tired.",
+          "why": {
+            "en": "Say does not take a person object directly; use tell me or say to me.",
+            "ru": "Say не берёт прямой объект-лицо; используй tell me или say to me."
+          }
+        },
+        {
+          "wrong": "She told that she was late.",
+          "right": "She told me that she was late.",
+          "why": {
+            "en": "Tell requires a person object before the that-clause.",
+            "ru": "Tell требует объекта-лица перед that-clause."
+          }
+        },
+        {
+          "wrong": "He said that he is tired.",
+          "right": "He said that he was tired.",
+          "why": {
+            "en": "After a past reporting verb, backshift the tense (is becomes was).",
+            "ru": "После reporting verb в прошедшем нужен сдвиг времени (is становится was)."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, reported statements expand in three ways: more reporting verbs, optional backshift, and finer control of the that-clause. Beyond say and tell, common verbs each carry their own structure: explain (to sb) that, mention (to sb) that, admit that / admit (to) doing, deny that / deny doing, claim that, insist that. Backshift becomes optional when the reported fact is still true: She said that Berlin is the capital of Germany keeps the present because it remains true; switch to was only if you want to distance yourself from the claim. Standard backshift still applies elsewhere: present simple to past simple, present continuous to past continuous, present perfect and past simple to past perfect, will to would. Modals shift too: can to could, will to would, may to might, must to had to (for obligation), while should, could, might and ought to stay the same. Note that deny and admit often take a gerund (He denied stealing it / She admitted forgetting), which avoids the double-negative trap of deny.",
         "ru": "На B2 reported statements расширяется: появляются **reporting verbs с разной структурой**, **опциональный backshift** и **нюансы `that`-clause**.\n\n**1. Reporting verbs — не только say/tell:**\n\n| Глагол | Структура | Пример |\n|---|---|---|\n| say | say (to sb) that | He said (to me) that he was late. |\n| tell | tell sb that | She told me that she was late. |\n| explain | explain (to sb) that | He explained to me that it was broken. |\n| mention | mention (to sb) that | She mentioned that she had seen him. |\n| admit | admit that | He admitted that he had lied. |\n| deny | deny + -ing / that | She denied stealing / that she had stolen. |\n| claim | claim that | He claimed that he was innocent. |\n| insist | insist that | She insisted that he (should) leave. |\n\n**2. Опциональный backshift — когда факт всё ещё верен:**\nЕсли пересказанное утверждение **до сих пор актуально**, backshift можно **не делать**:\n- `She said that Berlin is the capital of Germany.` (Она сказала, что Берлин — столица Германии. Это всё ещё правда.)\n- `He said that he loves jazz.` (Он и сейчас любит джаз.)\n\nНо если хотим **отстраниться** от утверждения (не знаем, верно ли ещё), делаем backshift: `He said that he loved jazz.`\n\n**3. Sequence of tenses — стандартный backshift:**\n- Present Simple → Past Simple: `\"I work here.\"` → `He said he worked there.`\n- Present Continuous → Past Continuous: `\"I'm working.\"` → `He said he was working.`\n- Present Perfect → Past Perfect: `\"I've finished.\"` → `He said he had finished.`\n- Past Simple → Past Perfect (обычно): `\"I finished it.\"` → `He said he had finished it.`\n- Will → would: `\"I'll help.\"` → `He said he would help.`\n\n**4. Модальные глаголы — shift:**\n- `can → could`: `\"I can swim.\"` → `She said she could swim.`\n- `will → would`: `\"I will go.\"` → `He said he would go.`\n- `may → might`: `\"It may rain.\"` → `She said it might rain.`\n- `must → had to` (в значении обязанности): `\"I must leave.\"` → `He said he had to leave.`\n- `should, could, might, ought to` — **не меняются**.\n\n**5. Deny и admit — особые структуры:**\n- `admit (to) doing sth` или `admit that + clause`: `He admitted (to) lying / that he had lied.`\n- `deny doing sth` или `deny that + clause`: `She denied breaking it / that she had broken it.`\n\nGerund после deny/admit встречается часто в письменных текстах.\n\n**6. Опускание `that`:**\n- Разговорно: `He said he was tired.`\n- Письменно и после редких глаголов (reply, mention, complain): `He mentioned that he was tired.` — `that` обычно сохраняем.\n\n**7. Типичные B2 ошибки:**\n- ❌ `He denied that he didn't do it.` (двойное отрицание) → ✅ `He denied doing it.` / `He denied that he had done it.`\n- ❌ `She admitted me that she was wrong.` → ✅ `She admitted (to me) that she was wrong.`\n- ❌ Backshift там, где не надо: `She said water boils at 100°C.` (вечная истина — backshift не обязателен.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + reporting verb (+ object) + that-clause  /  deny / admit + gerund",
+        "ru": "подлежащее + reporting verb (+ объект) + that-clause  /  deny / admit + герундий"
       },
       "examples": [
         {
@@ -73,11 +118,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He denied stealing the money.",
-          "ru": "Он отрицал, что украл деньги."
+          "ru": "Он отрицал, что украл деньги.",
+          "note": {
+            "en": "deny + gerund",
+            "ru": "deny + герундий"
+          }
         },
         {
           "en": "The scientist explained that water freezes at zero degrees.",
-          "ru": "Учёный объяснил, что вода замерзает при нуле градусов."
+          "ru": "Учёный объяснил, что вода замерзает при нуле градусов.",
+          "note": {
+            "en": "no backshift: still true",
+            "ru": "без сдвига: всё ещё истинно"
+          }
         },
         {
           "en": "She mentioned that her brother was getting married.",
@@ -85,36 +138,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He claimed he had never been to Paris.",
-          "ru": "Он утверждал, что никогда не был в Париже."
+          "ru": "Он утверждал, что никогда не был в Париже.",
+          "note": {
+            "en": "past perfect backshift",
+            "ru": "сдвиг в past perfect"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Если факт всё ещё верен — backshift не обязателен (Water boils at 100°C). Для вечных истин обычно оставляем Present."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He denied that he didn't do it.",
+          "right": "He denied doing it.",
+          "why": {
+            "en": "Deny is already negative; adding didn't creates an unintended double negative.",
+            "ru": "Deny само по себе отрицательно; didn't создаёт двойное отрицание."
+          }
+        },
+        {
+          "wrong": "She admitted me that she was wrong.",
+          "right": "She admitted (to me) that she was wrong.",
+          "why": {
+            "en": "Admit does not take a bare person object; use admit to someone.",
+            "ru": "Admit не берёт прямой объект-лицо; используй admit to someone."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, reported statements become a tool for conveying the speaker's stance and signalling how reliable a claim is. Stance reporting verbs carry distinct shades: claim and allege suggest the writer may doubt the statement, insist signals persistence against objection, maintain and contend mark a held position, assert is emphatic, while concede and acknowledge admit something reluctantly or factually, and imply or suggest hint at it indirectly. Insist works two ways: insist that + subjunctive demands action (He insisted that she leave immediately), while insist that + indicative asserts a fact (He insisted that he was innocent). After verbs of demand and recommendation (insist, demand, suggest, recommend), American English favours the subjunctive or bare infinitive (He demanded that she be present), whereas British English also accepts should or the indicative. Journalists exploit reporting verbs to distance themselves: The minister claimed the economy was improving; Sources allege the company misled investors. Remember that all deictic markers shift, not just tense and pronouns: this becomes that, these days becomes those days, next week becomes the following week, ago becomes before. A key contrast for Russian speakers: Russian does not backshift, so transferring that habit into English is the most persistent C1 error. Note also the alternative is said to / is reported to + infinitive (He is said to be very rich) as a substitute for a that-clause.",
         "ru": "На C1 reported statements становится инструментом **передачи позиции говорящего** (stance) и **оценки достоверности** (evidentiality).\n\n**1. Stance reporting verbs — передают отношение автора к сказанному:**\n\n| Глагол | Оттенок |\n|---|---|\n| claim | утверждает (автор может сомневаться) |\n| allege | предположительно (обвинение без доказательств) |\n| insist | настаивает (против возражений) |\n| maintain | придерживается позиции (стабильно) |\n| argue | аргументирует (логическая позиция) |\n| contend | утверждает (формально, в дебатах) |\n| assert | решительно заявляет |\n| concede | признаёт (неохотно) |\n| acknowledge | признаёт (факт) |\n| imply | намекает |\n| suggest | предполагает / намекает |\n| state | официально заявляет |\n\n**2. Insist — две структуры:**\n- `insist that + subjunctive`: `He insisted that she (should) leave immediately.` (настаивал, чтобы ушла.)\n- `insist that + indicative`: `He insisted that he was innocent.` (настаивал, что невиновен.)\n\nПервая структура — императив/просьба. Вторая — утверждение факта.\n\n**3. Subjunctive после reporting verbs:**\nАмериканский английский чаще использует `should` или голый инфинитив после глаголов типа `insist, demand, suggest, recommend`:\n- AmE: `He demanded that she be present.`\n- BrE: `He demanded that she should be present.` / `He demanded that she was present.`\n\n**4. Indirect reporting в журналистике:**\nЖурналисты используют reporting verbs, чтобы отстраниться от утверждений:\n- `The minister claimed that the economy was improving.` (Автор не утверждает сам.)\n- `Sources allege that the company misled investors.` (Обвинение без подтверждения.)\n- `It has been reported that talks collapsed.` (Дистанцирование.)\n\n**5. Deictic shifts — сдвиги указателей:**\nКроме времени и местоимений сдвигаются **все дейктические элементы**:\n- `this book → that book`\n- `these days → those days`\n- `next week → the following week`\n- `last Friday → the previous Friday`\n- `ago → before / earlier`\n\nПример: `\"I met him two days ago.\"` → `She said she had met him two days before.`\n\n**6. Free indirect speech — литературный приём:**\nВ прозе косвенная речь может сливаться с нарратором без явного `said`:\n- Прямо: `\"I'm exhausted,\" she thought.`\n- Косвенно: `She thought she was exhausted.`\n- Free indirect: `She was exhausted. How much longer could this go on?`\n\nПоследняя форма передаёт мысль персонажа, но грамматически — нарратор.\n\n**7. Reporting without backshift — стилистический выбор:**\n- News: `The president says the deal is final.` (актуально, present reporting verb.)\n- History: `The president said the deal was final.` (факт прошлого, backshift.)\n- Mixed: `He said he is still learning.` (формально говорил в прошлом, но учится и сейчас.)\n\n**8. Complex reported clauses:**\n- С инверсией: `He said that never had he seen such a sight.` (редко, литературно.)\n- С параллельными clauses: `She said that she had tried everything and (that) nothing had worked.`\n- С модальностью: `He said he might be late but would try to arrive on time.`\n\n**9. Russian contrastive:**\nРусская косвенная речь **не требует backshift**: «Он сказал, что устал» — время глагола не меняется. Английский же обязательно согласует времена (кроме вечных истин). Эта разница — источник самых частых ошибок у русскоязычных учеников даже на C1.\n\n**10. Common C1 refinements:**\n- Выбор reporting verb для передачи оттенка (claim vs state vs assert).\n- Управление длинными цепями косвенной речи с сохранением backshift.\n- Различение first-hand (он сам слышал) и second-hand (слышал от кого-то) reporting.\n- Использование `is said to / is reported to + inf` как альтернативы that-clause: `He is said to be very rich.` (Говорят, что он очень богат.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + stance verb + (that) + clause  /  insist / demand + that + (should) base form (subjunctive)",
+        "ru": "подлежащее + stance-глагол + (that) + придаточное  /  insist / demand + that + (should) инфинитив без to (сослагательное)"
       },
       "examples": [
         {
           "en": "The defendant maintained that he had been elsewhere at the time of the crime.",
-          "ru": "Подсудимый настаивал, что в момент преступления был в другом месте."
+          "ru": "Подсудимый настаивал, что в момент преступления был в другом месте.",
+          "note": {
+            "en": "maintain: held position",
+            "ru": "maintain: устойчивая позиция"
+          }
         },
         {
           "en": "Critics allege that the company concealed crucial data from investors.",
-          "ru": "Критики утверждают, что компания скрыла важные данные от инвесторов."
+          "ru": "Критики утверждают, что компания скрыла важные данные от инвесторов.",
+          "note": {
+            "en": "allege: unproven claim",
+            "ru": "allege: обвинение без доказательств"
+          }
         },
         {
           "en": "She conceded that her original argument had been flawed.",
-          "ru": "Она признала, что её первоначальный аргумент был ошибочным."
+          "ru": "Она признала, что её первоначальный аргумент был ошибочным.",
+          "note": {
+            "en": "concede: reluctant admission",
+            "ru": "concede: неохотное признание"
+          }
         },
         {
           "en": "The spokesperson asserted that no decision had yet been made.",
@@ -122,36 +209,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He implied, without saying so directly, that the agreement had been broken.",
-          "ru": "Он намекнул, не говоря этого прямо, что соглашение было нарушено."
+          "ru": "Он намекнул, не говоря этого прямо, что соглашение было нарушено.",
+          "note": {
+            "en": "imply: indirect",
+            "ru": "imply: косвенно"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Claim, allege, insist, maintain — каждый глагол несёт оттенок позиции автора. Выбирай по смыслу."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He insisted that she leaves immediately.",
+          "right": "He insisted that she leave immediately.",
+          "why": {
+            "en": "When insist demands an action, use the subjunctive base form, not the present.",
+            "ru": "Когда insist требует действия, используй сослагательное (инфинитив без to), а не present."
+          }
+        },
+        {
+          "wrong": "She said she meets him two days ago.",
+          "right": "She said she had met him two days before.",
+          "why": {
+            "en": "Backshift the tense and shift the deictic word: ago becomes before.",
+            "ru": "Сдвинь время и дейктическое слово: ago становится before."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, reported speech is a refined instrument of evidentiality, the way a writer signals the source of information and how far they endorse it. The choice of reporting verb encodes a scale of support: showed or proved that (the writer agrees), said or stated that (neutral), claimed or maintained that (distance), alleged or purported or insinuated that (doubt), up to would have us believe that (open disbelief). Passive reporting constructions add formal distance: It is said that he was a spy; He is said to have been a spy; She was reported to have declined the offer, where the perfect infinitive marks a completed action and the continuous infinitive marks an ongoing one. Academic writing uses this as a hedge: rather than asserting X is true, write Smith (2021) argues that X is true, taking responsibility only for accurate reporting. The subjunctive is mastered fully after demand, insist, suggest, recommend, propose, require, request, order and urge, and the choice changes meaning: He insisted that she was there asserts a fact, while He insisted that she be there demands an action. In long passages, sequence harmony must hold throughout, and skilled writers blend reported statements, questions and commands into one flow, or merge speech with narration through free indirect discourse. Journalism leans on allegedly, reportedly and purportedly as a legal shield against defamation. For Russian speakers, English builds these nuances into grammar and lexis, whereas Russian leans on modal particles (мол, дескать, якобы), so translation requires a deliberate choice of reporting verb to recover the intended distance.",
         "ru": "На C2 reported statements — **изысканный инструмент evidentiality** (передачи источника и степени уверенности в информации) и литературного стиля.\n\n**1. Evidentiality — кто отвечает за утверждение:**\nВыбор reporting verb и структуры сигнализирует читателю, **насколько автор соглашается** с переданным утверждением:\n\n| Уровень поддержки | Форма |\n|---|---|\n| Автор согласен | X showed / demonstrated / proved that... |\n| Нейтрально | X said / stated / reported that... |\n| Дистанция | X claimed / maintained that... |\n| Сомнение автора | X alleged / purported / insinuated that... |\n| Явное недоверие | X would have us believe that... |\n\n**2. Reporting with distancing constructions:**\n- `It is said that he was a spy.` — безличное, передача слухов.\n- `He is said to have been a spy.` — аналогично, но `to have been` указывает на прошлое.\n- `He was rumoured to be considering resignation.` — слухи + continuous инфинитив = процесс.\n- `She was reported to have declined the offer.` — официальное сообщение, perfect inf = законченное действие.\n\nЭта структура `subject + passive reporting verb + to-inf` — очень формальная, характерная для новостей и академического письма.\n\n**3. Hedging через reported speech:**\nАкадемическое письмо использует косвенную речь как **защиту от категоричности**:\n- Вместо `X is true` → `Smith (2021) argues that X is true.` (автор не отвечает за истинность, только за корректную передачу.)\n- `It has been suggested that...` — двойное hedging: безличная форма + мягкий глагол.\n\n**4. Subjunctive mood — thorough mastery:**\nПосле глаголов `demand, insist, suggest, recommend, propose, require, request, order, urge, ask, move, stipulate` используется subjunctive:\n- Formal AmE: `He demanded that she be present.` / `She insisted that the report be revised.`\n- BrE также принимает: `He demanded that she should be present.` или с indicative: `He demanded that she was present.`\n\nВыбор между subjunctive и indicative меняет смысл: `He insisted that she was there` = настаивал на факте. `He insisted that she be there` = настаивал, чтобы была.\n\n**5. Intricate backshift — sequence harmony:**\nВ длинных пассажах косвенной речи backshift должен соблюдаться **всюду** для гармонии:\n- `She said that she had arrived the day before, that she was staying at the hotel, and that she would meet them the following evening.`\n\nНарушение sequence в одном месте выдаёт неряшливого писателя:\n- ❌ `She said she had arrived, she is staying at the hotel, and she will meet them tomorrow.` (смешение времён и deictics.)\n\n**6. Reporting questions, commands, thoughts in one flow:**\nC2 мастерство — переплетать типы косвенной речи:\n- `He told us that he had failed, asked whether we would help, and begged us not to tell his parents.`\n\n**7. Reporting irony and sarcasm:**\n- `He \"apologised\" by saying that if anyone had been offended, that was their problem.` — кавычки вокруг reporting verb сигнализируют иронию.\n- `She claimed, with that tone of hers, that she had meant no harm.` — модификация verb через наречие/фразу передаёт скептицизм автора.\n\n**8. Free indirect discourse в высокой прозе:**\nМастера прозы сливают косвенную речь с нарратором, создавая **polyphony** (многоголосие):\n- Joyce, Woolf, Austen активно используют: `She was late. How had this happened again? She would have to explain, apologise, start over.`\n\nГрамматически — прошедшее время (backshift), но модальность и лексика принадлежат персонажу.\n\n**9. Journalism: distancing and legal caution:**\n- `allegedly` — превращает утверждение в обвинение без подтверждения: `He allegedly accepted bribes.`\n- `reportedly` — источники подтверждают, но газета не гарантирует: `She reportedly declined to comment.`\n- `purportedly` — утверждается, но с сомнением: `The document purportedly contains state secrets.`\n\nЭти наречия — журналистский щит против исков о клевете.\n\n**10. Russian-English contrastive nuances:**\nРусская косвенная речь гораздо прямолинейнее: «Он сказал, что Х» — и всё. Нет ни backshift, ни тонкой градации глаголов. Русский компенсирует интонацией, модальными частицами (мол, дескать, якобы), порядком слов. Английская косвенная речь встроила эти нюансы в **саму грамматику** и **выбор лексики**.\n\nПеревод с русского на английский требует решения: какой reporting verb выбрать? `Якобы` → `allegedly / purportedly`. `Дескать` → `supposedly` или through-the-verb distancing (`he claimed that`). `Мол` → indirect sign of skepticism, часто через `would claim` или `liked to say`.\n\n**11. Mastery markers:**\nНа C2 ты:\n- Выбираешь reporting verb осознанно, передавая точную степень соглашения автора.\n- Поддерживаешь sequence harmony в длинных пассажах.\n- Используешь passive reporting constructions (`is said to`) для формальной дистанции.\n- Вплетаешь free indirect discourse в нарратив.\n- Применяешь `allegedly / reportedly / purportedly` для юридической точности.\n- Управляешь subjunctive после глаголов требования и предложения.\n- Осознаёшь, что косвенная речь — не просто пересказ, а **позиционирование автора по отношению к словам другого**."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + passive reporting verb + to-infinitive (is said to / was reported to have + past participle)",
+        "ru": "подлежащее + пассивный reporting verb + инфинитив с to (is said to / was reported to have + причастие прошедшего времени)"
       },
       "examples": [
         {
           "en": "The minister is widely reported to have misled the committee, though he has denied any impropriety.",
-          "ru": "Широко сообщается, что министр ввёл комиссию в заблуждение, хотя он отрицает какое-либо нарушение."
+          "ru": "Широко сообщается, что министр ввёл комиссию в заблуждение, хотя он отрицает какое-либо нарушение.",
+          "note": {
+            "en": "passive report + perfect inf",
+            "ru": "пассивный report + перфектный инфинитив"
+          }
         },
         {
           "en": "She insisted, with characteristic firmness, that the proposal be reconsidered at the next meeting.",
-          "ru": "Она настаивала, с характерной для неё твёрдостью, чтобы предложение было пересмотрено на следующей встрече."
+          "ru": "Она настаивала, с характерной для неё твёрдостью, чтобы предложение было пересмотрено на следующей встрече.",
+          "note": {
+            "en": "subjunctive after insist",
+            "ru": "сослагательное после insist"
+          }
         },
         {
           "en": "The witness purportedly saw the defendant leave the building moments before the fire.",
-          "ru": "Свидетель, как утверждается, видел подсудимого выходящим из здания за несколько мгновений до пожара."
+          "ru": "Свидетель, как утверждается, видел подсудимого выходящим из здания за несколько мгновений до пожара.",
+          "note": {
+            "en": "purportedly: distancing",
+            "ru": "purportedly: дистанцирование"
+          }
         },
         {
           "en": "He conceded, reluctantly and only after much pressure, that his earlier claims had been exaggerated.",
@@ -159,15 +280,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "It has long been maintained by scholars that the manuscript dates from the twelfth century.",
-          "ru": "Учёные давно утверждают, что рукопись датируется двенадцатым веком."
+          "ru": "Учёные давно утверждают, что рукопись датируется двенадцатым веком.",
+          "note": {
+            "en": "It has been maintained",
+            "ru": "It has been maintained"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Allegedly, reportedly, purportedly — тонкая шкала дистанции автора от утверждения. Выбирай аккуратно, особенно в журналистике."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is said that he is being a spy.",
+          "right": "He is said to be a spy.",
+          "why": {
+            "en": "Prefer the subject + passive reporting verb + to-infinitive construction for formal distance.",
+            "ru": "Для формальной дистанции используй конструкцию подлежащее + пассивный reporting verb + инфинитив с to."
+          }
+        },
+        {
+          "wrong": "She insisted that the proposal was reconsidered at the next meeting.",
+          "right": "She insisted that the proposal be reconsidered at the next meeting.",
+          "why": {
+            "en": "Insist demanding action takes the subjunctive (be), not the past indicative.",
+            "ru": "Insist в значении требования берёт сослагательное (be), а не прошедшее изъявительное."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "reported-questions",
+    "reported-commands",
+    "backshift-of-tenses",
+    "noun-clauses"
+  ],
+  "crossTopic": [
+    "past-simple",
+    "past-perfect-simple",
+    "will-would",
+    "modal-perfect"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Direct speech",
+      "Reported statement",
+      "Backshift + deixis shift"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "past-perfect-continuous",
   "title": {
-    "en": "",
+    "en": "Past Perfect Continuous",
     "ru": "Past Perfect Continuous"
   },
   "cefr": "B2",
@@ -14,19 +14,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "Use the **Past Perfect Continuous** for an action that started before another moment in the past and continued up to it, stressing **duration** or the **process** itself rather than the result.\n\n**Form:** `had been` + verb-`ing` (often contracted: `I'd been working`).\n\nTypical uses:\n\n1. **A long action leading up to a past moment** — `She had been working there for ten years when she quit.` / `I had been waiting for an hour when he finally arrived.`\n2. **Explaining a visible past state** — `Her eyes were red. She had been crying.` / `The ground was wet. It had been raining.`\n3. **Process vs. result, against Past Perfect Simple** — `She had written three chapters by Friday` (Simple = result, quantity) vs. `She had been writing all week` (Continuous = process, duration).\n\n**Markers:** `for` + period, `since` + point in time, `all day/morning/week`, and `when` + Past Simple for the cut-off point.\n\n**Stative verbs** (`know`, `own`, `belong`, `understand`, `love`) stay in the Simple: not `I had been knowing him for years` but `I had known him for years`.\n\n**Negative and question:** `I hadn't been paying attention.` / `Had you been waiting long?`",
         "ru": "**Past Perfect Continuous** — время для действия, которое **началось раньше другого действия в прошлом** и **продолжалось до него или вплоть до него**. Подчёркивает **длительность** или **процесс**.\n\n**Форма:** `had been` + глагол-`ing`\n\n- `I had been working` (часто `I'd been working`)\n- `She had been waiting`\n\n**Когда использовать:**\n\n1. **Длительное действие, которое шло до момента в прошлом:**\n   - `She had been working there for 10 years when she quit.` (Работала 10 лет до того, как уволилась.)\n   - `I had been waiting for an hour when he finally arrived.`\n\n2. **Объяснение видимого состояния в прошлом:**\n   - `Her eyes were red. She had been crying.` (Глаза красные, потому что плакала.)\n   - `The ground was wet. It had been raining.`\n\n3. **Контраст с результатом в Past Perfect Simple:**\n   - `She had written three chapters by Friday.` (Simple — результат, количество.)\n   - `She had been writing all week.` (Continuous — процесс, длительность.)\n\n**Ключевые маркеры:**\n- `for` + период (for hours, for years)\n- `since` + точка (since morning, since 2010)\n- `all day/morning/week`\n- `when` + Past Simple (прерывание или точка отсчёта)\n\n**Разница с Past Perfect Simple:**\n\n| Past Perfect Simple | Past Perfect Continuous |\n|---|---|\n| I had written the email | I had been writing the email |\n| Результат, количество | Процесс, длительность |\n| Stative verbs OK | Stative verbs — нет |\n\n**Stative verbs — НЕ использовать:**\n- ❌ `I had been knowing him for years.` → ✅ `I had known him for years.`\n- ❌ `She had been loving it.` → ✅ `She had loved it.`\n\n**Отрицание и вопрос:**\n- `I hadn't been paying attention.` (Я не следил.)\n- `Had you been waiting long?` (Ты долго ждал?)\n\n**Типичные ошибки:**\n- Continuous для короткого или завершённого действия: `I had been finishing the email` обычно звучит странно; лучше `I had finished the email`.\n- Continuous с stative verbs.\n- Путаница с Past Continuous: `I was waiting` (в процессе в прошлом) vs `I had been waiting` (процесс до другого прошлого действия)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + had been + verb-ing (+ for/since + time)",
+        "ru": "подлежащее + had been + глагол-ing (+ for/since + время)"
       },
       "examples": [
         {
@@ -35,7 +37,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He was tired because he had been working all night.",
-          "ru": "Он был уставшим, потому что работал всю ночь."
+          "ru": "Он был уставшим, потому что работал всю ночь.",
+          "note": {
+            "en": "explains a state",
+            "ru": "объясняет состояние"
+          }
         },
         {
           "en": "They had been living in Berlin for five years before they moved.",
@@ -47,23 +53,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "How long had you been waiting before the bus came?",
-          "ru": "Как долго ты ждал, прежде чем пришёл автобус?"
+          "ru": "Как долго ты ждал, прежде чем пришёл автобус?",
+          "note": {
+            "en": "question form",
+            "ru": "вопросительная форма"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Past Perfect Continuous — длительный процесс ДО момента в прошлом: had been + V-ing."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I had been knowing him for years.",
+          "right": "I had known him for years.",
+          "why": {
+            "en": "Stative verbs like 'know' do not take the continuous; use Past Perfect Simple.",
+            "ru": "Глаголы состояния (know) не используются в Continuous — нужен Past Perfect Simple."
+          }
+        },
+        {
+          "wrong": "She had been writing three letters by Friday.",
+          "right": "She had written three letters by Friday.",
+          "why": {
+            "en": "A finished count or result needs the Simple, not the Continuous.",
+            "ru": "Завершённый результат или количество требует Simple, а не Continuous."
+          }
+        },
+        {
+          "wrong": "I was waiting for an hour when he had arrived.",
+          "right": "I had been waiting for an hour when he arrived.",
+          "why": {
+            "en": "The long process before the past point is Past Perfect Continuous; the cut-off event is Past Simple.",
+            "ru": "Длительный процесс до прошлого момента — Past Perfect Continuous; точка отсчёта — Past Simple."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, the Past Perfect Continuous expresses **cause and effect** and **sustained effort** in the past with finer control.\n\n1. **Explaining past states and results** — the continuous makes the prior process explain what was observed: `When I found them, they had been arguing for hours.` / `The students looked exhausted. They had been preparing for weeks.`\n2. **Completion vs. process** — `When she retired, she had worked there for 40 years` (Simple = a stated fact of duration) vs. `...she had been working there for 40 years` (Continuous = livelier, the career as an ongoing process). The difference is one of register: Simple is more formal, Continuous more vivid.\n3. **Interruption and incompleteness** — the continuous often implies the process never reached its goal: `They had been negotiating for months when the deal fell through.`\n4. **Reported speech** — Present Perfect Continuous backshifts to this form: `\"I've been working here for five years.\"` → `She said she had been working there for five years.`\n5. **Implied effort or complaint** — `He said he had been trying his best.` carries a note of justification.\n6. **Stative verbs as allowed exceptions** — dynamic-leaning statives work: `I had been thinking about this for a while.` / `She had been meaning to call you.` But `know`, `own`, `belong`, `understand` stay Simple.\n7. **Narrative build-up** — it sets up a climax: `She had been waiting for this moment for years. When it came, she froze.`\n\nWatch the contrast with Past Continuous: `I was waiting` is a process at a specific past moment; `I had been waiting` is a process leading up to another past moment.",
         "ru": "На C1 Past Perfect Continuous используется для **тонкого описания причинно-следственных связей** и **длительного усилия** в прошлом.\n\n**1. Explaining past states and results:**\nContinuous подчёркивает процесс, который **объясняет** наблюдаемое состояние:\n- `When I found them, they had been arguing for hours.` (Долго спорили — объясняет напряжение.)\n- `He finally stopped running. He had been chasing the thief for twenty minutes.`\n- `The students looked exhausted. They had been preparing for weeks.`\n\n**2. Contrast of completion and process:**\n- `When she retired, she had worked there for 40 years.` (Simple — установленный факт длительности.)\n- `When she retired, she had been working there for 40 years.` (Continuous — более живое, подчёркивает карьеру как процесс.)\n\nРазница нюансная: Simple формальнее, Continuous — более эмоционально.\n\n**3. Interruption and incompleteness:**\n- `I had been trying to reach you all day when I finally saw you online.` (Пытался дозвониться — процесс с усилием.)\n- `They had been negotiating for months when the deal fell through.` (Переговоры шли — не завершились, сорвались.)\n\nContinuous часто подразумевает, что процесс не дошёл до логического завершения.\n\n**4. Reported speech — backshift Present Perfect Continuous:**\n- `\"I've been working here for five years.\"` → `She said she had been working there for five years.`\n\n**5. Implicature of recent effort or complaint:**\n- `He said he had been trying his best.` (Старался — с оттенком оправдания или жалобы.)\n- `She explained she had been going through a difficult time.` (Переживала трудный период — объяснение поведения.)\n\n**6. Stative verbs в Past Perfect Continuous — допустимые исключения:**\n- `I had been thinking about this for a while.` (Обдумывал — процесс.)\n- `She had been meaning to call you.` (Собиралась — нарастающее намерение.)\n- `They had been wanting to visit.` (Хотели — постепенное желание.)\n\nНо `know`, `own`, `belong`, `understand` — только Simple.\n\n**7. Narrative dynamics:**\nВ рассказе Past Perfect Continuous часто используется для **подготовки кульминации**:\n- `She had been waiting for this moment for years. When it came, she froze.`\n- `He had been planning the speech for weeks. When he stood up, his mind went blank.`\n\nContinuous нагнетает ожидание, Simple разряжает его.\n\n**8. Common C1 patterns:**\n- `had been X-ing for Y when Z` — стандартная структура прерванного длительного процесса.\n- `had been X-ing all morning/day/week` — эмфатическое подчёркивание непрерывного усилия.\n- `had been X-ing, but Y` — контраст процесса с результатом.\n\n**9. Typical C1 errors:**\n- Continuous вместо Simple для счётных результатов: ❌ `I had been writing three letters` → ✅ `I had written three letters`.\n- Continuous со stative verbs вне разрешённых исключений.\n- Избыточный Continuous в нарративе: теряется ясность.\n- Путаница с Past Continuous: `I was waiting` — процесс в конкретный момент прошлого; `I had been waiting` — процесс до другого момента прошлого."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + had been + verb-ing (+ for Y) + when/before + Past Simple",
+        "ru": "подлежащее + had been + глагол-ing (+ for Y) + when/before + Past Simple"
       },
       "examples": [
         {
@@ -76,7 +112,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She had been meaning to visit her parents for months.",
-          "ru": "Она уже несколько месяцев собиралась навестить родителей."
+          "ru": "Она уже несколько месяцев собиралась навестить родителей.",
+          "note": {
+            "en": "stative exception",
+            "ru": "исключение со stative"
+          }
         },
         {
           "en": "He apologised — he had been trying to fix the issue all night.",
@@ -84,23 +124,45 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I could see she had been crying before I arrived.",
-          "ru": "Было видно, что она плакала до моего прихода."
+          "ru": "Было видно, что она плакала до моего прихода.",
+          "note": {
+            "en": "explains a state",
+            "ru": "объясняет состояние"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Past Perfect Continuous объясняет видимое прошлое состояние: eyes were red — she had been crying."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "When she retired, she had been working there for 40 years, so she had been earning a good pension.",
+          "right": "When she retired, she had been working there for 40 years, so she had earned a good pension.",
+          "why": {
+            "en": "Use the Simple for an achieved result (the pension earned), keep the Continuous for the ongoing process.",
+            "ru": "Достигнутый результат — Simple; длительный процесс — Continuous."
+          }
+        },
+        {
+          "wrong": "She said she has been working there for five years.",
+          "right": "She said she had been working there for five years.",
+          "why": {
+            "en": "In reported speech the Present Perfect Continuous backshifts to the Past Perfect Continuous.",
+            "ru": "В косвенной речи Present Perfect Continuous сдвигается в Past Perfect Continuous."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, the Past Perfect Continuous is a rhetorical tool for foregrounding **prolonged effort**, **causality**, and emotional colour in narrative.\n\n1. **Compressed causality** — it replaces a wordy explanation: `He broke down in tears. He had been holding it in for weeks.` / `The machine finally failed. It had been running non-stop for months.`\n2. **Dense storytelling** — it packs a long backstory into one clause: `He looked at the manuscript. He had been rewriting it for ten years.`\n3. **Psychological depth** — `For years, she had been telling herself it didn't matter.` underscores the duration of self-deception.\n4. **Journalism and analysis** — for background dynamics: `Tensions had been building for months before the explosion.` / `Analysts had been warning about the risks since early spring.`\n5. **Precise contrast with the Simple** — `He had written three novels before his death` (a biographical summary) vs. `He had been writing novels all his life` (a lifelong vocation).\n6. **Stative verbs for marked effect** — chosen deliberately: `She had been loving every minute of her sabbatical.` / `They had been seeing each other in secret.` (a euphemism for an affair).\n7. **Rhetorical inversion (formal/literary)** — `Long had she been waiting for this moment.` / `Never had I been working under such pressure.`\n8. **Complex layering** — two parallel past processes revealed together: `They had been deceiving her, and she had been defending them.`\n\nThe mastery test: choose this tense to stress prolonged, often emotionally charged effort, to explain a visible state through a preceding process, to build a sense of accumulated backstory, to soften through distance (apologies, explanations), or to convey incompleteness. Avoid it with instantaneous actions: not `He had been breaking the vase` but `He had broken the vase`.",
         "ru": "На C2 Past Perfect Continuous — инструмент риторического подчёркивания длительности усилия, причинности и эмоциональной окраски в повествовании.\n\n**1. Subtle reasons and explanations:**\nContinuous часто заменяет многословное объяснение причинности:\n- `He broke down in tears. He had been holding it in for weeks.` (Он сломался. Неделями сдерживал это.)\n- `The machine finally failed. It had been running non-stop for months.`\n\nЧитатель улавливает причинно-следственную связь без дополнительных объяснений.\n\n**2. Compressed storytelling:**\nВ плотной прозе Past Perfect Continuous упаковывает длительную предысторию:\n- `She arrived at his door. They had not been speaking.` (Они не общались — состояние до встречи.)\n- `He looked at the manuscript. He had been rewriting it for ten years.`\n\n**3. Emotional and psychological depth:**\n- `For years, she had been telling herself it didn't matter.` (Годами убеждала себя — подчёркивает длительность самообмана.)\n- `He realised, with horror, that they had been watching him.` (Всё это время наблюдали — с эффектом вскрытия.)\n\n**4. Journalism и analytical writing:**\n- `Tensions had been building for months before the explosion.` (Напряжённость нарастала — фоновая динамика.)\n- `Analysts had been warning about the risks since early spring.` (Аналитики предупреждали — накопленный экспертный ряд.)\n\n**5. Contrast с Past Perfect Simple — precise nuance:**\n- `He had written three novels before his death.` (Написал три романа — факт творческого наследия.)\n- `He had been writing novels all his life.` (Писал всю жизнь — процесс и призвание.)\n\nРазные картинки: Simple даёт биографическую сводку, Continuous — жизненную деятельность.\n\n**6. Stative verbs в Continuous — маркерный эффект:**\n- `She had been loving every minute of her sabbatical.` (Наслаждалась — эмфатично, эмоционально.)\n- `They had been seeing each other in secret.` (Встречались тайно — эвфемизм романа.)\n- `I had been meaning to write, but the days slipped away.` (Собирался написать — с оттенком сожаления.)\n\nНа C2 эти формы выбираются сознательно для эмоционального эффекта.\n\n**7. Rhetorical inversion (formal):**\n- `Long had she been waiting for this moment.` (Поэтически.)\n- `Never had I been working under such pressure.`\n\nИнверсия с Continuous встречается редко, но создаёт литературный эффект.\n\n**8. Complex narrative layering:**\n- `When the truth emerged, she realised what had been happening all along. They had been deceiving her, and she had been defending them.`\n\nДва параллельных Continuous-процесса в прошлом, раскрытые в момент prise de conscience.\n\n**9. Literary aesthetic function:**\nВ высокой прозе Continuous создаёт ощущение **длительного, протяжённого времени**, Simple — эпизодичности. Автор выбирает Continuous, когда хочет дать читателю почувствовать вес прошлого:\n- `She had been living in that house since her childhood.` (Вся жизнь в этом доме — тяжесть привязанности.)\n\n**10. C2 typical errors и subtle points:**\n- Overuse of Continuous для стилистического эффекта без смысловой причины.\n- Continuous с кратковременными, мгновенными действиями: ❌ `He had been breaking the vase` → ✅ `He had broken the vase`.\n- Забывать, что Continuous часто подразумевает прерванность или продолжение в другую фазу прошлого.\n- Не различать Past Perfect Continuous и Past Continuous: первое — до точки в прошлом (сложный temporal layering), второе — в точке прошлого (одна временная перспектива).\n\n**11. Mastery test:**\nНа C2 ты выбираешь Past Perfect Continuous, когда хочешь:\n- Подчеркнуть длительное усилие, обычно с эмоциональной окраской.\n- Объяснить видимое состояние через предшествующий процесс.\n- Создать эффект накопленной предыстории.\n- Смягчить через дистанцию (особенно в извинениях и объяснениях).\n- Передать незавершённость или прерванность длительного процесса."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + had been + verb-ing (+ for/since duration); inverted: adverbial + had + subject + been + verb-ing",
+        "ru": "подлежащее + had been + глагол-ing (+ for/since); инверсия: обстоятельство + had + подлежащее + been + глагол-ing"
       },
       "examples": [
         {
@@ -117,19 +179,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He had been meaning to apologise, but the moment never seemed right.",
-          "ru": "Он собирался извиниться, но момент никогда не казался подходящим."
+          "ru": "Он собирался извиниться, но момент никогда не казался подходящим.",
+          "note": {
+            "en": "stative, marked",
+            "ru": "stative, маркированный"
+          }
         },
         {
           "en": "They had been deceiving her, and she had been willingly believing them.",
-          "ru": "Они её обманывали, а она охотно им верила."
+          "ru": "Они её обманывали, а она охотно им верила.",
+          "note": {
+            "en": "parallel processes",
+            "ru": "параллельные процессы"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Past Perfect Continuous создаёт эмоциональную окраску и показывает накопленное усилие в прошлом."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He had been breaking the vase when she walked in.",
+          "right": "He had broken the vase when she walked in.",
+          "why": {
+            "en": "An instantaneous, completed action takes the Simple, not the Continuous.",
+            "ru": "Мгновенное завершённое действие — Simple, а не Continuous."
+          }
+        },
+        {
+          "wrong": "Never I had been working under such pressure.",
+          "right": "Never had I been working under such pressure.",
+          "why": {
+            "en": "After a fronted negative adverb, invert the auxiliary: 'had' goes before the subject.",
+            "ru": "После отрицательного наречия в начале предложения нужна инверсия: had ставится перед подлежащим."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "past-perfect-simple",
+    "present-perfect-continuous",
+    "past-continuous"
+  ],
+  "crossTopic": [
+    "adverbial-clauses-time",
+    "stative-verbs",
+    "reported-statements",
+    "backshift-of-tenses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "start of action",
+      "ongoing duration",
+      "reference point in the past",
+      "now"
+    ]
+  }
 };

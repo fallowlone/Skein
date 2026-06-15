@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "yes-no-questions",
   "title": {
-    "en": "",
+    "en": "Yes/No Questions",
     "ru": "Yes No Questions"
   },
   "cefr": "A1",
@@ -17,24 +17,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "questions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "swap",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "A yes/no question is a question you can answer with \"yes\" or \"no\". English does not signal these questions with intonation alone the way many languages do: it changes the word order. The auxiliary (helping) verb moves to the front, before the subject.\n\nAt A1 you only need two patterns.\n\nPattern 1 — the verb \"be\". Take the statement and swap the subject and \"am/is/are\":\n- \"You are happy.\" becomes \"Are you happy?\"\n- \"He is a student.\" becomes \"Is he a student?\"\n\nPattern 2 — the modal \"can\". Move \"can\" to the front:\n- \"She can swim.\" becomes \"Can she swim?\"\n- \"You can help me.\" becomes \"Can you help me?\"\n\nShort answers: English rarely answers with a bare \"yes\" or \"no\". You repeat the auxiliary: \"Yes, I am.\" / \"No, I'm not.\"; \"Yes, she can.\" / \"No, she can't.\"\n\nIntonation rises at the end: \"Are you ready?\" with the voice going up.\n\nThe classic mistake is to keep statement word order and just raise the voice, the way you would in your own language: \"You are happy?\" is wrong. You must move the verb to the front: \"Are you happy?\"",
         "ru": "**Вопросы «да/нет»** — это вопросы, на которые отвечают `Yes` или `No`. В английском у них особый порядок слов: вспомогательный глагол идёт **первым**, потом подлежащее, потом остальное.\n\n**Правило №1 (с глаголом `be`):**\n- Утверждение: `You are happy.` (Ты счастлив.)\n- Вопрос: `Are you happy?` (Ты счастлив?)\n- Мы просто меняем местами `you` и `are`.\n\n**Правило №2 (с модальным `can`):**\n- Утверждение: `She can swim.` (Она умеет плавать.)\n- Вопрос: `Can she swim?` (Она умеет плавать?)\n- `Can` выходит на первое место.\n\n**Короткие ответы:**\n- `Yes, I am.` / `No, I'm not.`\n- `Yes, she can.` / `No, she can't.`\n- В английском неестественно говорить просто `Yes` или `No` — добавляют вспомогательный глагол.\n\n**Интонация:** голос идёт вверх в конце вопроса. `Are you ready?` ↗\n\n**Типичная ошибка русскоговорящего:** делать вопрос только интонацией, как в русском.\n- Неправильно: `You are happy?`\n- Правильно: `Are you happy?`\n\nВ русском «Ты счастлив?» и «Ты счастлив.» различаются только интонацией. В английском нужно менять порядок слов.\n\nНа A1 учи два шаблона: `Are you…?` и `Can you…?`. Остальные вопросы (с `do/does/did`) — чуть позже."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "be (Am/Is/Are) or can + subject + rest?",
+        "ru": "be (Am/Is/Are) или can + подлежащее + остальное?"
       },
       "examples": [
         {
           "en": "Are you hungry?",
-          "ru": "Ты голодный?"
+          "ru": "Ты голодный?",
+          "note": {
+            "en": "be",
+            "ru": "глагол be"
+          }
         },
         {
           "en": "Is he a student?",
@@ -46,7 +52,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Can you help me?",
-          "ru": "Ты можешь мне помочь?"
+          "ru": "Ты можешь мне помочь?",
+          "note": {
+            "en": "can",
+            "ru": "модальный can"
+          }
         },
         {
           "en": "Can she speak English?",
@@ -56,17 +66,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В вопросе вспомогательный глагол всегда первый: Are you…? Can you…?"
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "You are happy?",
+          "right": "Are you happy?",
+          "why": {
+            "en": "English forms yes/no questions by moving the verb to the front, not by intonation alone.",
+            "ru": "В английском вопрос «да/нет» строится переносом глагола вперёд, а не одной интонацией."
+          }
+        },
+        {
+          "wrong": "She can swims?",
+          "right": "Can she swim?",
+          "why": {
+            "en": "After a modal like \"can\" the main verb stays in its base form, with no -s.",
+            "ru": "После модального can основной глагол стоит в базовой форме, без -s."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2 you add the \"do/does/did\" questions. You need them when the sentence has no \"be\" and no modal verb — that is, with ordinary verbs in the present and past simple.\n\nPresent simple: use \"do\" for I/you/we/they and \"does\" for he/she/it.\n- \"You like coffee.\" becomes \"Do you like coffee?\"\n- \"She works here.\" becomes \"Does she work here?\"\n\nThe key rule: \"does\" already carries the third-person -s, so the main verb drops it. Say \"Does she work?\", never \"Does she works?\"\n\nPast simple: use \"did\" for every subject.\n- \"You went home.\" becomes \"Did you go home?\"\n\n\"Did\" carries the past tense, so the main verb returns to its base form: \"Did you go?\", never \"Did you went?\"\n\nShort answers follow the auxiliary: \"Yes, I do.\" / \"No, I don't.\"; \"Yes, she does.\" / \"No, she doesn't.\"; \"Yes, I did.\" / \"No, I didn't.\"\n\nUse this quick test to pick the auxiliary: if there is a \"be\", question with \"be\" (\"Is he tired?\"); if there is a modal, question with it (\"Will you come?\"); if there is neither, use do/does/did. And never use two auxiliaries together — \"Do you can swim?\" is wrong; it is just \"Can you swim?\"",
         "ru": "На A2 добавляем вопросы с `do`, `does`, `did`. Это нужно, когда в предложении **нет** ни `be`, ни модального глагола.\n\n**Настоящее время (Present Simple):**\n- `do` — для `I`, `you`, `we`, `they`.\n- `does` — для `he`, `she`, `it`.\n- Утверждение: `You like coffee.` (Ты любишь кофе.)\n- Вопрос: `Do you like coffee?` (Ты любишь кофе?)\n- Утверждение: `She works here.` (Она работает здесь.)\n- Вопрос: `Does she work here?` (Она здесь работает?)\n\n**Важно:** после `does` глагол теряет окончание `-s`. Не `Does she works?`, а `Does she work?`\n\n**Прошедшее время (Past Simple):**\n- `did` для всех лиц.\n- Утверждение: `You went home.` (Ты пошёл домой.)\n- Вопрос: `Did you go home?` (Ты пошёл домой?)\n- После `did` всегда базовая форма глагола: не `Did you went?`, а `Did you go?`\n\n**Краткие ответы:**\n- `Yes, I do.` / `No, I don't.`\n- `Yes, she does.` / `No, she doesn't.`\n- `Yes, I did.` / `No, I didn't.`\n\n**Типичная ошибка:** использовать вопросительный порядок без вспомогательного глагола.\n- Неправильно: `You like coffee?`\n- Правильно: `Do you like coffee?`\n\nДругая ошибка — двойной вспомогательный:\n- Неправильно: `Do you can swim?`\n- Правильно: `Can you swim?` (Если есть `can`, `do` не нужен.)\n\n**Короткая схема:**\n- Есть `be` → делай вопрос с `be`: `Is he tired?`\n- Есть модальный (`can`, `will`, `should`) → делай вопрос с ним: `Will you come?`\n- Нет ни того, ни другого → используй `do/does/did`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Do/Does/Did + subject + base verb (no -s, no -ed)?",
+        "ru": "Do/Does/Did + подлежащее + базовая форма глагола (без -s, без -ed)?"
       },
       "examples": [
         {
@@ -75,11 +103,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Does he speak French?",
-          "ru": "Он говорит по-французски?"
+          "ru": "Он говорит по-французски?",
+          "note": {
+            "en": "does + base verb",
+            "ru": "does + базовая форма"
+          }
         },
         {
           "en": "Did they arrive on time?",
-          "ru": "Они прибыли вовремя?"
+          "ru": "Они прибыли вовремя?",
+          "note": {
+            "en": "did + base verb",
+            "ru": "did + базовая форма"
+          }
         },
         {
           "en": "Does your sister work in a bank?",
@@ -93,17 +129,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Do/does/did + подлежащее + базовая форма глагола. После does и did нет -s и -ed."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Does she works here?",
+          "right": "Does she work here?",
+          "why": {
+            "en": "\"Does\" already carries the -s, so the main verb stays in its base form.",
+            "ru": "Does уже несёт -s, поэтому основной глагол остаётся в базовой форме."
+          }
+        },
+        {
+          "wrong": "Did you went home?",
+          "right": "Did you go home?",
+          "why": {
+            "en": "\"Did\" carries the past tense, so the main verb returns to its base form.",
+            "ru": "Did несёт прошедшее время, поэтому основной глагол возвращается к базовой форме."
+          }
+        },
+        {
+          "wrong": "Do you can swim?",
+          "right": "Can you swim?",
+          "why": {
+            "en": "Never stack two auxiliaries; if there is a modal, do/does is not needed.",
+            "ru": "Нельзя ставить два вспомогательных подряд: если есть модальный, do/does не нужен."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the basic word order is automatic, so the focus shifts to forming questions across more tenses and to embedding a yes/no question inside another clause.\n\nDifferent tenses keep the same principle — the first auxiliary moves to the front:\n- Present continuous: \"Are you working now?\"\n- Present perfect: \"Have you seen this film?\"\n- Past continuous: \"Were you sleeping?\"\n- Future: \"Will you come?\" / \"Are you going to come?\"\n\nPresent perfect questions are a common difficulty: the auxiliary is \"have/has\", not \"do\". \"Have you ever been to London?\" with answers \"Yes, I have.\" / \"No, I haven't.\" Compare \"Have you been to Paris?\" (your experience generally) with \"Did you go to Paris?\" (one specific past trip) — both are correct but mean different things.\n\nEmbedded yes/no questions are the big new skill. When the question is reported inside another sentence, you introduce it with \"if\" or \"whether\" and switch back to statement word order — no inversion:\n- Direct: \"Are you tired?\"\n- Embedded: \"I want to know if you are tired.\" (not \"I want to know are you tired.\")\n\nUse \"Could you...?\" as a more polite alternative to \"Can you...?\", and \"Would you like...?\" as the standard polite offer. Whatever the subject's length, the auxiliary still comes first: \"Is the new teacher from Canada?\"",
         "ru": "На B1 добавляются более сложные формы и встроенные вопросы.\n\n**Вопросы в разных временах:**\n- Present Continuous: `Are you working now?` (Ты сейчас работаешь?)\n- Present Perfect: `Have you seen this film?` (Ты видел этот фильм?)\n- Past Continuous: `Were you sleeping?` (Ты спал?)\n- Future: `Will you come?` / `Are you going to come?`\n\nПринцип тот же: вспомогательный глагол (`are`, `have`, `were`, `will`) выходит вперёд.\n\n**Present Perfect — частая трудность:**\n- Вопрос: `Have you ever been to London?` (Ты когда-нибудь был в Лондоне?)\n- Ответ: `Yes, I have.` / `No, I haven't.` / `No, I've never been there.`\n- Обрати внимание: вспомогательный `have/has`, а не `do`.\n\n**Встроенные вопросы (embedded yes/no):**\nКогда вопрос «да/нет» вставлен в другое предложение, мы используем `if` или `whether` и **нормальный порядок** слов.\n- Прямой: `Are you tired?`\n- Встроенный: `I want to know if you are tired.` (Я хочу знать, устал ли ты.)\n- Не `I want to know are you tired.`\n\nЭто частая ошибка. В главном вопросе — инверсия, во встроенном — порядок как в утверждении.\n\n**Вопросы с длинным подлежащим:**\n- `Is the new teacher from Canada?` (Новый учитель из Канады?)\n- Подлежащее может быть длинным, но вспомогательный всё равно первый.\n\n**Вежливые формы:**\n- `Could you help me?` (более вежливо, чем `Can you help me?`)\n- `Would you like some tea?` (Хотели бы вы чаю?) — стандартная вежливая форма.\n\n**Типичные ошибки B1:**\n- `Do you can swim?` — двойной вспомогательный. Правильно: `Can you swim?`\n- `Have you been to Paris?` путают с `Did you go to Paris?` Оба правильны, но разный смысл: первый — опыт в целом, второй — конкретная поездка в прошлом."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "first auxiliary (Are/Have/Were/Will...) + subject + verb?  |  embedded: ... if / whether + subject + verb (statement order)",
+        "ru": "первый вспомогательный (Are/Have/Were/Will...) + подлежащее + глагол?  |  встроенный: ... if / whether + подлежащее + глагол (прямой порядок)"
       },
       "examples": [
         {
@@ -112,7 +174,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Have you finished your homework?",
-          "ru": "Ты закончил домашку?"
+          "ru": "Ты закончил домашку?",
+          "note": {
+            "en": "present perfect",
+            "ru": "Present Perfect"
+          }
         },
         {
           "en": "Will you be at the meeting tomorrow?",
@@ -120,32 +186,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I wonder if she likes her new job.",
-          "ru": "Интересно, нравится ли ей её новая работа."
+          "ru": "Интересно, нравится ли ей её новая работа.",
+          "note": {
+            "en": "embedded (if)",
+            "ru": "встроенный (if)"
+          }
         },
         {
           "en": "Would you like to join us for dinner?",
-          "ru": "Хотел бы ты присоединиться к нам на ужин?"
+          "ru": "Хотел бы ты присоединиться к нам на ужин?",
+          "note": {
+            "en": "polite offer",
+            "ru": "вежливое предложение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Во встроенных вопросах после if/whether — прямой порядок слов, без инверсии."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I want to know are you tired.",
+          "right": "I want to know if you are tired.",
+          "why": {
+            "en": "Inside another clause an embedded question uses statement word order with if/whether, not inversion.",
+            "ru": "Во встроенном вопросе после if/whether — прямой порядок слов, без инверсии."
+          }
+        },
+        {
+          "wrong": "Have you saw this film?",
+          "right": "Have you seen this film?",
+          "why": {
+            "en": "After \"have/has\" the present perfect uses the past participle (seen), not the past simple (saw).",
+            "ru": "После have/has в Present Perfect используется причастие (seen), а не форма прошедшего (saw)."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the form is no longer the issue; the focus is on negative yes/no questions and the stylistic shading of how you ask.\n\nNegative yes/no questions — \"Don't you...?\", \"Isn't he...?\", \"Haven't they...?\" — are rarely neutral requests for information. They carry emotion: surprise (\"Don't you like pizza?\" implies the speaker expected you to), rhetorical admiration (\"Isn't this beautiful?\"), or mild irritation (\"Haven't you finished yet?\").\n\nAnswering them is a known trap. In English \"yes\" always confirms the positive action and \"no\" denies it, regardless of how the question is phrased. To \"Don't you want coffee?\" say \"Yes, I do.\" if you do want it and \"No, I don't.\" if you do not. You cannot use \"yes\" to agree with the negative the way some languages allow.\n\nIn formal writing, embed the question politely with \"whether\" or \"if\": \"May I ask whether you received my email?\", \"Would you kindly confirm if the package has arrived?\"\n\nThere is a register ladder for the same request: \"Do you want coffee?\" (neutral), \"Would you like some coffee?\" (polite, for guests), \"Fancy a coffee?\" (informal, British), \"Coffee?\" (maximally clipped, among close friends).\n\nRhetorical yes/no questions expect no answer — they assert: \"Who doesn't love chocolate?\" (everyone does), \"Isn't that obvious?\" The B2 caution: a negative question is not a neutral one. \"Don't you have a pen?\" can sound demanding or reproachful where \"Do you have a pen?\" is simply a request.",
         "ru": "На B2 фокус на **отрицательных вопросах для выражения удивления или ожидания ответа**, а также на стилистических оттенках.\n\n**Отрицательные yes/no questions:**\nЭто вопросы типа `Don't you…?`, `Isn't he…?`, `Haven't they…?` Их функция — не просто информация, а эмоциональная: удивление, укор, подтверждение ожидания.\n\n- `Don't you like pizza?` (Ты разве не любишь пиццу?) — говорящий удивлён.\n- `Isn't this beautiful?` (Разве это не прекрасно?) — риторическое восхищение.\n- `Haven't you finished yet?` (Ты ещё не закончил?) — лёгкое недовольство.\n\n**Ответ на отрицательный вопрос — ловушка для русскоговорящих:**\n- `Don't you want coffee?`\n- Если хочешь кофе: `Yes, I do.` (Да, хочу.)\n- Если не хочешь: `No, I don't.` (Нет, не хочу.)\n\nВ русском ответы устроены иначе: «Разве ты не хочешь кофе?» — «Да, не хочу» (подтверждение отрицания). В английском `Yes` всегда значит положительное действие.\n\n**Формальные yes/no questions в письме:**\n- `May I ask whether you received my email?` — деловая форма.\n- `Would you kindly confirm if the package has arrived?` — ещё более вежливо.\n\nЗдесь `whether` и `if` работают как встроенные вопросы.\n\n**Стилистический выбор:**\n- `Do you want coffee?` — нейтрально.\n- `Would you like some coffee?` — вежливо, для гостей.\n- `Fancy a coffee?` — разговорно, в британском английском.\n- `Coffee?` — максимально сжато, среди близких.\n\n**Риторические вопросы:**\nОни не ожидают ответа — говорящий делает утверждение в вопросительной форме.\n- `Who doesn't love chocolate?` (Кто не любит шоколад? — т.е. все любят.)\n- `Isn't that obvious?` (Разве это не очевидно?)\n\n**Частая ошибка на B2:** использовать отрицательный вопрос как нейтральный.\n- `Don't you have a pen?` звучит требовательно, не как `Do you have a pen?`\n- В вежливом контексте это может прозвучать как упрёк.\n\nОсваивая отрицательные вопросы, одновременно думай об эмоциональной окраске — они редко бывают нейтральными."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "negative aux (Don't/Isn't/Haven't) + subject + verb? = surprise / expectation; vs. plain Do/Is/Have = neutral",
+        "ru": "отрицательный вспомогательный (Don't/Isn't/Haven't) + подлежащее + глагол? = удивление / ожидание; обычный Do/Is/Have = нейтрально"
       },
       "examples": [
         {
           "en": "Don't you think it's too late?",
-          "ru": "Ты разве не думаешь, что уже поздно?"
+          "ru": "Ты разве не думаешь, что уже поздно?",
+          "note": {
+            "en": "surprise",
+            "ru": "удивление"
+          }
         },
         {
           "en": "Isn't she the new manager?",
@@ -157,44 +253,86 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "May I ask whether you've received our offer?",
-          "ru": "Могу я спросить, получили ли вы наше предложение?"
+          "ru": "Могу я спросить, получили ли вы наше предложение?",
+          "note": {
+            "en": "formal / embedded",
+            "ru": "формально / встроенный"
+          }
         },
         {
           "en": "Wouldn't it be easier to take a taxi?",
-          "ru": "Разве не было бы проще взять такси?"
+          "ru": "Разве не было бы проще взять такси?",
+          "note": {
+            "en": "rhetorical",
+            "ru": "риторический"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В ответе на Don't you…? — Yes значит «да, хочу», No значит «нет, не хочу». Ориентируйся на факт, не на отрицание."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Don't you want coffee? — Yes, I don't want it.",
+          "right": "Don't you want coffee? — No, I don't want it.",
+          "why": {
+            "en": "In English \"yes\" can never pair with a negative answer; use \"no\" to deny.",
+            "ru": "В английском yes не сочетается с отрицательным ответом; для отрицания нужно no."
+          }
+        },
+        {
+          "wrong": "Don't you have a pen? (as a neutral request)",
+          "right": "Do you have a pen?",
+          "why": {
+            "en": "The negative question sounds demanding or reproachful; a neutral request uses the positive form.",
+            "ru": "Отрицательный вопрос звучит требовательно или с упрёком; нейтральная просьба — в утвердительной форме."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 yes/no questions work at the rhetorical and pragmatic level — as instruments of argument, doubt, and provocation rather than requests for facts.\n\nIn spoken argument, the rhetorical yes/no question carries a hidden answer: \"Is it really worth the risk?\" and \"Can we afford to ignore this issue?\" both imply \"no\", while \"Don't we owe it to them?\" implies \"yes\". The form invites the listener to agree without being explicitly asked, working almost like a tag.\n\nTentative questions soften an intervention: \"Might I suggest an alternative?\" is a gentle bid for the floor; \"Could it be that we're missing something?\" frames a point with academic caution.\n\nIn formal speech and writing, embed the yes/no question and prefer \"whether\" to \"if\": \"The committee must determine whether the evidence is admissible.\" \"If\" reads as conversational and neutral; \"whether\" belongs to legal and scientific registers.\n\nPragmatically the same form can be sarcastic (\"Did you really think that would work?\"), incredulous (\"Are you serious?\"), or self-questioning (\"Is this the best approach, though?\"). Modal shading grades politeness: \"Could you possibly...?\" leaves room to refuse; \"Would you happen to know...?\" is casual and unobtrusive; \"Might you have a moment?\" is very formal.\n\nIn academic essays a rhetorical yes/no question is a strong device used sparingly — one or two per essay land as emphasis; more reads as declamation. In speech, echo answers add force: \"Did you finish the report?\" — \"Finish it? I barely started.\"",
         "ru": "На C1 вопросы «да/нет» работают на **риторическом и прагматическом уровне** — как инструмент аргументации, сомнения, провокации.\n\n**Риторические yes/no questions в устной аргументации:**\n- `Is it really worth the risk?` (Действительно ли это стоит риска?) — скрытое «нет».\n- `Can we afford to ignore this issue?` (Можем ли мы позволить себе игнорировать эту проблему?) — скрытое «нет».\n- `Don't we owe it to them?` (Разве мы им этим не обязаны?) — скрытое «да».\n\n**Tag-подобная функция:** риторический вопрос может звучать как приглашение собеседника согласиться без фактического запроса информации.\n\n**Вопросы-сомнение (tentative questions):**\n- `Might I suggest an alternative?` (Позвольте предложить альтернативу?) — мягкое вмешательство.\n- `Could it be that we're missing something?` (Может быть, мы что-то упускаем?) — академическая осторожность.\n\n**Встроенные yes/no в формальной речи:**\n- `The committee must determine whether the evidence is admissible.` (Комитет должен определить, допустимы ли доказательства.)\n- Обрати внимание: `whether`, не `if`, предпочтительнее в формальном контексте.\n- `If` используется в разговорном и нейтральном стиле; `whether` — в юридическом, научном.\n\n**Прагматика риторических:**\n- Саркастический: `Did you really think that would work?` (Ты правда думал, что это сработает?)\n- Удивление: `Are you serious?` / `Are you kidding me?`\n- Сомнение в собственной идее: `Is this the best approach, though?`\n\n**Тонкие модальные оттенки:**\n- `Could you possibly…?` — максимально вежливая просьба, допускающая отказ.\n- `Would you happen to know…?` — случайно, ненавязчиво.\n- `Might you have a moment?` — очень формально.\n\n**Нюанс для письменной речи C1:**\nВ академическом эссе риторический yes/no question — сильный приём, но использовать его нужно осторожно. Один-два на эссе — акцент. Больше — выглядит как декламация.\n\n**Ответы и эхо:**\n- `Did you finish the report?` — `Finish it? I barely started.` (эхо-ответ с переспросом).\n- Это разговорный приём для усиления: вместо прямого ответа — переосмысление вопроса."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "rhetorical: aux + subject + verb? (hidden yes/no);  formal embedded: ... whether + subject + verb;  tentative: Might/Could + subject + verb?",
+        "ru": "риторический: вспомог. + подлежащее + глагол? (скрытое да/нет);  формальный встроенный: ... whether + подлежащее + глагол;  осторожный: Might/Could + подлежащее + глагол?"
       },
       "examples": [
         {
           "en": "Is it really necessary to repeat the same argument?",
-          "ru": "Неужели действительно нужно повторять тот же аргумент?"
+          "ru": "Неужели действительно нужно повторять тот же аргумент?",
+          "note": {
+            "en": "rhetorical (hidden no)",
+            "ru": "риторический (скрытое нет)"
+          }
         },
         {
           "en": "Might I suggest we reconsider the proposal?",
-          "ru": "Могу ли я предложить пересмотреть это предложение?"
+          "ru": "Могу ли я предложить пересмотреть это предложение?",
+          "note": {
+            "en": "tentative",
+            "ru": "осторожно"
+          }
         },
         {
           "en": "The court must decide whether the defendant acted in self-defence.",
-          "ru": "Суд должен решить, действовал ли обвиняемый в целях самозащиты."
+          "ru": "Суд должен решить, действовал ли обвиняемый в целях самозащиты.",
+          "note": {
+            "en": "formal / legal (whether)",
+            "ru": "формально / юридически (whether)"
+          }
         },
         {
           "en": "Could you possibly spare a moment of your time?",
-          "ru": "Не могли бы вы уделить минуту вашего времени?"
+          "ru": "Не могли бы вы уделить минуту вашего времени?",
+          "note": {
+            "en": "polite request",
+            "ru": "вежливая просьба"
+          }
         },
         {
           "en": "Are we really prepared to accept these terms?",
@@ -204,34 +342,68 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В формальной речи whether звучит точнее if; риторический yes/no вопрос — скрытое утверждение."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The court must decide if the defendant acted in self-defence. (in a formal legal text)",
+          "right": "The court must decide whether the defendant acted in self-defence.",
+          "why": {
+            "en": "In formal and legal registers \"whether\" is preferred to \"if\" for embedded yes/no questions.",
+            "ru": "В формальном и юридическом регистре для встроенных yes/no вопросов whether предпочтительнее if."
+          }
+        },
+        {
+          "wrong": "Is it worth the risk? Can we afford it? Do we have time? Are we sure? (a chain in one essay paragraph)",
+          "right": "Is it really worth the risk? (one rhetorical question for emphasis)",
+          "why": {
+            "en": "Rhetorical yes/no questions lose force when stacked; in writing one or two are an accent, more is declamation.",
+            "ru": "Риторические yes/no вопросы теряют силу при нагромождении; в письме один-два — акцент, больше — декламация."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the yes/no question — the simplest piece of English syntax — becomes a matter of genre mastery, from courtroom cross-examination to literary dialogue and public oratory.\n\nIn legal cross-examination the leading yes/no question is a tool of control: \"Isn't it true that you were at the scene that night?\" is the standard formula, and \"Did you or did you not sign the document?\" forces the witness into a binary answer. Lawyers deliberately frame closed yes/no questions to steer testimony.\n\nIn political rhetoric the form mobilises: \"Can we, as a nation, afford to turn away?\" and \"Is this the kind of society we want to leave to our children?\" make the listener mentally answer \"no\" and adopt the speaker's stance.\n\nIn literature the yes/no question frames a character's inner speech — free indirect thought: \"Was he really going to do this? Could he live with the consequences?\"\n\nHigh-register inversions survive in fixed phrases: \"Dare we hope?\", \"Shall we proceed?\" (archaic-formal, in business or ceremony), \"Will that be all, sir?\" (service register).\n\nIntonation does fine work here: \"Really?\" is neutral on a level tone, doubtful on a rising tone, and sarcastic on a falling tone — distinctions a native ear catches instantly. Doubled forms intensify: \"Did he or did he not mention the deadline?\", \"Is it, or is it not, your intention to resign?\"\n\nThe subtlest skill is choosing between \"Do you think...?\" (neutral, gathering opinion) and \"Don't you think...?\" (an invitation to agree). At C2 the speaker exploits this difference on purpose. The inversion is still there, but it is almost invisible — the work happens at the level of pragmatics, not grammar.",
         "ru": "На C2 yes/no вопросы становятся элементом **жанрового мастерства**: от судебных перекрёстных допросов до литературных диалогов и публичных выступлений.\n\n**Судебная практика и перекрёстный допрос:**\n- `Isn't it true that you were at the scene that night?` (Разве не правда, что вы были на месте в ту ночь?) — стандартная формула cross-examination.\n- `Did you or did you not sign the document?` (Вы подписали документ или нет?) — форма загоняет свидетеля в бинарный ответ.\n- Юристы специально строят leading questions как закрытые yes/no, чтобы управлять показаниями.\n\n**Политическая риторика:**\n- `Can we, as a nation, afford to turn away?` (Можем ли мы, как нация, позволить себе отвернуться?) — Cicero-esque.\n- `Is this the kind of society we want to leave to our children?`\n- Работает как мобилизующий приём: слушатель ментально отвечает `No`.\n\n**Литературные функции:**\n- Внутренняя речь персонажа: `Was he really going to do this? Could he live with the consequences?` — свободный косвенный вопрос.\n- В переводах с русского таких конструкций становится больше — это маркер художественного стиля.\n\n**Высокорегистровые инверсии:**\n- `Dare we hope?` (Смеем ли мы надеяться?)\n- `Shall we proceed?` (Продолжим?) — архаично-формальное, в деловой или церковной речи.\n- `Will that be all, sir?` — сервисный регистр.\n\n**Интонационные тонкости:**\n- `Really?` с ровной интонацией — нейтральное переспрашивание.\n- `Really?` с восходящей — сомнение.\n- `Really?` с нисходящей — сарказм.\n- Носители C2 слышат разницу мгновенно; учащимся полезно тренировать слушание, не произношение.\n\n**Двойные и составные yes/no:**\n- `Did he or did he not mention the deadline?` — требование бинарного ответа.\n- `Is it, or is it not, your intention to resign?` — усиленная форма.\n\n**Тонкий стилистический навык:**\nВыбрать между `Do you think…?` и `Don't you think…?` — это выбор между нейтральным вопросом и приглашением согласиться. На C2 говорящий пользуется этой разницей целенаправленно, в зависимости от того, хочет ли он собрать мнения или склонить собеседника.\n\n**Итог:** yes/no вопрос — простейшая синтаксическая конструкция английского — на C2 становится инструментом высокой риторики. Инверсия есть, но она почти незаметна; работает на уровне прагматики, а не грамматики."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "leading: Isn't it true that + clause? / Did you or did you not + verb?;  oratorical: Can / Shall / Dare + subject + verb? — register and intonation carry the meaning",
+        "ru": "наводящий: Isn't it true that + придаточное? / Did you or did you not + глагол?;  ораторский: Can / Shall / Dare + подлежащее + глагол? — смысл несут регистр и интонация"
       },
       "examples": [
         {
           "en": "Isn't it true, sir, that you misled the committee?",
-          "ru": "Разве не правда, сэр, что вы ввели комитет в заблуждение?"
+          "ru": "Разве не правда, сэр, что вы ввели комитет в заблуждение?",
+          "note": {
+            "en": "cross-examination",
+            "ru": "перекрёстный допрос"
+          }
         },
         {
           "en": "Shall we turn to the next item on the agenda?",
-          "ru": "Перейдём ли мы к следующему пункту повестки?"
+          "ru": "Перейдём ли мы к следующему пункту повестки?",
+          "note": {
+            "en": "elevated / formal",
+            "ru": "высокий регистр"
+          }
         },
         {
           "en": "Did he or did he not approve the transfer?",
-          "ru": "Одобрил он перевод или нет?"
+          "ru": "Одобрил он перевод или нет?",
+          "note": {
+            "en": "doubled (binary)",
+            "ru": "удвоенный (бинарный)"
+          }
         },
         {
           "en": "Is this the legacy we wish to leave behind?",
-          "ru": "Таково ли наследие, которое мы хотим оставить?"
+          "ru": "Таково ли наследие, которое мы хотим оставить?",
+          "note": {
+            "en": "political rhetoric",
+            "ru": "политическая риторика"
+          }
         },
         {
           "en": "Dare one ask what the minister intends to do?",
@@ -241,9 +413,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "На C2 yes/no вопрос — риторическое оружие: в суде, в речи, в прозе. Грамматика тривиальна, прагматика решает всё."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "You were at the scene that night, weren't you? (as a forceful courtroom challenge)",
+          "right": "Isn't it true that you were at the scene that night?",
+          "why": {
+            "en": "The fronted negative yes/no question (\"Isn't it true that...?\") presses harder than a tag question in cross-examination.",
+            "ru": "Вынесенный вперёд отрицательный yes/no вопрос (Isn't it true that...?) давит сильнее, чем разделительный, в перекрёстном допросе."
+          }
+        },
+        {
+          "wrong": "Do you think we should resign? (when steering the listener to agree)",
+          "right": "Don't you think we should resign?",
+          "why": {
+            "en": "\"Do you think...?\" is neutral; to invite agreement choose the negative \"Don't you think...?\" deliberately.",
+            "ru": "Do you think...? нейтрально; чтобы пригласить согласиться, осознанно выбирают отрицательное Don't you think...?"
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "wh-questions",
+    "negative-questions",
+    "tag-questions",
+    "indirect-questions"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "past-simple",
+    "present-perfect-simple",
+    "can-could"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "statement (subject + auxiliary)",
+      "swap to front",
+      "yes/no question (auxiliary + subject)"
+    ]
+  }
 };

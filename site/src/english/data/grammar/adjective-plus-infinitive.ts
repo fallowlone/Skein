@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "adjective-plus-infinitive",
   "title": {
-    "en": "",
+    "en": "Adjective + Infinitive",
     "ru": "Adjective Plus Infinitive"
   },
   "cefr": "B1",
@@ -15,24 +15,33 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "verb-patterns",
+  "egp": [
+    "EGP:B1 can use a range of adjectives followed by 'to' + infinitive",
+    "EGP:B2 can use 'It + be + adjective + (for/of + object) + to' + infinitive",
+    "EGP:C1 can use adjectives with 'to' + infinitive in tough-movement and with perfect infinitives",
+    "EGP:C2 can use a wide range of formal and evaluative adjective + infinitive frames"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Many adjectives are followed by 'to' + infinitive, which explains the adjective or says what it relates to. The core pattern is be + adjective + to + infinitive: 'I'm happy to help you.' This is extremely common with emotion adjectives that describe a reaction: happy, glad, sad, pleased, delighted, sorry, surprised, shocked, disappointed, relieved, lucky, excited, eager, afraid, ready. So you say 'glad to see you', 'sorry to hear that', 'ready to go', 'surprised to learn the truth'. A second very frequent frame puts the meaning at the start with 'it': It + be + adjective + to + infinitive: 'It is important to be on time', 'It's difficult to learn Chinese', 'It's easy to make mistakes'. You can also add 'enough' or 'too' to grade the adjective: adjective + enough + to + infinitive means there is sufficient quality ('He's old enough to drive'), while too + adjective + to + infinitive means there is an excess that blocks the action ('The coffee is too hot to drink', 'She was too tired to work'). The biggest trap for learners is inserting 'for': the link to the infinitive is just 'to', never 'for to'.",
         "ru": "После некоторых прилагательных используется **to + инфинитив**, чтобы объяснить или уточнить значение прилагательного.\n\n**Общая конструкция:**\n`be + adjective + to + inf`\n\nЧастые примеры:\n- `happy to help` — рад помочь: `I'm happy to help you.`\n- `glad to see` — рад видеть: `Glad to see you again.`\n- `sorry to hear` — жаль слышать: `I'm sorry to hear that.`\n- `ready to go` — готов идти: `Are you ready to go?`\n- `afraid to ask` — боюсь спросить: `She was afraid to ask for help.`\n- `pleased to meet` — приятно познакомиться: `Pleased to meet you.`\n- `nice to see / meet`: `Nice to meet you.`\n- `excited to start` — взволнован перед началом: `I'm excited to start this project.`\n- `surprised to learn`: `I was surprised to learn the truth.`\n- `lucky to have`: `I'm lucky to have such friends.`\n- `eager to help`: `He's eager to help.`\n\n**Emotional reactions — adj + to + inf:**\nМногие прилагательные чувств используют эту модель: happy, glad, sad, pleased, delighted, thrilled, sorry, surprised, shocked, amazed, disappointed, relieved.\n\n**It is + adj + to + inf:**\nФормальная конструкция:\n- `It is important to be on time.`\n- `It's difficult to learn Chinese.`\n- `It was kind of you to help.`\n- `It's easy to make mistakes.`\n\nЭта структура — один из самых частых паттернов английского на B1-B2.\n\n**Adjective + enough + to + inf:**\n- `He's old enough to drive.` (Достаточно взрослый, чтобы водить.)\n- `The box is big enough to fit everything.`\n\n**Too + adjective + to + inf:**\n- `The coffee is too hot to drink.` (Слишком горячий, чтобы пить.)\n- `She was too tired to work.`\n\n**Частая ошибка русскоговорящего:** переводить буквально «для того чтобы». В английском — просто `to + inf`.\n- ✗ `I'm happy for to help.` (never `for to`.)\n- ✓ `I'm happy to help.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + be + adjective + to + infinitive  /  It + be + adjective + to + infinitive",
+        "ru": "подлежащее + be + прилагательное + to + инфинитив  /  It + be + прилагательное + to + инфинитив"
       },
       "examples": [
         {
           "en": "I'm glad to meet you.",
-          "ru": "Рад с тобой познакомиться."
+          "ru": "Рад с тобой познакомиться.",
+          "note": {
+            "en": "emotion adj",
+            "ru": "прилагательное-эмоция"
+          }
         },
         {
           "en": "She was surprised to hear the news.",
@@ -40,11 +49,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "It's important to be honest.",
-          "ru": "Важно быть честным."
+          "ru": "Важно быть честным.",
+          "note": {
+            "en": "It + adj",
+            "ru": "It + прилагательное"
+          }
         },
         {
           "en": "He's too young to understand.",
-          "ru": "Он слишком молод, чтобы понять."
+          "ru": "Он слишком молод, чтобы понять.",
+          "note": {
+            "en": "too + adj",
+            "ru": "too + прилагательное"
+          }
         },
         {
           "en": "I'm ready to start.",
@@ -54,22 +71,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Most emotion adjectives (happy, sad, sorry, surprised) берут to-inf: happy to help, sorry to hear."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'm happy for to help.",
+          "right": "I'm happy to help.",
+          "why": {
+            "en": "The adjective links to the infinitive with bare 'to' alone; English never uses 'for to'.",
+            "ru": "Прилагательное соединяется с инфинитивом только через 'to'; конструкции 'for to' в английском нет."
+          }
+        },
+        {
+          "wrong": "It's important being on time.",
+          "right": "It's important to be on time.",
+          "why": {
+            "en": "After an evaluating adjective in the 'It is + adjective' frame, use the to-infinitive, not the -ing form.",
+            "ru": "После оценочного прилагательного в конструкции 'It is + adjective' нужен to-инфинитив, а не форма -ing."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the list of adjectives widens and you must separate two competing patterns. Pattern one stays adjective + to + infinitive and now covers volition and probability adjectives: willing, reluctant, determined, entitled, inclined, likely, unlikely, supposed, bound, due ('She's likely to be late', 'He was reluctant to agree'). Pattern two is adjective + preposition + -ing, where the adjective fixes a particular preposition and the verb that follows must be a gerund: good at swimming, bad at cooking, interested in learning, tired of waiting, worried about failing, capable of lying, afraid of flying, keen on cycling, used to / accustomed to waking up early. Choosing 'to + infinitive' versus 'preposition + -ing' is a vocabulary fact about each adjective, so learn the pattern with the word. Some adjectives take both with a meaning shift: 'afraid to do' = not daring to act, 'afraid of doing' = fearing a consequence; 'sorry to do' = regret about the present action, 'sorry for/about doing' = regret about a past action. Finally, the impersonal 'It' frame splits by preposition: 'It + be + adjective + of + person + to' + infinitive judges the person's character ('It was kind of you to help', 'It was stupid of him to forget'), while 'It + be + adjective + for + person + to' + infinitive describes how hard or possible the action is for someone ('It's difficult for me to learn Chinese', 'It's easy for you to say').",
         "ru": "На B2 расширяй список и учись различать adj+to-inf vs adj+preposition+gerund.\n\n**Adj + to + inf (standard):**\n- `willing to listen, reluctant to agree, determined to win, entitled to vote, inclined to believe, likely to fail, unlikely to succeed, supposed to arrive, bound to happen, due to start`.\n\n**Adj + preposition + gerund** (другой тип):\n- `good at + -ing`: `She's good at swimming.`\n- `bad at + -ing`: `He's bad at cooking.`\n- `interested in + -ing`: `I'm interested in learning Spanish.`\n- `tired of + -ing`: `I'm tired of waiting.`\n- `worried about + -ing`: `She's worried about failing.`\n- `famous for + -ing`: `The city is famous for making chocolate.`\n- `capable of + -ing`: `He's capable of lying.`\n- `responsible for + -ing`: `Who is responsible for organizing this?`\n- `afraid of + -ing`: `I'm afraid of flying.`\n- `fond of + -ing`: `She's fond of reading.`\n- `keen on + -ing`: `He's keen on cycling.`\n- `used to + -ing`: `I'm used to waking up early.` (привык.)\n- `accustomed to + -ing`.\n\n**Adj + to-inf vs adj + of-gerund (same adjective, different pattern):**\n- `afraid to do` — не осмеливается действовать: `She was afraid to speak.`\n- `afraid of doing` — боится последствий: `She was afraid of making a mistake.`\n\n- `sorry to do` — сожалею, что делаю сейчас: `I'm sorry to bother you.`\n- `sorry for doing / about doing` — сожалею о прошлом действии: `I'm sorry for being late.`\n\n**It + be + adj + of + someone + to + inf:**\nКогда прилагательное характеризует человека:\n- `It was kind of you to help.` (Было мило с твоей стороны помочь.)\n- `It was stupid of him to forget.`\n- `It's generous of them to donate.`\n\n**It + be + adj + for + someone + to + inf:**\nКогда показываем трудность/возможность для кого-то:\n- `It's difficult for me to learn Chinese.`\n- `It's easy for you to say.`\n- `It's impossible for him to attend.`\n\nРазница: `of` — качество человека; `for` — опыт действия для человека."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "It + be + adjective + of + person + to + infinitive  /  It + be + adjective + for + person + to + infinitive  /  adjective + preposition + -ing",
+        "ru": "It + be + прилагательное + of + человек + to + инфинитив  /  It + be + прилагательное + for + человек + to + инфинитив  /  прилагательное + предлог + -ing"
       },
       "examples": [
         {
           "en": "She's good at solving puzzles.",
-          "ru": "Она хорошо решает головоломки."
+          "ru": "Она хорошо решает головоломки.",
+          "note": {
+            "en": "adj + prep + -ing",
+            "ru": "прилагательное + предлог + -ing"
+          }
         },
         {
           "en": "I'm tired of waiting for him.",
@@ -77,11 +116,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "It was kind of you to call.",
-          "ru": "Было мило с твоей стороны позвонить."
+          "ru": "Было мило с твоей стороны позвонить.",
+          "note": {
+            "en": "of (character)",
+            "ru": "of (характер)"
+          }
         },
         {
           "en": "It's hard for beginners to understand this.",
-          "ru": "Начинающим трудно это понять."
+          "ru": "Начинающим трудно это понять.",
+          "note": {
+            "en": "for (difficulty)",
+            "ru": "for (трудность)"
+          }
         },
         {
           "en": "He's likely to be late.",
@@ -91,22 +138,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Adj + of + person + to + inf = характеристика человека (kind of you to help). Adj + for + person + to + inf = сложность для человека (hard for me to understand)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She's good at to swim.",
+          "right": "She's good at swimming.",
+          "why": {
+            "en": "When an adjective fixes a preposition (good at, interested in, tired of), the following verb must be a gerund, not an infinitive.",
+            "ru": "Когда прилагательное требует предлога (good at, interested in, tired of), следующий глагол ставится в форме -ing, а не в инфинитиве."
+          }
+        },
+        {
+          "wrong": "It was kind from you to help.",
+          "right": "It was kind of you to help.",
+          "why": {
+            "en": "Character-judging adjectives take 'of + person', not 'from'; use 'for + person' only for difficulty/possibility.",
+            "ru": "Прилагательные, характеризующие человека, берут 'of + человек', а не 'from'; 'for + человек' используется только для трудности/возможности."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you control the subtler structures. Tough-movement lets the logical object of the infinitive become the grammatical subject of the adjective, and the infinitive stays active even though the subject is the thing acted on: 'It is hard to solve the problem' = 'The problem is hard to solve' (not 'to be solved'). This works with easy, difficult, hard, tough, simple, impossible, dangerous, painful, pleasant, interesting: 'The instructions are easy to follow', 'She was easy to please', 'The book is hard to put down'. Perfect infinitives after an adjective signal that the action is already complete: 'I'm happy to have met you', 'She was relieved to have finished'. A large group of adjectives takes 'to' + infinitive to express prediction or probability, syntactically like a quasi-modal: likely, unlikely, bound, sure, certain ('He's likely to win', 'It's bound to rain'). Another group expresses obligation or arrangement: supposed, meant, due, expected, destined, set ('You're supposed to be here at 5', 'The train is due to arrive at 3'). Note 'about to' + infinitive for imminence ('The show is about to start'). It helps to sort these adjectives into semantic groups: emotion, probability, obligation, ability/difficulty (tough-movement), character (of + person), and experience (for + person).",
         "ru": "На C1 углубляй тонкости.\n\n**Passive infinitives after adjectives:**\n- `easy to understand` / `easy to be understood` — первая форма естественнее (object is fronted).\n- `The instructions are easy to follow.` (not `to be followed`.)\n- `The problem is hard to solve.` (not `to be solved`.)\n\nПаттерн tough-movement: `It is hard to solve the problem.` = `The problem is hard to solve.` (object становится subject.) Такая структура работает с `easy, difficult, hard, tough, simple, impossible, dangerous, painful, pleasant, interesting`.\n\n**Perfect infinitives after adjectives:**\n- `I'm happy to have met you.` (подчёркивает that meeting already happened.)\n- `She was relieved to have finished.`\n- `It's good to have known you.`\n\n**Adjective + to-inf с object:**\n- `She was easy to please.` (= It was easy to please her.)\n- `Her decision was difficult to accept.`\n- `The book is hard to put down.`\n\n**Likely / unlikely / bound / sure / certain + to-inf:**\n- `He's likely to win.` (вероятно, выиграет.)\n- `She's sure to pass.` (обязательно сдаст.)\n- `It's bound to rain.` (обязательно будет дождь.)\n- `The meeting is certain to be postponed.`\n\nЭти adjectives с to-inf выражают prediction / probability.\n\n**Supposed / meant / destined / due / set + to-inf:**\n- `You're supposed to be here at 5.` (должен быть — обязательство.)\n- `This was meant to be a surprise.` (предполагалось быть сюрпризом.)\n- `They were destined to meet.`\n- `The train is due to arrive at 3.`\n- `The ceremony is set to begin.`\n\n**About + to + inf:**\n- `The show is about to start.` (вот-вот начнётся.)\n- `I was about to call you.`\n\n**Adjective + preposition + noun clause:**\n- `aware of + (the fact) that...`\n- `sure of + (the fact) that...`\n- Эти prepositional adjectives могут брать that-clause через `the fact`: `aware of the fact that he lied`.\n\n**Semantic groups:**\n1. Emotion: happy, sad, sorry, pleased, surprised + to-inf.\n2. Probability: likely, unlikely, bound, sure, certain + to-inf.\n3. Obligation: supposed, meant, due, expected + to-inf.\n4. Ability / difficulty: easy, hard, difficult + to-inf (tough-movement).\n5. Character: kind, rude, stupid, generous + of + person + to-inf.\n6. Experience: difficult, easy, interesting + for + person + to-inf."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "thing + be + adjective + to + infinitive (active, tough-movement)  /  subject + be + adjective + to have + past participle",
+        "ru": "предмет + be + прилагательное + to + инфинитив (актив, tough-movement)  /  подлежащее + be + прилагательное + to have + причастие прошедшего времени"
       },
       "examples": [
         {
           "en": "She's certain to win the election.",
-          "ru": "Она обязательно выиграет выборы."
+          "ru": "Она обязательно выиграет выборы.",
+          "note": {
+            "en": "probability adj",
+            "ru": "прилагательное вероятности"
+          }
         },
         {
           "en": "The book is worth reading twice.",
@@ -114,60 +183,146 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He was about to leave when the phone rang.",
-          "ru": "Он собирался уйти, когда зазвонил телефон."
+          "ru": "Он собирался уйти, когда зазвонил телефон.",
+          "note": {
+            "en": "about to",
+            "ru": "about to"
+          }
         },
         {
           "en": "I'm pleased to have met your family.",
-          "ru": "Я рад, что познакомился с твоей семьёй."
+          "ru": "Я рад, что познакомился с твоей семьёй.",
+          "note": {
+            "en": "perfect inf",
+            "ru": "перфектный инфинитив"
+          }
         },
         {
           "en": "The deadline is impossible to meet without more staff.",
-          "ru": "Срок невозможно соблюсти без дополнительного персонала."
+          "ru": "Срок невозможно соблюсти без дополнительного персонала.",
+          "note": {
+            "en": "tough-movement",
+            "ru": "tough-movement"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Tough-movement: It's hard to solve this problem = This problem is hard to solve. Object subject'ом становится, to-inf остаётся в active."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The problem is hard to be solved.",
+          "right": "The problem is hard to solve.",
+          "why": {
+            "en": "In tough-movement the infinitive stays active even though the subject is what is acted on; a passive infinitive is wrong here.",
+            "ru": "В конструкции tough-movement инфинитив остаётся в активе, хотя подлежащее — это объект действия; пассивный инфинитив здесь ошибочен."
+          }
+        },
+        {
+          "wrong": "I'm happy to meet you yesterday.",
+          "right": "I'm happy to have met you yesterday.",
+          "why": {
+            "en": "To mark an action as already completed before now, use the perfect infinitive 'to have + past participle', not the simple infinitive.",
+            "ru": "Чтобы показать, что действие уже завершилось, используйте перфектный инфинитив 'to have + причастие', а не простой инфинитив."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the adjective + infinitive frame becomes a precise instrument of register and evaluation. Formal and literary adjectives carry exact shades: loath to (unwilling, formal), apt to / prone to (tending to), disposed to (inclined, formal), at liberty to (permitted to), hard-pressed to (struggling to) — 'I'm not at liberty to discuss that', 'I'd be hard-pressed to name a better example'. Literary front-position patterns use an ordinal or 'only' plus the infinitive as a postmodifier: 'The first to arrive was...', 'The last to leave...', 'The only one willing to help...'. Counterfactual or polite frames combine 'would' with a perfect infinitive: 'I would be happy to have helped', 'She would be proud to have served'. Be alert to ambiguity that only context resolves: 'She's hard to please' (object construction) versus 'She's hard at work' (a different sense of 'hard'); 'too happy to help' can mean 'too glad' or 'so glad that...'. Extraposition with 'It + be + adjective + for + X + to' + infinitive supports long, information-dense academic sentences. Evaluative frames — 'It is fair / reasonable / prudent / wise / foolish to + infinitive' — encode the writer's judgement, as in 'It is reasonable to conclude that...'. Across the register ladder the same idea climbs from 'I'm happy to help' to 'I'd be glad to assist' to 'I am at your disposal'.",
         "ru": "На C2 используй такие конструкции для точного регистра.\n\n**Rare/formal adjectives + to-inf:**\n- `loath to + inf` — не желать: `She was loath to accept the offer.`\n- `apt to + inf` — склонен: `He's apt to forget.`\n- `prone to + inf` — подвержен: `She's prone to catch colds.`\n- `disposed to + inf` — склонен: `I'm not disposed to help.` (formal.)\n- `at liberty to + inf` — вправе: `I'm not at liberty to discuss that.`\n- `hard-pressed to + inf` — с трудом: `I'd be hard-pressed to name a better example.`\n\n**Literary patterns:**\n- `The first to arrive was...` (subject with modifier.)\n- `The last to leave was...`\n- `The only one (who was) willing to help...`\n\n**Subjunctive-like perfect infinitives:**\n- `I would be happy to have helped.` (готов бы был помочь.)\n- `She would be proud to have served.` (горда бы была, что послужила.)\n\n**Ambiguity resolution:**\n- `She's hard to please.` (ей трудно угодить — object construction.)\n- `She's hard at work.` (усердно работает — different meaning of hard.)\n- Контекст и collocation разрешают.\n\n**Stylistic density with extraposed infinitives:**\n- Simple: `It's important to study.`\n- Dense: `It's important for policymakers to study the implications carefully before enacting legislation.`\n\nExtraposition (`it + be + adj + for + X + to + inf`) позволяет строить длинные, информативные высказывания.\n\n**Advanced collocations:**\n- `fit to be tied` — в ярости (idiom).\n- `slow to catch on` — медленно соображать.\n- `quick on the uptake` — быстро соображать.\n- `loath to admit it` / `loath to say it`.\n\n**Evaluative frames:**\n- `It is fair / reasonable / prudent / wise / foolish / courageous to + inf.`\n- В академическом стиле такие frames выражают оценку: `It is reasonable to conclude that...`\n\n**Critical linguistic nuance:**\n- `happy to help` (immediate offer.)\n- `happy enough to help` (willing but not eager.)\n- `too happy to help` — ambiguous: too glad OR so glad that...\n- Disambiguate with context or reformulation.\n\n**Register ladder for «я могу помочь»:**\n- Casual: `I'm down to help.`\n- Neutral: `I'm happy to help.`\n- Formal: `I'd be glad / pleased to assist.`\n- Very formal: `I am at your disposal.`\n- Bureaucratic: `I am available to provide assistance.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + be + formal adjective + to + infinitive  /  ordinal/'only' + noun + to + infinitive  /  would + be + adjective + to have + past participle",
+        "ru": "подлежащее + be + формальное прилагательное + to + инфинитив  /  порядковое/'only' + существительное + to + инфинитив  /  would + be + прилагательное + to have + причастие прошедшего времени"
       },
       "examples": [
         {
           "en": "He was loath to concede defeat.",
-          "ru": "Он не хотел признавать поражение."
+          "ru": "Он не хотел признавать поражение.",
+          "note": {
+            "en": "loath to",
+            "ru": "loath to"
+          }
         },
         {
           "en": "She's the first to admit her mistakes.",
-          "ru": "Она первая признаёт свои ошибки."
+          "ru": "Она первая признаёт свои ошибки.",
+          "note": {
+            "en": "the first to",
+            "ru": "the first to"
+          }
         },
         {
           "en": "The CEO is not at liberty to disclose financial details.",
-          "ru": "Генеральный директор не вправе раскрывать финансовые детали."
+          "ru": "Генеральный директор не вправе раскрывать финансовые детали.",
+          "note": {
+            "en": "at liberty to",
+            "ru": "at liberty to"
+          }
         },
         {
           "en": "I'd be hard-pressed to find a better candidate.",
-          "ru": "Мне было бы трудно найти лучшего кандидата."
+          "ru": "Мне было бы трудно найти лучшего кандидата.",
+          "note": {
+            "en": "hard-pressed to",
+            "ru": "hard-pressed to"
+          }
         },
         {
           "en": "She was proud to have represented her country.",
-          "ru": "Она была горда, что представляла свою страну."
+          "ru": "Она была горда, что представляла свою страну.",
+          "note": {
+            "en": "perfect inf",
+            "ru": "перфектный инфинитив"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Loath to / apt to / prone to — formal alternatives to 'unwilling to / tend to' для literary или academic stilistic elevation."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She was loath accepting the offer.",
+          "right": "She was loath to accept the offer.",
+          "why": {
+            "en": "Formal adjectives like loath, apt, prone, disposed and at liberty take 'to' + infinitive, never a gerund.",
+            "ru": "Формальные прилагательные loath, apt, prone, disposed, at liberty берут 'to' + инфинитив, а не герундий."
+          }
+        },
+        {
+          "wrong": "He was the first arriving.",
+          "right": "He was the first to arrive.",
+          "why": {
+            "en": "An ordinal or superlative as a postmodifier is followed by 'to' + infinitive, not the -ing form.",
+            "ru": "После порядкового числительного или превосходной степени в роли определения ставится 'to' + инфинитив, а не форма -ing."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "verb-plus-infinitive",
+    "prepositions-after-adjectives",
+    "gerund-as-noun",
+    "it-as-subject"
+  ],
+  "crossTopic": [
+    "it-as-subject",
+    "purpose-clauses",
+    "intensifiers",
+    "participle-adjectives"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "subject",
+      "be",
+      "adjective",
+      "to-infinitive"
+    ]
+  }
 };

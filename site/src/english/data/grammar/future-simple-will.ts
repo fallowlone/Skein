@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "future-simple-will",
   "title": {
-    "en": "",
+    "en": "Future Simple: will",
     "ru": "Future Simple Will"
   },
   "cefr": "A2",
@@ -16,56 +16,96 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:can use 'will' + base form to predict and to make on-the-spot decisions, promises and offers"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Use the Future Simple with **will** to talk about the future. The form is the same for every subject: **will + base verb** (no -s, no -ed): *I will work, She will come, They will help*. In speech we almost always contract it: *I'll, you'll, she'll, we'll, they'll, it'll*.\n\nThe negative is **won't** (= will not): *I won't go. She won't come.* For questions, put **will** first: *Will you help me? Will it rain?*\n\nUse will for three everyday jobs: **predictions** about the future (*It will rain tomorrow*), **instant decisions** made at the moment of speaking (*OK, I'll help you*), and **promises or offers** (*I'll call you later. I'll carry your bag*). Common time markers are *tomorrow, next week, in an hour, soon, one day*.",
         "ru": "**Future Simple с `will`** — время для **будущего**. Используем, когда говорим о том, что случится потом.\n\n**Форма:** `will` + базовая форма глагола\n\n- `I will work` (часто `I'll work`)\n- `You will go` (часто `you'll go`)\n- `She will come` (часто `she'll come`)\n- `We will help` (часто `we'll help`)\n\n`will` **одинаковый** для всех лиц. После него — глагол **без -s**, **без -ed**.\n\n**Отрицание:** `won't` = `will not`\n- `I won't go.` (Я не пойду.)\n- `She won't come.` (Она не придёт.)\n\n**Вопрос:** `Will` в начало\n- `Will you help me?` (Ты мне поможешь?)\n- `Will it rain?` (Пойдёт ли дождь?)\n\n**Когда использовать `will`:**\n\n1. **Предсказания о будущем:**\n   - `It will rain tomorrow.` (Завтра будет дождь.)\n   - `She will be happy.` (Она будет счастлива.)\n\n2. **Мгновенные решения (в момент речи):**\n   - `OK, I'll help you.` (Хорошо, я тебе помогу — решение сейчас.)\n   - `I'll have the pasta, please.` (Я возьму пасту, пожалуйста.)\n\n3. **Обещания и предложения:**\n   - `I'll call you later.` (Я тебе позвоню позже.)\n   - `I'll carry your bag.` (Я понесу твою сумку.)\n\n**Time markers:**\n- `tomorrow` (завтра)\n- `next week/month/year`\n- `in an hour` (через час)\n- `soon` (скоро)\n- `one day` (однажды)\n\n**Типичные ошибки:**\n- ❌ `I will to go` → ✅ `I will go`\n- ❌ `She will goes` → ✅ `She will go`\n- ❌ `Will you going?` → ✅ `Will you go?`\n\n**`Will` часто сокращается:** `I'll`, `you'll`, `he'll`, `she'll`, `we'll`, `they'll`, `it'll`. В разговорной речи почти всегда используют сокращённые формы."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "will + base verb (same for all subjects)",
+        "ru": "will + начальная форма глагола (одинаково для всех лиц)"
       },
       "examples": [
         {
           "en": "I'll see you tomorrow.",
-          "ru": "Увидимся завтра."
+          "ru": "Увидимся завтра.",
+          "note": {
+            "en": "promise",
+            "ru": "обещание"
+          }
         },
         {
           "en": "It will be cold tonight.",
-          "ru": "Вечером будет холодно."
+          "ru": "Вечером будет холодно.",
+          "note": {
+            "en": "prediction",
+            "ru": "предсказание"
+          }
         },
         {
           "en": "She won't be at the meeting.",
-          "ru": "Она не будет на собрании."
+          "ru": "Она не будет на собрании.",
+          "note": {
+            "en": "negative",
+            "ru": "отрицание"
+          }
         },
         {
           "en": "Will you help me with this?",
-          "ru": "Поможешь мне с этим?"
+          "ru": "Поможешь мне с этим?",
+          "note": {
+            "en": "request",
+            "ru": "просьба"
+          }
         },
         {
           "en": "Don't worry — I'll pay.",
-          "ru": "Не волнуйся — я заплачу."
+          "ru": "Не волнуйся — я заплачу.",
+          "note": {
+            "en": "instant decision",
+            "ru": "мгновенное решение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После will глагол всегда в базовой форме: I will go, не I will to go."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I will to go.",
+          "right": "I will go.",
+          "why": {
+            "en": "Will is followed by the bare base form, never to + verb.",
+            "ru": "После will идёт начальная форма без to."
+          }
+        },
+        {
+          "wrong": "She will goes.",
+          "right": "She will go.",
+          "why": {
+            "en": "No -s after will; the verb stays in its base form for every subject.",
+            "ru": "После will глагол без -s, форма одинакова для всех лиц."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, choose deliberately between **will**, **be going to** and the **Present Continuous** for the future, because each carries a different meaning.\n\nUse **will** for predictions you have no present evidence for (*I think she'll like it*), for **instant decisions** (*The phone's ringing — I'll get it*), and for **promises, offers and requests** (*I'll help you. Shall I carry that? Will you close the door?*). Use **be going to** for decisions already made — intentions and plans (*I'm going to study medicine*) — and for predictions based on present evidence (*Look at those clouds — it's going to rain*). Use the **Present Continuous** for fixed personal arrangements with a time or place (*I'm meeting John at 3*).\n\nKey rule: after the future conjunctions **when, if, as soon as, until, before, after**, use the Present Simple, not will: *I'll call you when I arrive* (not *when I will arrive*).",
         "ru": "На B1 важно различать `will`, `be going to` и **Present Continuous** для будущего — они выражают **разные смыслы**.\n\n**`will` — когда использовать:**\n\n1. **Предсказания без конкретных доказательств:**\n   - `I think she will like the gift.` (Думаю, ей понравится.)\n   - `England will probably win.` (Англия, наверное, выиграет.)\n\n2. **Мгновенные решения:**\n   - `The phone is ringing. I'll answer it.` (Я отвечу — решение в момент речи.)\n\n3. **Обещания, предложения, просьбы:**\n   - `I'll help you tomorrow.` (Обещание.)\n   - `I'll get you a coffee.` (Предложение.)\n   - `Will you close the door, please?` (Просьба.)\n\n4. **Отказ — `won't`:**\n   - `The door won't open.` (Дверь не открывается.)\n   - `She won't listen to me.` (Она не хочет меня слушать.)\n\n**`be going to` — когда использовать:**\n\n1. **Намерения и планы (уже решённые):**\n   - `I'm going to study medicine.` (Я собираюсь изучать медицину.)\n\n2. **Предсказания с доказательствами сейчас:**\n   - `Look at those clouds. It's going to rain.` (Смотри на эти тучи — пойдёт дождь.)\n\n**Present Continuous — когда использовать:**\n\nДля **личных договорённостей** с конкретным временем/местом:\n- `I'm meeting John at 3.` (У меня встреча с Джоном в 3 — договорились.)\n- `We're flying to Rome on Friday.` (Билеты куплены.)\n\n**Сравнение:**\n- `I'll cook dinner.` (Сейчас решил, может спонтанно.)\n- `I'm going to cook dinner.` (Уже решил раньше, план.)\n- `I'm cooking dinner at 7.` (Договорённость с кем-то, время зафиксировано.)\n\n**`will` с союзами будущего:**\nПосле `when`, `if`, `as soon as`, `until`, `before`, `after` — используем **Present Simple**, не `will`:\n- ✅ `I'll call you when I arrive.` (не `when I will arrive`)\n- ✅ `If it rains, we'll stay home.` (не `if it will rain`)\n\n**`Shall` (устаревшее):**\n- `Shall I help you?` (Может, я помогу? — вежливое предложение, особенно в британском.)\n- `Shall we go?` (Пойдём?)\n\nВ современном английском `shall` редко. Для `I/we` в обычной речи используй `will`.\n\n**Типичные ошибки:**\n- `will` в if-clause: ❌ `If I will have time` → ✅ `If I have time`.\n- Путаница `will` и `be going to` для планов.\n- Использование `will` для уже запланированных встреч: лучше Present Continuous."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "will + base verb / won't + base verb; after when, if, as soon as: Present Simple (no will)",
+        "ru": "will + начальная форма / won't + начальная форма; после when, if, as soon as — Present Simple (без will)"
       },
       "examples": [
         {
@@ -74,7 +114,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I'll call you as soon as I get home.",
-          "ru": "Я позвоню, как только приду домой."
+          "ru": "Я позвоню, как только приду домой.",
+          "note": {
+            "en": "future time clause",
+            "ru": "придаточное времени"
+          }
         },
         {
           "en": "The kids won't eat their vegetables.",
@@ -82,44 +126,86 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Shall we have coffee?",
-          "ru": "Может, выпьем кофе?"
+          "ru": "Может, выпьем кофе?",
+          "note": {
+            "en": "shall (offer)",
+            "ru": "shall (предложение)"
+          }
         },
         {
           "en": "If I see him, I'll tell him.",
-          "ru": "Если я его увижу, я ему скажу."
+          "ru": "Если я его увижу, я ему скажу.",
+          "note": {
+            "en": "first conditional",
+            "ru": "первый тип условия"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После when, if, as soon as в будущем — Present Simple, не will."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If I will have time, I'll call.",
+          "right": "If I have time, I'll call.",
+          "why": {
+            "en": "Use the Present Simple after if for a future condition; will goes only in the main clause.",
+            "ru": "После if о будущем — Present Simple; will остаётся в главной части."
+          }
+        },
+        {
+          "wrong": "I'll meet John at 3 — it's arranged.",
+          "right": "I'm meeting John at 3.",
+          "why": {
+            "en": "For a fixed personal arrangement use the Present Continuous, not will.",
+            "ru": "Для зафиксированной договорённости — Present Continuous, а не will."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, will takes on subtler functions beyond plain future time. Use it for **characteristic or habitual behaviour**, often with irritation: *He will keep interrupting me! Boys will be boys.* Use **won't** for **refusal**, including inanimate objects: *The door won't open. My car won't start. She won't talk to me* — this describes present stubbornness, not future time.\n\nKeep distinguishing **arrangements** (Present Continuous: *I'm having dinner with Sarah on Friday*) from **predictions and spontaneous decisions** (will). Will combines with probability adverbs in the order subject + will + adverb + verb: *She'll probably come. It'll definitely rain.*\n\nFor predictions, will rests on opinion or knowledge (*I think he'll like it*), while be going to rests on visible present signs (*Watch out — you're going to fall!*). The strength of your commitment is graded: *I'll be there* (firm) → *I'll try to be there* → *I'll probably be there* → *I might be there*. In reported speech and the future-in-the-past, will shifts to **would**: *She said she would come.*",
         "ru": "На B2 `will` приобретает тонкие функции: **characteristic behavior**, **refusal**, **prediction vs arrangement**.\n\n**1. `will` для характерного поведения:**\n- `Boys will be boys.` (Мальчишки есть мальчишки.)\n- `He will keep interrupting me!` (Он всё время меня перебивает! — раздражение.)\n- `She will tell everyone.` (Она обязательно всем расскажет — характерное поведение.)\n\nАкцент на `will` (в устной речи) часто показывает раздражение или констатацию типичного.\n\n**2. `won't` для отказа:**\n- `The door won't open.` (Дверь не открывается — «отказывается».)\n- `My computer won't start.` (Компьютер не запускается.)\n- `She won't talk to me.` (Она не хочет со мной говорить — не буквально «не будет», а «отказывается».)\n\nЭто не предсказание, а констатация упорства или отказа в настоящем.\n\n**3. Present Continuous vs `will` для будущего:**\n- `I'm meeting him tomorrow.` (Личная договорённость — знаю время и место.)\n- `I'll meet him tomorrow.` (Неточное — может, предсказание или неопределённое намерение.)\n\nДля уже определённых встреч — Continuous. `Will` предпочитай для спонтанных решений и предсказаний.\n\n**4. `will` с вероятностными наречиями:**\n- `She'll probably come.` (Вероятно, придёт.)\n- `It'll definitely rain.` (Точно пойдёт дождь.)\n- `He might not come.` (Может не прийти.)\n\n`will` сочетается с `probably`, `definitely`, `certainly`, `perhaps`, `maybe`, `surely`. Порядок: subject + `will probably` + verb.\n\n**5. Будущее в прошлом — `would`:**\nВ reported speech и нарративе прошлого `will` → `would`:\n- `She said she would come.` (От `I will come`.)\n- `He believed he would succeed.` (Думал, что добьётся успеха.)\n\n**6. Предсказания с `will` vs `be going to` — nuance:**\n- `will` — предсказание, основанное на мнении/знании: `I think he'll like it.`\n- `be going to` — предсказание, основанное на видимых сейчас признаках: `Watch out! You're going to fall!`\n\n**7. Commitment и hedging:**\n- `I'll be there.` (Твёрдое обещание.)\n- `I'll try to be there.` (Смягчённо.)\n- `I'll probably be there.` (Допускаю возможность отсутствия.)\n- `I might be there.` (Неопределённо.)\n\nВыбор маркирует степень обязательства.\n\n**8. Formal `shall`:**\n- `Shall I open the window?` (Предложение.)\n- `Shall we dance?` (Приглашение.)\n- `We shall overcome.` (Торжественно, решительно — историческое.)\n- `The landlord shall provide heating.` (Легальное обязательство в контракте.)\n\nВ формальном британском `shall` с `I/we` встречается. В AmE почти исчез.\n\n**9. Типичные ошибки B2:**\n- `will` в if/when-clauses для будущего.\n- Путаница `will` и Present Continuous для личных договорённостей.\n- Использование `will` без учёта смысла: не каждое будущее — `will`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "will + base (prediction / habit); won't + base (refusal); subject + will + probably/definitely + verb",
+        "ru": "will + начальная форма (предсказание / характерное поведение); won't (отказ); subject + will + probably/definitely + глагол"
       },
       "examples": [
         {
           "en": "I'll probably leave early tomorrow.",
-          "ru": "Я, наверное, завтра уйду пораньше."
+          "ru": "Я, наверное, завтра уйду пораньше.",
+          "note": {
+            "en": "+ probability adverb",
+            "ru": "+ наречие вероятности"
+          }
         },
         {
           "en": "My car won't start — the battery's dead.",
-          "ru": "Машина не заводится — аккумулятор сел."
+          "ru": "Машина не заводится — аккумулятор сел.",
+          "note": {
+            "en": "refusal (object)",
+            "ru": "отказ (предмет)"
+          }
         },
         {
           "en": "I'm having dinner with Sarah on Friday.",
-          "ru": "В пятницу я ужинаю с Сарой."
+          "ru": "В пятницу я ужинаю с Сарой.",
+          "note": {
+            "en": "arrangement",
+            "ru": "договорённость"
+          }
         },
         {
           "en": "He will keep borrowing money and never pay it back.",
-          "ru": "Он вечно берёт в долг и никогда не возвращает."
+          "ru": "Он вечно берёт в долг и никогда не возвращает.",
+          "note": {
+            "en": "characteristic habit",
+            "ru": "характерное поведение"
+          }
         },
         {
           "en": "Shall we take a break?",
@@ -129,83 +215,194 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "won't часто значит «отказывается», не «не будет»: the door won't open = дверь не открывается."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The door doesn't want to open.",
+          "right": "The door won't open.",
+          "why": {
+            "en": "English uses won't to express a thing's refusal to work, not 'doesn't want to'.",
+            "ru": "Отказ предмета работать передаётся через won't, не через 'не хочет'."
+          }
+        },
+        {
+          "wrong": "She will probably comes.",
+          "right": "She'll probably come.",
+          "why": {
+            "en": "The adverb sits between will and the base verb, which stays uninflected.",
+            "ru": "Наречие стоит между will и начальной формой глагола без окончания."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, will is a precise tool for marking stance — certainty, commitment, habit and character — and frequently has nothing to do with future time. **Deductive (epistemic) will** expresses a confident present inference: *That'll be the postman. They'll be at the pub by now* (= 'they must be'). **Habitual/characteristic will** generalises about typical behaviour: *She'll spend hours in the garden. He will always find fault.*\n\nIn formal British English, **shall** survives with I/we for offers and resolve (*Shall I put you through? We shall not tolerate this*), and in contracts shall with any subject signals obligation: *The landlord shall provide heating.* Commitment is finely graded across will / be going to / Present Continuous / might / shall, and you select the level consciously.\n\nNote that **would** is the hedging and backshifted counterpart of will (*I'd say that's broadly correct; she said she would come*). Don't overuse will where a present arrangement needs the Present Continuous, and remember will can be a present deduction, not only a future.",
         "ru": "На C1 `will` становится инструментом точного выражения стэнсов: уверенности, обязательств, привычки, характера.\n\n**1. Formal shall в UK-контексте:**\n- `We shall not tolerate such behaviour.` (Торжественно, решительно.)\n- `Shall I put you through?` (Формальный колл-центр.)\n- `The party of the first part shall...` (Легальные документы.)\n\nВ формальной британской речи `shall` с `I/we` сохраняется; `shall` с `he/she/they/you` в контрактах означает обязательство.\n\n**2. `Will` для habitual/characteristic behavior:**\n- `She'll spend hours in the garden.` (Она проводит часы в саду — характерно для неё.)\n- `He will always find fault.` (Он вечно найдёт, к чему придраться.)\n- `Students will procrastinate.` (Студенты склонны откладывать.)\n\nЭто не будущее, а обобщение.\n\n**3. `Will` для deduction / assumption:**\n- `That'll be the postman.` (Наверное, это почтальон — вывод.)\n- `They'll be at the pub by now.` (Они, должно быть, уже в пабе.)\n\nЭто не будущее, а настоящее предположение. В русском — «должно быть», «наверное».\n\n**4. Hedging с `will`:**\n- `I'd say that's probably correct, but I'd need to check.` (Смягчено через `I'd`.)\n- `It would appear that...` (Казалось бы...)\n- `That would be approximately the case.` (Это, пожалуй, близко к истине.)\n\nХотя это `would`, он по формуле — прошлое `will`, и используется для мягкого утверждения.\n\n**5. Nuance between commitment levels:**\n- `I will do it.` (Твёрдое.)\n- `I'll do it.` (Нормальное обещание.)\n- `I am going to do it.` (Намерение, план.)\n- `I am doing it.` (Процесс или договорённость.)\n- `I might do it.` (Возможно.)\n- `I'll try to do it.` (Попытка, смягчение.)\n- `I shall do it.` (Формально, торжественно — реже в современной речи.)\n\nНа C1 ты различаешь все эти оттенки.\n\n**6. `Will` в conditional III и mixed conditionals:**\n- `If I won the lottery, I would travel.` (Second conditional — гипотетическое настоящее/будущее.)\n- `If I had won, I would be rich now.` (Mixed — гипотетика прошлого с настоящим результатом.)\n\n**7. `Will` в формальных объявлениях:**\n- `The meeting will commence at 10:00.` (Формально.)\n- `Passengers will be informed of any changes.` (Пассажирам сообщат — пассивная формальная конструкция.)\n\n**8. `Won't` как отказ — тонкости:**\n- `She won't listen.` (Не хочет слушать.)\n- `He won't help.` (Отказывается помогать.)\n- `The car won't start.` (Машина упрямо не заводится.)\n\nВ контексте `won't` становится глаголом «упрямства» или «отказа», не чистым будущим.\n\n**9. Tonкие ошибки C1:**\n- Overuse of `will` там, где нужен Present Continuous для договорённостей.\n- Использование `will` с `if` в будущем (устаревшая ошибка).\n- Забывать, что `will` может быть настоящим deduction, не только будущим.\n- Путаница с модальными `must` (уверенность) и `will` (вывод): оба допустимы, но `must` сильнее.\n\n**10. Prescriptive vs descriptive `shall`:**\nТрадиционная грамматика: `shall` с `I/we`, `will` с остальными — для нейтрального будущего. В современной речи `will` универсален. На C1-экзаменах используй `will` для всех лиц, `shall` — только в формальных и юридических контекстах."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "will / 'll + base verb (epistemic deduction or characteristic habit, present meaning)",
+        "ru": "will / 'll + начальная форма (эпистемический вывод или характерное поведение — настоящее значение)"
       },
       "examples": [
         {
           "en": "That'll be John at the door.",
-          "ru": "Наверное, это Джон в дверь звонит."
+          "ru": "Наверное, это Джон в дверь звонит.",
+          "note": {
+            "en": "deduction (present)",
+            "ru": "вывод (настоящее)"
+          }
         },
         {
           "en": "Boys will be boys — don't worry about it.",
-          "ru": "Мальчишки есть мальчишки — не переживай."
+          "ru": "Мальчишки есть мальчишки — не переживай.",
+          "note": {
+            "en": "fixed expression",
+            "ru": "устойчивое выражение"
+          }
         },
         {
           "en": "The meeting shall adjourn at 5 p.m.",
-          "ru": "Собрание будет закрыто в 5 вечера."
+          "ru": "Собрание будет закрыто в 5 вечера.",
+          "note": {
+            "en": "formal/legal shall",
+            "ru": "формальный/юридический shall"
+          }
         },
         {
           "en": "She will keep bringing up the past.",
-          "ru": "Она всё время возвращается к прошлому."
+          "ru": "Она всё время возвращается к прошлому.",
+          "note": {
+            "en": "characteristic behaviour",
+            "ru": "характерное поведение"
+          }
         },
         {
           "en": "I would say that's broadly correct.",
-          "ru": "Я бы сказал, в целом это верно."
+          "ru": "Я бы сказал, в целом это верно.",
+          "note": {
+            "en": "hedging would",
+            "ru": "смягчающее would"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "That'll be... — распространённый deduction: «наверное, это...», не будущее."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "That must to be John at the door.",
+          "right": "That'll be John at the door.",
+          "why": {
+            "en": "Epistemic will expresses a confident present deduction; must works too but never takes to.",
+            "ru": "Эпистемическое will — уверенный вывод о настоящем; must тоже годится, но без to."
+          }
+        },
+        {
+          "wrong": "If I will win, I would travel.",
+          "right": "If I won the lottery, I would travel.",
+          "why": {
+            "en": "In the second conditional the if-clause uses the past simple, not will.",
+            "ru": "Во втором типе условия в if-части — Past Simple, не will."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, will is a subtle stylistic and pragmatic choice, often unconnected to future time. **Epistemic will** asserts a confident present inference (*He'll be home by now. That will be the reason*). **Generic will** states timeless tendencies and laws (*Water will freeze at 0°C. Accidents will happen. A hungry dog will eat anything*). **Performative/committal will** is near-ritual and resists substitution (*I will always love you. I will not stand for this. We shall overcome*); swapping in be going to would break the effect.\n\nRegister governs everything: in legalese **shall** means 'is obliged to', sharply distinct from may (permission) and will (intention) — *The tenant shall pay rent on the first.* Formal conditionals invert with should (*Should you require assistance, we will be happy to help*), and academic prose uses self-referential will (*As will be shown in the next chapter*). In reported speech the choice of would vs will reveals the narrator's current stance.\n\nMastery is restraint: too much will makes narrative heavy, while avoiding it altogether can read as evasive in business writing, and reflexively translating Russian 'будет' as will often misfires where be going to or the Present Continuous is the natural choice.",
         "ru": "На C2 `will` — это тонкий стилистический и прагматический выбор, часто не имеющий отношения к будущему времени.\n\n**1. Epistemic will — настоящее предположение:**\n- `He'll be home by now.` (Он, наверное, уже дома.)\n- `You'll know what I mean.` (Ты, наверное, поймёшь, о чём я.)\n- `That will be the reason.` (Это и есть причина — уверенный вывод.)\n\nЭто `will` не про будущее, а про уверенное настоящее предположение.\n\n**2. Generic will — вечные истины:**\n- `Water will freeze at 0°C.` (Вода замерзает при 0°C — обобщённый факт.)\n- `Accidents will happen.` (Несчастные случаи случаются.)\n- `A hungry dog will eat anything.` (Голодная собака съест что угодно.)\n\nЭто обобщающий `will`, родственный Present Simple, но с оттенком закономерности.\n\n**3. Performative and committal will:**\n- `I will always love you.` (Обещание как перформатив.)\n- `I will not stand for this.` (Торжественная решимость.)\n- `We shall overcome.` (Исторически-риторическое.)\n\nТакие высказывания почти ритуальны, и замена `will` на `be going to` или Present Simple сломает смысл.\n\n**4. Subtle commitment vs hedging:**\n- `I'll do it.` — нейтральное обещание.\n- `I am going to do it.` — с планом.\n- `I'll see what I can do.` — уклончиво.\n- `I will see to it personally.` — формально, с ответственностью.\n- `That can be arranged.` — ещё более уклончиво.\n\nДипломатический регистр требует тонкого выбора.\n\n**5. Will в narrative и prophetic style:**\n- `The day will come when truth prevails.` (Наступит день...)\n- `History will judge them.` (История их рассудит.)\n\nЛитературно-торжественный регистр.\n\n**6. Will в condition inversion:**\n- `Should you need assistance, I will be available.` (Формальный условный — инверсия `if` в `should`.)\n- `Would you be so kind...?` (Дипломатичная просьба.)\n\n**7. Shall в legal register:**\n- `The tenant shall pay rent on the first of the month.` (Обязательство в контракте.)\n- `The parties shall cooperate.` (Юридический английский.)\n\nВ legalese `shall` — не «будет», а «обязан, должен». Юристы жёстко различают `shall` (обязательство), `may` (разрешение), `will` (намерение).\n\n**8. Retrospective/prospective will:**\n- `As will be shown in the next chapter...` (Как будет показано — академический самореферентный стиль.)\n- `This will prove crucial.` (Это окажется решающим — прогностический.)\n\n**9. Tonкое в reported speech:**\n- `He said he would come.` (Нейтральный backshift.)\n- `He said he will come.` (Если говорящий считает обещание всё ещё в силе — допустимо, но редко; чаще `would`.)\n\nЭтот выбор показывает текущую позицию рассказчика.\n\n**10. Stylistic diagnostics:**\n- Избыток `will` в нарративе делает текст тяжёлым.\n- Полное избегание `will` в деловом письме создаёт ощущение уклончивости.\n- Замена `will` на `be going to` может показаться слишком casual в формальном контексте.\n\n**11. Common near-native errors:**\n- Использование `will` вместо `would` для гипотетики в настоящем.\n- Перевод русского «будет» автоматически как `will` без учёта контекста (часто нужен Present Continuous или `be going to`).\n- Избыток `shall` — звучит архаично или сарказмом.\n\n**12. Final mastery:**\nНа C2 ты используешь `will` сознательно для конкретных прагматических эффектов: обещания, торжественного обещания, эпистемического вывода, обобщения, характерного поведения. Каждое его использование — осознанный выбор."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "will + base verb across registers: epistemic (present), generic (timeless), performative; legal shall = obligation",
+        "ru": "will + начальная форма в разных регистрах: эпистемический (настоящее), обобщающий (вневременной), перформативный; юридический shall = обязательство"
       },
       "examples": [
         {
           "en": "That will be the reason she hasn't replied — she's abroad.",
-          "ru": "Должно быть, поэтому она не ответила — она за границей."
+          "ru": "Должно быть, поэтому она не ответила — она за границей.",
+          "note": {
+            "en": "epistemic deduction",
+            "ru": "эпистемический вывод"
+          }
         },
         {
           "en": "The parties shall comply with all relevant regulations.",
-          "ru": "Стороны обязаны соблюдать все соответствующие регламенты."
+          "ru": "Стороны обязаны соблюдать все соответствующие регламенты.",
+          "note": {
+            "en": "legal shall (obligation)",
+            "ru": "юридический shall (обязательство)"
+          }
         },
         {
           "en": "Should you require further information, we will be happy to assist.",
-          "ru": "Если вам потребуется дополнительная информация, мы будем рады помочь."
+          "ru": "Если вам потребуется дополнительная информация, мы будем рады помочь.",
+          "note": {
+            "en": "inverted formal conditional",
+            "ru": "формальное условие с инверсией"
+          }
         },
         {
           "en": "A true friend will tell you the truth, even when it hurts.",
-          "ru": "Настоящий друг скажет тебе правду, даже если это больно."
+          "ru": "Настоящий друг скажет тебе правду, даже если это больно.",
+          "note": {
+            "en": "generic truth",
+            "ru": "обобщающая истина"
+          }
         },
         {
           "en": "As will become apparent in due course, the decision was premature.",
-          "ru": "Как станет очевидно со временем, решение было преждевременным."
+          "ru": "Как станет очевидно со временем, решение было преждевременным.",
+          "note": {
+            "en": "self-referential will",
+            "ru": "самореферентное will"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "He'll be home by now — эпистемическое \"наверное, он уже дома\", не будущее."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "When you will arrive, call me.",
+          "right": "When you arrive, call me.",
+          "why": {
+            "en": "Even at native level the future time clause takes the Present Simple, never will.",
+            "ru": "Придаточное времени о будущем берёт Present Simple, не will."
+          }
+        },
+        {
+          "wrong": "The tenant will pay rent on the first.",
+          "right": "The tenant shall pay rent on the first.",
+          "why": {
+            "en": "In a binding contract shall denotes obligation; will only states intention.",
+            "ru": "В договоре shall означает обязательство; will выражает лишь намерение."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "future-with-going-to",
+    "future-with-present-continuous",
+    "shall",
+    "will-would"
+  ],
+  "crossTopic": [
+    "first-conditional",
+    "adverbial-clauses-time",
+    "reported-statements",
+    "passive-future"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "now",
+      "decision",
+      "future event"
+    ]
+  }
 };

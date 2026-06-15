@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "present-perfect-simple",
   "title": {
-    "en": "",
+    "en": "Present Perfect Simple",
     "ru": "Present Perfect Simple"
   },
   "cefr": "A2",
@@ -16,196 +16,405 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "The Present Perfect Simple links the **past to now**: something happened earlier and it still matters at this moment. You never say exactly when it happened.\n\n**Form:** `have/has` + past participle (the third form of the verb).\n- `I/you/we/they have` (often shortened to `I've`, `you've`, `we've`, `they've`)\n- `he/she/it has` (often `he's`, `she's`, `it's`)\n\nRegular past participles just add `-ed` (`work → worked`, `play → played`). Irregular ones must be learned: `go → gone`, `see → seen`, `eat → eaten`, `be → been`, `do → done`.\n\n**Use it for:**\n1. **Life experience** — `I have been to Paris.` / `Have you ever tried sushi?`\n2. **Something that started in the past and is still true** — `I have lived in Moscow for ten years.`\n3. **A recent action with a present result** — `I have lost my keys.` (so I don't have them now).\n\n**Common time words:** `ever`, `never`, `already`, `yet` (in questions and negatives), `just`, `for` + a period, `since` + a starting point, `so far`, `recently`.\n\n**Negatives and questions:** `I haven't seen him.` / `Have you finished?` / `She hasn't called yet.`\n\n**The big rule:** never use a finished past time word (`yesterday`, `last week`, `in 2015`, `ago`) with the present perfect — that needs the past simple.",
         "ru": "**Present Perfect Simple** — время, которое связывает **прошлое и настоящее**. Оно говорит: «что-то случилось в какой-то момент раньше, и это важно сейчас».\n\n**Форма:** `have/has` + **past participle** (третья форма глагола)\n\n- `I/you/we/they have` → часто `I've`, `you've`, `we've`, `they've`\n- `he/she/it has` → часто `he's`, `she's`, `it's`\n\n**Past participle (3-я форма):**\n- Правильные глаголы: просто `+ed`: `work → worked`, `play → played`\n- Неправильные — надо учить: `go → gone`, `see → seen`, `eat → eaten`, `write → written`, `be → been`, `have → had`, `do → done`\n\n**Когда использовать Present Perfect:**\n\n1. **Жизненный опыт (experience):**\n   - `I have been to Paris.` (Я был в Париже — когда-то в жизни.)\n   - `Have you ever tried sushi?` (Ты когда-нибудь пробовал суши?)\n\n2. **Действие началось в прошлом и продолжается сейчас:**\n   - `I have lived in Moscow for 10 years.` (Я живу в Москве 10 лет — и сейчас тоже.)\n   - `She has known him since 2010.` (Она знает его с 2010 года.)\n\n3. **Недавнее действие с результатом в настоящем:**\n   - `I have lost my keys.` (Я потерял ключи — и сейчас их нет.)\n\n**Ключевые слова (time markers):**\n- `ever` (когда-либо), `never` (никогда)\n- `already` (уже), `yet` (ещё — в вопросах и отрицаниях), `just` (только что)\n- `for` + период (for 3 years, for a long time)\n- `since` + точка во времени (since 2010, since Monday)\n- `so far` (пока), `recently` (недавно)\n\n**Отрицание и вопрос:**\n- `I haven't seen him.` (Я его не видел.)\n- `Have you finished?` (Ты закончил?)\n- `She hasn't called yet.` (Она ещё не звонила.)\n\n**Главная ошибка:** использовать Present Perfect с конкретным прошлым временем.\n❌ `I have seen him yesterday.` → ✅ `I saw him yesterday.`\n\nС `yesterday`, `last week`, `in 2015`, `ago` — всегда Past Simple."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + have/has + past participle",
+        "ru": "подлежащее + have/has + причастие прошедшего времени (3-я форма)"
       },
       "examples": [
         {
           "en": "I have visited Paris twice.",
-          "ru": "Я был в Париже два раза."
+          "ru": "Я был в Париже два раза.",
+          "note": {
+            "en": "experience",
+            "ru": "опыт"
+          }
         },
         {
           "en": "She has lived here since 2018.",
-          "ru": "Она живёт здесь с 2018 года."
+          "ru": "Она живёт здесь с 2018 года.",
+          "note": {
+            "en": "since + start point",
+            "ru": "since + точка отсчёта"
+          }
         },
         {
           "en": "Have you ever eaten sushi?",
-          "ru": "Ты когда-нибудь ел суши?"
+          "ru": "Ты когда-нибудь ел суши?",
+          "note": {
+            "en": "ever question",
+            "ru": "вопрос с ever"
+          }
         },
         {
           "en": "They haven't finished the project yet.",
-          "ru": "Они ещё не закончили проект."
+          "ru": "Они ещё не закончили проект.",
+          "note": {
+            "en": "yet (negative)",
+            "ru": "yet (отрицание)"
+          }
         },
         {
           "en": "I've just had lunch.",
-          "ru": "Я только что пообедал."
+          "ru": "Я только что пообедал.",
+          "note": {
+            "en": "just (recent)",
+            "ru": "just (только что)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "С yesterday, last week, ago — всегда Past Simple, не Present Perfect."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I have seen him yesterday.",
+          "right": "I saw him yesterday.",
+          "why": {
+            "en": "A finished past time (yesterday) needs the past simple, not the present perfect.",
+            "ru": "С завершённым прошлым временем (yesterday) нужен Past Simple, а не Present Perfect."
+          }
+        },
+        {
+          "wrong": "She have finished.",
+          "right": "She has finished.",
+          "why": {
+            "en": "Third-person singular takes has, not have.",
+            "ru": "В 3-м лице единственного числа используется has, а не have."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the key skill is **choosing between the present perfect and the past simple** — a decision that has no direct equivalent in Russian.\n\n**Past simple** = the action is **finished and fixed in the past**, with no link to now: `I lived in Paris in 2015.` / `She saw him yesterday.`\n\n**Present perfect** = the action connects to **now** (a result, an experience, or an unfinished period): `I have lived in Paris.` (experience, no fixed time) / `She has just seen him.`\n\n**How to decide:**\n- A definite past time → past simple.\n- A period that isn't over yet (`today`, `this week`) → present perfect.\n- A life experience (\"ever in your life\") → present perfect.\n- A present result → present perfect.\n- Narrative, a chain of events → past simple.\n\n**Been vs gone:** `has been to` = went and came back (`She has been to Italy.`); `has gone to` = went and is still there (`She has gone to Italy.`).\n\n**For vs since:** `for` + a length of time (`for five years`); `since` + a starting point (`since 2010`, `since Monday`).\n\n**Already / yet / just:** `already` in positive statements (`I've already eaten.`); `yet` in questions and negatives (`Have you eaten yet?` / `I haven't eaten yet.`); `just` for a very recent action (`I've just finished.`).",
         "ru": "На B1 главная задача — **различать Present Perfect и Past Simple**. Это ключевое решение для русскоговорящих, потому что в русском нет такого разделения.\n\n**Past Simple** — действие **полностью в прошлом**, без связи с настоящим:\n- `I lived in Paris in 2015.` (Я жил в Париже в 2015 — тогда.)\n- `She saw him yesterday.` (Она видела его вчера.)\n\n**Present Perfect** — действие связано с **настоящим** (результат, опыт, незавершённый период):\n- `I have lived in Paris.` (Я жил в Париже — опыт, без конкретного времени.)\n- `She has just seen him.` (Она только что его видела.)\n\n**Правило выбора:**\n\n| Ситуация | Время |\n|---|---|\n| Есть точное время в прошлом | Past Simple |\n| Период ещё не закончился (today, this week) | Present Perfect |\n| Опыт в жизни (когда-либо) | Present Perfect |\n| Результат в настоящем | Present Perfect |\n| Повествование, хронология | Past Simple |\n\n**Сравнение:**\n- `I have read three books this week.` (На этой неделе — она ещё идёт, возможно, прочитаю ещё.)\n- `I read three books last week.` (Прошлая неделя закончилась.)\n- `She has been to Japan.` (Была когда-то — опыт.)\n- `She went to Japan in 2019.` (Ездила конкретно в 2019.)\n\n**Been vs gone:**\n- `has been to` = был и вернулся: `She has been to Italy.` (Она была в Италии.)\n- `has gone to` = уехал и ещё там: `She has gone to Italy.` (Она уехала в Италию.)\n\n**For и since:**\n- `for` + продолжительность: `for 5 years`, `for a long time`, `for ages`\n- `since` + точка: `since 2010`, `since Monday`, `since I was a child`\n\n**Already, yet, just:**\n- `already` — уже (в утверждениях): `I've already eaten.`\n- `yet` — ещё (в вопросах и отрицаниях): `Have you eaten yet? / I haven't eaten yet.`\n- `just` — только что: `I've just finished.`\n\n**Типичные ошибки B1:**\n- ❌ `I have seen him last year` → ✅ `I saw him last year`.\n- ❌ `How long do you know her?` → ✅ `How long have you known her?`\n- ❌ `I live here for 5 years` → ✅ `I have lived here for 5 years`.\n- Путаница been/gone: `She has gone home` ≠ `She has been home`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Present perfect: subject + have/has + past participle | Past simple: subject + past form (+ time word)",
+        "ru": "Present Perfect: подлежащее + have/has + 3-я форма | Past Simple: подлежащее + форма прошедшего времени (+ слово времени)"
       },
       "examples": [
         {
           "en": "I have worked here for three years.",
-          "ru": "Я работаю здесь три года."
+          "ru": "Я работаю здесь три года.",
+          "note": {
+            "en": "for + duration",
+            "ru": "for + длительность"
+          }
         },
         {
           "en": "She went to London last summer.",
-          "ru": "Она ездила в Лондон прошлым летом."
+          "ru": "Она ездила в Лондон прошлым летом.",
+          "note": {
+            "en": "past simple, finished",
+            "ru": "Past Simple, завершено"
+          }
         },
         {
           "en": "Have you finished your homework yet?",
-          "ru": "Ты уже закончил домашку?"
+          "ru": "Ты уже закончил домашку?",
+          "note": {
+            "en": "yet question",
+            "ru": "вопрос с yet"
+          }
         },
         {
           "en": "He has already left for work.",
-          "ru": "Он уже ушёл на работу."
+          "ru": "Он уже ушёл на работу.",
+          "note": {
+            "en": "already",
+            "ru": "already"
+          }
         },
         {
           "en": "They have known each other since childhood.",
-          "ru": "Они знакомы с детства."
+          "ru": "Они знакомы с детства.",
+          "note": {
+            "en": "since + start",
+            "ru": "since + начало"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Present Perfect — если период включает сейчас; Past Simple — если время закончилось."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "How long do you know her?",
+          "right": "How long have you known her?",
+          "why": {
+            "en": "A state continuing up to now uses the present perfect, not the present simple.",
+            "ru": "Состояние, длящееся до настоящего момента, выражается через Present Perfect, а не Present Simple."
+          }
+        },
+        {
+          "wrong": "I live here for five years.",
+          "right": "I have lived here for five years.",
+          "why": {
+            "en": "An action that began in the past and continues now needs the present perfect with for/since.",
+            "ru": "Действие, начавшееся в прошлом и длящееся сейчас, требует Present Perfect с for/since."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the present perfect gains finer shades: **resultative meaning**, **finished vs unfinished periods**, and **news reporting**.\n\n**1. Resultative:** the present result is what matters — `I've lost my keys.` (I can't find them now), `She's broken her arm.` (it's still broken). Contrast: `I lost my keys but found them this morning` → past simple, because there's no present result.\n\n**2. Unfinished periods:** use the present perfect while the period is still open — `today`, `this week`, `this year`, `so far`, `up to now`: `I've had three coffees today.` But once `this morning` is over (it's now afternoon), switch to past simple: `I had three coffees this morning.`\n\n**3. News reporting:** the present perfect introduces a piece of news; the past simple then gives the details — `A man has been arrested. He was found in a car at 3 a.m.`\n\n**4. With superlatives and ordinals:** `This is the best book I've ever read.` / `It's the third time she's called today.` / `This is the first time I've seen snow.`\n\n**5. British vs American:** British English keeps the present perfect with `just`, `already`, `yet`; American English often allows the past simple (`I just ate.`, `Did you finish yet?`). For exams and formal writing, prefer the present perfect.\n\n**6. Watch `when`:** a question about a specific moment always takes the past simple — `When did you see him?`, never `When have you seen him?`",
         "ru": "На B2 Present Perfect получает более тонкие нюансы: **resultative meaning**, **continuing vs finished periods**, **news reporting**.\n\n**1. Resultative Present Perfect (результат виден сейчас):**\n- `I've lost my keys.` (Я потерял ключи — и сейчас их нет.)\n- `She's broken her arm.` (Она сломала руку — и сейчас рука сломана.)\n- `They've sold the house.` (Они продали дом — и дом больше не их.)\n\nСравни с Past Simple: `I lost my keys yesterday but found them this morning` — сейчас ключи есть, значит не Perfect.\n\n**2. Unfinished time periods:**\nPresent Perfect используется, если период **ещё не закончился**:\n- `today`, `this morning/afternoon/evening` (если ещё та часть дня), `this week/month/year`, `so far`, `up to now`\n- `I've had three coffees today.` (Если сегодня ещё не закончилось.)\n- `We've had a lot of rain this month.`\n\nНо если `this morning` уже прошло (а сейчас день) — Past Simple: `I had three coffees this morning.`\n\n**3. News reporting — первое упоминание:**\nPresent Perfect часто используется для **первого объявления** новости:\n- `A man has been arrested.` (Мужчина был арестован — новость.)\n\nПотом переходят в Past Simple для деталей:\n- `The man was arrested at 3am. Police found him in a car.`\n\n**4. Present Perfect с superlatives и ordinals:**\n- `This is the best book I've ever read.` (Это лучшая книга, которую я читал.)\n- `It's the third time she's called today.` (Это уже третий раз, когда она звонит сегодня.)\n- `This is the first time I've seen snow.` (Впервые в жизни вижу снег.)\n\n**5. BrE vs AmE:**\n- Британский английский придерживается Present Perfect строже: `I've just eaten.`, `Have you finished yet?`\n- Американский английский допускает Past Simple в таких контекстах: `I just ate.`, `Did you finish yet?`\n\nДля экзаменов и формального письма используй Present Perfect.\n\n**6. Tonkие различия:**\n- `Have you seen my glasses?` = Они где-то тут? (результат сейчас)\n- `Did you see my glasses?` = Ты их видел в какой-то момент? (возможно, другой человек)\n\n**7. Stative vs dynamic verbs в Perfect:**\n- Stative: `I have known her for years.` — длительность состояния.\n- Dynamic: `I have met her three times.` — количество раз.\n\n**8. Частые ошибки B2:**\n- ❌ `I have finished it two days ago` → ✅ `I finished it two days ago`.\n- ❌ `When have you seen him?` → ✅ `When did you see him?`\n- С `when` о конкретном моменте — всегда Past Simple."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + have/has + past participle (+ unfinished-time marker: today / this week / so far)",
+        "ru": "подлежащее + have/has + 3-я форма (+ маркер незакончившегося периода: today / this week / so far)"
       },
       "examples": [
         {
           "en": "I've just realised something important.",
-          "ru": "Я только что понял кое-что важное."
+          "ru": "Я только что понял кое-что важное.",
+          "note": {
+            "en": "just (realisation)",
+            "ru": "just (осознание)"
+          }
         },
         {
           "en": "She has been promoted three times this year.",
-          "ru": "Её повышали трижды в этом году."
+          "ru": "Её повышали трижды в этом году.",
+          "note": {
+            "en": "this year (unfinished)",
+            "ru": "this year (незакончен)"
+          }
         },
         {
           "en": "This is the first time I've tasted real Italian pizza.",
-          "ru": "Это первый раз, когда я пробую настоящую итальянскую пиццу."
+          "ru": "Это первый раз, когда я пробую настоящую итальянскую пиццу.",
+          "note": {
+            "en": "first time + perfect",
+            "ru": "первый раз + перфект"
+          }
         },
         {
           "en": "The government has announced new tax measures.",
-          "ru": "Правительство объявило о новых налоговых мерах."
+          "ru": "Правительство объявило о новых налоговых мерах.",
+          "note": {
+            "en": "news report",
+            "ru": "новостной репортаж"
+          }
         },
         {
           "en": "I've had this laptop for five years — it still works well.",
-          "ru": "У меня этот ноутбук пять лет — он ещё хорошо работает."
+          "ru": "У меня этот ноутбук пять лет — он ещё хорошо работает.",
+          "note": {
+            "en": "duration up to now",
+            "ru": "длительность до сейчас"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Resultative Perfect: I've lost my keys — и сейчас их нет; I lost and found them — Past Simple."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I have finished it two days ago.",
+          "right": "I finished it two days ago.",
+          "why": {
+            "en": "ago marks a finished point in the past, so the past simple is required.",
+            "ru": "ago обозначает завершённый момент в прошлом, поэтому нужен Past Simple."
+          }
+        },
+        {
+          "wrong": "When have you seen him?",
+          "right": "When did you see him?",
+          "why": {
+            "en": "A when-question about a specific moment always takes the past simple.",
+            "ru": "Вопрос с when о конкретном моменте всегда требует Past Simple."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the present perfect sits inside a system of choices, contrasting with the past simple and the present perfect continuous in demanding contexts.\n\n**1. Journalism — switching tenses:** a headline uses the present perfect (`Minister has resigned amid scandal`), the body shifts to the past simple for detail (`The minister resigned yesterday after a three-hour meeting`), then returns to the present perfect for the current state (`He has not commented publicly.`).\n\n**2. Present perfect vs present perfect continuous:** the simple form stresses result, quantity, and completeness; the continuous stresses duration and process. `I've read the book` (result) vs `I've been reading the book` (process, maybe unfinished); `She's written three articles` (countable result) vs `She's been writing for hours` (ongoing process). Stative verbs stay simple: `I've known him for years`, never `I've been knowing`.\n\n**3. Verbs of communication:** `I've told you many times` (accumulated experience) vs `I told you yesterday` (one occasion).\n\n**4. Nuanced time phrases:** `over the years`, `through the centuries`, `lately` usually pair with the present perfect; `recently` works with either (`he recently retired` is fine).\n\n**5. Argumentative writing:** the present perfect ties accumulated experience to a present conclusion — `The country has faced many challenges, yet it remains stable.`\n\n**6. Formal and legal register:** `The committee has reviewed the evidence.` / `The parties have agreed to...`\n\n**7. Common C1 errors:** overusing the present perfect in narrative (past simple should carry the story), and forgetting that a past-referring `when` demands the past simple.",
         "ru": "На C1 Present Perfect встраивается в систему выбора и контраста с Past Simple и Present Perfect Continuous в сложных контекстах.\n\n**1. News и journalism — переход между временами:**\n- Заголовок: `Minister has resigned amid scandal.` (Present Perfect — актуальная новость.)\n- Основной текст: `The Minister resigned yesterday after a three-hour meeting.` (Past Simple — детали.)\n- Возвращение к Present Perfect: `He has not commented publicly.` (Результат сейчас.)\n\n**2. BrE vs AmE различия:**\nВ британском английском `yet`, `just`, `already` жёстко требуют Present Perfect. В американском допустимо `I just saw him`. Для C1-экзаменов важно придерживаться британской нормы, если пишешь BrE.\n\n**3. Present Perfect vs Present Perfect Continuous:**\n- Simple: результат, количество, завершённость действия.\n- Continuous: продолжительность, процесс, незавершённость.\n\nСравни:\n- `I've read the book.` (Прочитал — результат.)\n- `I've been reading the book.` (Читаю — процесс, возможно, не закончил.)\n- `She's written three articles.` (Количественный результат.)\n- `She's been writing for hours.` (Продолжительный процесс.)\n\nStative verbs идут только в Simple: `I've known him for years` (не `I've been knowing`).\n\n**4. Present Perfect с verbs of communication:**\n- `I've told you many times.` (Сказал много раз — Perfect подчёркивает накопленный опыт.)\n- `I told you yesterday.` (Конкретный случай.)\n\n**5. Nuanced temporal phrases:**\n- `over the years` + Present Perfect: `Over the years, she has developed expertise.`\n- `through the centuries` + Present Perfect: `Through the centuries, the city has changed dramatically.`\n- `lately`, `recently` обычно с Perfect; `recently` допустимо и с Past Simple (`he recently retired`).\n\n**6. Contrastive discourse markers:**\n- `I've tried everything, and nothing works.`\n- `The country has faced many challenges, yet it remains stable.`\n\nPerfect связывает накопленный опыт с текущим выводом — полезно для argumentative writing.\n\n**7. Formal and legal register:**\n- `The committee has reviewed the evidence.` (Формально, с отсылкой к настоящему.)\n- `Pursuant to the regulations, the parties have agreed to...` (Официальные документы.)\n\n**8. Common C1 mistakes:**\n- Overuse of Present Perfect в нарративе: в повествовании о прошлом основное время — Past Simple, Perfect используется только для явной связи с настоящим.\n- Забывать, что `when` о прошлом всегда требует Past Simple: `When did you last see him?`, не `When have you last seen him?`\n- Смешивать Simple и Continuous без причины: выбор должен быть мотивирован смыслом."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + have/has + past participle  vs  subject + have/has + been + verb-ing (continuous)",
+        "ru": "подлежащее + have/has + 3-я форма  vs  подлежащее + have/has + been + глагол-ing (длительный)"
       },
       "examples": [
         {
           "en": "Over the past decade, the industry has transformed significantly.",
-          "ru": "За последнее десятилетие индустрия значительно трансформировалась."
+          "ru": "За последнее десятилетие индустрия значительно трансформировалась.",
+          "note": {
+            "en": "over the decade",
+            "ru": "за десятилетие"
+          }
         },
         {
           "en": "She has published extensively on this topic.",
-          "ru": "Она много публиковалась по этой теме."
+          "ru": "Она много публиковалась по этой теме.",
+          "note": {
+            "en": "accumulated record",
+            "ru": "накопленный итог"
+          }
         },
         {
           "en": "The court has ruled in favour of the plaintiff.",
-          "ru": "Суд вынес решение в пользу истца."
+          "ru": "Суд вынес решение в пользу истца.",
+          "note": {
+            "en": "legal register",
+            "ru": "правовой регистр"
+          }
         },
         {
           "en": "I've read the proposal, and I have several concerns.",
-          "ru": "Я прочитал предложение, и у меня есть ряд замечаний."
+          "ru": "Я прочитал предложение, и у меня есть ряд замечаний.",
+          "note": {
+            "en": "result + comment",
+            "ru": "результат + комментарий"
+          }
         },
         {
           "en": "Scientists have long debated whether this theory holds.",
-          "ru": "Учёные давно спорят, верна ли эта теория."
+          "ru": "Учёные давно спорят, верна ли эта теория.",
+          "note": {
+            "en": "ongoing debate",
+            "ru": "продолжающийся спор"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Present Perfect — связь прошлого и настоящего; в чистом нарративе прошлого — Past Simple."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I've been knowing him for years.",
+          "right": "I've known him for years.",
+          "why": {
+            "en": "Stative verbs like know do not take the continuous form, even in the perfect.",
+            "ru": "Глаголы состояния, такие как know, не употребляются в длительной форме, даже в перфекте."
+          }
+        },
+        {
+          "wrong": "When have you last seen him?",
+          "right": "When did you last see him?",
+          "why": {
+            "en": "A when-question pointing to a past moment requires the past simple.",
+            "ru": "Вопрос с when, указывающий на момент в прошлом, требует Past Simple."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the present perfect is a matter of stylistic and pragmatic precision. An error here is rarely grammatical — it is one of meaning.\n\n**1. Resultative vs experiential ambiguity:** `I've read War and Peace` can mean \"I've finished it\" (result) or \"I've read it at some point in my life\" (experience). Context disambiguates: `I've read War and Peace — it's on my shelf now` (result) vs `I've read War and Peace — twice, actually` (experience).\n\n**2. Hot news and political discourse:** `The president has declared a state of emergency` signals freshness and current relevance; once the event cools, it becomes `The president declared a state of emergency last week.`\n\n**3. Literary register:** `Many have tried, few have succeeded.` The perfect creates an aphoristic, cumulative effect.\n\n**4. Academic and legal nuance:** `Research has shown that...` and `Scholars have argued...` invoke an accumulated, still-relevant body of evidence; `Research showed that...` narrows it to one closed study.\n\n**5. Indefinite past as a bridge to the present:** `She has travelled widely` (open generalisation) vs `She travelled widely in her youth` (a closed period demands the past simple). The perfect denies closure; the past simple asserts it.\n\n**6. Stance in argument:** `The evidence has consistently shown...` keeps the topic live; `The evidence consistently showed...` closes the discussion. Writers choose the perfect to keep an issue current.\n\n**7. Prescriptive vs descriptive norms:** the traditional rule binds the present perfect to `yet`, `just`, `already`, `ever`, `never`; American and global English increasingly allow the past simple with these markers. At C2 you know both norms and match the register.\n\n**8. Common nuance errors:** overusing the perfect in narrative (it kills rhythm), and rendering every Russian perfective \"я сделал\" as a present perfect without weighing context.",
         "ru": "На C2 Present Perfect — часть тонкого стилистического и прагматического выбора. Ошибка здесь не грамматическая, а смысловая.\n\n**1. Resultative vs experiential nuances:**\n- `I've read War and Peace.` — может значить «прочитал» (результат) или «читал в жизни» (опыт).\n- Контекст разрешает: `I've read War and Peace — it's on my shelf now` (результат) vs `I've read War and Peace — twice, actually` (опыт).\n- В устной речи интонация и акцент различают эти значения.\n\n**2. Present Perfect в hot news и political discourse:**\n- `The president has declared a state of emergency.` (Только что, актуально.)\n- `The president declared a state of emergency last week.` (Past Simple, уже не hot news.)\n\nВыбор Present Perfect в новости подчёркивает её свежесть и текущую релевантность. После этого репортажа Perfect переходит в Past.\n\n**3. Literary and poetic register:**\n- `Many have tried, few have succeeded.` (Многие пытались, немногим удалось.) — формальный, почти афористический.\n- `The seas have risen, the forests have fallen.` — Perfect создаёт ощущение накопленного итога, возможно трагического.\n\n**4. Academic and legal nuances:**\n- `The court has held that...` — правовой формализм для установленной прецедентной позиции.\n- `Research has shown that...` — утверждение с опорой на накопленные доказательства.\n- `Scholars have argued...` — дискуссия, продолжающаяся в настоящем.\n\nСравни: `Research showed that...` — узкий, завершённый вывод из конкретного исследования.\n\n**5. Indefinite past as bridge to present:**\n- `She has travelled widely.` — обобщение без фиксированных поездок.\n- `She travelled widely in her youth.` — Past Simple, потому что «в юности» — завершённый период.\n\nPerfect отрицает завершённость, Past Simple её утверждает.\n\n**6. Temporal prepositions с Perfect:**\n- `in the past`, `over the years`, `throughout history` — обычно Perfect.\n- `in 1990`, `during the war`, `at that time` — Past Simple.\n- `Since` + pluperfect clause: `She has worked there since she graduated.` — Present Perfect в главном, Past Simple в since-clause.\n\n**7. Perfect shift for stance:**\nВ argumentative writing Perfect используется, чтобы придать суждению актуальность:\n- `The evidence has consistently shown...` (Perfect — продолжающаяся релевантность.)\n- `The evidence consistently showed...` (Past — закрытая дискуссия.)\n\nАвтор выбирает Perfect, чтобы удержать тему «живой».\n\n**8. Prescriptive vs descriptive norms:**\n- Традиционная норма: Present Perfect обязательно с `yet`, `just`, `already`, `ever`, `never`, `recently`, `so far`.\n- В AmE и всё чаще в глобальном английском Past Simple допустим с этими маркерами. На C2 ты должен знать обе нормы и применять соответствующую регистру.\n\n**9. Common nuance errors on C2 level:**\n- Избыточное использование Perfect в нарративе — теряется ритм, рассказ звучит невразумительно.\n- Перевод русского «я сделал» одинаково как Present Perfect без учёта контекста — распространённая ловушка.\n- Путаница с `have got` и `have gotten` — в BrE только `have got` (владение), в AmE `have gotten` (приобретение)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + have/has + past participle (stance / hot-news / cumulative register)",
+        "ru": "подлежащее + have/has + 3-я форма (регистр позиции / горячей новости / накопленного итога)"
       },
       "examples": [
         {
           "en": "Research has consistently demonstrated the link between sleep and cognition.",
-          "ru": "Исследования последовательно демонстрируют связь между сном и когнитивными функциями."
+          "ru": "Исследования последовательно демонстрируют связь между сном и когнитивными функциями.",
+          "note": {
+            "en": "academic stance",
+            "ru": "академическая позиция"
+          }
         },
         {
           "en": "Many have called for reform; few have acted.",
-          "ru": "Многие призывали к реформам; немногие действовали."
+          "ru": "Многие призывали к реформам; немногие действовали.",
+          "note": {
+            "en": "aphoristic",
+            "ru": "афористический"
+          }
         },
         {
           "en": "The court has held the statute unconstitutional.",
-          "ru": "Суд признал закон неконституционным."
+          "ru": "Суд признал закон неконституционным.",
+          "note": {
+            "en": "legal holding",
+            "ru": "правовое решение"
+          }
         },
         {
           "en": "She has travelled widely and speaks six languages.",
-          "ru": "Она много путешествовала и говорит на шести языках."
+          "ru": "Она много путешествовала и говорит на шести языках.",
+          "note": {
+            "en": "open generalisation",
+            "ru": "открытое обобщение"
+          }
         },
         {
           "en": "Throughout the centuries, the monastery has endured wars, fires, and revolutions.",
-          "ru": "На протяжении веков монастырь пережил войны, пожары и революции."
+          "ru": "На протяжении веков монастырь пережил войны, пожары и революции.",
+          "note": {
+            "en": "cumulative endurance",
+            "ru": "накопленное выстаивание"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В академическом письме research has shown — продолжающаяся релевантность; research showed — узкий вывод."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She has travelled widely in her youth.",
+          "right": "She travelled widely in her youth.",
+          "why": {
+            "en": "A closed period (in her youth) forces the past simple; the perfect would deny that closure.",
+            "ru": "Завершённый период (in her youth) требует Past Simple; перфект отрицал бы эту завершённость."
+          }
+        },
+        {
+          "wrong": "Research showed that sleep aids cognition, which is why current policy is built on it.",
+          "right": "Research has shown that sleep aids cognition, which is why current policy is built on it.",
+          "why": {
+            "en": "To present evidence as still relevant to current policy, use the present perfect, not the past simple.",
+            "ru": "Чтобы представить доказательства как актуальные для текущей политики, нужен Present Perfect, а не Past Simple."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "past-simple",
+    "present-perfect-continuous",
+    "present-simple",
+    "present-continuous"
+  ],
+  "crossTopic": [
+    "adverbs-of-frequency",
+    "prepositions-of-time",
+    "superlative-adjectives",
+    "stative-verbs"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "past",
+      "now",
+      "still relevant"
+    ]
+  }
 };

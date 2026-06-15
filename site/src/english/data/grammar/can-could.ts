@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "can-could",
   "title": {
-    "en": "",
+    "en": "Can and Could",
     "ru": "Can Could"
   },
   "cefr": "A1",
@@ -17,32 +17,46 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "modals",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "`Can` is one of the most useful little words in English. It means *be able to*, *know how to*, or *be allowed to*.\n\n**The key rule:** after `can`, use the **base verb** — no `to` and no `-s`.\n- `I can swim.`\n- `She can swim.` (not `She cans swim`, not `She can swims`)\n- `We can help.`\n\n`Can` never changes its form: it is `can` for *I, you, he, she, it, we, they* alike.\n\n**Negative:** `cannot`, or the short form `can't`.\n- `I can't drive.`\n- `He can't speak French.`\n\n**Question:** put `can` first.\n- `Can you help me?`\n- `Can she cook?`\n\nUse `can` for three everyday jobs: **ability** (`I can ride a bike.`), **permission** (`You can go home.`), and **requests** (`Can I have some water?`). Reach for it confidently whenever you want to say *I can* or *I know how to*.",
         "ru": "**Can** — это маленькое, но очень важное слово. Оно значит «могу», «умею» или «можно».\n\n**Главное правило:** после `can` всегда идёт глагол **без `to`** и **без `-s`**.\n\n- `I can swim.` (Я умею плавать.)\n- `She can swim.` (Она умеет плавать.) — не `She cans swim`, не `She can swims`.\n- `We can help.` (Мы можем помочь.)\n\n**Русский студент часто говорит** `I can to swim` — это ошибка. Никакого `to`.\n\n**Отрицание:** `cannot` или короткая форма `can't`:\n- `I can't drive.` (Я не умею водить машину.)\n- `He can't speak French.` (Он не говорит по-французски.)\n\n**Вопрос:** `can` идёт в начало:\n- `Can you help me?` (Ты можешь мне помочь?)\n- `Can she cook?` (Она умеет готовить?)\n\n**Когда использовать `can`:**\n\n1. **Умение** (ability): `I can ride a bike.` (Я умею кататься на велосипеде.)\n2. **Разрешение** (permission): `You can go home.` (Ты можешь идти домой.)\n3. **Просьба** (request): `Can I have some water?` (Можно мне воды?)\n\n`Can` — это один из самых частых модальных глаголов. Используй его смело, когда хочешь сказать «могу» или «умею»."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + can + base verb (no to, no -s)",
+        "ru": "подлежащее + can + глагол в начальной форме (без to, без -s)"
       },
       "examples": [
         {
           "en": "I can play the guitar.",
-          "ru": "Я умею играть на гитаре."
+          "ru": "Я умею играть на гитаре.",
+          "note": {
+            "en": "ability",
+            "ru": "умение"
+          }
         },
         {
           "en": "She can't swim.",
-          "ru": "Она не умеет плавать."
+          "ru": "Она не умеет плавать.",
+          "note": {
+            "en": "negative",
+            "ru": "отрицание"
+          }
         },
         {
           "en": "Can you open the window?",
-          "ru": "Можешь открыть окно?"
+          "ru": "Можешь открыть окно?",
+          "note": {
+            "en": "request",
+            "ru": "просьба"
+          }
         },
         {
           "en": "We can meet tomorrow.",
@@ -50,32 +64,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Can I sit here?",
-          "ru": "Можно мне здесь сесть?"
+          "ru": "Можно мне здесь сесть?",
+          "note": {
+            "en": "permission",
+            "ru": "разрешение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После can — глагол без to и без -s: she can swim, не she can to swim."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I can to swim.",
+          "right": "I can swim.",
+          "why": {
+            "en": "After `can` the verb has no `to`.",
+            "ru": "После can глагол идёт без to."
+          }
+        },
+        {
+          "wrong": "She cans dance.",
+          "right": "She can dance.",
+          "why": {
+            "en": "`Can` never adds `-s` in the third person.",
+            "ru": "Can никогда не добавляет -s в 3-м лице."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2, `can` gains its past partner: **could**.\n\n**Could is the past of `can`** for general ability:\n- `I can swim now.` → `I could swim when I was five.`\n\n**Could for polite requests** sounds gentler than `can`:\n- `Can you help me?` — neutral.\n- `Could you help me?` — more polite.\n\nIn shops, offices, or with strangers, `could` is the safer, softer choice.\n\n**Could for present possibility:**\n- `It could rain tomorrow.` — not certain, but possible.\n\nLike `can`, `could` takes the **base verb** and never changes form: `I could go`, `she could go`. The negative is `couldn't` and the question puts `could` first: `Could I go?`\n\nOne important limit: for a **single, specific success in the past** (you actually managed to do one thing), prefer `was/were able to`, not `could`. Keep `could` for general past abilities.",
         "ru": "На уровне A2 `can` расширяется. Появляется его «прошлая версия» — **could**.\n\n**Could = прошлая форма can** для общих умений и возможностей:\n- `I can swim now.` (Я умею плавать сейчас.)\n- `I could swim when I was five.` (Я умел плавать, когда мне было пять лет.)\n\n**Could для вежливой просьбы:** звучит мягче, чем `can`:\n- `Can you help me?` (Можешь помочь?) — нейтрально.\n- `Could you help me?` (Не мог бы ты мне помочь?) — вежливее.\n\nВ магазине, офисе, с незнакомыми людьми лучше использовать `could`.\n\n**Could для возможности в настоящем:**\n- `It could rain tomorrow.` (Завтра может пойти дождь.) — не факт, но возможно.\n\n**Формы:**\n\n| | can | could |\n|---|---|---|\n| Утверждение | I can go | I could go |\n| Отрицание | I can't go | I couldn't go |\n| Вопрос | Can I go? | Could I go? |\n\n**Типичные ошибки русских студентов:**\n- ❌ `I can to swim` → ✅ `I can swim`\n- ❌ `She cans dance` → ✅ `She can dance`\n- ❌ `I could swimmed` → ✅ `I could swim`\n- ❌ `Yesterday I could finish the work` (для одного конкретного успеха) → лучше `I was able to finish the work`\n\n**Важно:** для одного конкретного прошлого события (когда у тебя получилось) лучше сказать `was/were able to`, а не `could`. `Could` годится для общих умений."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + could + base verb; could = past ability or softer request",
+        "ru": "подлежащее + could + глагол в начальной форме; could = умение в прошлом или более вежливая просьба"
       },
       "examples": [
         {
           "en": "When I was young, I could run very fast.",
-          "ru": "Когда я был молодой, я мог очень быстро бегать."
+          "ru": "Когда я был молодой, я мог очень быстро бегать.",
+          "note": {
+            "en": "past ability",
+            "ru": "умение в прошлом"
+          }
         },
         {
           "en": "Could you pass me the salt, please?",
-          "ru": "Не мог бы ты передать мне соль?"
+          "ru": "Не мог бы ты передать мне соль?",
+          "note": {
+            "en": "polite request",
+            "ru": "вежливая просьба"
+          }
         },
         {
           "en": "I can't hear you — can you speak louder?",
@@ -87,40 +131,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "It could be true.",
-          "ru": "Это может быть правдой."
+          "ru": "Это может быть правдой.",
+          "note": {
+            "en": "possibility",
+            "ru": "возможность"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Could — это прошлое для общих умений; для одного успеха используй was able to."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I could swimmed when I was five.",
+          "right": "I could swim when I was five.",
+          "why": {
+            "en": "After `could` the verb stays in its base form, with no past ending.",
+            "ru": "После could глагол остаётся в начальной форме, без окончания прошедшего времени."
+          }
+        },
+        {
+          "wrong": "Yesterday I could finish the work.",
+          "right": "Yesterday I was able to finish the work.",
+          "why": {
+            "en": "For one specific past success, use `was/were able to`, not `could`.",
+            "ru": "Для одного конкретного успеха в прошлом используй was/were able to, а не could."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, two distinctions matter: **could vs was/were able to**, and **can/could for possibility and certainty**.\n\n**Could vs was/were able to.** Use `could` for a general past ability (`I could play chess at six.`), but `was/were able to` for a single success in a specific situation (`Yesterday I was able to finish the report.`). The test: *managed to do one particular thing* → `was/were able to`. In the **negative**, however, `couldn't` works for single events too: `I couldn't finish the test yesterday.`\n\n**Possibility.** `Can` marks a general, theoretical possibility (`It can get cold in October.`), while `could` marks a specific possibility in the moment (`That could be John at the door.`).\n\n**Certainty with can't.** Use `can't` for a confident negative conclusion: `That can't be true!`, `She can't be at home — I just saw her at work.` Here `can't` means *I'm sure it isn't so*.\n\n**Polite, indirect requests.** Layer extra words for softness: `Do you think you could help me?`, `Could I possibly borrow your pen?`\n\n**Permission.** In everyday speech `can` is the normal choice; `may` is more formal. At B1, `can` is perfectly natural for asking and giving permission.",
         "ru": "На B1 важно точно различать **could** и **was/were able to**, а также понимать **степени вероятности** с `can/could`.\n\n**Could vs was/were able to:**\n\n- `Could` — общая способность в прошлом: `I could play chess at six.` (Я умел играть в шахматы в шесть лет.)\n- `Was/were able to` — конкретный успех в конкретной ситуации: `Yesterday I was able to finish the report.` (Вчера мне удалось закончить отчёт.)\n\n**Правило:** если ты хочешь сказать «мне удалось сделать одно конкретное дело», используй `was/were able to`, а не `could`.\n\n- ❌ `Yesterday I could solve the puzzle.`\n- ✅ `Yesterday I was able to solve the puzzle.` / `I managed to solve the puzzle.`\n\nНо **в отрицании** `couldn't` работает и для одного случая:\n- ✅ `I couldn't finish the test yesterday.` (Я не смог закончить тест вчера.)\n\n**Can/could для возможности и вероятности:**\n\n- `Can` — общая теоретическая возможность: `It can get cold in October.` (В октябре бывает холодно.)\n- `Could` — конкретная возможность в ситуации: `That could be John at the door.` (Это, возможно, Джон у двери.)\n\n**Can't для уверенного отрицания:**\n- `That can't be true!` (Не может быть, чтобы это было правдой!) — я уверен, что нет.\n- `She can't be at home — I just saw her at work.` (Она не может быть дома — я только что видел её на работе.)\n\n**Can/could в непрямых просьбах:**\n- `Do you think you could help me?` (Как ты думаешь, ты не мог бы мне помочь?) — очень вежливо.\n- `Could I possibly borrow your pen?` (Не мог бы я, пожалуй, одолжить твою ручку?)\n\n**Разрешение: can vs may:**\nВ повседневной речи `can` используется чаще. `May` — более формально. На B1 в разговорной ситуации смело используй `can` для разрешения."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "could = general past ability; was/were able to + base verb = one specific past success; can't + be = sure it isn't true",
+        "ru": "could = общее умение в прошлом; was/were able to + глагол = один конкретный успех в прошлом; can't + be = уверен, что это неправда"
       },
       "examples": [
         {
           "en": "I tried hard and was able to pass the exam.",
-          "ru": "Я очень старался и смог сдать экзамен."
+          "ru": "Я очень старался и смог сдать экзамен.",
+          "note": {
+            "en": "specific success",
+            "ru": "конкретный успех"
+          }
         },
         {
           "en": "She could play the violin when she was ten.",
-          "ru": "Она умела играть на скрипке, когда ей было десять."
+          "ru": "Она умела играть на скрипке, когда ей было десять.",
+          "note": {
+            "en": "general past ability",
+            "ru": "общее умение в прошлом"
+          }
         },
         {
           "en": "That can't be his sister — they look nothing alike.",
-          "ru": "Это не может быть его сестрой — они совсем непохожи."
+          "ru": "Это не может быть его сестрой — они совсем непохожи.",
+          "note": {
+            "en": "can't = sure it isn't",
+            "ru": "can't = уверен, что нет"
+          }
         },
         {
           "en": "Could you possibly lend me some money?",
-          "ru": "Ты мог бы, пожалуй, одолжить мне немного денег?"
+          "ru": "Ты мог бы, пожалуй, одолжить мне немного денег?",
+          "note": {
+            "en": "indirect request",
+            "ru": "непрямая просьба"
+          }
         },
         {
           "en": "It could rain later, so take an umbrella.",
@@ -130,34 +212,68 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Для одного конкретного успеха в прошлом используй was/were able to, а не could."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Yesterday I could solve the puzzle.",
+          "right": "Yesterday I was able to solve the puzzle.",
+          "why": {
+            "en": "A single past success takes `was/were able to`, not `could`.",
+            "ru": "Один успех в прошлом требует was/were able to, а не could."
+          }
+        },
+        {
+          "wrong": "It can be John at the door.",
+          "right": "It could be John at the door.",
+          "why": {
+            "en": "For a specific possibility right now, use `could`; `can` here states general possibility.",
+            "ru": "Для конкретной возможности в данный момент нужен could; can здесь выражает общую возможность."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, `can/could` reach into **hypothetical possibility**, **criticism**, and the **modal perfect**.\n\n**Could for hypothetical possibility.** Where `can` states a real ability, `could` floats a possibility — often a soft suggestion: `You could try a different approach.`, `We could go to Italy this summer.`\n\n**Could have + past participle (modal perfect).** This points back at the past:\n- Missed chance: `You could have told me!` (but you didn't).\n- Past guess: `He could have missed the train.`\n- Gentle reproach: `You could have been more careful.`\n\nCompare `You could help me.` (now, if you wanted) with `You could have helped me.` (in the past — but you didn't).\n\n**Can/could for surprise or criticism:** `How can you be so rude?`, `How could you say that?`\n\n**Can't have + past participle (logical deduction):** `She can't have left already — her coat is still here.`, `He couldn't have stolen it — he was with me.`\n\n**Can for typical behaviour (habitual):** describing what something tends to do, not one event: `She can be really annoying sometimes.`, `Winters can get very cold here.`",
         "ru": "На B2 `can/could` используются для **теоретической возможности**, **критики** и **modal perfect**.\n\n**1. Could для теоретической возможности (hypothetical):**\n- `You could try a different approach.` (Ты мог бы попробовать другой подход.) — совет.\n- `We could go to Italy this summer.` (Мы могли бы поехать в Италию этим летом.) — предложение.\n\nРазница с `can`: `can` — реальная способность, `could` — гипотетическая возможность, часто как мягкое предложение.\n\n**2. Could have + past participle (modal perfect):**\n\n- **Упущенная возможность:** `You could have told me!` (Ты мог бы мне сказать!) — но не сказал.\n- **Предположение о прошлом:** `He could have missed the train.` (Он, возможно, пропустил поезд.)\n- **Мягкая критика:** `You could have been more careful.` (Мог бы быть поосторожнее.)\n\nСравни:\n- `You could help me.` (Мог бы помочь — сейчас.)\n- `You could have helped me.` (Мог бы помочь — но не помог.)\n\n**3. Can/could для критики и удивления:**\n- `How can you be so rude?` (Как ты можешь быть таким грубым?)\n- `How could you say that?` (Как ты мог такое сказать?)\n\n**4. Can't have + past participle (логический вывод):**\n- `She can't have left already — her coat is still here.` (Она не могла уже уйти — её пальто всё ещё здесь.)\n- `He couldn't have stolen it — he was with me.` (Он не мог это украсть — он был со мной.)\n\n**5. Can для характеристик (habitual):**\n- `She can be really annoying sometimes.` (Она бывает очень раздражающей иногда.)\n- `Winters can get very cold here.` (Зимы здесь бывают очень холодными.)\n\nЭто не единичное событие, а свойство, которое проявляется регулярно.\n\n**6. Типичные ошибки B2:**\n- ❌ `You could of helped me.` (could of — неграмотная запись could have)\n- ✅ `You could have helped me.`\n- ❌ `He could to come yesterday.` → ✅ `He could have come yesterday.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "could have + past participle = missed chance / past guess; can't have + past participle = it's impossible that; can + be = tends to be",
+        "ru": "could have + причастие прошедшего времени = упущенная возможность / предположение о прошлом; can't have + причастие = невозможно, чтобы; can + be = бывает"
       },
       "examples": [
         {
           "en": "You could have warned me about the traffic!",
-          "ru": "Мог бы предупредить меня о пробке!"
+          "ru": "Мог бы предупредить меня о пробке!",
+          "note": {
+            "en": "missed chance / reproach",
+            "ru": "упущенная возможность / упрёк"
+          }
         },
         {
           "en": "She can be quite difficult when she's tired.",
-          "ru": "Она бывает довольно тяжёлой, когда устала."
+          "ru": "Она бывает довольно тяжёлой, когда устала.",
+          "note": {
+            "en": "habitual can",
+            "ru": "can для свойства"
+          }
         },
         {
           "en": "He can't have finished it so quickly.",
-          "ru": "Он не мог закончить это так быстро."
+          "ru": "Он не мог закончить это так быстро.",
+          "note": {
+            "en": "can't have = impossible",
+            "ru": "can't have = невозможно"
+          }
         },
         {
           "en": "We could stay at a hotel or with my cousin.",
-          "ru": "Мы могли бы остановиться в отеле или у моего кузена."
+          "ru": "Мы могли бы остановиться в отеле или у моего кузена.",
+          "note": {
+            "en": "hypothetical suggestion",
+            "ru": "гипотетическое предложение"
+          }
         },
         {
           "en": "How could he forget her birthday?",
@@ -167,26 +283,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Could have + past participle — упущенная возможность или мягкая критика."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "You could of helped me.",
+          "right": "You could have helped me.",
+          "why": {
+            "en": "`could of` is a mishearing of `could have`; always write `could have` (or `could've`).",
+            "ru": "could of — ошибочная запись could have; всегда пиши could have (или could've)."
+          }
+        },
+        {
+          "wrong": "He could to come yesterday.",
+          "right": "He could have come yesterday.",
+          "why": {
+            "en": "There is no `to` after a modal; for the past, use `could have` + past participle.",
+            "ru": "После модального глагола нет to; для прошлого используй could have + причастие."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, `can/could` become tools of **epistemic modality** and **diplomatic register**.\n\n**Epistemic vs deontic.** A *deontic* reading is about permission or obligation (`You can go now.` — I permit it). An *epistemic* reading is about how certain you are (`That can't be right.` — my logical judgement). The same sentence can flip between the two, and context decides; at C1 you should sense the shift and exploit it deliberately.\n\n**Could as a hedge.** In formal and business writing, `could` softens a claim: `This approach could be problematic.` is gentler than `is`; `We could consider alternative solutions.`; `One could argue that...`\n\n**Could in academic register** signals a cautious conclusion: `The results could suggest a correlation.`, `It could be argued that this interpretation oversimplifies the data.`\n\n**Distancing structures:** `It can be seen that...` (impersonal passive), `Could it be that...?` (rhetorical question), `One couldn't help noticing...`\n\n**Might vs could.** `He might be at home.` is neutral possibility; `He could be at home.` adds a sense of the option being open to him; `He may be at home.` is a touch more formal.\n\n**Indirectness in requests:** the longer and more tentative the wording, the more polite — `I was wondering if you could possibly take a look at this.`, `Could I perhaps trouble you for a moment?`",
         "ru": "На C1 `can/could` становятся инструментами **эпистемической модальности** и **дипломатического регистра**.\n\n**1. Epistemic vs deontic readings:**\n\n- **Deontic** (разрешение, обязанность): `You can go now.` (Ты можешь идти сейчас.) — я разрешаю.\n- **Epistemic** (степень уверенности): `That can't be right.` (Не может быть правильно.) — моя логическая оценка.\n\nВ одном и том же предложении `can/could` может восприниматься двояко, и контекст решает значение. На C1 важно чувствовать этот сдвиг и уметь его использовать сознательно.\n\n**2. Could для дипломатического hedging:**\nВ официальном письме и бизнес-коммуникации `could` смягчает утверждения:\n- `This approach could be problematic.` (Этот подход может быть проблематичным.) — мягче, чем `is`.\n- `We could consider alternative solutions.` (Мы могли бы рассмотреть альтернативные решения.)\n- `One could argue that...` (Можно утверждать, что...) — академический hedge.\n\n**3. Could в академическом регистре:**\n- `The results could suggest a correlation.` (Результаты могут указывать на корреляцию.) — осторожный вывод.\n- `It could be argued that this interpretation oversimplifies the data.` (Можно утверждать, что эта интерпретация упрощает данные.)\n\n**4. Can/could + сложные конструкции:**\n- `It can be seen that...` (Видно, что...) — пассив для дистанцирования.\n- `Could it be that...?` (Возможно ли, что...?) — риторический вопрос.\n- `One couldn't help noticing...` (Нельзя было не заметить...)\n\n**5. Тонкая разница might vs could:**\n- `He might be at home.` — возможность, нейтрально.\n- `He could be at home.` — возможность + подразумевается наличие способности быть там.\n- `He may be at home.` — чуть более формально.\n\n**6. Indirectness в запросах:**\n- `I was wondering if you could possibly take a look at this.` (Я тут думал, не могли бы вы, пожалуй, взглянуть на это.)\n- `Could I perhaps trouble you for a moment?` (Не мог бы я, возможно, побеспокоить вас на минуту?)\n\nДлина и грамматическая сложность запроса коррелирует с уровнем вежливости.\n\n**7. Could для рефлексивного предложения:**\n- `We could always try again tomorrow.` (Мы всегда могли бы попробовать ещё раз завтра.) — вводит открытую опцию."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "could + hedge (possibly / perhaps / well) + verb = tentative claim; deontic can = permission vs epistemic can/could = degree of certainty",
+        "ru": "could + смягчитель (possibly / perhaps / well) + глагол = осторожное утверждение; деонтический can = разрешение vs эпистемический can/could = степень уверенности"
       },
       "examples": [
         {
           "en": "It could be argued that the methodology lacks rigour.",
-          "ru": "Можно утверждать, что методологии не хватает строгости."
+          "ru": "Можно утверждать, что методологии не хватает строгости.",
+          "note": {
+            "en": "academic hedge",
+            "ru": "академический смягчитель"
+          }
         },
         {
           "en": "I was wondering if you could spare a few minutes.",
-          "ru": "Я тут думал, не могли бы вы уделить несколько минут."
+          "ru": "Я тут думал, не могли бы вы уделить несколько минут.",
+          "note": {
+            "en": "tentative request",
+            "ru": "осторожная просьба"
+          }
         },
         {
           "en": "This interpretation could well be the most convincing one.",
@@ -198,32 +340,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Could it be that we've been missing the point entirely?",
-          "ru": "Возможно ли, что мы вообще не понимали сути?"
+          "ru": "Возможно ли, что мы вообще не понимали сути?",
+          "note": {
+            "en": "rhetorical question",
+            "ru": "риторический вопрос"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Could + hedging (possibly, perhaps, well) — стандартный приём академического и дипломатического регистра."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It can be argued that the methodology lacks rigour.",
+          "right": "It could be argued that the methodology lacks rigour.",
+          "why": {
+            "en": "For a cautious, hedged academic claim, `could` is the convention; `can` sounds like a flat assertion of possibility.",
+            "ru": "Для осторожного, смягчённого академического утверждения принят could; can звучит как прямая констатация возможности."
+          }
+        },
+        {
+          "wrong": "I was wondering if you can spare a few minutes.",
+          "right": "I was wondering if you could spare a few minutes.",
+          "why": {
+            "en": "The polite, distancing frame `I was wondering if...` pairs with `could`, not `can`.",
+            "ru": "Вежливый дистанцирующий оборот I was wondering if... сочетается с could, а не can."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, `can/could` are a fine stylistic instrument, sensitive to **register**, **genre**, and **pragmatic stance**.\n\n**Lexicalised expressions with `can`:** `I can't help feeling that...`, `One can only hope.`, `You can't be serious.`, the informal reply `Can do!`, and the refusal `No can do.`\n\n**Marked rhetorical uses:** `Could it be that we were wrong all along?`, `Who could have foreseen such an outcome?`, `Nothing could have prepared him for what he saw.`\n\n**Counterfactual `could have been + -ing`:** `We could have been talking about this for hours.`, `She could have been waiting outside all this time.`\n\n**Reproach vs neutral inference.** `You could have called.` is a reproach (you had the chance and didn't); `You might have called.` is softer and can also mean *perhaps you did call*.\n\n**Register variation.** British English favours the emphatically polite `I couldn't agree more.` where American English may prefer the direct `I totally agree.` In British legal prose, `can` and `may` stay clearly distinct.\n\n**Hedging clusters:** `It could plausibly be argued that...`, `This could conceivably lead to...`. Paradoxically, the longer the chain of softeners, the more forcefully the writer is actually asserting — a recognised rhetorical move.\n\n**Literary idiom:** `cannot but + base` / `cannot help but + base` make a strong claim through double negation: `I cannot but admire her courage.`, `One cannot help but wonder...`",
         "ru": "На C2 `can/could` — это тонкий стилистический инструмент, чувствительный к **регистру**, **жанру** и **прагматической установке**.\n\n**1. Лексикализованные обороты с `can`:**\n- `I can't help feeling that...` (Я не могу избавиться от ощущения, что...)\n- `One can only hope.` (Остаётся только надеяться.)\n- `You can't be serious.` (Ты не можешь быть серьёзным.)\n- `Can do!` (Сделаем!) — разговорный ответ.\n- `No can do.` (Никак нельзя.) — отказ.\n\n**2. Marked uses в литературе и риторике:**\n- `Could it be that we were wrong all along?` — риторический вопрос в эссе.\n- `Who could have foreseen such an outcome?` — риторическое «кто бы мог».\n- `Nothing could have prepared him for what he saw.` (Ничто не могло подготовить его к тому, что он увидел.)\n\n**3. Counterfactual could have + been + -ing:**\n- `We could have been talking about this for hours.` (Мы могли бы обсуждать это часами.) — гипотетическая продолжительность.\n- `She could have been waiting outside all this time.` (Она, возможно, всё это время ждала снаружи.)\n\n**4. Subtle reproach vs neutral inference:**\nРазница `could have` и `might have`:\n- `You could have called.` — упрёк: ты имел возможность, но не сделал.\n- `You might have called.` — похоже, но чуть менее прямолинейно; также может означать «возможно, ты звонил».\n\n**5. Regional and stylistic variation:**\n- British English: `I couldn't agree more.` (Полностью согласен.) — подчёркнуто вежливо.\n- American English чаще предпочитает прямое `I totally agree.`\n- В британском юридическом письме `can` и `may` чётко разграничены; в американском `may` вытесняется.\n\n**6. Academic hedging cluster:**\nНа C2 `could` входит в устойчивые академические цепочки:\n- `It could plausibly be argued that...`\n- `This could conceivably lead to...`\n- `Such findings could potentially reshape our understanding of...`\n\nПарадоксально, чем длиннее цепочка смягчителей, тем сильнее автор фактически утверждает — это риторический приём.\n\n**7. Переключение между deontic и epistemic:**\n- `You can't leave now` — это запрет или логический вывод? Контекст плюс интонация решают.\n- `She could be lying` — способность лгать или предположение о том, что она лжёт?\n\nНа C2 ты не только понимаешь эту двусмысленность, но и умеешь использовать её стилистически — для иронии, намёка, подтекста.\n\n**8. Syntax-level idiom:** `cannot but + base` / `cannot help but + base` — литературный оборот:\n- `I cannot but admire her courage.` (Я не могу не восхищаться её смелостью.)\n- `One cannot help but wonder...` (Нельзя не задуматься...)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "cannot (help) but + base verb = strong assertion via double negation; could have been + -ing = counterfactual continuous",
+        "ru": "cannot (help) but + глагол в начальной форме = сильное утверждение через двойное отрицание; could have been + -ing = контрфактическое длительное"
       },
       "examples": [
         {
           "en": "One cannot help but marvel at the elegance of the proof.",
-          "ru": "Нельзя не восхититься изяществом доказательства."
+          "ru": "Нельзя не восхититься изяществом доказательства.",
+          "note": {
+            "en": "cannot help but",
+            "ru": "cannot help but"
+          }
         },
         {
           "en": "Could it be that the author intended this ambiguity?",
-          "ru": "Возможно ли, что автор задумал эту двусмысленность?"
+          "ru": "Возможно ли, что автор задумал эту двусмысленность?",
+          "note": {
+            "en": "rhetorical question",
+            "ru": "риторический вопрос"
+          }
         },
         {
           "en": "No one could have foreseen the consequences.",
@@ -231,7 +403,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I couldn't agree with you more on this point.",
-          "ru": "Не могу согласиться с вами сильнее по этому вопросу."
+          "ru": "Не могу согласиться с вами сильнее по этому вопросу.",
+          "note": {
+            "en": "emphatic British politeness",
+            "ru": "подчёркнутая британская вежливость"
+          }
         },
         {
           "en": "Such a reading could plausibly be defended on structural grounds.",
@@ -241,9 +417,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Cannot but и cannot help but — литературные обороты для сильного утверждения через двойное отрицание."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "One cannot but to admire her courage.",
+          "right": "One cannot but admire her courage.",
+          "why": {
+            "en": "In the idiom `cannot but`, the following verb is the bare base form, with no `to`.",
+            "ru": "В обороте cannot but следующий глагол стоит в чистой начальной форме, без to."
+          }
+        },
+        {
+          "wrong": "You might have called when you really mean a reproach.",
+          "right": "You could have called.",
+          "why": {
+            "en": "For a clear reproach about a missed chance, `could have` is direct; `might have` is softer and can be read as *perhaps you did*.",
+            "ru": "Для явного упрёка об упущенной возможности прямым звучит could have; might have мягче и может читаться как «возможно, ты звонил»."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "may-might",
+    "must-have-to",
+    "should-ought-to",
+    "will-would"
+  ],
+  "crossTopic": [
+    "modal-perfect",
+    "passive-with-modals",
+    "indirect-questions",
+    "first-conditional"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "can = present ability / possibility",
+      "could = past ability / softer or hypothetical"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "present-continuous",
   "title": {
-    "en": "",
+    "en": "Present Continuous",
     "ru": "Present Continuous"
   },
   "cefr": "A0",
@@ -18,19 +18,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "aspect",
+  "egp": [
+    "EGP:can-use-the-present-continuous-to-talk-about-actions-happening-now"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "A0": {
       "cefr": "A0",
       "explain": {
-        "en": "",
+        "en": "Use the **present continuous** for an action happening **right now**, at this moment: \"I am writing\", \"Mum is cooking\", \"the dog is sleeping\".\n\nYou always need **two parts**: a form of the verb **`to be`** + the main verb with **`-ing`**.\n\nThe `to be` forms are: `I am`, `you are`, `he/she/it is`, `we/they are`.\n\nMake the `-ing` form by adding `-ing` to the verb: `work → working`, `play → playing`, `read → reading`, `eat → eating`, `sleep → sleeping`.\n\nFor a **negative**, put `not` after `am/is/are`: `I am not sleeping`, `he is not working`.\n\nFor a **question**, move `am/is/are` to the front: `Are you reading?`, `Is she working?`\n\nIn speech we often shorten `am/is/are`: `I'm reading`, `she's working`, `they're playing`.\n\nSignal words: `now`, `right now`, `at the moment`.",
         "ru": "**Present Continuous** — это время, когда действие происходит **прямо сейчас**, в этот момент. Например: «я пишу», «мама готовит», «собака спит».\n\n**Как строить предложение:**\n\nНужны две части: **форма глагола `to be`** + **глагол с окончанием `-ing`**.\n\nФормы `to be`:\n- `I am` (я)\n- `You are` (ты)\n- `He is / She is / It is` (он/она/оно)\n- `We are / They are` (мы/они)\n\nГлагол + `-ing`:\n- `work → working` (работать)\n- `play → playing` (играть)\n- `read → reading` (читать)\n- `eat → eating` (есть)\n- `sleep → sleeping` (спать)\n\n**Примеры:**\n- `I am reading.` (Я читаю.)\n- `She is working.` (Она работает.)\n- `They are playing.` (Они играют.)\n- `We are eating.` (Мы едим.)\n\n**Отрицание** — добавляем `not` после `am/is/are`:\n- `I am not sleeping.` (Я не сплю.)\n- `He is not working.` (Он не работает.)\n\nЧасто пишут коротко:\n- `I'm reading.`\n- `She's working.`\n- `They're playing.`\n\n**Вопрос** — `am/is/are` переезжает в начало:\n- `Are you reading?` (Ты читаешь?)\n- `Is she working?` (Она работает?)\n\n**Слова-подсказки:** `now` (сейчас), `right now` (прямо сейчас), `at the moment` (в этот момент)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + am/is/are + verb-ing",
+        "ru": "подлежащее + am/is/are + глагол с -ing"
       },
       "examples": [
         {
@@ -51,32 +53,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "What are you doing?",
-          "ru": "Что ты делаешь?"
+          "ru": "Что ты делаешь?",
+          "note": {
+            "en": "question",
+            "ru": "вопрос"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Всегда нужны две части: am/is/are + глагол с -ing."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I reading.",
+          "right": "I am reading.",
+          "why": {
+            "en": "You must keep the `to be` part; the -ing verb can never stand alone.",
+            "ru": "Нужна форма to be: без am/is/are глагол с -ing не работает."
+          }
+        },
+        {
+          "wrong": "She is work.",
+          "right": "She is working.",
+          "why": {
+            "en": "After am/is/are the verb needs the -ing ending.",
+            "ru": "После am/is/are глагол должен быть с окончанием -ing."
+          }
+        }
+      ]
     },
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "The **present continuous** describes something happening **now** or in this **current period of time**. The form is `am/is/are` + `verb-ing`.\n\n**Spelling of `-ing`:**\n- Usually just add it: `work → working`, `play → playing`.\n- Drop a final `-e`: `write → writing`, `make → making`, `come → coming`.\n- In a short word ending in consonant + vowel + consonant, double the last letter: `run → running`, `sit → sitting`, `swim → swimming`, `stop → stopping`.\n- `-ie` becomes `-y`: `lie → lying`, `die → dying`.\n\n**When to use it:**\n1. An action right now: `I'm writing a letter.`\n2. A temporary situation: `She's staying with her aunt this week.`\n3. A change in progress: `The weather is getting colder.`\n\n**Time markers:** `now`, `right now`, `at the moment`, `today`, `this week/month/year`, and after `Look!` or `Listen!`\n\n**Contractions:** `I'm`, `you're`, `he's/she's/it's`, `we're/they're`, `isn't`, `aren't`.",
         "ru": "**Present Continuous** используется для действий, которые происходят **сейчас** или **в этот период времени**.\n\n**Форма:** `am/is/are` + `verb-ing`\n\n**Правила написания `-ing`:**\n- Обычно просто прибавляем: `work → working`, `play → playing`\n- Если слово оканчивается на `-e`, убираем её: `write → writing`, `make → making`, `come → coming`\n- Если короткое слово оканчивается на согласную + гласную + согласную — удваиваем последнюю: `run → running`, `sit → sitting`, `swim → swimming`, `stop → stopping`\n- `lie → lying`, `die → dying` (меняем `-ie` на `-y`)\n\n**Когда использовать:**\n\n1. **Действие прямо сейчас:** `I'm writing a letter.` (Я пишу письмо сейчас.)\n2. **Временная ситуация:** `She's staying with her aunt this week.` (Она живёт у тёти на этой неделе.)\n3. **Изменения:** `The weather is getting colder.` (Погода становится холоднее.)\n\n**Типичные time markers:**\n- `now` (сейчас)\n- `right now` (прямо сейчас)\n- `at the moment` (в этот момент)\n- `today` (сегодня)\n- `this week/month/year` (на этой неделе, в этом месяце)\n- `Look!` / `Listen!` (Смотри! / Слушай!)\n\n**Короткие формы (contractions):**\n- `I'm = I am`\n- `you're = you are`\n- `he's/she's/it's = he is/she is/it is`\n- `we're/they're = we are/they are`\n- `isn't = is not`, `aren't = are not`\n\n**Главные ошибки:**\n- Забыть `to be`: ❌ `I working now` → ✅ `I am working now`\n- Двойной `-ing`: ❌ `She is workinging` — такого не бывает\n- `-ing` без `to be`: ❌ `He playing football` → ✅ `He is playing football`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + am/is/are (+ not) + verb-ing",
+        "ru": "подлежащее + am/is/are (+ not) + глагол с -ing"
       },
       "examples": [
         {
           "en": "Look! It's raining.",
-          "ru": "Смотри! Идёт дождь."
+          "ru": "Смотри! Идёт дождь.",
+          "note": {
+            "en": "happening now",
+            "ru": "происходит сейчас"
+          }
         },
         {
           "en": "I'm learning English this year.",
-          "ru": "Я учу английский в этом году."
+          "ru": "Я учу английский в этом году.",
+          "note": {
+            "en": "this period",
+            "ru": "в этот период"
+          }
         },
         {
           "en": "They aren't listening to me.",
@@ -94,30 +126,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Не забывай am/is/are перед глаголом с -ing: I am reading, not I reading."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He playing football.",
+          "right": "He is playing football.",
+          "why": {
+            "en": "An -ing verb with no am/is/are is not a sentence; add the auxiliary.",
+            "ru": "Глагол с -ing без am/is/are не образует предложение — нужен вспомогательный глагол."
+          }
+        },
+        {
+          "wrong": "I am writeing a letter.",
+          "right": "I am writing a letter.",
+          "why": {
+            "en": "Drop the silent final -e before adding -ing.",
+            "ru": "Перед -ing убираем немую конечную -e."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2 the key skill is **not confusing the present continuous with the present simple** — they paint two different pictures.\n\n**Present simple** = habits, routines, permanent facts: `I work in an office.` `She drinks coffee every morning.`\n\n**Present continuous** = now, this period, temporary: `I'm working from home today.` `She's drinking tea right now.`\n\nAsk yourself: \"is this always true?\" (simple) or \"is this happening now / just temporarily?\" (continuous).\n\n**Stative verbs** describe states, not actions, and normally do **not** take the continuous even when you mean \"now\": `know`, `like`, `love`, `want`, `need`, `understand`, `believe`, `remember`, `forget`, `belong`, `seem`. Say `I know her`, not `I am knowing her`.\n\n**Future use — fixed arrangements:** the present continuous can express a planned action in the near future when there is a clear arrangement: `I'm meeting Anna tomorrow.` `We're flying to Paris next week.` Compare with `will` (a decision at the moment of speaking or a prediction) and `be going to` (an intention).",
         "ru": "На уровне A2 главное — **не путать Present Continuous с Present Simple**. Это две разные картинки мира.\n\n**Present Simple** — привычки, регулярность, факты:\n- `I work in an office.` (Я работаю в офисе — моя постоянная работа.)\n- `She drinks coffee every morning.` (Она пьёт кофе каждое утро.)\n\n**Present Continuous** — сейчас, в данный период, временно:\n- `I'm working from home today.` (Сегодня я работаю из дома — временно.)\n- `She's drinking tea right now.` (Она пьёт чай прямо сейчас.)\n\n**Ключевой вопрос:** «это всегда так» или «это сейчас/временно»?\n\n**Временные ситуации:**\n- `I'm living with my parents for now.` (Я сейчас живу у родителей — временно.)\n- `He's studying French this semester.` (Он учит французский в этом семестре.)\n\n**Stative verbs (глаголы состояния):** не используются в Continuous, даже про «сейчас»:\n- `know` (знать), `like` (нравиться), `love` (любить), `want` (хотеть), `need` (нуждаться), `understand` (понимать), `believe` (верить), `remember` (помнить), `forget` (забывать), `belong` (принадлежать), `seem` (казаться)\n\nНельзя: ❌ `I am knowing her.` Правильно: ✅ `I know her.`\n\n**Будущее значение — договорённости и планы:**\nPresent Continuous используется для **запланированных действий** в ближайшем будущем, когда есть чёткая договорённость:\n- `I'm meeting Anna tomorrow.` (Я встречаюсь с Анной завтра — уже договорились.)\n- `We're flying to Paris next week.` (Мы летим в Париж на следующей неделе — билеты куплены.)\n\nРазница с `will`: `will` — это решение в момент речи или предсказание. `Be going to` — намерение. Present Continuous — чёткий план, особенно с другим человеком или обязательством.\n\n**Сравнение в одной теме:**\n- `She usually wears glasses, but today she's wearing contact lenses.` (Она обычно носит очки, но сегодня — контактные линзы.)\n- `He doesn't smoke, but he's smoking now because he's nervous.` (Он не курит, но сейчас курит, потому что нервничает.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "now/temporary: am/is/are + verb-ing | habit: present simple",
+        "ru": "сейчас/временно: am/is/are + глагол с -ing | привычка: Present Simple"
       },
       "examples": [
         {
           "en": "Normally I walk to work, but today I'm taking the bus.",
-          "ru": "Обычно я хожу на работу пешком, но сегодня еду на автобусе."
+          "ru": "Обычно я хожу на работу пешком, но сегодня еду на автобусе.",
+          "note": {
+            "en": "habit vs now",
+            "ru": "привычка против сейчас"
+          }
         },
         {
           "en": "What are you doing next weekend?",
-          "ru": "Что ты делаешь в следующие выходные?"
+          "ru": "Что ты делаешь в следующие выходные?",
+          "note": {
+            "en": "future arrangement",
+            "ru": "будущая договорённость"
+          }
         },
         {
           "en": "I know him very well.",
-          "ru": "Я его очень хорошо знаю."
+          "ru": "Я его очень хорошо знаю.",
+          "note": {
+            "en": "stative verb",
+            "ru": "глагол состояния"
+          }
         },
         {
           "en": "My English is getting better.",
@@ -131,30 +193,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Stative verbs (know, like, want) — всегда в Simple, никогда в Continuous."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I am knowing her.",
+          "right": "I know her.",
+          "why": {
+            "en": "Stative verbs like know, like, want stay in the present simple.",
+            "ru": "Глаголы состояния (know, like, want) остаются в Present Simple."
+          }
+        },
+        {
+          "wrong": "I am working here every day.",
+          "right": "I work here every day.",
+          "why": {
+            "en": "A regular habit takes the present simple, not the continuous.",
+            "ru": "Регулярная привычка требует Present Simple, а не Continuous."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 you use the present continuous for **future arrangements**, **annoyance**, and **changes in progress**.\n\n**1. Personal arrangements (future):** `I'm seeing the doctor tomorrow at 3.` `We're having dinner with the Millers on Friday.` This is a concrete arrangement with a time or place, not a vague intention. Compared with `be going to`, the continuous signals that something has been agreed/booked, while `be going to` expresses a plan or intention.\n\n**2. `always` + continuous = irritation:** `He is always losing his keys!` `You are always complaining!` The present simple (`he always loses his keys`) is a neutral fact; the continuous adds the speaker's annoyance. Use it with `always`, `constantly`, `forever`, `continually`.\n\n**3. Changes and developing processes:** `The climate is changing rapidly.` `Prices are rising.` `My English is improving.` Typical change verbs: `get`, `become`, `grow`, `rise`, `fall`, `increase`, `decrease`, `change`, `improve`.\n\n**4. Stative verbs that shift meaning** can take the continuous: `I think he's right` (opinion) vs `I'm thinking about it` (mental process); `I have a car` (own) vs `I'm having lunch` (eat); `I see what you mean` (understand) vs `I'm seeing Anna tonight` (meet).\n\n**5. Describing pictures and scenes:** `In the picture, a man is reading a book while a dog is sleeping next to him.`",
         "ru": "На уровне B1 важно уметь использовать Present Continuous для **будущих договорённостей**, **раздражения** и **изменений**.\n\n**1. Будущие личные договорённости:**\n- `I'm seeing the doctor tomorrow at 3.` (Я иду к врачу завтра в 3.)\n- `We're having dinner with the Millers on Friday.` (Мы ужинаем с Миллерами в пятницу.)\n\nЭто не общее намерение, а конкретная договорённость с временем/местом.\n\n**Разница Present Continuous vs `be going to`:**\n- Present Continuous: есть договорённость с кем-то/чем-то. `I'm meeting John at 5.`\n- `be going to`: намерение, план, но необязательно чёткая договорённость. `I'm going to read more this year.`\n\n**2. Always + Continuous — раздражение:**\n- `He is always losing his keys!` (Он вечно теряет ключи!) — жалоба, раздражение.\n- `You are always complaining!` (Ты вечно жалуешься!)\n\nСравни с Present Simple: `He always loses his keys` — нейтральный факт. `He is always losing his keys` — говорящий раздражён.\n\nНаречия, которые создают этот эффект: `always`, `constantly`, `forever`, `continually`.\n\n**3. Изменения, процессы развития:**\n- `The climate is changing rapidly.` (Климат быстро меняется.)\n- `Prices are rising.` (Цены растут.)\n- `My English is improving.` (Мой английский улучшается.)\n- `More and more people are working from home.` (Всё больше людей работают из дома.)\n\nТипичные глаголы изменения: `get`, `become`, `grow`, `rise`, `fall`, `increase`, `decrease`, `change`, `improve`.\n\n**4. Stative verbs в Continuous — допустимые случаи:**\nНекоторые stative verbs получают другое значение в Continuous:\n- `think` (мнение) → `think` (обдумывать): `I think he's right` vs `I'm thinking about it`.\n- `have` (владеть) → `have` (в выражениях): `I have a car` vs `I'm having lunch`.\n- `see` (видеть) → `see` (встречаться): `I see what you mean` vs `I'm seeing Anna tonight`.\n- `taste/smell/feel` могут быть и Simple, и Continuous: `The soup tastes good` vs `The chef is tasting the soup`.\n\n**5. Описание картинок, фотографий, событий:**\n- `In the picture, a man is reading a book while a dog is sleeping next to him.` (На картинке мужчина читает книгу, а рядом спит собака.)\n\n**Типичные ошибки B1:**\n- Использовать Continuous для постоянных фактов: ❌ `I am living in Moscow for 10 years` → ✅ `I have lived in Moscow for 10 years`.\n- Забыть различие с `be going to`: если есть договорённость — Continuous."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "always/constantly + am/is/are + verb-ing (for irritation)",
+        "ru": "always/constantly + am/is/are + глагол с -ing (для раздражения)"
       },
       "examples": [
         {
           "en": "I'm meeting the team at 10 tomorrow.",
-          "ru": "Я встречаюсь с командой завтра в 10."
+          "ru": "Я встречаюсь с командой завтра в 10.",
+          "note": {
+            "en": "arrangement",
+            "ru": "договорённость"
+          }
         },
         {
           "en": "He's always interrupting me!",
-          "ru": "Он вечно меня перебивает!"
+          "ru": "Он вечно меня перебивает!",
+          "note": {
+            "en": "irritation",
+            "ru": "раздражение"
+          }
         },
         {
           "en": "The situation is getting worse every day.",
-          "ru": "Ситуация становится хуже с каждым днём."
+          "ru": "Ситуация становится хуже с каждым днём.",
+          "note": {
+            "en": "change in progress",
+            "ru": "изменение в процессе"
+          }
         },
         {
           "en": "I'm thinking about changing jobs.",
@@ -168,26 +260,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Для личных договорённостей на будущее — Present Continuous: I'm meeting him tomorrow."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I am living in Moscow for 10 years.",
+          "right": "I have lived in Moscow for 10 years.",
+          "why": {
+            "en": "A state lasting up to now needs the present perfect, not the continuous.",
+            "ru": "Состояние, длящееся до настоящего момента, требует Present Perfect, а не Continuous."
+          }
+        },
+        {
+          "wrong": "I'm going to meet him tomorrow at 10. (when it's a fixed appointment)",
+          "right": "I'm meeting him tomorrow at 10.",
+          "why": {
+            "en": "For a fixed personal arrangement the present continuous is the natural choice.",
+            "ru": "Для конкретной личной договорённости естественнее Present Continuous."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the present continuous becomes a tool of **pragmatics**: emotion, criticism, politeness and stylistic effect.\n\n**1. `always`/`constantly`/`forever` + continuous = emotional colour.** This almost always carries a feeling: irritation (`You're constantly checking your phone!`), admiration (`She's always helping others.`), or surprise (`He's forever coming up with new ideas.`). It is not just frequency — it is a subjective judgement.\n\n**2. Stative verbs in the continuous — modern trends.** Native speakers increasingly use the continuous with stative verbs for a temporary, emphatic effect: `I'm loving this book.`, `I'm liking what I'm seeing.` This is fine in conversation and advertising, but avoid it in academic or formal writing.\n\n**3. `be` + being for temporary behaviour:** `He's being rude today` (acting that way now) vs `He is rude` (a permanent characteristic). `She's being very patient with the children.`\n\n**4. Hypothetical and tentative situations:** `Am I hearing you correctly?` `You're not seriously suggesting that, are you?` The continuous adds doubt, distance, or politeness.\n\n**5. Softening / politeness:** `We're hoping to finish by Friday` is gentler than `we hope to`.\n\n**6. Vivid commentary:** in narrative and journalism the continuous freezes a moment: `The sun is setting. The wind is picking up. She is standing alone at the edge.`\n\n**7. Subtle contrast with the simple:** `Who writes these reports?` (usually) vs `Who is writing these reports?` (right now). At B2 you should feel these nuances and choose deliberately.",
         "ru": "На B2 Present Continuous становится инструментом прагматики: эмоций, критики, социальной вежливости и стилистических эффектов.\n\n**1. Always / constantly / forever + Continuous — эмоциональная окраска:**\nЭтот приём почти всегда несёт эмоциональный заряд:\n- Раздражение: `You're constantly checking your phone!` (Ты постоянно смотришь в телефон!)\n- Восхищение: `She's always helping others.` (Она всё время помогает другим.)\n- Удивление: `He's forever coming up with new ideas.` (Он без конца придумывает новые идеи.)\n\nЭто не просто частота — это субъективная оценка. Говорящий показывает своё отношение.\n\n**2. Stative verbs в Continuous — современные тенденции:**\nНосители английского всё чаще используют Continuous со stative verbs для временных эффектов:\n- `I'm loving this book.` (Мне очень нравится эта книга.) — эмфатично, временно.\n- `I'm liking what I'm seeing.` (Мне нравится то, что я вижу.) — процесс впечатления.\n- `I'm wanting to try something new.` (Мне хочется попробовать что-то новое.) — осознаваемое желание.\n\nЭто разговорная и рекламная норма, но в академическом и формальном письме таких форм избегай.\n\n**3. `Be` + Continuous для временного поведения:**\n- `He's being rude today.` (Он сегодня ведёт себя грубо.) — временно, не обычно.\n- `She's being very patient with the children.` (Она сейчас очень терпелива с детьми.)\n\nСравни: `He is rude` (характеристика) vs `He is being rude` (поведение сейчас).\n\n**4. Гипотетические ситуации и сомнения:**\n- `Am I hearing you correctly?` (Я правильно тебя слышу?)\n- `You're not seriously suggesting that, are you?` (Ты же это не всерьёз предлагаешь?)\n\nContinuous добавляет оттенок сомнения, дистанции, вежливости.\n\n**5. Politeness в разговорной речи:**\n- `I was wondering if you could help.` — past continuous, но показывает, как Continuous смягчает.\n- `We're hoping to finish by Friday.` (Мы надеемся закончить к пятнице.) — мягче, чем `we hope`.\n\n**6. Commentary for drama and atmosphere:**\nВ литературе и журналистике Continuous создаёт ощущение кадра, остановленного момента:\n- `The sun is setting. The wind is picking up. She is standing alone at the edge.` (Солнце садится. Ветер усиливается. Она одиноко стоит на краю.)\n\n**7. Тонкие контрасты с Simple:**\n- `Who writes these reports?` (Кто обычно их пишет?) vs `Who is writing these reports?` (Кто их пишет сейчас?)\n- `The company produces electronics.` (Общее направление.) vs `The company is producing a new model.` (Сейчас работает над моделью.)\n\nНа B2 ты должен чувствовать эти нюансы и выбирать сознательно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "be + being + adjective (temporary behaviour)",
+        "ru": "be + being + прилагательное (временное поведение)"
       },
       "examples": [
         {
           "en": "You're being unreasonable about this.",
-          "ru": "Ты в этом ведёшь себя неразумно."
+          "ru": "Ты в этом ведёшь себя неразумно.",
+          "note": {
+            "en": "temporary behaviour",
+            "ru": "временное поведение"
+          }
         },
         {
           "en": "I'm hoping to hear from you soon.",
-          "ru": "Надеюсь скоро получить от тебя ответ."
+          "ru": "Надеюсь скоро получить от тебя ответ.",
+          "note": {
+            "en": "softening",
+            "ru": "смягчение"
+          }
         },
         {
           "en": "She's forever misplacing her glasses.",
@@ -195,7 +313,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I'm loving the new apartment so far.",
-          "ru": "Пока мне очень нравится новая квартира."
+          "ru": "Пока мне очень нравится новая квартира.",
+          "note": {
+            "en": "stative, temporary",
+            "ru": "состояние, временно"
+          }
         },
         {
           "en": "Am I understanding you correctly?",
@@ -205,26 +327,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "He's being rude — грубый сейчас (временно); he is rude — грубый по характеру (всегда)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He is rude today. (meaning: acting that way now)",
+          "right": "He is being rude today.",
+          "why": {
+            "en": "Use be + being for behaviour at this moment, not a permanent trait.",
+            "ru": "be + being передаёт поведение в данный момент, а не постоянную черту."
+          }
+        },
+        {
+          "wrong": "In my essay: The data is suggesting a strong trend.",
+          "right": "In my essay: The data suggests a strong trend.",
+          "why": {
+            "en": "In formal/academic writing keep stative verbs in the simple form.",
+            "ru": "В формальном/академическом письме глаголы состояния остаются в простой форме."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the present continuous enters the play of **register** and fine contrasts with the simple and perfect.\n\n**1. The continuous as a marker of subjectivity.** In formal writing the present simple sounds objective and the continuous sounds engaged: `The economy is shrinking` (an observation in progress) vs `The economy shrinks in winter` (a general fact). A journalist reaches for the continuous to feel immediate; an analyst reaches for the simple to generalise.\n\n**2. Progressive for politeness and distance:** `I'm hoping you might be able to help` is far softer than `I hope you can help`; `We're thinking you should reconsider` is more diplomatic than `we think you should`. These forms leave room for refusal and avoid imposing.\n\n**3. Stative verbs in the progressive serve three functions:** softening (`I'm wondering if...` ≈ a gentle `I wonder`), temporariness (`I'm loving this moment`), and process (`I'm seeing a new side of him` = gradual realisation). Distinguish this from error: `I'm knowing her` is wrong, but `I'm understanding the argument now` can work if you mean the process of grasping it.\n\n**4. Aspect contrast in narrative:** the continuous gives background, the simple gives foreground: `The sun is setting as she walks home.`\n\n**5. Technical and scientific writing:** the continuous conveys an unfinished process — `The system is currently processing the request.` `Researchers are investigating new methods.` — while the simple is more declarative.\n\n**6. Future arrangements vs intentions:** continuous = a firm arrangement with the outside world; `be going to` = intention; `will` = a spontaneous decision or prediction; present simple = a fixed timetable. A native chooses among them in a split second.",
         "ru": "На C1 Present Continuous входит в игру регистра и тонких смысловых различий с Simple и Perfect.\n\n**1. Continuous как маркер субъективности:**\nВ академическом и формальном письме Present Simple звучит объективно, Continuous — субъективно:\n- `The economy is shrinking.` (Экономика сжимается — наблюдение в процессе.)\n- `The economy shrinks in winter.` (Экономика обычно сжимается зимой — факт.)\n\nЖурналист выберет Continuous для ощущения непосредственности, аналитик — Simple для обобщения.\n\n**2. Progressive для вежливости и дистанции:**\n- `I'm hoping you might be able to help.` — гораздо мягче, чем `I hope you can help`.\n- `We're thinking you should reconsider.` — дипломатичнее, чем `we think you should`.\n- `Are you needing assistance?` (в сервисной индустрии) — вежливая форма `do you need?`\n\nЭти формы создают пространство для отказа, показывают, что говорящий не навязывает.\n\n**3. Stative verbs в progressive — три функции:**\n- **Смягчение:** `I'm wondering if...` = мягкое `I wonder`.\n- **Временность:** `I'm loving this moment` = интенсивное состояние сейчас.\n- **Процесс:** `I'm seeing a new side of him` = постепенное осознание.\n\nВажно различать это от ошибки. `I'm knowing her` — ошибка. `I'm understanding the argument now` — возможно, если имеется в виду процесс осознания.\n\n**4. Aspect contrast в нарративе:**\nВ повествовании Continuous создаёт фон, Simple — передний план:\n- `The sun was setting as she walked home.` — фон/действие.\n- `The sun is setting as she walks home.` — тот же приём в Present.\n\n**5. Scientific and technical writing:**\nВ технических отчётах Continuous часто передаёт процесс, который ещё не завершён:\n- `The system is currently processing the request.` (Система сейчас обрабатывает запрос.)\n- `Researchers are investigating new methods.` (Исследователи изучают новые методы.)\n\nSimple более декларативен: `The system processes 1000 requests per second`.\n\n**6. Future arrangements vs intentions — тонкая граница:**\n- Present Continuous: чёткая договорённость с внешним миром (встреча, билеты, запись).\n- `be going to`: намерение, решение, план.\n- `will`: спонтанное решение, предсказание, готовность.\n- Present Simple: расписание, установленное событием/учреждением.\n\nНоситель выбирает между ними в доли секунды, и правильный выбор показывает компетенцию.\n\n**7. Complaining vs characterising:**\n- `He's always losing things` (раздражение) vs `He always loses things` (обобщение).\n- `People are constantly complaining about the weather` (нарратив жалобы) vs `People constantly complain about the weather` (факт о людях)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "I'm hoping/wondering/thinking + ... (softened, tentative)",
+        "ru": "I'm hoping/wondering/thinking + ... (смягчённо, осторожно)"
       },
       "examples": [
         {
           "en": "I'm wondering whether you could take another look.",
-          "ru": "Думаю, не могли бы вы ещё раз посмотреть."
+          "ru": "Думаю, не могли бы вы ещё раз посмотреть.",
+          "note": {
+            "en": "polite hedge",
+            "ru": "вежливое смягчение"
+          }
         },
         {
           "en": "The team is currently working on the new protocol.",
-          "ru": "Команда в данный момент работает над новым протоколом."
+          "ru": "Команда в данный момент работает над новым протоколом.",
+          "note": {
+            "en": "unfinished process",
+            "ru": "незавершённый процесс"
+          }
         },
         {
           "en": "Are you seeing this pattern in your data?",
@@ -236,36 +384,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We're seeing an increase in applications this quarter.",
-          "ru": "В этом квартале мы наблюдаем рост заявлений."
+          "ru": "В этом квартале мы наблюдаем рост заявлений.",
+          "note": {
+            "en": "observed trend",
+            "ru": "наблюдаемая тенденция"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "I'm hoping, I'm wondering — мягче и вежливее, чем I hope, I wonder."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'm knowing the answer now.",
+          "right": "I know the answer now.",
+          "why": {
+            "en": "know is purely stative; the continuous of process applies to verbs like understand or realise, not know.",
+            "ru": "know — чисто статичный глагол; Continuous процесса возможен с understand/realise, но не с know."
+          }
+        },
+        {
+          "wrong": "I hope you can fix this right away. (as a soft request)",
+          "right": "I'm hoping you might be able to fix this.",
+          "why": {
+            "en": "The progressive plus a modal makes the request less direct and more polite.",
+            "ru": "Прогрессив с модальным глаголом делает просьбу менее прямой и более вежливой."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the present continuous is a fine stylistic register. You command it to create specific effects and to distinguish it from close alternatives.\n\n**1. Progressive for implicature** (an implied meaning the simple lacks): `I'm waiting.` suggests impatience or reproach; `You're forgetting something.` is a gentle reminder; `I'm not hearing a plan.` is criticism — I expect one but am not getting it.\n\n**2. Performative softening:** the continuous makes a statement less categorical and more open: `I'm suggesting you reconsider` (a soft proposal); `I'm telling you this isn't right` (emphatic yet at a distance); `I'm not saying you're wrong` (a tactful denial).\n\n**3. Stylistic novelisation:** in modern prose authors slip into the continuous for detached, cinematic observation — `She is walking down the street. Her heart is racing. The world is shrinking around her.` The simple would read more neutral and objective.\n\n**4. Hedging in academic speech:** `Researchers are beginning to recognise...` (an emerging, not-yet-settled trend); `The evidence is suggesting...` (a cautious, provisional claim). The simple (`evidence suggests`) asserts; the continuous proposes.\n\n**5. Performative in business and diplomacy:** `We are proposing a compromise` (still on the table) vs `We propose a compromise` (an official, fixed proposal). The choice signals the degree of commitment.\n\n**6. Dialectal variation:** Indian English uses the continuous with stative verbs (`I am understanding`, `I am knowing`); in standard British and American English this is informal at best.\n\n**Final rule:** choose the continuous to foreground process over fact, add an evaluative or emotional shade, create sensory immediacy, soften or distance a claim, or convey change and instability — but do not over-use it, or speech sounds artificial.",
         "ru": "На C2 Present Continuous — это тонкий стилистический регистр. Ты должен владеть им для создания конкретных эффектов и различать его от близких альтернатив.\n\n**1. Progressive для implicature (косвенного значения):**\nContinuous часто несёт подтекст, которого нет в Simple:\n- `I'm waiting.` — нетерпеливое ожидание, упрёк или намёк.\n- `You're forgetting something.` — мягкое напоминание.\n- `I'm not hearing a plan.` — критика (ожидаю, но не получаю).\n\nЭти оттенки — ключевая черта продвинутого владения.\n\n**2. Continuous в performative shifts:**\nCravtings progressive может делать высказывание менее категоричным и более открытым для обсуждения:\n- `I'm suggesting you reconsider.` = мягкое предложение.\n- `I'm telling you this isn't right.` = эмфатично, но с дистанцией.\n- `I'm not saying you're wrong.` = тактичное отрицание.\n\n**3. Stylistic novelisation:**\nВ современной прозе авторы переходят в Continuous для создания эффекта отстранённого наблюдения:\n- `She is walking down the street. Her heart is racing. The world is shrinking around her.` (Она идёт по улице. Сердце колотится. Мир вокруг неё сужается.)\n\nЭтот приём создаёт сенсорное, кинематографическое ощущение. Simple дал бы более нейтральное, объективное изложение.\n\n**4. Progressive в хеджинге академической речи:**\n- `Researchers are beginning to recognise...` = появляющаяся тенденция, ещё не устоявшаяся.\n- `The evidence is suggesting...` = предварительный вывод, осторожное утверждение.\n\nСравни с категоричным `research recognises`, `evidence suggests` — Simple утверждает, Continuous предлагает.\n\n**5. Performative в деловой и дипломатической речи:**\n- `We are proposing a compromise.` = текущее предложение, ещё на столе.\n- `We propose a compromise.` = официальное предложение, зафиксированное.\n\nВ переговорах этот выбор показывает степень обязательства.\n\n**6. Dialectal and regional variations:**\nВ индийском английском Continuous чаще используется со stative verbs: `I am understanding`, `I am knowing`. В британском и американском это неприемлемо формально, но встречается в неформальной речи влиятельных тенденций (реклама, соцсети).\n\n**7. Complex layered meanings:**\n- `He's dying.` — буквально умирает сейчас, процесс.\n- `He's always dying to tell someone.` — идиома «ему не терпится».\n- `He's being dramatic.` — временное поведение.\n\n**8. Правило финального выбора:**\nНа C2 ты выбираешь Continuous, когда хочешь:\n- Подчеркнуть процесс, а не факт.\n- Добавить эмоциональный или оценочный оттенок.\n- Создать ощущение сенсорной непосредственности.\n- Смягчить или отдистанцироваться от утверждения.\n- Передать изменение, динамику, нестабильность.\n\nНе выбирай Continuous, если достаточно Simple — избыток Continuous в речи звучит искусственно и стилистически нагруженно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "I'm + verb-ing (process / implicature / hedge over a bare fact)",
+        "ru": "I'm + глагол с -ing (процесс / косвенный смысл / смягчение вместо факта)"
       },
       "examples": [
         {
           "en": "I'm not hearing a solution from you.",
-          "ru": "Я не слышу от тебя решения."
+          "ru": "Я не слышу от тебя решения.",
+          "note": {
+            "en": "implicature",
+            "ru": "косвенный смысл"
+          }
         },
         {
           "en": "Scholars are increasingly recognising the novel's complexity.",
-          "ru": "Учёные всё чаще признают сложность этого романа."
+          "ru": "Учёные всё чаще признают сложность этого романа.",
+          "note": {
+            "en": "academic hedge",
+            "ru": "академическое смягчение"
+          }
         },
         {
           "en": "We are proposing, not insisting, on this approach.",
-          "ru": "Мы предлагаем, а не настаиваем на этом подходе."
+          "ru": "Мы предлагаем, а не настаиваем на этом подходе.",
+          "note": {
+            "en": "performative",
+            "ru": "перформатив"
+          }
         },
         {
           "en": "She's always smiling, always helping — a remarkable person.",
@@ -279,9 +461,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "I'm waiting (с контекстом) часто значит упрёк или нетерпение — не просто факт ожидания."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "In a formal report: The findings are showing that the model fails.",
+          "right": "In a formal report: The findings show that the model fails.",
+          "why": {
+            "en": "For a firm, established claim the simple is more authoritative; reserve the continuous for tentative or emerging conclusions.",
+            "ru": "Для твёрдого, установленного вывода простая форма авторитетнее; Continuous — для предварительных или формирующихся выводов."
+          }
+        },
+        {
+          "wrong": "Overusing it: I'm thinking I'm needing I'm wanting a break.",
+          "right": "I think I need a break.",
+          "why": {
+            "en": "Stacking progressive stative verbs sounds unnatural; use it only where the nuance earns its place.",
+            "ru": "Нагромождение прогрессивных глаголов состояния звучит неестественно; используй Continuous лишь там, где оттенок оправдан."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "present-simple",
+    "dynamic-vs-stative",
+    "stative-verbs",
+    "future-with-present-continuous"
+  ],
+  "crossTopic": [
+    "adverbs-of-frequency",
+    "wh-questions",
+    "negative-sentences",
+    "future-with-going-to"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "past",
+      "NOW (in progress)",
+      "future"
+    ]
+  }
 };

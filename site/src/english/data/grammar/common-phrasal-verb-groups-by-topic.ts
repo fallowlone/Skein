@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "common-phrasal-verb-groups-by-topic",
   "title": {
-    "en": "",
+    "en": "Common Phrasal Verb Groups by Topic",
     "ru": "Common Phrasal Verb Groups By Topic"
   },
   "cefr": "B1",
@@ -15,143 +15,271 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "phrasal-verbs",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "map",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Phrasal verbs are easier to remember when you group them by topic instead of learning them alphabetically. A topic anchors the verb in a real situation, so the meaning and the natural collocation stick together. Start with high-frequency everyday domains: Travel (set off, check in, get on, get off, pick up, take off), Health (come down with, get over, work out, cut down on), Relationships (get on with, fall out, make up, break up), Work and Study (hand in, figure out, look up, give up), and Home and Daily life (turn on, turn off, clean up, throw away). It also helps to notice that many phrasal verbs share a particle that adds a consistent flavour: up often signals completion (eat up, clean up), out often signals discovery or production (find out, come out), and off often signals separation (cut off, set off). Pick one topic, learn five to seven verbs at a time, and immediately use them in sentences about your own life so they feel personal rather than abstract.",
         "ru": "Phrasal verbs лучше учить тематическими группами, а не алфавитно. Тематический подход помогает запомнить контекст и естественные collocations.\n\n**Тема: Travel / Transport (путешествия):**\n- `set off` — отправиться: `We set off at dawn.`\n- `check in / check out` — зарегистрироваться / выписаться: `Check in at 3pm.`\n- `get on / get off` — сесть / выйти (bus, train, plane): `Get off at the next stop.`\n- `get in / get out of` — сесть / выйти (car, taxi): `Get in the car.`\n- `pick up / drop off` — забрать / высадить: `I'll pick you up at 8.`\n- `take off / land` — взлёт / посадка: `The plane took off.`\n- `stop over` — сделать остановку (в транзите): `We stopped over in Dubai.`\n\n**Тема: Health (здоровье):**\n- `come down with` — заболеть: `I came down with a cold.`\n- `get over` — выздороветь: `He got over the flu quickly.`\n- `pass out` — потерять сознание: `She passed out from the heat.`\n- `throw up` — рвать (informal): `The baby threw up.`\n- `cut down on` — сократить: `Cut down on sugar.`\n- `work out` — тренироваться: `I work out three times a week.`\n- `wake up / get up` — проснуться / встать: `Wake up at 7.`\n\n**Тема: Relationships (отношения):**\n- `get on (with)` — ладить: `I get on with my sister.`\n- `fall out (with)` — поссориться: `They fell out over money.`\n- `make up` — помириться: `They made up after the fight.`\n- `break up (with)` — расстаться: `She broke up with him.`\n- `go out with` — встречаться с: `He's going out with Maria.`\n- `settle down` — остепениться: `He settled down at 40.`\n- `split up` — разойтись.\n\n**Тема: Work / Study (работа / учёба):**\n- `hand in` — сдать (homework, report): `Hand in your papers.`\n- `hand out` — раздать.\n- `figure out` — разобраться: `I'll figure it out.`\n- `look up` — найти в словаре: `Look up the word.`\n- `give up` — сдаться: `Don't give up.`\n- `work on` — работать над: `I'm working on a project.`\n- `fill in / out` — заполнить (form).\n- `carry out` — осуществить.\n\n**Тема: Home / Daily life (дом / повседневность):**\n- `get up` — встать.\n- `put on / take off` — надеть / снять.\n- `turn on / off` — включить / выключить.\n- `clean up` — убраться.\n- `throw away` — выбросить.\n- `wash up` — помыть посуду (BrE).\n\n**Группы по общему particle тоже полезны:**\n- `up` (completion): drink up, eat up, finish up, clean up, use up.\n- `out` (production / discovery): find out, come out, turn out, bring out.\n- `off` (separation): cut off, take off, set off, call off.\n\nУчи 5-7 phrasal verbs за раз в одной теме, используй их в предложениях о себе."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + particle (+ object)  /  e.g. set off, hand in the essay",
+        "ru": "глагол + частица (+ дополнение) — например, set off, hand in"
       },
       "examples": [
         {
           "en": "We set off for the coast early in the morning.",
-          "ru": "Мы отправились на побережье рано утром."
+          "ru": "Мы отправились на побережье рано утром.",
+          "note": {
+            "en": "travel",
+            "ru": "путешествия"
+          }
         },
         {
           "en": "I came down with a bad cold last week.",
-          "ru": "Я подхватил сильную простуду на прошлой неделе."
+          "ru": "Я подхватил сильную простуду на прошлой неделе.",
+          "note": {
+            "en": "health",
+            "ru": "здоровье"
+          }
         },
         {
           "en": "They get on really well despite their differences.",
-          "ru": "Они хорошо ладят, несмотря на различия."
+          "ru": "Они хорошо ладят, несмотря на различия.",
+          "note": {
+            "en": "relationships",
+            "ru": "отношения"
+          }
         },
         {
           "en": "I need to hand in my essay by Friday.",
-          "ru": "Мне нужно сдать эссе к пятнице."
+          "ru": "Мне нужно сдать эссе к пятнице.",
+          "note": {
+            "en": "work / study",
+            "ru": "работа / учёба"
+          }
         },
         {
           "en": "Don't forget to turn off the oven.",
-          "ru": "Не забудь выключить духовку."
+          "ru": "Не забудь выключить духовку.",
+          "note": {
+            "en": "home",
+            "ru": "дом"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Учи phrasal verbs тематическими блоками (travel, health, work, relationships) — это эффективнее, чем алфавитно."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I get over of the flu.",
+          "right": "I got over the flu.",
+          "why": {
+            "en": "Get over takes a direct object with no extra preposition.",
+            "ru": "После get over дополнение идёт напрямую, без лишнего предлога."
+          }
+        },
+        {
+          "wrong": "Hand the essay in to me. (object split with a long phrase: Hand in the essay you wrote last night to me later) — keep it natural: Hand in your essay.",
+          "right": "Hand in your essay. / Hand your essay in.",
+          "why": {
+            "en": "With a short object both orders work, but a long object normally stays after the particle: hand in the essay you wrote.",
+            "ru": "С коротким дополнением порядок свободный, но длинное дополнение остаётся после частицы."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you widen each topic cluster and start meeting verbs that have a clear figurative meaning rather than a literal one. Within Travel add show up, see off, pull over, drop by; within Health add wear off, flare up, build up, and the very useful burn out (to become exhausted from overwork). Relationships gains hit it off, drift apart, get back together, stand someone up and patch things up. Work and Study expands into take on, take over, step down, lay off, call off, put off, wrap up, catch up on, come up with and follow up on. Two brand-new clusters become important here: Finance (pay off a debt, save up for, take out a loan, rip off, splash out) and Emotions (cheer up, calm down, freak out, break down, chill out). Communication and Learning verbs (bring up a topic, get across an idea, brush up on, catch on) round out the set. The key B2 habit is to record each verb inside a topic with a personal example sentence, because a phrasal verb learned in context is recalled far faster than one learned from a list.",
         "ru": "На B2 расширяй тематические группы.\n\n**Travel / Transport extended:**\n- `show up` — появиться: `He didn't show up.`\n- `check in at / check out of`.\n- `see off` — проводить (friend at station).\n- `catch up with` — догнать.\n- `hold up` — задержать.\n- `pull over` — съехать на обочину.\n- `fill up` — заправить (bus, car).\n- `touch down` — приземлиться (formal).\n- `drop by / stop by` — заскочить.\n\n**Health extended:**\n- `wear off` — перестать действовать (medication).\n- `knock out` — 1) нокаутировать, 2) отключить (анестезия).\n- `bring on` — спровоцировать (attack).\n- `ease off / ease up` — ослабевать (pain).\n- `flare up` — вспыхнуть (chronic condition): `Her arthritis flared up.`\n- `burn out` — выгореть эмоционально: `She's burnt out from overwork.`\n- `build up (immunity)` — вырабатывать.\n- `break out (in rash)` — покрыться сыпью.\n\n**Relationships extended:**\n- `hit it off` — сразу поладить: `They hit it off immediately.`\n- `drift apart` — отдалиться.\n- `get back together` — возобновить отношения: `They got back together.`\n- `stand someone up` — не прийти на свидание.\n- `go out on a date` — пойти на свидание.\n- `chat someone up` — заигрывать (BrE informal): `He tried to chat her up.`\n- `patch things up` — загладить конфликт.\n- `stick by (someone)` — быть рядом в трудное время.\n\n**Work / Study extended:**\n- `take on (project, responsibility)` — взять на себя.\n- `take over` — принять (role / duties).\n- `step down` — уйти с поста.\n- `lay off` — уволить (по сокращению).\n- `call off` — отменить.\n- `put off` — отложить.\n- `wrap up` — завершить (meeting, work): `Let's wrap up the meeting.`\n- `catch up on (work / sleep)` — наверстать.\n- `keep up with` — не отставать от.\n- `come up with` — придумать.\n- `follow up on` — довести до конца / follow-up: `I'll follow up on our conversation.`\n\n**Finance / Money:**\n- `pay off (debt)` — погасить.\n- `pay back` — вернуть деньги / отомстить.\n- `run out of (money)` — закончиться.\n- `save up (for)` — копить на: `I'm saving up for a car.`\n- `take out (loan)` — взять кредит.\n- `pay in (cash)` — положить на счёт (BrE).\n- `fork out (for)` — раскошелиться.\n- `splash out (on)` — шиковать: `She splashed out on a new dress.`\n- `rip off` — ободрать как липку: `You got ripped off.`\n\n**Emotions:**\n- `cheer up` — повеселеть.\n- `calm down` — успокоиться.\n- `freak out` — психовать (informal).\n- `break down` — расплакаться.\n- `chill out` — расслабиться (informal).\n- `simmer down` — остыть.\n- `perk up` — приободриться.\n\n**Communication:**\n- `speak up` — говорить громче / высказаться.\n- `shut up` — заткнуться (rude).\n- `bring up (topic)` — поднять (тему).\n- `go over (details)` — пройтись по.\n- `talk (someone) into / out of + gerund` — уговорить / отговорить.\n- `get across (idea)` — донести (мысль).\n- `run by (someone)` — обсудить с (подать идею): `Let me run this by you.`\n- `chat away` — болтать.\n\n**Learning / Memory:**\n- `look up` — найти.\n- `pick up (language / skill)` — освоить.\n- `figure out` — разобраться.\n- `brush up on` — освежить.\n- `work out (solution)` — решить.\n- `catch on` — сообразить.\n- `slip one's mind` — вылететь из головы.\n- `come back to` — вспомнить / вернуться к теме."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + particle (+ preposition) (+ object)  /  e.g. follow up on, catch up on",
+        "ru": "глагол + частица (+ предлог) (+ дополнение) — например, follow up on, catch up on"
       },
       "examples": [
         {
           "en": "The plane touched down at 3pm.",
-          "ru": "Самолёт приземлился в 3 часа."
+          "ru": "Самолёт приземлился в 3 часа.",
+          "note": {
+            "en": "travel",
+            "ru": "путешествия"
+          }
         },
         {
           "en": "I'm trying to build up my strength after the illness.",
-          "ru": "Я стараюсь восстановить силы после болезни."
+          "ru": "Я стараюсь восстановить силы после болезни.",
+          "note": {
+            "en": "health",
+            "ru": "здоровье"
+          }
         },
         {
           "en": "They got back together after a six-month break.",
-          "ru": "Они вновь сошлись после шестимесячного перерыва."
+          "ru": "Они вновь сошлись после шестимесячного перерыва.",
+          "note": {
+            "en": "relationships",
+            "ru": "отношения"
+          }
         },
         {
           "en": "Let's wrap up the meeting and continue tomorrow.",
-          "ru": "Давайте завершим совещание и продолжим завтра."
+          "ru": "Давайте завершим совещание и продолжим завтра.",
+          "note": {
+            "en": "work",
+            "ru": "работа"
+          }
         },
         {
           "en": "I need to catch up on my emails.",
-          "ru": "Мне нужно разобраться с письмами."
+          "ru": "Мне нужно разобраться с письмами.",
+          "note": {
+            "en": "work / learning",
+            "ru": "работа / учёба"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Тематические группы: travel, health, relationships, work, finance, emotions, communication, learning. Учи по 5-7 в каждой."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She is burned out from her job for years.",
+          "right": "She has been burnt out by her job for years.",
+          "why": {
+            "en": "Burn out describes a state reached over time; pair it with a present perfect, not a present simple, for an ongoing result.",
+            "ru": "Burn out описывает достигнутое состояние; для длящегося результата нужен present perfect."
+          }
+        },
+        {
+          "wrong": "I will follow up our conversation.",
+          "right": "I will follow up on our conversation.",
+          "why": {
+            "en": "Follow up needs the preposition on before its object: follow up on something.",
+            "ru": "После follow up перед дополнением нужен предлог on."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the grouping becomes domain-specialised: you learn the phrasal verbs that signal you belong to a particular professional or topical register. Business and Professional English relies on roll out, scale up, ramp up, hand over, sign off on, take over, spin off, write off, branch out, phase out and break into a market. Crime and Law has its own tight cluster: break into, break out of, lock up, let off, put away, turn someone in, crack down on and track down. Environmental and Social discourse uses die out, wipe out, bring about, give rise to and stem from. Academic and argumentative writing leans on point out, touch on, go into, build on, draw on, account for, rule out and zero in on. News and journalistic English adds break out, call for, hold out, weigh in on, speak out against and side with. There are also cognitive verbs (mull over, dwell on, get one's head around, come to terms with) and sports verbs (knock out, stand out, take up). The C1 strategy is to pick one or two domains a week, note the target verbs with examples drawn from texts you actually read, then revisit them after a week and after a month so the cluster consolidates.",
         "ru": "На C1 расширяй специализированные группы.\n\n**Business / Professional:**\n- `roll out (a product / plan)` — запустить.\n- `scale up / down` — масштабировать.\n- `ramp up (production)` — усилить.\n- `hand over (duties)` — передать полномочия.\n- `sign off on` — утвердить.\n- `bring in (consultant)` — нанять.\n- `take over (company)` — поглотить.\n- `spin off (division)` — отделить.\n- `write off (asset)` — списать.\n- `branch out (into)` — расширить направление: `The company branched out into tech.`\n- `close down (factory)` — закрыть.\n- `shut down` — закрыть / прекратить.\n- `wind down (business)` — сворачивать.\n- `phase out` — постепенно вывести.\n- `buy out` — выкупить (share).\n- `break into (market)` — прорваться: `We're trying to break into the Asian market.`\n\n**Crime / Law:**\n- `break into (house)` — вломиться.\n- `break out (of prison)` — сбежать.\n- `lock up` — посадить в тюрьму / запереть.\n- `let off (criminal)` — отпустить без наказания: `The judge let him off with a warning.`\n- `put away` — посадить: `He was put away for 10 years.`\n- `turn (someone) in` — сдать в полицию.\n- `run away (from)` — сбежать.\n- `give (oneself) up` — сдаться.\n- `crack down on (crime)` — подавить.\n- `come up against (the law)` — столкнуться с.\n- `track down (suspect)` — выследить.\n- `take down (suspect)` — задержать (often violently).\n\n**Environmental / Social:**\n- `die out (species)` — вымирать.\n- `use up (resources)` — исчерпать.\n- `run out of (time / resources)` — заканчиваться.\n- `wipe out (species / population)` — уничтожить.\n- `bring about (change)` — вызвать.\n- `give rise to (concerns)` — порождать.\n- `stem from` — происходить из.\n- `take off (trend)` — стать популярным.\n- `catch on (fashion)` — прижиться.\n\n**Academic / Argumentative:**\n- `point out` — указать.\n- `touch on` — затронуть (briefly).\n- `go into` — углубиться.\n- `build on (prior work)` — опираться.\n- `draw on` — использовать.\n- `account for` — объяснить / составлять (percent).\n- `amount to` — составлять / равняться.\n- `rule out` — исключить.\n- `bring up (counterargument)` — поднять.\n- `zero in on (key point)` — сфокусироваться.\n- `get across (complex idea)` — донести.\n\n**News / Journalistic:**\n- `break out (war, fire, disease)` — вспыхнуть.\n- `call for (reform)` — призвать.\n- `crack down on` — подавить.\n- `hold out (hope)` — питать надежду.\n- `step down` — уйти в отставку.\n- `weigh in on (debate)` — высказаться.\n- `speak out against` — публично осудить.\n- `side with / against` — принять сторону.\n- `come out (against / in favour)` — выступить.\n\n**Cognitive / Mental:**\n- `mull over` — обдумывать.\n- `think through` — обдумать полностью.\n- `sleep on it` — переспать с вопросом.\n- `dwell on` — зацикливаться.\n- `get one's head around` — осознать: `I can't get my head around it.`\n- `come to terms with` — смириться.\n- `reflect on` — размышлять.\n\n**Sports / Competition:**\n- `knock out (of tournament)` — выбить.\n- `stand out` — выделяться.\n- `come in (first / second)` — занять (место).\n- `take up (sport)` — начать заниматься.\n- `work out` — тренироваться.\n- `warm up / cool down` — размяться / остыть.\n- `take out (opponent)` — устранить.\n\n**Group-learning strategy:**\n- Choose 1-2 domains per week.\n- Note target phrasal verbs with personal examples.\n- Practice in writing / speaking.\n- Revise after 1 week, 1 month."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + particle (+ object) within a domain register  /  e.g. roll out a product, account for the rise",
+        "ru": "глагол + частица (+ дополнение) в рамках доменного регистра — например, roll out, account for"
       },
       "examples": [
         {
           "en": "The company plans to roll out the new service next month.",
-          "ru": "Компания планирует запустить новый сервис в следующем месяце."
+          "ru": "Компания планирует запустить новый сервис в следующем месяце.",
+          "note": {
+            "en": "business",
+            "ru": "бизнес"
+          }
         },
         {
           "en": "Police cracked down on illegal street racing.",
-          "ru": "Полиция подавила нелегальные уличные гонки."
+          "ru": "Полиция подавила нелегальные уличные гонки.",
+          "note": {
+            "en": "crime / law",
+            "ru": "криминал / право"
+          }
         },
         {
           "en": "The study builds on earlier research in the field.",
-          "ru": "Исследование опирается на более ранние работы в этой области."
+          "ru": "Исследование опирается на более ранние работы в этой области.",
+          "note": {
+            "en": "academic",
+            "ru": "академический"
+          }
         },
         {
           "en": "I'm trying to get my head around the new regulations.",
-          "ru": "Я пытаюсь разобраться в новых правилах."
+          "ru": "Я пытаюсь разобраться в новых правилах.",
+          "note": {
+            "en": "cognitive",
+            "ru": "мышление"
+          }
         },
         {
           "en": "The minister stepped down amid the scandal.",
-          "ru": "Министр ушёл в отставку на фоне скандала."
+          "ru": "Министр ушёл в отставку на фоне скандала.",
+          "note": {
+            "en": "news / politics",
+            "ru": "новости / политика"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Бизнес: roll out, scale up, ramp up, hand over, spin off. Academic: point out, build on, draw on, account for. Учи группами по домену."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "This factor accounts 30% of the rise.",
+          "right": "This factor accounts for 30% of the rise.",
+          "why": {
+            "en": "Account for is inseparable and always keeps for before its object.",
+            "ru": "Account for неразделимо и всегда сохраняет предлог for перед дополнением."
+          }
+        },
+        {
+          "wrong": "The company branched into the tech sector.",
+          "right": "The company branched out into the tech sector.",
+          "why": {
+            "en": "The fixed business verb is branch out into; dropping the particle changes the meaning.",
+            "ru": "Устойчивый бизнес-глагол — branch out into; без частицы смысл меняется."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 you command phrasal verbs across every domain and, crucially, you choose between a phrasal verb and its single-word Latinate equivalent as a deliberate stylistic move. Each field has its own expert cluster: Finance (leverage up, write down, sell off, take public, roll over), Diplomacy (walk back a statement, double down on a position, back out of a treaty, fall through), Media (drop an album, pull the plug on, rake in, sell out, blow up), Technology (boot up, back up, roll out, wipe out, patch up), advanced Medical (present with symptoms, work up a diagnosis, rule out, pull through), and advanced Political (rally behind, drum up support, stir up controversy, gloss over, play up, play down). The signal that marks a true native is register control: the deal fell through feels native, the transaction failed is generic, the firm went belly up is colloquial, and the firm underwent liquidation is legal-formal. Masters can also stack several phrasal verbs in one breath (she took up tennis, got the hang of it, moved on to competitive play, wound up ranked nationally, but burned out and dropped out). The C2 diagnostic is simple: whenever you reach for a phrasal verb, ask what the single-word equivalent would be. If you can answer, you are choosing your register; if you cannot, you are stuck in one.",
         "ru": "На C2 владей phrasal verbs по всем доменам и выбирай сознательно.\n\n**Specialized domains — expert level:**\n\n**Finance / Investment:**\n- `leverage up / deleverage` — увеличить / уменьшить заём.\n- `write up / write down / write off` — переоценить вверх / вниз / списать полностью.\n- `pay out dividends`.\n- `sell off (underperformers)`.\n- `take public / take private` — вывести на биржу / увести с.\n- `short-sell, cash out, roll over (loan), top up (account)`.\n\n**Diplomacy / International:**\n- `walk back (statement)` — отыграть назад.\n- `double down on (position)` — удвоить ставку.\n- `stand by (ally)`.\n- `press for (concessions)`.\n- `back out of (treaty)` — выйти из.\n- `come together on (issue)` — объединиться.\n- `bow out of (talks)`.\n- `fall through (deal)` — сорваться.\n\n**Media / Entertainment:**\n- `roll out (premiere)`, `drop (album release)` — выпустить (informal but standard now).\n- `pick up (series for renewal)` — возобновить.\n- `pull the plug on (show)` — закрыть.\n- `rake in (money)` — загребать.\n- `sell out (concert)`.\n- `bomb (film flop)`.\n- `blow up (go viral)`.\n\n**Technology:**\n- `boot up / shut down (computer)`.\n- `log on / log off`.\n- `back up (data)`.\n- `roll out (software release)`.\n- `crash on / freeze up (system)`.\n- `hook up (to internet / to device)`.\n- `wipe out (data)` — стереть.\n- `patch up (bug)` — залатать.\n\n**Medical advanced:**\n- `present with (symptoms)` — обратиться с симптомами.\n- `work up (diagnostic)` — диагностическая обработка.\n- `follow up on (patient)` — наблюдение.\n- `rule out (diagnosis)`.\n- `kick in (medication effects)`.\n- `flare up (condition)`.\n- `go under (anesthesia)` — уйти под наркоз.\n- `pull through (crisis)` — справиться.\n- `die out / fade away`.\n\n**Political advanced:**\n- `rally behind (candidate)`.\n- `fall in line (behind leader)`.\n- `cross over (to other party)`.\n- `carry out (reforms)`.\n- `usher in (new era)`.\n- `bring about (transformation)`.\n- `take aim at (opponent)`.\n- `drum up (support)`.\n- `stir up (controversy)`.\n- `tap into (grievance)`.\n- `play up / play down (issue)`.\n- `gloss over (problem)`.\n\n**Rhetorical nuance:**\nChoice between domain-specific phrasal and generic Latinate conveys insider status:\n- `The deal fell through` — native feel.\n- `The transaction failed` — generic.\n- `The firm went belly up` — colloquial.\n- `The firm went bankrupt` — neutral.\n- `The firm underwent liquidation` — legal / formal.\n\n**Stacking phrasal verbs:**\nMasters of English can stack 3-5 phrasal verbs naturally:\n- `She took up tennis, got the hang of it, moved on to competitive play, wound up ranked nationally, but burned out and dropped out within five years.`\n\n**Tonal register map:**\n- Hip / youth / social media: short, punchy (`blow up, kick off, ghost on, peace out`).\n- Professional email: balanced (`follow up on, get back to, touch base with, catch up on`).\n- Academic: measured (`account for, build on, draw on, call for, give rise to`).\n- Legal / policy: formal-phrasal (`refrain from, adhere to, comply with, abide by`).\n- Literary: idiomatic / varied.\n\n**Advanced strategy:**\n- Build personal phrasal verb vocabulary by domain (career-specific).\n- Recognise domain-phrasal mismatch as stylistic signal (humorous, contemptuous, or out of touch).\n- Use phrasal verbs for native flow; latinate for precision and formality.\n- Code-switch deliberately.\n\n**C2 diagnostic question:** when you use a phrasal verb, ask «what's the single-word Latinate equivalent?» If you can answer, you're aware of register; if you can't, you're locked into one register."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "phrasal verb chosen for register vs. its Latinate single-word synonym  /  fell through ↔ failed",
+        "ru": "выбор phrasal verb по регистру против однословного латинского синонима — fell through ↔ failed"
       },
       "examples": [
         {
           "en": "The startup blew up on social media overnight.",
-          "ru": "Стартап стал viral в соцсетях за ночь."
+          "ru": "Стартап стал viral в соцсетях за ночь.",
+          "note": {
+            "en": "media",
+            "ru": "медиа"
+          }
         },
         {
           "en": "The conglomerate spun off its media division to focus on core operations.",
-          "ru": "Конгломерат отделил медиа-подразделение, чтобы сфокусироваться на основном бизнесе."
+          "ru": "Конгломерат отделил медиа-подразделение, чтобы сфокусироваться на основном бизнесе.",
+          "note": {
+            "en": "business",
+            "ru": "бизнес"
+          }
         },
         {
           "en": "Diplomats scrambled to shore up the crumbling alliance.",
-          "ru": "Дипломаты судорожно пытались укрепить разваливающийся альянс."
+          "ru": "Дипломаты судорожно пытались укрепить разваливающийся альянс.",
+          "note": {
+            "en": "diplomacy",
+            "ru": "дипломатия"
+          }
         },
         {
           "en": "The theory hinges on several untested assumptions.",
@@ -159,15 +287,57 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Voters rallied behind the outsider candidate.",
-          "ru": "Избиратели сплотились вокруг кандидата-аутсайдера."
+          "ru": "Избиратели сплотились вокруг кандидата-аутсайдера.",
+          "note": {
+            "en": "politics",
+            "ru": "политика"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Каждый domain имеет свой phrasal verb vocabulary. Finance: leverage up, write off. Medicine: present with, rule out. Tech: boot up, back up. Learn domain clusters."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "In the legal filing, the firm went belly up last year.",
+          "right": "In the legal filing, the firm underwent liquidation last year.",
+          "why": {
+            "en": "Colloquial phrasals like go belly up clash with formal-legal register; match the verb to the context.",
+            "ru": "Разговорные phrasal verbs (go belly up) не сочетаются с формально-юридическим регистром."
+          }
+        },
+        {
+          "wrong": "The minister walked the statement.",
+          "right": "The minister walked back the statement.",
+          "why": {
+            "en": "Walk back is the fixed idiom for retracting a position; the particle back is obligatory.",
+            "ru": "Walk back — устойчивая идиома; частица back обязательна."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "phrasal-verbs-with-up-down",
+    "phrasal-verbs-with-in-out",
+    "phrasal-verbs-with-on-off",
+    "phrasal-verbs-formal-informal"
+  ],
+  "crossTopic": [
+    "separable-phrasal-verbs",
+    "three-word-phrasal-verbs",
+    "prepositions-after-verbs",
+    "present-simple"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Travel",
+      "Health",
+      "Relationships",
+      "Work",
+      "Money",
+      "Emotions"
+    ]
+  }
 };

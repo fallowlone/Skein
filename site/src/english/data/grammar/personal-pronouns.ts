@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "personal-pronouns",
   "title": {
-    "en": "",
+    "en": "Personal Pronouns",
     "ru": "Personal Pronouns"
   },
   "cefr": "A0",
@@ -18,24 +18,31 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "pronouns",
+  "egp": [
+    "EGP:A1.PRONOUNS.subject",
+    "EGP:A1.PRONOUNS.object"
+  ],
+  "archetype": "swap",
   "lessons": {
     "A0": {
       "cefr": "A0",
       "explain": {
-        "en": "",
+        "en": "Personal pronouns are short words we use instead of a name or a noun, so we don't have to repeat it. English has only seven subject pronouns: `I` (always written with a capital letter, even in the middle of a sentence), `you` (one person or many), `he` (a man or boy), `she` (a woman or girl), `it` (a thing, an animal, or the weather), `we`, and `they`. The most important rule at this stage: for any object or thing, English uses `it` — never `he` or `she`. A table, a book, a car are all `it`. Put a pronoun at the start of a basic sentence with `am`/`is`/`are`: `I am Anna.`, `She is a doctor.`, `It is a cat.`, `We are at home.`",
         "ru": "Личные местоимения — это маленькие слова, которые мы ставим вместо имени или названия. Они нужны, чтобы не повторять одно и то же слово. Вместо «Анна» можно сказать **она**. Вместо «стол» — **он** или **оно**. В английском эти слова очень простые, и их всего несколько.\n\nВот главные личные местоимения в английском:\n\n- `I` — я (всегда с большой буквы!)\n- `you` — ты или вы\n- `he` — он (про мужчину или мальчика)\n- `she` — она (про женщину или девочку)\n- `it` — он / она / оно (про вещь, животное или погоду)\n- `we` — мы\n- `they` — они\n\nЗапомни: `I` в середине предложения тоже пишется большой буквой. Например: `My friend and I are here.`\n\nОчень важно: для вещей и предметов по-английски не говорят `he` или `she`. Всегда — `it`. Стол — это `it`. Книга — тоже `it`. Машина — `it`. В русском языке мы говорим «он стоит», «она лежит», но в английском нет мужского и женского рода у предметов. Для всех неживых вещей — только `it`.\n\nПримеры самых простых предложений:\n- `I am Anna.` (Я Анна.)\n- `You are my friend.` (Ты мой друг.)\n- `He is a doctor.` (Он врач.)\n- `She is a student.` (Она студентка.)\n- `It is a cat.` (Это кот.)\n- `We are at home.` (Мы дома.)\n- `They are happy.` (Они счастливы.)\n\nНикогда не говори `me am` или `him is`. В самом начале предложения всегда ставь `I`, `you`, `he`, `she`, `it`, `we` или `they`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "pronoun + am / is / are + ...",
+        "ru": "местоимение + am / is / are + ..."
       },
       "examples": [
         {
           "en": "I am a boy.",
-          "ru": "Я мальчик."
+          "ru": "Я мальчик.",
+          "note": {
+            "en": "I + am",
+            "ru": "I + am"
+          }
         },
         {
           "en": "She is my mum.",
@@ -47,7 +54,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "It is a dog.",
-          "ru": "Это собака."
+          "ru": "Это собака.",
+          "note": {
+            "en": "thing → it",
+            "ru": "предмет → it"
+          }
         },
         {
           "en": "We are friends.",
@@ -57,17 +68,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Для любого предмета или животного используй it, а не he или she."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He is a car.",
+          "right": "It is a car.",
+          "why": {
+            "en": "Things and animals take `it`, not `he` or `she`.",
+            "ru": "Предметы и животные обозначаются it, а не he или she."
+          }
+        },
+        {
+          "wrong": "i am Anna.",
+          "right": "I am Anna.",
+          "why": {
+            "en": "The pronoun `I` is always capitalised.",
+            "ru": "Местоимение I всегда пишется с большой буквы."
+          }
+        }
+      ]
     },
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "Each personal pronoun has two forms: a subject form that does the action and an object form that receives it. Subject forms (`I, you, he, she, it, we, they`) go before the verb; object forms (`me, you, him, her, it, us, them`) go after a verb or after a small word like `to`, `with`, `for`, `about`. Compare the pairs: `I see him.` / `He sees me.`; `She loves us.` / `We love her.` Note that `you` and `it` never change. The classic beginner error is starting a sentence with the object form — say `I go home.`, not `Me go home.`",
         "ru": "Теперь мы узнаем, что у личных местоимений есть **две формы**: одна — когда местоимение делает действие, вторая — когда с ним что-то делают. В русском это похоже на «я» и «меня», «он» и «его».\n\n**Форма подлежащего** (делает действие) — стоит в начале:\n- `I, you, he, she, it, we, they`\n\n**Форма дополнения** (принимает действие) — стоит после глагола:\n- `me, you, him, her, it, us, them`\n\nСмотри, как это работает в парах:\n\n- `I see him.` (Я вижу его.)\n- `He sees me.` (Он видит меня.)\n- `She loves us.` (Она любит нас.)\n- `We love her.` (Мы любим её.)\n- `They know you.` (Они знают тебя.)\n- `You know them.` (Ты знаешь их.)\n\nФорма `you` не меняется — одно слово и в начале, и после глагола. Форма `it` тоже не меняется: `It is big.` и `I like it.`\n\n**Где ставить какую форму:**\n- В начале предложения, перед глаголом: `I`, `he`, `she`, `we`, `they` — форма подлежащего.\n- После глагола (`see`, `love`, `know`, `help`): `me`, `him`, `her`, `us`, `them`.\n- После маленьких слов `to`, `with`, `for`, `about`: тоже `me`, `him`, `her`, `us`, `them`.\n\nПримеры с предлогами:\n- `Give the book to me.` (Дай книгу мне.)\n- `Come with us.` (Пойдём с нами.)\n- `This is for her.` (Это для неё.)\n\n**Частая ошибка:** русские студенты иногда говорят `Me go home.` — это неправильно. Правильно — `I go home.`, потому что «я» здесь делает действие. Запомни: в начале — `I`, после глагола — `me`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject pronoun + verb + object pronoun",
+        "ru": "местоимение-подлежащее + глагол + местоимение-дополнение"
       },
       "examples": [
         {
@@ -76,11 +105,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She calls him every day.",
-          "ru": "Она звонит ему каждый день."
+          "ru": "Она звонит ему каждый день.",
+          "note": {
+            "en": "him after verb",
+            "ru": "him после глагола"
+          }
         },
         {
           "en": "Can you help me, please?",
-          "ru": "Ты можешь мне помочь?"
+          "ru": "Ты можешь мне помочь?",
+          "note": {
+            "en": "me after verb",
+            "ru": "me после глагола"
+          }
         },
         {
           "en": "We saw them at school.",
@@ -94,22 +131,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В начале предложения — I, he, she; после глагола — me, him, her."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Me go home.",
+          "right": "I go home.",
+          "why": {
+            "en": "The doer of the action takes the subject form `I`.",
+            "ru": "Деятель действия требует формы подлежащего I."
+          }
+        },
+        {
+          "wrong": "She loves we.",
+          "right": "She loves us.",
+          "why": {
+            "en": "After a verb, use the object form `us`.",
+            "ru": "После глагола используется форма дополнения us."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Two patterns get harder here: prepositions and comparisons. After every preposition (`with`, `without`, `for`, `to`, `about`, `next to`, `from`) use the object form — `with me`, `for her`, `about them` — never `with I` or `for he`. In comparisons with `than` and `as ... as`, modern spoken English uses the object form (`taller than me`, `faster than him`); the formal alternative adds the verb (`taller than I am`). The object form is the safe default for exams. English also uses `it` as a dummy subject for weather, time, distance, and general situations: `It is cold.`, `It is five o'clock.`, `It is difficult.` Russian often drops the subject here, but English always needs `it`.",
         "ru": "На уровне A2 ты уже уверенно пользуешься двумя формами местоимений, но появляются более сложные ситуации: **предлоги** и **сравнения**.\n\n**После всех предлогов — форма дополнения (me, him, her, us, them):**\n- `with me`, `without him`, `for her`, `to us`, `about them`\n- `She is talking about us.` (Она говорит о нас.)\n- `Sit next to me.` (Сядь рядом со мной.)\n- `This letter is from him.` (Это письмо от него.)\n\nНикогда не говори `with I` или `for he` — всегда `with me`, `for him`.\n\n**Сравнения с `than` и `as ... as`:** в разговорной речи используют форму дополнения, в формальной — форму подлежащего.\n\n- Разговорный английский: `He is taller than me.`, `She runs faster than him.`\n- Формальный английский: `He is taller than I (am).`, `She runs faster than he (does).`\n\nОба варианта можно встретить. Для школьных работ и экзаменов безопасно использовать форму дополнения (`than me`, `than him`) — это стандарт современного английского.\n\n**`it` в роли подлежащего** — очень важный приём в английском. Мы используем `it`, когда говорим о:\n- погоде: `It is cold today.` (Сегодня холодно.)\n- времени: `It is five o'clock.` (Пять часов.)\n- расстоянии: `It is far from here.` (Отсюда далеко.)\n- общей ситуации: `It is difficult.` (Это сложно.)\n\nВ русском мы часто опускаем «оно» (говорим просто «холодно»), но в английском всегда должно быть `it`. Без него предложение неграмотное.\n\n**`we` и `they` для групп:**\n- `we` — ты включаешь себя в группу: `We are students.`\n- `they` — группа без тебя: `They are teachers.`\n- Про смешанную группу мужчин и женщин — всегда `they`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "preposition + object pronoun  /  dummy it + be + ...",
+        "ru": "предлог + местоимение-дополнение  /  формальное it + be + ..."
       },
       "examples": [
         {
           "en": "Come with me to the park.",
-          "ru": "Пойдём со мной в парк."
+          "ru": "Пойдём со мной в парк.",
+          "note": {
+            "en": "with + me",
+            "ru": "with + me"
+          }
         },
         {
           "en": "This gift is for them.",
@@ -121,7 +180,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "It is raining outside.",
-          "ru": "На улице идёт дождь."
+          "ru": "На улице идёт дождь.",
+          "note": {
+            "en": "dummy it",
+            "ru": "формальное it"
+          }
         },
         {
           "en": "We often visit them in summer.",
@@ -131,17 +194,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "После любого предлога (with, for, to, about) ставь me, him, her, us, them."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "This gift is for they.",
+          "right": "This gift is for them.",
+          "why": {
+            "en": "After a preposition use the object form `them`.",
+            "ru": "После предлога используется форма дополнения them."
+          }
+        },
+        {
+          "wrong": "Is cold today.",
+          "right": "It is cold today.",
+          "why": {
+            "en": "Weather sentences need the dummy subject `it`.",
+            "ru": "В предложениях о погоде нужно формальное подлежащее it."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "The hard cases at B1 involve coordinated pronouns — a pronoun paired with a name or another pronoun (`X and Y`). To choose the right form, drop the other part and listen: `My brother and I went` → `I went` (correct); `She helped my sister and me` → `She helped me` (correct). By convention you put yourself last: `my brother and I`, not `I and my brother`. After `between`, always use the object form: `between you and me`, never the hyper-corrected `between you and I`. In replies, English says `It's me.`, not the literary `It is I.` Singular `they` is the normal, accepted way to refer to one person of unknown or unspecified gender: `If someone calls, tell them I'm busy.`, `A student should bring their book.`",
         "ru": "На уровне B1 мы учимся справляться со сложными ситуациями, где местоимения часто идут **парой** или соединяются с другими словами. Это место, где делают ошибки даже носители языка.\n\n**Координированные местоимения (X and Y):** когда местоимение стоит рядом с именем или другим местоимением, многие по ошибке выбирают неправильную форму. Простой способ проверить — убери вторую часть и посмотри, что звучит правильно.\n\n- `My brother and I went to school.` — убери «my brother»: `I went to school.` → правильно.\n- Неправильно: `Me and my brother went to school.` → `Me went to school.` звучит плохо.\n- `She helped my sister and me.` — убери «my sister»: `She helped me.` → правильно.\n- Неправильно: `She helped my sister and I.` → `She helped I.` звучит плохо.\n\n**Запомни правило вежливости:** по традиции себя ставят последним. Говори `my brother and I`, а не `I and my brother`.\n\n**`you and I` vs `you and me`:**\n- В начале предложения (подлежащее): `You and I are friends.`\n- После глагола или предлога: `Between you and me`, `for you and me`.\n\nОчень частая ошибка — говорить `between you and I`. Это звучит «образованно», но на самом деле неправильно. После `between` всегда форма дополнения: `between you and me`.\n\n**Вежливые и формальные конструкции:**\n- `It is I who said that.` (формально, литературно) — в обычной речи: `It's me.`\n- На вопрос «Кто там?» отвечают: `It's me!`, не `It is I.`\n\n**Singular `they`** для одного человека, когда пол неизвестен или не важен:\n- `If someone calls, tell them I'm busy.` (Если кто-то позвонит, скажи ему, что я занят.)\n- `A student should bring their book.` (Ученик должен принести свою книгу.)\n\nЭто общепринятая и полностью нормальная конструкция в современном английском, она работает так же, как русское безличное «ему/ей».\n\n**Обращение к группе:** `you` — это и «ты», и «вы». Чтобы подчеркнуть множественное число, в речи говорят `you all`, `you guys` (США, неформ.), `all of you`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "[name / pronoun] and I/me (subject vs object by position)",
+        "ru": "[имя / местоимение] and I/me (форма по позиции в предложении)"
       },
       "examples": [
         {
@@ -150,7 +231,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "This is a secret between you and me.",
-          "ru": "Это секрет между нами."
+          "ru": "Это секрет между нами.",
+          "note": {
+            "en": "after between",
+            "ru": "после between"
+          }
         },
         {
           "en": "He invited my friends and me to dinner.",
@@ -158,7 +243,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "If anyone asks, tell them to wait.",
-          "ru": "Если кто-то спросит, скажи ему подождать."
+          "ru": "Если кто-то спросит, скажи ему подождать.",
+          "note": {
+            "en": "singular they",
+            "ru": "singular they"
+          }
         },
         {
           "en": "You guys are always late!",
@@ -168,26 +257,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Проверь координированное местоимение: убери второе слово и послушай, что звучит правильно."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Between you and I.",
+          "right": "Between you and me.",
+          "why": {
+            "en": "`between` is a preposition, so both pronouns take the object form.",
+            "ru": "between — предлог, поэтому оба местоимения в форме дополнения."
+          }
+        },
+        {
+          "wrong": "Me and my brother went to school.",
+          "right": "My brother and I went to school.",
+          "why": {
+            "en": "The pair is the subject, so use `I`, and put yourself last.",
+            "ru": "Пара — это подлежащее, поэтому нужно I, и себя ставят последним."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 pronouns carry emphasis and stylistic weight. Emphatic doubling with a reflexive form stresses who did it: `I myself saw it.`, `She herself wrote the letter.`, `We did it ourselves.` — placed right after the pronoun or at the end. The dummy `it` introduces a delayed `to`- or `that`-clause: `It is important to study.`, `It seems that she is right.` (you cannot say `This is important to study.`). `It`-clefting foregrounds one element: `It was John who called me.`, `It was in 2020 that we met.` Inclusive `we` (`We can see from the data that...`) draws the reader in; the royal `we` survives only as a joke. The old `he or she` is now usually replaced by singular `they`. Watch the typical errors: `Me and her went...` for `She and I went...`, and `between he and I` for `between him and me`.",
         "ru": "На уровне B2 мы работаем с **эмфатическим** использованием местоимений и тонкими стилистическими эффектами. Местоимение может не просто заполнять место в предложении, а нести смысловое ударение.\n\n**Эмфатическое дублирование с возвратной формой:**\n- `I myself saw it.` (Я сам это видел.) — подчёркивает, что именно я, не кто-то другой.\n- `She herself wrote the letter.` (Она сама написала письмо.)\n- `We did it ourselves.` (Мы сделали это сами.)\n\nТакая конструкция добавляет смысл «сам / лично». По-русски это похоже на «я сам», «она сама». В английском возвратная форма (`myself`, `herself` и т.д.) ставится сразу после местоимения или в конец предложения.\n\n**`it` как «пустое» подлежащее перед `that`/`to`:**\n- `It is important to study.` (Важно учиться.) — здесь `it` формальное подлежащее, настоящий смысл в `to study`.\n- `It seems that she is right.` (Кажется, что она права.)\n- `It is obvious that he lied.` (Очевидно, что он соврал.)\n\nЭту конструкцию нельзя заменить на `This is important to study.` — только `it`.\n\n**Эмфатическая `it`-clefting** (выделительная конструкция):\n- `It was John who called me yesterday.` (Это Джон мне вчера звонил — именно он, а не кто-то ещё.)\n- `It is this book that I need.` (Мне нужна именно эта книга.)\n\nЭтот приём позволяет выделить любую часть предложения и сделать её главной.\n\n**Инклюзивное `we`:**\n- В академическом письме и лекциях `we` часто означает «мы с вами, читатель / слушатель»: `We can see from the data that...`\n- В политических речах `we` объединяет оратора с аудиторией.\n- `Royal we` (`We are not amused.`) сейчас почти не используется, кроме шуток.\n\n**Гендерно-нейтральное местоимение:** конструкция `he or she` когда-то была стандартом, но сейчас её заменяют на `they` в большинстве регистров. В формальных юридических текстах ещё можно встретить `he/she` или `s/he`, но это устаревает.\n\n**Типичные ошибки этого уровня:**\n- `Me and her went...` вместо `She and I went...`\n- `This is between he and I.` вместо `between him and me`.\n- Использование `whom` там, где оно не нужно, — гиперкоррекция, звучит неестественно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + (myself/herself...) + verb  /  cleft: it + be + X + who/that ...",
+        "ru": "подлежащее + (myself/herself...) + глагол  /  выделит. it + be + X + who/that ..."
       },
       "examples": [
         {
           "en": "I myself don't believe it.",
-          "ru": "Я сам в это не верю."
+          "ru": "Я сам в это не верю.",
+          "note": {
+            "en": "emphatic myself",
+            "ru": "эмфатическое myself"
+          }
         },
         {
           "en": "It was she who found the answer.",
-          "ru": "Именно она нашла ответ."
+          "ru": "Именно она нашла ответ.",
+          "note": {
+            "en": "it-cleft",
+            "ru": "выделительное it"
+          }
         },
         {
           "en": "It is essential that we arrive on time.",
@@ -205,26 +320,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Эмфатическое myself, yourself после подлежащего подчёркивает «сам, лично»."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "This is important to study.",
+          "right": "It is important to study.",
+          "why": {
+            "en": "Anticipatory subject with an extraposed `to`-clause must be `it`.",
+            "ru": "Формальное подлежащее перед вынесенным to-оборотом — только it."
+          }
+        },
+        {
+          "wrong": "Me and her went to the party.",
+          "right": "She and I went to the party.",
+          "why": {
+            "en": "Coordinated subjects take subject forms, with yourself last.",
+            "ru": "Координированное подлежащее требует форм подлежащего, себя — последним."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 pronouns become tools for register, stance, and cohesion. Academic `we` (the modest plural for a single author) is now varied with `I` or impersonal constructions (`it has been shown that...`, `the data suggest...`) depending on the journal. Generic `you` is neutral and conversational; `one` is formal and literary, especially in British English (`One never knows.`, `One must do one's best.`), and sounds stilted in American usage. Applying `it` to a person is dehumanising except for a baby in a neutral context or where sex is genuinely unknown. The seafaring and literary tradition of `she` for ships and countries persists, though the press usually writes `it`. Avoid the business-email hyper-correction `Please contact myself` — a reflexive needs the subject and object to be the same person, so write `Please contact me.` For cohesion, replace an ambiguous `it`/`this` with a full noun (`the problem`, `this situation`). Singular `they` is fully accepted in Chicago, APA, and MLA: `The applicant must submit their documents by Friday.`",
         "ru": "На уровне C1 местоимения становятся инструментом для управления **регистром, стансом и связностью текста**. Здесь важно не просто правильно выбрать форму, но и уметь использовать её как стилистический приём.\n\n**Академический регистр и `we`:** в научных статьях традиционно использовалось `we` для скромности, даже если автор один (`we conclude that...`). Современная норма — варьировать: в некоторых журналах поощряется `I` для единственного автора, в других по-прежнему предпочитают `we` или безличные конструкции (`it has been shown that...`, `the data suggest...`).\n\n**Генерическое `you` vs формальное `one`:**\n- `You never know what might happen.` (нейтрально, разговорно)\n- `One never knows what might happen.` (формально, литературно, в британском английском)\n\n`One` — обобщающее местоимение, означающее «любой человек, включая меня». В современном американском английском звучит книжно и немного вычурно; в британском более естественно в эссе и формальной прозе. После `one` продолжают либо `one` (`One must do one's best.`), либо переходят на `he/she/they` в менее формальном регистре.\n\n**Стилистическая холодность `it`:** `It`, применённое к человеку, становится дегуманизирующим или уничижительным: `It came into the room.` — звучит как про монстра. Исключения — младенец в нейтральном контексте (`The baby is sleeping. It looks peaceful.`) или когда пол действительно неизвестен.\n\n**Кораблей и стран как `she`:** традиция использовать `she` для кораблей (`The Titanic — she was majestic.`), автомобилей и иногда стран в поэтическом стиле. В современной прессе чаще пишут `it`; `she` сохраняется в моряцкой и литературной традиции.\n\n**Reflexive overuse как ошибка:** `Please contact myself if you have questions.` — гиперкоррекция, которая часто встречается в деловой переписке. Правильно: `Please contact me.` Возвратная форма требует, чтобы подлежащее и объект совпадали.\n\n**Местоимение для связности:**\n- Слишком частое `it` или `this` создаёт неясность: читатель не понимает, к чему относится.\n- В длинных текстах полезно иногда заменять местоимение на полное существительное для ясности: не только `it` → `the problem`, `this situation`.\n\n**Singular `they` в формальном письме:** уже принято в авторитетных стилевых руководствах (Chicago, APA, MLA). Пример: `The applicant must submit their documents by Friday.` — полностью нормативно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "register choice: I / we / you / one / they (+ matching possessive)",
+        "ru": "выбор регистра: I / we / you / one / they (+ соответствующее притяжательное)"
       },
       "examples": [
         {
           "en": "One should always consider one's audience before speaking.",
-          "ru": "Всегда следует учитывать свою аудиторию перед тем, как говорить."
+          "ru": "Всегда следует учитывать свою аудиторию перед тем, как говорить.",
+          "note": {
+            "en": "formal one",
+            "ru": "формальное one"
+          }
         },
         {
           "en": "The candidate may submit their application online.",
-          "ru": "Кандидат может подать заявку онлайн."
+          "ru": "Кандидат может подать заявку онлайн.",
+          "note": {
+            "en": "singular they",
+            "ru": "singular they"
+          }
         },
         {
           "en": "Please contact me directly with any concerns.",
@@ -242,22 +383,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Не используй myself вместо me в деловой речи — это гиперкоррекция."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Please contact myself with any concerns.",
+          "right": "Please contact me with any concerns.",
+          "why": {
+            "en": "A reflexive needs a matching subject; the object here is just `me`.",
+            "ru": "Возвратная форма требует совпадения подлежащего; здесь нужно me."
+          }
+        },
+        {
+          "wrong": "One should always consider their audience.",
+          "right": "One should always consider one's audience.",
+          "why": {
+            "en": "Formal `one` is conventionally continued with `one's`, not `their`.",
+            "ru": "Формальное one по норме продолжается one's, а не their."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the choice of pronoun is a rhetorical decision about perspective and register. First-person `I` builds intimacy; first-person `we` builds solidarity (academic, political, essayistic); second-person `you` addresses the reader directly (`You walk into the room and you just know.`); third person creates distance and objectivity. Writers deliberately shift between them — moving from `I` to `one` within a paragraph changes the tone from personal to universal. Collective `we` in oratory (`we few, we happy few`) is a calculated effect of belonging. Archaic forms (`thou art`, `thy`, `ye`) signal stylisation, never neutral register. Switch reference (`When a student works hard, they succeed.`) is fine as long as the reader keeps the thread. Dummy `it` survives in legal boilerplate (`It is hereby ordered that...`), though plain-language guidance prefers `The Party shall...`. British `one` (`One does one's best.`) now reads as archaic or ironic outside philosophy and law. In neutral formal prose, singular `they` remains the most established gender-inclusive option, ahead of neologisms like `ze/zir`.",
         "ru": "На уровне C2 местоимения — это тонкий инструмент **риторики, перспективы и регистра**. Здесь мы имеем дело с редкими случаями, авторскими решениями и смысловыми нюансами, которые чувствуют только носители с глубоким языковым опытом.\n\n**Перспектива и narratorial voice:**\n- Первое лицо `I` задаёт интимность и субъективность.\n- Первое лицо `we` создаёт солидарность с читателем (академический, политический, эссеистический регистры).\n- Второе лицо `you` даёт эффект обращения: `You walk into the room and immediately feel it.` — часто в литературе, эссеистике и рекламе.\n- Третье лицо `he/she/they` — дистанция, объективность.\n\nПисатели намеренно переключают перспективу для эффекта. В эссе Дидион или Бодлера можно видеть переход от `I` к `one` в пределах одного абзаца — это меняет тон от личного к общечеловеческому.\n\n**`we` в манифестах и выступлениях:** собирательное `we` Черчилля или Линкольна (`we few, we happy few`) создаёт пафос принадлежности. Использование `we` в месте, где логически должно быть `I`, — это осознанный риторический ход.\n\n**Archaisms и литературные `ye`, `thou`, `thee`:** в поэзии, молитвах, архаической стилизации сохраняются. `Thou art` = `you are` (интимное, одно лицо), `thy` = `your`. Для современного автора это маркер стилизации, никогда не нейтрального регистра.\n\n**Switch reference:** носители интуитивно перескакивают с одного местоимения на другое для связности. `When a student works hard, they succeed.` — `student` единственное, `they` обобщающее. Это допустимо; важно, чтобы читатель не терял нить.\n\n**Dummy `it` в юридических и бюрократических текстах:**\n- `It is hereby ordered that...`\n- `It shall be the duty of the Party to...`\n\nТакие конструкции с `it` звучат тяжеловесно, но сохраняются в правовом регистре. В современном техническом письме их рекомендуют упрощать (`The Party shall...`).\n\n**Редкие случаи `one` в британском English:**\n- `One does one's best.` — высокая степень формальности, королевский/аристократический ореол; обычный носитель воспринимает как архаичное или ироничное.\n- В современных британских изданиях `one` сохраняется в эссе и определённых академических дисциплинах (философия, право).\n\n**Gender-inclusive local variants:** `ze/zir`, `xe/xem` и другие неологизмы встречаются в определённых сообществах и некоторых стайлгайдах. В нейтральной формальной прозе всё ещё используется singular `they` как наиболее установленная форма.\n\n**Стилистический совет:** на этом уровне местоимение — это решение. Каждое `I`, `we`, `you`, `one` говорит о твоей позиции по отношению к читателю. Следи не только за грамматикой, но и за эффектом: личным, обобщающим, дистанцированным, солидарным."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "perspective + register: I / we / you / one (rhetorical stance)",
+        "ru": "перспектива + регистр: I / we / you / one (риторическая позиция)"
       },
       "examples": [
         {
           "en": "One cannot help but admire her persistence.",
-          "ru": "Нельзя не восхититься её настойчивостью."
+          "ru": "Нельзя не восхититься её настойчивостью.",
+          "note": {
+            "en": "literary one",
+            "ru": "литературное one"
+          }
         },
         {
           "en": "We, the undersigned, hereby declare...",
@@ -269,7 +432,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Thou shalt not steal.",
-          "ru": "Не укради."
+          "ru": "Не укради.",
+          "note": {
+            "en": "archaic thou",
+            "ru": "архаичное thou"
+          }
         },
         {
           "en": "It is hereby resolved that the motion be approved.",
@@ -279,9 +446,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Выбор между I, we, one и you — это не только грамматика, но и риторическая позиция."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is hereby resolved that the motion is approved by them.",
+          "right": "It is hereby resolved that the motion be approved.",
+          "why": {
+            "en": "Legal `it`-boilerplate keeps the subjunctive `be`, not a tense-marked verb.",
+            "ru": "В юридическом it-обороте сохраняется сослагательное be, а не личная форма глагола."
+          }
+        },
+        {
+          "wrong": "You walk into a room like that and one just knows.",
+          "right": "You walk into a room like that and you just know.",
+          "why": {
+            "en": "Keep one generic pronoun consistent; don't switch `you` to `one` mid-clause.",
+            "ru": "Держи одно обобщающее местоимение; не меняй you на one внутри высказывания."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "possessive-pronouns",
+    "reflexive-pronouns",
+    "demonstrative-pronouns",
+    "it-as-subject"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "prepositions-of-place",
+    "subject-vs-object-questions",
+    "cleft-sentences"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "subject form",
+      "object form"
+    ]
+  }
 };

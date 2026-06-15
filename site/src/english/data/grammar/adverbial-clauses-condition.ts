@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "adverbial-clauses-condition",
   "title": {
-    "en": "",
+    "en": "Adverbial Clauses of Condition",
     "ru": "Adverbial Clauses Condition"
   },
   "cefr": "B1",
@@ -15,19 +15,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conjunctions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "branch",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "A conditional clause sets the circumstances under which the main-clause action happens. The core conjunctions are: `if` (the action depends on something happening), `unless` (= if not), `when` (the speaker is sure it will happen, so it feels like time, not chance), `as long as` / `provided (that)` / `providing (that)` (only on this condition), and `in case` (as a precaution, in advance).\n\nThree contrasts to keep straight:\n- `if` vs `when`: `if it rains` is possible but not certain; `when it rains` treats it as a sure event and focuses on the moment.\n- `if` vs `in case`: `I'll call you if I need help` means only when a problem actually arises; `I'll take my phone in case I need help` means just to be safe, ahead of time.\n- `if` vs `unless`: `unless` already means `if not`, so it never takes a second negative.\n\nThe key rule: in the conditional clause, use the present tense for the future — do not put `will` after `if`, `unless`, `when`, etc. Say `If it rains, we'll stay home`, never `If it will rain...`.",
         "ru": "**Придаточные условия** объясняют, при каких обстоятельствах произойдёт действие в главном предложении.\n\n**Основные союзы:**\n- `if` — если: `If it rains, we'll stay home.`\n- `unless` — если не (= if not): `Unless you hurry, you'll be late.`\n- `when` — когда (для 100% уверенности): `When it rains, the ground gets wet.`\n- `as long as` — если только, при условии: `You can stay as long as you're quiet.`\n- `provided (that) / providing (that)` — при условии, что: `Provided you arrive on time, we can start.`\n- `in case` — на случай: `Take an umbrella in case it rains.`\n\n**If vs Unless.** `Unless` = `if not`.\n- `You'll fail unless you study.` = `You'll fail if you don't study.`\n\nНе ставь двойное отрицание: ✗ `Unless you don't study` — ошибка.\n\n**If vs When.**\n- `If it rains` — возможно (не факт).\n- `When it rains` — обязательно случится, фокус на моменте.\n\n**If vs In case.**\n- `I'll call you if I need help.` (только если случится проблема.)\n- `I'll take my phone in case I need help.` (на всякий случай, на будущее.)\n\n**Правило «без will».** В придаточных условия не ставь `will`, даже если речь о будущем:\n- ✗ `If it will rain...`\n- ✓ `If it rains...`\n- ✓ `Unless she comes, we can't start.`\n\nИсключение: `if you will` в значении «если вам угодно» (очень формально, устаревающее).\n\n**Частая ошибка русскоговорящего:** путать условие и время. «Когда приеду» в русском одно, в английском разделяется на `when` (time, 100%) и `if` (condition, maybe)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "If / Unless / When / As long as / Provided (that) + present tense, main clause (will / can / imperative)",
+        "ru": "If / Unless / When / As long as / Provided (that) + настоящее время, главное предложение (will / can / повелительное)"
       },
       "examples": [
         {
@@ -36,7 +38,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Unless it rains, we'll have a picnic.",
-          "ru": "Если не будет дождя, у нас будет пикник."
+          "ru": "Если не будет дождя, у нас будет пикник.",
+          "note": {
+            "en": "unless = if not",
+            "ru": "unless = if not"
+          }
         },
         {
           "en": "You can borrow my car as long as you drive carefully.",
@@ -44,7 +50,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Take water in case you get thirsty.",
-          "ru": "Возьми воду на случай, если захочешь пить."
+          "ru": "Возьми воду на случай, если захочешь пить.",
+          "note": {
+            "en": "precaution",
+            "ru": "предосторожность"
+          }
         },
         {
           "en": "Provided you finish on time, you'll get a bonus.",
@@ -54,17 +64,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Unless = if not. Никогда не ставь 'don't' после unless — двойного отрицания в английском не бывает."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If it will rain, we'll stay home.",
+          "right": "If it rains, we'll stay home.",
+          "why": {
+            "en": "No `will` in the if-clause; use the present tense for the future.",
+            "ru": "В придаточном условия не ставится will — для будущего используется настоящее время."
+          }
+        },
+        {
+          "wrong": "Unless you don't hurry, you'll be late.",
+          "right": "Unless you hurry, you'll be late.",
+          "why": {
+            "en": "`Unless` already means `if not`, so a second negative is wrong.",
+            "ru": "Unless уже значит «если не», поэтому второе отрицание ошибочно."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the range of conditional links widens. More formal connectors include `on (the) condition that`, `assuming (that)`, `supposing (that)`, `given (that)` (between cause and condition), and `but for + noun/-ing` (= if it weren't / hadn't been for).\n\nDistinguish `whether` from `if` in indirect conditions: both work after verbs like `know` or `wonder`, but only `whether` follows a preposition (`It depends on whether...`) and precedes `or` (`whether he agrees or not`); `whether` is also preferred in formal writing.\n\nReview the conditional types — zero (general truth), first (real future), second (unreal present/future), third (unreal past), and mixed combinations. Learn the formal inversion that drops `if`: `Had I known...`, `Were she here...`, `Should you need help...`.\n\nFinally, separate `even if` (a concession plus a possible condition: `I'll help even if I'm tired`) from `even though` (a stated fact: `I came even though I was tired`), and note `whether or not` (the result holds regardless) versus a plain conditional.",
         "ru": "На B2 углубляй понимание условных придаточных.\n\n**Новые союзы:**\n- `on (the) condition that` — при условии, что (формально): `I'll help on the condition that you don't tell anyone.`\n- `assuming (that)` — предполагая, что: `Assuming the weather is good, we'll hike.`\n- `supposing (that)` — предположим, что: `Supposing he says no, what will we do?`\n- `given (that)` — учитывая, что (на грани causal и conditional).\n- `but for + noun/gerund` — если бы не: `But for your help, I'd have failed.`\n\n**Whether vs If.** Оба могут вводить косвенные условные конструкции:\n- `I don't know if / whether she'll come.`\n- После prepositions — только whether: `It depends on whether you can pay.`\n- Перед or — whether: `It matters whether he agrees or not.`\n- В формальной речи — whether.\n\n**Conditional types (brief review):**\n- Zero: general truth. `If + Present, Present.`\n- First: real future. `If + Present, will.`\n- Second: unreal present/future. `If + Past, would.`\n- Third: unreal past. `If + Past Perfect, would have.`\n- Mixed: combinations.\n\n**Inversion (formal alternative to if):**\n- `Had I known, I would have helped.` = If I had known...\n- `Were she here, she would agree.` = If she were here...\n- `Should you need help, call me.` = If you should need help...\n\n**Even if vs Even though:**\n- `Even if` — условие + уступка: `I'll help even if I'm tired.` (возможная ситуация.)\n- `Even though` — признанный факт: `I came even though I was tired.` (факт произошёл.)\n\n**Whether or not.** Разница:\n- `I'll come whether or not it rains.` (не важно, будет дождь или нет.)\n- `I'll come if it doesn't rain.` (только без дождя.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "On condition that / Assuming / Supposing / Given that + clause; whether (+ or not); inversion: Had / Were / Should + subject ...",
+        "ru": "On condition that / Assuming / Supposing / Given that + придаточное; whether (+ or not); инверсия: Had / Were / Should + подлежащее ..."
       },
       "examples": [
         {
@@ -73,11 +101,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "But for his intervention, the deal would have failed.",
-          "ru": "Если бы не его вмешательство, сделка провалилась бы."
+          "ru": "Если бы не его вмешательство, сделка провалилась бы.",
+          "note": {
+            "en": "but for = if not for",
+            "ru": "but for = если бы не"
+          }
         },
         {
           "en": "Had I known, I would have acted differently.",
-          "ru": "Если бы я знал, я бы действовал по-другому."
+          "ru": "Если бы я знал, я бы действовал по-другому.",
+          "note": {
+            "en": "inversion (no if)",
+            "ru": "инверсия (без if)"
+          }
         },
         {
           "en": "It depends on whether the budget is approved.",
@@ -91,22 +127,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Формальная инверсия без if: Had I known, Were she here, Should you need. Это более элегантный стиль для писем и эссе."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It depends on if the budget is approved.",
+          "right": "It depends on whether the budget is approved.",
+          "why": {
+            "en": "After a preposition use `whether`, not `if`.",
+            "ru": "После предлога употребляется whether, а не if."
+          }
+        },
+        {
+          "wrong": "If I had known, I would have acted differently.",
+          "right": "Had I known, I would have acted differently.",
+          "why": {
+            "en": "Formal inversion drops `if` and fronts the auxiliary; both are correct, but the inverted form is the register being practised here.",
+            "ru": "Формальная инверсия опускает if и выносит вспомогательный глагол вперёд."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you handle fine-grained, often formal or legal conditionals: `in the event that`, `should + subject + bare infinitive` (`Should you encounter problems...`), `on the assumption that`, and `subject to + noun` (`Subject to approval, the plan proceeds`).\n\nGrade the degree of reality: a real condition (`If the meeting is cancelled, I'll go home`), a tentative one with `were to` (`If the meeting were to be cancelled...`, stressing remoteness), and a counter-factual past (`Had the meeting been cancelled...`). `Were to + infinitive` is the formal device for marking a hypothesis as distant or improbable.\n\nKnow the `if`-substitutes used to frame a scenario: `imagine (that)`, `let's say / say (that)`, `suppose / supposing`, and `what if`. In reported speech the conditional pattern does not backshift: `She said that if she had the money, she would buy it`. Note also fixed idiomatic conditionals such as `if push comes to shove`, `if worst comes to worst`, `if all else fails`, and `if you ask me`.",
         "ru": "На C1 используй тонкие условные формулировки.\n\n**Formal/legal conditionals:**\n- `in the event that` — в случае, если: `In the event that the contract is breached, we will sue.`\n- `should + subject + bare infinitive` — формальная инверсия: `Should you encounter any problems, contact me.`\n- `on the assumption that` — исходя из предположения, что.\n- `subject to + noun` — при условии (legal): `Subject to approval, the plan will proceed.`\n\n**Hypothetical vs real conditions:**\n- Real: `If the meeting is cancelled, I'll go home.` (возможно в реальности.)\n- Tentative: `If the meeting were to be cancelled...` (отдалённая гипотеза.)\n- Hypothetical past: `Had the meeting been cancelled...` (не случилось.)\n\n**Were to — hypothetical emphasis:**\n- `If he were to refuse, we'd need a backup plan.` — подчёркивает нереальность/отдалённость.\n- Более формально, чем `If he refused`.\n\n**Alternatives to 'if':**\n- `imagine (that)` — представим, что.\n- `let's say (that) / say (that)` — скажем, что.\n- `suppose / supposing` — предположим.\n- `what if` — что, если: `What if she doesn't come?`\n\n**Concession + condition:**\n- `Even supposing he agrees...` — даже если предположить, что он согласится.\n- `If only for the fact that...` — хотя бы потому, что.\n\n**Conditional perfect in reported speech:**\n- Original: `If I had the money, I would buy it.`\n- Reported: `She said that if she had the money, she would buy it.` (без backshift в условном.)\n\n**Common C1 trap:** смешение `provided that` и `providing that`. Оба корректны, interchangeable. Но `provided` более формальный; `providing` чуть разговорнее.\n\n**Idiomatic fixed conditionals:**\n- `If push comes to shove` — если дойдёт до крайности.\n- `If worst comes to worst` — в худшем случае.\n- `If all else fails` — если ничто не поможет.\n- `If you ask me` — если хочешь знать моё мнение."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Should + subject + bare infinitive ...; subject + were to + infinitive ...; In the event that / Subject to ...",
+        "ru": "Should + подлежащее + инфинитив без to ...; подлежащее + were to + инфинитив ...; In the event that / Subject to ..."
       },
       "examples": [
         {
           "en": "Should any issues arise, please contact our support team.",
-          "ru": "Если возникнут проблемы, пожалуйста, свяжитесь с нашей службой поддержки."
+          "ru": "Если возникнут проблемы, пожалуйста, свяжитесь с нашей службой поддержки.",
+          "note": {
+            "en": "should-inversion",
+            "ru": "инверсия с should"
+          }
         },
         {
           "en": "In the event that the flight is cancelled, we will reimburse the cost.",
@@ -114,7 +172,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Were the proposal to be rejected, we would consider alternatives.",
-          "ru": "Если бы предложение было отклонено, мы бы рассмотрели альтернативы."
+          "ru": "Если бы предложение было отклонено, мы бы рассмотрели альтернативы.",
+          "note": {
+            "en": "were to (tentative)",
+            "ru": "were to (гипотетично)"
+          }
         },
         {
           "en": "Subject to the committee's approval, the project starts in June.",
@@ -122,32 +184,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "If push comes to shove, we'll sell the house.",
-          "ru": "Если дойдёт до крайности, мы продадим дом."
+          "ru": "Если дойдёт до крайности, мы продадим дом.",
+          "note": {
+            "en": "fixed idiom",
+            "ru": "устойчивая идиома"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Were to + inf — способ подчеркнуть нереальность или отдалённость гипотезы: If he were to refuse звучит более гипотетично, чем If he refused."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Should you to need help, contact me.",
+          "right": "Should you need help, contact me.",
+          "why": {
+            "en": "After inverted `should` the verb is a bare infinitive — no `to`.",
+            "ru": "После инверсии с should идёт инфинитив без to."
+          }
+        },
+        {
+          "wrong": "She said that if she would have the money, she would buy it.",
+          "right": "She said that if she had the money, she would buy it.",
+          "why": {
+            "en": "The conditional pattern does not backshift, and `would` never appears in the if-clause.",
+            "ru": "Условная конструкция не сдвигается по времени, и would не ставится в придаточном."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 conditionals become a tool for rhetorical precision and stylistic control. Use elliptical conditionals (`if necessary`, `if anything`, `if in doubt`, `if not X, then Y`) and rhetorical ones where `if you will` means 'so to speak' rather than stating a condition, and `if I may / might` softens a request.\n\nBuild condition-consequence chains and inversions: `Only if X will Y`, `Not unless X will Y`. Handle layered counter-factual argument: `Had it not been for X, Y would not have occurred`; `Were it not that X, Y would be impossible`. Keep the subjunctive in fixed forms — `If I were you` (never `was`), `if need be`, `if truth be told`.\n\nMaster concealed conditionals, where the `if` is implicit: `A word from her and I would have stayed` (= If she had said a word...); `Any more delays and we'll miss the deadline` (= If there are any more delays...); `Without his help, we wouldn't have finished`. Reach for academic hedging (`provided the assumption holds`, `contingent upon further evidence`) and literary turns (`Would that X were Y`, `Be that as it may`). The subtle danger is over-nesting conditions — pick one level of conditionality rather than stacking `if, assuming that, providing that...`.",
         "ru": "На C2 условные конструкции — инструмент риторической точности и стилистической игры.\n\n**Elliptical conditionals:**\n- `If necessary, ...` — если необходимо.\n- `If anything, ...` — если уж на то пошло.\n- `If in doubt, ...` — если сомневаешься.\n- `If not X, (then) Y.` — если не X, то Y.\n- `If ever there was a Z, this is it.` — если когда-либо и был Z, то это он.\n\n**Rhetorical conditionals:**\n- `If you will ...` — вот такое выражение (not condition, but «так сказать»): `This is, if you will, a gentle reminder.`\n- `If I may / might` — если можно (просьба): `If I may interrupt...`\n\n**Condition-consequence chains:**\n- `If X, then Y; if not, then Z.`\n- `Only if X will Y.` (инверсия после only if.)\n- `Not unless X will Y.` — только не если не X.\n\n**Contrary-to-fact in complex argumentation:**\n- `Had it not been for X, Y would not have occurred.` (Если бы не X, Y бы не случилось.)\n- `But that X happened, we would still be doing Y.` (Если бы не случилось X...)\n- `Were it not that X, Y would be impossible.`\n\n**Subjunctive in formal conditionals:**\n- `If I were you` (not 'was') — стандарт для subjunctive.\n- `If need be` — если потребуется (fixed idiom).\n- `If truth be told` — по правде говоря (archaic-literary).\n\n**Concealed conditionals — implicit if:**\n- `A word from her and I would have stayed.` (= If she had said a word...)\n- `Any more delays and we'll miss the deadline.` (= If there are any more delays...)\n- `Without his help, we wouldn't have finished.` (= If it hadn't been for his help...)\n\n**Conditional hedging в academic prose:**\n- `provided the assumption holds`\n- `assuming ceteris paribus`\n- `on condition that the data are reliable`\n- `contingent upon further evidence`\n\n**Literary touches:**\n- `Would that X were Y.` (Хотел бы я, чтобы X был Y — poetic wish.)\n- `Be X as it may, Y.` (Как бы X ни обстояло, Y.)\n\n**Common subtle error:** избыточное nesting. `If, assuming that, providing that...` — нагромождение условий выдаёт неуверенность. Выбирай ОДИН уровень условности."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Only if + clause + inverted main clause; [trigger noun phrase] + and + would-/will-clause (concealed if); Had it not been for + noun, ...",
+        "ru": "Only if + придаточное + инверсия в главном; [фраза-триггер] + and + would/will-предложение (скрытое if); Had it not been for + существительное, ..."
       },
       "examples": [
         {
           "en": "Had it not been for her persistence, the reform would never have passed.",
-          "ru": "Если бы не её настойчивость, реформа никогда бы не прошла."
+          "ru": "Если бы не её настойчивость, реформа никогда бы не прошла.",
+          "note": {
+            "en": "concealed counter-fact",
+            "ru": "скрытое нереальное условие"
+          }
         },
         {
           "en": "Any more excuses and he'll be fired.",
-          "ru": "Ещё одна отговорка, и его уволят."
+          "ru": "Ещё одна отговорка, и его уволят.",
+          "note": {
+            "en": "noun + and (implicit if)",
+            "ru": "существительное + and (скрытое if)"
+          }
         },
         {
           "en": "If truth be told, I never liked the idea.",
@@ -155,7 +247,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Only if all parties consent will the agreement take effect.",
-          "ru": "Только если все стороны согласятся, соглашение вступит в силу."
+          "ru": "Только если все стороны согласятся, соглашение вступит в силу.",
+          "note": {
+            "en": "only if + inversion",
+            "ru": "only if + инверсия"
+          }
         },
         {
           "en": "Be that as it may, the deadline cannot be extended.",
@@ -165,9 +261,45 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Concealed conditional: Without his help, we'd have failed = If it hadn't been for his help — сжатый элегантный стиль."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If I was you, I would accept the offer.",
+          "right": "If I were you, I would accept the offer.",
+          "why": {
+            "en": "The fixed subjunctive keeps `were` for all persons in this set phrase.",
+            "ru": "В устойчивом сослагательном обороте сохраняется were."
+          }
+        },
+        {
+          "wrong": "Only if all parties consent the agreement will take effect.",
+          "right": "Only if all parties consent will the agreement take effect.",
+          "why": {
+            "en": "Fronted `only if` triggers subject-auxiliary inversion in the main clause.",
+            "ru": "Вынесенное вперёд only if требует инверсии в главном предложении."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "adverbial-clauses-time",
+    "adverbial-clauses-contrast",
+    "first-conditional",
+    "subordinating-conjunctions"
+  ],
+  "crossTopic": [
+    "zero-conditional",
+    "second-conditional",
+    "third-conditional",
+    "inversion"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "condition",
+      "main clause",
+      "no will in the if-clause",
+      "unless = if not"
+    ]
+  }
 };
