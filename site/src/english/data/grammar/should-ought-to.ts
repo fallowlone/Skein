@@ -436,5 +436,518 @@ export const topic: GrammarTopic = {
       "should = advice / expectation, no to",
       "ought to = same meaning, more formal, always with to"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "You look exhausted — you ___ get some rest before the trip. (advice)",
+        "answer": "should",
+        "distractors": [
+          "shoulds",
+          "should to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She has a bad cough; she ___ see a doctor soon.",
+        "answer": "should",
+        "distractors": [
+          "should to",
+          "shoulding"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "It's raining hard — we ___ take an umbrella.",
+        "answer": "should",
+        "distractors": [
+          "should to",
+          "shoulds"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "After should, the verb has no extra word: you should ___ more water. (drink)",
+        "answer": "drink",
+        "distractors": [
+          "to drink",
+          "drinks"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He hurt his friend, so he ___ to apologise. (use the formal modal with 'to')",
+        "answer": "ought",
+        "distractors": [
+          "should",
+          "must"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "After 'ought', the little word ___ is always needed: you ought ___ go.",
+        "answer": "to",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "You ___ smoke in here — it isn't allowed. (negative advice)",
+        "answer": "shouldn't",
+        "distractors": [
+          "don't should",
+          "shouldn't to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ I open the window? It's a bit warm. (ask for advice, modal first)",
+        "answer": "Should",
+        "distractors": [
+          "Do",
+          "Ought"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The train ___ arrive at ten — that's the timetable. (expectation)",
+        "answer": "should",
+        "distractors": [
+          "oughts",
+          "should to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "What ___ we do about the broken printer? (ask for advice)",
+        "answer": "should",
+        "distractors": [
+          "ought",
+          "shall to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "You really ___ try this restaurant; the pasta is excellent. (recommendation)",
+        "answer": "should",
+        "distractors": [
+          "should to",
+          "shoulds"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Children ___ be rude to their teachers. (negative advice)",
+        "answer": "shouldn't",
+        "distractors": [
+          "don't should",
+          "shouldn't to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She finishes work at six, so she ___ be home by now. (reasonable expectation)",
+        "answer": "should",
+        "distractors": [
+          "ought",
+          "shall"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The bus ___ be here in five minutes — it's usually on time. (expectation, not advice)",
+        "answer": "should",
+        "distractors": [
+          "should to",
+          "shoulds"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'm not certain, but I think you ___ apologise. (softened advice)",
+        "answer": "should",
+        "distractors": [
+          "should to",
+          "ought"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Maybe you ___ ask her directly instead of guessing. (tentative advice)",
+        "answer": "should",
+        "distractors": [
+          "shall",
+          "ought"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "In formal writing one ___ to weigh both sides of the argument. (formal modal with 'to')",
+        "answer": "ought",
+        "distractors": [
+          "should",
+          "would"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ we invite her too? It seems unfair to leave her out. (negative-leaning suggestion, modal first)",
+        "answer": "Shouldn't",
+        "distractors": [
+          "Don't",
+          "Oughtn't we"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I don't think you ___ lend him money — he never pays it back. (negative advice on the right modal)",
+        "answer": "should",
+        "distractors": [
+          "shouldn't",
+          "ought"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The formal negative of the duty modal keeps its 'to': you ___ to lie on the form. (ought + negative)",
+        "answer": "ought not",
+        "distractors": [
+          "ought",
+          "don't ought"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ I carry that bag for you? (offer to help, not asking for advice)",
+        "answer": "Shall",
+        "distractors": [
+          "Should",
+          "Ought"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He's been travelling all day, so he ___ be quite tired by now — though I'm not sure. (weaker than 'must')",
+        "answer": "should",
+        "distractors": [
+          "must",
+          "ought"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I ___ called her yesterday, but I completely forgot. (regret about the past)",
+        "answer": "should have",
+        "distractors": [
+          "should",
+          "should of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You ___ told me the meeting was cancelled! I waited an hour. (criticism of the past)",
+        "answer": "should have",
+        "distractors": [
+          "should",
+          "shouldn't have"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We ___ stayed so late — now everyone is exhausted. (regret, negative)",
+        "answer": "shouldn't have",
+        "distractors": [
+          "shouldn't",
+          "should have"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "In writing, never use 'should of'; the correct form is should ___ . (fill the missing word)",
+        "answer": "have",
+        "distractors": [
+          "of",
+          "had"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "After 'have' you need the past participle: she should have ___ . (go)",
+        "answer": "gone",
+        "distractors": [
+          "went",
+          "go"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The parcel ___ arrived by now, but it still hasn't. (unmet expectation in the past)",
+        "answer": "should have",
+        "distractors": [
+          "should",
+          "ought"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It's the formal equivalent: she ___ to have apologised at once. (ought + perfect)",
+        "answer": "ought",
+        "distractors": [
+          "should",
+          "would"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ you require assistance, please call reception. (formal inverted conditional, no 'if')",
+        "answer": "Should",
+        "distractors": [
+          "If",
+          "Would"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Applicants ___ submit their CV by Friday — softer than 'must' but still expected. (formal instruction)",
+        "answer": "should",
+        "distractors": [
+          "should to",
+          "ought"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It is important that the report ___ be checked before it is sent. (subjunctive that-clause)",
+        "answer": "should",
+        "distractors": [
+          "shall",
+          "would"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She insisted that we ___ stay for dinner. (subjunctive after 'insist')",
+        "answer": "should",
+        "distractors": [
+          "shall",
+          "ought"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm checking my expectation: she ___ have arrived by now. (expectation, not a confident deduction)",
+        "answer": "should",
+        "distractors": [
+          "must",
+          "ought"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I ___ think she's already left — the lights are off. (British tentative opinion, not advice)",
+        "answer": "should",
+        "distractors": [
+          "ought",
+          "shall"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ any discrepancies arise, please notify us at once. (formal inverted conditional)",
+        "answer": "Should",
+        "distractors": [
+          "If",
+          "Were"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It is essential that all staff ___ be informed of the change. (subjunctive 'should')",
+        "answer": "should",
+        "distractors": [
+          "shall",
+          "would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He demanded that she ___ leave the building immediately. (subjunctive after 'demand')",
+        "answer": "should",
+        "distractors": [
+          "shall",
+          "ought"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In British academic prose, with a moral colouring, one ___ to respect the views of others. (the marked moral modal + 'to')",
+        "answer": "ought",
+        "distractors": [
+          "should",
+          "might"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You ___ have been working, not playing games all afternoon. (criticism of an extended past action)",
+        "answer": "should",
+        "distractors": [
+          "ought",
+          "would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I ___ imagine the report will run to forty pages. (polite, hedged opinion — British register)",
+        "answer": "should",
+        "distractors": [
+          "ought",
+          "shall"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In the inverted conditional the modal moves to the front and 'if' disappears: ___ you change your mind, let me know. (rewrite of 'If you...')",
+        "answer": "Should",
+        "distractors": [
+          "If",
+          "Would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "After subjunctive 'should' the verb stays in the base form: he demanded that she should ___ at once. (leave)",
+        "answer": "leave",
+        "distractors": [
+          "leaves",
+          "left"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It ___ be remembered that correlation does not imply causation. (reader-directed academic hedge)",
+        "answer": "should",
+        "distractors": [
+          "ought",
+          "would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "With full moral weight and distance, one ___ not to pass judgement without the facts. (marked moral modal, negative + 'to')",
+        "answer": "ought",
+        "distractors": [
+          "should",
+          "could"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ the worst come to the worst, we still have a contingency plan. (formal inverted-conditional idiom)",
+        "answer": "Should",
+        "distractors": [
+          "If",
+          "Were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He ___ to have known better than to sign without reading it. (past moral criticism, the marked modal + perfect)",
+        "answer": "ought",
+        "distractors": [
+          "should",
+          "would"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "And who ___ walk in at that very moment but the person we'd been discussing! (literary narrative surprise, base verb follows)",
+        "answer": "should",
+        "distractors": [
+          "would",
+          "could"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "How ___ I know where he keeps his keys? (idiomatic rhetorical refusal)",
+        "answer": "should",
+        "distractors": [
+          "would",
+          "ought"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Why ___ he care what they think of his decision? (rhetorical indifference)",
+        "answer": "should",
+        "distractors": [
+          "would",
+          "ought"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It is hereby ordered that the defendant ___ appear on the appointed date. (subjunctive 'should' in legal register)",
+        "answer": "should",
+        "distractors": [
+          "shall",
+          "would"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I ___ have thought that point was self-evident, frankly. (high-register polemical hedge)",
+        "answer": "should",
+        "distractors": [
+          "ought",
+          "would"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She ___ to have realised that silence would be read as consent. (moral criticism with the marked modal + perfect)",
+        "answer": "ought",
+        "distractors": [
+          "should",
+          "could"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "For past moral criticism use the full form: he ought ___ have known better. (fill the missing word)",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "had"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "should-ought-to-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "'{answer}' is the form the context requires: should/ought-to and their perfect, subjunctive, inverted-conditional, and discourse uses are a context-driven choice, never a regular inflection.",
+          "ru": "«{answer}» — форма, которую требует контекст: should/ought to и их перфектные, сослагательные, инвертированно-условные и дискурсивные употребления выбираются по смыслу, а не вычисляются регулярным словоизменением."
+        }
+      }
+    ],
+    "contexts_note": "all distractors are genuinely wrong in their slot"
   }
 };

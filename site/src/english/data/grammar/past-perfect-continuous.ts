@@ -239,5 +239,591 @@ export const topic: GrammarTopic = {
       "reference point in the past",
       "now"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "past-perfect-continuous-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Past Perfect Continuous (had been + V-ing) is chosen by meaning and context — duration up to a past point, explaining a visible past state, reported-speech backshift, or fronted-adverb inversion — so the correct answer '{answer}' cannot be derived by inflection alone.",
+          "ru": "Past Perfect Continuous (had been + V-ing) выбирается по смыслу и контексту — длительность до момента в прошлом, объяснение видимого прошлого состояния, сдвиг в косвенной речи или инверсия после наречия — поэтому правильный ответ «{answer}» нельзя вывести одним лишь спряжением."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I ___ for the bus for twenty minutes when it finally turned up. (wait)",
+        "answer": "had been waiting",
+        "distractors": [
+          "was waiting",
+          "have been waiting",
+          "had waited"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ at that firm for ten years when she suddenly resigned. (work)",
+        "answer": "had been working",
+        "distractors": [
+          "was working",
+          "has been working",
+          "worked"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They ___ in Lisbon for five years before they decided to move. (live)",
+        "answer": "had been living",
+        "distractors": [
+          "lived",
+          "were living",
+          "have been living"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "By the time the teacher arrived, we ___ in the corridor for ages. (stand)",
+        "answer": "had been standing",
+        "distractors": [
+          "stood",
+          "were standing",
+          "have been standing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ all morning, so his back was aching by lunchtime. (dig)",
+        "answer": "had been digging",
+        "distractors": [
+          "dug",
+          "was digging",
+          "has been digging"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We ___ the documentary for an hour when the power went out. (watch)",
+        "answer": "had been watching",
+        "distractors": [
+          "watched",
+          "were watching",
+          "have been watching"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My sister ___ the piano for years before she gave her first concert. (study)",
+        "answer": "had been studying",
+        "distractors": [
+          "studied",
+          "was studying",
+          "has been studying"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The children ___ outside since breakfast when it started to rain. (play)",
+        "answer": "had been playing",
+        "distractors": [
+          "played",
+          "were playing",
+          "have been playing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Her eyes were red. She ___ . (cry)",
+        "answer": "had been crying",
+        "distractors": [
+          "cried",
+          "was crying",
+          "has been crying"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The ground was wet because it ___ all night. (rain)",
+        "answer": "had been raining",
+        "distractors": [
+          "rained",
+          "was raining",
+          "has been raining"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "His hands were filthy — he ___ in the garage. (work)",
+        "answer": "had been working",
+        "distractors": [
+          "worked",
+          "was working",
+          "has been working"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She was out of breath because she ___ to catch the train. (run)",
+        "answer": "had been running",
+        "distractors": [
+          "ran",
+          "was running",
+          "has been running"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The kitchen smelled wonderful; someone ___ bread. (bake)",
+        "answer": "had been baking",
+        "distractors": [
+          "baked",
+          "was baking",
+          "has been baking"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He looked exhausted — he ___ all night. (drive)",
+        "answer": "had been driving",
+        "distractors": [
+          "drove",
+          "was driving",
+          "has been driving"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Her voice was hoarse; she ___ at the match for two hours. (shout)",
+        "answer": "had been shouting",
+        "distractors": [
+          "shouted",
+          "was shouting",
+          "has been shouting"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The floor was covered in sawdust because they ___ a shelf. (build)",
+        "answer": "had been building",
+        "distractors": [
+          "built",
+          "were building",
+          "have been building"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "How long ___ for me before I showed up? (you / wait)",
+        "answer": "had you been waiting",
+        "distractors": [
+          "were you waiting",
+          "have you been waiting",
+          "did you wait"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ long before the train finally came? (they / queue)",
+        "answer": "had they been queuing",
+        "distractors": [
+          "were they queuing",
+          "have they been queuing",
+          "did they queue"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I failed the test because I ___ attention in class. (not pay)",
+        "answer": "hadn't been paying",
+        "distractors": [
+          "didn't pay",
+          "wasn't paying",
+          "haven't been paying"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They ___ to the warnings, which is why the project collapsed. (not listen)",
+        "answer": "hadn't been listening",
+        "distractors": [
+          "didn't listen",
+          "weren't listening",
+          "haven't been listening"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When I found them, they ___ for hours and the air was tense. (argue)",
+        "answer": "had been arguing",
+        "distractors": [
+          "argued",
+          "were arguing",
+          "have been arguing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The students looked drained; they ___ for the exam for weeks. (prepare)",
+        "answer": "had been preparing",
+        "distractors": [
+          "prepared",
+          "were preparing",
+          "have been preparing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He finally stopped — he ___ the thief for twenty minutes. (chase)",
+        "answer": "had been chasing",
+        "distractors": [
+          "chased",
+          "was chasing",
+          "has been chasing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The team ___ the prototype for a year when the funding was cut. (develop)",
+        "answer": "had been developing",
+        "distractors": [
+          "developed",
+          "was developing",
+          "has been developing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I ___ to reach you all day when I finally saw you online. (try)",
+        "answer": "had been trying",
+        "distractors": [
+          "tried",
+          "was trying",
+          "have been trying"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They ___ the contract for months when the deal fell through. (negotiate)",
+        "answer": "had been negotiating",
+        "distractors": [
+          "negotiated",
+          "were negotiating",
+          "have been negotiating"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "By midnight she ___ on the report for nine straight hours. (work)",
+        "answer": "had been working",
+        "distractors": [
+          "worked",
+          "was working",
+          "has been working"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The volunteers ___ supplies since dawn when the lorry finally arrived. (sort)",
+        "answer": "had been sorting",
+        "distractors": [
+          "sorted",
+          "were sorting",
+          "have been sorting"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She said she ___ there for five years. (work)",
+        "answer": "had been working",
+        "distractors": [
+          "has been working",
+          "was working",
+          "is working"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He explained that he ___ to fix the bug since the morning. (try)",
+        "answer": "had been trying",
+        "distractors": [
+          "has been trying",
+          "was trying",
+          "tried"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They told us they ___ for the keys everywhere. (look)",
+        "answer": "had been looking",
+        "distractors": [
+          "have been looking",
+          "were looking",
+          "looked"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The witness claimed she ___ across the street when the crash happened. (walk)",
+        "answer": "had been walking",
+        "distractors": [
+          "has been walking",
+          "is walking",
+          "walks"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She ___ to call you for months, but never found the time. (mean)",
+        "answer": "had been meaning",
+        "distractors": [
+          "meant",
+          "was meaning",
+          "has been meaning"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I ___ about that idea for a while before I finally acted on it. (think)",
+        "answer": "had been thinking",
+        "distractors": [
+          "thought",
+          "was thinking",
+          "have been thinking"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They ___ to visit the coast for years before they finally booked it. (want)",
+        "answer": "had been wanting",
+        "distractors": [
+          "wanted",
+          "were wanting",
+          "have been wanting"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She ___ for this moment for years; when it came, she froze. (wait)",
+        "answer": "had been waiting",
+        "distractors": [
+          "waited",
+          "was waiting",
+          "has been waiting"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___ the speech for weeks; when he stood up, his mind went blank. (plan)",
+        "answer": "had been planning",
+        "distractors": [
+          "planned",
+          "was planning",
+          "has been planning"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "By the time the storm passed, we ___ in the cave for six hours. (shelter)",
+        "answer": "had been sheltering",
+        "distractors": [
+          "sheltered",
+          "were sheltering",
+          "have been sheltering"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I could tell she ___ before I came in; the tissues gave it away. (cry)",
+        "answer": "had been crying",
+        "distractors": [
+          "cried",
+          "was crying",
+          "has been crying"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He broke down in tears — he ___ it in for weeks. (hold)",
+        "answer": "had been holding",
+        "distractors": [
+          "held",
+          "was holding",
+          "has been holding"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The machine finally failed; it ___ non-stop for months. (run)",
+        "answer": "had been running",
+        "distractors": [
+          "ran",
+          "was running",
+          "has been running"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "For years, she ___ herself that it didn't matter. (tell)",
+        "answer": "had been telling",
+        "distractors": [
+          "told",
+          "was telling",
+          "has been telling"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He realised, with horror, that they ___ him all along. (watch)",
+        "answer": "had been watching",
+        "distractors": [
+          "watched",
+          "were watching",
+          "have been watching"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Tensions ___ for months before the explosion. (build)",
+        "answer": "had been building",
+        "distractors": [
+          "built",
+          "were building",
+          "have been building"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Analysts ___ about the risks since early spring. (warn)",
+        "answer": "had been warning",
+        "distractors": [
+          "warned",
+          "were warning",
+          "have been warning"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The currency ___ steadily for a year before it finally collapsed. (slide)",
+        "answer": "had been sliding",
+        "distractors": [
+          "slid",
+          "was sliding",
+          "has been sliding"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "For decades, scholars ___ over whether the manuscript was authentic. (debate)",
+        "answer": "had been debating",
+        "distractors": [
+          "debated",
+          "were debating",
+          "have been debating"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He looked at the manuscript; he ___ it for ten years. (rewrite)",
+        "answer": "had been rewriting",
+        "distractors": [
+          "rewrote",
+          "was rewriting",
+          "has been rewriting"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She ___ for her birth mother long before she finally found her. (search)",
+        "answer": "had been searching",
+        "distractors": [
+          "searched",
+          "was searching",
+          "has been searching"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The country ___ on the edge of crisis for years when the collapse came. (teeter)",
+        "answer": "had been teetering",
+        "distractors": [
+          "teetered",
+          "was teetering",
+          "has been teetering"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He ___ to apologise, but the moment never seemed right. (mean)",
+        "answer": "had been meaning",
+        "distractors": [
+          "meant",
+          "was meaning",
+          "has been meaning"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "They ___ each other in secret for almost a year. (see)",
+        "answer": "had been seeing",
+        "distractors": [
+          "saw",
+          "were seeing",
+          "have been seeing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Never ___ under such relentless pressure before that summer. (had / I / work)",
+        "answer": "had I been working",
+        "distractors": [
+          "I had been working",
+          "did I work",
+          "was I working"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Long ___ for this recognition when it finally arrived. (had / she / wait)",
+        "answer": "had she been waiting",
+        "distractors": [
+          "she had been waiting",
+          "did she wait",
+          "was she waiting"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "They ___ her, and she had been defending them the whole time. (deceive)",
+        "answer": "had been deceiving",
+        "distractors": [
+          "deceived",
+          "were deceiving",
+          "have been deceiving"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She had been living a lie, and he ___ along with it. (play)",
+        "answer": "had been playing",
+        "distractors": [
+          "played",
+          "was playing",
+          "has been playing"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };
