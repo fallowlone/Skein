@@ -528,5 +528,84 @@ export const topic: GrammarTopic = {
       "now",
       "future"
     ]
+  },
+  "gen": {
+    "features": [
+      "past-tense"
+    ],
+    "pools": [
+      {
+        "id": "subj",
+        "tags": {
+          "level": [
+            "A1",
+            "A2",
+            "B1"
+          ]
+        },
+        "items": [
+          "She",
+          "He",
+          "They",
+          "We",
+          "The team",
+          "My colleague",
+          "The intern",
+          "Our client",
+          "I",
+          "The bot"
+        ]
+      },
+      {
+        "id": "verbs",
+        "tags": {
+          "level": [
+            "A1",
+            "A2",
+            "B1"
+          ]
+        },
+        "items": [
+          "work",
+          "play",
+          "study",
+          "fix",
+          "build",
+          "ship",
+          "write",
+          "go",
+          "see",
+          "make",
+          "run",
+          "read",
+          "send",
+          "break",
+          "take",
+          "find"
+        ]
+      }
+    ],
+    "templates": [
+      {
+        "id": "past",
+        "type": "fill_in_blank",
+        "cefrMin": "A1",
+        "cefrMax": "B1",
+        "pattern": "{subj} ___ ({verb}) it yesterday.",
+        "slots": {
+          "subj": {
+            "pool": "subj"
+          },
+          "verb": {
+            "pool": "verbs"
+          }
+        },
+        "deriveKey": "past-simple-form",
+        "rationale": {
+          "en": "Past simple: regular verbs add -ed; irregular verbs use their past form.",
+          "ru": "Past Simple: правильные глаголы получают -ed; неправильные — особую форму."
+        }
+      }
+    ]
   }
 };
