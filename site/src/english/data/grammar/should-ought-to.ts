@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "should-ought-to",
   "title": {
-    "en": "",
+    "en": "Should and Ought To",
     "ru": "Should Ought To"
   },
   "cefr": "A2",
@@ -16,196 +16,420 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "modals",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "`Should` is the everyday modal for **advice** and **recommendations** — the English way of saying *you ought to*, *it's a good idea to*.\n\n**The key rule:** after `should`, use the **base verb** — no `to` and no `-s`.\n- `You should sleep more.`\n- `She should call her mother.` (not `She shoulds`, not `She should to call`)\n\n`Should` never changes its form: it is `should` for *I, you, he, she, it, we, they* alike.\n\n**Three everyday jobs:**\n1. **Advice:** `You should see a doctor.`\n2. **Recommendation:** `You should try this restaurant.`\n3. **Expectation:** `The train should arrive at ten.` (I expect it to.)\n\n**Negative:** `shouldn't` (short for `should not`): `You shouldn't smoke.`\n\n**Question:** put `should` first: `Should I call him?`, `What should we do?`\n\n**Ought to** is close in meaning to `should`, but more formal and far less common in speech: `You ought to apologise.` Note the difference: `ought` is **always** followed by `to` — never say `You ought apologise`. At A2, use `should` confidently; just recognise `ought to` when you meet it.",
         "ru": "**Should** — это модальный глагол для **совета** и **рекомендации**. По-русски мы часто говорим «тебе следует», «надо бы», «стоит».\n\n**Главное правило:** после `should` идёт глагол **без `to`** и **без `-s`**:\n- `You should sleep more.` (Тебе следует больше спать.)\n- `She should call her mother.` (Ей следует позвонить матери.) — не `She shoulds`.\n\n**Когда использовать should:**\n\n1. **Совет:** `You should see a doctor.` (Тебе следует сходить к врачу.)\n2. **Рекомендация:** `You should try this restaurant.` (Тебе стоит попробовать этот ресторан.)\n3. **Ожидание:** `The train should arrive at 10.` (Поезд должен приехать в 10.)\n\n**Отрицание:** `shouldn't` (сокращение от `should not`):\n- `You shouldn't smoke.` (Тебе не следует курить.)\n- `She shouldn't work so hard.` (Ей не надо так много работать.)\n\n**Вопрос:** `should` идёт в начало:\n- `Should I call him?` (Мне позвонить ему?)\n- `What should we do?` (Что нам делать?)\n\n**Ought to** — похожий по значению на `should`, но более формальный и **реже** используется в речи:\n- `You ought to apologise.` (Тебе следует извиниться.)\n\nОбрати внимание: после `ought` всегда есть `to`! Не говори `You ought apologise`.\n\nНа уровне A2 смело используй `should`. `Ought to` полезно понимать, но в речи можно спокойно заменять на `should`.\n\n**Частые ошибки:**\n- ❌ `You should to go.` → ✅ `You should go.`\n- ❌ `She shoulds come.` → ✅ `She should come.`\n- ❌ `You ought go.` → ✅ `You ought to go.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + should + base verb (no to, no -s); ought + to + base verb",
+        "ru": "подлежащее + should + глагол в начальной форме (без to, без -s); ought + to + глагол"
       },
       "examples": [
         {
           "en": "You should drink more water.",
-          "ru": "Тебе следует пить больше воды."
+          "ru": "Тебе следует пить больше воды.",
+          "note": {
+            "en": "advice",
+            "ru": "совет"
+          }
         },
         {
           "en": "We shouldn't be late for the meeting.",
-          "ru": "Нам не следует опаздывать на собрание."
+          "ru": "Нам не следует опаздывать на собрание.",
+          "note": {
+            "en": "negative",
+            "ru": "отрицание"
+          }
         },
         {
           "en": "Should I open the window?",
-          "ru": "Мне открыть окно?"
+          "ru": "Мне открыть окно?",
+          "note": {
+            "en": "asking for advice",
+            "ru": "запрос совета"
+          }
         },
         {
           "en": "He ought to thank her.",
-          "ru": "Ему следовало бы поблагодарить её."
+          "ru": "Ему следовало бы поблагодарить её.",
+          "note": {
+            "en": "ought to",
+            "ru": "ought to"
+          }
         },
         {
           "en": "You should try Italian food — it's delicious.",
-          "ru": "Тебе стоит попробовать итальянскую еду — она вкусная."
+          "ru": "Тебе стоит попробовать итальянскую еду — она вкусная.",
+          "note": {
+            "en": "recommendation",
+            "ru": "рекомендация"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Should — без to; ought — всегда с to. Это частая ошибка."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "You should to go.",
+          "right": "You should go.",
+          "why": {
+            "en": "After `should` the verb has no `to`.",
+            "ru": "После should глагол идёт без to."
+          }
+        },
+        {
+          "wrong": "She shoulds come.",
+          "right": "She should come.",
+          "why": {
+            "en": "`Should` never adds `-s` in the third person.",
+            "ru": "Should никогда не добавляет -s в 3-м лице."
+          }
+        },
+        {
+          "wrong": "You ought go.",
+          "right": "You ought to go.",
+          "why": {
+            "en": "`Ought` is always followed by `to`.",
+            "ru": "После ought всегда идёт to."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, `should` and `ought to` stretch beyond advice into **expectation** and **probability**, and the nuances between them sharpen.\n\n**1. Should for expectation.** `The bus should be here in five minutes.`, `She should be home by now — she finishes at six.` This is not advice or obligation; it is your reasonable prediction.\n\n**2. Should vs must for likelihood.** `Must` is strong certainty (`He must be tired.` — I'm sure); `should` is a weaker expectation (`He should be tired after that trip.`).\n\n**3. Ought to = a more formal `should`.** `You ought to apologise.` and `You should apologise.` mean almost the same. `Ought to` turns up more in writing and in British English; American English uses `should` almost everywhere.\n\n**Negative of ought:** `ought not to` (rarely shortened to `oughtn't to`). In speech, prefer `shouldn't`. The question `Ought I to call?` is rare — say `Should I call?`\n\n**4. Softening advice.** `You should try it.` (direct) → `I think you should try it.` (softer) → `Maybe you should try it.` (softer still). For negative advice, move the negative onto `think`: `I don't think you should try it.`\n\n**5. Shall vs should in questions.** `Shall I open the window?` offers to do something; `Should I open the window?` asks for advice.\n\n**6. A glimpse ahead.** `You should have called.` (you didn't) criticises the past — covered fully at B2.",
         "ru": "На B1 `should` и `ought to` расширяются до **ожиданий**, **предположений** и нюансов между ними.\n\n**1. Should для ожидания/предположения:**\n- `The bus should be here in five minutes.` (Автобус должен быть здесь через пять минут.) — я ожидаю, что так будет.\n- `She should be at home now — she finishes work at 6.` (Она должна быть дома сейчас — она заканчивает в 6.)\n\nЭто не совет и не обязанность. Это мой разумный прогноз.\n\n**2. Should vs must для ожидания:**\n- `Must` — сильная уверенность: `He must be tired.` (Он должен быть уставшим — я уверен.)\n- `Should` — ожидание с меньшей уверенностью: `He should be tired after that trip.` (Он, должно быть, уставший после той поездки.)\n\n**3. Ought to — формальный синоним should:**\n- `You ought to apologise.` / `You should apologise.` — почти одно и то же.\n- `Ought to` чаще встречается в письменном английском и в британском варианте.\n- В американском английском `should` используется почти всегда.\n\n**Отрицание ought:** `ought not to` (редко сокращается `oughtn't to`):\n- `You ought not to lie.` (Тебе не следует лгать.) — формально.\n- В речи чаще: `You shouldn't lie.`\n\n**Вопрос с ought** встречается редко: `Ought I to call?` — лучше `Should I call?`\n\n**4. Should для советов в разных формах:**\n- `You should try it.` — прямой совет.\n- `I think you should try it.` — мягче.\n- `Maybe you should try it.` — ещё мягче.\n- `I don't think you should try it.` — отрицательный совет (отрицание переносится на `think`, а не на `should`).\n\n**5. Should + have + past participle (B2 preview):**\n- `You should have called.` (Тебе следовало позвонить.) — критика прошлого.\nЭто будет подробнее на B2.\n\n**6. Ought to not сокращается обычно:**\n- `shouldn't` — стандартно.\n- `oughtn't to` — редко, старомодно. Лучше сказать `should not`.\n\n**7. Shall vs should для предложений:**\n- `Shall I open the window?` (Мне открыть окно?) — предложение что-то сделать.\n- `Should I open the window?` — запрос совета.\nОба вопроса возможны, но `shall I` звучит больше как предложение помощи.\n\n**8. Типичные ошибки:**\n- ❌ `You ought apologise.` → ✅ `You ought to apologise.`\n- ❌ `should of` (слышится в речи) → ✅ `should have`\n- ❌ `I should to study more.` → ✅ `I should study more.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "should / ought to + base verb = expectation; must = stronger certainty; ought not to = formal negative",
+        "ru": "should / ought to + глагол = ожидание; must = более сильная уверенность; ought not to = формальное отрицание"
       },
       "examples": [
         {
           "en": "You should probably apologise.",
-          "ru": "Тебе, пожалуй, стоит извиниться."
+          "ru": "Тебе, пожалуй, стоит извиниться.",
+          "note": {
+            "en": "softened advice",
+            "ru": "смягчённый совет"
+          }
         },
         {
           "en": "The meeting should finish by 5.",
-          "ru": "Собрание должно закончиться к 5."
+          "ru": "Собрание должно закончиться к 5.",
+          "note": {
+            "en": "expectation",
+            "ru": "ожидание"
+          }
         },
         {
           "en": "One ought to be careful with such decisions.",
-          "ru": "Нужно быть осторожным с такими решениями."
+          "ru": "Нужно быть осторожным с такими решениями.",
+          "note": {
+            "en": "formal ought to",
+            "ru": "формальное ought to"
+          }
         },
         {
           "en": "Shouldn't we invite her too?",
-          "ru": "Разве мы не должны пригласить её тоже?"
+          "ru": "Разве мы не должны пригласить её тоже?",
+          "note": {
+            "en": "negative question",
+            "ru": "вопрос с отрицанием"
+          }
         },
         {
           "en": "You ought to have told me sooner.",
-          "ru": "Тебе следовало сказать мне раньше."
+          "ru": "Тебе следовало сказать мне раньше.",
+          "note": {
+            "en": "ought to have (preview)",
+            "ru": "ought to have (предварительно)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Ought to — формальный эквивалент should; в разговорной речи смело заменяй на should."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "You ought apologise.",
+          "right": "You ought to apologise.",
+          "why": {
+            "en": "`Ought` always keeps its `to`.",
+            "ru": "Ought всегда сохраняет to."
+          }
+        },
+        {
+          "wrong": "I should to study more.",
+          "right": "I should study more.",
+          "why": {
+            "en": "After `should` the verb takes no `to`.",
+            "ru": "После should глагол идёт без to."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the central structure is **should have / ought to have + past participle**, used for **regret** and **criticism** of the past.\n\n**1. Should have + past participle.** Something was needed in the past — but it didn't happen (or the opposite):\n- `I should have called her yesterday.` (but I didn't) — **regret** about yourself.\n- `You should have told me!` (you didn't) — **criticism** of someone else.\n- `We shouldn't have stayed so long.` (but we did).\n\n**2. Ought to have + past participle** — the same meaning, more formal: `She ought to have apologised.`, `They ought not to have lied.`\n\n**3. Should have for an unmet expectation:** `The package should have arrived by now.` (but it hasn't).\n\n**4. The `should of` trap.** In fast speech `should have` sounds like *should of* — but `should of` is **always wrong** in writing. Use `should have` or `should've`: not `I should of gone`, but `I should have gone`.\n\n**5. Should in formal instructions** is softer than `must` but still binding: `Applicants should submit their CV by Friday.`\n\n**6. Should in conditionals (inversion):** `Should you need help, please let me know.` = `If you need help...` — formal.\n\n**7. Subjunctive should in that-clauses:** `It's important that he should arrive on time.`, `She insisted that we should stay.` In American English the `should` is often dropped: `It's important that he arrive on time.`\n\n**8. Contrast with must have:** `She should have arrived by now.` (I'm checking an expectation) vs `She must have arrived by now.` (a confident deduction).",
         "ru": "На B2 появляется **should have / ought to have + past participle** для **сожаления** и **критики**.\n\n**1. Should have + past participle (regret or criticism):**\nКогда в прошлом что-то надо было сделать — но не сделали, или наоборот:\n- `I should have called her yesterday.` (Мне следовало позвонить ей вчера.) — но я не позвонил.\n- `You should have told me!` (Тебе следовало сказать мне!) — ты не сказал.\n- `We shouldn't have stayed so long.` (Нам не следовало оставаться так долго.) — но остались.\n\nЭто одна из самых важных структур B2. Она выражает:\n- **Сожаление** (regret) — про себя.\n- **Критика** (criticism) — про других.\n\n**2. Ought to have + past participle:**\nТоже же значение, более формально:\n- `She ought to have apologised.` (Ей следовало извиниться.)\n- `They ought not to have lied.` (Им не следовало лгать.)\n\n**3. Should have для ожидания, которое не сбылось:**\n- `The package should have arrived by now.` (Посылка уже должна была прийти.) — но не пришла.\n- `He should have finished the report yesterday.` (Он должен был закончить отчёт вчера.) — неясно, закончил ли.\n\n**4. Произношение и ошибка «should of»:**\nВ быстрой речи `should have` звучит как «should of». Многие носители пишут `should of` — это **ошибка**! В письме всегда только `should have` или `should've`:\n- ❌ `I should of gone.`\n- ✅ `I should have gone.` / `I should've gone.`\n\n**5. Should в формальных инструкциях:**\n- `Applicants should submit their CV by Friday.` (Соискатели должны подать резюме до пятницы.)\n- `The device should be charged before first use.` (Устройство следует зарядить перед первым использованием.)\n\nЗдесь `should` — мягче, чем `must`, но всё ещё обязательно.\n\n**6. Should в условных:**\n- `Should you need help, please let me know.` (Если вам понадобится помощь, сообщите мне.) — инверсия, формально.\n- Эквивалент: `If you need help...`\n\n**7. Subjunctive should в that-clauses:**\n- `It's important that he should arrive on time.` (Важно, чтобы он пришёл вовремя.)\n- `She insisted that we should stay.` (Она настояла, чтобы мы остались.)\n\nВ американском английском `should` здесь часто опускается: `It's important that he arrive on time.` (subjunctive без should).\n\n**8. Ought to have vs should have:**\nЗначение почти идентичное. `Ought to have` звучит формально, редко в речи.\n\n**9. Контраст с must have:**\n- `She should have arrived by now.` (Она уже должна была прийти.) — я ожидаю, проверяю ожидание.\n- `She must have arrived by now.` (Она, должно быть, уже пришла.) — я делаю уверенный вывод.\n\n**10. Типичные ошибки B2:**\n- ❌ `should of` → ✅ `should have`\n- ❌ `She should have went.` → ✅ `She should have gone.`\n- ❌ `I shouldn't went.` → ✅ `I shouldn't have gone.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + should/ought to + have + past participle = regret / criticism of the past; never should of",
+        "ru": "подлежащее + should/ought to + have + причастие прошедшего времени = сожаление / критика прошлого; никогда should of"
       },
       "examples": [
         {
           "en": "I should have studied harder for the exam.",
-          "ru": "Мне следовало усерднее готовиться к экзамену."
+          "ru": "Мне следовало усерднее готовиться к экзамену.",
+          "note": {
+            "en": "regret",
+            "ru": "сожаление"
+          }
         },
         {
           "en": "You shouldn't have spent so much money.",
-          "ru": "Тебе не следовало тратить столько денег."
+          "ru": "Тебе не следовало тратить столько денег.",
+          "note": {
+            "en": "criticism",
+            "ru": "критика"
+          }
         },
         {
           "en": "The train should have arrived by now.",
-          "ru": "Поезд уже должен был прийти."
+          "ru": "Поезд уже должен был прийти.",
+          "note": {
+            "en": "unmet expectation",
+            "ru": "несбывшееся ожидание"
+          }
         },
         {
           "en": "She ought to have apologised immediately.",
-          "ru": "Ей следовало извиниться сразу же."
+          "ru": "Ей следовало извиниться сразу же.",
+          "note": {
+            "en": "formal ought to have",
+            "ru": "формальное ought to have"
+          }
         },
         {
           "en": "Should you require assistance, call reception.",
-          "ru": "Если вам потребуется помощь, позвоните на ресепшн."
+          "ru": "Если вам потребуется помощь, позвоните на ресепшн.",
+          "note": {
+            "en": "conditional inversion",
+            "ru": "инверсия в условном"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Should have + past participle — сожаление или критика прошлого; never should of."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I should of gone.",
+          "right": "I should have gone.",
+          "why": {
+            "en": "`should of` is a mishearing of `should have`; always write `should have` or `should've`.",
+            "ru": "should of — ошибочная запись should have; всегда пиши should have или should've."
+          }
+        },
+        {
+          "wrong": "She should have went.",
+          "right": "She should have gone.",
+          "why": {
+            "en": "After `have`, use the past participle (`gone`), not the past simple (`went`).",
+            "ru": "После have ставится причастие прошедшего времени (gone), а не прошедшее простое (went)."
+          }
+        },
+        {
+          "wrong": "I shouldn't went.",
+          "right": "I shouldn't have gone.",
+          "why": {
+            "en": "Past criticism needs `have` + past participle: `shouldn't have gone`.",
+            "ru": "Критика прошлого требует have + причастие: shouldn't have gone."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, `should`/`ought to` become instruments of **softening**, **hedging**, and **subjunctive structure**.\n\n**1. Tentative-opinion `I should think / I should imagine`** (British register): `I should think so.`, `I should imagine she's busy.`, `I should have thought that was obvious.` Here `should` signals polite uncertainty about your own view, not advice.\n\n**2. Subjunctive should** after verbs and adjectives of importance, demand, or suggestion: `It is essential that all staff should be informed.`, `He demanded that she should leave.`, `I suggested that we should postpone.` The alternative is the bare subjunctive (common in American English): `He demanded that she leave.` Know both.\n\n**3. Inverted conditional with should** — a fixture of formal correspondence: `Should you have any questions, do not hesitate to contact me.`, `Should further information be required, please let us know.`\n\n**4. Concessive should:** `Whatever he should say, don't believe him.`, `However hard you should try, the result is the same.` — formal; modern English often drops the `should`.\n\n**5. Ought to with moral weight.** In British academic English, `ought to` carries a slightly stronger sense of **moral** duty than neutral `should`: `One ought to respect the views of others.` vs the more neutral `Governments should protect the vulnerable.`\n\n**6. Should have been + -ing** — criticism of an extended past action: `You should have been working, not playing games.`\n\n**7. Academic should:** `The results should indicate a trend.` (expectation), `The methodology should be replicated.` (a recommended standard).\n\n**8. Oughtn't to is nearly extinct** in speech; people say `shouldn't`. In formal writing use `ought not to`, written separately.",
         "ru": "На C1 `should/ought to` — инструменты **softening**, **hedging** и **subjunctive structures**.\n\n**1. I should think / I should imagine (tentative opinion):**\n- `I should think so.` (Полагаю, да.)\n- `I should imagine she's busy.` (Полагаю, она занята.)\n- `I should have thought that was obvious.` (Я-то думал, это очевидно.)\n\nЭтот `should` — не совет и не обязанность, а мягкий оттенок неуверенности в собственном мнении. Британский регистр.\n\n**2. Should в формальных subjunctive constructions:**\nПосле глаголов и прилагательных, выражающих важность, требование, предложение:\n- `It is essential that all staff should be informed.` (Необходимо, чтобы весь персонал был проинформирован.)\n- `He demanded that she should leave.` (Он потребовал, чтобы она ушла.)\n- `I suggested that we should postpone the meeting.` (Я предложил отложить собрание.)\n\nАльтернатива — subjunctive без `should` (чаще в американском): `He demanded that she leave.`\nНа C1 обе формы знать обязательно.\n\n**3. Inverted conditional with should:**\n- `Should you have any questions, do not hesitate to contact me.` (Если у вас возникнут вопросы, не стесняйтесь обратиться.) — формально, деловая переписка.\n- `Should further information be required, please let us know.` (Если потребуется дополнительная информация, сообщите нам.)\n\nЭто стандартный оборот формальной корреспонденции.\n\n**4. Should в концессивных оборотах:**\n- `Whatever he should say, don't believe him.` (Что бы он ни сказал, не верь ему.) — формально.\n- `However hard you should try, the result will be the same.` (Как бы ты ни старался, результат будет тот же.)\n\nВ современном английском эти конструкции часто упрощаются без `should`.\n\n**5. Ought to в критических и моральных контекстах:**\n`Ought to` в британском академическом английском имеет чуть более сильный оттенок **морального** долга:\n- `One ought to respect the views of others.` (Следует уважать мнения других.) — этическая норма.\n- `Governments ought to protect the vulnerable.` (Правительства должны защищать уязвимых.)\n\nСравни с нейтральным `should`: `Governments should protect the vulnerable.` — рекомендация.\n\nНа C1 ты чувствуешь эту тонкую разницу.\n\n**6. Should have been + -ing:**\n- `You should have been working, not playing games.` (Ты должен был работать, а не играть.) — критика длительного прошлого действия.\n- `We should have been paying more attention.` (Нам следовало внимательнее следить.)\n\n**7. Academic should:**\n- `The results should indicate a trend.` (Результаты должны указывать на тенденцию.) — ожидание.\n- `The methodology should be replicated.` (Методология должна быть повторена.) — рекомендация к стандарту.\n\n**8. Softening with I should:**\n- `I should say it's about five miles.` (Я бы сказал, это около пяти миль.)\n- `I should think we've got about an hour.` (Думается мне, у нас около часа.)\n\nЭто характерный британский регистр, маркер вежливой неуверенности.\n\n**9. Should for polite disagreement:**\n- `I should have thought that was unnecessary.` (Я-то думал, это излишне.) — вежливое несогласие с намёком на удивление.\n\n**10. Oughtn't to — почти вымерло:**\n`Oughtn't to` в современной речи практически не используется; носители говорят `shouldn't`. В формальном письме — `ought not to` раздельно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Should + subject + verb = inverted formal conditional; I should think/imagine = tentative opinion; verb of demand + that + subject + should + base verb",
+        "ru": "Should + подлежащее + глагол = инверсия в формальном условном; I should think/imagine = осторожное мнение; глагол требования + that + подлежащее + should + глагол"
       },
       "examples": [
         {
           "en": "I should think she's forgotten already.",
-          "ru": "Полагаю, она уже забыла."
+          "ru": "Полагаю, она уже забыла.",
+          "note": {
+            "en": "tentative opinion",
+            "ru": "осторожное мнение"
+          }
         },
         {
           "en": "Should any discrepancies arise, please notify us at once.",
-          "ru": "Если возникнут какие-либо расхождения, немедленно сообщите нам."
+          "ru": "Если возникнут какие-либо расхождения, немедленно сообщите нам.",
+          "note": {
+            "en": "inverted conditional",
+            "ru": "инверсия в условном"
+          }
         },
         {
           "en": "It is imperative that the deadline should be respected.",
-          "ru": "Императивно, чтобы крайний срок соблюдался."
+          "ru": "Императивно, чтобы крайний срок соблюдался.",
+          "note": {
+            "en": "subjunctive should",
+            "ru": "сослагательное should"
+          }
         },
         {
           "en": "One ought to consider the ethical implications before proceeding.",
-          "ru": "Следует рассмотреть этические последствия перед тем, как действовать."
+          "ru": "Следует рассмотреть этические последствия перед тем, как действовать.",
+          "note": {
+            "en": "moral ought to",
+            "ru": "ought to с моральным оттенком"
+          }
         },
         {
           "en": "We should have been paying closer attention to the budget.",
-          "ru": "Нам следовало внимательнее следить за бюджетом."
+          "ru": "Нам следовало внимательнее следить за бюджетом.",
+          "note": {
+            "en": "should have been + -ing",
+            "ru": "should have been + -ing"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Should you need... — инверсия в формальных условных предложениях, стандарт деловой переписки."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If you should have any questions, do not hesitate to contact me.",
+          "right": "Should you have any questions, do not hesitate to contact me.",
+          "why": {
+            "en": "In the formal inverted conditional, `should` moves to the front and `if` is dropped.",
+            "ru": "В формальном инвертированном условном should выносится вперёд, а if опускается."
+          }
+        },
+        {
+          "wrong": "He demanded that she should leaves.",
+          "right": "He demanded that she should leave.",
+          "why": {
+            "en": "After subjunctive `should`, the verb stays in the base form, with no `-s`.",
+            "ru": "После сослагательного should глагол остаётся в начальной форме, без -s."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, `should`/`ought to` are fine tools of **register**, **epistemic distance**, and **moral positioning**.\n\n**1. The marked status of `ought to`.** It is steadily yielding to `should`, surviving mainly in philosophical and ethical texts (`One ought to act so that one's maxim could become a universal law.`), formal moralising (`Children ought to respect their elders.`), and a conservative British register (`One ought not to discuss money at the table.`). At C2 you deploy `ought to` deliberately — for formality, moral weight, or irony.\n\n**2. High-register hedging:** `I should have thought that was self-evident.` (polemical), `One should perhaps note that...`, `It should be remembered that...`\n\n**3. Pragmatic subtleties of should have.** Tone and stress decide the reading: `You should have seen her face!` (an emphatic invitation to imagine, not criticism), `I should have known.` (self-reproach: *it was obvious*), `That should have been obvious.` (a reproach or flat statement).\n\n**4. Archaic and idiomatic uses:** `I shouldn't wonder if he resigned.`, `Why should he care?` (rhetorical indifference), `How should I know?` (idiomatic refusal), `Who should arrive but John himself!` (literary narrative surprise).\n\n**5. Subjunctive should in legal/religious language:** `It is hereby ordered that the defendant should appear...`, `God grant that it should be so.` — plain-English editing strips such `should`.\n\n**6. Ought to have in moral criticism:** `He ought to have known better.`, `One ought to have anticipated this.` — distancing through `one`.\n\n**7. Sociolinguistic variation.** Older British speakers use `ought to` and even `Ought you to be doing that?` actively; younger speakers reach almost exclusively for `should`, sometimes `supposed to`.\n\n**8. Stress and information focus:** `You SHOULD have told me!` (maximal reproach on the modal) vs `You should have TOLD me.` (focus on the action).\n\n**9. Dual interpretation.** `She should be coming.` may read as expectation or as recommendation; at C2 you can build the context to exclude the ambiguity when it matters.",
         "ru": "На C2 `should/ought to` — тонкие инструменты **регистра**, **эпистемической дистанции** и **морального позиционирования**.\n\n**1. Prescriptive attitudes toward ought to:**\n`Ought to` в современном английском постепенно вытесняется `should`, но сохраняется в:\n- **Философских и этических текстах:** `One ought to act so that one's maxim could become a universal law.` (Кант — этика долга.)\n- **Формальном морализаторстве:** `Children ought to respect their elders.`\n- **Британском консервативном регистре:** `One ought not to discuss money at the table.`\n\nПрескриптивисты (традиционалисты) считают `ought to` более «правильной» формой для моральных норм. Дескриптивисты (описательный подход) признают, что `should` давно вытеснил `ought to` в живой речи.\n\nНа C2 ты понимаешь эту стилистическую маркированность и используешь `ought to` сознательно — для эффекта формальности, морального веса или иронии.\n\n**2. Should в high-register hedging:**\n- `I should have thought that this was self-evident.` (Мне казалось, это самоочевидно.) — полемический приём.\n- `One should perhaps note that...` (Пожалуй, следует отметить...) — академический hedge.\n- `It should be remembered that...` (Следует помнить, что...) — общее обращение к читателю.\n\n**3. Pragmatic subtleties with should have:**\n- `You should have seen her face!` — не критика, а эмфатическое приглашение к воображению.\n- `I should have known.` — самоупрёк с оттенком «это было очевидно».\n- `That should have been obvious.` — упрёк или констатация.\n\nКонтекст и интонация решают, какое прочтение.\n\n**4. Shan't / shouldn't в архаических оборотах:**\n- `I shouldn't wonder if he resigned.` (Не удивлюсь, если он уйдёт в отставку.) — редкий британский оборот.\n- `You shouldn't believe everything you read.` — общее предостережение.\n\n**5. Subjunctive should в legal and religious language:**\n- `It is hereby ordered that the defendant should appear on the appointed date.` (Настоящим постановляется, что ответчик должен явиться в назначенную дату.)\n- `God grant that it should be so.` (Дай Бог, чтобы так и было.) — архаика.\n\nВ plain English movement такой `should` удаляется ради краткости.\n\n**6. Ought to have в moral criticism:**\n- `He ought to have known better.` (Ему следовало бы знать лучше.) — моральный упрёк взрослому за поведение ниже уровня зрелости.\n- `One ought to have anticipated this.` (Можно было бы это предвидеть.) — критика с дистанцией через `one`.\n\n**7. Regional and generational variation:**\n- Старшее поколение британцев: активно `ought to`, `oughtn't to`, inverted `Ought you to be doing that?`.\n- Среднее поколение: предпочитают `should`.\n- Молодёжь: почти исключительно `should`, иногда даже `supposed to` как замена.\n\nНа C2 ты распознаёшь эту социолингвистическую вариативность в устной и письменной речи.\n\n**8. Emphatic should have + stress pattern:**\n- `You SHOULD have told me!` — сильное ударение на should, максимальный упрёк.\n- `You should have TOLD me.` — ударение на told, фокус на конкретном действии.\n\nНа C2 интонационный контур корректно отражает, где лежит информационный фокус.\n\n**9. Literary uses:**\n- `Why should he care?` — риторический вопрос, выражает безразличие говорящего.\n- `How should I know?` (Откуда мне знать?) — идиоматический отказ.\n- `Who should arrive but John himself!` (Кто же вошёл, как не сам Джон!) — литературный нарративный оборот с неожиданностью.\n\n**10. Dual interpretation pitfalls:**\n- `She should be coming.` — ожидание (я думаю, она придёт) или рекомендация (пусть придёт)?\n- Контекст всегда решает, но на C2 ты умеешь построить контекст так, чтобы исключить двусмысленность, когда это важно.\n\n**11. Recent shifts:**\nВ современном академическом письме `should` всё чаще заменяется на `might want to` или `could consider` — для большей вежливости. `Ought to` в academic English почти исчезло, кроме цитирования классики."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "ought to (have) = marked moral/formal register vs neutral should; stress placement on SHOULD vs the main verb shifts the focus",
+        "ru": "ought to (have) = маркированный моральный/формальный регистр против нейтрального should; ударение на SHOULD или на смысловом глаголе смещает фокус"
       },
       "examples": [
         {
           "en": "One ought not to pass judgement without full knowledge of the facts.",
-          "ru": "Не следует выносить суждение без полного знания фактов."
+          "ru": "Не следует выносить суждение без полного знания фактов.",
+          "note": {
+            "en": "moral ought not to",
+            "ru": "моральное ought not to"
+          }
         },
         {
           "en": "Should the worst come to the worst, we have a contingency plan.",
-          "ru": "Если случится худшее, у нас есть запасной план."
+          "ru": "Если случится худшее, у нас есть запасной план.",
+          "note": {
+            "en": "inverted conditional idiom",
+            "ru": "идиома инвертированного условного"
+          }
         },
         {
           "en": "It should be remembered that correlation does not imply causation.",
-          "ru": "Следует помнить, что корреляция не означает причинную связь."
+          "ru": "Следует помнить, что корреляция не означает причинную связь.",
+          "note": {
+            "en": "reader-directed hedge",
+            "ru": "обращение к читателю"
+          }
         },
         {
           "en": "Who should walk in at that moment but the very person we had been discussing!",
-          "ru": "И кто же вошёл в этот момент, как не тот самый человек, о котором мы говорили!"
+          "ru": "И кто же вошёл в этот момент, как не тот самый человек, о котором мы говорили!",
+          "note": {
+            "en": "literary narrative should",
+            "ru": "литературное нарративное should"
+          }
         },
         {
           "en": "She ought to have known that silence would be interpreted as consent.",
-          "ru": "Ей следовало бы знать, что молчание будет истолковано как согласие."
+          "ru": "Ей следовало бы знать, что молчание будет истолковано как согласие.",
+          "note": {
+            "en": "moral criticism (ought to have)",
+            "ru": "моральная критика (ought to have)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Ought to сохраняется в моральных/этических контекстах; should — нейтральная современная норма."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He ought to known better.",
+          "right": "He ought to have known better.",
+          "why": {
+            "en": "Past moral criticism needs `ought to have` + past participle, not `ought to` + bare participle.",
+            "ru": "Моральная критика прошлого требует ought to have + причастие, а не ought to + причастие без have."
+          }
+        },
+        {
+          "wrong": "Who should arrived but John himself!",
+          "right": "Who should arrive but John himself!",
+          "why": {
+            "en": "In this literary narrative idiom, `should` takes the base verb; the surprise reading does not need a past form.",
+            "ru": "В этом литературном нарративном обороте should сочетается с глаголом в начальной форме; значение неожиданности не требует прошедшей формы."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "must-have-to",
+    "can-could",
+    "may-might",
+    "modal-perfect"
+  ],
+  "crossTopic": [
+    "first-conditional",
+    "passive-with-modals",
+    "reported-commands",
+    "noun-clauses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "should = advice / expectation, no to",
+      "ought to = same meaning, more formal, always with to"
+    ]
+  }
 };

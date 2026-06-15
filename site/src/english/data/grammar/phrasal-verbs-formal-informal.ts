@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "phrasal-verbs-formal-informal",
   "title": {
-    "en": "",
+    "en": "Phrasal Verbs: Formal vs. Informal Register",
     "ru": "Phrasal Verbs Formal Informal"
   },
   "cefr": "B2",
@@ -14,122 +14,254 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "phrasal-verbs",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "Most phrasal verbs belong to a spoken, informal register. In formal writing they are routinely swapped for a single Latin-derived (Latinate) verb that sounds more academic and detached. Both versions are correct English; what changes is the register, and the register is dictated by your audience, not by which verb is better. The reason for the split is historical: phrasal verbs are the everyday Anglo-Saxon core of the language and feel native and idiomatic, while Latinate verbs entered English through law, science and scholarship and carry a more official tone. Learn the high-frequency pairs as units: put off to postpone or delay, call off to cancel, go on to continue, carry out to conduct or execute, find out to discover, get rid of to eliminate or dispose of, set up to establish, come up with to devise or propose, look into to investigate, turn down to decline, bring up to raise, give up to abandon, make up to fabricate, hand in to submit, hand out to distribute, and pick up to collect. Before you write a sentence, run a quick register check: Who is the reader? Is the context formal, neutral or informal? Is there a Latinate equivalent? And does my choice sound natural? A formal letter, a client email or an academic paper leans Latinate; a chat with a friend or fiction leans phrasal; a business email to a colleague mixes the two in a natural balance.",
         "ru": "Phrasal verbs — это часто **разговорный и неформальный** регистр. В формальном письме их часто заменяют на **однословные latinate** глаголы (latin-origin synonyms).\n\n**Почему так?**\n- Phrasal verbs часто идиоматичны, образны — это «родной» английский.\n- Latinate verbs — от латинских корней — звучат академически, формально.\n- Оба корректны; выбор диктует регистр.\n\n**Частые пары (informal phrasal → formal single word):**\n- `put off` → `postpone` / `delay`: `We postponed the meeting.`\n- `call off` → `cancel`: `The event was cancelled.`\n- `go on` → `continue` / `proceed`: `Please continue.`\n- `carry out` → `execute` / `conduct`: `Conduct the experiment.`\n- `find out` → `discover` / `ascertain`: `We ascertained the truth.`\n- `get rid of` → `dispose of` / `eliminate`: `Eliminate the risk.`\n- `set up` → `establish` / `found`: `They established a company.`\n- `come up with` → `devise` / `propose`: `She devised a solution.`\n- `look into` → `investigate` / `examine`: `Investigators examined the case.`\n- `look for` → `seek` / `search for`: `We seek candidates.`\n- `think over` → `consider`: `Please consider the offer.`\n- `turn down` → `reject` / `decline`: `She declined the invitation.`\n- `bring up` → `raise` / `mention`: `Raise this at the meeting.`\n- `give up` → `abandon` / `relinquish`: `They abandoned the plan.`\n- `make up` → `invent` / `fabricate`: `He fabricated the story.`\n- `work out` → `resolve` / `calculate`: `Resolve the conflict.`\n- `take off` → `remove` / `depart`: `The plane departed.`\n- `put up with` → `tolerate` / `endure`.\n- `hand in` → `submit`: `Submit your application.`\n- `hand out` → `distribute`: `Distribute the flyers.`\n- `pick up` → `collect`: `Collect the package.`\n- `sort out` → `resolve` / `organise`.\n- `bring about` → `cause` / `induce`.\n- `take on` → `accept` / `undertake`.\n- `break down` → `deteriorate` / `malfunction`.\n- `build up` → `accumulate` / `develop`.\n- `fall down` → `collapse`.\n\n**Когда что выбирать:**\n- Formal letter / email to client / academic paper: latinate.\n- Casual conversation / email to friend / fiction narration: phrasal.\n- Business email to colleague: mix (natural balance).\n- Speech / presentation: mostly neutral-to-informal.\n\n**Russian-speaker trap:** студенты часто знают только latinate (через школу) и боятся phrasal verbs. Или наоборот — используют phrasal везде, игнорируя register.\n\n**Register checklist для предложения:**\n1. Какова аудитория?\n2. Какой regisotr (formal / neutral / informal)?\n3. Есть ли эквивалент?\n4. Звучит ли естественно?"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "informal: subject + phrasal verb (verb + particle)   /   formal: subject + Latinate verb   (e.g. call off the event → cancel the event)",
+        "ru": "неформально: подлежащее + phrasal verb (глагол + частица); формально: подлежащее + латинский глагол (call off → cancel)"
       },
       "examples": [
         {
           "en": "We regret to inform you that we have decided to cancel the event.",
-          "ru": "К сожалению, мы должны сообщить, что решили отменить мероприятие."
+          "ru": "К сожалению, мы должны сообщить, что решили отменить мероприятие.",
+          "note": {
+            "en": "formal",
+            "ru": "формально"
+          }
         },
         {
           "en": "The committee will investigate the matter thoroughly.",
-          "ru": "Комитет тщательно расследует этот вопрос."
+          "ru": "Комитет тщательно расследует этот вопрос.",
+          "note": {
+            "en": "formal",
+            "ru": "формально"
+          }
         },
         {
           "en": "We need to establish clear guidelines.",
-          "ru": "Нам нужно установить чёткие правила."
+          "ru": "Нам нужно установить чёткие правила.",
+          "note": {
+            "en": "formal",
+            "ru": "формально"
+          }
         },
         {
           "en": "Let's put off the meeting until next week.",
-          "ru": "Давайте отложим совещание до следующей недели."
+          "ru": "Давайте отложим совещание до следующей недели.",
+          "note": {
+            "en": "informal",
+            "ru": "неформально"
+          }
         },
         {
           "en": "She came up with a really smart idea.",
-          "ru": "Она придумала действительно умную идею."
+          "ru": "Она придумала действительно умную идею.",
+          "note": {
+            "en": "informal",
+            "ru": "неформально"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Formal writing обычно предпочитает latinate verbs: cancel вместо call off, investigate вместо look into, submit вместо hand in."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "We regret to inform you that the event will be put off until further notice.",
+          "right": "We regret to inform you that the event will be cancelled until further notice.",
+          "why": {
+            "en": "In a formal notice, choose the Latinate verb (cancel/postpone) rather than the informal phrasal verb put off.",
+            "ru": "В формальном уведомлении уместен латинский глагол, а не разговорный phrasal verb."
+          }
+        },
+        {
+          "wrong": "Hey, can you investigate why the printer is broken?",
+          "right": "Hey, can you look into why the printer is broken?",
+          "why": {
+            "en": "Latinate verbs can sound stiff or cold in casual speech; the phrasal verb fits the relaxed register better.",
+            "ru": "Латинские глаголы звучат сухо в неформальной речи; здесь естественнее phrasal verb."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, register stops being a checklist and becomes automatic: you sense where a phrase sits on the formality scale and choose deliberately. Picture a gradient with four bands. Casual or colloquial phrasal verbs (chuck out, mess around, goof off, chicken out, fess up, knock off, blow off) are fine among friends but jarring in professional writing. Neutral everyday phrasal verbs (find out, look after, get along, take care of, put up with, make sure) are the default for ordinary speech and informal correspondence. Semi-formal, business-neutral verbs (carry out, bring about, set out, come up with, deal with, take on) suit reports, presentations and professional email. And there is a band of genuinely formal phrasal verbs that are welcome even in academic prose (adhere to, account for, amount to, embark on, refrain from, give rise to) — they are strictly inseparable. The key C1 insight is that formal does not mean Latinate-only: the stigma against phrasal verbs in academic writing is outdated, and many formal phrasal verbs are intrinsic to scholarly, legal, business and political English. Reserve full Latinate replacement for the most formal moments — abstracts, thesis statements, very formal letters — where put forth becomes propose, come up against becomes encounter, do away with becomes abolish, and go ahead with becomes proceed with. Notice the fine register pairs too: rely on versus depend on, refrain from versus hold back from, proceed with versus go on with, contend with versus deal with. Rule of thumb: writing to authority or for publication, lean Latinate; replying to a colleague, mix naturally; writing fiction, mix freely for voice.",
         "ru": "На C1 осознай регистр автоматически и делай осознанные выборы.\n\n**Regitr levels:**\n\n**Casual / colloquial:**\n- `chuck out` (BrE) = throw away.\n- `mess around` = fool around.\n- `goof off` = slack.\n- `chicken out` = back out из страха.\n- `fess up` = confess.\n- `knock off` = finish work / copy.\n- `blow off` = ignore (appointment).\n\nОчень разговорно; избегай в профессиональном контексте.\n\n**Neutral everyday:**\n- `find out, look after, get along, take care of, put up with, make sure`.\n- Стандарт для бытовой речи и неформальной переписки.\n\n**Semi-formal / business-neutral:**\n- `carry out, bring about, set out, come up with, deal with, take on`.\n- Подходит для профессиональной переписки, отчётов, презентаций.\n\n**Formal / academic (phrasal still OK):**\n- `adhere to, account for, amount to, comprise of, embark on, refrain from, give rise to`.\n- Используются в academic writing — но strictly inseparable.\n\n**Very formal / only latinate:**\nReplace phrasal:\n- `put forth` → propose.\n- `come up against` → encounter.\n- `bring about` → induce / effect.\n- `carry on with` → continue / proceed with.\n- `do away with` → abolish / eliminate.\n- `go ahead with` → proceed with.\n\n**Academic writing conventions:**\n1. Phrasal verbs are OK; стигма overcome.\n2. Но в plenary statements / abstracts / thesis statements — latinate чаще.\n3. В narrative sections, methodology — phrasal OK.\n4. Avoid overly colloquial phrasals (`mess up, goof off`).\n\n**Journalistic patterns:**\n- News headlines love compact phrasal verbs: `PM steps down`, `Talks break down`, `Reforms rolled out`.\n- Feature writing mixes freely.\n\n**Legal / contractual:**\n- Heavily latinate, but uses fossilized phrasal phrases: `carry out obligations, enter into agreements, subject to conditions`.\n- Специфические phrasal: `abide by, adhere to, comply with`.\n\n**Business English:**\n- `roll out (product), scale up, ramp up, hand over, sign off`.\n- Phrasal verbs intrinsic to business vocabulary.\n\n**Political / diplomatic:**\n- `come down on (crack down on), stand by (support), back down from, lay out (plan), put forward (proposal), call for (demand)`.\n- Phrasal verbs colour political discourse.\n\n**Medical:**\n- `come down with (illness), take effect, wear off (medication), hold up (procedure), follow up (on care)`.\n- Domain-specific phrasal clusters.\n\n**Academic / scientific:**\n- `account for, arise from, bring about, result in, rely upon, build on (prior work), carry out (experiment), point to (conclusion), give rise to`.\n- Many formal phrasal verbs are intrinsic to academic English.\n\n**Subtle register pair:**\n- `rely on` (semi-formal) vs `depend on` (neutral).\n- `refrain from` (formal) vs `hold back from` (neutral).\n- `proceed with` (formal) vs `go on with` (neutral).\n- `contend with` (formal) vs `deal with` (neutral).\n\n**Rule of thumb at C1:**\nIf you're writing to someone in authority, or for publication: lean towards latinate.\nIf you're writing a reply to a colleague email: mix naturally.\nIf fiction / creative: mix freely for voice."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "register scale: colloquial → neutral → semi-formal → formal phrasal → Latinate-only   (do away with → abolish; go on with → proceed with)",
+        "ru": "шкала регистра: разговорный → нейтральный → полуформальный → формальный phrasal → только латинский (do away with → abolish)"
       },
       "examples": [
         {
           "en": "The government proposes to phase out coal subsidies by 2030.",
-          "ru": "Правительство предлагает постепенно вывести субсидии на уголь к 2030 году."
+          "ru": "Правительство предлагает постепенно вывести субсидии на уголь к 2030 году.",
+          "note": {
+            "en": "formal",
+            "ru": "формально"
+          }
         },
         {
           "en": "The judge reprimanded the lawyer for failing to adhere to procedure.",
-          "ru": "Судья сделал выговор адвокату за несоблюдение процедуры."
+          "ru": "Судья сделал выговор адвокату за несоблюдение процедуры.",
+          "note": {
+            "en": "formal",
+            "ru": "формально"
+          }
         },
         {
           "en": "The experiment was carried out under controlled conditions.",
-          "ru": "Эксперимент проводился в контролируемых условиях."
+          "ru": "Эксперимент проводился в контролируемых условиях.",
+          "note": {
+            "en": "formal",
+            "ru": "формально"
+          }
         },
         {
           "en": "We just need to get rid of the clutter.",
-          "ru": "Нам просто нужно избавиться от хлама."
+          "ru": "Нам просто нужно избавиться от хлама.",
+          "note": {
+            "en": "informal",
+            "ru": "неформально"
+          }
         },
         {
           "en": "The company has undertaken a series of bold initiatives.",
-          "ru": "Компания предприняла ряд смелых инициатив."
+          "ru": "Компания предприняла ряд смелых инициатив.",
+          "note": {
+            "en": "formal",
+            "ru": "формально"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Adhere to, refrain from, embark on — академически приемлемые phrasal verbs. Chuck out, mess up, goof off — строго разговорные."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The findings give rise the conclusion that the model is flawed.",
+          "right": "The findings give rise to the conclusion that the model is flawed.",
+          "why": {
+            "en": "Formal phrasal verbs like give rise to are inseparable and keep their preposition; never drop the to.",
+            "ru": "Формальные phrasal verbs (give rise to) неразделимы и сохраняют предлог; to опускать нельзя."
+          }
+        },
+        {
+          "wrong": "In the dissertation abstract, we goofed off the standard procedure.",
+          "right": "In the dissertation abstract, we departed from the standard procedure.",
+          "why": {
+            "en": "Colloquial verbs such as goof off clash with academic register; choose a neutral or Latinate verb there.",
+            "ru": "Разговорные глаголы (goof off) не сочетаются с академическим регистром; нужен нейтральный или латинский."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 you own the register layer completely and use the phrasal-versus-Latinate choice as a fine stylistic instrument. Prose built entirely from Latinate verbs reads ponderous and stiff; prose built entirely from phrasal verbs reads chatty and under-formal; skilled writing alternates the two for rhythm and texture, so a paragraph breathes between a heavy clause (the administration's intransigence precipitated a crisis) and a light one (the government dug in and things fell apart). Different fields fossilise their own clusters: legal English is mostly Latinate but keeps frozen phrasal turns (enter into, comply with, abide by, refrain from, adhere to); clinical medicine has present with, rule out, work up, step up; finance has write down, write off, spin off, pay out; diplomacy leans on walk back, double down, reach out, back off; and philosophy expresses conceptual relations phrasally (boil down to, reduce to, hinge on, give rise to). Mismatching a domain register is itself an infelicity — refrain from touching the artifacts reads naturally formal, while you gotta chuck out all that stuff is jarring in a legal context. Treat the choice as tuning: a phrasal verb foregrounds the action and native feel (crack down on), a Latinate verb adds clinical distance and is easier for an ESL audience to decode (suppress). Master the synonym clusters and their nuance: turn down is neutral, reject is categorical, decline is polite-formal, refuse is adamant; carry out is neutral, execute is formal, implement is official, conduct is formal-investigative; bring about is neutral, cause is direct, induce is scientific, effect is formal, engender is literary. Remember two truths that defeat the beginner's binary: some phrasal verbs are formal (adhere to, refrain from, embark on, account for), and not all Latinate verbs are formal (use, get, have are all of French or Latin origin yet entirely neutral). Mastery is recognising that register is a gradient, and the phrasal-versus-Latinate axis is just one dial among several.",
         "ru": "На C2 владей регистровым слоем в совершенстве: выбирай между phrasal и latinate для тонкого стилистического эффекта.\n\n**Stylistic layering:**\n- Prose that's all latinate: ponderous, stiff.\n- Prose that's all phrasal: chatty, under-formal.\n- Skilled writing: alternates for rhythm and texture.\n\n**Example — economic report:**\n- Stiff: `The board decided to abandon the initiative and reallocate resources, as the project had failed to yield projected returns.`\n- Over-casual: `The board gave up on it and moved the money around because the project wasn't paying off.`\n- Balanced: `The board opted to abandon the initiative, shifting resources elsewhere after the project failed to yield its projected returns.`\n\n**Registration-specific phrasal verbs:**\n\n**Legal:**\n- `enter into (agreement)`, `comply with (regulations)`, `abide by (terms)`, `refrain from (activity)`, `adhere to (rules)`, `waive (rights)`.\n- Few Anglo-Saxon phrasal verbs; mostly latinate, with frozen phrasal turns.\n\n**Medical clinical:**\n- `present with (symptoms)`, `rule out (condition)`, `work up (diagnostic)`, `step up (care)`.\n- Technical phrasal cluster.\n\n**Financial:**\n- `write down (assets)`, `write off (debt)`, `spin off (subsidiary)`, `pay out (dividends)`, `leverage up / deleverage`.\n- Specialized phrasal.\n\n**Diplomatic / political:**\n- `walk back (statement)`, `double down (on position)`, `reach out (to allies)`, `back off (from threat)`.\n- American political jargon heavily phrasal.\n\n**Academic philosophy:**\n- `boil down to`, `reduce to`, `come down to`, `give rise to`, `hinge on`.\n- Conceptual relationships often expressed phrasally.\n\n**Domain mismatch as infelicity:**\n- Using legal-register phrasal in casual speech: `Please refrain from touching the artifacts.` — naturally formal tone.\n- Using casual phrasal in legal: `You gotta chuck out all that stuff.` — jarring.\n\n**C2-level stylistic tweaking:**\n- Want emphasis on action: phrasal verb (`crack down on`).\n- Want clinical distance: latinate (`suppress`).\n- Want native feel: phrasal.\n- Want international / lingua franca: latinate (easier for non-native speakers).\n\n**Translatability tests:**\nWhen writing for ESL audience, prefer latinate — easier to decode. When writing for British / American native: phrasal shows fluency.\n\n**Subtle pairs at C2:**\n- `turn down` vs `reject` vs `decline` vs `refuse`: all reject, but nuance:\n  - `turn down` — neutral conversational.\n  - `reject` — strong, categorical.\n  - `decline` — polite formal.\n  - `refuse` — adamant, direct.\n\n- `carry out` vs `execute` vs `implement` vs `conduct`:\n  - `carry out` — neutral.\n  - `execute` — formal (plan / order).\n  - `implement` — official (policy).\n  - `conduct` — formal (study / investigation).\n\n- `bring about` vs `cause` vs `induce` vs `effect` vs `engender`:\n  - `bring about` — neutral / slightly formal.\n  - `cause` — direct.\n  - `induce` — scientific / medical.\n  - `effect` (verb) — formal.\n  - `engender` — literary.\n\n**Paragraph-level variation:**\nGood paragraphs alternate heavy and light vocabulary:\n- Heavy (latinate): `The administration's intransigence precipitated a constitutional crisis.`\n- Light (phrasal): `The government dug in and things fell apart.`\n- Blend: `The administration's refusal to back down helped precipitate the crisis.`\n\n**Formality doesn't mean avoiding phrasal:**\n- Some phrasal verbs ARE formal: `adhere to, refrain from, embark on, account for`.\n- Not all latinate is formal: `use, get, have` (all from Old French / Latin but normal.)\n\n**Mastering at C2 means:** recognizing that register is a gradient, not binary; and phrasal-vs-latinate is one axis among many in register."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "deliberate alternation: phrasal verb ⟷ Latinate synonym, tuned per domain and audience   (crack down on ↔ suppress; fell through ↔ failed)",
+        "ru": "осознанное чередование: phrasal verb ⟷ латинский синоним, подбор по домену и аудитории (crack down on ↔ suppress)"
       },
       "examples": [
         {
           "en": "The firm will refrain from further comment pending the investigation.",
-          "ru": "Фирма воздержится от дальнейших комментариев до окончания расследования."
+          "ru": "Фирма воздержится от дальнейших комментариев до окончания расследования.",
+          "note": {
+            "en": "formal",
+            "ru": "формально"
+          }
         },
         {
           "en": "The scandal may prompt regulators to crack down on the industry.",
-          "ru": "Скандал может побудить регуляторов подавить отрасль."
+          "ru": "Скандал может побудить регуляторов подавить отрасль.",
+          "note": {
+            "en": "informal",
+            "ru": "неформально"
+          }
         },
         {
           "en": "Scientists have come up with compelling evidence for the theory.",
-          "ru": "Учёные получили убедительные доказательства теории."
+          "ru": "Учёные получили убедительные доказательства теории.",
+          "note": {
+            "en": "neutral / formal",
+            "ru": "нейтрально / формально"
+          }
         },
         {
           "en": "Let's not beat around the bush — the plan is a mess.",
-          "ru": "Давайте не будем ходить вокруг да около — план никуда не годится."
+          "ru": "Давайте не будем ходить вокруг да около — план никуда не годится.",
+          "note": {
+            "en": "idiomatic",
+            "ru": "идиоматично"
+          }
         },
         {
           "en": "The ruling overturned a precedent that had stood for decades.",
-          "ru": "Решение отменило прецедент, существовавший десятилетиями."
+          "ru": "Решение отменило прецедент, существовавший десятилетиями.",
+          "note": {
+            "en": "formal",
+            "ru": "формально"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Refrain from (formal) / hold back from (neutral) / back off (informal) — три уровня одной идеи. Choose by audience."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The peer-reviewed paper noted that the trial subjects came down with the condition.",
+          "right": "The peer-reviewed paper noted that the trial subjects presented with the condition.",
+          "why": {
+            "en": "Domain register matters: clinical writing uses present with, while come down with is the everyday-conversational equivalent.",
+            "ru": "Регистр домена важен: в клинике — present with, а come down with — разговорный эквивалент."
+          }
+        },
+        {
+          "wrong": "Every sentence in the report effected, precipitated and engendered the same outcome.",
+          "right": "The report's findings brought about, and ultimately precipitated, the same outcome.",
+          "why": {
+            "en": "Stacking only heavy Latinate synonyms reads stiff; alternate with a neutral phrasal verb for rhythm.",
+            "ru": "Нагромождение тяжёлых латинских синонимов звучит сухо; для ритма чередуйте с нейтральным phrasal verb."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "common-phrasal-verb-groups-by-topic",
+    "three-word-phrasal-verbs",
+    "inseparable-phrasal-verbs",
+    "separable-phrasal-verbs"
+  ],
+  "crossTopic": [
+    "passive-present-simple",
+    "prepositions-after-verbs",
+    "reported-statements",
+    "noun-phrases"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Informal phrasal verb",
+      "Formal Latinate verb"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "future-with-present-continuous",
   "title": {
-    "en": "",
+    "en": "Future with the Present Continuous",
     "ru": "Future With Present Continuous"
   },
   "cefr": "B1",
@@ -15,24 +15,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:can use present continuous (am/is/are + -ing) to talk about future arrangements with a time reference"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Use the present continuous (am/is/are + -ing) to talk about future arrangements that are already fixed for a specific time. The form is identical to the present-now continuous, so a time reference does the work of pointing to the future. Compare 'I'm working now' (happening now) with 'I'm working tomorrow' (a planned arrangement). Words like tomorrow, next week, on Friday, at 3 pm, this weekend, or tonight signal that you mean the future, not the present moment. Use this form for personal arrangements you have already agreed or set up: 'I'm meeting John at 3 pm', 'She's flying to Paris tomorrow' (the ticket is booked). It differs from the alternatives: the present continuous means it is already arranged (a ticket, an appointment); 'be going to' expresses an intention or plan; and 'will' is for a spontaneous decision or a prediction. Do not use this form for fixed public schedules (use the present simple: 'The train leaves at 6') or for stative verbs (say 'I'll know him tomorrow', not 'I'm knowing him tomorrow').",
         "ru": "**Present Continuous для будущего** — способ говорить о **договорённостях**, которые уже запланированы на конкретное время.\n\n**Форма:** `am/is/are` + глагол-`ing` (как обычный Present Continuous)\n\n**Разница в смысле:**\n- `I'm working now.` (Работаю сейчас — обычное Present Continuous.)\n- `I'm working tomorrow.` (Работаю завтра — будущее; контекст показывает смысл.)\n\nКонтекст (`tomorrow`, `next week`, `on Friday`) говорит, что это про будущее, а не про сейчас.\n\n**Когда использовать:**\n\n1. **Личные договорённости с конкретным временем:**\n   - `I'm meeting John at 3 pm.` (Встречаюсь с Джоном в 3.)\n   - `We're having dinner with the Millers on Friday.` (Ужинаем с Миллерами в пятницу.)\n\n2. **Запланированные события:**\n   - `She's flying to Paris tomorrow.` (Она летит в Париж завтра — билет куплен.)\n   - `They're moving next month.` (Они переезжают в следующем месяце.)\n\n3. **Важно: должно быть конкретное время или обстоятельство:**\n   - ✅ `I'm playing tennis on Saturday.`\n   - ❌ `I'm playing tennis.` (без контекста — значит, играю сейчас!)\n\n**Разница с `will` и `be going to`:**\n\n| Форма | Смысл |\n|---|---|\n| Present Continuous | Уже договорились (билет, встреча) |\n| `be going to` | Намерение, план |\n| `will` | Спонтанное решение или предсказание |\n\n**Сравнение:**\n- `I'm flying to Rome on Friday.` (Билет куплен, дата точная.)\n- `I'm going to fly to Rome.` (Собираюсь — может без конкретной даты.)\n- `I'll fly to Rome someday.` (Когда-нибудь, в будущем.)\n\n**Типичные time markers:**\n- `tomorrow`\n- `next week/month`\n- `on Friday`\n- `at 3 pm`\n- `this weekend`\n- `tonight`\n\n**Stative verbs — НЕ использовать:**\n- ❌ `I'm knowing him tomorrow.` → ✅ `I'll know him tomorrow.`\n- Stative verbs не идут в Continuous.\n\n**Типичные ошибки:**\n- Использовать без чёткого времени: контекст должен указывать на будущее.\n- Путать с Present Continuous сейчас: при сомнении добавь time marker.\n- Использовать для неперсональных событий (расписания): для расписаний — Present Simple (`The train leaves at 6`)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + am/is/are (+ not) + verb-ing + future time reference",
+        "ru": "подлежащее + am/is/are (+ not) + глагол-ing + обозначение будущего времени"
       },
       "examples": [
         {
           "en": "I'm seeing the dentist on Tuesday.",
-          "ru": "Я иду к стоматологу во вторник."
+          "ru": "Я иду к стоматологу во вторник.",
+          "note": {
+            "en": "fixed appointment",
+            "ru": "назначенная встреча"
+          }
         },
         {
           "en": "We're having a party next Saturday.",
@@ -40,44 +46,86 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She's starting her new job on Monday.",
-          "ru": "Она начинает новую работу в понедельник."
+          "ru": "Она начинает новую работу в понедельник.",
+          "note": {
+            "en": "agreed plan",
+            "ru": "согласованный план"
+          }
         },
         {
           "en": "What are you doing this evening?",
-          "ru": "Что ты делаешь сегодня вечером?"
+          "ru": "Что ты делаешь сегодня вечером?",
+          "note": {
+            "en": "asking about plans",
+            "ru": "вопрос о планах"
+          }
         },
         {
           "en": "They're not coming to the wedding.",
-          "ru": "Они не придут на свадьбу."
+          "ru": "Они не придут на свадьбу.",
+          "note": {
+            "en": "negative arrangement",
+            "ru": "отрицательная договорённость"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Для будущих договорённостей Present Continuous нужен time marker: on Friday, tomorrow, next week."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'm playing tennis.",
+          "right": "I'm playing tennis on Saturday.",
+          "why": {
+            "en": "Without a future time reference, the present continuous means right now, not a future arrangement.",
+            "ru": "Без обозначения будущего времени Present Continuous значит «сейчас», а не будущую договорённость."
+          }
+        },
+        {
+          "wrong": "I'm knowing him tomorrow.",
+          "right": "I'll know him tomorrow.",
+          "why": {
+            "en": "Stative verbs like know do not take the continuous; use will for a future state.",
+            "ru": "Глаголы состояния (know) не идут в Continuous; для будущего состояния используется will."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the key skill is choosing precisely between the present continuous, 'be going to', and 'will' for the future. The present continuous signals a confirmed arrangement: 'I'm meeting him at 5', 'She's giving a presentation tomorrow'. 'Be going to' states an intention or plan that is not necessarily nailed down: 'I'm going to meet him soon'. 'Will' makes a prediction or marks a decision made at the moment of speaking: 'I'll help you'. In professional contexts the future continuous often carries a near-future implicature that preparation is already under way: 'The team is finalising the report this week', 'We're launching the product next month'. The form is impossible for predictions without a plan ('It will rain tomorrow', not 'it is raining tomorrow'), for official timetables ('The train leaves at 6'), and for general future facts ('You will be 30 next year'). It also softens requests and questions: 'Are you coming tomorrow?' sounds friendlier and less demanding than 'Will you come tomorrow?'. You can chain arrangements naturally — 'I'm flying out on Monday and meeting the team on Tuesday' — but keep stative verbs out of the continuous.",
         "ru": "На B2 важно тонко различать Present Continuous, `be going to` и `will` для будущего.\n\n**Present Continuous — уже договорились:**\n- `I'm meeting him at 5.` (Договорились.)\n- `She's giving a presentation tomorrow.` (Запланировано и подтверждено.)\n\n**`be going to` — намерение/план, без обязательно чёткой договорённости:**\n- `I'm going to meet him soon.` (Намерен встретиться.)\n- `She's going to give a presentation at some point.` (Собирается.)\n\n**`will` — предсказание, спонтанное решение:**\n- `I'll meet him if I have time.` (Неопределённо.)\n- `I'll help you.` (Решил сейчас.)\n\n**Near-future implicature в профессиональном контексте:**\n- `The team is finalising the report this week.` (Команда заканчивает отчёт — уже в процессе, ожидается завершение.)\n- `We're launching the product next month.` (Запускаем — проект в процессе.)\n\nPresent Continuous для будущего в деловой речи часто подразумевает, что подготовка уже идёт.\n\n**Когда Present Continuous невозможен:**\n\n1. **Предсказания без плана:** `It will rain tomorrow.` (Не `it is raining tomorrow` — погода не договаривается.)\n2. **Официальные расписания:** `The train leaves at 6.` (Present Simple.) Не `is leaving`.\n3. **Общие факты о будущем:** `You will be 30 next year.` (Не `you are being`.)\n\n**Present Continuous vs `be going to` — subtle difference:**\n- `I'm having dinner with Sarah tomorrow.` (Договорились, конкретика.)\n- `I'm going to have dinner with Sarah tomorrow.` (Намерен, план.)\n\nРазница минимальна в устной речи, но Continuous чаще для конкретной договорённости.\n\n**Softening and politeness:**\n- `Are you coming tomorrow?` (Ты идёшь завтра? — ожидание ответа о плане.)\n- `Are you going to come tomorrow?` (Ты собираешься прийти? — запрос о намерении.)\n- `Will you come tomorrow?` (Ты придёшь? — запрос обещания.)\n\nPresent Continuous звучит дружелюбно и ненавязчиво.\n\n**Mixing with other tenses в плане:**\n- `I'm flying out on Monday and meeting the team on Tuesday.` (Парные договорённости.)\n- `After I graduate, I'm moving to Berlin.` (После окончания — переезжаю.)\n\n**Stative verbs — correcting:**\n- ❌ `I'm knowing her tomorrow.` → ✅ `I'll meet her tomorrow.`\n- ❌ `She's liking it.` → ✅ `She'll like it.`\n\n**Типичные ошибки B2:**\n- Использование Present Continuous без time marker, создавая двусмысленность.\n- Путаница с Present Simple для расписаний.\n- Stative verbs в Continuous для будущего.\n- Случайное смешение с `will` в цепочке действий."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + am/is/are (+ not) + verb-ing + time reference  |  vs. be going to / will",
+        "ru": "подлежащее + am/is/are (+ not) + глагол-ing + обозначение времени  |  в сравнении с be going to / will"
       },
       "examples": [
         {
           "en": "I'm catching the 7 am train to Manchester.",
-          "ru": "Я еду поездом в Манчестер в 7 утра."
+          "ru": "Я еду поездом в Манчестер в 7 утра.",
+          "note": {
+            "en": "fixed schedule",
+            "ru": "точное расписание"
+          }
         },
         {
           "en": "We're launching the new website next week.",
-          "ru": "Мы запускаем новый сайт на следующей неделе."
+          "ru": "Мы запускаем новый сайт на следующей неделе.",
+          "note": {
+            "en": "business arrangement",
+            "ru": "деловая договорённость"
+          }
         },
         {
           "en": "Are you coming to the conference?",
-          "ru": "Ты идёшь на конференцию?"
+          "ru": "Ты идёшь на конференцию?",
+          "note": {
+            "en": "friendly enquiry",
+            "ru": "дружеский вопрос"
+          }
         },
         {
           "en": "She's moving to Canada in June.",
@@ -85,28 +133,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "They're not attending the meeting tomorrow.",
-          "ru": "Они не будут на завтрашнем собрании."
+          "ru": "Они не будут на завтрашнем собрании.",
+          "note": {
+            "en": "negative plan",
+            "ru": "отрицательный план"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Present Continuous для будущего — конкретная договорённость; be going to — план без подтверждения."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is raining tomorrow.",
+          "right": "It will rain tomorrow.",
+          "why": {
+            "en": "Weather predictions have no arrangement behind them, so use will, not the present continuous.",
+            "ru": "За прогнозом погоды нет договорённости, поэтому используется will, а не Present Continuous."
+          }
+        },
+        {
+          "wrong": "The train is leaving at 6.",
+          "right": "The train leaves at 6.",
+          "why": {
+            "en": "Official timetables take the present simple, not the future continuous.",
+            "ru": "Официальные расписания требуют Present Simple, а не Present Continuous для будущего."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the future present continuous becomes a register and politeness tool. It distances the speaker and softens a claim about coming actions: 'We're thinking of taking a break' is gentler than 'we will take a break', and 'I'm hoping to see you soon' is warmer than a flat statement. In business writing it is the neutral, professional default for the near future: 'The board is convening on Thursday', 'We're rolling out the update next quarter', 'Negotiations are resuming next week'. Against 'be going to', the continuous implies you are further along toward the action: 'I'm applying for the position' (already in motion) versus 'I'm going to apply' (still a plan). It coordinates smoothly with other future forms — 'I'm meeting Sarah tomorrow, and I'll ask her about the project'; 'We're flying out Monday; by Friday, we'll have finished the audit'. It can also convey imminence ('The results are coming out shortly') and works in reported speech with backshift ('She said she was flying to Rome on Monday'). Avoid overusing 'will' where the continuous sounds more natural, dropping the time reference, and slipping into the continuous for fixed schedules.",
         "ru": "На C1 Present Continuous для будущего приобретает тонкие функции политности, дипломатии и профессионального регистра.\n\n**1. Politeness and softening:**\n- `We're thinking of taking a break.` (Мы подумываем о перерыве — мягче, чем `we will take`.)\n- `I'm hoping to see you soon.` (Надеюсь скоро увидеться.)\n- `Are you coming to the meeting?` (Ненавязчивый запрос.)\n\nContinuous дистанцирует говорящего, делает высказывание менее категоричным.\n\n**2. Near-future в профессиональном контексте:**\n- `The board is convening on Thursday.` (Совет собирается в четверг.)\n- `We're rolling out the update next quarter.` (Развёртываем обновление в следующем квартале.)\n- `Negotiations are resuming next week.` (Переговоры возобновляются на следующей неделе.)\n\nПостоянно встречается в бизнес-коммуникациях.\n\n**3. Present Continuous vs `be going to` в планах:**\n- `I'm applying for the position.` (Уже подаю — конкретное действие.)\n- `I'm going to apply for the position.` (Собираюсь — план.)\n\nContinuous подразумевает бóльшую продвинутость к действию.\n\n**4. Coordination с другими future forms:**\n- `I'm meeting Sarah tomorrow, and I'll ask her about the project.` (Встречаюсь + спрошу — план + будущее действие в рамках встречи.)\n- `We're flying out Monday; by Friday, we'll have finished the audit.` (Летим + к пятнице завершим — план + Future Perfect.)\n\nProfessional writing часто комбинирует Present Continuous и другие формы.\n\n**5. Continuous for political future politeness:**\n- `The minister is meeting with stakeholders next week.` (Министр встречается со стейкхолдерами.) — нейтрально, фактически.\n- `The minister will meet with stakeholders.` — более формально, решительно.\n- `The minister is going to meet with stakeholders.` — с планом.\n\nВыбор в пресс-релизах и дипломатических коммуникациях отражает степень определённости и регистр.\n\n**6. Continuous в контексте ближайшего будущего (imminence):**\n- `The results are coming out shortly.` (Результаты появятся скоро.)\n- `The decision is being announced this afternoon.` (Решение будет объявлено сегодня днём.)\n\nЭто создаёт ощущение, что действие уже в движении.\n\n**7. Subtle control of discourse:**\nВ переговорах или презентациях Present Continuous помогает смягчить утверждение о предстоящих действиях:\n- `We're looking at a Q2 launch.` (Мы ориентируемся на запуск во 2-м квартале — менее обязывающе.)\n- `We're considering various options.` (Рассматриваем варианты — открыто для обсуждения.)\n\n**8. Reported speech с Present Continuous:**\n- `She said she was flying to Rome on Monday.` (Backshift от `I am flying`.)\n- `He told me he was starting a new job.` (От `I am starting`.)\n\n**9. Typical C1 errors:**\n- Overuse of `will` в контексте, где Continuous звучит естественнее.\n- Continuous без time marker — неясность времени.\n- Смешение Present Continuous и `be going to` без осознанного выбора.\n- Использование Continuous для расписаний вместо Present Simple."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + am/is/are + verb-ing + time reference  →  softened / professional near-future",
+        "ru": "подлежащее + am/is/are + глагол-ing + обозначение времени  →  смягчённое / профессиональное ближайшее будущее"
       },
       "examples": [
         {
           "en": "We're finalising the agreement next week.",
-          "ru": "Мы завершаем оформление соглашения на следующей неделе."
+          "ru": "Мы завершаем оформление соглашения на следующей неделе.",
+          "note": {
+            "en": "professional near-future",
+            "ru": "профессиональное ближайшее будущее"
+          }
         },
         {
           "en": "The committee is reviewing the proposal on Friday.",
@@ -114,11 +188,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I'm hoping we can meet before the end of the month.",
-          "ru": "Я надеюсь, мы сможем встретиться до конца месяца."
+          "ru": "Я надеюсь, мы сможем встретиться до конца месяца.",
+          "note": {
+            "en": "softened with hoping",
+            "ru": "смягчение через hoping"
+          }
         },
         {
           "en": "She said she was starting a new role in January.",
-          "ru": "Она сказала, что начинает новую должность в январе."
+          "ru": "Она сказала, что начинает новую должность в январе.",
+          "note": {
+            "en": "reported speech (backshift)",
+            "ru": "косвенная речь (backshift)"
+          }
         },
         {
           "en": "The team is presenting the findings at the next board meeting.",
@@ -128,30 +210,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В бизнес-коммуникации we're rolling out, we're launching — нейтрально и профессионально."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She said she is flying to Rome on Monday.",
+          "right": "She said she was flying to Rome on Monday.",
+          "why": {
+            "en": "In reported speech the future present continuous backshifts to the past continuous.",
+            "ru": "В косвенной речи Present Continuous для будущего сдвигается в Past Continuous (backshift)."
+          }
+        },
+        {
+          "wrong": "We will finalise the agreement next week — please confirm your attendance.",
+          "right": "We're finalising the agreement next week — please confirm your attendance.",
+          "why": {
+            "en": "For an already-arranged business action, the present continuous is the more natural, neutral choice.",
+            "ru": "Для уже назначенного делового действия Present Continuous звучит естественнее и нейтральнее."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the future present continuous is a fine-grained stylistic choice that signals certainty, register, and pragmatic stance. It weaves time frames together in extended discourse: 'Now that the proposal is ready, we're presenting it next week, and by the end of the month, we'll have secured the funding' blends present perfect, present continuous, and future perfect into a seamless narrative. Of the three future forms it expresses the firmest commitment: 'We're signing the contract on Monday' is more settled than 'we will sign' or 'we are going to sign'. Idiomatic stative-looking uses become almost obligatory for arrangements — 'I'm seeing her tomorrow', 'We're having a meeting at 2'. In professional and diplomatic English the continuous is often preferred ('We're expanding into Asia', 'The nations are meeting at the UN', 'We're aiming to finalise the deal this month'), while academic prose leans toward 'will', 'intend to', and 'plan to'. Conventional markers convey imminence ('I'm leaving in five'), and a rare narrative use projects inevitability ('In ten years, we're living in a different reality'). Mastery means reaching for this form deliberately — to foreground a settled arrangement, to render preparation already in motion, to soften a claim, or to bind several near-future events into one fluent line — while still avoiding it for spontaneous decisions and institutional timetables.",
         "ru": "На C2 Present Continuous для будущего — это тонкий стилистический выбор, показывающий уверенность, регистр и прагматическую позицию говорящего.\n\n**1. Coordination с discourse flow:**\nВ сложной речи Present Continuous помогает сплести разные временные планы:\n- `Now that the proposal is ready, we're presenting it next week, and by the end of the month, we'll have secured the funding.`\n\nPresent Perfect (`now that the proposal is ready`) + Present Continuous (`we're presenting`) + Future Perfect (`we'll have secured`) — плавное повествование.\n\n**2. Continuous для futurity with commitment:**\n- `We're signing the contract on Monday.` (Подписываем — решено, готово.)\n- `We will sign the contract.` (Подпишем — менее обязательно.)\n- `We are going to sign the contract.` (Собираемся — с планом, но без привязки к дате.)\n\nContinuous выражает самую твёрдую договорённость.\n\n**3. Politeness refinement — continuous future of stative meaning:**\n- `I'm seeing her tomorrow.` (`See` в значении «встречаться».)\n- `I'm having lunch with the team.` (`Have` в идиоматическом значении.)\n- `We're having a meeting at 2.` (Идиоматическое.)\n\nЭти stative формы в Continuous становятся почти обязательными для будущих договорённостей.\n\n**4. Narrative Present Continuous для прогностики:**\n- `The world is changing. In ten years, we're living in a different reality.` (Мир меняется. Через 10 лет мы живём в другой реальности.)\n\nЭто редкое литературное использование — Continuous в проекции на будущее передаёт ощущение неизбежности.\n\n**5. `Be going to` vs Present Continuous — subtle preferences:**\n- В профессиональной речи Continuous часто предпочтительнее: `We're expanding into Asia.` vs `We're going to expand into Asia.`\n- В разговорной: оба равноправны.\n- В академической: Continuous реже, предпочитаются `will`, `intend to`, `plan to`.\n\n**6. Plural subjects и коллективное будущее:**\n- `The nations are meeting at the UN.` (Страны встречаются — встреча назначена.)\n- `The leaders are gathering in Geneva.` (Лидеры собираются в Женеве.)\n\nContinuous передаёт институциональную организацию.\n\n**7. Subtle implications:**\n- `I'm just getting some water.` (Возьму воды — в ближайшую секунду.)\n- `I'm meeting him later.` (Встречусь позже — договорились.)\n- `I'm leaving in five.` (Ухожу через 5 минут — имминентное.)\n\nConventional markers указывают на близость будущего.\n\n**8. Diplomatic и commercial communication:**\n- `We're looking forward to working with you.` (Ждём совместной работы.)\n- `We're aiming to finalise the deal this month.` (Нацелены завершить сделку в этом месяце.)\n- `We're opening discussions with several partners.` (Начинаем обсуждения с несколькими партнёрами.)\n\nЭти формы стандартны в деловой коммуникации.\n\n**9. Coordination with other future forms:**\n- `I'm flying out tomorrow and will be meeting the client on Wednesday. By Friday, I'll have signed the deal.` (Present Continuous + Future Continuous + Future Perfect.)\n\nНа C2 ты орграничиваешь эти формы в единое, естественное повествование о предстоящих событиях.\n\n**10. Common near-native errors:**\n- Использование Continuous для будущего без контекста времени — создаёт путаницу с настоящим.\n- Смешение Continuous и `will` в одной цепочке без согласования: `We are meeting at 3 and will discuss the proposal` — возможно, но `we are meeting at 3 and discussing` не звучит.\n- Continuous для спонтанных решений: это не его функция.\n- Continuous для формальных расписаний и институциональных графиков: для них `The conference will take place` или `The conference takes place`.\n\n**11. Mastery:**\nНа C2 Present Continuous для будущего — естественный инструмент, который ты выбираешь, когда:\n- Хочешь подчеркнуть договорённость, уже состоявшуюся.\n- Передаёшь процесс подготовки, который выльется в будущее действие.\n- Создаёшь вежливую, ненавязчивую формулировку.\n- Строишь плавное связанное повествование о ближайшем будущем."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + am/is/are + verb-ing + time reference  →  committed arrangement, woven with will / future continuous / future perfect",
+        "ru": "подлежащее + am/is/are + глагол-ing + обозначение времени  →  твёрдая договорённость в связке с will / Future Continuous / Future Perfect"
       },
       "examples": [
         {
           "en": "We're rolling out the new framework across all divisions next quarter.",
-          "ru": "Мы внедряем новый фреймворк во всех подразделениях в следующем квартале."
+          "ru": "Мы внедряем новый фреймворк во всех подразделениях в следующем квартале.",
+          "note": {
+            "en": "firm commitment",
+            "ru": "твёрдая договорённость"
+          }
         },
         {
           "en": "The delegation is arriving in Geneva on Monday for the talks.",
-          "ru": "Делегация прибывает в Женеву в понедельник для переговоров."
+          "ru": "Делегация прибывает в Женеву в понедельник для переговоров.",
+          "note": {
+            "en": "institutional / collective",
+            "ru": "институциональное / коллективное"
+          }
         },
         {
           "en": "I'm seeing the director this afternoon — I'll raise your concerns then.",
-          "ru": "Я встречаюсь с директором сегодня днём — затрону твои вопросы."
+          "ru": "Я встречаюсь с директором сегодня днём — затрону твои вопросы.",
+          "note": {
+            "en": "chained with will",
+            "ru": "связка с will"
+          }
         },
         {
           "en": "She's giving the keynote at the summit; afterwards, she's flying to Tokyo.",
@@ -159,15 +271,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We're exploring several strategic options before committing.",
-          "ru": "Мы изучаем несколько стратегических вариантов, прежде чем принять решение."
+          "ru": "Мы изучаем несколько стратегических вариантов, прежде чем принять решение.",
+          "note": {
+            "en": "open-ended deliberation",
+            "ru": "открытое обдумывание"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В плавной речи Present Continuous связывает разные этапы будущего: I'm flying out and will be meeting..."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "We are meeting at 3 and discussing the proposal next month.",
+          "right": "We're meeting at 3 and will discuss the proposal next month.",
+          "why": {
+            "en": "Chaining two continuous verbs across mismatched time frames sounds wrong; switch to will for the later action.",
+            "ru": "Связывать два глагола в Continuous с разными временными планами не звучит; для более позднего действия нужен will."
+          }
+        },
+        {
+          "wrong": "The conference is taking place on the 5th of June every year.",
+          "right": "The conference takes place on the 5th of June every year.",
+          "why": {
+            "en": "For institutional, recurring schedules use the present simple, not the future continuous.",
+            "ru": "Для институциональных регулярных графиков используется Present Simple, а не Present Continuous для будущего."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "future-with-going-to",
+    "future-simple-will",
+    "present-continuous",
+    "future-continuous"
+  ],
+  "crossTopic": [
+    "adverbs-of-frequency",
+    "prepositions-of-time",
+    "reported-statements",
+    "stative-verbs"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "now",
+      "fixed arrangement",
+      "future time"
+    ]
+  }
 };

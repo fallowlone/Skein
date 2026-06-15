@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "result-clauses",
   "title": {
-    "en": "",
+    "en": "Result Clauses",
     "ru": "Result Clauses"
   },
   "cefr": "B2",
@@ -14,122 +14,257 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conjunctions",
+  "egp": [
+    "EGP:so-such-that-result",
+    "EGP:too-enough-result",
+    "EGP:result-discourse-markers"
+  ],
+  "archetype": "scale",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "Result clauses express the consequence of a high degree of something. The core pattern links an intensifier to a *that*-clause stating what followed.\n\n**Three building blocks:**\n\n1. **so + adjective/adverb + that:** `She was so tired that she fell asleep.` Use *so* directly before an adjective or adverb with no noun.\n2. **such + (a/an) + adjective + noun + that:** `It was such a long film that we missed the bus.` Use *such* when a noun is in the phrase. Drop *a/an* before plural or uncountable nouns: `such good food`, `such difficult questions`.\n3. **so much / so many / so little / so few + noun + that:** `There was so much noise that we left.` Use these quantifiers to intensify amounts (*much/little* for uncountable, *many/few* for countable).\n\n**so vs such — the deciding test:** is there a noun? No noun → *so* (+ adj/adv). Noun present → *such* (+ adj + noun). This is the single most common error point for learners.\n\n**that is often dropped** in speech: `She was so tired she fell asleep.` The meaning is unchanged.\n\n**Result vs purpose — don't confuse them.** *so...that* states a real consequence (`He spoke so loudly that everyone heard` — they did hear). *so that* + modal states an intention (`He spoke loudly so that everyone would hear` — the aim, not necessarily the outcome).",
         "ru": "**Придаточные результата** показывают следствие или степень, к которой что-то привело.\n\n**Основные конструкции:**\n\n**1. So + adjective/adverb + that + clause.**\n- `She was so tired that she fell asleep immediately.` (Она так устала, что сразу уснула.)\n- `He spoke so quickly that I couldn't understand.` (Он говорил так быстро, что я не понял.)\n\n**2. Such + (a/an) + adjective + noun + that + clause.**\n- `It was such a long film that we missed the bus.` (Это был такой длинный фильм, что мы пропустили автобус.)\n- `They had such difficult questions that nobody passed.` (У них были такие сложные вопросы, что никто не сдал.)\n\n**3. So much / so many / so little / so few + noun + that.**\n- `There was so much noise that we left.` (Было столько шума, что мы ушли.)\n- `She has so many friends that she's always busy.` (У неё так много друзей, что она всегда занята.)\n\n**So vs Such.**\n- `So` + adj/adv: `so big, so carefully`.\n- `Such` + (a/an) + adj + noun: `such a big dog`, `such good food`.\n- Нет прилагательного, только существительное → `such`: `such a mess`.\n\n**Частая ошибка русскоговорящего:** использовать `so` перед существительным. ✗ `so a problem` — неправильно. ✓ `such a problem`.\n\n**So что = чтобы (purpose) vs so...that (result).** Не путай:\n- Result: `He spoke so loudly that everyone heard.` (следствие.)\n- Purpose: `He spoke loudly so that everyone would hear.` (цель — future, with modal.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "so + adj/adv + that + clause  |  such + (a/an) + adj + noun + that + clause",
+        "ru": "so + прил./нареч. + that + предложение  |  such + (a/an) + прил. + сущ. + that + предложение"
       },
       "examples": [
         {
           "en": "The weather was so bad that the flight was cancelled.",
-          "ru": "Погода была такой плохой, что рейс отменили."
+          "ru": "Погода была такой плохой, что рейс отменили.",
+          "note": {
+            "en": "so + adj",
+            "ru": "so + прилагательное"
+          }
         },
         {
           "en": "It was such an exciting game that we watched it twice.",
-          "ru": "Это была такая увлекательная игра, что мы смотрели её дважды."
+          "ru": "Это была такая увлекательная игра, что мы смотрели её дважды.",
+          "note": {
+            "en": "such + a/an + adj + noun",
+            "ru": "such + a/an + прил. + сущ."
+          }
         },
         {
           "en": "She spoke so softly that no one could hear.",
-          "ru": "Она говорила так тихо, что никто не слышал."
+          "ru": "Она говорила так тихо, что никто не слышал.",
+          "note": {
+            "en": "so + adv",
+            "ru": "so + наречие"
+          }
         },
         {
           "en": "There were so many people that we couldn't find a seat.",
-          "ru": "Там было столько людей, что мы не могли найти место."
+          "ru": "Там было столько людей, что мы не могли найти место.",
+          "note": {
+            "en": "so many + noun",
+            "ru": "so many + сущ."
+          }
         },
         {
           "en": "He told such an interesting story that everyone listened.",
-          "ru": "Он рассказал такую интересную историю, что все слушали."
+          "ru": "Он рассказал такую интересную историю, что все слушали.",
+          "note": {
+            "en": "such + an + adj + noun",
+            "ru": "such + an + прил. + сущ."
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "So + adj/adv, such + (a/an) + adj + noun. Неправильно so a car — правильно such a car."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It was so a long film that we missed the bus.",
+          "right": "It was such a long film that we missed the bus.",
+          "why": {
+            "en": "With a noun in the phrase, use *such*, not *so*.",
+            "ru": "Перед существительным в группе используется such, а не so."
+          }
+        },
+        {
+          "wrong": "There were so much people that we couldn't sit.",
+          "right": "There were so many people that we couldn't sit.",
+          "why": {
+            "en": "*People* is countable, so use *so many*, not *so much*.",
+            "ru": "People исчисляемое, поэтому so many, а не so much."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, broaden the result repertoire for more formal and literary register.\n\n**Front-inversion for emphasis:** moving *so + adjective* or *such* to the front triggers subject-verb inversion: `So loud was the music that we couldn't speak.` / `Such was the disaster that many lost their homes.` This is emphatic and formal — the fronted intensity hits first, the consequence follows.\n\n**too + adj + (for + object) + to-infinitive** signals a *negative*, blocking result — the degree is excessive and prevents the action: `The box is too heavy to lift.` / `She spoke too fast for me to follow.`\n\n**adj + enough + to-infinitive** signals a *sufficient*, enabling result — the degree is adequate: `He's old enough to drive.` Watch the position: *enough* follows an adjective (`warm enough`) but precedes a noun (`enough time`).\n\n**with the result that / with the consequence that** is a more formal, explicit equivalent of *so...that*: `The bridge was damaged, with the result that traffic was diverted.`\n\n**Sentence-level result connectors** stand at the start of a new sentence (or after a semicolon): *therefore, thus, hence, consequently, accordingly, as a result*. `He failed the test; consequently, he must retake it.` Note the register: *thus* and *hence* are academic/literary, *therefore* is neutral-formal, and sentence-initial *so* is conversational.",
         "ru": "На C1 расширяй конструкции результата для более литературного стиля.\n\n**Inversion for emphasis:**\n- `So loud was the music that we couldn't speak.` (Так громка была музыка, что мы не могли говорить.)\n- `Such was the disaster that many lost their homes.` (Таковы были масштабы катастрофы...)\n\nИнверсия подчёркивает силу следствия. Формальный регистр.\n\n**Too + adj + to + inf (негативный результат):**\n- `The box is too heavy to lift.` (Коробка слишком тяжёлая, чтобы её поднять.)\n- `She spoke too fast for me to follow.` (Она говорила слишком быстро, чтобы я мог уследить.)\n\n**Enough + to + inf (положительный / достаточный результат):**\n- `He's old enough to drive.` (Он достаточно взрослый, чтобы водить.)\n- `The soup is warm enough to eat.` (Суп достаточно тёплый, чтобы есть.)\n\nЗаметь: `enough` идёт **после** прилагательного, но **перед** существительным:\n- `warm enough` (adj + enough)\n- `enough time` (enough + noun)\n\n**With the result that / with the consequence that:**\n- `The bridge was damaged, with the result that traffic was diverted.`\n- `He refused to cooperate, with the consequence that the project was delayed.`\n\nБолее формальный эквивалент so...that.\n\n**Discourse markers of result (как отдельные предложения):**\n- `Therefore`, `thus`, `hence`, `consequently`, `accordingly`, `as a result` — ставятся в начале следующего предложения или после запятой.\n- `He failed the test; consequently, he must retake it.`\n\n**Nuance:**\n- `hence` — литературный, также в значении «отсюда».\n- `thus` — формальный, академический.\n- `therefore` — нейтрально-формальный.\n- `so` — разговорный (в начале предложения — разговорный маркер)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "too + adj + to-inf (blocked result)  |  adj + enough + to-inf (sufficient result)  |  So/Such + ... + verb + subject + that (inversion)",
+        "ru": "too + прил. + to-inf (результат невозможен)  |  прил. + enough + to-inf (достаточный результат)  |  So/Such + ... + глагол + подлежащее + that (инверсия)"
       },
       "examples": [
         {
           "en": "So great was the noise that windows shook.",
-          "ru": "Столь велик был шум, что окна дрожали."
+          "ru": "Столь велик был шум, что окна дрожали.",
+          "note": {
+            "en": "fronted inversion",
+            "ru": "инверсия в начале"
+          }
         },
         {
           "en": "The problem is too complex to solve in one day.",
-          "ru": "Проблема слишком сложна, чтобы решить её за день."
+          "ru": "Проблема слишком сложна, чтобы решить её за день.",
+          "note": {
+            "en": "too...to (blocked)",
+            "ru": "too...to (невозможно)"
+          }
         },
         {
           "en": "He's experienced enough to handle the job.",
-          "ru": "Он достаточно опытен, чтобы справиться с работой."
+          "ru": "Он достаточно опытен, чтобы справиться с работой.",
+          "note": {
+            "en": "enough...to (sufficient)",
+            "ru": "enough...to (достаточно)"
+          }
         },
         {
           "en": "The road was closed, with the result that we took a detour.",
-          "ru": "Дорога была закрыта, в результате чего мы поехали в объезд."
+          "ru": "Дорога была закрыта, в результате чего мы поехали в объезд.",
+          "note": {
+            "en": "with the result that",
+            "ru": "with the result that"
+          }
         },
         {
           "en": "She didn't submit the form; consequently, her application was rejected.",
-          "ru": "Она не подала форму; в результате её заявка была отклонена."
+          "ru": "Она не подала форму; в результате её заявка была отклонена.",
+          "note": {
+            "en": "consequently",
+            "ru": "consequently"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Too + adj + to + inf — негативное (не может): too tired to walk. Enough + to + inf — позитивное (может): strong enough to lift."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The box is too heavy for lifting it.",
+          "right": "The box is too heavy to lift.",
+          "why": {
+            "en": "*too + adj* is followed by a to-infinitive, not *for + -ing*; no object pronoun after the infinitive either.",
+            "ru": "После too + прил. идёт to-инфинитив, а не for + -ing, и без объектного местоимения."
+          }
+        },
+        {
+          "wrong": "He is enough old to drive.",
+          "right": "He is old enough to drive.",
+          "why": {
+            "en": "*enough* comes after an adjective, not before it.",
+            "ru": "enough ставится после прилагательного, а не перед ним."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, result structures serve rhythm, register-shifting, and fine causal cohesion rather than mere intensity.\n\n**Literary inversion patterns** extend the C1 fronting to richer shapes: `Such was his fury that he left the room.` / `So profound was the silence that the clock's ticking filled the room.` / `To such a degree had the situation deteriorated that intervention became inevitable.`\n\n**Gradient intensifiers** let you tune force and register: plain *so + adj* (neutral); *so very + adj* (emotional, conversational); *ever so + adj* (British, slightly dated); *to such an extent/degree that* (formal, academic gradation); *in such a way that* (manner combined with result).\n\n**to the point where / to the point that** marks a process reaching a critical threshold: `She practised to the point that her fingers bled.`\n\n**Academic result markers:** *which resulted in + noun/gerund*, *which gave rise to + noun*, *with the upshot that + clause*, *the outcome of which was + noun*.\n\n**Distinguish subtle result types:** direct consequence (`Consequently, the plan failed`), unintended result (`The reform inadvertently led to higher costs`), proportional result (`The more complex the system, the more likely failures become`), and paradoxical result (`Ironically, the solution created a new problem`).\n\n**Cleft highlighting of result:** `It is precisely because of X that Y happened.` / `What resulted was a complete redesign.`\n\n**Avoid dangling *enough*:** prefer `big enough for everyone to fit` or `big enough to accommodate everyone` over `big enough that everyone could fit`. Idiomatic result patterns include *to the tune of + amount*, *with a vengeance*, and *all the more + adj + because/since/for...*.",
         "ru": "На C2 результатные конструкции используются для ритма и тонкой каузальной связности.\n\n**Literary inversion patterns:**\n- `Such was his fury that he left the room.` (Такова была его ярость, что...)\n- `So profound was the silence that the clock's ticking filled the room.`\n- `To such a degree had the situation deteriorated that intervention became inevitable.`\n\n**Gradient intensifiers:**\n- `so + adj/adv`: нейтральное усиление.\n- `so very + adj`: эмоциональное, разговорное.\n- `ever so + adj`: British, чуть старомодное: `ever so grateful`.\n- `to such an extent that / to such a degree that`: формальная академическая градация.\n- `in such a way that`: manner + result.\n\n**To the point where / to the point that:**\n- `The situation deteriorated to the point where intervention was necessary.`\n- `She practised to the point that her fingers bled.`\n\n**Academic markers of result:**\n- `this / which resulted in + noun/gerund`\n- `this / which gave rise to + noun`\n- `with the upshot that + clause`\n- `the outcome of which was + noun`\n\n**Distinguishing subtle types of result:**\n- Direct consequence: `Consequently, the plan failed.`\n- Unintended result: `The reform inadvertently led to higher costs.`\n- Proportional result: `The more complex the system, the more likely failures become.`\n- Paradoxical result: `Ironically, the solution created a new problem.`\n\n**Cleft structures for highlighting result:**\n- `It is precisely because of X that Y happened.`\n- `What resulted was / What followed was + noun/clause.`\n\n**Dangling enough:**\n- Avoid: `The room was big enough that everyone could fit.`\n- Better: `The room was big enough for everyone to fit.` / `... big enough to accommodate everyone.`\n\n**Idiomatic result patterns:**\n- `to the tune of + amount` (для денежных сумм результатов): `It cost us to the tune of $10,000.`\n- `with a vengeance` — с удвоенной силой (intensive result): `The flu returned with a vengeance.`\n- `all the more + adj/adv + because/since/for...` — тем более: `The win is all the more impressive because they played without their captain.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Such/So + ... + verb + subject + that (literary inversion)  |  to such an extent/degree that  |  to the point where/that  |  which resulted in/gave rise to + noun",
+        "ru": "Such/So + ... + глагол + подлежащее + that (литературная инверсия)  |  to such an extent/degree that  |  to the point where/that  |  which resulted in/gave rise to + сущ."
       },
       "examples": [
         {
           "en": "Such was the uproar that the speaker had to pause.",
-          "ru": "Такова была суматоха, что оратору пришлось сделать паузу."
+          "ru": "Такова была суматоха, что оратору пришлось сделать паузу.",
+          "note": {
+            "en": "Such was... inversion",
+            "ru": "инверсия Such was..."
+          }
         },
         {
           "en": "The crisis escalated to the point where international intervention became inevitable.",
-          "ru": "Кризис обострился до такой степени, что международное вмешательство стало неизбежным."
+          "ru": "Кризис обострился до такой степени, что международное вмешательство стало неизбежным.",
+          "note": {
+            "en": "to the point where",
+            "ru": "to the point where"
+          }
         },
         {
           "en": "The reform gave rise to unforeseen economic challenges.",
-          "ru": "Реформа породила непредвиденные экономические трудности."
+          "ru": "Реформа породила непредвиденные экономические трудности.",
+          "note": {
+            "en": "gave rise to",
+            "ru": "gave rise to"
+          }
         },
         {
           "en": "It is precisely because of his dedication that the project succeeded.",
-          "ru": "Именно благодаря его самоотверженности проект удался."
+          "ru": "Именно благодаря его самоотверженности проект удался.",
+          "note": {
+            "en": "cleft highlight",
+            "ru": "расщеплённая конструкция"
+          }
         },
         {
           "en": "The victory was all the more remarkable for having come against the favourites.",
-          "ru": "Победа была тем более замечательной, что произошла против фаворитов."
+          "ru": "Победа была тем более замечательной, что произошла против фаворитов.",
+          "note": {
+            "en": "all the more for",
+            "ru": "all the more for"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "To the point where/that — сильный маркер градации результата, когда процесс достиг критического порога."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The room was big enough that everyone could fit.",
+          "right": "The room was big enough for everyone to fit.",
+          "why": {
+            "en": "After *adj + enough*, prefer a *for + object + to-infinitive* over a *that*-clause in careful written English.",
+            "ru": "После прил. + enough в тщательной письменной речи предпочтительна конструкция for + объект + to-инфинитив, а не придаточное с that."
+          }
+        },
+        {
+          "wrong": "Such his fury was that he left the room.",
+          "right": "Such was his fury that he left the room.",
+          "why": {
+            "en": "Fronting *such* triggers inversion: the verb precedes the subject (*was his fury*).",
+            "ru": "Вынесение such вперёд вызывает инверсию: глагол стоит перед подлежащим (was his fury)."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "purpose-clauses",
+    "adverbial-clauses-reason",
+    "subordinating-conjunctions",
+    "cleft-sentences"
+  ],
+  "crossTopic": [
+    "intensifiers",
+    "coordinating-conjunctions",
+    "inversion",
+    "comparative-adjectives"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "cause / intensity",
+      "threshold",
+      "consequence"
+    ]
+  }
 };

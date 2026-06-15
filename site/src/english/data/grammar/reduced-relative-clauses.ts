@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "reduced-relative-clauses",
   "title": {
-    "en": "",
+    "en": "Reduced Relative Clauses",
     "ru": "Reduced Relative Clauses"
   },
   "cefr": "B2",
@@ -14,32 +14,46 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "relative-clauses",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "A reduced relative clause is a relative clause with the relative pronoun and the verb 'be' deleted, leaving only a participle (or an adjective/prepositional phrase) to modify the noun. You can reduce only when the relative pronoun is the subject of its clause.\n\nThere are two core patterns. For an active, ongoing meaning, keep the -ing form: 'The man who is standing there' becomes 'The man standing there.' For a passive meaning, keep the -ed / past participle: 'The book which was written by Hemingway' becomes 'The book written by Hemingway.' In both cases you simply drop 'who/which/that' together with 'is/are/was/were.'\n\nReduction also covers adjectives and prepositional phrases after 'be': 'the person who is responsible' becomes 'the person responsible,' and 'anyone who is interested' becomes 'anyone interested.'\n\nTwo limits matter at this level. First, you cannot reduce when the relative pronoun is the object of the clause: 'the book which I read' has no 'be' to delete and cannot become a participle. Second, an -ing reduction can shift meaning with habitual verbs: 'the girl wearing a red dress' reads as 'right now,' not 'every day.' Reduced relatives make writing denser and more formal, and they are everywhere in news headlines and academic prose.",
         "ru": "**Reduced relative clauses** — это сокращённые варианты придаточных определительных. Мы убираем relative pronoun + auxiliary verb (`who is, which is, that are`) и оставляем только причастие или прилагательное.\n\n**Два основных типа:**\n\n**1. -ing form (active, present/ongoing):**\n- `The man who is standing there is my brother.` → `The man standing there is my brother.`\n- `Students who are taking the exam should arrive early.` → `Students taking the exam should arrive early.`\n- `Anyone who is interested should apply.` → `Anyone interested should apply.`\n\n**2. -ed / past participle (passive):**\n- `The book which was written by Hemingway is a classic.` → `The book written by Hemingway is a classic.`\n- `The money that was stolen was recovered.` → `The money stolen was recovered.`\n- `Cars made in Japan are reliable.` (= cars which are made.)\n\n**Когда это работает:**\n- Reduction возможна только если relative pronoun = subject придаточного.\n- Reduction работает с `be` (was/were/is/are + V-ing или V-ed).\n- Stative verbs and adjectives тоже: `The person responsible for this...` (= who is responsible.)\n\n**Когда НЕ работает:**\n- Если pronoun = object: `The book which I read` — cannot reduce (I read is not subject-be pattern.)\n- Если нет auxiliary `be`: `The man who lives next door` — cannot simply drop who; need different structure.\n\n**Примеры reduction:**\n- `The girl who is wearing a red dress` → `The girl wearing a red dress` ✓\n- `The girl who wears a red dress every day` → НЕ `The girl wearing a red dress every day` (meaning shift; reduction не идеальна с habitual actions.)\n- `The decision that was made by the committee` → `The decision made by the committee` ✓\n- `Students who have completed the course` → `Students having completed the course` (possible but formal.)\n\n**Зачем использовать reduced relatives?**\n- Делают письмо плотнее.\n- Звучат более sophisticated.\n- Частые в газетных заголовках, академическом письме.\n\n**Частая ошибка:** reduce когда pronoun = object.\n- ✗ `The book I read yesterday was great.` → `The book reading yesterday...` (WRONG.)\n- Правильно — либо keep full relative, либо restructure."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "noun + present participle (-ing) [active] / past participle (-ed) [passive]",
+        "ru": "существительное + причастие настоящего (-ing) [актив] / причастие прошедшего (-ed) [пассив]"
       },
       "examples": [
         {
           "en": "Students taking the exam must bring ID.",
-          "ru": "Студенты, сдающие экзамен, должны принести удостоверение."
+          "ru": "Студенты, сдающие экзамен, должны принести удостоверение.",
+          "note": {
+            "en": "active (-ing)",
+            "ru": "актив (-ing)"
+          }
         },
         {
           "en": "The building damaged by fire has been demolished.",
-          "ru": "Здание, повреждённое огнём, было снесено."
+          "ru": "Здание, повреждённое огнём, было снесено.",
+          "note": {
+            "en": "passive (-ed)",
+            "ru": "пассив (-ed)"
+          }
         },
         {
           "en": "Anyone interested in the position should email me.",
-          "ru": "Все, кто заинтересован в должности, должны написать мне."
+          "ru": "Все, кто заинтересован в должности, должны написать мне.",
+          "note": {
+            "en": "adjective",
+            "ru": "прилагательное"
+          }
         },
         {
           "en": "The car parked outside is mine.",
@@ -53,22 +67,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Reduction работает, когда relative = subject + be. Present participle (-ing) для active, past participle (-ed) для passive."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The book reading yesterday was great.",
+          "right": "The book I read yesterday was great.",
+          "why": {
+            "en": "The pronoun is the object here, so there is no 'be' to delete; the clause cannot be reduced.",
+            "ru": "Относительное местоимение здесь дополнение, нет вспомогательного be для удаления; clause не сокращается."
+          }
+        },
+        {
+          "wrong": "The report writing by the committee was rejected.",
+          "right": "The report written by the committee was rejected.",
+          "why": {
+            "en": "A passive meaning needs the past participle (-ed), not the -ing form.",
+            "ru": "Для пассивного значения нужно причастие прошедшего времени (-ed), а не форма -ing."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you handle the harder cases. Modals and future auxiliaries do not reduce cleanly: 'students who can speak French' usually rephrases to an adjective phrase ('students able to speak French') rather than a participle. Perfect aspect reduces to a perfect participle in formal writing: 'the committee which has approved the plan' becomes 'the committee having approved the plan.'\n\nReduction works in non-defining clauses too, keeping the commas: 'The mayor, who was elected last year,' becomes 'The mayor, elected last year.' The same -ed / -ing distinction still separates passive ('elected') from active.\n\nThree pitfalls dominate here. A dangling participle appears when the subject of the participle does not match the subject of the main clause, as in 'Walking down the street, my hat blew off' - the hat was not walking. Reduction can also create ambiguity ('the girl watching the boy laughing' - who is laughing?). Finally, reduction loses fine temporal detail: 'students passing the test' no longer signals whether the event is past or general the way 'who passed' does. These structures are extremely productive in journalism and academic prose: 'a study published in Nature found...,' 'data collected over five years...'",
         "ru": "На C1 освой продвинутые варианты reduced relatives.\n\n**Reduction with modal verbs / other auxiliaries:**\n- `Students who can speak French are invited.` → Keep as is; cannot cleanly reduce modals.\n- Alternative: `Students able to speak French are invited.` (adjective form.)\n- `Workers who will be laid off` — no good reduction.\n\n**Perfect participle reduction:**\n- `The committee which has approved the plan...` → `The committee having approved the plan...` (formal.)\n- Less common; mainly in writing.\n\n**Reduction in non-defining clauses:**\nWorks same way but with commas:\n- `The mayor, who was elected last year, is popular.` → `The mayor, elected last year, is popular.`\n- `The novel, which was written in 1925, is still read.` → `The novel, written in 1925, is still read.`\n\n**Adjective clauses as reduction:**\n- `Anyone (who is) interested` — adj.\n- `People (who are) aware of the risk` — adj.\n- `The student (who is) responsible for this` — adj.\n\n**Embedded reduced relatives:**\n- `A man walking a dog wearing a red collar waved at me.` — multiple reductions.\n- Требует careful parsing — иногда ambiguous.\n\n**Common pitfalls:**\n\n**1. Dangling participles:**\n- ✗ `Walking down the street, my hat blew off.` (hat didn't walk — ambiguous.)\n- ✓ `Walking down the street, I lost my hat.` (subject matches participle.)\n\n**2. Ambiguous reductions:**\n- `The man hit by the car was taken to hospital.` (clear.)\n- `The girl watching the boy laughing.` (who was laughing?) — clarify.\n\n**3. Tense information loss:**\n- `The students who passed the test` (past.)\n- `The students passing the test` (could be present/general.)\n- `The students who had passed the test` (past perfect — no direct reduction.)\n- Sometimes reduction loses fine temporal information.\n\n**Academic / journalistic patterns:**\n- `A study published in Nature found...` (= which was published.)\n- `A law signed into effect yesterday...`\n- `Data collected over five years...`\n- Highly productive in formal writing.\n\n**Restrictive vs non-restrictive reduction:**\nBoth work; punctuation preserved:\n- Defining: `Books written by women sell well.` (no commas.)\n- Non-defining: `War and Peace, written by Tolstoy, is enormous.` (commas.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "noun (+ comma) + participle / perfect participle (having + -ed) / adjective phrase",
+        "ru": "существительное (+ запятая) + причастие / перфектное причастие (having + -ed) / прилагательная фраза"
       },
       "examples": [
         {
           "en": "The minister, having resigned, refused to comment.",
-          "ru": "Министр, ушедший в отставку, отказался комментировать."
+          "ru": "Министр, ушедший в отставку, отказался комментировать.",
+          "note": {
+            "en": "perfect participle",
+            "ru": "перфектное причастие"
+          }
         },
         {
           "en": "A report compiled over six months reveals shocking findings.",
@@ -80,7 +116,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Walking to work, I noticed the new café.",
-          "ru": "Идя на работу, я заметил новое кафе."
+          "ru": "Идя на работу, я заметил новое кафе.",
+          "note": {
+            "en": "fronted -ing",
+            "ru": "вынесенное -ing"
+          }
         },
         {
           "en": "Legislation passed last year finally takes effect.",
@@ -90,22 +130,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Избегай dangling participles: subject главного предложения должен совпадать с subject причастия. Walking home, I lost my hat (правильно), но Walking home, my hat flew off (неправильно — шляпа не шла)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Walking down the street, my hat blew off.",
+          "right": "Walking down the street, I lost my hat.",
+          "why": {
+            "en": "Dangling participle: the subject of the main clause must be the one performing the -ing action.",
+            "ru": "Висячее причастие: подлежащее главного предложения должно совпадать с тем, кто выполняет действие -ing."
+          }
+        },
+        {
+          "wrong": "Students who can speak French invited to the event.",
+          "right": "Students able to speak French are invited to the event.",
+          "why": {
+            "en": "Modal verbs do not reduce to a participle; switch to an adjective phrase instead.",
+            "ru": "Модальные глаголы не сокращаются до причастия; используйте прилагательную фразу."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 reduced relatives become a tool for density and rhetorical control. You can stack several in one noun phrase ('reports detailing incidents involving officers patrolling the area'), as long as each reduction has a clear antecedent. Prepositional phrases reduce the same way: 'items on sale' (= which are on sale), 'people in charge of the project' (= who are in charge).\n\nClosely related are absolute constructions, which look like reductions but modify the whole clause: 'weather permitting,' 'all things considered,' 'the meeting over.' Fronted participle phrases compress a clause to the front of the sentence: 'Written in haste, the letter contained errors'; 'Exhausted by the journey, they slept.' Post-nominal adjective phrases work too: 'anyone worthy of the prize,' 'a problem easy to solve.'\n\nStyle notes: avoid 'being' in straight reductions ('the car parked outside,' not 'the car being parked outside'), though 'being' is fine for cause ('Being a beginner, I made mistakes'). The -ed / -ing contrast still carries crucial meaning - 'the thief caught by the police' (passive) versus 'the thief catching the police off-guard' (active). The chief risk remains a misidentified logical subject, which produces a dangling participle even in elaborate prose.",
         "ru": "На C2 reduced relatives используются для максимальной плотности и стилистической изящности.\n\n**Multiple stacked reductions:**\n- `Reports detailing incidents involving officers patrolling the area were leaked.` — три reduced relative clauses nested.\n- Works when each reduction has clear antecedent.\n\n**Reduced with preposition:**\n- `Items on sale must be returned within 30 days.` (= which are on sale.)\n- `People in charge of the project disagreed.` (= who are in charge.)\n\n**Participle absolute construction:**\nНе совсем reduced relative, но похоже:\n- `All things considered, the plan is good.` (= когда все вещи учтены.)\n- `Weather permitting, we'll go hiking.` (если погода позволит.)\n- `The meeting over, everyone left.` (когда совещание закончилось.)\n\n**Fronted reduced clauses:**\n- `Written in haste, the letter contained errors.` (= which was written in haste.)\n- `Exhausted by the journey, they slept.`\n- `Known for her wit, she was popular.`\n\n**Post-nominal adjective phrases (reduced adj clauses):**\n- `Anyone worthy of the prize will win it.` (= who is worthy.)\n- `Solutions effective in the lab may fail in practice.`\n- `A novel remarkable for its depth...`\n\n**Reduction with 'being':**\nОбычно избегать `being` perceived as awkward:\n- ✗ `The car being parked outside is mine.`\n- ✓ `The car parked outside is mine.`\n\nНо:\n- `Being a beginner, I made mistakes.` (as reason — OK.)\n- `The child, being only five, didn't understand.` (acceptable but often heavy.)\n\n**Embedded adjective + reduction:**\n- `A problem (which is) easy to solve...` → `A problem easy to solve...`\n- `A concept (that is) hard to grasp...` → `A concept hard to grasp...`\n\n**Stylistic spectrum:**\n- Max reduction: `Children fascinated by stories love books.` (compact.)\n- Semi-reduced: `Children who are fascinated by stories love books.`\n- Full clause: `Children who find themselves fascinated by stories love books.`\n\nВыбор по cadence, register, and clarity requirement.\n\n**Potential ambiguity at C2:**\n- `The thief caught by the police.` (caught = passive — пойман полицией.)\n- `The thief catching the police off-guard.` (active — вор застал полицию врасплох.)\n\nSame -ed/-ing distinction carries crucial meaning.\n\n**Literary extension — parallel reductions:**\n- `Books read but forgotten, music heard but not appreciated, words spoken but not heeded — these are the marks of inattention.`\n- Parallel reduced relatives create rhetorical rhythm.\n\n**Pitfalls at C2:**\n- Reduction in sentences with complex modality (must, might, would): often cannot reduce without loss.\n- Perfect-aspect reductions rare and formal: `Having completed the course, students receive certificates.` (this is participial clause, not strict relative reduction.)\n- Misidentifying subject of reduction creates dangling participles — always check logical subject."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "noun + stacked participles / prepositional phrase / fronted participle clause / absolute construction",
+        "ru": "существительное + цепочка причастий / предложная фраза / вынесенное причастие / абсолютная конструкция"
       },
       "examples": [
         {
           "en": "Exhausted from the journey, the travellers collapsed.",
-          "ru": "Измотанные путешествием, путешественники рухнули."
+          "ru": "Измотанные путешествием, путешественники рухнули.",
+          "note": {
+            "en": "fronted -ed",
+            "ru": "вынесенное -ed"
+          }
         },
         {
           "en": "A theory first proposed in 1920 has now been confirmed.",
@@ -117,7 +179,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Weather permitting, the ceremony will take place outdoors.",
-          "ru": "Если погода позволит, церемония пройдёт на открытом воздухе."
+          "ru": "Если погода позволит, церемония пройдёт на открытом воздухе.",
+          "note": {
+            "en": "absolute",
+            "ru": "абсолютная"
+          }
         },
         {
           "en": "Solutions offered in theory often prove unworkable in practice.",
@@ -127,9 +193,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Absolute construction: weather permitting / all things considered / the work done — компактные reduced structures, популярные в письме."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The car being parked outside is mine.",
+          "right": "The car parked outside is mine.",
+          "why": {
+            "en": "In a straight reduction 'being' is redundant and sounds awkward; drop it before the past participle.",
+            "ru": "В прямом сокращении 'being' избыточно и звучит неуклюже; уберите его перед причастием прошедшего времени."
+          }
+        },
+        {
+          "wrong": "Approving the plan, certificates were issued to the committee.",
+          "right": "Having approved the plan, the committee issued certificates.",
+          "why": {
+            "en": "The logical subject of the participle must head the main clause, or it dangles.",
+            "ru": "Логическое подлежащее причастия должно возглавлять главное предложение, иначе причастие повисает."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "defining-relative-clauses",
+    "non-defining-relative-clauses",
+    "participle-adjectives",
+    "relative-pronouns-who-which-that-whose"
+  ],
+  "crossTopic": [
+    "passive-present-simple",
+    "present-continuous",
+    "indefinite-pronouns",
+    "noun-phrases"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Full relative clause",
+      "Drop pronoun + be",
+      "Reduced clause"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "reported-questions",
   "title": {
-    "en": "",
+    "en": "Reported Questions",
     "ru": "Reported Questions"
   },
   "cefr": "B1",
@@ -15,28 +15,38 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "reported-speech",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "A **reported (indirect) question** tells someone what another person asked, instead of quoting the question directly. The key change is that the reported version uses **statement word order** and has **no question mark**.\n\n**Two patterns:**\n- **Wh-questions** keep the question word: \"Where do you work?\" becomes *She asked where I worked.*\n- **Yes/no questions** add **if** or **whether**: \"Do you speak English?\" becomes *She asked if I spoke English.*\n\n**What changes:**\n1. **Word order** flips from question to statement: not *where did I live*, but *where I lived*.\n2. The auxiliary **do/does/did disappears** in the Present and Past Simple: \"Where does she work?\" becomes *He asked where she worked.*\n3. Tenses **backshift** when the reporting verb is past: do becomes did, is becomes was, will becomes would.\n4. Pronouns and references to time and place shift, just as in reported statements.\n5. The sentence ends with a full stop, not a question mark.\n\nUse **ask** for questions and **tell** for statements or commands — do not mix them.",
         "ru": "**Reported questions** — косвенные вопросы. Это когда мы **пересказываем чужой вопрос**, а не задаём его напрямую.\n\n**Главное правило:** в косвенном вопросе **нет вопросительного порядка слов** и **нет вопросительного знака** в конце.\n\n**Direct vs reported:**\n- Direct: `He asked, \"Where do you live?\"`\n- Reported: `He asked where I lived.` (Не `where did I live`!)\n\n**Формула:** `subject + asked (+ object) + question word / if / whether + statement word order`.\n\n**Два типа косвенных вопросов:**\n\n**1. Wh-questions — оставляем вопросительное слово:**\n- `\"Where do you work?\"` → `She asked where I worked.`\n- `\"What is your name?\"` → `He asked what my name was.`\n- `\"Why are you late?\"` → `She asked why I was late.`\n- `\"When will he come?\"` → `She asked when he would come.`\n\nВопросительные слова: `what, where, when, why, who, how, which`.\n\n**2. Yes/no questions — добавляем `if` или `whether`:**\n- `\"Do you speak English?\"` → `She asked if I spoke English.`\n- `\"Are you tired?\"` → `He asked whether I was tired.`\n- `\"Has he finished?\"` → `She asked if he had finished.`\n\n`If` и `whether` — почти синонимы для yes/no вопросов. `Whether` чуть формальнее.\n\n**Что меняется:**\n\n1. **Порядок слов:** вопросительный → утвердительный.\n   - ❌ `She asked where did I live.`\n   - ✅ `She asked where I lived.`\n\n2. **Вспомогательный глагол `do/does/did` исчезает** (в Present и Past Simple):\n   - `\"Do you know Anna?\"` → `He asked if I knew Anna.` (не `if did I know`.)\n   - `\"Where does she work?\"` → `He asked where she worked.` (не `where did she work`.)\n\n3. **Время сдвигается (backshift):** `do → did`, `is → was`, `will → would`.\n\n4. **Местоимения и время/место:** как в reported statements.\n\n5. **Нет `?` в конце:** косвенный вопрос — это утверждение по форме.\n\n**Типичные ошибки русских учеников:**\n- ❌ `She asked where did I live.` (оставили вопросительный порядок) → ✅ `She asked where I lived.`\n- ❌ `He asked do I know her.` (оставили do) → ✅ `He asked if I knew her.`\n- ❌ `She asked me where I live?` (вопросительный знак) → ✅ `She asked me where I lived.`\n- ❌ `He asked me what is my name.` → ✅ `He asked me what my name was.`\n\n**Ask vs tell:**\n- `Ask` для вопросов: `He asked where I lived.`\n- `Tell` для утверждений/команд: `He told me to go.`\n- Не путать! ❌ `He told me where did I live.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + asked (+ object) + question word / if / whether + statement word order",
+        "ru": "подлежащее + asked (+ объект) + вопросительное слово / if / whether + утвердительный порядок слов"
       },
       "examples": [
         {
           "en": "She asked where I lived.",
-          "ru": "Она спросила, где я живу."
+          "ru": "Она спросила, где я живу.",
+          "note": {
+            "en": "wh-question",
+            "ru": "вопрос со словом"
+          }
         },
         {
           "en": "He asked if I spoke English.",
-          "ru": "Он спросил, говорю ли я по-английски."
+          "ru": "Он спросил, говорю ли я по-английски.",
+          "note": {
+            "en": "yes/no with if",
+            "ru": "yes/no с if"
+          }
         },
         {
           "en": "The teacher asked what my name was.",
@@ -44,7 +54,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She asked whether he had arrived.",
-          "ru": "Она спросила, приехал ли он."
+          "ru": "Она спросила, приехал ли он.",
+          "note": {
+            "en": "yes/no with whether",
+            "ru": "yes/no с whether"
+          }
         },
         {
           "en": "He asked me why I was crying.",
@@ -54,30 +68,68 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В косвенном вопросе — утвердительный порядок слов. He asked where I lived, NOT where did I live."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She asked where did I live.",
+          "right": "She asked where I lived.",
+          "why": {
+            "en": "A reported question uses statement word order — drop the auxiliary and do not invert.",
+            "ru": "В косвенном вопросе утвердительный порядок слов — без вспомогательного глагола и без инверсии."
+          }
+        },
+        {
+          "wrong": "He asked do I know her.",
+          "right": "He asked if I knew her.",
+          "why": {
+            "en": "Yes/no questions need if or whether, and do/does/did is dropped.",
+            "ru": "Yes/no вопросы вводятся через if или whether, а do/does/did опускается."
+          }
+        },
+        {
+          "wrong": "She asked me where I lived?",
+          "right": "She asked me where I lived.",
+          "why": {
+            "en": "An indirect question is a statement in form, so it ends with a full stop, not a question mark.",
+            "ru": "Косвенный вопрос по форме утверждение, поэтому в конце точка, а не вопросительный знак."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, reported questions add the **if/whether contrast**, the use of indirect questions for **politeness**, and a wider set of reporting verbs.\n\n**If vs whether:** Both introduce a yes/no question, but **whether** is preferred before *or not* (*whether or not I was coming*), before a *to*-infinitive (*whether to stay*), after a preposition (*about whether to accept*), at the start of a clause, and in formal writing. **If** is more common in everyday speech.\n\n**Indirect questions for politeness:** Embedding a question in an introductory phrase softens it. \"Where is the station?\" becomes *Could you tell me where the station is?* Common openers: *Could you tell me…*, *Do you know…*, *Do you happen to know…*, *I was wondering…*, *Would you mind telling me…*\n\nCrucially, these polite questions still use **statement word order**, and because the main verb is present, there is **no backshift** inside them: *Do you know what time it is?* (not *what time is it?*).\n\n**Backshift with a past reporting verb** still applies normally: \"Have you seen him?\" becomes *She asked if I had seen him.* Modals shift too: can becomes could, will becomes would, may becomes might, must becomes had to (but could, should, might, ought to stay).\n\n**Reporting verbs beyond ask:** *inquire* (formal), *wonder*, *want to know*, *question*. With *inquire/wonder/want to know* there is usually no direct object.",
         "ru": "На B2 reported questions включает **нюансы if vs whether**, **косвенные вопросы как вежливость** и **сложные структуры**.\n\n**1. If vs whether — разница:**\n\nОба вводят yes/no вопрос в косвенной речи, но не всегда взаимозаменяемы.\n\n**Whether предпочтителен:**\n- Перед `or not`: `She asked whether or not I was coming.` / `She asked whether I was coming or not.`\n- Перед инфинитивом: `I don't know whether to stay.` (❌ `if to stay`.)\n- После предлога: `We talked about whether to accept the offer.` (❌ `about if`.)\n- В начале предложения: `Whether he comes or not, we'll go.` (❌ `If he comes or not, we'll go` — возможно, но менее формально.)\n- В формальном письме: `whether` звучит образованнее.\n\n**If предпочтителен:**\n- В разговорной речи: `She asked if I was okay.`\n- После ask, wonder, know в коротких предложениях.\n\n**2. Indirect questions as politeness — вежливые вопросы:**\nКосвенная форма смягчает вопрос, делает его вежливее. Используется с вводными фразами:\n\n| Прямой | Косвенный (вежливый) |\n|---|---|\n| Where is the station? | Could you tell me where the station is? |\n| What time is it? | Do you know what time it is? |\n| Does the shop open at 9? | Could you tell me if the shop opens at 9? |\n| Is this the right way? | I was wondering if this is the right way. |\n\nВводные фразы:\n- `Could you tell me...`\n- `Do you know...`\n- `Do you happen to know...`\n- `I was wondering...`\n- `I'd like to know...`\n- `Would you mind telling me...`\n\n**ВАЖНО:** в таких вопросах **нет backshift**, потому что главный глагол в Present. Но **порядок слов утвердительный**:\n- ❌ `Could you tell me where is the station?`\n- ✅ `Could you tell me where the station is?`\n- ❌ `Do you know what time is it?`\n- ✅ `Do you know what time it is?`\n\n**3. Backshift в reported questions:**\nКогда reporting verb в прошлом, применяется обычный backshift:\n- `\"Where do you live?\"` → `He asked where I lived.`\n- `\"Have you seen him?\"` → `She asked if I had seen him.`\n- `\"Will you help?\"` → `He asked if I would help.`\n- `\"Can you swim?\"` → `She asked if I could swim.`\n\n**4. Модальные глаголы:**\n- `can → could`, `will → would`, `may → might`, `must → had to`\n- `should, could, might, ought to` — не меняются.\n\n**5. Reporting verbs для вопросов:**\nНе только `ask`:\n- `inquire` (формально): `She inquired whether the room was available.`\n- `wonder`: `I wondered if he was telling the truth.`\n- `want to know`: `He wanted to know where I had been.`\n- `question` (допрашивать): `The police questioned him about where he had been.`\n\n**6. Ask + object:**\n`Ask` может брать прямой объект (кого спросили) или обходиться без него:\n- `He asked me where I lived.` (кого — me.)\n- `He asked where I lived.` (кого — не указано.)\n- С `inquire/wonder/want to know` обычно без прямого объекта.\n\n**7. Типичные B2 ошибки:**\n- ❌ `Could you tell me what time is it?` → ✅ `Could you tell me what time it is?`\n- ❌ `I was wondering if do you have a pen.` → ✅ `I was wondering if you have a pen.`\n- ❌ `She asked me whether or if I was hungry.` (смешение) → ✅ `She asked me whether I was hungry.`\n- ❌ Двойное отрицание: `He asked if I didn't know nothing.` → ✅ `He asked if I didn't know anything.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Could you tell me / Do you know / I wonder + question word / if / whether + statement word order",
+        "ru": "Could you tell me / Do you know / I wonder + вопросительное слово / if / whether + утвердительный порядок слов"
       },
       "examples": [
         {
           "en": "Could you tell me where the nearest pharmacy is?",
-          "ru": "Не могли бы вы сказать, где ближайшая аптека?"
+          "ru": "Не могли бы вы сказать, где ближайшая аптека?",
+          "note": {
+            "en": "polite, no backshift",
+            "ru": "вежливо, без backshift"
+          }
         },
         {
           "en": "I wonder whether she'll accept the offer or not.",
-          "ru": "Интересно, примет ли она предложение или нет."
+          "ru": "Интересно, примет ли она предложение или нет.",
+          "note": {
+            "en": "whether + or not",
+            "ru": "whether + or not"
+          }
         },
         {
           "en": "The interviewer asked whether I had worked abroad.",
-          "ru": "Интервьюер спросил, работал ли я за границей."
+          "ru": "Интервьюер спросил, работал ли я за границей.",
+          "note": {
+            "en": "past backshift",
+            "ru": "backshift в прошлое"
+          }
         },
         {
           "en": "Do you happen to know if the library is open on Sundays?",
@@ -91,22 +143,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Whether предпочтительнее перед 'or not' и инфинитивом; if — в разговорной речи. Порядок слов всегда утвердительный."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Could you tell me what time is it?",
+          "right": "Could you tell me what time it is?",
+          "why": {
+            "en": "Embedded questions keep statement word order even when the opener is a question.",
+            "ru": "Встроенный вопрос сохраняет утвердительный порядок слов, даже если вводная часть — вопрос."
+          }
+        },
+        {
+          "wrong": "I was wondering if do you have a pen.",
+          "right": "I was wondering if you have a pen.",
+          "why": {
+            "en": "After if/whether the clause is a statement — no inversion and no do-support.",
+            "ru": "После if/whether идёт утвердительная часть — без инверсии и без do."
+          }
+        },
+        {
+          "wrong": "She asked whether or if I was hungry.",
+          "right": "She asked whether I was hungry.",
+          "why": {
+            "en": "Use whether or if, not both — they are alternatives, not a pair.",
+            "ru": "Используйте whether или if, но не оба сразу — это альтернативы, а не пара."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, reported questions become a tool of **pragmatics** — managing politeness and social distance — and of **complex syntax**.\n\n**Politeness scale:** The longer and more indirect the form, the more polite it sounds. *Where's the bathroom?* → *Do you know where the bathroom is?* → *Could you tell me where the bathroom is?* → *Would you mind telling me where the bathroom is?* → *I was wondering if you could tell me where the bathroom is.* Past-tense modals add distance: *I was wondering…* is more courteous than *I wonder…*, and *Could you…* outranks *Can you…*.\n\n**Embedded questions in complex sentences:** Indirect questions slot into longer structures while always keeping statement order — *The question of whether the proposal is viable remains open*; *What we need to determine is whether this approach will scale*; *He refused to explain why he had made that decision.*\n\n**Deeper backshift:** When the original question concerned an even earlier time, use the past perfect — *She asked where I had been the previous evening.*\n\n**Questions inside questions** can stack — *I don't know if she asked him where we were going* — and each layer keeps its own word order (statement for every embedded clause).\n\n**Formal and academic frames:** *The question arises as to whether…*, *It remains to be seen whether…*, *Doubts have been raised regarding whether…*\n\n**Negative embedded questions** put the negation in the subordinate clause, not the opener: *I wonder why he didn't come.* For Russian speakers the main C1 challenge is producing the long, courteous English forms, since Russian achieves the same politeness much more briefly.",
         "ru": "На C1 reported questions становится инструментом **прагматики** (управления вежливостью и социальной дистанцией) и **сложного синтаксиса**.\n\n**1. Politeness scale — градация вежливости:**\n\n| Уровень | Форма | Пример |\n|---|---|---|\n| Прямой | Direct question | Where's the bathroom? |\n| Мягче | Embedded question | Do you know where the bathroom is? |\n| Вежливо | Could you tell me... | Could you tell me where the bathroom is? |\n| Очень вежливо | Would you mind... | Would you mind telling me where the bathroom is? |\n| Сверх-вежливо | I was wondering if... | I was wondering if you could tell me where the bathroom is. |\n\nЧем длиннее и косвеннее — тем вежливее. В деловой переписке и официальных ситуациях используем длинные формы.\n\n**2. Модальные глаголы прошедшего времени для дистанции:**\n- `I wonder if...` → `I was wondering if...` (past continuous добавляет учтивости.)\n- `Could you...` вместо `Can you...` (past modal = вежливее.)\n- `Would you mind if...` — past modal + subjunctive.\n- `I hoped you might...` — double past для максимальной дистанции.\n\n**3. Embedded questions in complex sentences:**\nКосвенные вопросы вставляются в длинные предложения:\n- `The question of whether the proposal is viable remains open.`\n- `What we need to determine is whether this approach will scale.`\n- `He refused to explain why he had made that decision.`\n\nОбрати внимание: порядок слов всегда утвердительный, даже внутри подчинённой конструкции.\n\n**4. Reporting questions from the past into the past perfect:**\nКогда repored question был ещё глубже в прошлом:\n- `She asked where I had been the previous evening.` (Тогдашний вопрос о ещё более раннем времени.)\n- `He wanted to know whether I had already completed the assignment.`\n\n**5. Questions inside questions:**\n- `Can you ask her whether she's coming?` — команда передать вопрос.\n- `Did he ask why I was late?` — вопрос о вопросе.\n- `I don't know if she asked him where we were going.` — тройная вложенность.\n\nПри вложенности каждый уровень сохраняет свой порядок слов (утвердительный для косвенного, вопросительный для прямого в главном).\n\n**6. Формальные и академические формы:**\n- `The question arises as to whether...` (возникает вопрос, следует ли...)\n- `It remains to be seen whether...` (ещё предстоит увидеть, будет ли...)\n- `Doubts have been raised regarding whether...` (возникли сомнения относительно того, ...)\n- `The central issue is whether...` (центральный вопрос — ...)\n\n**7. Negative embedded questions:**\n- `I wonder why he didn't come.` (Интересно, почему он не пришёл.)\n- `She asked whether I hadn't seen the notice.` (Она спросила, не видел ли я объявления.)\n- `Could you tell me why the parcel hasn't arrived?`\n\nОтрицание встраивается в подчинённую часть, не в главную.\n\n**8. Tag questions перекликаются с косвенными вопросами:**\n- Direct: `You know where it is, don't you?`\n- Indirect: `I suppose you know where it is.`\n- Polite: `I don't suppose you'd know where it is, would you?`\n\n**9. Suggested answers в embedded questions:**\n- `Do you know if he's coming or not?` — нейтральный.\n- `Do you know whether he's coming?` — чуть формальнее, подчёркивает альтернативу.\n- `I don't suppose you know if he's coming?` — с суггестией «наверное, нет».\n\n**10. Russian contrastive:**\nРусский строит косвенный вопрос просто: «Он спросил, где я живу» — тот же порядок слов, что в утверждении, частица `ли` для yes/no вопроса. Английский требует **явного сдвига в утвердительный порядок** и использования if/whether вместо `ли`. Но принцип очень похож: без вопросительного знака, без инверсии.\n\nОсновная трудность для русскоязычных на C1 — **длинные вежливые формулировки**. В русском «Не подскажете, где метро?» уже вежливо. В английском для той же учтивости нужна развёрнутая конструкция: `Could you tell me where the underground station is?` — и порядок слов в конце утвердительный.\n\n**11. Common C1 refinements:**\n- Выбор правильной длины вежливой формы в зависимости от контекста.\n- Избегание избыточности: `I was wondering if you could tell me whether...` — тройная косвенность, может звучать натянуто.\n- Управление длинными embedded questions с сохранением порядка слов во всей цепочке."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "I was wondering if / Would you mind + -ing + question word / whether + past-modal statement clause",
+        "ru": "I was wondering if / Would you mind + -ing + вопросительное слово / whether + утвердительная часть с модальным в прошедшем"
       },
       "examples": [
         {
           "en": "I was wondering whether you might be free for coffee sometime next week.",
-          "ru": "Мне было интересно, не будете ли вы свободны для кофе как-нибудь на следующей неделе."
+          "ru": "Мне было интересно, не будете ли вы свободны для кофе как-нибудь на следующей неделе.",
+          "note": {
+            "en": "very polite",
+            "ru": "очень вежливо"
+          }
         },
         {
           "en": "Could you possibly let me know whether the contract has been finalised?",
@@ -114,7 +196,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The committee enquired as to whether alternative solutions had been considered.",
-          "ru": "Комитет поинтересовался, рассматривались ли альтернативные решения."
+          "ru": "Комитет поинтересовался, рассматривались ли альтернативные решения.",
+          "note": {
+            "en": "formal, enquire",
+            "ru": "формально, enquire"
+          }
         },
         {
           "en": "She refused to say why she had withdrawn her application.",
@@ -122,32 +208,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The question of whether the data support such a conclusion remains under debate.",
-          "ru": "Вопрос о том, поддерживают ли данные такой вывод, остаётся предметом обсуждения."
+          "ru": "Вопрос о том, поддерживают ли данные такой вывод, остаётся предметом обсуждения.",
+          "note": {
+            "en": "academic frame",
+            "ru": "академическая рамка"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Чем длиннее и косвеннее embedded question — тем вежливее. Но не переусердствуй: тройная косвенность звучит натянуто."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I was wondering if could you help me.",
+          "right": "I was wondering if you could help me.",
+          "why": {
+            "en": "Even the most polite frame keeps statement order in the embedded clause — subject before the modal.",
+            "ru": "Даже самая вежливая форма сохраняет утвердительный порядок во встроенной части — подлежащее перед модальным."
+          }
+        },
+        {
+          "wrong": "She asked where had I been the previous evening.",
+          "right": "She asked where I had been the previous evening.",
+          "why": {
+            "en": "Past-perfect backshift still requires statement order: subject before the auxiliary.",
+            "ru": "Backshift в past perfect всё равно требует утвердительного порядка: подлежащее перед вспомогательным."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, reported (embedded) questions are a precise instrument of **academic caution, legal formality, and rhetorical strategy**.\n\n**Rhetorical embedded questions** invite reflection rather than request information: *One might ask whether such a policy can truly succeed*; *Whether the strategy will pay off remains to be seen.*\n\n**Long embedded chains** demand sequence clarity — several indirect questions in a row, all backshifted, all in statement order, without mixing tenses: *She wanted to know how he had discovered where I had been staying and why I had not informed her earlier.*\n\n**Academic hedging:** *It is not yet clear whether the correlation indicates causation*; *Further research is needed to determine whether the effect persists.*\n\n**Legal and contractual frames** prize embedded questions for neutrality: *The court must decide whether the defendant acted in good faith*; *The contract specifies who shall be responsible for delivery.*\n\n**Journalistic neutrality:** *The minister refused to say whether she would resign* poses a question without answering it.\n\n**Elliptical and free indirect forms** appear in literary and editorial prose: *Whether to stay or go, that was the question*; thoughts rendered as *Why had she come back? Was it really over?* read as a character's mind in past narration.\n\n**Fine distinctions** between *how* (manner), *whether* (alternative, allows *or not*), *if* (colloquial), and *what* (object) are chosen deliberately. Note that *whether* — not *if* — precedes a *to*-infinitive: *He asked whether to go*, never *if to go*. At this level the embedded question is a strategic authorial choice about how to present doubt, possibility, or a request.",
         "ru": "На C2 reported questions — **точный инструмент академической осторожности, юридической формальности и риторической стратегии**.\n\n**1. Rhetorical embedded questions:**\nКосвенные вопросы в риторике — не запрос информации, а **приглашение подумать**:\n- `One might ask whether such a policy can truly succeed.` (Можно задаться вопросом, может ли такая политика действительно быть успешной.)\n- `The real issue is not whether we can afford this, but whether we can afford not to.`\n- `Whether the strategy will pay off remains to be seen.`\n\n**2. Long embedded chains — sequence clarity:**\nC2 мастерство — поддерживать ясность в длинных цепях косвенных вопросов:\n- `She wanted to know how he had discovered where I had been staying and why I had not informed her earlier.`\n\nНесколько косвенных вопросов в ряд, все с backshift, все с утвердительным порядком. Ключ — **не смешивать времена** и **держать логику дейктических сдвигов**.\n\n**3. Academic hedging through embedded questions:**\nАкадемическое письмо использует embedded questions для выражения **методологической осторожности**:\n- `It is not yet clear whether the correlation indicates causation.`\n- `The question remains whether these results can be replicated.`\n- `Further research is needed to determine whether the effect persists over time.`\n- `Whether X causes Y is an empirical question that cannot be settled a priori.`\n\n**4. Legal and contractual formulations:**\nПравовые тексты любят embedded questions за точность и нейтральность:\n- `The court must decide whether the defendant acted in good faith.`\n- `The contract specifies who shall be responsible for delivery.`\n- `It is a matter of dispute whether the clause applies to subsidiaries.`\n- `The panel shall consider whether the conditions have been met.`\n\n**5. Indirect questions in journalism:**\nЖурналисты используют embedded questions, чтобы задать вопрос, не формулируя его напрямую:\n- `The minister refused to say whether she would resign.` (Вопрос задан, но министр не ответил.)\n- `Analysts are debating whether the deal will survive antitrust review.`\n- `Nobody knows for certain why the president chose that moment.`\n\n**6. Elliptical embedded questions:**\nВ разговорной и публицистической речи часто опускают элементы:\n- `Whether to stay or go, that was the question.` (без главного глагола.)\n- `The question: whether to invest now.` (тире + embedded.)\n- `Why now? Why him? Whether it was coincidence, nobody could say.`\n\n**7. Embedded questions with subjunctive:**\nВ очень формальной речи после некоторых глаголов возможен subjunctive:\n- `The question arose whether the committee be reconstituted.` (формально, редко.)\n- `She was asked whether she would be willing to serve.`\n\n**8. Reporting questions about future from past perspective:**\n- `He wanted to know whether I would be attending the conference.` (future-in-the-past.)\n- `She asked whether they were going to sign the agreement.` (going to → were going to.)\n- `The board enquired whether the deadline could be extended.` (modal shift.)\n\n**9. Distinctions between how, whether, and if in complex embedded clauses:**\n- `He asked how it was possible.` — способ, механизм.\n- `He asked whether it was possible.` — возможность как альтернатива.\n- `He asked if it was possible.` — то же, что whether, но разговорнее.\n- `He asked what was possible.` — объект возможности.\n\nНа C2 ты чувствуешь эти нюансы и выбираешь осознанно.\n\n**10. Free indirect questions in literature:**\nМастера прозы передают мысли героев через embedded questions без явного `he asked/wondered`:\n- `Why had she come back? Was it really over? These questions pressed at him from every side.` — первое предложение формально direct question, но в контексте прошедшего нарратива читается как мысль героя.\n\n**11. Russian contrastive — fine points:**\nРусский частица `ли` делает любое предложение косвенным вопросом: «Не знаю, пришёл ли он». Английский требует выбора между `whether` (формальнее, допускает `or not`) и `if` (разговорнее). Тонкость: `He asked whether or not to go` vs `He asked if to go` — второе звучит неестественно. Выбор зависит от жёсткости альтернативы.\n\nРусское «интересно, а не...» часто переводится через `I wonder whether perhaps...` или `I was wondering if maybe...` — с добавлением perhaps/maybe для передачи модального оттенка.\n\n**12. Pragmatic mastery:**\nНа C2 ты используешь embedded questions для:\n- **Вежливости:** `Would you mind letting me know whether...`\n- **Академической осторожности:** `It remains unclear whether...`\n- **Юридической точности:** `The question is whether the clause applies.`\n- **Риторики:** `One might ask whether we have truly achieved progress.`\n- **Литературной экономии:** `She wondered why, even now, the thought pained her.`\n- **Журналистского нейтралитета:** `Whether the allegations will lead to charges is unclear.`\n\nКосвенный вопрос — не просто грамматическая трансформация, а **стратегическое решение автора** о том, как представить сомнение, возможность, запрос."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Whether + clause / It remains unclear whether + clause / The court must decide whether + clause",
+        "ru": "Whether + придаточное / It remains unclear whether + придаточное / The court must decide whether + придаточное"
       },
       "examples": [
         {
           "en": "Whether the reforms will ultimately succeed remains a matter of considerable debate.",
-          "ru": "Будут ли реформы в конечном счёте успешными — остаётся предметом серьёзной дискуссии."
+          "ru": "Будут ли реформы в конечном счёте успешными — остаётся предметом серьёзной дискуссии.",
+          "note": {
+            "en": "fronted whether-clause",
+            "ru": "whether-придаточное в начале"
+          }
         },
         {
           "en": "The tribunal shall determine whether the evidence supports the claimant's allegations.",
-          "ru": "Трибунал определит, подтверждают ли доказательства утверждения истца."
+          "ru": "Трибунал определит, подтверждают ли доказательства утверждения истца.",
+          "note": {
+            "en": "legal frame",
+            "ru": "юридическая рамка"
+          }
         },
         {
           "en": "He enquired, with that carefully measured politeness of his, whether he might trouble me for a moment.",
@@ -159,15 +275,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She found herself wondering, not for the first time, why she had agreed to any of this.",
-          "ru": "Она поймала себя на мысли, не в первый раз, почему она на всё это согласилась."
+          "ru": "Она поймала себя на мысли, не в первый раз, почему она на всё это согласилась.",
+          "note": {
+            "en": "free indirect thought",
+            "ru": "несобственно-прямая мысль"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Whether в формальных, юридических, академических текстах; if — в разговорной речи. В риторике embedded questions приглашают подумать, а не отвечать."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He asked if to go or not.",
+          "right": "He asked whether to go or not.",
+          "why": {
+            "en": "Before a to-infinitive and before or not, use whether, not if.",
+            "ru": "Перед to-инфинитивом и перед or not используется whether, а не if."
+          }
+        },
+        {
+          "wrong": "The court must decide whether did the defendant act in good faith.",
+          "right": "The court must decide whether the defendant acted in good faith.",
+          "why": {
+            "en": "Even in formal legal prose the embedded clause is a statement — no do-support, no inversion.",
+            "ru": "Даже в формальном юридическом тексте встроенная часть — утверждение: без do и без инверсии."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "indirect-questions",
+    "reported-statements",
+    "reported-commands",
+    "backshift-of-tenses"
+  ],
+  "crossTopic": [
+    "wh-questions",
+    "yes-no-questions",
+    "question-words",
+    "noun-clauses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Direct question",
+      "Reported question"
+    ]
+  }
 };

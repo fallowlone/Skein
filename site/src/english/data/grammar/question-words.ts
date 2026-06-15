@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "question-words",
   "title": {
-    "en": "",
+    "en": "Question Words",
     "ru": "Question Words"
   },
   "cefr": "A1",
@@ -17,24 +17,33 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "questions",
+  "egp": [
+    "EGP:wh-questions-what-who-where-when-why-how",
+    "EGP:how-much-how-many",
+    "EGP:which-vs-what",
+    "EGP:question-word-plus-infinitive"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "Question words open an information question - one that cannot be answered with just yes or no. English has a small core set, and almost all of them begin with 'wh': what (a thing), who (a person), where (a place), when (a time), why (a reason), and how (a manner or condition). Learn these six first; they carry most everyday conversation.\n\nThe basic order is: question word + be/auxiliary + subject. With the verb 'be', the verb jumps in front of the subject: 'What is this?', 'Where are you?', 'Who is she?'. This inversion is the part that feels strange at first, because the subject and verb swap places compared with a statement.\n\nKeep two pairs apart. Use 'who' for people ('Who is your teacher?') and 'what' for things and jobs ('What is your job?'). And remember that English asks 'What is your name?' (literally 'what', not 'how'), and 'How old are you?' to ask someone's age - never 'how many years'. Master five or six set questions - name, origin, age, job, home - and you can already hold a simple first conversation.",
         "ru": "**Question words** (вопросительные слова) — это главные слова для открытых вопросов в английском. Их немного — выучи базовые и тренируй.\n\n**Шесть главных:**\n- `what` — что, какой: `What is this?` (Что это?)\n- `who` — кто: `Who is she?` (Кто она?)\n- `where` — где, куда: `Where are you?` (Где ты?)\n- `when` — когда: `When is the party?` (Когда вечеринка?)\n- `why` — почему: `Why are you sad?` (Почему ты грустный?)\n- `how` — как: `How are you?` (Как ты?)\n\n**Стандартный порядок слов:**\n`Wh-слово + глагол + подлежащее + …`\n\n- `What is your name?` (Как тебя зовут?)\n- `Where are you from?` (Откуда ты?)\n- `Who is that?` (Кто это?)\n- `How old are you?` (Сколько тебе лет?)\n\n**Типовые короткие вопросы-знакомства:**\n- `What is your name?` — «Как тебя зовут?» (не «What is your name how are called», как в русском).\n- `How old are you?` — «Сколько тебе лет?» (буквально «Как стар ты?»).\n- `Where do you live?` — «Где ты живёшь?»\n- `What do you do?` — «Чем ты занимаешься?» (о профессии).\n\n**Don't mix:**\n- `Who` — о людях: `Who is your friend?` (Кто твой друг?)\n- `What` — о предметах и профессиях: `What is your job?` (Какая у тебя работа?)\n\n**Типичные ошибки русскоговорящего:**\n- `What is your name?` переводят как «Как тебя зовут?» — в английском буквально «Что твоё имя?» (что, а не как).\n- `How are you?` — «Как ты?», но буквально «Как есть ты?» (how = как, но в приветствии смысл — «как дела?»).\n\n**Short answers:**\n- `What is this?` — `It's a book.` (Это книга.)\n- `Where are you?` — `I'm at home.` (Я дома.)\n- `Who is he?` — `He's my brother.` (Он мой брат.)\n\n**Practical A1 vocabulary:**\nНаучись задавать 5-6 базовых вопросов — они покроют 80% простых разговоров."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "question word + be/auxiliary + subject (+ rest)",
+        "ru": "вопросительное слово + be/вспомогательный глагол + подлежащее (+ остальное)"
       },
       "examples": [
         {
           "en": "What is your name?",
-          "ru": "Как тебя зовут?"
+          "ru": "Как тебя зовут?",
+          "note": {
+            "en": "asking a name",
+            "ru": "спросить имя"
+          }
         },
         {
           "en": "Where are you from?",
@@ -42,7 +51,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "How old is your sister?",
-          "ru": "Сколько лет твоей сестре?"
+          "ru": "Сколько лет твоей сестре?",
+          "note": {
+            "en": "how + old = age",
+            "ru": "how + old = возраст"
+          }
         },
         {
           "en": "Who is your English teacher?",
@@ -56,30 +69,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Что — what, кто — who, где — where, когда — when. Выучи эти четыре первыми."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "How is your name?",
+          "right": "What is your name?",
+          "why": {
+            "en": "English asks a name with 'what', not 'how'.",
+            "ru": "Имя в английском спрашивают через what, а не how."
+          }
+        },
+        {
+          "wrong": "Where you are from?",
+          "right": "Where are you from?",
+          "why": {
+            "en": "Put the verb 'be' before the subject in a question.",
+            "ru": "В вопросе глагол be ставится перед подлежащим."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2 the focus shifts to combinations built on 'how', plus the choice between 'which' and 'what'.\n\n'How' joins an adjective to ask about a measurement: 'How old...?', 'How tall...?', 'How far...?', 'How long...?', 'How big...?'. The pattern is how + adjective + be/do + subject. To ask about quantity, English splits in two: 'how much' goes with uncountable nouns (money, water, time) and 'how many' goes with countable nouns (books, people, hours). Price always takes 'how much': 'How much is it?'. 'How' also pairs with an adverb to ask about degree or frequency: 'How often...?', 'How well...?', 'How fast...?'.\n\nChoose between 'what' and 'which' by whether the options are limited. Use 'what' when the answer can be anything ('What colour do you like?') and 'which' when you are choosing from a known, fixed set ('Which colour, red or blue?'). Two more words arrive here: 'whose' asks who something belongs to ('Whose bag is this?'), and 'what kind/type of' asks about a category ('What kind of music...?'). Watch the classic slips: it is 'What time is it?' (not 'how time'), and 'How many books?' (not 'how much books').",
         "ru": "На A2 добавляем `how` в разных сочетаниях и `which`.\n\n**How + прилагательное (о характеристике):**\n- `How old are you?` (Сколько тебе лет?) — о возрасте.\n- `How tall is he?` (Какого он роста?)\n- `How far is the station?` (Как далеко вокзал?)\n- `How big is your house?` (Какой у тебя большой дом?)\n- `How long is the film?` (Какой длинный фильм? / Сколько идёт фильм?)\n- `How heavy is the bag?` (Насколько тяжёлая сумка?)\n\nФормула: `How + adjective + be/do + …`\n\n**How much / how many:**\n- `How much` — с неисчисляемыми: `How much money do you have?`, `How much water do you drink?`, `How much time do we have?`\n- `How many` — с исчисляемыми: `How many books?`, `How many people?`, `How many hours?`\n\nЦена всегда с `how much`: `How much is it?` (Сколько это стоит?)\n\n**How + adverb:**\n- `How often do you exercise?` (Как часто ты занимаешься?)\n- `How well do you speak English?` (Как хорошо ты говоришь по-английски?)\n- `How fast can you run?` (Как быстро ты бегаешь?)\n\n**Which vs what:**\n- `What` — открытый вопрос, любой вариант: `What colour do you like?` (Какой цвет тебе нравится? — любой цвет в мире).\n- `Which` — выбор из известных вариантов: `Which colour do you like, red or blue?` (Какой цвет тебе нравится — красный или синий?)\n\nКогда выбор ограничен, ставим `which`. Если нет — `what`.\n\n**Whose — чей:**\n- `Whose bag is this?` (Чья это сумка?)\n- `Whose car is parked outside?` (Чья машина припаркована снаружи?)\n- `Whose turn is it?` (Чья очередь?)\n\n**What kind / what type of:**\n- `What kind of music do you like?` (Какую музыку ты любишь?)\n- `What type of food is this?` (Какой это тип еды?)\n\n**Why vs why not:**\n- `Why are you late?` (Почему ты опаздываешь?)\n- `Why not come with us?` (Почему бы не пойти с нами?) — приглашение.\n\n**Типичные A2 ошибки:**\n- `How time is it?` — неправильно. Правильно: `What time is it?`\n- `How much books?` — неправильно. Правильно: `How many books?`\n- `Which is your favourite colour?` — ok, но более открыто `What is your favourite colour?`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "how + adjective/adverb + be/do + subject;  how much (uncountable) / how many (countable);  which (from a set) / what (open)",
+        "ru": "how + прилагательное/наречие + be/do + подлежащее;  how much (неисчисляемое) / how many (исчисляемое);  which (из набора) / what (открытый)"
       },
       "examples": [
         {
           "en": "How much does this cost?",
-          "ru": "Сколько это стоит?"
+          "ru": "Сколько это стоит?",
+          "note": {
+            "en": "how much = price",
+            "ru": "how much = цена"
+          }
         },
         {
           "en": "How many children do you have?",
-          "ru": "Сколько у тебя детей?"
+          "ru": "Сколько у тебя детей?",
+          "note": {
+            "en": "how many + countable",
+            "ru": "how many + исчисляемое"
+          }
         },
         {
           "en": "Which jacket is yours — the black one or the grey one?",
-          "ru": "Какая куртка твоя — чёрная или серая?"
+          "ru": "Какая куртка твоя — чёрная или серая?",
+          "note": {
+            "en": "which = from a set",
+            "ru": "which = из набора"
+          }
         },
         {
           "en": "Whose keys are on the table?",
@@ -93,30 +136,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "How much — для денег и неисчисляемого; how many — для исчисляемых. Which — выбор из вариантов; what — открытый."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "How much books do you have?",
+          "right": "How many books do you have?",
+          "why": {
+            "en": "Use 'how many' with countable nouns; 'how much' is for uncountables.",
+            "ru": "С исчисляемыми существительными нужен how many; how much - для неисчисляемых."
+          }
+        },
+        {
+          "wrong": "How time is it?",
+          "right": "What time is it?",
+          "why": {
+            "en": "Time of day is asked with 'what time', not 'how time'.",
+            "ru": "Время суток спрашивают через what time, а не how time."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the combinations grow longer and start interacting with tense, and a few near-synonyms must be told apart.\n\n'How long' has two senses: duration ('How long have you lived here?') and physical length ('How long is the table?'). With the present perfect it asks about something that began in the past and continues now, and the answer uses 'since' (a starting point) or 'for' (a stretch of time): 'How long have you been here?' - 'Since Monday' / 'For two days'. To pin a past moment, use 'how long ago': 'How long ago did you meet?' - 'Two years ago'.\n\nThe most important B1 distinction for many learners is 'What is she like?' versus 'How is she?'. 'What ... like?' asks about character or appearance ('She's kind and funny'), while 'How ...?' asks about a current state ('She's fine, thanks'). They are different questions with different answers. Related forms include 'What does he look like?' (describe appearance) and the spoken 'How come...?', which means 'why' but takes statement order with no auxiliary ('How come you didn't call?'). Finally, prepositions naturally land at the end of the clause: 'Who are you talking to?', 'What are you looking at?' - this is normal, not an error.",
         "ru": "На B1 расширяем сочетания `how long`, `how far`, `how come`, и добавляем временные рамки.\n\n**How long — два значения:**\n1. Продолжительность: `How long have you lived here?` (Как долго ты живёшь здесь?)\n2. Длина физически: `How long is the table?` (Какой длины стол?)\n\n**How long ago:**\n- `How long ago did you meet?` (Как давно вы познакомились?)\n- Ответ: `Two years ago.` (Два года назад.)\n- Время: момент в прошлом.\n\n**How long + Present Perfect:**\n- `How long have you been studying English?` (Как долго ты учишь английский?)\n- `How long have they lived in this house?`\n\nС Present Perfect — про действие, которое началось в прошлом и продолжается.\n\n**Since vs for:**\n- `How long have you been here?` — `Since Monday.` или `For two days.`\n- `since` — момент начала; `for` — длительность.\n\n**How come — разговорный «почему?»:**\n- `How come you didn't call?` (А почему ты не позвонил?)\n- `How come she's so late?` (А почему она так опаздывает?)\n\nПосле `how come` — **прямой** порядок слов, без `do/did`. Это особенность разговорной формы. Выражает удивление или лёгкий упрёк.\n\n**What…like vs how:**\n- `What is she like?` (Какая она? — о характере/внешности) → `She's kind and funny.`\n- `How is she?` (Как она? — о состоянии сейчас) → `She's fine, thanks.`\n\nОчень важное различие для русскоговорящих. Русское «Какая она?» — это `What is she like?`, не `How is she?`.\n\n- `What does he look like?` (Как он выглядит?) → описание внешности.\n- `How does he look?` (Как он выглядит?) → впечатление на данный момент (красив/плох). Обе формы существуют, но с разным оттенком.\n\n**What for = why:**\n- `What did you do that for?` (Зачем ты это сделал?) — разговорная альтернатива `Why did you do that?`\n- Обычно с оттенком раздражения или любопытства.\n\n**Where…from / where…to:**\n- `Where are you from?` (Откуда ты?) — происхождение.\n- `Where are you going to?` = `Where are you going?` (Куда ты идёшь?)\n\nВ современном английском `to` часто опускают в `where to`.\n\n**Prepositional questions:**\n- `Who are you talking to?` (С кем ты разговариваешь?)\n- `What are you looking at?` (На что ты смотришь?)\n- `Where does this lead to?` (Куда это ведёт?)\n\nПредлог в конце — это нормально, не ошибка.\n\n**Типичные B1 ошибки:**\n- `How come did you leave?` — неправильный порядок. Правильно: `How come you left?`\n- `What she is like?` — нужен вопросительный порядок: `What is she like?`\n- Путаница `how long` и `how long ago`: первое — продолжительность, второе — момент в прошлом."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "how long + present perfect (since / for);  how long ago + past simple;  what ... like (character) vs how (state);  How come + subject + verb (no auxiliary);  stranded preposition at the end",
+        "ru": "how long + Present Perfect (since / for);  how long ago + Past Simple;  what ... like (характер) против how (состояние);  How come + подлежащее + глагол (без вспомогательного);  предлог в конце"
       },
       "examples": [
         {
           "en": "How long have you been waiting?",
-          "ru": "Как долго ты ждёшь?"
+          "ru": "Как долго ты ждёшь?",
+          "note": {
+            "en": "how long + perfect = duration",
+            "ru": "how long + перфект = длительность"
+          }
         },
         {
           "en": "How come you're always late?",
-          "ru": "А почему ты всегда опаздываешь?"
+          "ru": "А почему ты всегда опаздываешь?",
+          "note": {
+            "en": "How come = no auxiliary",
+            "ru": "How come = без вспомогательного"
+          }
         },
         {
           "en": "What is your new colleague like?",
-          "ru": "Какой твой новый коллега?"
+          "ru": "Какой твой новый коллега?",
+          "note": {
+            "en": "what ... like = character",
+            "ru": "what ... like = характер"
+          }
         },
         {
           "en": "Where did she go to university?",
@@ -130,17 +203,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "What is she LIKE — о характере; how is she — о состоянии. Разные вопросы, разные ответы."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "How come did you leave?",
+          "right": "How come you left?",
+          "why": {
+            "en": "After 'how come' use statement order with no auxiliary do/did.",
+            "ru": "После how come - прямой порядок без вспомогательного do/did."
+          }
+        },
+        {
+          "wrong": "How is your new colleague?",
+          "right": "What is your new colleague like?",
+          "why": {
+            "en": "To ask about someone's character or personality, use 'What ... like?', not 'How?'.",
+            "ru": "О характере и личности спрашивают What ... like?, а не How?."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 question words feed a set of idiomatic, high-frequency frames that go well beyond literal information-seeking.\n\nIntensifiers express surprise or irritation: 'What on earth are you doing?', 'Why on earth did you agree?', 'Who on earth told you that?' (rougher variants: 'what the hell', and the AmE 'what in the world'). Suggestion and topic-shift frames are everyday tools: 'How about dinner?' and 'How about we leave early?' propose something; 'What about John?' shifts to a new subject; 'What if it rains?' raises a hypothetical. Note the grammar trap: 'How about' takes a gerund or a clause - 'How about leaving?' or 'How about we leave?', never 'How about to leave'.\n\nA few fixed expressions drop the auxiliary entirely: 'How dare you say that!' is a frozen formula of outrage. For clarification, attach 'exactly': 'When exactly...?', 'Where exactly...?', 'Who exactly...?'. To ask for elaboration after someone's claim, use the short replies 'How so?' and 'Why so?'. Finally, the -ever forms (whatever, whoever, whichever, wherever, whenever, however) are no longer questions - they introduce statements and free relative clauses: 'Take whichever you prefer', 'Whoever did this will regret it'. Register also becomes a choice: 'How come?' (informal), 'Why?' (neutral), 'For what reason?' (formal).",
         "ru": "На B2 добавляем **идиоматические question forms** и расширенные конструкции.\n\n**How come — распознавание:**\nУже описано на B1. На B2 — свободно используй в разговорном английском.\n\n**What on earth / why on earth:**\nЭто усилители, выражающие удивление, раздражение или недоумение.\n- `What on earth are you doing?` (Что ты вообще делаешь?)\n- `Why on earth did you agree?` (С какой это стати ты согласился?)\n- `Who on earth told you that?` (Кто вообще тебе это сказал?)\n\nАльтернативы: `what the hell` (более грубо), `what in the world` (американский вариант).\n\n**How about / what about:**\n- `How about dinner?` (Как насчёт ужина?) — предложение.\n- `What about John? Is he coming?` (А что насчёт Джона? Он идёт?) — переход к новой теме.\n- `How about we leave early?` (Может, уйдём пораньше?) — предложение с глаголом.\n\n**What if:**\n- `What if it rains?` (Что если пойдёт дождь?)\n- `What if we tried a different approach?` (А что если мы попробуем другой подход?) — предложение.\n\n**What for / what's that for:**\n- `What is this for?` (Для чего это?) — функция предмета.\n- `What did you go for?` — Зачем ты пошёл?\n\n**How dare:**\n- `How dare you say that!` (Как ты смеешь такое говорить!) — возмущение.\n- Устоявшаяся формула, не нужен `do`.\n\n**When exactly / where exactly / who exactly:**\nДля уточнения:\n- `When exactly did this happen?`\n- `Where exactly are you?`\n- `Who exactly told you?`\n\n**How so? Why so?**\n- `How so?` (Почему?/Каким образом?) — реакция на утверждение.\n- `Why so?` (Почему?) — аналогично.\n\nИспользуются, чтобы попросить развёрнутое объяснение после утверждения собеседника.\n\n**Anywhere, anyhow, etc. в вопросах:**\n- `Do you go anywhere for holidays?`\n- `Have you heard anything?`\n- В отрицании: `Nothing`, `nobody`, `nowhere`.\n\n**Compound question-words:**\n- `whatever` (всё что угодно, без разницы): `Whatever you want.`\n- `whoever` (кто угодно): `Whoever did this will regret it.`\n- `whichever` (какой бы ни): `Take whichever you prefer.`\n- `wherever` (где угодно): `Go wherever you want.`\n- `whenever` (когда угодно): `Come whenever you like.`\n- `however` (как угодно): `Do it however you wish.`\n\nЭти формы — свободные относительные предложения; функционально они вводят утверждения, не вопросы.\n\n**Stylistic register:**\n- `How come?` — разговорное.\n- `Why?` — нейтральное.\n- `For what reason?` — формальное.\n- `Pray tell, why?` — архаично-ироничное.\n\n**Типичные B2 ошибки:**\n- `Why come…?` — неправильно. Правильно: `How come…?`\n- `How about to leave?` — неправильно. Правильно: `How about leaving?` (герундий) или `How about we leave?`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "what/why/who + on earth (emphasis);  How about + gerund / clause;  What about + noun;  What if + clause;  How dare + subject (no auxiliary);  -ever forms = free relatives, not questions",
+        "ru": "what/why/who + on earth (усиление);  How about + герундий / клауза;  What about + существительное;  What if + клауза;  How dare + подлежащее (без вспомогательного);  -ever формы = свободные относительные, не вопросы"
       },
       "examples": [
         {
@@ -149,15 +240,27 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "What on earth were you thinking?",
-          "ru": "О чём ты вообще думал?"
+          "ru": "О чём ты вообще думал?",
+          "note": {
+            "en": "on earth = emphasis",
+            "ru": "on earth = усиление"
+          }
         },
         {
           "en": "How about meeting for lunch tomorrow?",
-          "ru": "Как насчёт встречи за обедом завтра?"
+          "ru": "Как насчёт встречи за обедом завтра?",
+          "note": {
+            "en": "How about + gerund",
+            "ru": "How about + герундий"
+          }
         },
         {
           "en": "Take whichever seat you prefer.",
-          "ru": "Бери любое место, какое тебе больше нравится."
+          "ru": "Бери любое место, какое тебе больше нравится.",
+          "note": {
+            "en": "whichever = free relative",
+            "ru": "whichever = свободное относительное"
+          }
         },
         {
           "en": "What if we postponed the trip?",
@@ -167,26 +270,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "How about + герундий (How about going?) или how about + подлежащее + глагол (How about we go?). Не «how about to go»."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "How about to leave early?",
+          "right": "How about leaving early?",
+          "why": {
+            "en": "'How about' takes a gerund or a clause, never a to-infinitive.",
+            "ru": "После How about идёт герундий или клауза, но не инфинитив с to."
+          }
+        },
+        {
+          "wrong": "Why come they haven't arrived?",
+          "right": "How come they haven't arrived?",
+          "why": {
+            "en": "The idiomatic 'why' form is 'how come', not 'why come'.",
+            "ru": "Идиоматическая форма для why - это how come, а не why come."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, question words become an instrument of discourse, rhetoric, and style rather than mere information requests.\n\nEmbedded in larger structures, a question word behaves like an ordinary clause element: 'The question of why she left remains unanswered', 'How exactly the accident occurred is still unclear'. With an infinitive it forms compact reported intentions: 'He doesn't know what to do', 'She wondered where to go next' - but this pattern excludes 'why' ('why he should go', not 'why to go'). The wh-cleft shifts emphasis to whatever follows the verb: 'What I value most is honesty', 'What matters is the outcome'; effective for stress, but formulaic if overused.\n\nIn essays and articles, question words drive rhetorical moves and titles: 'Why do we assume that...?', 'What, if anything, distinguishes X from Y?', 'What Makes Us Human?'. Free relatives with -ever build concessive or generalising links ('Whatever you decide, I'll support you'; 'However we try, it fails'), with 'no matter' as the neutral equivalent. Register is now a deliberate dial: 'For what purpose...?', 'To what end...?', 'By what right...?', 'Under what conditions...?' each signal a formal, often academic or legal frame. The C1 skill is choosing precisely: 'Why did she do that?' and 'What made her do that?' probe different things - one a reason, the other an agent or cause.",
         "ru": "На C1 question words работают в **эссеистике, дискурсе, стилистике**.\n\n**Эллиптические вопросы:**\nВ разговорной речи и диалогах часто опускают подлежащее и глагол.\n- `Why not?` (Почему нет?)\n- `What for?` (Зачем?)\n- `Where to?` (Куда?)\n- `When again?` (Когда, говоришь?)\n- `How so?` (Как так?)\n\nЭто нормально в разговоре, недопустимо в формальном письме.\n\n**Rhetorical question words in essays:**\n- `Why do we assume that…?` — введение критики.\n- `How is it that we continue to…?` — публицистическое.\n- `What, if anything, distinguishes X from Y?` — аналитический приём.\n- `Who, then, is to blame?` — драматизация.\n\nЭти формы — риторические ходы, которые открывают абзац или раздел.\n\n**Embedded question words:**\nВ индиректных вопросах question word ведёт себя как нормальный член предложения.\n- `The question of why she left remains unanswered.` (Вопрос, почему она ушла, остаётся без ответа.)\n- `How exactly the accident occurred is still unclear.` (Как именно произошёл инцидент, всё ещё неясно.)\n- `What the committee intends to do is a matter of speculation.`\n\n**Question word + infinitive:**\n- `He doesn't know what to do.`\n- `She wondered where to go next.`\n- `We were taught how to solve this.`\n\nНе работает с `why`: не `why to do`, а `why he should do`.\n\n**Free relatives (`whatever`, etc.):**\n- `Whatever you decide, I'll support you.` (Что бы ты ни решил, я тебя поддержу.)\n- `Wherever he went, trouble followed.`\n- `Whenever I need help, she's there.`\n- `However we try, it fails.`\n\nЭти формы вводят уступительные или обобщающие конструкции. В эссе используются как изящные связки.\n\n**Wh-cleft:**\n- `What I value most is honesty.` (То, что я ценю больше всего, — это честность.)\n- `What matters is the outcome.`\n- `How she did it remains a mystery.`\n- `Where we went wrong is obvious now.`\n\nWh-cleft сдвигает акцент — используется для эмфазы. Эффективный, но при избытке звучит шаблонно.\n\n**Высокорегистровые:**\n- `By what right…?` — юридическое.\n- `To what end…?` — философское.\n- `In whose name…?` — ритуально-риторическое.\n- `For what purpose…?` — формальное.\n- `Under what conditions…?` — академическое.\n\n**Pseudo-questions as titles:**\nВ эссе и статьях заголовок часто — вопрос:\n- `What Makes Us Human?`\n- `Why Cities Work`\n- `How Language Shapes Thought`\n\nЭто привлекает читателя и структурирует текст.\n\n**Stacked question words:**\n- `Who said what to whom, and when?` — в расследовании.\n- `What, where, and how is less important than why.` — в анализе.\n\n**Nuance between `what` and `which`:**\n- `What book did you read?` — любая книга.\n- `Which book did you read?` — из предложенных.\n- В академическом стиле часто `which` — когда контекст уже задан предыдущим предложением.\n\n**Question word + -ever для обобщения:**\n- `No matter who calls, tell them I'm busy.` = `Whoever calls…`\n- `No matter how hard it is…` = `However hard it is…`\n\nФормы с `-ever` чуть более литературные; `no matter` — нейтральный.\n\n**Common C1 awareness:**\nВыбор question word на C1 — часть стилистического мастерства. `Why did she do that?` и `What made her do that?` — разные вопросы, с разными оттенками (агентность vs причина)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "embedded wh (statement order) as clause element;  wh + to-infinitive (not why);  wh-cleft: What/How ... is ...;  pied-piped formal frames: For what / To what / By what ...",
+        "ru": "встроенное wh (прямой порядок) как член предложения;  wh + инфинитив с to (кроме why);  wh-cleft: What/How ... is ...;  формальные рамки с предлогом: For what / To what / By what ..."
       },
       "examples": [
         {
           "en": "What, if anything, distinguishes this case from the previous one?",
-          "ru": "Что, если что-то есть, отличает этот случай от предыдущего?"
+          "ru": "Что, если что-то есть, отличает этот случай от предыдущего?",
+          "note": {
+            "en": "what + parenthetical (analysis)",
+            "ru": "what + вставка (анализ)"
+          }
         },
         {
           "en": "By what authority does he claim to speak for us?",
-          "ru": "На каком основании он заявляет, что говорит за нас?"
+          "ru": "На каком основании он заявляет, что говорит за нас?",
+          "note": {
+            "en": "pied-piped formal frame",
+            "ru": "формальная рамка с предлогом"
+          }
         },
         {
           "en": "However this turns out, we tried our best.",
@@ -194,7 +323,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "What remains to be done is a matter of political will.",
-          "ru": "Что осталось сделать — это вопрос политической воли."
+          "ru": "Что осталось сделать — это вопрос политической воли.",
+          "note": {
+            "en": "wh-cleft for emphasis",
+            "ru": "wh-cleft для эмфазы"
+          }
         },
         {
           "en": "To what extent does technology liberate us?",
@@ -204,22 +337,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "What в начале эссе (What makes X work?) — классический приём. Why — для причины, how — для механизма."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He doesn't know why to do it.",
+          "right": "He doesn't know why he should do it.",
+          "why": {
+            "en": "The wh + to-infinitive pattern works with what/where/how/when/who, but not with 'why'.",
+            "ru": "Конструкция wh + инфинитив с to работает с what/where/how/when/who, но не с why."
+          }
+        },
+        {
+          "wrong": "What is most important honesty.",
+          "right": "What is most important is honesty.",
+          "why": {
+            "en": "A wh-cleft is a full subject clause and still needs its own linking verb 'is'.",
+            "ru": "Wh-cleft - это полноценное подлежащее-клауза, и ему нужен свой связочный глагол is."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, question words are deployed across genre conventions, and the speaker controls register, archaism, and pragmatic function with precision.\n\nArchaic forms must be recognised even if rarely produced: 'whence' (from where), 'whither' (to where), 'wherefore' (why, not where - 'Wherefore art thou Romeo?'), and the case form 'whom' ('To whom it may concern'). Pied-piping dominates formal and legal style, with the preposition fronted alongside the question word: 'On what grounds do you object?', 'In what sense is this true?', 'By what means shall we achieve it?'. Double and stacked interrogatives compress information for headlines and analysis: 'How and why did this happen?', 'Who said what to whom, and when?'.\n\nPhilosophical and academic registers have their own recognisable frames: 'What does it mean to...?', 'Why is there something rather than nothing?', 'By what criterion...?'. Crucially, a C2 user distinguishes function: a question word can request information, drive rhetoric, or - in 'What a shame!' and 'How beautiful!' - form an exclamation that takes statement order and no answer. Pragmatic fixed phrases ('What can I say?', 'Who knew?', 'How about that?') act as discourse particles rather than genuine questions. In headlines the question word states a theme without a question mark ('What the Report Reveals'). The mastery here is reading and producing the right form for the right register - a sense built from wide reading and listening, not from rules alone.",
         "ru": "На C2 question words — элемент **виртуозного дискурса**.\n\n**Archaic question words:**\n- `whence` — откуда: `Whence cometh my help?` (Откуда приходит помощь моя? — библейское).\n- `whither` — куда: `Whither goest thou?` (Куда идёшь?)\n- `wherefore` — почему/зачем: `Wherefore art thou Romeo?` (Почему ты Ромео? — Shakespeare). Это не «где», это «зачем».\n- `whom` — кого, кому (падежные формы): `To whom it may concern.`\n\nВ современной речи эти формы — архаизмы. Узнавать — обязательно; активно использовать — только в стилизациях.\n\n**Pied-piping с question words:**\n- `On what grounds do you object?` (На каких основаниях вы возражаете?)\n- `In what sense is this true?` (В каком смысле это верно?)\n- `For what reason was it declined?` (По какой причине это было отклонено?)\n- `By what means shall we achieve it?` (Каким образом мы этого достигнем?)\n\nЭто формальные формулы, где предлог + question word стоят вместе. В нейтральной речи — `What grounds do you object on?`, но в академике и юриспруденции pied-piping доминирует.\n\n**Double interrogatives:**\n- `How and why did this happen?`\n- `When and where did you meet?`\n- `What and who is involved?`\n\nКомпрессированная форма, удобная в заголовках и вопросниках.\n\n**Philosophical question forms:**\n- `What does it mean to…?` (Что значит…?)\n- `Why is there something rather than nothing?` — классический Ляйбницевский вопрос.\n- `How can we know…?` — эпистемологическое.\n- `By what criterion…?` — критериологическое.\n\nЭти формулы узнаваемы носителем C2 как маркеры академического philosophy-speak.\n\n**Question words in indirect discourse:**\n- `She wondered what possible reason he could have had.`\n- `He asked himself why, of all people, it had to be him.`\n\nВставные обороты (`of all people`, `of all times`) — стилистический штрих.\n\n**Экзистенциальные формулы:**\n- `Where does one begin?` (С чего начать?)\n- `How is one to respond?` (Как отвечать?)\n- `What can one say?` (Что тут скажешь?)\n\nБезличное `one` в сочетании с question word — высокий, слегка ироничный регистр.\n\n**Question words в заголовках прессы:**\n- `Who Leaked? What Next? Why Now?` — компрессированная журналистика.\n- `How the Deal Unravelled.`\n- `What the Report Reveals.`\n\nВ заголовках question word часто без вопросительного знака — заявляет тему, а не задаёт вопрос.\n\n**Multiple wh in academic writing:**\n- `The paper addresses who benefits, what is lost, and why current policies fail.`\n- Перечисление wh — приём структурирования introduction или abstract.\n\n**Question word в функции emphasis:**\n- `What a shame!` (Какая жалость!) — не вопрос, а восклицание.\n- `How beautiful!` (Как красиво!)\n- `What a day!` (Ну и денёк!)\n\nВ восклицаниях `what` и `how` меняют функцию — это не wh-questions, а wh-exclamations. Грамматически похоже, прагматически иначе.\n\n**Pragmatic question words:**\n- `What can I say?` (Что тут скажешь?) — ритуальная риторическая фраза.\n- `Who knew?` (Кто бы мог подумать?) — ирония.\n- `How about that?` (Ну как тебе?) — разговорная реакция.\n\n**Stylistic mastery:**\nНоситель C2 распознаёт, когда question word — действительно запрос информации, когда — риторика, когда — восклицание, когда — дискурсивная частица. Этот навык не учится в грамматике — он приходит из чтения, слушания и говорения в больших количествах.\n\n**Финал:** question words — десяток слов, покрывающих гигантский диапазон прагматических функций. От простого `What is your name?` на A1 до философского `What does it mean to be?` на C2 — путь от лексики к стилю."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "archaic whence/whither/wherefore/whom;  pied-piping: On/In/By what ... + inversion;  stacked wh in one clause;  wh-exclamation: What (a) + noun / How + adjective (statement order, no answer)",
+        "ru": "архаичные whence/whither/wherefore/whom;  pied-piping: On/In/By what ... + инверсия;  несколько wh в одной клаузе;  wh-восклицание: What (a) + существительное / How + прилагательное (прямой порядок, без ответа)"
       },
       "examples": [
         {
           "en": "By what criterion should we evaluate this?",
-          "ru": "По какому критерию мы должны это оценивать?"
+          "ru": "По какому критерию мы должны это оценивать?",
+          "note": {
+            "en": "by what criterion = academic",
+            "ru": "by what criterion = академическое"
+          }
         },
         {
           "en": "What possible reason could there be for such a delay?",
@@ -227,7 +382,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Whence comes this unshakeable conviction?",
-          "ru": "Откуда берётся эта непоколебимая убеждённость?"
+          "ru": "Откуда берётся эта непоколебимая убеждённость?",
+          "note": {
+            "en": "archaic whence",
+            "ru": "архаичное whence"
+          }
         },
         {
           "en": "How and why the policy failed is the subject of the next chapter.",
@@ -235,15 +394,55 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "What a turn of events!",
-          "ru": "Ну и поворот событий!"
+          "ru": "Ну и поворот событий!",
+          "note": {
+            "en": "wh-exclamation, not a question",
+            "ru": "wh-восклицание, не вопрос"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "На C2 question word выбирается по регистру: What reason? — нейтрально; On what grounds? — формально; Whence? — архаично."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Wherefore are you going?",
+          "right": "Where are you going?",
+          "why": {
+            "en": "'Wherefore' is archaic and means 'why', not 'where'; use 'where' for place.",
+            "ru": "Wherefore - архаизм со значением why, а не where; место спрашивают через where."
+          }
+        },
+        {
+          "wrong": "What a beautiful is this view!",
+          "right": "What a beautiful view this is!",
+          "why": {
+            "en": "A wh-exclamation keeps statement order: 'What (a) + noun phrase + subject + verb'.",
+            "ru": "Wh-восклицание сохраняет прямой порядок: What (a) + именная группа + подлежащее + глагол."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "wh-questions",
+    "yes-no-questions",
+    "subject-vs-object-questions",
+    "interrogative-pronouns"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "indirect-questions",
+    "reported-questions",
+    "prepositions-after-verbs"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Question word (front slot)",
+      "Auxiliary / be",
+      "Subject",
+      "Rest of clause"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "phrasal-verbs-with-in-out",
   "title": {
-    "en": "",
+    "en": "Phrasal Verbs with In and Out",
     "ru": "Phrasal Verbs With In Out"
   },
   "cefr": "B1",
@@ -15,24 +15,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "phrasal-verbs",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "The particles in and out are two of the most productive in English, and they build phrasal verbs with both literal and figurative meanings. At their core, in points inward and out points outward, and many everyday verbs follow that spatial logic. With in you get the idea of entering and joining: come in, go in, walk in, get in (a car or building), and join in an activity. In also covers submitting and including: hand in your homework, fill in a form, and check in at a hotel or airport. With out you get the opposite movement and the idea of removal: go out, get out, take out the rubbish. Out also commonly means using something up (we ran out of milk), discovering something (I found out the truth), distributing (hand out the flyers), and a product appearing (the book comes out next week). The most useful thing to remember at B1 is that get in needs no extra word but get out almost always takes of: you get in the car but you get out of the car, and you run out of time, never just run out time.",
         "ru": "Частицы `in` и `out` — одни из самых продуктивных. Они создают phrasal verbs с физическим и переносным смыслом.\n\n**IN — частые значения:**\n- Вход: `come in`, `go in`, `walk in`, `get in` (в машину).\n- Participation: `join in` (присоединиться), `take part in`.\n- Submission: `hand in` (сдать), `turn in` (сдать).\n- Inclusion: `fit in`, `fill in` (заполнить).\n- Arrival: `check in` (зарегистрироваться в отеле / аэропорту).\n\n**OUT — частые значения:**\n- Выход / удаление: `go out`, `take out` (вытащить), `get out`.\n- Completion / exhaustion: `run out (of)`, `wear out`.\n- Distribution: `hand out`, `give out`.\n- Discovery / appearance: `find out`, `come out`, `turn out`.\n- Production: `bring out` (выпустить product).\n\n**IN — основные phrasal verbs:**\n- `come in` — войти: `Please come in.`\n- `go in` — войти, зайти.\n- `get in` — войти / попасть (into car, building): `Get in the car.`\n- `walk in` — войти (пешком).\n- `check in` — зарегистрироваться (отель / полёт): `Check in at reception.`\n- `fill in` — заполнить (form): `Fill in the form.`\n- `hand in` — сдать (homework): `Hand in your papers.`\n- `join in` — присоединиться: `Everyone joined in the song.`\n- `plug in` — включить в розетку: `Plug in the kettle.`\n- `turn in` — 1) лечь спать (informal), 2) сдать: `I'm going to turn in. / Turn in your report.`\n\n**OUT — основные phrasal verbs:**\n- `go out` — выйти (на улицу / на свидание): `Let's go out tonight.`\n- `get out` — выйти (car, building): `Get out of the car.`\n- `come out` — 1) выйти (product release), 2) stain disappear: `The book comes out next month.`\n- `take out` — 1) вытащить, 2) пригласить куда-то: `Take out the trash. / He took her out.`\n- `find out` — узнать: `I found out the truth.`\n- `run out (of)` — закончиться: `We ran out of time.`\n- `work out` — 1) тренироваться, 2) получиться: `I work out at the gym. / Everything worked out.`\n- `hand out` — раздавать: `Hand out the flyers.`\n- `sort out` — разобраться с: `Sort out this mess.`\n- `figure out` — понять, разобраться: `I can't figure it out.`\n- `turn out` — оказаться: `It turned out to be true.`\n\n**Частая ошибка:** смешивать `get in` и `get out` с prepositions.\n- `get in the car` (сесть) vs `get out of the car` (выйти).\n- Обрати внимание: `get out OF` (не просто `out`)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + in / out (+ object)  /  verb + out + of + object (get out of, run out of)",
+        "ru": "глагол + in / out (+ дополнение) / глагол + out + of + дополнение (get out of, run out of)"
       },
       "examples": [
         {
           "en": "Please fill in this form.",
-          "ru": "Пожалуйста, заполни эту форму."
+          "ru": "Пожалуйста, заполни эту форму.",
+          "note": {
+            "en": "in = complete a form",
+            "ru": "in = заполнить форму"
+          }
         },
         {
           "en": "I'll hand in my assignment tomorrow.",
@@ -40,11 +46,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We ran out of milk.",
-          "ru": "У нас закончилось молоко."
+          "ru": "У нас закончилось молоко.",
+          "note": {
+            "en": "run out of = use up",
+            "ru": "run out of = закончиться"
+          }
         },
         {
           "en": "The book comes out next week.",
-          "ru": "Книга выходит на следующей неделе."
+          "ru": "Книга выходит на следующей неделе.",
+          "note": {
+            "en": "come out = be released",
+            "ru": "come out = выйти (релиз)"
+          }
         },
         {
           "en": "Don't go out in this weather.",
@@ -54,30 +68,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Get in = сесть (car), get out OF = выйти (car). С out часто нужен второй preposition OF."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "We ran out milk.",
+          "right": "We ran out of milk.",
+          "why": {
+            "en": "Run out takes of before the thing you have used up.",
+            "ru": "После run out нужен предлог of перед тем, что закончилось."
+          }
+        },
+        {
+          "wrong": "Get out the car, we're here.",
+          "right": "Get out of the car, we're here.",
+          "why": {
+            "en": "Get out needs of before a place or container; only get in works without it.",
+            "ru": "После get out нужен of перед местом; без предлога работает только get in."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the same two particles stretch well beyond movement into a rich figurative range, and the meaning often has little to do with literal direction. On the in side, bring in can mean introduce a law, hire an expert, or generate income; take in can mean absorb information or be deceived (I was completely taken in by his story); give in means surrender; and break in means force entry or break new shoes in. Workplace and tech idioms appear too: clock in, log in, chip in for a gift, drop in unannounced. On the out side, break out describes something sudden starting (a fire, a war, a disease), burn out describes a person exhausted by overwork, carry out means execute a plan, rule out means eliminate a possibility, and reach out means make contact. A crucial B2 insight is that in and out are not always neat opposites: fill in (British) and fill out (American) both mean complete a form, while check in and check out are genuine opposites at a hotel, and turn in (submit) versus turn out (prove to be) share no meaning at all. Treat each verb-plus-particle as its own vocabulary item rather than assuming the particle flips the sense.",
         "ru": "На B2 расширяй figurative uses.\n\n**IN — advanced:**\n- `bring in` — 1) ввести (law), 2) нанять (consultant), 3) приносить (доход): `They brought in new regulations.`\n- `break in` — 1) вломиться, 2) разносить (shoes): `Break in your new boots.`\n- `cash in on` — извлечь выгоду: `cash in on the trend`.\n- `chip in` — вставить реплику / скинуться деньгами: `Everyone chipped in for the gift.`\n- `clock in / clock out` — пробить карточку (work): `I clocked in at 9.`\n- `drop in` — заскочить: `Drop in when you're nearby.`\n- `fit in` — вписаться: `She fits in well.`\n- `give in` — сдаться, уступить: `He finally gave in.`\n- `jump in` — 1) прыгнуть в, 2) вмешаться в разговор.\n- `log in / log out` — войти в систему / выйти.\n- `rope in` — привлечь (to help): `He roped me into the project.`\n- `take in` — 1) впитать (information), 2) обмануть: `I was taken in by his story.`\n- `tune in (to)` — настроиться (радио / chanel).\n\n**OUT — advanced:**\n- `break out` — 1) вспыхнуть (война, drankenness), 2) сбежать (prison): `A fire broke out. / He broke out of jail.`\n- `bring out` — 1) выпустить (book / product), 2) выявить (quality): `The conflict brought out her strengths.`\n- `burn out` — 1) сгореть, 2) выгореть (person): `She burned out at work.`\n- `carry out` — осуществить (plan, research): `They carried out the experiment.`\n- `cut out` — 1) вырезать, 2) перестать: `Cut out the noise! / Cut out sugar.`\n- `die out` — вымирать: `The species died out.`\n- `fill out` — заполнить form (AmE; BrE fill in).\n- `give out` — 1) раздавать, 2) перестать работать: `My phone gave out.`\n- `hand out` — раздавать.\n- `hang out` — проводить время: `We hung out at the park.`\n- `look out` — берегись: `Look out!`\n- `make out` — 1) разобрать (read, hear with difficulty), 2) отпустить чек: `I can't make out what it says.`\n- `miss out (on)` — упустить: `Don't miss out on this opportunity.`\n- `pass out` — потерять сознание: `She passed out from heat.`\n- `point out` — указать.\n- `pull out` — 1) выехать (from parking), 2) изъять (from race, project).\n- `put out` — 1) потушить (fire), 2) выпустить (statement), 3) inconvenience: `Don't put yourself out.`\n- `reach out` — связаться с: `Feel free to reach out.`\n- `rule out` — исключить (possibility): `We can't rule that out.`\n- `sell out` — 1) распродать, 2) продаться (morally).\n- `set out` — отправиться / начать: `We set out at dawn.`\n- `sort out` — решить: `Sort out the problem.`\n- `stand out` — выделяться: `She stands out in a crowd.`\n- `take out` — 1) извлечь, 2) устранить, 3) пригласить: `The gunman was taken out. / He took her out.`\n- `work out` — 1) тренироваться, 2) решить, 3) сработать: `Things worked out in the end.`\n- `wipe out` — уничтожить / измотать: `The storm wiped out the crops.`\n\n**In / out as opposites — not always:**\n- `fill in` (BrE) / `fill out` (AmE) — оба значат «заполнить».\n- `check in / check out` — зарегистрироваться / выписаться (отель).\n- `turn in / turn out` — разные meanings (сдать / оказаться)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + in / out used figuratively (bring in a law, break out, carry out a plan)",
+        "ru": "глагол + in / out в переносном значении (bring in a law, break out, carry out a plan)"
       },
       "examples": [
         {
           "en": "The government brought in new tax laws.",
-          "ru": "Правительство ввело новые налоговые законы."
+          "ru": "Правительство ввело новые налоговые законы.",
+          "note": {
+            "en": "bring in = introduce",
+            "ru": "bring in = ввести (закон)"
+          }
         },
         {
           "en": "I was completely taken in by his story.",
-          "ru": "Я был полностью обманут его историей."
+          "ru": "Я был полностью обманут его историей.",
+          "note": {
+            "en": "take in = deceive",
+            "ru": "take in = обмануть"
+          }
         },
         {
           "en": "A new virus broke out in the region.",
-          "ru": "В регионе вспыхнул новый вирус."
+          "ru": "В регионе вспыхнул новый вирус.",
+          "note": {
+            "en": "break out = erupt suddenly",
+            "ru": "break out = вспыхнуть"
+          }
         },
         {
           "en": "She burnt out after working 80 hours a week.",
@@ -91,26 +135,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Break out = вспыхнуть внезапно (war, fire, epidemic, sweat). Break in = вломиться / разносить (обувь)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "A fire broke up in the kitchen.",
+          "right": "A fire broke out in the kitchen.",
+          "why": {
+            "en": "Sudden events (fire, war, disease) break out, not break up; break up means end a relationship.",
+            "ru": "Внезапные события (пожар, война, болезнь) break out, а не break up; break up — разорвать отношения."
+          }
+        },
+        {
+          "wrong": "I was taken on by his story.",
+          "right": "I was taken in by his story.",
+          "why": {
+            "en": "Take in (not take on) carries the meaning of being deceived or fooled.",
+            "ru": "Значение обмануть несёт take in, а не take on."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the focus shifts to idioms and fine distinctions where the particle adds a precise nuance rather than a direction. On the in side you meet abstract collocations such as set in (winter has set in), sink in (the news took time to sink in), step in (intervene), zero in on (focus tightly), and come in handy (prove useful). On the out side, idioms multiply: pan out (develop or succeed), play out (unfold), spell out (explain in detail), walk out on (abandon), lash out (attack verbally), drown out (overwhelm a sound), fall out with (quarrel), and weed out (remove the unwanted). At this level the spatial metaphor becomes a guide rather than a rule: in tends to mean inclusion, arrival, or receiving, while out often signals completion, resolution, or distribution. Two cautions matter. First, the same root verb can take in and out for completely unrelated senses, so check in and check out diverge, and bear out (confirm) has nothing to do with bear in mind (remember). Second, register varies sharply: freak out, chill out, and hang out are casual, whereas bear out, zero in on, weed out, and pan out are acceptable in formal writing. Choose the particle and the verb to fit both the meaning and the setting.",
         "ru": "На C1 осваивай idioms и тонкие различия.\n\n**IN — idiomatic / abstract:**\n- `bring in the harvest` — собирать урожай.\n- `come in handy` — пригодиться: `This knife will come in handy.`\n- `fall in with` — попасть в компанию: `He fell in with the wrong crowd.`\n- `let in on` — раскрыть секрет: `Let me in on the plan.`\n- `pitch in` — внести лепту.\n- `set in` — установиться (weather / mood): `Winter has set in.`\n- `sink in` — осознать: `The news took time to sink in.`\n- `step in` — вмешаться: `The teacher stepped in to stop the fight.`\n- `swing in` — заглянуть (briefly).\n- `zero in on` — сфокусироваться: `Let's zero in on the main issue.`\n\n**OUT — idiomatic / abstract:**\n- `bear out` — подтвердить: `Evidence bears out his claim.`\n- `break out in + rash / sweat` — покрыться.\n- `come out of (one's shell)` — раскрыться.\n- `draw out` — затянуть / выявить: `She drew out the details.`\n- `drown out` — заглушить (sound): `The music drowned out our voices.`\n- `even out` — выровнять.\n- `fall out (with)` — поссориться: `They fell out over money.`\n- `fan out` — рассредоточиться: `The soldiers fanned out.`\n- `freak out` — испугаться / сойти с ума (informal).\n- `lash out (at)` — наброситься (словами / физически): `He lashed out at his critics.`\n- `pan out` — получиться, развернуться: `Let's see how it pans out.`\n- `play out` — разыграться, развиваться: `The scandal played out in the media.`\n- `pull out all the stops` — приложить максимум усилий.\n- `rub out` — 1) стереть (pencil), 2) убить (AmE crime slang).\n- `sit out` — пересидеть / не участвовать.\n- `space out` — 1) отвлечься, 2) распределить по времени.\n- `spell out` — объяснить подробно: `Let me spell it out for you.`\n- `spread out` — разложить / разбрестись.\n- `think out / think through` — обдумать.\n- `tire out` — измотать.\n- `walk out (on)` — бросить, уйти: `He walked out on his family.`\n- `weed out` — избавиться от (плохого): `weed out corruption`.\n- `work out for the best` — обернуться к лучшему.\n\n**IN / OUT spatial metaphors:**\n- `IN` — внутрь, вовлечение, получение, прибытие.\n- `OUT` — наружу, исключение, отдача, отправление.\n\nPattern — общий, но не абсолютный.\n\n**Common C1 pitfalls:**\n- Wrong particle: `check in` (hotel) vs `check out` (hotel / merch): разные meanings.\n- `bear out` (confirm) vs `bear in mind` (remember): `bear` + particle — separate idioms.\n- `carry out` (execute) vs `carry on` (continue): easy confusion.\n\n**Register:**\n- `freak out / chill out / hang out / space out` — casual / youthful.\n- `bear out / weed out / zero in on / pan out` — acceptable in formal writing.\n- Choose based on setting."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + in / out as idiom (zero in on, pan out, spell out, walk out on)",
+        "ru": "глагол + in / out как идиома (zero in on, pan out, spell out, walk out on)"
       },
       "examples": [
         {
           "en": "The detective zeroed in on the suspect.",
-          "ru": "Детектив сосредоточился на подозреваемом."
+          "ru": "Детектив сосредоточился на подозреваемом.",
+          "note": {
+            "en": "zero in on = focus",
+            "ru": "zero in on = сосредоточиться"
+          }
         },
         {
           "en": "The news took a while to sink in.",
-          "ru": "Новость не сразу дошла."
+          "ru": "Новость не сразу дошла.",
+          "note": {
+            "en": "sink in = be realised",
+            "ru": "sink in = осознать"
+          }
         },
         {
           "en": "Let's see how the negotiations pan out.",
@@ -122,36 +192,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He walked out on his responsibilities.",
-          "ru": "Он бросил свои обязанности."
+          "ru": "Он бросил свои обязанности.",
+          "note": {
+            "en": "walk out on = abandon",
+            "ru": "walk out on = бросить"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Pan out = как развернуться / получиться. Often used like in seeing how things will turn out."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The detective zeroed in to the suspect.",
+          "right": "The detective zeroed in on the suspect.",
+          "why": {
+            "en": "Zero in is followed by on, not to, when naming the target.",
+            "ru": "После zero in идёт on, а не to, при указании цели."
+          }
+        },
+        {
+          "wrong": "Let's see how the deal turns in.",
+          "right": "Let's see how the deal pans out.",
+          "why": {
+            "en": "The idiom for how a situation develops is pan out (or turn out), never turn in, which means submit or go to bed.",
+            "ru": "Идиома о развитии ситуации — pan out (или turn out), но не turn in, что значит сдать или лечь спать."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the work is pointillist: you select the exact particle for a fine collocational shade and you switch register deliberately. Rare and literary items enter your active range, such as usher in (herald a new era), edge in (insert subtly), and work in (fit something into a plan) on the in side, and on the out side eke out (stretch scarce resources), phase out (withdraw gradually), root out (eradicate), bow out (retire gracefully), edge out (displace a rival), freeze out (exclude), and ride out (survive a crisis). Many roots fan into a whole paradigm where each particle yields a distinct meaning, as with set in, set out, set off, set up, set about, and set aside, or carry in, carry out, carry on, carry over, and carry off. Two deep metaphors organise the whole system: the container metaphor, where lives and organisations are containers so in means inclusion and out means exclusion, and the path metaphor, where out frequently signals completion or resolution. Mastery at this level is largely about register control and strategic avoidance: corporate and policy discourse favours roll out, phase out, and usher in, while academic prose often prefers a single Latinate verb for gravitas, so find out becomes ascertain, sort out becomes resolve, and come up with becomes devise. Knowing both registers and choosing between them on purpose is the C2 skill.",
         "ru": "На C2 различай фигуративные nuances и collocational patterns.\n\n**Rare / literary IN:**\n- `inhere in` — быть присущим (very formal).\n- `fade in / fade out` — техническое (film, audio).\n- `edge in` — незаметно втиснуться: `She edged in a remark.`\n- `rope someone in` — attract, often reluctantly: `He was roped into helping.`\n- `work in` — вставить (plan): `I worked in a few jokes.`\n- `usher in` — возвестить: `The reform ushered in a new era.`\n\n**Rare / literary OUT:**\n- `bow out` — уйти грациозно: `She bowed out of politics.`\n- `edge out` — вытеснить: `He edged out his rival.`\n- `eke out` — растянуть (resources): `She eked out a living.`\n- `farm out` — передать на аутсорс.\n- `freeze out` — заморозить, исключить: `They froze him out of decisions.`\n- `lay out` — изложить / расположить / оплатить заранее.\n- `pan out` — развернуться (finance, plans).\n- `pass out` — 1) потерять сознание, 2) военный: закончить училище.\n- `peel out` — быстро уехать (AmE slang).\n- `phase out` — постепенно вывести.\n- `play out` — сыграть до конца / развернуться / исчерпать.\n- `ride out` — пережить (storm, crisis).\n- `roll out` — выпустить (product): corporate jargon.\n- `root out` — искоренить: `root out corruption`.\n- `sing out` — громко произнести.\n- `start out` — начать (career): `She started out as a teacher.`\n- `stretch out` — растянуть (timeline, body).\n- `tap out` — 1) exhaust (BrE), 2) signal surrender (MMA).\n\n**Pairs and triplets for semantic precision:**\n- `point out` (mention) / `point to` (indicate).\n- `hand in` (submit) / `hand out` (distribute) / `hand over` (transfer) / `hand down` (pass generationally).\n- `check in` (register) / `check out` (leave / examine).\n- `carry in / carry out / carry on / carry over / carry off`: каждый даёт unique meaning.\n- `set in / set out / set off / set up / set about / set aside`: rich polysemy.\n\n**Metaphor depth:**\n- Container metaphor: жизнь, организации — контейнеры. IN = inclusion, OUT = exclusion.\n- Path metaphor: progress. OUT often signals completion, resolution.\n- These metaphors structure phrasal verb meanings.\n\n**Register ladder — «заболеть»:**\n- Informal: `come down with something`.\n- Neutral: `catch something`.\n- Idiomatic: `go down with flu` (BrE).\n- Medical / formal: `contract an illness`.\n- Phrasal verb usage affects register significantly.\n\n**Collocational mastery at C2:**\nNative speakers choose phrasal verbs based on thousands of micro-collocations:\n- `break out` — disease, fire, war, sweat, rash.\n- `spell out` — terms, details, consequences.\n- `work out` — problem, solution, relationship, plan.\n- `bring about` — change, transformation, reform.\n\n**Strategic avoidance:**\nВ academic writing избегай phrasal verbs когда single verb equivalent available:\n- `find out` → discover / ascertain.\n- `sort out` → resolve / organize.\n- `come up with` → devise / propose.\n- Mastery = knowing when to use phrasal vs latinate."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + in / out (literary / corporate) ↔ single Latinate verb (academic)  /  find out ↔ ascertain",
+        "ru": "глагол + in / out (литературный / корпоративный) ↔ однословный латинский глагол (академический) — find out ↔ ascertain"
       },
       "examples": [
         {
           "en": "The reform ushered in an era of transparency.",
-          "ru": "Реформа возвестила эпоху прозрачности."
+          "ru": "Реформа возвестила эпоху прозрачности.",
+          "note": {
+            "en": "usher in = herald",
+            "ru": "usher in = возвестить"
+          }
         },
         {
           "en": "She eked out a modest living from her writing.",
-          "ru": "Она с трудом зарабатывала на жизнь своим творчеством."
+          "ru": "Она с трудом зарабатывала на жизнь своим творчеством.",
+          "note": {
+            "en": "eke out = stretch",
+            "ru": "eke out = растянуть"
+          }
         },
         {
           "en": "The company plans to phase out plastic packaging by 2030.",
-          "ru": "Компания планирует постепенно вывести пластиковую упаковку к 2030 году."
+          "ru": "Компания планирует постепенно вывести пластиковую упаковку к 2030 году.",
+          "note": {
+            "en": "phase out = withdraw gradually",
+            "ru": "phase out = постепенно вывести"
+          }
         },
         {
           "en": "Investigators sought to root out the source of the leak.",
@@ -165,9 +269,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Roll out / phase out / usher in — corporate / policy register. Pick them for business и policy discourse."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The committee will find out the cause of the discrepancy. (in a formal audit report)",
+          "right": "The committee will ascertain the cause of the discrepancy.",
+          "why": {
+            "en": "In high-register prose a single Latinate verb is preferred over the phrasal verb for precision and gravitas.",
+            "ru": "В высоком регистре однословный латинский глагол предпочтительнее phrasal verb для точности и весомости."
+          }
+        },
+        {
+          "wrong": "The firm will phase down plastic packaging by 2030.",
+          "right": "The firm will phase out plastic packaging by 2030.",
+          "why": {
+            "en": "The fixed corporate idiom for gradual withdrawal is phase out; phase down is not the established collocation.",
+            "ru": "Устойчивая корпоративная идиома постепенного вывода — phase out; phase down не является закреплённой коллокацией."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "phrasal-verbs-with-up-down",
+    "phrasal-verbs-with-on-off",
+    "common-phrasal-verb-groups-by-topic",
+    "phrasal-verbs-formal-informal"
+  ],
+  "crossTopic": [
+    "prepositions-of-movement",
+    "prepositions-after-verbs",
+    "separable-phrasal-verbs",
+    "inseparable-phrasal-verbs"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "in",
+      "out"
+    ]
+  }
 };

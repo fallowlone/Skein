@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "passive-past-simple",
   "title": {
-    "en": "",
+    "en": "Passive: Past Simple",
     "ru": "Passive Past Simple"
   },
   "cefr": "B1",
@@ -15,24 +15,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "passive",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Use the past simple passive when a past action matters more than who did it. Form it with **was/were + past participle (V3)**: was for singular subjects (I/he/she/it), were for plural subjects (we/you/they). So 'Someone stole my bike' (active) becomes 'My bike was stolen' (passive). Choose the passive when the agent is unknown ('The window was broken last night'), unimportant ('The letter was sent yesterday'), or obvious. Add the agent with **by** only when it carries real information: 'The novel was written by Tolstoy.' Make negatives and questions with the same was/were: 'The email wasn't sent', 'Was the door locked?', 'Were they invited?' The two things to get right are subject-verb agreement (one window → was) and the correct V3 of irregular verbs (eat → eaten, steal → stolen, write → written).",
         "ru": "**Passive Voice (past simple)** — страдательный залог в прошедшем простом времени. Используем, когда **действие произошло в прошлом**, но нам **важен объект**, а не тот, кто делал.\n\n**Форма:** `was/were` + **past participle** (V3).\n\n- `I was invited.` (Меня пригласили.)\n- `He was invited.` (Его пригласили.)\n- `We were invited.` (Нас пригласили.)\n- `They were invited.` (Их пригласили.)\n\n**Active vs Passive:**\n- Active: `Someone stole my bike.` (Кто-то украл мой велосипед.)\n- Passive: `My bike was stolen.` (Мой велосипед украли.)\n\n**Когда использовать:**\n1. **Агент неизвестен:** `The window was broken last night.` (Окно разбили вчера ночью.)\n2. **Агент неважен:** `The letter was sent yesterday.` (Письмо отправили вчера.)\n3. **Известные исторические факты:** `The book was written in 1920.` (Книга была написана в 1920 году.)\n\n**By-agent:**\n- `The novel was written by Tolstoy.` (Роман был написан Толстым.)\n- `America was discovered by Columbus.` (Америка была открыта Колумбом.)\n\nАгент с `by` добавляем только если это важно.\n\n**Типичные ошибки:**\n- ❌ `The window were broken.` → ✅ `The window was broken.` (одно окно — was)\n- ❌ `The cake was eat.` → ✅ `The cake was eaten.` (нужна V3!)\n- ❌ `They were broke the vase.` → ✅ `They broke the vase.` (это актив) / `The vase was broken.` (это пассив)\n\n**Неправильные глаголы в пассиве — повторение V3:**\n- write → written, take → taken, break → broken, do → done, see → seen, eat → eaten, give → given, steal → stolen, make → made, find → found.\n\n**Отрицание и вопрос:**\n- `The email wasn't sent.` (Письмо не было отправлено.)\n- `Was the door locked?` (Дверь была закрыта?)\n- `Were they invited?` (Их пригласили?)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + was/were + past participle (V3) (+ by + agent)",
+        "ru": "подлежащее + was/were + причастие прошедшего времени (V3) (+ by + деятель)"
       },
       "examples": [
         {
           "en": "The book was written in 1920.",
-          "ru": "Книга была написана в 1920 году."
+          "ru": "Книга была написана в 1920 году.",
+          "note": {
+            "en": "known fact",
+            "ru": "известный факт"
+          }
         },
         {
           "en": "My wallet was stolen at the station.",
@@ -48,32 +54,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Were you invited to the wedding?",
-          "ru": "Тебя пригласили на свадьбу?"
+          "ru": "Тебя пригласили на свадьбу?",
+          "note": {
+            "en": "yes/no question",
+            "ru": "общий вопрос"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Was/were + V3 — прошлое в пассиве. Всегда проверяй третью форму неправильных глаголов."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The cake was eat.",
+          "right": "The cake was eaten.",
+          "why": {
+            "en": "The passive needs the past participle (V3), not the base verb.",
+            "ru": "В пассиве нужна третья форма глагола (V3), а не инфинитив."
+          }
+        },
+        {
+          "wrong": "The window were broken.",
+          "right": "The window was broken.",
+          "why": {
+            "en": "A singular subject takes was, not were.",
+            "ru": "При единственном подлежащем нужно was, а не were."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, control the *style* of the past passive — news, biographies, history, reports — and handle the by-phrase and two-object verbs cleanly. Follow end-weight: a long agent goes last ('The proposal was rejected by the committee that had reviewed it twice'). Verbs with two objects (give, send, offer, tell, show) allow two passives: 'He was given a prize' (person in focus) or 'A prize was given to him' (thing in focus). Note 'be born' exists only as a fixed passive: 'I was born in 1995' — never 'I borned'. In informal speech, the **get-passive** replaces be: 'He got fired' = 'He was fired', adding a sense of suddenness or misfortune; avoid it in formal writing. Watch the agent preposition (by him, not 'from him'), and use the past continuous passive 'was being + V3' for an action in progress ('The house was being built when we visited'), not the plain past passive.",
         "ru": "На B2 важно владеть **стилистикой прошедшего пассива**: новости, биографии, исторические тексты, отчёты. А также аккуратно обращаться с **by-phrase** и **двумя объектами**.\n\n**1. By-agent placement:**\n- Короткий агент: `The door was opened by a stranger.`\n- Длинный агент — ближе к концу, особенно если содержит важную информацию: `The proposal was rejected by the committee of senior managers who had reviewed it twice.`\n\nПринцип end-weight: тяжёлая часть фразы идёт в конец.\n\n**2. Passive with two objects (give, send, offer, tell, show):**\nГлаголы с двумя объектами допускают два варианта пассива:\n- Active: `They gave **him** a prize.`\n- Passive 1: `He was given a prize.` (предпочтительнее, если человек важнее.)\n- Passive 2: `A prize was given to him.` (предпочтительнее, если фокус на предмете.)\n\nАналогично: `She was offered the job.` / `The job was offered to her.`\n\n**3. News and reporting:**\nНовости обильно используют пассив в past simple:\n- `Three suspects were arrested yesterday.`\n- `The announcement was made at a press conference.`\n- `The plane was diverted due to bad weather.`\n\nНовостной регистр: пассив создаёт дистанцию и объективность.\n\n**4. Historical narrative:**\n- `The treaty was signed in 1919.`\n- `The city was founded in the 12th century.`\n- `The discovery was made by accident.`\n\n**5. Get-passive в прошлом — informal:**\n- `He got fired last week.` = `He was fired last week.`\n- `My phone got stolen at the concert.` = `My phone was stolen at the concert.`\n\n`Get` добавляет оттенок неожиданности, неприятности, внезапности. Используется в разговорной речи, избегается в формальном письме.\n\n**6. Common mistakes:**\n- **Неправильный предлог:** ❌ `The letter was written from him.` → ✅ `The letter was written by him.` (by — агент, не from.)\n- **Забытая форма `was being`:** для длительного действия в прошлом нужен past continuous passive: `The house was being built when we visited.` (Не `was built`.)\n- **Двойной пассив:** ❌ `The work was started to be done.` → ✅ `The work was started.` или `We started to do the work.`\n\n**7. Was born — особая форма:**\n`Be born` существует только в пассиве (во многих случаях):\n- `I was born in 1995.` (Я родился в 1995.)\n- `Where were you born?`\n\nНет формы `I borned`. Это фиксированное пассивное выражение.\n\n**8. Когда НЕ использовать пассив:**\nЕсли агент — главный герой повествования, актив сильнее: `Napoleon invaded Russia in 1812.` — не `Russia was invaded by Napoleon in 1812` (если Наполеон — тема абзаца)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "[person/thing] + was/were + V3 (+ to + recipient)  •  informal: got + V3",
+        "ru": "[лицо/предмет] + was/were + V3 (+ to + получатель)  •  разговорно: got + V3"
       },
       "examples": [
         {
           "en": "The Mona Lisa was painted by Leonardo da Vinci.",
-          "ru": "Мона Лиза была написана Леонардо да Винчи."
+          "ru": "Мона Лиза была написана Леонардо да Винчи.",
+          "note": {
+            "en": "by-agent",
+            "ru": "деятель с by"
+          }
         },
         {
           "en": "She was offered a promotion but she refused.",
-          "ru": "Ей предложили повышение, но она отказалась."
+          "ru": "Ей предложили повышение, но она отказалась.",
+          "note": {
+            "en": "two-object verb",
+            "ru": "глагол с двумя объектами"
+          }
         },
         {
           "en": "The building was destroyed in the earthquake.",
@@ -85,32 +121,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I was born in a small village in the north.",
-          "ru": "Я родился в маленькой деревне на севере."
+          "ru": "Я родился в маленькой деревне на севере.",
+          "note": {
+            "en": "fixed passive",
+            "ru": "фиксированный пассив"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "С глаголами с двумя объектами (give, offer) в пассив можно поставить и человека, и предмет."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The letter was written from him.",
+          "right": "The letter was written by him.",
+          "why": {
+            "en": "The agent is marked with by, not from.",
+            "ru": "Деятель вводится предлогом by, а не from."
+          }
+        },
+        {
+          "wrong": "I borned in 1995.",
+          "right": "I was born in 1995.",
+          "why": {
+            "en": "'Be born' is a fixed passive — there is no active verb 'to born'.",
+            "ru": "'Be born' — фиксированный пассив; активного глагола 'to born' не существует."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the past passive becomes a tool for narrative, analysis, and distance. The get-passive is not just informal — it carries an evaluative tint: 'He got promoted' hints at surprise; 'My bag got stolen' frames the speaker as a victim. Use the passive to manage information structure across a paragraph, keeping each sentence anchored to what the reader already knows: 'The manuscript was discovered in 1947. It was translated by a team of scholars. The translation was published in 1953.' Reporting passives soften claims into rumour or hypothesis: 'He was said to have left the country', 'The company was believed to be in trouble.' Legal and historical registers default to the passive ('Evidence was collected at the scene'; 'The treaty was signed under duress'). Compress it into reduced relatives and participial phrases ('the book, written in exile…'; 'Born in Vienna, the composer…'). The key contrasts to keep clear: 'was stolen' (simple past passive) versus 'had been stolen' (an event before another past event), and 'was being built' (action in progress) versus a finished 'was built'.",
         "ru": "На C1 прошедший пассив становится инструментом **нарратива, анализа и дистанции**. Важно различать stylistic preference, connotation, and register.\n\n**1. Get-passive connotations:**\nGet-passive не просто informal — он несёт **оценочную окраску**:\n- `He was promoted.` — нейтрально.\n- `He got promoted.` — с оттенком удивления, иногда зависти или иронии.\n- `She got married.` — событие с эмоцией, часто позитивное.\n- `My bag got stolen.` — жертва обстоятельств, жалоба.\n\nGet-passive редко используется в академическом стиле, но часто в журналистике для живости и в разговорной речи.\n\n**2. Information structure в прошлом:**\nПассив позволяет строить повествование с акцентом на **тему** (что уже известно) и **рему** (что новое):\n- `The manuscript was discovered in 1947. It was translated by a team of scholars. The translation was published in 1953.`\n\nКаждое предложение начинается с того, что уже знакомо читателю. Актив бы разрушил эту связность.\n\n**3. Passive of reporting in the past:**\n- `He was said to have left the country.` (Говорили, что он покинул страну.)\n- `The company was believed to be in financial trouble.` (Считалось, что компания в финансовых трудностях.)\n- `She was thought to be hiding evidence.`\n\nЭти формы — **сплетня, гипотеза, версия без прямого обвинения**. Популярны в журналистике и детективах.\n\n**4. Historical and biographical writing:**\n- `The treaty was signed under duress.` (Договор был подписан под давлением.)\n- `The revolutionary was arrested, tried, and executed within a week.`\n\nЦепочки пассивов передают фаталистичность и безличность исторических событий.\n\n**5. Legal narratives:**\n- `The suspect was detained for questioning.`\n- `Evidence was collected at the scene.`\n- `The verdict was delivered on Monday.`\n\nЮридический стиль требует пассива почти везде — актёр действия (полиция, судья) либо очевиден, либо несущественен.\n\n**6. Double passive — редкая, но возможная форма:**\n- `The order was expected to be carried out.` — допустимо.\n- `The treaty was hoped to be ratified soon.` — тяжеловесно, лучше перефразировать: `It was hoped that the treaty would be ratified soon.`\n\n**7. Clausal patterns with passive past:**\n- `The book, which was written in exile, remains a classic.`\n- `Having been rejected once, the manuscript was revised and resubmitted.`\n- `Born in Vienna, the composer was taught by his father.`\n\nReduced relative clauses и participial phrases часто содержат пассив — compact и элегантно.\n\n**8. Stylistic vs grammatical passive choice:**\n- Actives: живость, движение, агентивность.\n- Passives: объективность, дистанция, обобщение, фокус на результате.\n- Гибкое переключение в одном тексте — признак зрелого письма.\n\n**9. Common C1 errors:**\n- Перебор пассивов в нарративе: читатель теряется, кто что делает.\n- Неверный выбор между `was stolen` (пассив) и `had been stolen` (past perfect passive — до другого прошлого события).\n- Путаница: `was being + V3` — длительный прошлый пассив (`The house was being built.`), не `was + V3 + being`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + was/were (+ being) + V3  •  reporting: was/were + said/believed/thought + to-infinitive",
+        "ru": "подлежащее + was/were (+ being) + V3  •  репортаж: was/were + said/believed/thought + инфинитив с to"
       },
       "examples": [
         {
           "en": "The diary was believed to have been written by the author's sister.",
-          "ru": "Считалось, что дневник был написан сестрой автора."
+          "ru": "Считалось, что дневник был написан сестрой автора.",
+          "note": {
+            "en": "reporting passive",
+            "ru": "пассив репортажа"
+          }
         },
         {
           "en": "He got arrested at the border and was deported the next day.",
-          "ru": "Его арестовали на границе и депортировали на следующий день."
+          "ru": "Его арестовали на границе и депортировали на следующий день.",
+          "note": {
+            "en": "get-passive",
+            "ru": "get-пассив"
+          }
         },
         {
           "en": "The composer, born into poverty, was later hailed as a genius.",
@@ -118,7 +184,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Documents were seized, witnesses were interviewed, and charges were filed.",
-          "ru": "Документы изъяли, свидетелей допросили, обвинения предъявили."
+          "ru": "Документы изъяли, свидетелей допросили, обвинения предъявили.",
+          "note": {
+            "en": "chained passives",
+            "ru": "цепочка пассивов"
+          }
         },
         {
           "en": "The painting was said to have been lost during the war.",
@@ -128,22 +198,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Get-passive (got fired, got stolen) звучит разговорно и обычно подразумевает неожиданность или неприятность."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "When I arrived, my bag was stolen already.",
+          "right": "When I arrived, my bag had been stolen already.",
+          "why": {
+            "en": "For an event completed before another past moment, use the past perfect passive (had been + V3), not the simple past passive.",
+            "ru": "Для события, завершившегося раньше другого момента в прошлом, нужен past perfect passive (had been + V3), а не простой прошедший пассив."
+          }
+        },
+        {
+          "wrong": "The house was built when we visited.",
+          "right": "The house was being built when we visited.",
+          "why": {
+            "en": "An action still in progress takes the past continuous passive (was being + V3).",
+            "ru": "Длящееся действие требует длительного прошедшего пассива (was being + V3)."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the past passive is a fine literary and analytical instrument: you choose it not because the agent is unknown but because it is the best form for a rhetorical purpose. Critical readers know the passive can hide an agent of power — 'Protesters were killed during the demonstration' leaves *by whom* open, while 'Police killed protesters' names the responsible party — so use it consciously, not to evade. In free indirect discourse it can mirror a character's passivity ('The door was opened. She was led inside. Her coat was taken.'). Historical distance comes from it too: 'Jerusalem was sacked in 70 AD' feels anonymous, almost agent-less, whereas 'The Romans sacked Jerusalem' restores responsibility. Advanced reporting passives let journalism stay cautious — 'He was rumoured to have embezzled millions', 'The scheme was alleged to have involved several ministers.' Impersonal forms ('It was decreed that…', 'It was ordered that all copies be destroyed') sound archaic and solemn. The passive also fuels counterfactuals and inversion: 'Had the warning been heeded, lives would have been saved'; 'Never before had such a ruling been issued.' Mastery means every past passive is a deliberate answer to a question about focus, register, ethics, or rhythm — and if you have no answer, you switch to the active.",
         "ru": "На C2 прошедший пассив — **тонкий литературно-аналитический инструмент**. Ты выбираешь его не потому что агент неизвестен, а потому что это лучшая форма для данной риторической задачи.\n\n**1. Agency, power, and the passive voice:**\nВ критической лингвистике пассив часто анализируется как способ **скрытия агента власти**:\n- `Protesters were killed during the demonstration.` — кем? Пассив оставляет этот вопрос открытым.\n- Active version: `Police killed protesters during the demonstration.` — прямо называет ответственного.\n\nМастерство C2 — видеть, когда пассив риторически оправдан, а когда используется для манипуляции. При собственном письме осознанно выбирать форму.\n\n**2. Free indirect discourse and passive:**\nВ литературе пассив может отражать **пассивность восприятия персонажа**:\n- `The door was opened. She was led inside. Her coat was taken.` (Дверь открыли. Её провели внутрь. Её пальто забрали.) — персонаж в состоянии шока или подчинения.\n- Active: `Someone opened the door. They led her inside. They took her coat.` — более нейтрально, менее психологично.\n\n**3. Historical distance and the passive:**\n- `Jerusalem was sacked in 70 AD.` vs `The Romans sacked Jerusalem in 70 AD.`\n- Пассив создаёт эффект исторической анонимности, как будто событие произошло «само».\n- Актив возвращает агентов и их ответственность.\n\nПросвещённый автор осознанно балансирует между этими перспективами.\n\n**4. Advanced reporting passives in the past:**\n- `He was rumoured to have embezzled millions.` (О нём ходили слухи, что он растратил миллионы.)\n- `The scheme was alleged to have involved several ministers.` (Утверждалось, что в схеме участвовали несколько министров.)\n- `The painting was long supposed to have been lost.` (Картину долго считали утерянной.)\n\nЭти формы позволяют репортажу быть осторожным без прямых обвинений — важный юридический и этический навык.\n\n**5. Passive and narrative pace:**\nПассив замедляет и «утяжеляет» повествование; актив ускоряет. Мастера прозы переключают аспекты:\n- `He was shown to the table. The menu was placed before him. Then the waiter leaned in and whispered...` — пассив создаёт ритуальность, актив в последнем предложении — удар действия.\n\n**6. Impersonal past passives в юридических и исторических документах:**\n- `It was decreed that...` \n- `It was understood that the agreement applied retroactively.`\n- `It was ordered that all copies be destroyed.`\n\nЭти формы устаревше-торжественные, часто появляются в исторических источниках или их стилизациях.\n\n**7. Passive in counterfactual and speculative past:**\n- `Had the plan been followed, the disaster would have been avoided.` (Если бы плану следовали, катастрофу можно было бы избежать.)\n- `The letter might have been intercepted.`\n- `The deal was to have been signed yesterday, but talks collapsed.`\n\nЭти формы играют с прошлым, которое не состоялось — высокий регистр.\n\n**8. Russian-English refinement:**\nРусский часто использует возвратные глаголы в прошлом (`написалось`, `решилось`, `получилось`), которые на английском передаются либо пассивом, либо активом, либо безличной конструкцией. Выбор зависит от регистра: `Решилось само` может быть `It just worked itself out` (разговорно) или `The matter was resolved on its own` (формально).\n\n**9. Rhetorical inversion in past passive:**\n- `Never before had such a decision been taken.` (Никогда прежде подобное решение не принималось.)\n- `Rarely was the truth revealed.`\n\nИнверсия с пассивом — признак высокой литературности.\n\n**10. Mastery:**\nНа C2 каждый пассив — **выбор**. Ты спрашиваешь себя: почему здесь пассив? Это вопрос фокуса, регистра, этики, ритма? Если ответа нет — переходи в актив. Этот самоаудит отличает мастера от среднего писателя."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "It + was + V3 + that-clause  •  inversion: Never/Rarely + had + subject + been + V3  •  counterfactual: Had + subject + been + V3, … would have been + V3",
+        "ru": "It + was + V3 + придаточное с that  •  инверсия: Never/Rarely + had + подлежащее + been + V3  •  контрфактив: Had + подлежащее + been + V3, … would have been + V3"
       },
       "examples": [
         {
           "en": "It was widely understood that the regime had been undermined from within.",
-          "ru": "Было широко понятно, что режим был подорван изнутри."
+          "ru": "Было широко понятно, что режим был подорван изнутри.",
+          "note": {
+            "en": "impersonal it-passive",
+            "ru": "безличный it-пассив"
+          }
         },
         {
           "en": "The documents, long thought to have been destroyed, were recovered from an attic.",
@@ -151,7 +243,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Had the warning been heeded, lives would have been saved.",
-          "ru": "Если бы предупреждение услышали, жизни были бы спасены."
+          "ru": "Если бы предупреждение услышали, жизни были бы спасены.",
+          "note": {
+            "en": "counterfactual past",
+            "ru": "нереальное прошлое"
+          }
         },
         {
           "en": "She was seen leaving the building moments before the blast.",
@@ -159,15 +255,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Never before had such a ruling been issued by the court.",
-          "ru": "Никогда прежде такое постановление не выносилось судом."
+          "ru": "Никогда прежде такое постановление не выносилось судом.",
+          "note": {
+            "en": "rhetorical inversion",
+            "ru": "риторическая инверсия"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Проверяй каждый пассив в прошлом: это осознанный выбор фокуса или просто привычка?"
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If the warning had been heeded, lives would been saved.",
+          "right": "Had the warning been heeded, lives would have been saved.",
+          "why": {
+            "en": "The counterfactual result needs the full modal perfect passive 'would have been + V3'; the inverted 'Had …' replaces 'if … had'.",
+            "ru": "В нереальном прошлом результат требует полной формы 'would have been + V3'; инверсия 'Had …' заменяет 'if … had'."
+          }
+        },
+        {
+          "wrong": "Never before such a ruling had been issued.",
+          "right": "Never before had such a ruling been issued.",
+          "why": {
+            "en": "After a fronted negative adverbial, the auxiliary inverts before the subject (had such a ruling been issued).",
+            "ru": "После вынесенного вперёд отрицательного наречия вспомогательный глагол ставится перед подлежащим (had such a ruling been issued)."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "passive-present-simple",
+    "passive-future",
+    "passive-perfect-tenses",
+    "passive-with-modals"
+  ],
+  "crossTopic": [
+    "past-simple",
+    "past-perfect-simple",
+    "reported-statements",
+    "non-defining-relative-clauses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Active: Someone stole my bike.",
+      "Passive: My bike was stolen."
+    ]
+  }
 };

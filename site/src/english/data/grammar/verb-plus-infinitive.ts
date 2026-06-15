@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "verb-plus-infinitive",
   "title": {
-    "en": "",
+    "en": "Verb Plus Infinitive",
     "ru": "Verb Plus Infinitive"
   },
   "cefr": "A2",
@@ -16,196 +16,406 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "verb-patterns",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Many English verbs are followed by the **to-infinitive**: the word `to` plus the base verb (`to go`, `to study`). The pattern is `subject + verb + to + V1`.\n\nLearn this starter set: `want to`, `decide to`, `hope to`, `promise to`, `agree to`, `refuse to`, `plan to`, `offer to`, `expect to`, `manage to`, `learn to`, `need to`.\n\n**Examples:** `I want to go home.` `She decided to study French.` `We hope to see you soon.` `He promised to call me.` `They refused to help.`\n\nThe `to` is not optional. English has no single rule for which verbs take `to + V1` and which take `-ing`, so at A2 you simply memorise this core list. The negative goes before `to`: `I decided not to go.`",
         "ru": "Некоторые английские глаголы требуют после себя **инфинитив с `to`**. Это называется **to-infinitive**.\n\nФормула: `subject + verb + to + V1`.\n\n**Базовый список глаголов + to-infinitive:**\n- `want to` — хотеть\n- `decide to` — решить\n- `hope to` — надеяться\n- `promise to` — обещать\n- `agree to` — соглашаться\n- `refuse to` — отказываться\n- `plan to` — планировать\n- `offer to` — предлагать\n- `expect to` — ожидать\n- `manage to` — суметь, справиться\n- `pretend to` — притворяться\n- `learn to` — учиться\n- `need to` — нуждаться\n\n**Примеры:**\n- `I want to go home.` (Я хочу пойти домой.)\n- `She decided to study French.` (Она решила учить французский.)\n- `We hope to see you soon.` (Мы надеемся скоро тебя увидеть.)\n- `He promised to call me.` (Он обещал мне позвонить.)\n- `They refused to help.` (Они отказались помочь.)\n\n**Типичная ошибка русскоговорящих:** в русском после «хочу», «решил», «обещаю» идёт обычный инфинитив без предлога: «хочу идти», «решил учить». В английском **обязательна частица `to`**.\n\nНеправильно: `I want go.` \nПравильно: `I want to go.`\n\nНеправильно: `She decided study.` \nПравильно: `She decided to study.`\n\nВыучи этот список наизусть: в английском нет общего правила — одни глаголы требуют `to V`, другие `-ing`. На уровне A2 просто запомни базовые 10-12 глаголов с `to`.\n\n**Мини-тренировка:**\n- I want ___ eat. → `I want to eat.`\n- She decided ___ leave. → `She decided to leave.`\n- We hope ___ win. → `We hope to win.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb + to + V1",
+        "ru": "подлежащее + глагол + to + V1"
       },
       "examples": [
         {
           "en": "I want to go home.",
-          "ru": "Я хочу пойти домой."
+          "ru": "Я хочу пойти домой.",
+          "note": {
+            "en": "want to",
+            "ru": "want to"
+          }
         },
         {
           "en": "She decided to learn English.",
-          "ru": "Она решила учить английский."
+          "ru": "Она решила учить английский.",
+          "note": {
+            "en": "decide to",
+            "ru": "decide to"
+          }
         },
         {
           "en": "He promised to call me.",
-          "ru": "Он обещал мне позвонить."
+          "ru": "Он обещал мне позвонить.",
+          "note": {
+            "en": "promise to",
+            "ru": "promise to"
+          }
         },
         {
           "en": "We hope to see you tomorrow.",
-          "ru": "Мы надеемся увидеть тебя завтра."
+          "ru": "Мы надеемся увидеть тебя завтра.",
+          "note": {
+            "en": "hope to",
+            "ru": "hope to"
+          }
         },
         {
           "en": "They refused to pay.",
-          "ru": "Они отказались платить."
+          "ru": "Они отказались платить.",
+          "note": {
+            "en": "refuse to",
+            "ru": "refuse to"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После want, decide, hope, promise, plan — всегда ставь `to` перед глаголом."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I want go home.",
+          "right": "I want to go home.",
+          "why": {
+            "en": "After want the verb needs to; the to-infinitive is required, not the bare verb.",
+            "ru": "После want нужна частица to: обязателен to-инфинитив, а не голый глагол."
+          }
+        },
+        {
+          "wrong": "She decided study English.",
+          "right": "She decided to study English.",
+          "why": {
+            "en": "Decide takes the to-infinitive; do not drop to even though Russian uses a bare infinitive.",
+            "ru": "Decide требует to-инфинитив; нельзя опускать to, хотя в русском идёт инфинитив без предлога."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the list grows and you add the **object + to-infinitive** pattern: a verb followed by a person, then `to + V1`. The pattern is `subject + verb + object + to + V1`.\n\nVerbs that need an object: `tell someone to`, `ask someone to`, `want someone to`, `expect someone to`, `advise someone to`, `allow someone to`, `force someone to`, `remind someone to`, `teach someone to`, `warn someone to`, `encourage someone to`.\n\n**Examples:** `She told him to leave.` `I want you to help me.` `The teacher advised us to study harder.` `My mother reminded me to take my keys.`\n\nEnglish does **not** use a `that`-clause here. Russian \"я хочу, чтобы ты помог\" becomes `I want you to help` — never `I want that you help`.\n\nMore object-free verbs to add: `afford to`, `arrange to`, `choose to`, `fail to`, `seem to`, `tend to`, `threaten to`, `wish to`. `We can't afford to buy a car.` `He failed to understand the problem.` `She seems to know the answer.`",
         "ru": "На B1 расширяем список глаголов и добавляем конструкцию **object + to-infinitive** — когда после глагола идёт дополнение (кому/чему), а потом инфинитив.\n\n**Формула:** `subject + verb + object + to + V1`.\n\n**Глаголы, требующие этой модели:**\n- `tell someone to do` — велеть/сказать кому-то сделать\n- `ask someone to do` — попросить\n- `want someone to do` — хотеть, чтобы кто-то сделал\n- `expect someone to do` — ожидать\n- `advise someone to do` — советовать\n- `allow someone to do` — разрешать\n- `force someone to do` — заставлять\n- `remind someone to do` — напоминать\n- `teach someone to do` — учить\n- `warn someone to do` — предупреждать\n- `encourage someone to do` — поощрять\n\n**Примеры:**\n- `She told him to leave.` (Она велела ему уйти.)\n- `I want you to help me.` (Я хочу, чтобы ты мне помог.)\n- `The teacher advised us to study harder.` (Учитель посоветовал нам усерднее заниматься.)\n- `My mother reminded me to take my keys.` (Мама напомнила мне взять ключи.)\n\n**Важное отличие от русского:** русский язык использует придаточное «чтобы»: «Я хочу, чтобы ты помог». Английский сжимает это в `want + object + to V`:\n- Russian: «Я хочу, чтобы ты пришёл.»\n- English: `I want you to come.` (а не `I want that you come.`)\n\nКонструкция `want that + clause` **не существует** в стандартном английском. Всегда используй `want someone to do`.\n\n**Расширенный список глаголов + to-infinitive (без объекта):**\n- `afford to` — позволить себе\n- `arrange to` — договориться\n- `choose to` — выбрать\n- `fail to` — не справиться\n- `seem to` — казаться\n- `tend to` — иметь тенденцию\n- `threaten to` — угрожать\n- `wish to` — желать (формально)\n\n**Примеры:**\n- `We can't afford to buy a new car.` (Мы не можем позволить себе новую машину.)\n- `He failed to understand the problem.` (Он не смог понять проблему.)\n- `She seems to know the answer.` (Она, кажется, знает ответ.)\n\nНа B1 закрепи отличие: одни глаголы идут без объекта (`I want to go`), другие требуют объект (`I want you to go`). У некоторых обе модели возможны — смысл меняется."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb + object + to + V1",
+        "ru": "подлежащее + глагол + дополнение + to + V1"
       },
       "examples": [
         {
           "en": "She told me to wait outside.",
-          "ru": "Она велела мне ждать снаружи."
+          "ru": "Она велела мне ждать снаружи.",
+          "note": {
+            "en": "tell + obj + to",
+            "ru": "tell + дополнение + to"
+          }
         },
         {
           "en": "I want you to listen carefully.",
-          "ru": "Я хочу, чтобы ты слушал внимательно."
+          "ru": "Я хочу, чтобы ты слушал внимательно.",
+          "note": {
+            "en": "want + obj + to",
+            "ru": "want + дополнение + to"
+          }
         },
         {
           "en": "He asked her to marry him.",
-          "ru": "Он попросил её выйти за него."
+          "ru": "Он попросил её выйти за него.",
+          "note": {
+            "en": "ask + obj + to",
+            "ru": "ask + дополнение + to"
+          }
         },
         {
           "en": "We can't afford to travel this year.",
-          "ru": "Мы не можем позволить себе путешествовать в этом году."
+          "ru": "Мы не можем позволить себе путешествовать в этом году.",
+          "note": {
+            "en": "no object",
+            "ru": "без дополнения"
+          }
         },
         {
           "en": "The doctor advised him to rest.",
-          "ru": "Врач посоветовал ему отдохнуть."
+          "ru": "Врач посоветовал ему отдохнуть.",
+          "note": {
+            "en": "advise + obj + to",
+            "ru": "advise + дополнение + to"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Want/ask/tell + object + to V: «Я хочу, чтобы ты…» = `I want you to…`, без `that`."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I want that you come.",
+          "right": "I want you to come.",
+          "why": {
+            "en": "After want, ask, tell English uses object + to-infinitive, never a that-clause.",
+            "ru": "После want, ask, tell в английском идёт дополнение + to-инфинитив, а не придаточное с that."
+          }
+        },
+        {
+          "wrong": "She told to him to wait.",
+          "right": "She told him to wait.",
+          "why": {
+            "en": "The object after tell takes no preposition; use the person directly, then to + verb.",
+            "ru": "Дополнение после tell идёт без предлога: сначала лицо, затем to + глагол."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the to-infinitive carries voice and aspect. **Passive infinitive** is `to be + V3`: `I want to be invited.` `She expects to be promoted.` `They refused to be interviewed.`\n\n**Passive reporting** is the news register: `subject + is/was + said/thought/believed/known/reported/expected + to V`. `He is said to be very rich.` `The minister is expected to resign.` Use `to have + V3` when the reported action happened **earlier** than the reporting: `He is said to have stolen the money.`\n\n**Perfect infinitive** `to have + V3` marks a completed action: `He claims to have finished the project.` `She seems to have left.` **Continuous infinitive** `to be + V-ing` marks an action in progress: `He appears to be working.`\n\nWatch the bare-infinitive verbs: `make` is bare in the active (`She made me laugh.`) but takes `to` in the passive (`I was made to laugh.`); `let` is always bare (`Let me go.`) and has essentially no passive. `help` allows both `help me carry` and `help me to carry`.",
         "ru": "На B2 добавляем **пассивный инфинитив** и **пассивные репортажные конструкции** с to-infinitive — характерные для новостей и формального стиля.\n\n**Пассивный инфинитив:** `to be + V3`\n- `I want to be invited.` (Я хочу, чтобы меня пригласили.)\n- `She expects to be promoted.` (Она ожидает повышения.)\n- `He hopes to be chosen.` (Он надеется, что его выберут.)\n- `They refused to be interviewed.` (Они отказались давать интервью.)\n\n**Пассивные репортажные конструкции** (passive reporting): используются в новостях, чтобы представить информацию осторожно.\n\nФормула: `subject + is/was + said/thought/believed/known/reported/expected + to V`.\n\n- `He is said to be very rich.` (Говорят, что он очень богат.)\n- `She is believed to have left the country.` (Считается, что она покинула страну.)\n- `The minister is expected to resign.` (Ожидается, что министр подаст в отставку.)\n- `They are known to oppose the plan.` (Известно, что они против плана.)\n\nИспользуй `to have + V3`, когда действие произошло **раньше** репортажа:\n- `He is said to have stolen the money.` (Говорят, что он украл деньги — украл раньше).\n- `She is thought to have been abroad.` (Считается, что она была за границей.)\n\n**Перфектный инфинитив:** `to have + V3` передаёт завершённое действие.\n- `I'm happy to have met you.` (Я рад, что встретил тебя.)\n- `He claims to have finished the project.` (Он утверждает, что закончил проект.)\n- `She seems to have left.` (Она, похоже, ушла.)\n\n**Длинный активный инфинитив:** `to be doing`\n- `He appears to be working.` (Похоже, он работает — сейчас.)\n- `She seems to be waiting for someone.` (Она, кажется, кого-то ждёт.)\n\n**Нюансы B2:**\nОбрати внимание на разницу между `help to do` и `help do` — оба варианта верны, без `to` звучит чуть разговорнее: `Can you help me carry this?` / `Can you help me to carry this?`\n\nГлагол `make` в активе требует инфинитив **без `to`**: `She made me laugh.` Но в пассиве — с `to`: `I was made to laugh.` Это частая ловушка.\n\nАналогично с `let` (always no `to`): `Let me go.` — пассива у `let` практически нет.\n\nУчи эти неочевидные штуки отдельно: на B2 грамматика требует внимания к таким мелким различиям."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "to be + V3 (passive)  |  subject + be + said/thought/expected + to V (reporting)  |  to have + V3 (perfect)",
+        "ru": "to be + V3 (пассив)  |  подлежащее + be + said/thought/expected + to V (репортаж)  |  to have + V3 (перфект)"
       },
       "examples": [
         {
           "en": "He is said to be the best player.",
-          "ru": "Говорят, он лучший игрок."
+          "ru": "Говорят, он лучший игрок.",
+          "note": {
+            "en": "passive reporting",
+            "ru": "пассивный репортаж"
+          }
         },
         {
           "en": "She hopes to be offered the job.",
-          "ru": "Она надеется, что ей предложат работу."
+          "ru": "Она надеется, что ей предложат работу.",
+          "note": {
+            "en": "passive infinitive",
+            "ru": "пассивный инфинитив"
+          }
         },
         {
           "en": "They are believed to have left early.",
-          "ru": "Считается, что они рано ушли."
+          "ru": "Считается, что они рано ушли.",
+          "note": {
+            "en": "earlier action",
+            "ru": "более раннее действие"
+          }
         },
         {
           "en": "I'm glad to have helped you.",
-          "ru": "Я рад, что смог тебе помочь."
+          "ru": "Я рад, что смог тебе помочь.",
+          "note": {
+            "en": "perfect infinitive",
+            "ru": "перфектный инфинитив"
+          }
         },
         {
           "en": "The suspect is thought to be hiding abroad.",
-          "ru": "Подозреваемый, предположительно, скрывается за границей."
+          "ru": "Подозреваемый, предположительно, скрывается за границей.",
+          "note": {
+            "en": "continuous infinitive",
+            "ru": "длительный инфинитив"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Passive reporting: `He is said to…` = «Говорят, что он…». `to have V3` = действие раньше."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I was made laugh.",
+          "right": "I was made to laugh.",
+          "why": {
+            "en": "Make is bare-infinitive in the active but takes to in the passive.",
+            "ru": "Make идёт с голым инфинитивом в активе, но требует to в пассиве."
+          }
+        },
+        {
+          "wrong": "He is said to steal the money last year.",
+          "right": "He is said to have stolen the money last year.",
+          "why": {
+            "en": "When the reported action is earlier than the reporting, use the perfect infinitive to have + V3.",
+            "ru": "Когда действие произошло раньше репортажа, нужен перфектный инфинитив to have + V3."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you distinguish **control** verbs from **raising** verbs. With a **control** verb (`want`, `decide`, `hope`, `promise`, `try`, `intend`) the main subject also performs the infinitive: `John wants to leave` = John leaves. With a **raising** verb (`seem`, `appear`, `happen`, `tend`, `turn out`) the subject is raised out of the lower clause and is not really an argument of the main verb: `John seems to be tired` = `It seems that John is tired`.\n\n**Test:** raising verbs accept the dummy subject `there` — `There seems to be a problem.` Control verbs do not — *There wants to be a problem* is impossible.\n\n**Complex-verb traps:** `advise` and `recommend` take object + to-infinitive (`I advise you to stop`), but `suggest` does **not** — use `suggest + -ing` or `suggest (that) you stop`; `I suggest you to stop` is wrong. The **split infinitive** (`to boldly go`) is now accepted, though formal academic writing often avoids it. Finally, **for + object + to-infinitive** supplies a separate logical subject: `It's important for students to practise.` `The best thing is for you to wait.`",
         "ru": "На C1 разбираем **raising vs control** — тонкую грамматическую разницу между двумя типами конструкций `verb + to V`, и сложные случаи выбора между инфинитивом и герундием.\n\n**Control verbs** (контроль): подлежащее главного глагола **совпадает** с подразумеваемым субъектом инфинитива.\n- `John wants [John] to leave.` — John хочет, и John же уйдёт.\n- `She promised [she] to help.` — она обещала, и она же поможет.\n- `I decided [I] to study abroad.` — я решил, и я же буду учиться.\n\nГлаголы control: `want`, `decide`, `hope`, `promise`, `refuse`, `agree`, `try`, `intend`.\n\n**Raising verbs** (подъём): грамматический субъект «поднят» из придаточного, он не выполняет действие главного глагола в обычном смысле.\n- `John seems to be tired.` — John «не кажется», кажется ситуация. John — субъект `be tired`, а не `seem`.\n- `It seems that John is tired.` — эквивалентная форма без raising.\n- `She appears to know the answer.` — она не «появляется», а похоже, что она знает.\n\nГлаголы raising: `seem`, `appear`, `happen`, `tend`, `turn out`.\n\n**Тест на различие:** подставь `there` как формальное подлежащее.\n- Raising допускает: `There seems to be a problem.` ✓\n- Control не допускает: `*There wants to be a problem.` ✗\n\n**Значение для языка:**\nНосители не думают об этом явно, но различие определяет, какие перефразирования возможны:\n- `It's likely that John won.` = `John is likely to have won.` (raising — работает)\n- `It's eager that John won.` ≠ `John is eager to have won.` (control — не работает одинаково)\n\n**Сложные глаголы C1:**\n- `advise/recommend/suggest` — ловушки:\n  - `I advise you to stop.` ✓ (advise + object + to V)\n  - `I advise stopping.` ✓ (advise + -ing, без объекта)\n  - `I suggest stopping.` ✓ (suggest + -ing)\n  - `*I suggest you to stop.` ✗ (**suggest не берёт object + to V**)\n  - `I suggest (that) you stop.` ✓ (suggest + that-clause)\n\nЭто один из самых частых подводных камней на C1. `Suggest` требует либо `-ing`, либо `that-clause`, но **никогда** `object + to V`.\n\n**Split infinitive:** `to boldly go` — вставка наречия между `to` и глаголом. Когда-то считалось ошибкой, сейчас признано допустимым, часто усиливает смысл. В формальном академическом стиле избегается.\n\n**For + object + to-infinitive:**\n- `It's important for students to practise.` (для студентов важно практиковаться)\n- `The best thing is for you to wait.` (лучшее — чтобы ты подождал)\n\nЭта конструкция вводит «логического субъекта» инфинитива, когда он отличается от главного подлежащего."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "control: subject_i + verb + to V_i  |  raising: subject + seem/appear + to V  |  for + object + to V",
+        "ru": "контроль: подлежащее_i + глагол + to V_i  |  подъём: подлежащее + seem/appear + to V  |  for + дополнение + to V"
       },
       "examples": [
         {
           "en": "She seems to have forgotten our meeting.",
-          "ru": "Она, похоже, забыла о нашей встрече."
+          "ru": "Она, похоже, забыла о нашей встрече.",
+          "note": {
+            "en": "raising + perfect",
+            "ru": "подъём + перфект"
+          }
         },
         {
           "en": "There appears to be a misunderstanding.",
-          "ru": "Похоже, произошло недоразумение."
+          "ru": "Похоже, произошло недоразумение.",
+          "note": {
+            "en": "raising with there",
+            "ru": "подъём с there"
+          }
         },
         {
           "en": "I suggest postponing the discussion.",
-          "ru": "Я предлагаю отложить обсуждение."
+          "ru": "Я предлагаю отложить обсуждение.",
+          "note": {
+            "en": "suggest + -ing",
+            "ru": "suggest + -ing"
+          }
         },
         {
           "en": "It's essential for everyone to follow the rules.",
-          "ru": "Важно, чтобы все следовали правилам."
+          "ru": "Важно, чтобы все следовали правилам.",
+          "note": {
+            "en": "for + obj + to",
+            "ru": "for + дополнение + to"
+          }
         },
         {
           "en": "He happens to know the CEO personally.",
-          "ru": "Он случайно знаком с CEO лично."
+          "ru": "Он случайно знаком с CEO лично.",
+          "note": {
+            "en": "raising (happen)",
+            "ru": "подъём (happen)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Suggest не принимает `object + to V`: «I suggest you to stop» — грубая ошибка. Только `suggest stopping` или `suggest (that) you stop`."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I suggest you to stop.",
+          "right": "I suggest stopping. / I suggest that you stop.",
+          "why": {
+            "en": "Suggest never takes object + to-infinitive; use the gerund or a that-clause.",
+            "ru": "Suggest никогда не берёт дополнение + to-инфинитив; используйте герундий или придаточное с that."
+          }
+        },
+        {
+          "wrong": "There wants to be a solution.",
+          "right": "There seems to be a solution.",
+          "why": {
+            "en": "Only raising verbs (seem, appear, tend) accept dummy there; control verbs like want do not.",
+            "ru": "Только глаголы подъёма (seem, appear, tend) принимают формальное there; глаголы контроля вроде want — нет."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the to-infinitive is a tool for register and nuance. **Complementation choice** signals tone: `I believe him to be honest` (formal, characterising — legal and academic prose) versus `I believe that he is honest` (neutral); `I expect him to come` is more assertive than the epistemically softer `I expect that he will come`.\n\n**For-to constructions** densify formal writing by avoiding finite that-clauses: `It is crucial for the mechanism to function without interruption.` **Relative tense in reporting** is precise: `He is said to be wealthy` (now) versus `He is said to have been wealthy` (earlier); the infinitive's \"tense\" is relative to the reporting verb, not absolute.\n\n**Rhetorical and elliptical infinitives** lend an aphoristic register: `To err is human, to forgive divine.` `Who am I to judge?` The **infinitive of result** (`He left only to return an hour later`) marks unintended or ironic outcome, distinct from the infinitive of purpose. Place `not` before `to` in formal prose (`I decided not to go`); `to not go` reads as deliberate emphasis. Lawyers favour `verb + object + to V` for nominalised passages: `The committee authorised the chairman to sign.`",
         "ru": "На C2 инфинитивные конструкции — инструмент **тонкой смысловой нюансировки**, характерной для академической прозы, юридических и дипломатических текстов.\n\n**Complementation choice — verb + infinitive vs verb + that-clause:**\n- `I expect him to come.` (я ожидаю его прихода — более уверенно, прямо)\n- `I expect that he will come.` (я предполагаю, что он придёт — эпистемически мягче)\n- `I believe him to be honest.` (формальное утверждение характеристики — книжный регистр)\n- `I believe (that) he is honest.` (нейтральное убеждение)\n\nПервые варианты — `verb + object + to V` — характерны для юридических заключений, научных статей, риторических эссе. Вторые — нейтральны.\n\n**For-to constructions в формальном письме:**\n- `It is crucial for the mechanism to function without interruption.` (критично, чтобы механизм работал без перебоев)\n- `The aim is for participants to reach consensus.` (цель — чтобы участники достигли консенсуса)\n\nТакие конструкции избегают использования `that-clauses` с finite-глаголами, что придаёт тексту плотность и академический тон.\n\n**Perfect infinitive after модальных:**\nТонкая разница в репортажных конструкциях:\n- `He is said to be wealthy.` — говорят, что он богат (сейчас).\n- `He is said to have been wealthy.` — говорят, что он был богат (раньше).\n- `He was said to be wealthy.` — говорили, что он богат (одновременно).\n- `He was said to have been wealthy.` — говорили, что он был богат (ещё раньше).\n\nГрамматическое «время» инфинитива выражает относительное время к reporting-глаголу, не абсолютное.\n\n**Rhetorical infinitive / elliptical constructions:**\n- `To err is human, to forgive divine.` (ошибаться — человеческое, прощать — божественное) — афористический регистр.\n- `To be, or not to be.` — риторический вопрос через инфинитив.\n- `Who am I to judge?` (кто я такой, чтобы судить?)\n- `Why bother to explain?` (зачем объяснять?)\n\nИнфинитив в начале предложения создаёт обобщающий, почти гномический эффект.\n\n**Инфинитив цели vs инфинитив результата:**\n- Purpose: `She works hard to succeed.` (она усердно работает, чтобы преуспеть)\n- Result: `He left only to return an hour later.` (он ушёл, только чтобы вернуться через час) — инфинитив результата, характерный литературный приём, подчёркивает непреднамеренность или иронию.\n\n**Negative infinitive placement:**\n- `I decided not to go.` ✓ (нейтрально)\n- `I decided to not go.` — допустимо, но звучит намеренно эмфатически.\n\nВ формальной прозе `not` стоит перед `to`.\n\n**Stylistic compression:**\nЮристы и политики используют `verb + object + to V` для номинализованных пассажей:\n- `The committee authorised the chairman to sign.` vs `The committee authorised that the chairman sign.` — первая форма стандартна для англоязычной юридической традиции.\n\n**C2 навык:** выбирать между `to V`, `-ing`, `that-clause` и номинализацией, ощущая регистр, плотность и риторический вес фразы. Это не грамматика в узком смысле, а стилистическое чутьё."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + object + to V (formal characterising)  |  for + object + to V  |  to have (been) + V3 (relative tense)  |  ... only to V (result)",
+        "ru": "глагол + дополнение + to V (формальное)  |  for + дополнение + to V  |  to have (been) + V3 (относительное время)  |  ... only to V (результат)"
       },
       "examples": [
         {
           "en": "He is alleged to have embezzled public funds.",
-          "ru": "Его обвиняют в растрате государственных средств."
+          "ru": "Его обвиняют в растрате государственных средств.",
+          "note": {
+            "en": "passive reporting",
+            "ru": "пассивный репортаж"
+          }
         },
         {
           "en": "The protocol requires all members to be present.",
-          "ru": "Протокол требует присутствия всех членов."
+          "ru": "Протокол требует присутствия всех членов.",
+          "note": {
+            "en": "verb + obj + to V",
+            "ru": "глагол + дополнение + to V"
+          }
         },
         {
           "en": "To understand the issue is to solve half of it.",
-          "ru": "Понять проблему — значит наполовину её решить."
+          "ru": "Понять проблему — значит наполовину её решить.",
+          "note": {
+            "en": "rhetorical infinitive",
+            "ru": "риторический инфинитив"
+          }
         },
         {
           "en": "She left the meeting only to find her car towed.",
-          "ru": "Она ушла с собрания — лишь затем, чтобы обнаружить, что её машину увезли."
+          "ru": "Она ушла с собрания — лишь затем, чтобы обнаружить, что её машину увезли.",
+          "note": {
+            "en": "infinitive of result",
+            "ru": "инфинитив результата"
+          }
         },
         {
           "en": "It would be imprudent for the board to delay further.",
-          "ru": "Было бы неблагоразумно для совета ещё затягивать."
+          "ru": "Было бы неблагоразумно для совета ещё затягивать.",
+          "note": {
+            "en": "for + obj + to V",
+            "ru": "for + дополнение + to V"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В формальном письме: `verb + object + to V` (I believe him to be honest) и `for + obj + to V` (It is vital for X to Y) — признаки академического регистра."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He is alleged to embezzle public funds last year.",
+          "right": "He is alleged to have embezzled public funds last year.",
+          "why": {
+            "en": "A reported action prior to the reporting verb needs the perfect infinitive to have + V3.",
+            "ru": "Действие, предшествующее репортажному глаголу, требует перфектного инфинитива to have + V3."
+          }
+        },
+        {
+          "wrong": "The committee authorised that the chairman sign.",
+          "right": "The committee authorised the chairman to sign.",
+          "why": {
+            "en": "In the formal legal register, verbs like authorise take object + to-infinitive, not a subjunctive that-clause.",
+            "ru": "В формальном юридическом регистре глаголы вроде authorise берут дополнение + to-инфинитив, а не сослагательное придаточное с that."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "verb-plus-gerund",
+    "verb-infinitive-or-gerund-same-meaning",
+    "verb-infinitive-or-gerund-different-meaning",
+    "adjective-plus-infinitive"
+  ],
+  "crossTopic": [
+    "reported-commands",
+    "passive-present-simple",
+    "purpose-clauses",
+    "causative-have-get"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "subject",
+      "verb",
+      "(object)",
+      "to + V1"
+    ]
+  }
 };
