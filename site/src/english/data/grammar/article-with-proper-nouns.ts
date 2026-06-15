@@ -363,5 +363,562 @@ export const topic: GrammarTopic = {
       "no article",
       "the"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "article-with-proper-nouns-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Proper nouns split by category: ranges, bodies of water, institutions, newspapers, and ships take \"the\"; people, cities, single mountains, lakes, most countries, brands, and short university names take no article. \"{answer}\" matches the category here.",
+          "ru": "Имена собственные делятся по категориям: цепи, водоёмы, учреждения, газеты и корабли — с the; люди, города, отдельные горы, озёра, большинство стран, бренды и короткие названия университетов — без артикля. \"{answer}\" соответствует категории в этом предложении."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "She has lived in ___ Moscow for over ten years now. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ Volga is the longest river in Europe. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Last summer they finally climbed ___ Mount Elbrus. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We spent a week sailing across ___ Black Sea. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ Lake Baikal is the deepest lake on the planet. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He grew up in ___ Germany but now works abroad. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Their company has an office in ___ United States. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The expedition crossed ___ Sahara on camels. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We could see ___ Alps from the train window. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My sister flew to ___ Tokyo for the conference. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The ship slowly entered ___ Atlantic Ocean. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Climbers from all over come to scale ___ Everest. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They went hiking in ___ Himalayas for a month. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Our flight has a long stopover in ___ Netherlands. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ Africa is the second-largest continent. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The cruise sailed down ___ Nile from Cairo. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She was born in ___ California and moved east later. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Ships pass through ___ Suez Canal every day. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ France shares a border with several countries. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We honeymooned in ___ Maldives last spring. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I read the whole story in ___ New York Times. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "On our trip we spent a morning at ___ British Museum. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She studied at ___ Oxford before moving to Berlin. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "For her thesis she works at ___ University of London. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We stayed at ___ Ritz for our anniversary. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He grabbed a quick coffee at ___ Starbucks near the office. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ Johnsons invited us over for dinner on Friday. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Tourists line up for hours to climb ___ Eiffel Tower. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She just bought the latest phone from ___ Apple. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The gallery tour ends at ___ Louvre in the afternoon. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We caught a ballet at ___ Bolshoi while in Moscow. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He picked up a few things at ___ Harrods in London. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The reporter writes a weekly column for ___ Guardian. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She subscribed to ___ Vogue for the fashion spreads. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The fleet sailed past ___ Strait of Gibraltar at dawn. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Historians still debate the causes of ___ First World War. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My cousin got into ___ Harvard on a scholarship. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "That tanker is registered with ___ Gulf of Mexico operators. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He has lived in ___ Ukraine since the mid-1990s. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ UN held an emergency session over the weekend. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Everyone knows ___ Titanic sank on its maiden voyage. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They stayed up late watching ___ Olympics on television. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ Red Square draws millions of visitors each year. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The diplomats agreed that ___ NATO should respond jointly. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Our connecting flight lands at ___ Heathrow Airport at noon. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Pedestrians stroll along ___ Oxford Street all afternoon. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Tourists pause to photograph ___ Golden Gate Bridge at sunset. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The report says ___ EU will review the policy next year. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In London the play opens at ___ Mall this season. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The astronauts aboard ___ Apollo 11 reached the Moon in 1969. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Officials confirmed that ___ FBI had opened an inquiry. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "After the split, ___ former Yugoslavia became several states. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "At the auction she finally bought ___ Picasso she had admired. (article)",
+        "answer": "a",
+        "distractors": [
+          "(no article)",
+          "the"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The essay contrasts ___ Russia of Dostoevsky with today's state. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Negotiators noted that ___ two Koreas remain technically at war. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "In the briefing, ___ President Macron addressed a divided nation. (article)",
+        "answer": "(no article)",
+        "distractors": [
+          "the",
+          "a"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The novelist evokes ___ sunburnt Spain of his childhood. (article)",
+        "answer": "a",
+        "distractors": [
+          "(no article)",
+          "the"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "At the press conference ___ president declined to comment further. (article)",
+        "answer": "the",
+        "distractors": [
+          "(no article)",
+          "a"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The collector insists that only ___ true Rolex holds its value. (article)",
+        "answer": "a",
+        "distractors": [
+          "(no article)",
+          "the"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

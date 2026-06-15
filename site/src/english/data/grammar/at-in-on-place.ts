@@ -444,5 +444,661 @@ export const topic: GrammarTopic = {
       "on = surface / line",
       "in = enclosed space / volume"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "My mum is ___ home now.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The cat is ___ the kitchen.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The book is ___ the shelf.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I wait ___ the bus stop every morning.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "She lives ___ Moscow.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Please put the keys ___ the table.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "There is a picture ___ the wall.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The children are ___ school until three.",
+        "answer": "at",
+        "distractors": [
+          "on",
+          "to"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "My dad is ___ work right now.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The milk is ___ the fridge.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Wait for me ___ the door.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "They live ___ Russia.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "There is dust ___ the floor.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The flowers are ___ the garden.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I'll meet you ___ the station.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She is ___ the hairdresser's now, getting a cut.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We live ___ the third floor.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He is ___ the train and can't talk for long.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The whole family is sitting ___ the car.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I was ___ the party last night and it was great.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She spoke ___ the meeting this morning.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "My flight lands soon, so I'm ___ the airport already.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He went to deposit a cheque, so he's ___ the bank.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The office is ___ the second floor, just up the stairs.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Grab a window seat once you're ___ the plane.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We took a taxi and chatted ___ the taxi the whole way.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The kids are ___ school all day during the week.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He lives ___ 25 Baker Street.",
+        "answer": "at",
+        "distractors": [
+          "on",
+          "in"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The office is ___ the fifth floor.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My grandma is ___ hospital this week as a patient.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We met ___ the corner of Pine and Elm.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The shop is right ___ the end of the street.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "There is a strange noise coming from ___ the middle of the room.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He's serving time and has been ___ prison for two years.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She's tired, so she's already ___ bed.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Every Sunday the family is ___ church for the morning service.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "This is the tallest building ___ the world.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "In American English, the kids are playing ___ the street.",
+        "answer": "on",
+        "distractors": [
+          "at",
+          "in"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The diagram is ___ the top of the page.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The president is ___ holiday this week.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I saw the news ___ TV last night.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "by"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The company is ___ trouble after the scandal.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Lives are ___ stake if we don't act now.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The whole team is ___ strike over pay.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "After the bad news, she was ___ shock for hours.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You can read the full interview ___ a magazine.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He heard the song ___ the radio this morning.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "by"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The two nations have been ___ war for a decade.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She rode here ___ a bike, which is why she's late.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The whole town is ___ danger because of the flood.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The manager who is ___ charge will sign the form.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "In British English, she's ___ university studying law.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They live ___ the outskirts of Paris.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We need to stay ___ top of the project deadlines.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The cathedral sits right ___ the heart of the city.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In American English, he is ___ the team that built the bridge.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Their best idea sits ___ the intersection of art and science.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "After months of silence she's finally back ___ the loop.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The CEO has been ___ the helm for ten years.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Our runner is ___ the lead after the first lap.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The suspect is still ___ large after the escape.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The minister spoke ___ chambers before the hearing.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Sorry, but her book is now ___ print and unavailable.",
+        "answer": "out of",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We recorded the scene ___ location in Iceland.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The witness was ___ the stand for two hours.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "After winning the seat, she is now ___ office.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The house has finally come ___ the market and is for sale.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "His comment was strictly ___ the record, so don't quote it.",
+        "answer": "off",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The judges are currently ___ session and cannot be disturbed.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The defendant stood quietly ___ the dock.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "at-in-on-place-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Place prepositions at/in/on are a meaning-driven choice (point vs surface vs enclosed space) plus many fixed phrases, so the correct filler is {answer}.",
+          "ru": "Предлоги места at/in/on выбираются по смыслу (точка / поверхность / внутри) и по устойчивым оборотам, поэтому верный вариант — {answer}."
+        }
+      }
+    ]
   }
 };

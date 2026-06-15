@@ -398,5 +398,611 @@ export const topic: GrammarTopic = {
       "past: true then (habit / state)",
       "now: no longer true"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "used-to-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "\"{answer}\" is the correct filler: 'used to' (with d) marks a past habit or state no longer true; after 'did/didn't' and in questions the d drops ('use to'); 'be/get used to' and 'be accustomed to' take a noun or -ing; 'would' fits only repeated past actions, never states.",
+          "ru": "«{answer}» — верный вариант: used to (с d) описывает прошлую привычку или состояние, которого больше нет; после did/didn't и в вопросах d пропадает (use to); be/get used to и be accustomed to требуют существительное или -ing; would годится только для повторяющихся действий, не для состояний."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I ___ smoke, but I quit five years ago. (use)",
+        "answer": "used to",
+        "distractors": [
+          "use to",
+          "am used to",
+          "would"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She ___ live in Paris before she moved to Rome. (live)",
+        "answer": "used to",
+        "distractors": [
+          "use to",
+          "is used to",
+          "used to be"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We ___ play football every weekend when we were kids.",
+        "answer": "used to",
+        "distractors": [
+          "use to",
+          "were used to",
+          "would be"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He ___ have long hair, but now it's short.",
+        "answer": "used to",
+        "distractors": [
+          "use to",
+          "is used to",
+          "using to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "They ___ live here, but they sold the house last year.",
+        "answer": "used to",
+        "distractors": [
+          "use to",
+          "are used to",
+          "used to be"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I used to ___ to the gym every morning before work. (go)",
+        "answer": "go",
+        "distractors": [
+          "going",
+          "goes",
+          "went"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She used to ___ the guitar, but she stopped years ago. (play)",
+        "answer": "play",
+        "distractors": [
+          "playing",
+          "plays",
+          "played"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I ___ like coffee, but now I drink it every day. (negative)",
+        "answer": "didn't use to",
+        "distractors": [
+          "didn't used to",
+          "don't use to",
+          "wasn't used to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He ___ have a beard when I first met him. (negative)",
+        "answer": "didn't use to",
+        "distractors": [
+          "didn't used to",
+          "doesn't use to",
+          "isn't used to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ you use to read fairy tales as a child? (question)",
+        "answer": "Did",
+        "distractors": [
+          "Do",
+          "Are",
+          "Were"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Did you ___ to play tennis at school? (question)",
+        "answer": "use",
+        "distractors": [
+          "used",
+          "using",
+          "be used"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Where ___ you use to live before you came here?",
+        "answer": "did",
+        "distractors": [
+          "do",
+          "were",
+          "are"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "My grandmother ___ bake bread every Sunday morning.",
+        "answer": "used to",
+        "distractors": [
+          "use to",
+          "is used to",
+          "would be"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "This ___ be a small village, but now it's a busy city.",
+        "answer": "used to",
+        "distractors": [
+          "use to",
+          "is used to",
+          "would"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I'm ___ drinking coffee in the morning now; it feels completely normal. (be accustomed)",
+        "answer": "used to",
+        "distractors": [
+          "use to",
+          "using to",
+          "used"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "After a month, she's ___ to getting up at five o'clock. (accustomed)",
+        "answer": "used",
+        "distractors": [
+          "use",
+          "using",
+          "used to be"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'm used to ___ in noisy offices; it doesn't bother me anymore. (work)",
+        "answer": "working",
+        "distractors": [
+          "work",
+          "worked",
+          "to work"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She's used to ___ late, so the long shifts don't tire her. (work)",
+        "answer": "working",
+        "distractors": [
+          "work",
+          "works",
+          "worked"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It's taking me time to get used to ___ the new system. (use)",
+        "answer": "using",
+        "distractors": [
+          "use",
+          "used",
+          "to use"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You'll soon get ___ to the routine here. (accustomed)",
+        "answer": "used",
+        "distractors": [
+          "use",
+          "using",
+          "be used"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I used to ___ up early when I had that job. (get)",
+        "answer": "get",
+        "distractors": [
+          "getting",
+          "gets",
+          "got"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He's not used to ___ such cold weather. (have)",
+        "answer": "having",
+        "distractors": [
+          "have",
+          "had",
+          "to have"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I ___ drink coffee every morning these days — it's my current habit, not the past.",
+        "answer": "usually",
+        "distractors": [
+          "use to",
+          "used to",
+          "am used to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'm getting used to ___ English at work. (speak)",
+        "answer": "speaking",
+        "distractors": [
+          "speak",
+          "spoke",
+          "to speak"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Did you use to ___ afraid of the dark as a child? (be)",
+        "answer": "be",
+        "distractors": [
+          "being",
+          "been",
+          "was"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It took me a month to get used to ___ in a foreign country. (live)",
+        "answer": "living",
+        "distractors": [
+          "live",
+          "lived",
+          "to live"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Every summer, we ___ travel to the countryside to visit our grandparents — a recurring action.",
+        "answer": "would",
+        "distractors": [
+          "used to be",
+          "are used to",
+          "get used to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Every Sunday, Father ___ wake us at dawn to go fishing.",
+        "answer": "would",
+        "distractors": [
+          "used to be",
+          "is used to",
+          "got used to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I ___ be afraid of dogs — and since it's a state, 'would' is wrong here.",
+        "answer": "used to",
+        "distractors": [
+          "would",
+          "am used to",
+          "would be"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ have a beard — a past state, so we can't use 'would'.",
+        "answer": "used to",
+        "distractors": [
+          "would",
+          "is used to",
+          "would have"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I ___ used to enjoy classical music, but now I love it. (emphatic negative)",
+        "answer": "never",
+        "distractors": [
+          "didn't",
+          "not",
+          "don't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ used to lie — that's why this sudden dishonesty is so shocking. (emphatic)",
+        "answer": "never",
+        "distractors": [
+          "didn't",
+          "wasn't",
+          "not"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "This building used to ___ a cinema before it was demolished. (be)",
+        "answer": "be",
+        "distractors": [
+          "been",
+          "being",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm ___ to walking to work; rain or shine, it feels normal now. (accustomed, not past habit)",
+        "answer": "used",
+        "distractors": [
+          "use",
+          "used to be",
+          "using"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He's not used to ___ criticised in front of others. (be)",
+        "answer": "being",
+        "distractors": [
+          "be",
+          "been",
+          "to be"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When I was young, we ___ live in a small village, and every morning I would walk to school.",
+        "answer": "used to",
+        "distractors": [
+          "would",
+          "are used to",
+          "got used to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He used to ___ to that café every Friday after work. (go)",
+        "answer": "go",
+        "distractors": [
+          "going",
+          "goes",
+          "went"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Did you use to ___ any sports at school? (play)",
+        "answer": "play",
+        "distractors": [
+          "played",
+          "playing",
+          "plays"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There ___ to be a pub on this corner, but it closed last year. (used)",
+        "answer": "used",
+        "distractors": [
+          "use",
+          "is used",
+          "would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "There used to ___ a thriving marketplace where the shopping centre now stands. (be)",
+        "answer": "be",
+        "distractors": [
+          "been",
+          "being",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "People used to write letters; today, ___ send emails instead.",
+        "answer": "they",
+        "distractors": [
+          "used to",
+          "they used",
+          "would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She was ___ to working alone, which is why the open-plan office unsettled her. (accustomed, formal)",
+        "answer": "accustomed",
+        "distractors": [
+          "used",
+          "use",
+          "using"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I'm not accustomed to ___ interrupted during a presentation. (be)",
+        "answer": "being",
+        "distractors": [
+          "be",
+          "been",
+          "to be"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In the 1960s, people ___ listen to vinyl records every evening.",
+        "answer": "used to",
+        "distractors": [
+          "would be",
+          "are used to",
+          "use to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She ___ used to speak to me that way — her tone has changed completely. (emphatic)",
+        "answer": "never",
+        "distractors": [
+          "didn't",
+          "wasn't",
+          "not"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It took me months to get used to ___ after I moved south. (noun phrase)",
+        "answer": "the climate",
+        "distractors": [
+          "live in",
+          "adapt",
+          "acclimatise"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You ___ to be able to smoke in restaurants before the ban. (used)",
+        "answer": "used",
+        "distractors": [
+          "use",
+          "would",
+          "are used"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It ___ to be thought that the earth was the centre of the universe. (passive: used)",
+        "answer": "used",
+        "distractors": [
+          "use",
+          "would",
+          "is used"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It used to be ___ that the Atlantic was uncrossable. (passive, think)",
+        "answer": "thought",
+        "distractors": [
+          "think",
+          "thinking",
+          "thinks"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She was in the habit of ___ a walk before breakfast. (formal paraphrase, take)",
+        "answer": "taking",
+        "distractors": [
+          "take",
+          "took",
+          "to take"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He was in the habit ___ rising before dawn to write. (preposition)",
+        "answer": "of",
+        "distractors": [
+          "to",
+          "for",
+          "with"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ those days, you could buy a loaf of bread for a penny. (factual paraphrase)",
+        "answer": "In",
+        "distractors": [
+          "Used to",
+          "Would",
+          "On"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Things are not what they ___ to be in this town. (fixed expression)",
+        "answer": "used",
+        "distractors": [
+          "use",
+          "were used",
+          "would"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I'm not as young as I ___ to be. (fixed expression)",
+        "answer": "used",
+        "distractors": [
+          "use",
+          "was used",
+          "would"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "You never get used to ___ — every defeat still stings. (lose, aphorism)",
+        "answer": "losing",
+        "distractors": [
+          "lose",
+          "lost",
+          "to lose"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "One gets used to ___, given enough time. (aphorism)",
+        "answer": "anything",
+        "distractors": [
+          "anywhere",
+          "somehow",
+          "ever"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It ___ to be said that fortune favours the bold. (passive frame: used)",
+        "answer": "used",
+        "distractors": [
+          "use",
+          "would",
+          "is used"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Jews used to ___ persecuted in many countries throughout history. (passive, be)",
+        "answer": "be",
+        "distractors": [
+          "been",
+          "being",
+          "was"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

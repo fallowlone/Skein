@@ -309,5 +309,591 @@ export const topic: GrammarTopic = {
       "Direct command",
       "Reported command"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "The teacher ___ us to open our books. (hint: ordered/instructed)",
+        "answer": "told",
+        "distractors": [
+          "said",
+          "said to",
+          "spoke"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ me to help her with the homework.",
+        "answer": "asked",
+        "distractors": [
+          "said",
+          "told to",
+          "said to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He told me ___ touch the wires.",
+        "answer": "not to",
+        "distractors": [
+          "to not",
+          "don't",
+          "not"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My mother told me ___ be late for dinner.",
+        "answer": "not to",
+        "distractors": [
+          "to not",
+          "don't",
+          "that not"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The doctor told ___ to drink more water.",
+        "answer": "me",
+        "distractors": [
+          "to me",
+          "at me",
+          "for me"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He told me ___ go home and rest.",
+        "answer": "to",
+        "distractors": [
+          "that",
+          "for",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She asked him ___ wait for her outside.",
+        "answer": "to",
+        "distractors": [
+          "that",
+          "for",
+          "-"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "\"Sit down!\" he said. → He ___ me to sit down.",
+        "answer": "told",
+        "distractors": [
+          "said",
+          "said to",
+          "asked to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "\"Please come in.\" → She ___ me to come in.",
+        "answer": "asked",
+        "distractors": [
+          "said",
+          "told to",
+          "said to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The coach told the players ___ give up.",
+        "answer": "not to",
+        "distractors": [
+          "to not",
+          "don't",
+          "not"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He ___ her to be careful on the stairs.",
+        "answer": "told",
+        "distractors": [
+          "said",
+          "said to",
+          "spoke"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The guard told us ___ enter without a pass.",
+        "answer": "not to",
+        "distractors": [
+          "to not",
+          "don't",
+          "not"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She told the children ___ make so much noise. (hint: negative)",
+        "answer": "not to",
+        "distractors": [
+          "to not",
+          "don't",
+          "that not"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "\"Help me, please.\" → He ___ me to help him.",
+        "answer": "asked",
+        "distractors": [
+          "said",
+          "told to",
+          "said to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My father told ___ to lock the door before leaving.",
+        "answer": "me",
+        "distractors": [
+          "to me",
+          "that me",
+          "at me"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The doctor ___ him to cut down on sugar. (hint: counsel)",
+        "answer": "advised",
+        "distractors": [
+          "suggested",
+          "said",
+          "recommended me"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ me not to leave my bag unattended. (hint: caution)",
+        "answer": "warned",
+        "distractors": [
+          "suggested",
+          "said",
+          "recommended"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My manager ___ us to submit the report by Monday. (hint: gave procedural orders)",
+        "answer": "instructed",
+        "distractors": [
+          "suggested",
+          "said",
+          "let"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ him not to tell anyone about it. (hint: pleaded)",
+        "answer": "begged",
+        "distractors": [
+          "suggested",
+          "recommended",
+          "said"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The officer ___ the crowd to step back. (hint: firm authority)",
+        "answer": "ordered",
+        "distractors": [
+          "suggested",
+          "said",
+          "recommended"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ that I leave early to beat the traffic. (NOT object + to-inf)",
+        "answer": "suggested",
+        "distractors": [
+          "told me",
+          "advised me to",
+          "asked me"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She suggested ___ the earlier train. (hint: gerund)",
+        "answer": "taking",
+        "distractors": [
+          "to take",
+          "me to take",
+          "that take"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My parents ___ me drive their car last weekend. (hint: bare infinitive)",
+        "answer": "let",
+        "distractors": [
+          "allowed",
+          "permitted",
+          "advised"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They ___ me to stay another night. (hint: + to-infinitive)",
+        "answer": "allowed",
+        "distractors": [
+          "let",
+          "made",
+          "suggested"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The passengers were ___ to fasten their seatbelts. (passive)",
+        "answer": "told",
+        "distractors": [
+          "said",
+          "suggested",
+          "spoken"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ me to call my mother on her birthday. (hint: jog the memory)",
+        "answer": "reminded",
+        "distractors": [
+          "suggested",
+          "said",
+          "mentioned"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ her to apply for the scholarship. (hint: positive support)",
+        "answer": "encouraged",
+        "distractors": [
+          "suggested",
+          "said",
+          "let"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The rules ___ us to smoke inside the building. (hint: prohibit)",
+        "answer": "forbid",
+        "distractors": [
+          "suggest",
+          "let",
+          "advise"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They ___ us to reconsider the decision before signing. (hint: strongly press)",
+        "answer": "urged",
+        "distractors": [
+          "suggested",
+          "said",
+          "let"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She finally ___ him to come to the party. (hint: talked him into it)",
+        "answer": "persuaded",
+        "distractors": [
+          "suggested",
+          "said",
+          "let"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The doctor recommended ___ more sleep, not less coffee. (hint: gerund)",
+        "answer": "getting",
+        "distractors": [
+          "to get",
+          "me to get",
+          "that to get"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He warned me ___ open the box until he arrived. (hint: negative)",
+        "answer": "not to",
+        "distractors": [
+          "that not",
+          "to not",
+          "don't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The general ___ that the troops advance at dawn. (subjunctive base form)",
+        "answer": "ordered",
+        "distractors": [
+          "told",
+          "advised",
+          "asked"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The board proposed that the bonus ___ linked to performance. (subjunctive)",
+        "answer": "be",
+        "distractors": [
+          "is",
+          "was",
+          "being"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The committee recommended that the project ___ reviewed quarterly. (subjunctive)",
+        "answer": "be",
+        "distractors": [
+          "is",
+          "was",
+          "to be"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He insisted that she ___ present at every meeting. (command reading, subjunctive)",
+        "answer": "be",
+        "distractors": [
+          "was",
+          "is",
+          "being"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The law requires that all applicants ___ identification. (subjunctive base form)",
+        "answer": "provide",
+        "distractors": [
+          "provides",
+          "provided",
+          "to provide"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She ___ refused to discuss the matter any further. (attitude adverb)",
+        "answer": "flatly",
+        "distractors": [
+          "fluently",
+          "quickly soon",
+          "hardly never"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___ told the children to behave themselves. (stern attitude)",
+        "answer": "sternly",
+        "distractors": [
+          "sternful",
+          "sternly-ly",
+          "stern"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The academic guidelines cautioned researchers ___ proceeding without consent. (formal negative)",
+        "answer": "against",
+        "distractors": [
+          "not to",
+          "from to",
+          "to not"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The court ordered that the witness ___ to the stand. (subjunctive)",
+        "answer": "return",
+        "distractors": [
+          "returns",
+          "returned",
+          "to return"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They demanded that he ___ a full explanation. (subjunctive base form)",
+        "answer": "give",
+        "distractors": [
+          "gives",
+          "gave",
+          "giving"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___ to help us move the furniture. (offer, no object)",
+        "answer": "offered",
+        "distractors": [
+          "suggested",
+          "told",
+          "let"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She ___ to call as soon as she landed. (commitment, to-inf)",
+        "answer": "promised",
+        "distractors": [
+          "suggested",
+          "told",
+          "reminded"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The manager insisted ___ paying for everyone's lunch. (insist + preposition + gerund)",
+        "answer": "on",
+        "distractors": [
+          "to",
+          "that to",
+          "in"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___ to sue the company if they didn't respond. (to-inf, no object)",
+        "answer": "threatened",
+        "distractors": [
+          "suggested",
+          "told",
+          "reminded"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The court ___ that the respondent be restrained from selling the assets. (legal subjunctive)",
+        "answer": "ordered",
+        "distractors": [
+          "told",
+          "asked",
+          "advised"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The statute requires that all parties ___ notified in writing. (legal subjunctive)",
+        "answer": "be",
+        "distractors": [
+          "are",
+          "were",
+          "to be"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The defendant was ___ from approaching the plaintiff's residence. (legal prohibition)",
+        "answer": "enjoined",
+        "distractors": [
+          "forbidden to",
+          "told not",
+          "advised against"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She ___ him, with tears in her eyes, not to undertake the journey. (literary plea)",
+        "answer": "entreated",
+        "distractors": [
+          "suggested",
+          "told to",
+          "said"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Passengers are respectfully ___ to remain seated until the aircraft stops. (passive notice)",
+        "answer": "reminded",
+        "distractors": [
+          "suggested",
+          "said",
+          "told that"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The contract stipulates that payment ___ be made within thirty days. (contractual obligation)",
+        "answer": "shall",
+        "distractors": [
+          "should",
+          "could",
+          "might"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "By the end of his career he had ___ countless donors to contribute. (formally talked round)",
+        "answer": "prevailed upon",
+        "distractors": [
+          "suggested",
+          "told",
+          "persuaded to that"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The chairman ___ the committee to consider all implications first. (formal/legal call)",
+        "answer": "enjoined",
+        "distractors": [
+          "suggested",
+          "said to",
+          "recommended that"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The tribunal ___ the respondent to provide full disclosure. (formal direction)",
+        "answer": "directed",
+        "distractors": [
+          "suggested",
+          "said to",
+          "recommended"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The minister ___ that the borders would be closed at midnight. (announcement report)",
+        "answer": "announced",
+        "distractors": [
+          "told to",
+          "suggested",
+          "ordered to"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "reported-commands-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Reported commands hinge on choosing the correct reporting verb and its required syntax (object + to-infinitive, that-clause + subjunctive, gerund, passive, or formal/legal frames). The correct filler here is \"{answer}\"; the distractors are plausible but ungrammatical or use the wrong frame for that verb.",
+          "ru": "Косвенные команды зависят от выбора правильного reporting verb и его синтаксиса (object + to-inf, that-clause + сослагательное, герундий, пассив или формально-юридические конструкции). Правильный вариант — «{answer}»; отвлекающие варианты выглядят правдоподобно, но грамматически неверны или используют не ту конструкцию для этого глагола."
+        }
+      }
+    ]
   }
 };

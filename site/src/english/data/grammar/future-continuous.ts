@@ -250,5 +250,572 @@ export const topic: GrammarTopic = {
       "action in progress",
       "after"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "This time tomorrow, I ___ over the Atlantic. (fly)",
+        "answer": "will be flying",
+        "distractors": [
+          "will fly",
+          "am flying",
+          "will have flown"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Don't call at nine — I ___ the kids to bed. (put)",
+        "answer": "will be putting",
+        "distractors": [
+          "will put",
+          "put",
+          "am putting"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "At eight o'clock tonight, we ___ the match. (watch)",
+        "answer": "will be watching",
+        "distractors": [
+          "will watch",
+          "watch",
+          "have watched"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Don't worry about the parcel — I ___ the post office anyway. (pass)",
+        "answer": "will be passing",
+        "distractors": [
+          "will pass",
+          "pass",
+          "passed"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "This time next week, she ___ on a beach in Greece. (lie)",
+        "answer": "will be lying",
+        "distractors": [
+          "will lie",
+          "lies",
+          "is lying"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ you ___ the car tonight, or can I borrow it? (use)",
+        "answer": "Will be using",
+        "alts": [
+          "will be using"
+        ],
+        "distractors": [
+          "Will use",
+          "Are using",
+          "Do use"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We ___ through London next week, so we'll drop in. (pass)",
+        "answer": "will be passing",
+        "distractors": [
+          "will pass",
+          "pass",
+          "passed"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They ___ around noon tomorrow, so have lunch ready. (arrive)",
+        "answer": "will be arriving",
+        "distractors": [
+          "will arrive",
+          "arrive",
+          "arrived"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "While you're at work, I ___ the kitchen. (paint)",
+        "answer": "will be painting",
+        "distractors": [
+          "will paint",
+          "paint",
+          "painted"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I ___ John tomorrow anyway, so I can pass on the message. (see)",
+        "answer": "will be seeing",
+        "distractors": [
+          "will see",
+          "am seeing",
+          "see"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "At this time next month, we ___ in our new flat. (live)",
+        "answer": "will be living",
+        "distractors": [
+          "will live",
+          "live",
+          "are living"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When you get home, the children ___ their homework. (do)",
+        "answer": "will be doing",
+        "distractors": [
+          "will do",
+          "do",
+          "did"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm afraid I ___ the report tonight; I have other plans. (not / write)",
+        "answer": "won't be writing",
+        "distractors": [
+          "won't write",
+          "don't write",
+          "am not writing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "By midnight the whole team ___ on the launch. (still / work)",
+        "answer": "will still be working",
+        "distractors": [
+          "will still work",
+          "still works",
+          "have still worked"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Tomorrow evening I ___ for my exam, so I can't come out. (revise)",
+        "answer": "will be revising",
+        "distractors": [
+          "will revise",
+          "revise",
+          "revised"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ you ___ us for dinner, or do you have to leave early? (join)",
+        "answer": "Will be joining",
+        "alts": [
+          "will be joining"
+        ],
+        "distractors": [
+          "Will join",
+          "Are joining",
+          "Do join"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "This time next year, the company ___ in three new countries. (operate)",
+        "answer": "will be operating",
+        "distractors": [
+          "will operate",
+          "operates",
+          "is operating"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Don't text me at noon — I ___ the conference talk then. (give)",
+        "answer": "will be giving",
+        "distractors": [
+          "will give",
+          "give",
+          "gave"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When the inspector arrives, we ___ the new machines. (test)",
+        "answer": "will be testing",
+        "distractors": [
+          "will test",
+          "test",
+          "tested"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "At eleven tomorrow the band ___ for the festival. (rehearse)",
+        "answer": "will be rehearsing",
+        "distractors": [
+          "will rehearse",
+          "rehearses",
+          "rehearsed"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ you ___ long, or is this just a quick visit? (stay)",
+        "answer": "Will be staying",
+        "alts": [
+          "will be staying"
+        ],
+        "distractors": [
+          "Will stay",
+          "Are staying",
+          "Do stay"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Madam, ___ you ___ anything else this evening? (need)",
+        "answer": "will be needing",
+        "distractors": [
+          "will need",
+          "do need",
+          "are needing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ you ___ anything to the party, or shall I provide everything? (bring)",
+        "answer": "Will be bringing",
+        "alts": [
+          "will be bringing"
+        ],
+        "distractors": [
+          "Will bring",
+          "Are bringing",
+          "Do bring"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I ___ soon, so I'll say my goodbyes now — no rush, though. (leave)",
+        "answer": "will be leaving",
+        "distractors": [
+          "will leave",
+          "leave",
+          "am leaving"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ you ___ the meeting on Thursday? It would be good to have you there. (attend)",
+        "answer": "Will be attending",
+        "alts": [
+          "will be attending"
+        ],
+        "distractors": [
+          "Will attend",
+          "Are attending",
+          "Do attend"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This time next year, I ___ abroad as part of my degree. (study)",
+        "answer": "will be studying",
+        "distractors": [
+          "will study",
+          "study",
+          "have studied"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In ten years, she ___ her own consultancy, no doubt. (run)",
+        "answer": "will be running",
+        "distractors": [
+          "will run",
+          "runs",
+          "has run"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "When you arrive, we ___ dinner, so just come straight in. (have)",
+        "answer": "will be having",
+        "distractors": [
+          "will have",
+          "have",
+          "had"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Sir, ___ you ___ the usual table by the window? (want)",
+        "answer": "will be wanting",
+        "distractors": [
+          "will want",
+          "do want",
+          "are wanting"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___ for us at the station, so we needn't take a taxi. (wait)",
+        "answer": "will be waiting",
+        "distractors": [
+          "will wait",
+          "waits",
+          "has waited"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We ___ past your office tomorrow, so we'll drop off the files. (drive)",
+        "answer": "will be driving",
+        "distractors": [
+          "will drive",
+          "drive",
+          "drove"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ you ___ the apartment over the summer, or leaving it empty? (use)",
+        "answer": "Will be using",
+        "alts": [
+          "will be using"
+        ],
+        "distractors": [
+          "Will use",
+          "Are using",
+          "Do use"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Reception ___ guests from three o'clock, so do come a little later. (check in)",
+        "answer": "will be checking in",
+        "distractors": [
+          "will check in",
+          "checks in",
+          "has checked in"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "While the kids are at camp, we ___ the loft into a study. (convert)",
+        "answer": "will be converting",
+        "distractors": [
+          "will convert",
+          "convert",
+          "converted"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ your team ___ on the migration over the holidays? (work)",
+        "answer": "Will be working",
+        "alts": [
+          "will be working"
+        ],
+        "distractors": [
+          "Will work",
+          "Are working",
+          "Do work"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The train ___ shortly; please make your way to the platform. (depart)",
+        "answer": "will be departing",
+        "distractors": [
+          "will depart",
+          "departs",
+          "has departed"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We ___ your answer by Friday, if that suits you. (need)",
+        "answer": "will be needing",
+        "distractors": [
+          "will need",
+          "need",
+          "are needing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The committee ___ your submission over the coming weeks. (review)",
+        "answer": "will be reviewing",
+        "distractors": [
+          "will review",
+          "reviews",
+          "has reviewed"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We ___ the situation closely and will update you in due course. (monitor)",
+        "answer": "will be monitoring",
+        "distractors": [
+          "will monitor",
+          "monitor",
+          "have monitored"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The department ___ further guidance in due course. (issue)",
+        "answer": "will be issuing",
+        "distractors": [
+          "will issue",
+          "issues",
+          "has issued"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Over the next week, delegates ___ the proposal in plenary. (debate)",
+        "answer": "will be debating",
+        "distractors": [
+          "will debate",
+          "debate",
+          "have debated"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "By Friday we ___ whether the deal has gone through. (learn)",
+        "answer": "will be learning",
+        "distractors": [
+          "will learn",
+          "learn",
+          "have learned"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The committee ___ on Tuesday to finalise the budget. (meet)",
+        "answer": "will be meeting",
+        "distractors": [
+          "will meet",
+          "meets",
+          "has met"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Sir, ___ you ___ a receipt with that? (require)",
+        "answer": "will be requiring",
+        "distractors": [
+          "will require",
+          "require",
+          "do require"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "This time next decade, we ___ texts written largely by machines. (read)",
+        "answer": "will be reading",
+        "distractors": [
+          "will read",
+          "read",
+          "have read"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Our staff ___ in touch should anything change. (be)",
+        "answer": "will be being",
+        "distractors": [
+          "will be",
+          "will be be",
+          "are being"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Throughout the trial, analysts ___ the data for anomalies. (examine)",
+        "answer": "will be examining",
+        "distractors": [
+          "will examine",
+          "examine",
+          "have examined"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "One day, we ___ back on all this and smiling. (look)",
+        "answer": "will be looking",
+        "distractors": [
+          "will look",
+          "look",
+          "have looked"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Madam, ___ you ___ with us long this season? (stay)",
+        "answer": "will be staying",
+        "distractors": [
+          "will stay",
+          "stay",
+          "do stay"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "At noon tomorrow, our auditors ___ the final accounts. (close)",
+        "answer": "will be closing",
+        "distractors": [
+          "will close",
+          "close",
+          "have closed"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The minister ___ a statement to the press at midday. (deliver)",
+        "answer": "will be delivering",
+        "distractors": [
+          "will deliver",
+          "delivers",
+          "has delivered"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Throughout next quarter, the board ___ each division's targets. (assess)",
+        "answer": "will be assessing",
+        "distractors": [
+          "will assess",
+          "assesses",
+          "has assessed"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "future-continuous-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The future continuous (will be + V-ing) names an action in progress at a future moment, an event in the natural course of things, a polite enquiry, or a distanced/institutional process; the correct filler is \"{answer}\".",
+          "ru": "Future Continuous (will be + V-ing) описывает действие в процессе в будущем, событие по ходу событий, вежливый вопрос или дистанцированный официальный процесс; верный вариант — «{answer}»."
+        }
+      }
+    ]
   }
 };

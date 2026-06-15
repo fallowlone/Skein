@@ -252,5 +252,571 @@ export const topic: GrammarTopic = {
       "been",
       "past participle (V3)"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "The quarterly report ___ finished ahead of schedule, so we can relax now.",
+        "answer": "has been",
+        "distractors": [
+          "has being",
+          "have been",
+          "has was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "All the tickets ___ sold for tonight's concert.",
+        "answer": "have been",
+        "distractors": [
+          "has been",
+          "have being",
+          "have was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The window had been ___ before we even arrived at the house.",
+        "answer": "broken",
+        "distractors": [
+          "broke",
+          "breaking",
+          "break"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Has the final decision ___ made yet, or are they still discussing it?",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The factory has been ___ since the fire last spring.",
+        "answer": "closed",
+        "distractors": [
+          "closing",
+          "close",
+          "closes"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My bike ___ stolen, so I had to walk to work this morning.",
+        "answer": "has been",
+        "distractors": [
+          "has being",
+          "have been",
+          "is been"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "This novel has been ___ into more than thirty languages.",
+        "answer": "translated",
+        "distractors": [
+          "translating",
+          "translate",
+          "translates"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The form hasn't ___ signed yet, so we can't process your request.",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When I got home, the cake had already ___ eaten by the children.",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The letters have been ___ and are ready to be posted.",
+        "answer": "written",
+        "distractors": [
+          "wrote",
+          "writing",
+          "write"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "By eight o'clock the door had been ___ and the lights switched off.",
+        "answer": "locked",
+        "distractors": [
+          "locking",
+          "lock",
+          "locks"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The email has just ___ sent, so check your inbox in a minute.",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "All the windows ___ cleaned this morning, so please don't touch them.",
+        "answer": "have been",
+        "distractors": [
+          "has been",
+          "have being",
+          "are been"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The patient has been ___ in hospital since Monday.",
+        "answer": "kept",
+        "distractors": [
+          "keeping",
+          "keep",
+          "keeped"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The missing keys had been ___ under the sofa all along.",
+        "answer": "hidden",
+        "distractors": [
+          "hid",
+          "hiding",
+          "hide"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The bridge ___ been repaired, so it is open to traffic again.",
+        "answer": "has",
+        "distractors": [
+          "have",
+          "had being",
+          "is"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Three suspects ___ been arrested in connection with the robbery.",
+        "answer": "have",
+        "distractors": [
+          "has",
+          "is",
+          "are"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The algorithm has been ___ extensively before the public release.",
+        "answer": "tested",
+        "distractors": [
+          "testing",
+          "test",
+          "tests"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "By the time the police arrived, the evidence had been ___.",
+        "answer": "destroyed",
+        "distractors": [
+          "destroying",
+          "destroy",
+          "destroys"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It has ___ reported that negotiations between the two sides are ongoing.",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The system has been in ___ since 2015 with minimal maintenance.",
+        "answer": "use",
+        "distractors": [
+          "used",
+          "using",
+          "uses"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The minister is said to have been ___ about the breach last week.",
+        "answer": "informed",
+        "distractors": [
+          "informing",
+          "inform",
+          "informs"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The manuscript ___ been revised several times since the first draft.",
+        "answer": "has",
+        "distractors": [
+          "have",
+          "had being",
+          "is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "By the time I arrived, all the documents had ___ signed.",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The new law has just been ___ by a narrow majority in parliament.",
+        "answer": "passed",
+        "distractors": [
+          "passing",
+          "pass",
+          "passes"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It had been ___ that further reforms were needed before the crisis.",
+        "answer": "suggested",
+        "distractors": [
+          "suggesting",
+          "suggest",
+          "suggests"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The room had ___ prepared, and the guests were due to arrive at seven.",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Tests have been ___ for over a year now without any final conclusion.",
+        "answer": "conducted",
+        "distractors": [
+          "conducting",
+          "conduct",
+          "conducts"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She has been ___ three times since she joined the firm.",
+        "answer": "promoted",
+        "distractors": [
+          "promoting",
+          "promote",
+          "promotes"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The site has ___ under investigation since January, and the report is still pending.",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The missing child has been ___ safe and well, the police announced.",
+        "answer": "found",
+        "distractors": [
+          "finded",
+          "finding",
+          "find"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The system had been in use for five years before it ___ upgraded.",
+        "answer": "was",
+        "distractors": [
+          "has been",
+          "being",
+          "been"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He was surprised to find that the problem had already been ___.",
+        "answer": "solved",
+        "distractors": [
+          "solving",
+          "solve",
+          "solves"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The proposal has been ___, reviewed, and circulated within a single week.",
+        "answer": "drafted",
+        "distractors": [
+          "drafting",
+          "draft",
+          "drafts"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It has long ___ held that the document is authentic, though doubts now exist.",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "All necessary measures have been ___ to prevent a recurrence of the incident.",
+        "answer": "taken",
+        "distractors": [
+          "took",
+          "taking",
+          "take"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "By 1914, the alliance system had been firmly ___ across the continent.",
+        "answer": "established",
+        "distractors": [
+          "establishing",
+          "establish",
+          "establishes"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Much has been ___ on the subject, yet little consensus has emerged.",
+        "answer": "written",
+        "distractors": [
+          "wrote",
+          "writing",
+          "write"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Nothing had ___ left to chance in the planning of the operation.",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The agreement has been duly ___ by both parties before the deadline.",
+        "answer": "executed",
+        "distractors": [
+          "executing",
+          "execute",
+          "executes"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "All contractual obligations had been ___ prior to the termination of the contract.",
+        "answer": "fulfilled",
+        "distractors": [
+          "fulfilling",
+          "fulfil",
+          "fulfils"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It has been ___ that these findings hold across a wide range of conditions.",
+        "answer": "shown",
+        "distractors": [
+          "showed",
+          "showing",
+          "show"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The technology had long been ___ to be impossible until the breakthrough.",
+        "answer": "believed",
+        "distractors": [
+          "believing",
+          "believe",
+          "believes"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The decision has been ___ to repeated legal challenges over the years.",
+        "answer": "subject",
+        "distractors": [
+          "subjecting",
+          "subjects",
+          "subjected"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The claim has been ___ as wholly unfounded by the committee.",
+        "answer": "dismissed",
+        "distractors": [
+          "dismissing",
+          "dismiss",
+          "dismisses"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Notice ___ been given to all tenants as required by the lease.",
+        "answer": "has",
+        "distractors": [
+          "have",
+          "had being",
+          "is"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The building, which had been ___ for decades, has now been restored.",
+        "answer": "abandoned",
+        "distractors": [
+          "abandoning",
+          "abandon",
+          "abandons"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He has been ___ to have taken bribes, though nothing has been proven.",
+        "answer": "alleged",
+        "distractors": [
+          "alleging",
+          "allege",
+          "alleges"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It had been ___ that the reaction was complete before the test was run.",
+        "answer": "assumed",
+        "distractors": [
+          "assuming",
+          "assume",
+          "assumes"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The procedure had been approved, signed, and ___ within a week.",
+        "answer": "archived",
+        "distractors": [
+          "archiving",
+          "archive",
+          "archives"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Little has been ___ to address the concerns raised by residents.",
+        "answer": "done",
+        "distractors": [
+          "did",
+          "doing",
+          "do"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "These findings have ___ confirmed by several subsequent studies.",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The decision has been widely ___ by historians as a turning point.",
+        "answer": "criticised",
+        "distractors": [
+          "criticising",
+          "criticise",
+          "criticises"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "By the time the investigation concluded, all evidence had been thoroughly ___.",
+        "answer": "catalogued",
+        "distractors": [
+          "cataloguing",
+          "catalogue",
+          "catalogues"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "passive-perfect-tenses-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The perfect passive is have/has/had + been + past participle (V3): '{answer}' completes the structure correctly. Watch for been (never being) after the auxiliary, a true V3 rather than a base or -ing form, and only one finite auxiliary.",
+          "ru": "Перфектный пассив — have/has/had + been + причастие прошедшего времени (V3): '{answer}' завершает конструкцию верно. Помни: после вспомогательного — been (никогда being), нужна именно V3, а не базовая или -ing форма, и только один личный вспомогательный глагол."
+        }
+      }
+    ]
   }
 };

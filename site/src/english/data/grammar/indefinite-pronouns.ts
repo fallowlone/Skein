@@ -419,5 +419,617 @@ export const topic: GrammarTopic = {
       "no- (one negative word)",
       "every- (the whole group)"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "___ is knocking at the door — can you check?",
+        "answer": "Someone",
+        "distractors": [
+          "Anyone",
+          "No one"
+        ],
+        "alts": [
+          "Somebody"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Is there ___ in the fridge to eat?",
+        "answer": "anything",
+        "distractors": [
+          "something",
+          "nothing"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ likes being shouted at.",
+        "answer": "Nobody",
+        "distractors": [
+          "Anybody",
+          "Somebody"
+        ],
+        "alts": [
+          "No one"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Everyone in the room ___ smiling.",
+        "answer": "is",
+        "distractors": [
+          "are",
+          "were"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I looked for my phone but I couldn't find it ___.",
+        "answer": "anywhere",
+        "distractors": [
+          "somewhere",
+          "nowhere"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "There's ___ wrong with the engine; it keeps stalling.",
+        "answer": "something",
+        "distractors": [
+          "anything",
+          "nothing"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Did ___ call while I was out?",
+        "answer": "anyone",
+        "distractors": [
+          "someone",
+          "no one"
+        ],
+        "alts": [
+          "anybody"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Nothing ___ ever simple with him.",
+        "answer": "is",
+        "distractors": [
+          "are",
+          "be"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We can have lunch ___ you like — the park or the cafe.",
+        "answer": "anywhere",
+        "distractors": [
+          "nowhere",
+          "everywhere"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I don't want ___ to eat right now, thanks.",
+        "answer": "anything",
+        "distractors": [
+          "nothing",
+          "something"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Everybody ___ the school song by heart.",
+        "answer": "knows",
+        "distractors": [
+          "know",
+          "knowing"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Someone left ___ on my desk — there's a note here.",
+        "answer": "something",
+        "distractors": [
+          "anything",
+          "nothing"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "There isn't ___ left in the bottle.",
+        "answer": "anything",
+        "distractors": [
+          "nothing",
+          "something"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ was at the party — the whole class came.",
+        "answer": "Everybody",
+        "distractors": [
+          "Anybody",
+          "Nobody"
+        ],
+        "alts": [
+          "Everyone"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Is ___ sitting here, or is the seat free?",
+        "answer": "anyone",
+        "distractors": [
+          "someone",
+          "no one"
+        ],
+        "alts": [
+          "anybody"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Would you like ___ to drink before we order food?",
+        "answer": "something",
+        "distractors": [
+          "anything",
+          "nothing"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ student must bring a pencil to the exam.",
+        "answer": "Every",
+        "distractors": [
+          "Each of",
+          "Both"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ of the twins received exactly the same present.",
+        "answer": "Each",
+        "distractors": [
+          "Every",
+          "Everyone"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Everyone is entitled to ___ own opinion on the matter.",
+        "answer": "their",
+        "distractors": [
+          "its",
+          "his and her"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ came to the meeting, so we had to reschedule it.",
+        "answer": "No one",
+        "distractors": [
+          "Anyone",
+          "Someone"
+        ],
+        "alts": [
+          "Nobody"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Can I have ___ water? I'm really thirsty.",
+        "answer": "some",
+        "distractors": [
+          "any",
+          "no"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Somebody phoned for you, but ___ didn't leave a name.",
+        "answer": "they",
+        "distractors": [
+          "he",
+          "it"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ child in the group needs to be picked up individually.",
+        "answer": "Each",
+        "distractors": [
+          "Every of",
+          "All of the each"
+        ],
+        "alts": [
+          "Every"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Would you like ___ to help you carry those bags?",
+        "answer": "someone",
+        "distractors": [
+          "anyone",
+          "no one"
+        ],
+        "alts": [
+          "somebody"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ of us has a slightly different version of the story.",
+        "answer": "Each",
+        "distractors": [
+          "Every",
+          "Everyone"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "There wasn't ___ in the building when the alarm rang.",
+        "answer": "anybody",
+        "distractors": [
+          "nobody",
+          "somebody"
+        ],
+        "alts": [
+          "anyone"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If anyone needs more time, ___ should let me know now.",
+        "answer": "they",
+        "distractors": [
+          "he",
+          "one"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I have ___ friends in this new town, so I feel quite lonely.",
+        "answer": "few",
+        "distractors": [
+          "a few",
+          "little"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Don't worry — there's still ___ milk left for your coffee.",
+        "answer": "a little",
+        "distractors": [
+          "a few",
+          "few"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ of the candidates was suitable, so the post stays open.",
+        "answer": "None",
+        "distractors": [
+          "Nothing",
+          "No one of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He doesn't have ___ time for hobbies these days.",
+        "answer": "much",
+        "distractors": [
+          "many",
+          "a few"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I asked for sugar and luckily there was ___ left in the jar.",
+        "answer": "a little",
+        "distractors": [
+          "a few",
+          "many"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ wins the election, the economy will be their first problem.",
+        "answer": "Whoever",
+        "distractors": [
+          "Whatever",
+          "Whichever"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Take ___ you want from the shelf — it's all free.",
+        "answer": "whatever",
+        "distractors": [
+          "whoever",
+          "whichever"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I have ___ money on me, so let's split the bill later.",
+        "answer": "no",
+        "distractors": [
+          "none",
+          "not any of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "How many tickets are left? — Sorry, I'm afraid we have ___.",
+        "answer": "none",
+        "distractors": [
+          "no",
+          "nothing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ is impossible if you are determined enough.",
+        "answer": "Nothing",
+        "distractors": [
+          "None",
+          "Not anything"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She read ___ books last summer — almost a hundred of them.",
+        "answer": "many",
+        "distractors": [
+          "much",
+          "a little"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ road you take, you'll reach the village by nightfall.",
+        "answer": "Whichever",
+        "distractors": [
+          "Whoever",
+          "Whatever"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We've made ___ progress this quarter — barely any, in fact.",
+        "answer": "little",
+        "distractors": [
+          "a little",
+          "few"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There were ___ complaints, which is why management ignored the issue.",
+        "answer": "few",
+        "distractors": [
+          "a few",
+          "little"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Each applicant must submit ___ documents by Friday.",
+        "answer": "their",
+        "distractors": [
+          "his or her or their",
+          "its"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "None of the evidence ___ conclusive, in the panel's formal view.",
+        "answer": "is",
+        "distractors": [
+          "are",
+          "were"
+        ],
+        "alts": [
+          "are"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Little ___ I know what awaited me on the other side.",
+        "answer": "did",
+        "distractors": [
+          "had",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In academic writing, ___ should always cite one's sources.",
+        "answer": "one",
+        "distractors": [
+          "you",
+          "they"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You can buy this adapter in ___ electronics shop — it doesn't matter which.",
+        "answer": "any",
+        "distractors": [
+          "some",
+          "no"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If a reader has questions, ___ can email the editor directly.",
+        "answer": "they",
+        "distractors": [
+          "he",
+          "it"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Few ___ disagree with so well-supported a conclusion.",
+        "answer": "would",
+        "distractors": [
+          "will not",
+          "wouldn't"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It ___ be seen from the data that the trend is accelerating.",
+        "answer": "can",
+        "distractors": [
+          "you can",
+          "one can"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Each participant must identify ___ at the registration desk.",
+        "answer": "themselves",
+        "distractors": [
+          "himself or herself",
+          "itself"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Never ___ anyone in the firm imagined such a result.",
+        "answer": "did",
+        "distractors": [
+          "had",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "There is no reason ___ to panic at this early stage.",
+        "answer": "whatsoever",
+        "distractors": [
+          "whatever so",
+          "what so ever"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Some embrace the reform; ___ resist it bitterly.",
+        "answer": "others",
+        "distractors": [
+          "the others one",
+          "another"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Neither of the two explanations ___ satisfactory, the report concludes.",
+        "answer": "is",
+        "distractors": [
+          "are",
+          "have been"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Never ___ anyone seen such a sight in living memory.",
+        "answer": "had",
+        "distractors": [
+          "did",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The treaty declares that ___ shall be subjected to torture.",
+        "answer": "no one",
+        "distractors": [
+          "anyone",
+          "everyone"
+        ],
+        "alts": [
+          "nobody"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "All for ___, I fear; the rescue came too late.",
+        "answer": "naught",
+        "distractors": [
+          "nothing",
+          "none"
+        ],
+        "alts": [
+          "nought"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The clause excludes any liability ___ on the part of the carrier.",
+        "answer": "whatsoever",
+        "distractors": [
+          "whoever",
+          "whichever"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Either of the proposed routes ___ acceptable to the committee.",
+        "answer": "is",
+        "distractors": [
+          "are",
+          "were both"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Nowhere else ___ you find craftsmanship of this calibre.",
+        "answer": "will",
+        "distractors": [
+          "you will",
+          "do you"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ argue for caution; others demand immediate action.",
+        "answer": "Some",
+        "distractors": [
+          "Anyone",
+          "Each"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "indefinite-pronouns-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "\"{answer}\" is the indefinite-pronoun (or agreement/quantifier) form the sentence's polarity, register, and meaning require.",
+          "ru": "«{answer}» — форма неопределённого местоимения (или согласования/квантификатора), которой требуют полярность, регистр и смысл предложения."
+        }
+      }
+    ],
+    "contexts_note": ""
   }
 };

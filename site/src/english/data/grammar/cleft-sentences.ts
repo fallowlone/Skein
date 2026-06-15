@@ -254,5 +254,571 @@ export const topic: GrammarTopic = {
       "neutral",
       "focus"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "cleft-sentences-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "A cleft splits a clause to spotlight one element; the correct answer is \"{answer}\".",
+          "ru": "Cleft разбивает предложение, чтобы выделить один элемент; правильный ответ — «{answer}»."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "It was my brother ___ helped me move, not my sister.",
+        "answer": "who",
+        "distractors": [
+          "which",
+          "whose",
+          "what"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was the noise ___ kept me awake all night.",
+        "answer": "that",
+        "distractors": [
+          "who",
+          "what",
+          "why"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was in 2019 ___ we first met at the conference.",
+        "answer": "that",
+        "distractors": [
+          "when",
+          "which",
+          "who"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ I really want right now is some peace and quiet.",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "Which",
+          "It"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "What she did ___ apologize to everyone immediately.",
+        "answer": "was",
+        "distractors": [
+          "did",
+          "is being",
+          "has"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ was John who called you, not Peter.",
+        "answer": "It",
+        "distractors": [
+          "He",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It is the design ___ I admire most about this phone.",
+        "answer": "that",
+        "distractors": [
+          "who",
+          "what",
+          "which one"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "What surprised everyone ___ his sudden resignation.",
+        "answer": "was",
+        "distractors": [
+          "did",
+          "is doing",
+          "were"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was Maria ___ I met at the airport yesterday.",
+        "answer": "who",
+        "distractors": [
+          "which",
+          "whose",
+          "when"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ I need from you is an honest answer.",
+        "answer": "What",
+        "distractors": [
+          "It",
+          "That",
+          "Which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was at midnight ___ the alarm finally went off.",
+        "answer": "that",
+        "distractors": [
+          "when",
+          "which",
+          "who"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "What the children enjoy most ___ playing in the garden.",
+        "answer": "is",
+        "distractors": [
+          "are",
+          "do",
+          "does"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was in Paris ___ they spent their honeymoon.",
+        "answer": "that",
+        "distractors": [
+          "where",
+          "which",
+          "who"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was the teacher ___ first noticed the mistake.",
+        "answer": "who",
+        "distractors": [
+          "which",
+          "whom",
+          "that one"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ he wants is simply to be left alone.",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "It",
+          "Which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "What I bought at the market ___ fresh strawberries.",
+        "answer": "was",
+        "distractors": [
+          "did",
+          "were buying",
+          "do"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was on Friday ___ the package finally arrived.",
+        "answer": "that",
+        "distractors": [
+          "when",
+          "which",
+          "what"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was your advice ___ saved the whole project.",
+        "answer": "that",
+        "distractors": [
+          "who",
+          "what",
+          "which one"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ matters here is the result, not the effort.",
+        "answer": "What",
+        "distractors": [
+          "It",
+          "That",
+          "Which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was the dog ___ knocked the vase off the shelf.",
+        "answer": "that",
+        "distractors": [
+          "who",
+          "what",
+          "whom"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ I asked for was a little understanding, nothing more.",
+        "answer": "All",
+        "distractors": [
+          "What all",
+          "That",
+          "Which"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It wasn't ___ she left that I realized how much I missed her.",
+        "answer": "until",
+        "distractors": [
+          "when",
+          "that",
+          "since"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The ___ I called was to invite you to dinner.",
+        "answer": "reason",
+        "distractors": [
+          "because",
+          "why",
+          "cause"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The only thing I regret ___ not calling her sooner.",
+        "answer": "is",
+        "distractors": [
+          "was being",
+          "does",
+          "has been done"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "All she did ___ complain about the weather.",
+        "answer": "was",
+        "distractors": [
+          "did",
+          "is doing",
+          "has"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It ___ John who calls me every single morning.",
+        "answer": "is",
+        "distractors": [
+          "was",
+          "were",
+          "has been"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ I want to live one day is a quiet village by the sea.",
+        "answer": "Where",
+        "distractors": [
+          "What",
+          "Which",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It was ___ the storm that the whole flight was cancelled.",
+        "answer": "because of",
+        "distractors": [
+          "because",
+          "that",
+          "so"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The ___ who broke the window turned out to be the neighbour's cat.",
+        "answer": "one",
+        "distractors": [
+          "thing",
+          "what",
+          "which"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It was with great difficulty ___ we finally reached the summit.",
+        "answer": "that",
+        "distractors": [
+          "which",
+          "when",
+          "who"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It is not until you travel abroad ___ you appreciate home.",
+        "answer": "that",
+        "distractors": [
+          "when",
+          "which",
+          "then"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ all I want is a good night's sleep.",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "It",
+          "Which one"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The reason ___ I left early was a sudden migraine.",
+        "answer": "why",
+        "distractors": [
+          "because",
+          "that's why",
+          "so"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "All ___ matters now is that everyone is safe.",
+        "answer": "that",
+        "distractors": [
+          "what",
+          "which",
+          "who"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It was only after midnight ___ the negotiations finally collapsed.",
+        "answer": "that",
+        "distractors": [
+          "when",
+          "which",
+          "then"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The thing ___ bothers me most is his constant lateness.",
+        "answer": "that",
+        "distractors": [
+          "what",
+          "who",
+          "which one"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It was ___ Spain that the whole family originally came.",
+        "answer": "from",
+        "distractors": [
+          "of",
+          "by",
+          "in"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Was it ___ Paris that you two first met?",
+        "answer": "in",
+        "distractors": [
+          "that",
+          "to",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It ___ John who called me last night, not this morning.",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "has been",
+          "were"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "What ___ was it that surprised you so much at the meeting?",
+        "answer": "exactly",
+        "distractors": [
+          "who",
+          "which",
+          "that"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It was not so much what she said ___ how she said it that hurt me.",
+        "answer": "but",
+        "distractors": [
+          "and",
+          "that",
+          "so"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "His silence was ___ surprised me most of all that evening.",
+        "answer": "what",
+        "distractors": [
+          "that",
+          "which",
+          "who"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It is ___ in moments of crisis that true character is revealed.",
+        "answer": "precisely",
+        "distractors": [
+          "exact",
+          "very",
+          "much"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It is not what you know ___ whom you know that opens doors.",
+        "answer": "but",
+        "distractors": [
+          "and",
+          "that",
+          "or so"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It's not ___ I dislike him; it's that I simply can't trust him.",
+        "answer": "that",
+        "distractors": [
+          "because",
+          "what",
+          "why"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ the crisis revealed was the fundamental fragility of the system.",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "It",
+          "Which"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It is only when we work together ___ we ever succeed.",
+        "answer": "that",
+        "distractors": [
+          "when",
+          "then",
+          "which"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It was not the money ___ the principle of the thing that worried him.",
+        "answer": "but",
+        "distractors": [
+          "and",
+          "that",
+          "so"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She said it ___ been John who had made the anonymous call.",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It is not until much later ___ the full meaning of her words sank in.",
+        "answer": "that",
+        "distractors": [
+          "when",
+          "then",
+          "which"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The one thing the reform failed to address ___ economic inequality.",
+        "answer": "was",
+        "distractors": [
+          "did",
+          "is doing",
+          "were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It is in the interplay between tradition and innovation ___ vitality is sustained.",
+        "answer": "that",
+        "distractors": [
+          "which",
+          "where",
+          "when"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It was ___ so much the loss but the manner of it that stung.",
+        "answer": "not",
+        "distractors": [
+          "no",
+          "never",
+          "none"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ astonished the critics was the sheer audacity of the design.",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "It",
+          "Which"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

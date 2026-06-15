@@ -380,5 +380,581 @@ export const topic: GrammarTopic = {
       "result",
       "always true"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "If you heat water, it ___ .",
+        "answer": "boils",
+        "distractors": [
+          "will boil",
+          "is boiling",
+          "boiled"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If you mix red and blue, you ___ purple.",
+        "answer": "get",
+        "distractors": [
+          "will get",
+          "are getting",
+          "got"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Ice ___ if you leave it in the sun.",
+        "answer": "melts",
+        "distractors": [
+          "will melt",
+          "is melting",
+          "melted"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If I drink coffee late, I ___ sleep well.",
+        "answer": "don't",
+        "distractors": [
+          "won't",
+          "am not",
+          "didn't"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If you press this button, the TV ___ on.",
+        "answer": "turns",
+        "distractors": [
+          "will turn",
+          "is turning",
+          "turned"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Plants die if they ___ get water.",
+        "answer": "don't",
+        "distractors": [
+          "doesn't",
+          "won't",
+          "aren't"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If it ___ , the ground gets wet.",
+        "answer": "rains",
+        "distractors": [
+          "will rain",
+          "is raining",
+          "rained"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ you heat ice, it melts.",
+        "answer": "If",
+        "distractors": [
+          "Unless",
+          "Although",
+          "Because"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If the light is red, you ___ .",
+        "answer": "stop",
+        "distractors": [
+          "will stop",
+          "are stopping",
+          "stopped"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "My dog barks ___ the doorbell rings.",
+        "answer": "when",
+        "distractors": [
+          "unless",
+          "although",
+          "despite"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If you don't water flowers, they ___ .",
+        "answer": "die",
+        "distractors": [
+          "will die",
+          "are dying",
+          "died"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Metal ___ when you heat it.",
+        "answer": "expands",
+        "distractors": [
+          "will expand",
+          "is expanding",
+          "expanded"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ you water plants, they die.",
+        "answer": "Unless",
+        "distractors": [
+          "If",
+          "When",
+          "Provided"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Unless it ___ , we play outside.",
+        "answer": "rains",
+        "distractors": [
+          "doesn't rain",
+          "will rain",
+          "won't rain"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ that you follow the rules, nothing bad happens.",
+        "answer": "Provided",
+        "distractors": [
+          "Unless",
+          "Despite",
+          "Whereas"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "As long as I ___ , I feel good.",
+        "answer": "exercise",
+        "distractors": [
+          "will exercise",
+          "am exercising",
+          "exercised"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ I see her, she smiles. (every time)",
+        "answer": "Whenever",
+        "distractors": [
+          "Unless",
+          "Although",
+          "However"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If the alarm rings, ___ the building immediately. (instruction)",
+        "answer": "leave",
+        "distractors": [
+          "you will leave",
+          "leaving",
+          "to leave"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you see smoke, ___ the fire department. (instruction)",
+        "answer": "call",
+        "distractors": [
+          "you will call",
+          "calling",
+          "to call"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Unless you ___ your work, you lose it.",
+        "answer": "save",
+        "distractors": [
+          "don't save",
+          "will save",
+          "saving"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If I eat nuts, I ___ sick. (it is always true)",
+        "answer": "feel",
+        "distractors": [
+          "will feel",
+          "am feeling",
+          "would feel"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "As long as you ___ honest, people trust you.",
+        "answer": "are",
+        "distractors": [
+          "will be",
+          "being",
+          "be"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Provided the weather ___ good, we have lunch outside.",
+        "answer": "is",
+        "distractors": [
+          "will be",
+          "being",
+          "be"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We trust the staff ___ long as they stay honest.",
+        "answer": "as",
+        "distractors": [
+          "so",
+          "such",
+          "too"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you heat iron to 1538 degrees, it ___ .",
+        "answer": "melts",
+        "distractors": [
+          "will melt",
+          "is melting",
+          "would melt"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If the light is red, you ___ stop. (obligation)",
+        "answer": "must",
+        "distractors": [
+          "will",
+          "would",
+          "are"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If you heat metal, it ___ expand. (possibility)",
+        "answer": "can",
+        "distractors": [
+          "will can",
+          "musts",
+          "is"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If students work hard, they ___ succeed. (expectation)",
+        "answer": "should",
+        "distractors": [
+          "will should",
+          "musting",
+          "are"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ the temperature stays below zero, ice forms. (formal)",
+        "answer": "On condition that",
+        "distractors": [
+          "In case of",
+          "Despite that",
+          "As though"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ the event that the machine malfunctions, the operator resets it. (formal)",
+        "answer": "In",
+        "distractors": [
+          "On",
+          "At",
+          "By"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Water the plants daily, ___ they die. (negative consequence)",
+        "answer": "or",
+        "distractors": [
+          "and",
+          "but",
+          "so"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Heat water, ___ it boils. (positive consequence)",
+        "answer": "and",
+        "distractors": [
+          "or",
+          "but",
+          "so"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If it ___ raining, we don't go out. (right now)",
+        "answer": "is",
+        "distractors": [
+          "will be",
+          "be",
+          "does"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If the system is running slowly, you ___ restart it.",
+        "answer": "can",
+        "distractors": [
+          "will can",
+          "cans",
+          "would can"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If you're feeling ill, you ___ home.",
+        "answer": "stay",
+        "distractors": [
+          "will stay",
+          "are staying",
+          "would stay"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We ___ outside every weekend, weather permitting. (always-true habit)",
+        "answer": "eat",
+        "distractors": [
+          "will eat",
+          "are eating",
+          "would eat"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When pressure increases, volume ___ . (scientific)",
+        "answer": "decreases",
+        "distractors": [
+          "will decrease",
+          "is decreasing",
+          "would decrease"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If the system detects an anomaly, the process ___ halted. (passive)",
+        "answer": "is",
+        "distractors": [
+          "will be",
+          "has",
+          "being"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ the applicant fail to respond, the offer is withdrawn. (formal inversion)",
+        "answer": "Should",
+        "distractors": [
+          "If",
+          "When",
+          "Unless"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "When a hypothesis is falsified, it ___ rejected. (passive)",
+        "answer": "is",
+        "distractors": [
+          "will be",
+          "has",
+          "being"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "When ___ chemicals are mixed, a reaction occurs. (academic passive)",
+        "answer": "these",
+        "distractors": [
+          "you mix",
+          "one mixes",
+          "mixing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If one ___ these chemicals, a reaction occurs. (generic one)",
+        "answer": "mixes",
+        "distractors": [
+          "mix",
+          "will mix",
+          "mixing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Should you ___ assistance, please ask. (very formal)",
+        "answer": "require",
+        "distractors": [
+          "requires",
+          "required",
+          "requiring"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If the test fails, the procedure ___ repeated. (technical passive)",
+        "answer": "is",
+        "distractors": [
+          "will be",
+          "has",
+          "being"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In academic prose, ___ temperature rises, molecular motion intensifies. (regularity)",
+        "answer": "when",
+        "distractors": [
+          "unless",
+          "although",
+          "whereas"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ the sun rises, shadows form. (inevitable event)",
+        "answer": "When",
+        "distractors": [
+          "If",
+          "Unless",
+          "Provided"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ you pay peanuts, you get monkeys. (proverb)",
+        "answer": "If",
+        "distractors": [
+          "When",
+          "Unless",
+          "Should"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Should the need ___ , protocols are activated. (formal inversion)",
+        "answer": "arise",
+        "distractors": [
+          "arises",
+          "arose",
+          "arising"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ institutions weaken, populism rises. (rhetorical regularity)",
+        "answer": "When",
+        "distractors": [
+          "Unless",
+          "Although",
+          "Whereas"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "No pain, no ___ . (compressed proverb)",
+        "answer": "gain",
+        "distractors": [
+          "gains",
+          "gaining",
+          "gained"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ it to rain, the event moves indoors. (formal conditional inversion)",
+        "answer": "Were",
+        "distractors": [
+          "Was",
+          "If",
+          "Should"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "If a society values truth, its institutions ___ . (rhetorical generalisation)",
+        "answer": "thrive",
+        "distractors": [
+          "will thrive",
+          "are thriving",
+          "would thrive"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Rather than state a bare law, careful writers say a cause ___ to produce an effect. (hedging)",
+        "answer": "tends",
+        "distractors": [
+          "will tend",
+          "is tending",
+          "tended"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "If you lie down with dogs, you ___ up with fleas. (proverb)",
+        "answer": "get",
+        "distractors": [
+          "will get",
+          "are getting",
+          "would get"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ circumstances permit, the event proceeds. (contractual inversion)",
+        "answer": "Should",
+        "distractors": [
+          "If",
+          "Were",
+          "When"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "zero-conditional-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Zero conditional states an always-true rule: both clauses use the present simple, with no 'will' after the conjunction. The correct filler here is '{answer}', which keeps the cause-and-result relationship fixed and general.",
+          "ru": "Zero conditional описывает всегда истинное правило: обе части в Present Simple, без 'will' после союза. Правильный вариант здесь — '{answer}', он сохраняет постоянную причинно-следственную связь."
+        }
+      }
+    ]
   }
 };

@@ -360,5 +360,571 @@ export const topic: GrammarTopic = {
       "pure modal",
       "semi-modal substitute"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "semi-modals-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Semi-modals are a register- and tense-sensitive CHOICE among substitute forms for pure modals, so the correct filler ({answer}) is fixed by context, not by regular inflection.",
+          "ru": "Semi-modals — это зависящий от контекста и регистра ВЫБОР формы-заменителя модального глагола, поэтому правильный вариант ({answer}) задаётся контекстом, а не регулярным словоизменением."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "Can has no future form, so for tomorrow we say: I ___ help you once the meeting ends.",
+        "answer": "will be able to",
+        "distractors": [
+          "can",
+          "will can"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ read since she was three — a skill she has had for years. (present perfect of ability)",
+        "answer": "has been able to",
+        "distractors": [
+          "can",
+          "could"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Students ___ use phones during the exam; the rule forbids it.",
+        "answer": "are not allowed to",
+        "distractors": [
+          "may not",
+          "cannot able to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Must has no past form, so for yesterday's obligation we say: We ___ wait for an hour.",
+        "answer": "had to",
+        "distractors": [
+          "must",
+          "musted"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Look at those dark clouds — it ___ rain very soon. (prediction from evidence)",
+        "answer": "is going to",
+        "distractors": [
+          "will",
+          "is about"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I haven't slept well lately; in fact I ___ sleep properly for a week. (perfect of ability)",
+        "answer": "haven't been able to",
+        "distractors": [
+          "can't",
+          "couldn't"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Don't write 'can able to' — choose one. I ___ swim is correct with a semi-modal.",
+        "answer": "am able to",
+        "distractors": [
+          "can able to",
+          "am can"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He ___ go now; his manager gave permission earlier. (be allowed to, needs 'be')",
+        "answer": "is allowed to",
+        "distractors": [
+          "allowed to",
+          "may allowed to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "After 'able to' use the base verb: She was able to ___ the project on time.",
+        "answer": "finish",
+        "distractors": [
+          "finished",
+          "finishing"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Next year, with the new visa, I ___ travel freely across the EU. (future ability)",
+        "answer": "will be able to",
+        "distractors": [
+          "can",
+          "could"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Pets ___ inside the restaurant — there's a sign on the door. (impersonal rule)",
+        "answer": "are not allowed",
+        "distractors": [
+          "may not",
+          "cannot"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I've decided already: I ___ visit my parents next weekend. (planned future)",
+        "answer": "am going to",
+        "distractors": [
+          "will",
+          "am about"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "When the law changes, citizens ___ vote at sixteen. (future permission)",
+        "answer": "will be allowed to",
+        "distractors": [
+          "can",
+          "may"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It was a tough week — I ___ work every single evening. (past obligation)",
+        "answer": "had to",
+        "distractors": [
+          "must",
+          "have to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I could swim as a child, but on that one occasion I ___ swim across the whole lake. (specific past success)",
+        "answer": "was able to",
+        "distractors": [
+          "could",
+          "can"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Despite no training, he ___ finish the marathon — a real achievement on the day. (single success)",
+        "answer": "managed to",
+        "distractors": [
+          "could",
+          "was unable to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Smoking ___ anywhere on the premises; it's a strict company rule.",
+        "answer": "is not allowed",
+        "distractors": [
+          "may not",
+          "cannot able"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "In informal British speech, 'I ___ go' means exactly 'I have to go'. (have got to)",
+        "answer": "have got to",
+        "distractors": [
+          "have got",
+          "must to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Lucky me — last week I ___ try the new restaurant downtown. (get to = opportunity)",
+        "answer": "got to",
+        "distractors": [
+          "had to",
+          "must"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "After 'must' use the bare infinitive: He must ___ able to defend the thesis.",
+        "answer": "be",
+        "distractors": [
+          "to be",
+          "being"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The film ___ start — everyone's taking their seats right now. (very near future)",
+        "answer": "is about to",
+        "distractors": [
+          "is going to",
+          "will"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "In standard modern English we say 'I don't ___ tell him', treating dare as an ordinary verb.",
+        "answer": "dare to",
+        "distractors": [
+          "dare",
+          "dares"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We've made the call: we ___ launch the product next month. (planned future)",
+        "answer": "are going to",
+        "distractors": [
+          "will",
+          "are about to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She's got a deadline she cannot miss — she ___ submit by Friday no matter what. (have got to)",
+        "answer": "has got to",
+        "distractors": [
+          "have got to",
+          "has got"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "For a one-off rescue yesterday, not general ability: the lifeguard ___ pull the swimmer to shore.",
+        "answer": "was able to",
+        "distractors": [
+          "could",
+          "can"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "'Pets may in the hotel' is wrong; a rule about a place uses: Pets ___ in the hotel.",
+        "answer": "are allowed",
+        "distractors": [
+          "may",
+          "can able"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Spoken, standard: I ___ leave early today — my supervisor okayed it. (need to)",
+        "answer": "need to",
+        "distractors": [
+          "need",
+          "needn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Formal written negative of can: candidates who ___ attend should notify us in advance.",
+        "answer": "are unable to",
+        "distractors": [
+          "can't",
+          "couldn't able to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Upbeat privilege, the opposite of obligation: she ___ work from home twice a week.",
+        "answer": "gets to",
+        "distractors": [
+          "has to",
+          "is meant to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "External expectation, slightly British: you ___ arrive by nine, according to the schedule. (be meant to)",
+        "answer": "are meant to",
+        "distractors": [
+          "are about to",
+          "are bound to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The dress code expects it: you ___ wear a tie to the meeting. (be supposed to)",
+        "answer": "are supposed to",
+        "distractors": [
+          "are bound to",
+          "are entitled to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "At this hour, near-certain inevitability: there ___ be traffic on the ring road. (be bound to)",
+        "answer": "is bound to",
+        "distractors": [
+          "is supposed to",
+          "is likely"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "A clean probability hedge for formal writing: she ___ win the election, the polls suggest. (be likely to)",
+        "answer": "is likely to",
+        "distractors": [
+          "is bound to",
+          "is supposed to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Formal 'still not', with implied expectation: the government ___ respond to the report.",
+        "answer": "has yet to",
+        "distractors": [
+          "hasn't yet",
+          "is yet to has"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Rights-based permission: full-time employees ___ twenty-five days of paid leave. (be entitled to)",
+        "answer": "are entitled to",
+        "distractors": [
+          "are allowed to",
+          "are free to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Polite liberty: please ___ ask questions at any point during the talk. (be free to / feel free)",
+        "answer": "feel free to",
+        "distractors": [
+          "are entitled to",
+          "are bound to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Very formal, institutional permission in a notice: visitors ___ enter the archive on weekdays.",
+        "answer": "are permitted to",
+        "distractors": [
+          "may to",
+          "get to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Fixed form — 'to' plus base verb, never a participle: she has yet ___ respond.",
+        "answer": "to",
+        "distractors": [
+          "responded",
+          "responding"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Formal probability, the unlikely side: it ___ rain today, the forecast says. (be unlikely to)",
+        "answer": "is unlikely to",
+        "distractors": [
+          "isn't bound to",
+          "is not likely"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "After 'be likely' comes 'to' + base: it is likely ___ rain this afternoon.",
+        "answer": "to",
+        "distractors": [
+          "rain",
+          "raining"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Business-register negative of can't: we ___ process your request at this time.",
+        "answer": "are unable to",
+        "distractors": [
+          "can't",
+          "won't able to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "C1 nuance — actual achievement, not just capacity: in the end she ___ persuade the board.",
+        "answer": "was able to",
+        "distractors": [
+          "could",
+          "is able"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Scheduled expectation, timetable register: the train ___ arrive at ten sharp. (be due to)",
+        "answer": "is due to",
+        "distractors": [
+          "is supposed to",
+          "is bound to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Formal written instruction/arrangement: you ___ report to the director at nine. (be to + infinitive)",
+        "answer": "are to",
+        "distractors": [
+          "are due to",
+          "are supposed to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Unfulfilled past plan: the meeting ___ taken place last week, but it was cancelled. (was to have + V3)",
+        "answer": "was to have",
+        "distractors": [
+          "was to",
+          "was to having"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Future obligation as a chain: with these cuts, you ___ explain the numbers to the board. (going to + have to)",
+        "answer": "are going to have to",
+        "distractors": [
+          "are going to must",
+          "will must"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Past habitual obligation chain: she ___ commute for hours before she moved closer. (used to + have to)",
+        "answer": "used to have to",
+        "distractors": [
+          "used to must",
+          "use to had to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Legal drafting, codified right: each State Party ___ withdraw upon written notice. (is entitled to)",
+        "answer": "is entitled to",
+        "distractors": [
+          "shall",
+          "is permitted"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Legal drafting, pure obligation: the Licensee ___ pay the fee within thirty days. (shall)",
+        "answer": "shall",
+        "distractors": [
+          "may",
+          "is free to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Legal drafting, discretion: the Authority ___, in its absolute discretion, permit late filing. (may)",
+        "answer": "may",
+        "distractors": [
+          "shall",
+          "is to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Failure register, three grades: he ___ secure adequate funding, falling below the target. (fell short of)",
+        "answer": "fell short of",
+        "distractors": [
+          "failed to",
+          "was unable to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Formal success, V-ing complement: the team ___ reducing latency by half. (succeeded in)",
+        "answer": "succeeded in",
+        "distractors": [
+          "managed to",
+          "was able to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Academic hedging — presumption: the transaction ___ have taken place before the audit. (is presumed to)",
+        "answer": "is presumed to",
+        "distractors": [
+          "is bound to",
+          "is due to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Academic hedging — judgement: the evidence ___ be sufficient for publication. (is deemed to)",
+        "answer": "is deemed to",
+        "distractors": [
+          "is meant to",
+          "is likely"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Moral semi-modal with evaluative weight, stronger than neutral should: one ___ tell the truth here.",
+        "answer": "ought to",
+        "distractors": [
+          "is bound to",
+          "is due to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Recognise but don't write it in standard prose — this is dialectal (Southern US/Scots): 'I ___ help you.'",
+        "answer": "might could",
+        "distractors": [
+          "could be able to",
+          "may can"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Unfulfilled plan needs 'have' + participle, not the bare verb: the project ___ been completed by December.",
+        "answer": "was to have",
+        "distractors": [
+          "was to",
+          "was to having"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Formal arrangement / news register: the ambassador ___ meet the prime minister on Tuesday. (be to)",
+        "answer": "is to",
+        "distractors": [
+          "is due",
+          "is supposed"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Negotiated discretion in a treaty exception clause: nothing herein ___ be construed as requiring disclosure. (shall)",
+        "answer": "shall",
+        "distractors": [
+          "may",
+          "is to have"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Don't stack a modal onto its own semi-modal twin: he ___ secure funding, not 'can be able to'.",
+        "answer": "will be able to",
+        "distractors": [
+          "can be able to",
+          "can able to"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

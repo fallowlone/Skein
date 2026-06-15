@@ -452,5 +452,553 @@ export const topic: GrammarTopic = {
       "Countable (a / -s / number)",
       "Uncountable (some / no -s / no a)"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "countable-uncountable-nouns-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Choose the form or quantifier that matches the noun's countability in context; the correct filler is {answer}.",
+          "ru": "Выбери форму или квантификатор, соответствующий исчисляемости существительного в контексте; правильный вариант — {answer}."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I eat ___ apple every day.",
+        "answer": "an",
+        "distractors": [
+          "some",
+          "a"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "She wants ___ water, not a glass.",
+        "answer": "some",
+        "distractors": [
+          "a",
+          "an"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "He bought ___ bread for breakfast.",
+        "answer": "some",
+        "distractors": [
+          "a",
+          "an"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "We have three ___ in the basket. (sandwich)",
+        "answer": "sandwiches",
+        "distractors": [
+          "sandwich",
+          "sandwiche"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Can I have ___ egg, please?",
+        "answer": "an",
+        "distractors": [
+          "some",
+          "a"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "They have two ___ in the garage. (car)",
+        "answer": "cars",
+        "distractors": [
+          "car",
+          "cares"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I'd like ___ rice with my dinner.",
+        "answer": "some",
+        "distractors": [
+          "a",
+          "an"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "There is ___ book on the table.",
+        "answer": "a",
+        "distractors": [
+          "some",
+          "an"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Please pass me ___ sugar.",
+        "answer": "some",
+        "distractors": [
+          "a",
+          "an"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "My sister drinks ___ milk every morning.",
+        "answer": "some",
+        "distractors": [
+          "a",
+          "an"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Can I have a ___ of water? (drinking vessel)",
+        "answer": "glass",
+        "distractors": [
+          "piece",
+          "slice"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She drinks three ___ of coffee a day.",
+        "answer": "cups",
+        "distractors": [
+          "coffees",
+          "glass"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Do you have ___ bread left?",
+        "answer": "any",
+        "distractors": [
+          "some",
+          "a"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I bought a ___ of olive oil.",
+        "answer": "bottle",
+        "distractors": [
+          "slice",
+          "loaf"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We need two ___ of sugar for the cake. (kilo)",
+        "answer": "kilos",
+        "distractors": [
+          "kilo",
+          "kiloes"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He cut a ___ of cheese for the sandwich.",
+        "answer": "slice",
+        "distractors": [
+          "glass",
+          "bottle"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "There isn't ___ milk in the fridge.",
+        "answer": "any",
+        "distractors": [
+          "some",
+          "a"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Would you like ___ tea?",
+        "answer": "some",
+        "distractors": [
+          "any",
+          "a"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She ate a ___ of bread with butter.",
+        "answer": "piece",
+        "distractors": [
+          "glass",
+          "cup"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We bought a ___ of bread at the bakery. (whole baked unit)",
+        "answer": "loaf",
+        "distractors": [
+          "slice",
+          "bar"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I don't have ___ time today. (uncountable)",
+        "answer": "much",
+        "distractors": [
+          "many",
+          "a few"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "How ___ friends do you have on the team?",
+        "answer": "many",
+        "distractors": [
+          "much",
+          "a little"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She gave me a piece of ___.",
+        "answer": "advice",
+        "distractors": [
+          "advices",
+          "an advice"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We bought new ___ for the flat. (chairs, tables, etc. as a mass)",
+        "answer": "furniture",
+        "distractors": [
+          "furnitures",
+          "a furniture"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "How much ___ do you have to check in? (bags as a mass)",
+        "answer": "luggage",
+        "distractors": [
+          "luggages",
+          "a luggage"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He has a lot of ___ about history. (uncountable)",
+        "answer": "knowledge",
+        "distractors": [
+          "knowledges",
+          "a knowledge"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "There is a lot of ___ on the road this morning. (uncountable)",
+        "answer": "traffic",
+        "distractors": [
+          "traffics",
+          "a traffic"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I only have ___ apples left, just two or three.",
+        "answer": "a few",
+        "distractors": [
+          "a little",
+          "much"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Add ___ salt to the soup, not too much.",
+        "answer": "a little",
+        "distractors": [
+          "a few",
+          "many"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The ___ is good today, the announcer said. (uncountable)",
+        "answer": "news",
+        "distractors": [
+          "new",
+          "newses"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I have to finish my ___ before dinner. (uncountable school task)",
+        "answer": "homework",
+        "distractors": [
+          "homeworks",
+          "a homework"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The ___ is lovely today, so let's walk. (uncountable)",
+        "answer": "weather",
+        "distractors": [
+          "weathers",
+          "a weather"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The police ___ investigating the case.",
+        "answer": "are",
+        "distractors": [
+          "is",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The staff ___ meeting tomorrow. (BrE)",
+        "answer": "are",
+        "distractors": [
+          "is",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I have a lot of ___ in marketing. (accumulated skill)",
+        "answer": "experience",
+        "distractors": [
+          "experiences",
+          "an experience"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Could you pass me a ___, please? (a drinking vessel)",
+        "answer": "glass",
+        "distractors": [
+          "glasses",
+          "water"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There isn't much ___ in the car. (space)",
+        "answer": "room",
+        "distractors": [
+          "rooms",
+          "a room"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The cattle ___ grazing in the field.",
+        "answer": "are",
+        "distractors": [
+          "is",
+          "grazes"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We recorded two ___ of bird on the island. (one form sing/plural)",
+        "answer": "species",
+        "distractors": [
+          "specieses",
+          "specie"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He likes ___, especially football. (BrE, uncountable)",
+        "answer": "sport",
+        "distractors": [
+          "a sport",
+          "sportes"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I had a strange ___ at the airport yesterday. (one event)",
+        "answer": "experience",
+        "distractors": [
+          "experiences",
+          "experiencing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The data ___ surprising, the analyst said casually. (AmE)",
+        "answer": "is",
+        "distractors": [
+          "are",
+          "were"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Recent ___ confirms this hypothesis. (uncountable, academic)",
+        "answer": "research",
+        "distractors": [
+          "researches",
+          "a research"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "There is little ___ to support the claim. (uncountable)",
+        "answer": "evidence",
+        "distractors": [
+          "evidences",
+          "an evidence"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ students enrolled this year than last. (countable, formal)",
+        "answer": "Fewer",
+        "distractors": [
+          "Less",
+          "Lesser"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We need ___ time to finish the report. (uncountable)",
+        "answer": "less",
+        "distractors": [
+          "fewer",
+          "fewest"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "A large ___ of data was collected. (uncountable)",
+        "answer": "amount",
+        "distractors": [
+          "number",
+          "quantity of items"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "A ___ of students attended the lecture. (countable)",
+        "answer": "number",
+        "distractors": [
+          "amount",
+          "deal"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The ___ from participants was very valuable. (uncountable)",
+        "answer": "feedback",
+        "distractors": [
+          "feedbacks",
+          "a feedback"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "There is a wealth of ___ in this archive. (uncountable)",
+        "answer": "information",
+        "distractors": [
+          "informations",
+          "an information"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The study made considerable ___ in a short time. (uncountable)",
+        "answer": "progress",
+        "distractors": [
+          "progresses",
+          "a progress"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Each ___ was reviewed independently. (countable, singular)",
+        "answer": "analysis",
+        "distractors": [
+          "analysises",
+          "information"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The report contains a great deal of ___, not a list of items. (rigidly uncountable)",
+        "answer": "evidence",
+        "distractors": [
+          "evidences",
+          "an evidence"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He shared several useful pieces of ___. (rigidly uncountable)",
+        "answer": "information",
+        "distractors": [
+          "informations",
+          "an information"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The theory has several ___. (countable)",
+        "answer": "weaknesses",
+        "distractors": [
+          "weakness",
+          "evidences"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We ordered two ___ and a coffee at the cafe. (portions, conversational)",
+        "answer": "teas",
+        "distractors": [
+          "tea",
+          "teaes"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "French ___ are famous around the world. (varieties)",
+        "answer": "cheeses",
+        "distractors": [
+          "cheese",
+          "cheeze"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "There have been three ___ from the disease. (instances)",
+        "answer": "deaths",
+        "distractors": [
+          "death",
+          "dead"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

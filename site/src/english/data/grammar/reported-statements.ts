@@ -328,5 +328,544 @@ export const topic: GrammarTopic = {
       "Reported statement",
       "Backshift + deixis shift"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "reported-statements-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Reported speech is a context-dependent transformation: backshift, deixis shifts, say vs tell, reporting-verb stance and the subjunctive are all decided by meaning, not by a regular inflection. \"{answer}\" is the form the sentence requires.",
+          "ru": "Косвенная речь — трансформация, зависящая от контекста: backshift, сдвиг дейктики, say vs tell, оттенок reporting-глагола и сослагательное наклонение определяются смыслом, а не регулярной формой. «{answer}» — форма, которую требует предложение."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "She said (that) she ___ hungry. (be)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "be"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He told me he ___ in Berlin. (live)",
+        "answer": "lived",
+        "distractors": [
+          "lives",
+          "living"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They said they ___ come the next day. (will)",
+        "answer": "would",
+        "distractors": [
+          "will",
+          "shall"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Anna told us she ___ the film. (like)",
+        "answer": "liked",
+        "distractors": [
+          "likes",
+          "like"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My teacher said I ___ passed the exam. (have)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "was"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He ___ me that he was tired.",
+        "answer": "told",
+        "distractors": [
+          "said",
+          "spoke"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ that she was running late, without addressing anyone.",
+        "answer": "said",
+        "distractors": [
+          "told",
+          "talked"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "\"I am busy now.\" -> She said she was busy ___.",
+        "answer": "then",
+        "distractors": [
+          "now",
+          "today"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "\"We live here.\" -> They said they lived ___.",
+        "answer": "there",
+        "distractors": [
+          "here",
+          "then"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "\"I will call you tomorrow.\" -> He said he would call me the next ___.",
+        "answer": "day",
+        "distractors": [
+          "tomorrow",
+          "today"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Marco ___ his sister that the train had been delayed.",
+        "answer": "told",
+        "distractors": [
+          "said",
+          "mentioned"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "\"I can drive.\" -> She said she ___ drive.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "cans"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The nurse said the patient ___ feeling better. (be)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "being"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "\"I have lost my keys.\" -> He said he ___ lost his keys. (have)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "have"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Grandma ___ us a story about the war.",
+        "answer": "told",
+        "distractors": [
+          "said",
+          "spoke"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She admitted that she ___ forgotten the meeting. (have)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ stealing the money, but the camera proved otherwise. (deny + gerund)",
+        "answer": "denied",
+        "distractors": [
+          "refused",
+          "rejected"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The scientist explained that water ___ at zero degrees, a fact still true today. (freeze)",
+        "answer": "freezes",
+        "distractors": [
+          "froze",
+          "frozen"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ that her brother was getting married. (verb taking no bare object, often 'to sb')",
+        "answer": "mentioned",
+        "distractors": [
+          "told",
+          "informed"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He claimed he ___ never been to Paris. (have)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He explained ___ me that the printer was broken. (particle after explain)",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She admitted ___ me that she had been wrong. (particle after admit)",
+        "answer": "to",
+        "distractors": [
+          "with",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"It may rain.\" -> The forecaster said it ___ rain. (may, backshifted)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "must"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I must leave.\" -> He said he ___ leave, since the obligation was in the past.",
+        "answer": "had to",
+        "distractors": [
+          "must",
+          "musted"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He denied ___ the vase; a clean gerund, not a double negative. (break)",
+        "answer": "breaking",
+        "distractors": [
+          "broke",
+          "broken"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The coach insisted that every player ___ on time, demanding the action. (subjunctive base)",
+        "answer": "be",
+        "distractors": [
+          "was",
+          "is"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She mentioned ___ the team that the deadline had moved. (particle)",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "with"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The witness ___ that he had seen the car, an emphatic factual statement. (assert a claim)",
+        "answer": "claimed",
+        "distractors": [
+          "denied",
+          "wondered"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ that he had lied to his manager, a reluctant confession. (own up)",
+        "answer": "admitted",
+        "distractors": [
+          "denied",
+          "refused"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I'm working.\" -> She said she ___ working. (be, past continuous)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "were"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The defendant maintained that he ___ been elsewhere at the time of the crime. (have)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Critics ___ that the company concealed crucial data, an accusation without proof. (charge unproven)",
+        "answer": "allege",
+        "distractors": [
+          "confirm",
+          "prove"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She ___ that her original argument had been flawed, a reluctant admission. (give ground)",
+        "answer": "conceded",
+        "distractors": [
+          "insisted",
+          "maintained"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The spokesperson ___ that no decision had yet been made, speaking emphatically. (declare forcefully)",
+        "answer": "asserted",
+        "distractors": [
+          "wondered",
+          "denied"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___, without saying so directly, that the agreement had been broken. (hint indirectly)",
+        "answer": "implied",
+        "distractors": [
+          "stated",
+          "announced"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He insisted that she ___ immediately, demanding the action. (subjunctive base)",
+        "answer": "leave",
+        "distractors": [
+          "leaves",
+          "left"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He insisted that he ___ innocent, asserting a fact rather than demanding action. (be, indicative backshift)",
+        "answer": "was",
+        "distractors": [
+          "be",
+          "is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"I met him two days ago.\" -> She said she had met him two days ___. (deictic shift of 'ago')",
+        "answer": "before",
+        "distractors": [
+          "ago",
+          "later"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"I'll see you next week.\" -> He said he would see me the ___ week. (next -> ?)",
+        "answer": "following",
+        "distractors": [
+          "next",
+          "this"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He is ___ to be very rich, a formal alternative to a that-clause. (passive report verb)",
+        "answer": "said",
+        "distractors": [
+          "told",
+          "spoken"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The minister claimed the economy ___ improving, language the writer does not endorse. (be)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "be"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The professor ___ that the theory still held, defending a long-standing position. (hold a position)",
+        "answer": "maintained",
+        "distractors": [
+          "conceded",
+          "alleged"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"I read this book last Friday.\" -> She said she had read that book the ___ Friday. (last -> ?)",
+        "answer": "previous",
+        "distractors": [
+          "next",
+          "last"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The committee demanded that the report ___ revised before publication. (subjunctive base)",
+        "answer": "be",
+        "distractors": [
+          "was",
+          "is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Sources ___ that talks had collapsed overnight, reporting at second hand. (report from sources, unproven)",
+        "answer": "alleged",
+        "distractors": [
+          "proved",
+          "showed"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The minister is widely reported to ___ misled the committee. (perfect inf marking a completed act)",
+        "answer": "have",
+        "distractors": [
+          "had",
+          "has"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She insisted, with characteristic firmness, that the proposal ___ reconsidered. (subjunctive be)",
+        "answer": "be",
+        "distractors": [
+          "was",
+          "is"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The witness ___ saw the defendant leave moments before the fire, distancing the writer from the claim. (adverb of doubtful report)",
+        "answer": "purportedly",
+        "distractors": [
+          "definitely",
+          "certainly"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It has long been ___ by scholars that the manuscript dates from the twelfth century. (held as a position, passive)",
+        "answer": "maintained",
+        "distractors": [
+          "proven",
+          "disproved"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He ___ accepted bribes, the journalist's legal shield against a defamation suit. (accusatory adverb)",
+        "answer": "allegedly",
+        "distractors": [
+          "obviously",
+          "truly"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He is said to ___ been a spy during the war. (perfect inf for a completed past)",
+        "answer": "have",
+        "distractors": [
+          "has",
+          "had"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She was ___ to have declined the offer, an official report of a completed act. (passive report verb)",
+        "answer": "reported",
+        "distractors": [
+          "telling",
+          "saying"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Smith (2021) ___ that the effect is overstated, a hedge that shifts responsibility to the source. (academic stance verb)",
+        "answer": "argues",
+        "distractors": [
+          "proves",
+          "confirms"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She ___ declined to comment when pressed by reporters, per the agency wire. (adverb: sources say, paper won't guarantee)",
+        "answer": "reportedly",
+        "distractors": [
+          "plainly",
+          "surely"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The board recommended that the policy ___ suspended pending review. (subjunctive base)",
+        "answer": "be",
+        "distractors": [
+          "was",
+          "is"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The file ___ contains state secrets, though no one has verified it. (adverb: claimed but doubted)",
+        "answer": "purportedly",
+        "distractors": [
+          "genuinely",
+          "verifiably"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He would have us ___ that the loss was someone else's fault, signalling open disbelief. (verb after 'have us')",
+        "answer": "believe",
+        "distractors": [
+          "believing",
+          "believed"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };
