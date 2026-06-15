@@ -10,7 +10,7 @@ import type { CardState, Grade } from "./scheduler/types";
 import { recordActiveDay } from "~/scripts/user-state";
 import type { Band } from "~/english/types";
 import { appendHours, type HourEntry, type HourKind } from "./hours";
-import { migrateGrammarMastery, type GrammarMastery } from "./grammar-mastery";
+import { migrateGrammarMastery, gradeGrammar, type GrammarMastery } from "./grammar-mastery";
 
 const KEY = "awesome.english.v2"; // v2: scheduler-backed (v1 Leitner is discarded)
 const scheduler = fsrsScheduler();
@@ -289,6 +289,20 @@ export function markGrammarDone(id: string) {
   englishState.value = {
     ...englishState.value,
     grammarDone: { ...englishState.value.grammarDone, [id]: true },
+  };
+  if (typeof window !== "undefined") recordActiveDay();
+}
+
+/** The FSRS mastery card for a grammar topic, or undefined if never graded. */
+export function grammarCardOf(topicId: string): CardState | undefined {
+  return englishState.value.grammar[topicId];
+}
+
+/** Grade a grammar topic's mastery card (create-if-absent); used by the practice runner. */
+export function gradeGrammarTopic(topicId: string, grade: Grade, now: number) {
+  englishState.value = {
+    ...englishState.value,
+    grammar: gradeGrammar(englishState.value.grammar, topicId, grade, new Date(now)),
   };
   if (typeof window !== "undefined") recordActiveDay();
 }
