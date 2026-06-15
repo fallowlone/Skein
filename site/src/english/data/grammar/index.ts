@@ -3,7 +3,11 @@
 import type { GrammarTopic } from "~/english/grammar-types";
 import { cefrIndex } from "~/english/grammar-types";
 
-const mods = import.meta.glob<{ topic: GrammarTopic }>("./*.ts", { eager: true });
+// Exclude *.test.ts at the glob level: an eager glob IMPORTS every match (the
+// runtime filter below only drops them from the array), and importing a test
+// file pulls in `vitest`, which crashes the Astro prerender build. The negative
+// pattern keeps test modules out of the import graph entirely.
+const mods = import.meta.glob<{ topic: GrammarTopic }>(["./*.ts", "!./*.test.ts"], { eager: true });
 
 export const grammarTopics: GrammarTopic[] = Object.entries(mods)
   .filter(([p]) => !/\/(index|families)\.ts$/.test(p) && !p.includes(".test."))
