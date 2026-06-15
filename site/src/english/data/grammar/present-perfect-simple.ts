@@ -22,7 +22,8 @@ export const topic: GrammarTopic = {
     "egp.b1.tenses-aspect.present-perfect-experience",
     "egp.b1.tenses-aspect.present-perfect-vs-past-simple",
     "egp.b1.tenses-aspect.present-perfect-for-since",
-    "egp.b2.tenses-aspect.present-perfect-vs-past-contrast"
+    "egp.b2.tenses-aspect.present-perfect-vs-past-contrast",
+    "egp.c2.tenses-aspect.perfect-aspect-for-evaluation"
   ],
   "archetype": "timeline",
   "lessons": {

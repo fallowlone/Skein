@@ -22,7 +22,8 @@ export const topic: GrammarTopic = {
     "egp.b1.clauses.reason-clauses-because-since-as",
     "egp.b2.clauses.participle-clauses-reduced",
     "egp.b2.discourse-cohesion.linkers-cause-result-therefore",
-    "egp.c2.prepositions.complex-and-formal-prepositions"
+    "egp.c2.prepositions.complex-and-formal-prepositions",
+    "egp.a1.clauses.reason-because"
   ],
   "archetype": "branch",
   "lessons": {

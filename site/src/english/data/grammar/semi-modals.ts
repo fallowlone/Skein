@@ -20,7 +20,8 @@ export const topic: GrammarTopic = {
     "egp.b1.modality.could-able-to-past-ability",
     "egp.b2.modality.semi-modals-be-able-to-bound-to",
     "egp.c1.modality.semi-modals-and-marginal-modals",
-    "egp.c2.modality.semi-modals-and-marginal-modals"
+    "egp.c2.modality.semi-modals-and-marginal-modals",
+    "egp.b2.modality.would-rather-had-better"
   ],
   "archetype": "swap",
   "lessons": {

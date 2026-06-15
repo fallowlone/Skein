@@ -21,7 +21,8 @@ export const topic: GrammarTopic = {
     "egp.b1.adjectives-adverbs.adverbs-of-degree",
     "egp.b2.adjectives-adverbs.intensifiers-gradable-non-gradable",
     "egp.c1.adjectives-adverbs.gradable-vs-non-gradable-intensifiers",
-    "egp.c2.adjectives-adverbs.gradable-vs-ungradable-intensification"
+    "egp.c2.adjectives-adverbs.gradable-vs-ungradable-intensification",
+    "egp.a1.adjectives-adverbs.very-and-really-intensifiers"
   ],
   "archetype": "scale",
   "lessons": {
