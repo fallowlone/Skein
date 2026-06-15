@@ -14,6 +14,7 @@ function applyFeature(token: string, feature?: string): string {
     case "plural": return nounPlural(token);
     case "comparative": return adjForm(token, "comparative");
     case "superlative": return adjForm(token, "superlative");
+    case "passive": return verbForm(token, "pastParticiple");
     default: return token;
   }
 }
