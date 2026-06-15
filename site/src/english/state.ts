@@ -10,6 +10,7 @@ import type { CardState, Grade } from "./scheduler/types";
 import { recordActiveDay } from "~/scripts/user-state";
 import type { Band } from "~/english/types";
 import { appendHours, type HourEntry, type HourKind } from "./hours";
+import { migrateGrammarMastery, type GrammarMastery } from "./grammar-mastery";
 
 const KEY = "awesome.english.v2"; // v2: scheduler-backed (v1 Leitner is discarded)
 const scheduler = fsrsScheduler();
@@ -42,6 +43,8 @@ export type EnglishState = {
   collocationDone: Record<string, true>;
   hoursLog: HourEntry[];
   chunks: Record<string, { text: string; note?: string; src?: string; addedAt: number; card: CardState }>;
+  /** FSRS grammar mastery cards, keyed by topicId. Migrated from grammarDone on load. */
+  grammar: GrammarMastery;
 };
 
 const DEFAULT_NEW_PER_DAY = 20;
@@ -52,6 +55,7 @@ const defaults: EnglishState = {
   grammarDone: {}, collocationDone: {},
   hoursLog: [],
   chunks: {},
+  grammar: {},
 };
 
 function load(): EnglishState {
@@ -83,6 +87,10 @@ function load(): EnglishState {
       collocationDone: parsed.collocationDone ?? {},
       hoursLog: Array.isArray(parsed.hoursLog) ? parsed.hoursLog : [],
       chunks: parsed.chunks && typeof parsed.chunks === "object" ? parsed.chunks : {},
+      grammar: migrateGrammarMastery(
+        parsed.grammarDone && typeof parsed.grammarDone === "object" ? parsed.grammarDone : undefined,
+        parsed.grammar && typeof parsed.grammar === "object" ? parsed.grammar : {},
+      ),
     };
   } catch {
     return defaults;
@@ -167,6 +175,7 @@ export function resetEnglish() {
     grammarDone: {}, collocationDone: {},
     hoursLog: [],
     chunks: {},
+    grammar: {},
   };
   if (typeof window !== "undefined") localStorage.removeItem(KEY);
 }
