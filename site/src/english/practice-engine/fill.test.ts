@@ -63,4 +63,10 @@ describe("fillContext", () => {
   it("is deterministic for a fixed seed", () => {
     expect(fillContext(ctxTpl, ctxs, "cloze", "A2", 5)).toEqual(fillContext(ctxTpl, ctxs, "cloze", "A2", 5));
   });
+  it("mc framing with no usable distractors falls back to cloze (never a 1-option MC)", () => {
+    const noDistract: TaggedContext[] = [{ stem: "She is ___ here.", answer: "an", distractors: [], cefr: "A1" }];
+    const ex = fillContext(ctxTpl, noDistract, "mc", "A2", 0);
+    expect(ex.type).toBe("fill_in_blank");
+    expect(ex.options).toBeUndefined();
+  });
 });

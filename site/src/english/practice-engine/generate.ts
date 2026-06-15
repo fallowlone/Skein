@@ -39,6 +39,9 @@ export function generateFromSpec(topicId: string, spec: TopicGenSpec, opts: Gene
   return out;
 }
 
+// Dependency direction: cross-topic.ts imports FROM this file (generateSetFromSpec +
+// CompositeSupplier). Do NOT import cross-topic.ts here — that would create a cycle.
+// The corpus-backed composite entry point (generateTopicSet) lives in cross-topic.ts.
 /** Supplier of cross-topic composite items for a focus topic, used to top up volume. */
 export type CompositeSupplier = (topicId: string, seed: number) => GeneratedExercise[];
 
