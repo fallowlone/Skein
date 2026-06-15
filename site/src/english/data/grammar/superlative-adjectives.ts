@@ -435,5 +435,155 @@ export const topic: GrammarTopic = {
       "in / of",
       "group"
     ]
+  },
+  "gen": {
+    "pools": [
+      {
+        "id": "shortAdj",
+        "tags": {
+          "level": [
+            "A1"
+          ]
+        },
+        "items": [
+          "tall",
+          "old",
+          "fast",
+          "big",
+          "hot",
+          "nice",
+          "large",
+          "happy",
+          "easy",
+          "good",
+          "bad",
+          "high",
+          "cold",
+          "young",
+          "kind",
+          "busy",
+          "close",
+          "wet",
+          "thin",
+          "strong",
+          "clean",
+          "cheap"
+        ]
+      },
+      {
+        "id": "longAdj",
+        "tags": {
+          "level": [
+            "A2"
+          ]
+        },
+        "items": [
+          "interesting",
+          "beautiful",
+          "expensive",
+          "important",
+          "difficult",
+          "popular",
+          "comfortable",
+          "reliable",
+          "powerful",
+          "intelligent",
+          "dangerous",
+          "successful",
+          "modern",
+          "talented",
+          "famous"
+        ]
+      },
+      {
+        "id": "shortFrame",
+        "tags": {
+          "level": [
+            "A1"
+          ]
+        },
+        "items": [
+          "building in the city",
+          "mountain in the country",
+          "runner on the team",
+          "river in the region",
+          "day of the year",
+          "room in the house",
+          "student in the class",
+          "player on the field",
+          "road to the coast",
+          "engine in the line"
+        ]
+      },
+      {
+        "id": "longFrame",
+        "tags": {
+          "level": [
+            "A2"
+          ]
+        },
+        "items": [
+          "restaurant in town",
+          "book on the shelf",
+          "film of the year",
+          "city in Europe",
+          "problem of the project",
+          "tool in the kit",
+          "library in the school",
+          "speaker at the event",
+          "feature of the app",
+          "route to the airport"
+        ]
+      }
+    ],
+    "templates": [
+      {
+        "id": "sup-short-est",
+        "type": "fill_in_blank",
+        "cefrMin": "A1",
+        "cefrMax": "A1",
+        "pattern": "It is the ___ {shortFrame}. (hint: {adj})",
+        "slots": {
+          "adj": {
+            "pool": "shortAdj"
+          },
+          "shortFrame": {
+            "pool": "shortFrame"
+          }
+        },
+        "deriveKey": "superlative-form",
+        "rationale": {
+          "en": "A one-syllable adjective takes the + -est, applying the spelling rules (double the consonant after a short vowel, -y becomes -i, final -e adds only -st); good and bad are irregular (the best / the worst).",
+          "ru": "Короткое прилагательное (1 слог) образует превосходную степень через the + -est с правилами написания (удвоение согласной после краткой гласной, -y меняется на -i, после -e добавляется только -st); good и bad — исключения (the best / the worst)."
+        }
+      },
+      {
+        "id": "sup-long-most",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "A2",
+        "pattern": "It is the ___ {longFrame}. (hint: {adj})",
+        "slots": {
+          "adj": {
+            "pool": "longAdj"
+          },
+          "longFrame": {
+            "pool": "longFrame"
+          }
+        },
+        "deriveKey": "superlative-form",
+        "rationale": {
+          "en": "A long adjective (two or more syllables) does not take -est; use the most + adjective, and never combine the two forms.",
+          "ru": "Длинное прилагательное (2 слога и больше) не берёт -est; используется the most + прилагательное, и две формы смешивать нельзя."
+        }
+      }
+    ],
+    "features": [
+      "superlative-short-est",
+      "superlative-long-most",
+      "superlative-irregular",
+      "superlative-spelling"
+    ],
+    "contexts": []
   }
 };
