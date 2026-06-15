@@ -20,7 +20,8 @@ export const topic: GrammarTopic = {
     "egp.b1.discourse-cohesion.linkers-of-contrast",
     "egp.b2.clauses.concession-clauses-although-though",
     "egp.c1.clauses.concessive-and-purpose-subordination",
-    "egp.c2.clauses.fronted-and-nominal-relatives"
+    "egp.c2.clauses.fronted-and-nominal-relatives",
+    "egp.b2.discourse-cohesion.linkers-contrast-however-nevertheless"
   ],
   "archetype": "contrast-pair",
   "lessons": {

@@ -22,7 +22,9 @@ export const topic: GrammarTopic = {
     "egp.a2.tenses-aspect.will-future-decisions-predictions",
     "egp.b1.verbs.going-to-plans-predictions",
     "egp.b1.tenses-aspect.present-continuous-future-arrangements",
-    "egp.b2.tenses-aspect.future-in-the-past"
+    "egp.b2.tenses-aspect.future-in-the-past",
+    "egp.a1.tenses-aspect.going-to-future-plans",
+    "egp.c1.tenses-aspect.future-in-the-past"
   ],
   "archetype": "timeline",
   "lessons": {
