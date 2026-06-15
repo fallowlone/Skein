@@ -21,6 +21,16 @@ export type ExerciseType =
 
 // --- Generative practice spec (typed now; DATA authored in Phase 3 / engine) ---
 export type Register = "neutral" | "engineering" | "academic";
+export type ContextFraming = "cloze" | "mc";
+/** A selection-grammar item whose correct answer is authored alongside the context.
+ *  Re-derivation is a pure lookup of this committed data — fully offline. */
+export type TaggedContext = {
+  stem: string;            // sentence with exactly one ___ blank
+  answer: string;          // correct filler
+  alts?: string[];         // other accepted fillers
+  distractors?: string[];  // wrong options (used to build MC framing)
+  cefr?: Cefr;
+};
 export type Pool = {
   id: string;
   tags: { level: Cefr[]; register?: Register[] };
@@ -36,11 +46,14 @@ export type Template = {
   deriveKey: string;
   rationale: Bi;
   contrast?: { wrong: string; why: Bi }[];
+  usesContext?: boolean;       // when true, the engine pulls from TopicGenSpec.contexts
+  framings?: ContextFraming[]; // which surfaces to emit for a context template
 };
 export type TopicGenSpec = {
   pools: Pool[];
   templates: Template[];
   features: string[];
+  contexts?: TaggedContext[]; // tagged-context items for selection-grammar topics
 };
 
 export type GrammarLesson = {
