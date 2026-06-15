@@ -1,4 +1,4 @@
-import type { Cefr, Pool, Template } from "~/english/grammar-types";
+import type { Cefr, ContextFraming, Pool, TaggedContext, Template } from "~/english/grammar-types";
 import type { GeneratedExercise } from "./types";
 import { createRng, pickIndex } from "./rng";
 import { getStrategy } from "./derive";
@@ -55,4 +55,44 @@ export function fillTemplate(tpl: Template, pools: Pool[], level: Cefr, seed: nu
     alts: alternates,
     rationale: { en: interp(tpl.rationale.en), ru: interp(tpl.rationale.ru) },
   };
+}
+
+/** Deterministic seeded shuffle (Fisher–Yates over a copy). */
+function shuffle<T>(arr: T[], rng: () => number): T[] {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = pickIndex(i + 1, rng);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/** Render one exercise from a tagged-context template. The answer travels with the
+ *  context (authored), so this is fully offline and reproducible. */
+export function fillContext(
+  tpl: Template,
+  contexts: TaggedContext[],
+  framing: ContextFraming,
+  level: Cefr,
+  seed: number,
+): GeneratedExercise {
+  if (contexts.length === 0) throw new Error(`fillContext: no contexts for template ${tpl.id}`);
+  const rng = createRng(seed);
+  const ctx = contexts[pickIndex(contexts.length, rng)];
+  const answer = ctx.answer;
+  const interp = (s: string): string => s.replace(/\{answer\}/g, answer);
+  const base = {
+    id: `${tpl.id}:${framing}:${seed}`,
+    topicId: "",
+    cefr: ctx.cefr ?? level,
+    prompt: ctx.stem,
+    answer,
+    alts: ctx.alts ?? [],
+    rationale: { en: interp(tpl.rationale.en), ru: interp(tpl.rationale.ru) },
+  };
+  if (framing === "mc") {
+    const options = shuffle([answer, ...(ctx.distractors ?? [])], rng);
+    return { ...base, type: "multiple_choice", options };
+  }
+  return { ...base, type: "fill_in_blank" };
 }
