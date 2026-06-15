@@ -322,5 +322,591 @@ export const topic: GrammarTopic = {
       "adjective",
       "to-infinitive"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I'm happy ___ help you with the report.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "at",
+          "with"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She was glad ___ see her old classmates again.",
+        "answer": "to",
+        "distractors": [
+          "for to",
+          "at",
+          "of"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We're so sorry ___ hear about your loss.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "of",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Are you ready ___ start the meeting?",
+        "answer": "to",
+        "distractors": [
+          "for to",
+          "at",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He was afraid ___ ask his boss for a raise.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "at",
+          "of to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'm pleased ___ meet you at last.",
+        "answer": "to",
+        "distractors": [
+          "for to",
+          "with",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It's important ___ be honest with your team.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "being",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It's difficult ___ learn a new language as an adult.",
+        "answer": "to",
+        "distractors": [
+          "for to",
+          "at",
+          "learning"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He's old enough ___ drive a car now.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "that",
+          "of"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The coffee is too hot ___ drink right now.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "that",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She was too tired ___ finish the project.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "that",
+          "of"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It's easy ___ make mistakes when you rush.",
+        "answer": "to",
+        "distractors": [
+          "for to",
+          "making",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I was surprised ___ learn the truth about the deal.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "of",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We're excited ___ start this new project together.",
+        "answer": "to",
+        "distractors": [
+          "for to",
+          "at",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It's important to ___ on time for the interview.",
+        "answer": "be",
+        "distractors": [
+          "being",
+          "been",
+          "to be"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It's lovely ___ relax after a long week.",
+        "answer": "to",
+        "distractors": [
+          "for to",
+          "relaxing",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She's good ___ solving difficult puzzles.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "of",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He's bad ___ remembering people's names.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "of",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm interested ___ learning more about machine learning.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She's tired ___ waiting for a reply from them.",
+        "answer": "of",
+        "distractors": [
+          "at",
+          "from",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They're worried ___ failing the final exam.",
+        "answer": "about",
+        "distractors": [
+          "of",
+          "for",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "This region is famous ___ producing fine wine.",
+        "answer": "for",
+        "distractors": [
+          "of",
+          "at",
+          "in"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He seems perfectly capable ___ handling the crisis alone.",
+        "answer": "of",
+        "distractors": [
+          "to",
+          "at",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Who is responsible ___ organizing the conference?",
+        "answer": "for",
+        "distractors": [
+          "of",
+          "to",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Many people are afraid ___ flying long distances.",
+        "answer": "of",
+        "distractors": [
+          "to fly",
+          "at",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He's keen ___ cycling to work every morning.",
+        "answer": "on",
+        "distractors": [
+          "at",
+          "in",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm used ___ waking up early these days.",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "of",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She's really good at ___ to new situations quickly.",
+        "answer": "adapting",
+        "distractors": [
+          "adapt",
+          "to adapt",
+          "adapted"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was kind ___ you to call and check on me.",
+        "answer": "of",
+        "distractors": [
+          "from",
+          "for",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was stupid ___ him to forget the deadline.",
+        "answer": "of",
+        "distractors": [
+          "from",
+          "for",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It's very generous ___ them to donate so much.",
+        "answer": "of",
+        "distractors": [
+          "from",
+          "for",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It's hard ___ beginners to understand recursion.",
+        "answer": "for",
+        "distractors": [
+          "of",
+          "to",
+          "with"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It's impossible ___ him to attend the meeting today.",
+        "answer": "for",
+        "distractors": [
+          "of",
+          "to",
+          "by"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It's easy ___ you to say, but I have to do the work.",
+        "answer": "for",
+        "distractors": [
+          "of",
+          "to",
+          "with"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He's likely ___ be late again this evening.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She was reluctant ___ agree to the new terms.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "at",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They were determined ___ win the contract.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "at",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The instructions are easy ___ follow once you start.",
+        "answer": "to",
+        "distractors": [
+          "to be followed",
+          "following",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This problem is hard ___ solve without more data.",
+        "answer": "to solve",
+        "distractors": [
+          "to be solved",
+          "solving",
+          "for solving"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Her decision was difficult ___ accept at first.",
+        "answer": "to accept",
+        "distractors": [
+          "to be accepted",
+          "accepting",
+          "for accepting"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The book was so good it was hard ___ put down.",
+        "answer": "to",
+        "distractors": [
+          "to be put",
+          "putting",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I'm happy ___ met you before you left the company.",
+        "answer": "to have",
+        "distractors": [
+          "to",
+          "having",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She was relieved ___ finished the audit on time.",
+        "answer": "to have",
+        "distractors": [
+          "to",
+          "having",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He's certain ___ win the election this year.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It's bound ___ rain before the ceremony ends.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You're supposed ___ be here at five o'clock.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The train is due ___ arrive at three exactly.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The show is about ___ start, so please sit down.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He was loath ___ concede defeat after the long campaign.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "at",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She's apt ___ forget appointments when she's busy.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "at",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I'm afraid I'm not at liberty ___ discuss the details.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I'd be hard-pressed ___ name a better candidate.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She was the first ___ admit she had been wrong.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "at",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He was always the last ___ leave the office at night.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "at",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She would be proud ___ have represented her country.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "As a child, he was prone ___ catch colds every winter.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "at",
+          "for"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "adjective-plus-infinitive-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "After an adjective, the correct link is '{answer}' — adjectives select either 'to' + infinitive, a fixed preposition + -ing, 'of/for + person', or an active/perfect infinitive, and the choice is a property of the adjective and the structure.",
+          "ru": "После прилагательного правильный вариант — '{answer}': прилагательное выбирает либо 'to' + инфинитив, либо фиксированный предлог + -ing, либо 'of/for + человек', либо активный/перфектный инфинитив, и выбор зависит от прилагательного и конструкции."
+        }
+      }
+    ]
   }
 };

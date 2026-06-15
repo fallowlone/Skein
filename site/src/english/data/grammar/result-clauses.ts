@@ -266,5 +266,667 @@ export const topic: GrammarTopic = {
       "threshold",
       "consequence"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "result-clauses-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Result clauses hinge on choosing the right intensifier or connector (so vs such, so much/many, too vs enough, inversion, formal markers) — a contextual choice no inflection rule can derive, so each item supplies its own sentence; the answer is {answer}.",
+          "ru": "Придаточные результата строятся на выборе правильного усилителя или связки (so vs such, so much/many, too vs enough, инверсия, формальные маркеры) — это контекстный выбор, который нельзя вывести правилом словоизменения, поэтому каждое задание даёт собственное предложение; правильный ответ — {answer}."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "The weather was ___ bad that the match was cancelled.",
+        "answer": "so",
+        "distractors": [
+          "such",
+          "such a",
+          "very"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She was ___ tired that she fell asleep at her desk.",
+        "answer": "so",
+        "distractors": [
+          "such",
+          "such a",
+          "too"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He spoke ___ quickly that nobody could follow him.",
+        "answer": "so",
+        "distractors": [
+          "such",
+          "such a",
+          "much"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The coffee was ___ hot that I burned my tongue.",
+        "answer": "so",
+        "distractors": [
+          "such",
+          "such a",
+          "enough"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The exam was ___ difficult that half the class failed.",
+        "answer": "so",
+        "distractors": [
+          "such",
+          "such a",
+          "very much"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was ___ a long film that we missed the last bus.",
+        "answer": "such",
+        "distractors": [
+          "so",
+          "so a",
+          "very"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He told ___ an interesting story that everyone stopped to listen.",
+        "answer": "such",
+        "distractors": [
+          "so",
+          "so an",
+          "too"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was ___ an exciting game that we watched it twice.",
+        "answer": "such",
+        "distractors": [
+          "so",
+          "so an",
+          "much"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They asked ___ a strange question that I didn't know how to answer.",
+        "answer": "such",
+        "distractors": [
+          "so",
+          "so a",
+          "very a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She made ___ a generous offer that we accepted at once.",
+        "answer": "such",
+        "distractors": [
+          "so",
+          "so a",
+          "too a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They were ___ difficult questions that nobody passed the test.",
+        "answer": "such",
+        "distractors": [
+          "so",
+          "such a",
+          "so many"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was ___ good food that we ordered the same dish again.",
+        "answer": "such",
+        "distractors": [
+          "so",
+          "such a",
+          "so much"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They are ___ kind people that everyone trusts them.",
+        "answer": "such",
+        "distractors": [
+          "so",
+          "such a",
+          "very"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There was ___ much noise that we decided to leave early.",
+        "answer": "so",
+        "distractors": [
+          "such",
+          "such a",
+          "too"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There were ___ many people that we couldn't find a seat.",
+        "answer": "so",
+        "distractors": [
+          "such",
+          "such a",
+          "very"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She has so ___ friends that she is always busy at weekends.",
+        "answer": "many",
+        "distractors": [
+          "much",
+          "few",
+          "little"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There was so ___ traffic that we missed our flight.",
+        "answer": "much",
+        "distractors": [
+          "many",
+          "few",
+          "little"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We had so ___ time that we couldn't finish the project.",
+        "answer": "little",
+        "distractors": [
+          "few",
+          "many",
+          "much"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "So ___ people turned up that the talk was nearly cancelled.",
+        "answer": "few",
+        "distractors": [
+          "little",
+          "much",
+          "many"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There were so ___ mistakes in the report that we rewrote it.",
+        "answer": "many",
+        "distractors": [
+          "much",
+          "little",
+          "few"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There were ___ many tourists that the streets were blocked.",
+        "answer": "so",
+        "distractors": [
+          "such",
+          "such a",
+          "very"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It made ___ a difference that we changed the whole plan.",
+        "answer": "such",
+        "distractors": [
+          "so",
+          "so a",
+          "too"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The room was ___ cold that we kept our coats on.",
+        "answer": "so",
+        "distractors": [
+          "such",
+          "such a",
+          "enough"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was ___ a mess that it took an hour to clean up.",
+        "answer": "such",
+        "distractors": [
+          "so",
+          "so a",
+          "very a"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The instructions were ___ clear that nobody got lost.",
+        "answer": "so",
+        "distractors": [
+          "such",
+          "such a",
+          "very much"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The box is ___ heavy to lift on my own.",
+        "answer": "too",
+        "distractors": [
+          "so",
+          "enough",
+          "such"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The problem is ___ complex to solve in a single afternoon.",
+        "answer": "too",
+        "distractors": [
+          "so",
+          "enough",
+          "such a"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She spoke ___ fast for me to follow her argument.",
+        "answer": "too",
+        "distractors": [
+          "so",
+          "enough",
+          "such"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This soup is ___ salty to enjoy.",
+        "answer": "too",
+        "distractors": [
+          "so",
+          "enough",
+          "very much"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He is experienced ___ to handle the negotiation alone.",
+        "answer": "enough",
+        "distractors": [
+          "too",
+          "so",
+          "such"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She is old ___ to make her own decisions now.",
+        "answer": "enough",
+        "distractors": [
+          "too",
+          "so",
+          "very"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The rope was strong ___ to hold all our weight.",
+        "answer": "enough",
+        "distractors": [
+          "too",
+          "so",
+          "such"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The soup is warm ___ to serve straight away.",
+        "answer": "enough",
+        "distractors": [
+          "too",
+          "so",
+          "very"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We finally had ___ time to review every clause carefully.",
+        "answer": "enough",
+        "distractors": [
+          "too",
+          "so",
+          "such"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "So loud ___ the music that we couldn't hear ourselves think.",
+        "answer": "was",
+        "distractors": [
+          "it was",
+          "that was",
+          "had"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ was the disaster that hundreds lost their homes.",
+        "answer": "Such",
+        "distractors": [
+          "So",
+          "So much",
+          "Too"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "So great ___ the noise that the windows shook.",
+        "answer": "was",
+        "distractors": [
+          "it was",
+          "that was",
+          "were"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The bridge was damaged, with the ___ that traffic was diverted for weeks.",
+        "answer": "result",
+        "distractors": [
+          "reason",
+          "purpose",
+          "cause"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She didn't submit the form; ___, her application was rejected.",
+        "answer": "consequently",
+        "distractors": [
+          "however",
+          "meanwhile",
+          "therefore besides"
+        ],
+        "cefr": "C1",
+        "alts": [
+          "therefore"
+        ]
+      },
+      {
+        "stem": "The data was incomplete; ___, the study had to be repeated.",
+        "answer": "therefore",
+        "distractors": [
+          "however",
+          "although",
+          "whereas"
+        ],
+        "cefr": "C1",
+        "alts": [
+          "consequently",
+          "thus",
+          "hence"
+        ]
+      },
+      {
+        "stem": "Costs rose sharply; as a ___, the project was cancelled.",
+        "answer": "result",
+        "distractors": [
+          "reason",
+          "cause",
+          "purpose"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The premise is false; ___, the conclusion cannot hold.",
+        "answer": "hence",
+        "distractors": [
+          "however",
+          "despite",
+          "whereas"
+        ],
+        "cefr": "C1",
+        "alts": [
+          "therefore",
+          "thus",
+          "consequently"
+        ]
+      },
+      {
+        "stem": "___ was his fury that he stormed out of the meeting.",
+        "answer": "Such",
+        "distractors": [
+          "So",
+          "So much",
+          "Too"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "So profound ___ the silence that the ticking clock filled the room.",
+        "answer": "was",
+        "distractors": [
+          "it was",
+          "that was",
+          "had been being"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "To such a ___ had the situation deteriorated that intervention became inevitable.",
+        "answer": "degree",
+        "distractors": [
+          "result",
+          "reason",
+          "purpose"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "extent"
+        ]
+      },
+      {
+        "stem": "Prices had risen to such an ___ that ordinary families could no longer cope.",
+        "answer": "extent",
+        "distractors": [
+          "amount",
+          "result",
+          "outcome"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "degree"
+        ]
+      },
+      {
+        "stem": "She practised to the ___ where her fingers bled.",
+        "answer": "point",
+        "distractors": [
+          "degree where",
+          "result",
+          "extent"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The crisis escalated to the point ___ international intervention became inevitable.",
+        "answer": "where",
+        "distractors": [
+          "which",
+          "what",
+          "of"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "that"
+        ]
+      },
+      {
+        "stem": "The reform gave ___ to a wave of unforeseen economic challenges.",
+        "answer": "rise",
+        "distractors": [
+          "result",
+          "way",
+          "place"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The merger, which ___ in mass layoffs, was widely criticised.",
+        "answer": "resulted",
+        "distractors": [
+          "gave",
+          "caused that",
+          "led"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Negotiations collapsed, with the ___ that both sides walked away empty-handed.",
+        "answer": "upshot",
+        "distractors": [
+          "reason",
+          "purpose",
+          "cause"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "result",
+          "consequence"
+        ]
+      },
+      {
+        "stem": "Funding was withdrawn, the ___ of which was the lab's closure.",
+        "answer": "outcome",
+        "distractors": [
+          "reason",
+          "purpose",
+          "cause"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "result",
+          "upshot"
+        ]
+      },
+      {
+        "stem": "It is precisely ___ of his dedication that the project ultimately succeeded.",
+        "answer": "because",
+        "distractors": [
+          "due",
+          "owing",
+          "thanks"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "What ___ was a complete redesign of the entire system.",
+        "answer": "resulted",
+        "distractors": [
+          "caused",
+          "because",
+          "therefore"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "followed"
+        ]
+      },
+      {
+        "stem": "The reform ___ led to higher costs, the opposite of its goal.",
+        "answer": "inadvertently",
+        "distractors": [
+          "consequently",
+          "therefore",
+          "hence"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___, the very solution they praised created a brand-new problem.",
+        "answer": "Ironically",
+        "distractors": [
+          "Therefore",
+          "Consequently",
+          "Hence"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The flu returned with a ___ that winter, far worse than before.",
+        "answer": "vengeance",
+        "distractors": [
+          "result",
+          "consequence",
+          "degree"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The win is all the more impressive ___ they played without their captain.",
+        "answer": "because",
+        "distractors": [
+          "therefore",
+          "hence",
+          "thus"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "since"
+        ]
+      },
+      {
+        "stem": "The repairs cost the council to the ___ of two million pounds.",
+        "answer": "tune",
+        "distractors": [
+          "result",
+          "extent of",
+          "point"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The more complex the system, ___ more likely failures become.",
+        "answer": "the",
+        "distractors": [
+          "so",
+          "such",
+          "that the"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

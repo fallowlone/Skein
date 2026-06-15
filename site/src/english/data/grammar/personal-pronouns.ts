@@ -488,5 +488,612 @@ export const topic: GrammarTopic = {
       "subject form",
       "object form"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "___ am a student.",
+        "answer": "I",
+        "distractors": [
+          "Me",
+          "My",
+          "He"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "___ is a doctor. (about a woman)",
+        "answer": "She",
+        "distractors": [
+          "He",
+          "It",
+          "Her"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "___ is my dad.",
+        "answer": "He",
+        "distractors": [
+          "She",
+          "Him",
+          "It"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "Look at that car. ___ is new.",
+        "answer": "It",
+        "distractors": [
+          "He",
+          "She",
+          "Its"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "___ are friends. (you and me)",
+        "answer": "We",
+        "distractors": [
+          "Us",
+          "They",
+          "Our"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "Maria and Tom are here. ___ are my neighbours.",
+        "answer": "They",
+        "distractors": [
+          "Them",
+          "We",
+          "Their"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "___ are my best friend.",
+        "answer": "You",
+        "distractors": [
+          "I",
+          "He",
+          "Your"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "This is a dog. ___ is small.",
+        "answer": "It",
+        "distractors": [
+          "He",
+          "She",
+          "Him"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "I like this song. ___ like it too.",
+        "answer": "They",
+        "distractors": [
+          "Them",
+          "Their",
+          "It"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "She calls ___ every evening. (about a man)",
+        "answer": "him",
+        "distractors": [
+          "he",
+          "his",
+          "her"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Can you help ___, please? (the speaker)",
+        "answer": "me",
+        "distractors": [
+          "I",
+          "my",
+          "mine"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "We saw ___ at the station. (Maria and Tom)",
+        "answer": "them",
+        "distractors": [
+          "they",
+          "their",
+          "theirs"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "He gave the book to ___. (you and me)",
+        "answer": "us",
+        "distractors": [
+          "we",
+          "our",
+          "ours"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I know ___ very well. (about a woman)",
+        "answer": "her",
+        "distractors": [
+          "she",
+          "hers",
+          "him"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ go home now. (the speaker, doing the action)",
+        "answer": "I",
+        "distractors": [
+          "Me",
+          "My",
+          "Mine"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "They love ___ a lot. (you and me)",
+        "answer": "us",
+        "distractors": [
+          "we",
+          "our",
+          "ourselves"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Please listen to ___ carefully. (the speaker)",
+        "answer": "me",
+        "distractors": [
+          "I",
+          "my",
+          "mine"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Come with ___ to the park. (the speaker)",
+        "answer": "me",
+        "distractors": [
+          "I",
+          "my",
+          "mine"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "This gift is for ___. (Maria and Tom)",
+        "answer": "them",
+        "distractors": [
+          "they",
+          "their",
+          "theirs"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She is older than ___. (a man, modern spoken English)",
+        "answer": "him",
+        "distractors": [
+          "his",
+          "he's",
+          "himself"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ is raining outside.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "That",
+          "This"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Sit next to ___. (the speaker)",
+        "answer": "me",
+        "distractors": [
+          "I",
+          "my",
+          "myself"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "This letter is from ___. (about a man)",
+        "answer": "him",
+        "distractors": [
+          "he",
+          "his",
+          "he's"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ is five o'clock already.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "That",
+          "This"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The teacher is talking about ___. (you and me)",
+        "answer": "us",
+        "distractors": [
+          "we",
+          "our",
+          "ourselves"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Don't go without ___. (about a woman)",
+        "answer": "her",
+        "distractors": [
+          "she",
+          "hers",
+          "herself"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ is too far to walk from here.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "That",
+          "This"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "My brother and ___ went to school together. (the speaker, subject)",
+        "answer": "I",
+        "distractors": [
+          "me",
+          "myself",
+          "mine"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "This is a secret between you and ___. (the speaker)",
+        "answer": "me",
+        "distractors": [
+          "I",
+          "myself",
+          "mine"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He invited my friends and ___ to dinner. (the speaker, object)",
+        "answer": "me",
+        "distractors": [
+          "I",
+          "myself",
+          "mine"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If someone calls, tell ___ I'm busy.",
+        "answer": "them",
+        "distractors": [
+          "him",
+          "it",
+          "themself"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "\"Who is it?\" \"It's ___!\" (informal reply, the speaker)",
+        "answer": "me",
+        "distractors": [
+          "I",
+          "mine",
+          "myself"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She and ___ are good friends. (the speaker, subject of the pair)",
+        "answer": "I",
+        "distractors": [
+          "me",
+          "myself",
+          "mine"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "A student should always bring ___ own book.",
+        "answer": "their",
+        "distractors": [
+          "its",
+          "his or her own",
+          "they're"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The decision is up to you and ___. (the speaker, after preposition)",
+        "answer": "me",
+        "distractors": [
+          "I",
+          "myself",
+          "mine"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You and ___ should talk later. (the speaker, subject)",
+        "answer": "I",
+        "distractors": [
+          "me",
+          "myself",
+          "mine"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I ___ saw the accident happen. (emphatic, the speaker did)",
+        "answer": "myself",
+        "distractors": [
+          "me",
+          "mine",
+          "my own"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It was ___ who called you yesterday, not Tom. (cleft, about a woman, formal)",
+        "answer": "she",
+        "distractors": [
+          "her",
+          "herself",
+          "hers"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ is essential that we arrive on time.",
+        "answer": "It",
+        "distractors": [
+          "This",
+          "That",
+          "There"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We did the whole project ___. (emphatic, on our own)",
+        "answer": "ourselves",
+        "distractors": [
+          "us",
+          "ourself",
+          "ours"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ was in 2020 that the company was founded. (cleft)",
+        "answer": "It",
+        "distractors": [
+          "This",
+          "That",
+          "There"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ wrote every word of the report. (emphatic)",
+        "answer": "herself",
+        "distractors": [
+          "her",
+          "herselves",
+          "hers"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ seems that the data were misread.",
+        "answer": "It",
+        "distractors": [
+          "This",
+          "That",
+          "There"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ is important to study every day. (anticipatory subject before a to-clause)",
+        "answer": "It",
+        "distractors": [
+          "This",
+          "That",
+          "There"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They themselves admitted the mistake, and ___ apologised in person. (the speaker, subject)",
+        "answer": "I",
+        "distractors": [
+          "me",
+          "myself",
+          "mine"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ should always consider one's audience before speaking. (formal generic pronoun)",
+        "answer": "One",
+        "distractors": [
+          "You",
+          "They",
+          "We"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The applicant must submit ___ documents by Friday. (singular they, formal)",
+        "answer": "their",
+        "distractors": [
+          "its",
+          "his/her",
+          "they're"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Please contact ___ directly with any concerns. (business email, object of the verb)",
+        "answer": "me",
+        "distractors": [
+          "myself",
+          "I",
+          "mine"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The data suggest that ___ need further research. (academic plural, the authors)",
+        "answer": "we",
+        "distractors": [
+          "us",
+          "one",
+          "I"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "One must always do ___ best in formal British prose. (continuing formal one)",
+        "answer": "one's",
+        "distractors": [
+          "their",
+          "his",
+          "your"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Each candidate may submit ___ application online. (gender-neutral singular)",
+        "answer": "their",
+        "distractors": [
+          "its",
+          "they're",
+          "theirs"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In this paper ___ argue that the model is flawed. (single author, modest academic plural)",
+        "answer": "we",
+        "distractors": [
+          "one",
+          "they",
+          "us"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ cannot help but admire her persistence. (literary generic, formal)",
+        "answer": "One",
+        "distractors": [
+          "You",
+          "They",
+          "We"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ walk into a room like that and you just know. (generic second person, kept consistent)",
+        "answer": "You",
+        "distractors": [
+          "One",
+          "They",
+          "We"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ shalt not steal. (archaic second-person singular)",
+        "answer": "Thou",
+        "distractors": [
+          "You",
+          "Ye",
+          "Thee"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ is hereby resolved that the motion be approved. (legal boilerplate subject)",
+        "answer": "It",
+        "distractors": [
+          "This",
+          "That",
+          "There"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We, the undersigned, hereby pledge ___ full support. (formal collective possessive)",
+        "answer": "our",
+        "distractors": [
+          "ours",
+          "us",
+          "one's"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "To live well, ___ must know oneself. (consistent formal generic chain)",
+        "answer": "one",
+        "distractors": [
+          "you",
+          "they",
+          "we"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "personal-pronouns-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A0",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Personal pronouns are a choice among words: the correct filler '{answer}' depends on grammatical role (subject vs object), preposition or comparison context, dummy 'it', coordinated pairs, singular 'they', emphatic reflexives, cleft 'it', and register (generic 'you' vs formal 'one'), so each item is judged in context.",
+          "ru": "Личные местоимения — это выбор среди слов: правильная форма «{answer}» зависит от роли (подлежащее или дополнение), предлога или сравнения, формального it, координированных пар, singular they, эмфатических возвратных форм, выделительного it и регистра (обобщающее you и формальное one), поэтому каждый пример оценивается в контексте."
+        }
+      }
+    ],
+    "contexts_note": "see contexts array"
   }
 };

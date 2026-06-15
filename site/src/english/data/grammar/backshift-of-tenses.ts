@@ -250,5 +250,562 @@ export const topic: GrammarTopic = {
       "Reporting verb (past)",
       "Reported speech (shifted back)"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "\"I live in Moscow,\" he said. Reported: He said he ___ in Moscow. (live)",
+        "answer": "lived",
+        "distractors": [
+          "lives",
+          "is living",
+          "will live"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I am working on the report,\" she said. Reported: She said she ___ working on the report. (be)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "were",
+          "has been"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I have finished the essay,\" he told me. Reported: He told me he ___ finished the essay. (have)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "have",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I will call you,\" he promised. Reported: He promised he ___ call me. (will)",
+        "answer": "would",
+        "distractors": [
+          "will",
+          "wills",
+          "shall"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I can swim,\" she said. Reported: She said she ___ swim. (can)",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "cans",
+          "would"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"You must leave now,\" he told me. Reported: He told me I ___ to leave. (must, obligation)",
+        "answer": "had",
+        "distractors": [
+          "must",
+          "have",
+          "need"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I saw him yesterday,\" she said. Reported: She said she ___ seen him the day before. (see)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "have",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"We are leaving tomorrow,\" they said. Reported: They said they were leaving the ___ day. (deictic shift of tomorrow)",
+        "answer": "next",
+        "distractors": [
+          "same",
+          "last",
+          "previous"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I will meet you here,\" he said. Reported: He said he would meet me ___. (deictic shift of here)",
+        "answer": "there",
+        "distractors": [
+          "here",
+          "this",
+          "now"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I bought this book yesterday,\" she said. Reported: She said she had bought ___ book the day before. (deictic shift of this)",
+        "answer": "that",
+        "distractors": [
+          "this",
+          "these",
+          "it"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I am tired,\" he admitted. Reported: He admitted he ___ tired. (be — neutral backshift)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "are",
+          "were"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I don't understand the question,\" she said. Reported: She said she ___ understand the question. (do, negative)",
+        "answer": "didn't",
+        "distractors": [
+          "doesn't",
+          "don't",
+          "hadn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I may come later,\" he said. Reported: He said he ___ come later. (may)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "mays",
+          "must"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"They were playing outside,\" she said. Reported: She said they ___ been playing outside. (continuous → past perfect continuous)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "has",
+          "were"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I should rest more,\" she said. Reported: She said she ___ rest more. (should — no shift)",
+        "answer": "should",
+        "distractors": [
+          "shoulded",
+          "would",
+          "had to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I left two hours ago,\" he said. Reported: He said he had left two hours ___. (deictic shift of ago)",
+        "answer": "before",
+        "distractors": [
+          "ago",
+          "after",
+          "since"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The scientist said that water ___ at 100 degrees Celsius. (boil — universal truth, present preferred)",
+        "answer": "boils",
+        "distractors": [
+          "boiled",
+          "had boiled",
+          "will boil"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My friend says he ___ hard every day. (present reporting verb — no backshift) (work)",
+        "answer": "works",
+        "distractors": [
+          "worked",
+          "had worked",
+          "was working"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I had already eaten,\" he said. Reported: He said he ___ already eaten. (past perfect stays)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "have",
+          "did"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"Do you speak French?\" she asked. Reported: She asked whether I ___ French. (do — reported question)",
+        "answer": "spoke",
+        "distractors": [
+          "speak",
+          "speaks",
+          "had spoken"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"We don't have any tickets left,\" they said. Reported: They said they ___ have any tickets left. (do not — past)",
+        "answer": "didn't",
+        "distractors": [
+          "don't",
+          "doesn't",
+          "hadn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I am going to apply for the job,\" she said. Reported: She said she ___ going to apply for the job. (be going to)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "are",
+          "were"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I might travel next summer,\" he said. Reported: He said he ___ travel the following summer. (might — no shift)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "must",
+          "would"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"I have been waiting for an hour,\" she complained. Reported: She complained that she ___ been waiting for an hour. (present perfect cont. → past perfect cont.)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "have",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "\"Come here and bring this folder,\" she said. Reported: She told me to go there and ___ that folder. (deictic: bring → ?)",
+        "answer": "take",
+        "distractors": [
+          "bring",
+          "come",
+          "carry here"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He said he ___ lived in Paris for ten years and still misses it. (mixed backshift — the lived part)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "have",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He said he had lived in Paris for ten years and still ___ it. (mixed backshift — current relevance stays present)",
+        "answer": "misses",
+        "distractors": [
+          "missed",
+          "had missed",
+          "was missing"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Galileo said that the Earth ___ the sun — and the writer agrees it still does. (orbit — present signals agreement)",
+        "answer": "orbits",
+        "distractors": [
+          "orbited",
+          "had orbited",
+          "would orbit"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The ancients believed that the Earth ___ flat — backshift, because the claim is false. (be)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "were",
+          "has been"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"If I see him, I'll tell him,\" she said. Reported: She said that if she ___ him, she would tell him. (first conditional backshift)",
+        "answer": "saw",
+        "distractors": [
+          "sees",
+          "will see",
+          "had seen"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"If I had time, I would help,\" he said. Reported: He said that if he ___ time, he would help. (second conditional — unchanged)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "would have",
+          "had had"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He mentioned that if he had known the deadline, he ___ have submitted earlier. (third conditional — unchanged)",
+        "answer": "would",
+        "distractors": [
+          "will",
+          "would had",
+          "had"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"He must be at home,\" she said. Reported: She said he ___ be at home — a deduction, kept. (must of deduction)",
+        "answer": "must",
+        "distractors": [
+          "had to",
+          "musted",
+          "would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"I'm about to leave,\" he said. Reported: He said he ___ about to leave. (be about to)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "were",
+          "had been"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"I will have finished by then,\" she said. Reported: She said she ___ have finished by then. (future perfect → conditional perfect)",
+        "answer": "would",
+        "distractors": [
+          "will",
+          "would had",
+          "had"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He explained that he ___ been working on the project for months and that the team was finally ready. (sequence harmony — past perfect cont.)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "have",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"You needn't come,\" he said. Reported: He said I ___ need to come. (needn't → didn't need to)",
+        "answer": "didn't",
+        "distractors": [
+          "don't",
+          "needn't",
+          "hadn't"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"This morning I overslept,\" she said. Reported: She said that ___ morning she had overslept. (deictic: this morning → ?)",
+        "answer": "that",
+        "distractors": [
+          "this",
+          "next",
+          "same"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She just said she ___ leaving — reported moments later, so no backshift. (be, immediate report)",
+        "answer": "is",
+        "distractors": [
+          "was",
+          "were",
+          "had been"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"I ought to apply,\" he said. Reported: He said he ___ to apply. (ought to — no shift)",
+        "answer": "ought",
+        "distractors": [
+          "had",
+          "has",
+          "would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"You mustn't touch it,\" she warned. Reported: She warned that I ___ touch it. (must not, prohibition — stays mustn't)",
+        "answer": "mustn't",
+        "distractors": [
+          "didn't have to",
+          "hadn't to",
+          "needn't"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "\"I had better leave,\" he said. Reported: He said he ___ better leave. (had better — no shift)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "would",
+          "ought"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He said that the treaty ___ flawed — neutral distance, neither agreeing nor stressing it is over. (be — neutral backshift)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "were",
+          "be"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He said that the treaty ___ been flawed — marking the judgement as no longer current. (be — past perfect for completed relevance)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "have",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Free indirect discourse: Why ___ she said that? Now he would never forgive her. (have — backshifted thought in FID)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "did",
+          "does"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "\"I wish I were taller,\" she said. Reported: She said she wished she ___ taller. (subjunctive were preserved)",
+        "answer": "were",
+        "distractors": [
+          "was",
+          "is",
+          "had been"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "\"It is essential that he be present,\" she said. Reported: She said that it ___ essential that he be present. (main verb shifts, subjunctive 'be' kept)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "were",
+          "be"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The prosecution demonstrated that he ___ have been present when the fire broke out. (modal perfect 'must have' — no further shift)",
+        "answer": "must",
+        "distractors": [
+          "had to",
+          "musted",
+          "would"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He claimed to ___ seen her the previous day, but the alibi held. (claim + perfect infinitive for past reference)",
+        "answer": "have",
+        "distractors": [
+          "had",
+          "has",
+          "be"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She recalled that she ___ first met him in Vienna in 1912, long before either had imagined the war. (past-of-past in long passage)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "have",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Smith (2020) argued that climate change ___ accelerating — a plain past-tense academic report. (be)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "were",
+          "had"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It had long been thought that the manuscript ___ a forgery, until carbon dating proved otherwise. (deep-embedded past)",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "were",
+          "be"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "\"The day after tomorrow I fly out,\" he said. Reported: He said he would fly out ___ days later. (deictic: day after tomorrow → ? days later)",
+        "answer": "two",
+        "distractors": [
+          "next",
+          "the following",
+          "tomorrow"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "backshift-of-tenses-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "After a past reporting verb the reported clause backshifts one step ({answer} here); exceptions are universal truths, still-relevant facts, present reporting verbs, already-past-perfect, no-shift modals (should/might/ought to), past-form conditionals, preserved subjunctives, and modal-perfects, plus deictic shifts of time and place.",
+          "ru": "После reporting verb в прошедшем времени придаточное сдвигается на шаг назад (здесь {answer}); исключения — вечные истины, всё ещё актуальные факты, reporting verb в present, уже-Past-Perfect, не меняющиеся модальные (should/might/ought to), conditionals в прошедшей форме, сохраняемый subjunctive и modal perfect, а также сдвиг обстоятельств времени и места."
+        }
+      }
+    ],
+    "contextsMeta": []
   }
 };

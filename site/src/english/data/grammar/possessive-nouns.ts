@@ -421,5 +421,601 @@ export const topic: GrammarTopic = {
       "'s",
       "thing owned"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "This is ___ bag. (Maria)",
+        "answer": "Maria's",
+        "distractors": [
+          "Marias",
+          "Maria",
+          "Marias'"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "My ___ car is red. (brother)",
+        "answer": "brother's",
+        "distractors": [
+          "brothers",
+          "brothers'",
+          "brother"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The ___ name is Rex. (dog)",
+        "answer": "dog's",
+        "distractors": [
+          "dogs",
+          "dogs'",
+          "dog"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ mother is a doctor. (Tom)",
+        "answer": "Tom's",
+        "distractors": [
+          "Toms",
+          "Tom",
+          "Toms'"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I like my ___ house. (friend)",
+        "answer": "friend's",
+        "distractors": [
+          "friends",
+          "friends'",
+          "friend"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Whose pen is this? It's ___ . (Anna)",
+        "answer": "Anna's",
+        "distractors": [
+          "Annas",
+          "Anna",
+          "Annas'"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The ___ tail is very long. (cat)",
+        "answer": "cat's",
+        "distractors": [
+          "cats",
+          "cats'",
+          "cat"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "That is my ___ phone. (sister)",
+        "answer": "sister's",
+        "distractors": [
+          "sisters",
+          "sisters'",
+          "sister"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ room is upstairs. (David)",
+        "answer": "David's",
+        "distractors": [
+          "Davids",
+          "David",
+          "Davids'"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The ___ wing was injured. (bird)",
+        "answer": "bird's",
+        "distractors": [
+          "birds",
+          "birds'",
+          "bird"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The ___ school is on this street. (girls, plural)",
+        "answer": "girls'",
+        "distractors": [
+          "girl's",
+          "girls's",
+          "girls"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "My ___ house is near the park. (parents, plural)",
+        "answer": "parents'",
+        "distractors": [
+          "parents's",
+          "parent's",
+          "parents"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The ___ books are on the top shelf. (children)",
+        "answer": "children's",
+        "distractors": [
+          "childrens'",
+          "childrens",
+          "children'"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I bought some ___ shoes. (women)",
+        "answer": "women's",
+        "distractors": [
+          "womens'",
+          "womens",
+          "women'"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "They sell ___ clothes on the second floor. (men)",
+        "answer": "men's",
+        "distractors": [
+          "mens'",
+          "mens",
+          "men'"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She is at the ___ . (hairdresser, the shop)",
+        "answer": "hairdresser's",
+        "distractors": [
+          "hairdressers",
+          "hairdressers'",
+          "hairdresser"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The ___ meeting is on Friday. (teachers, plural)",
+        "answer": "teachers'",
+        "distractors": [
+          "teacher's",
+          "teachers's",
+          "teachers"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We respect other ___ opinions. (people)",
+        "answer": "people's",
+        "distractors": [
+          "peoples'",
+          "peoples",
+          "people'"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He has an appointment at the ___ . (dentist, the clinic)",
+        "answer": "dentist's",
+        "distractors": [
+          "dentists",
+          "dentists'",
+          "dentist"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The ___ changing room is at the back. (boys, plural)",
+        "answer": "boys'",
+        "distractors": [
+          "boy's",
+          "boys's",
+          "boys"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I read ___ newspaper this morning. (today)",
+        "answer": "today's",
+        "distractors": [
+          "todays",
+          "todays'",
+          "today"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She took two ___ holiday in July. (weeks, duration)",
+        "answer": "weeks'",
+        "distractors": [
+          "week's",
+          "weeks's",
+          "weeks"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We need a ___ notice before you leave. (month, duration)",
+        "answer": "month's",
+        "distractors": [
+          "months",
+          "months'",
+          "month"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ news shocked the whole country. (Yesterday)",
+        "answer": "Yesterday's",
+        "distractors": [
+          "Yesterdays",
+          "Yesterday",
+          "Yesterdays'"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "A ___ work earned him very little. (day, duration)",
+        "answer": "day's",
+        "distractors": [
+          "days",
+          "days'",
+          "day"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The dog is asleep in ___ basket. (it)",
+        "answer": "its",
+        "distractors": [
+          "it's",
+          "its'",
+          "it"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'll call you back in an ___ time. (hour)",
+        "answer": "hour's",
+        "distractors": [
+          "hours",
+          "hours'",
+          "hour"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ economy is growing fast. (Germany, place)",
+        "answer": "Germany's",
+        "distractors": [
+          "Germanys",
+          "Germany",
+          "Germanys'"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We watched last ___ episode together. (week)",
+        "answer": "week's",
+        "distractors": [
+          "weeks",
+          "weeks'",
+          "week"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The plane left after an ___ delay. (hour, duration)",
+        "answer": "hour's",
+        "distractors": [
+          "hours",
+          "hours'",
+          "hour"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The cake was ruined; we threw it away because ___ icing had melted. (it)",
+        "answer": "its",
+        "distractors": [
+          "it's",
+          "its'",
+          "it"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They will return in two ___ time. (years)",
+        "answer": "years'",
+        "distractors": [
+          "year's",
+          "years's",
+          "years"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We discussed the ___ strategy for next season. (team, organisation)",
+        "answer": "team's",
+        "distractors": [
+          "teams",
+          "teams'",
+          "team"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The ___ of the old church needs repair. (roof — inanimate)",
+        "answer": "roof",
+        "distractors": [
+          "roof's",
+          "roofs",
+          "roofs'"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "A colleague of my ___ visited us yesterday. (brother — double genitive)",
+        "answer": "brother's",
+        "distractors": [
+          "brother",
+          "brothers",
+          "brothers'"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ book is lying on the kitchen table. (James)",
+        "answer": "James's",
+        "distractors": [
+          "James",
+          "Jamess",
+          "James's'"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The ___ of the matter cannot be overstated. (importance — abstract)",
+        "answer": "importance",
+        "distractors": [
+          "importance's",
+          "importances",
+          "importances'"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The new ___ policy upset many employees. (company, organisation)",
+        "answer": "company's",
+        "distractors": [
+          "companys",
+          "companies'",
+          "company"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ president addressed the assembly. (France, country)",
+        "answer": "France's",
+        "distractors": [
+          "Frances",
+          "France",
+          "Frances'"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "A photo of ___ appeared in the magazine. (John — double genitive)",
+        "answer": "John's",
+        "distractors": [
+          "John",
+          "Johns",
+          "Johns'"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Could you pass me the ___ of the book that I bought yesterday? (title — long phrase)",
+        "answer": "title",
+        "distractors": [
+          "title's",
+          "titles",
+          "titles'"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ wedding was a beautiful occasion. (Anna and Max — joint, one wedding)",
+        "answer": "Anna and Max's",
+        "distractors": [
+          "Anna's and Max's",
+          "Anna and Maxs",
+          "Anna's and Max"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ opinions on the matter clearly differ. (Anna and Max — separate, two opinions)",
+        "answer": "Anna's and Max's",
+        "distractors": [
+          "Anna and Max's",
+          "Annas and Maxs",
+          "Anna and Maxs'"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The committee appreciated ___ being on time. (John — possessive + gerund)",
+        "answer": "John's",
+        "distractors": [
+          "John",
+          "Johns",
+          "Johns'"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "That remark of ___ surprised everyone in the room. (her — double genitive)",
+        "answer": "hers",
+        "distractors": [
+          "her's",
+          "her",
+          "hers'"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ joint venture finally turned a profit. (Ben and Lucy — joint, one venture)",
+        "answer": "Ben and Lucy's",
+        "distractors": [
+          "Ben's and Lucy's",
+          "Ben and Lucys",
+          "Ben's and Lucy"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The ___ decision was widely criticised. (government — institutional)",
+        "answer": "government's",
+        "distractors": [
+          "governments",
+          "governments'",
+          "government"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It was rather rude of you to question ___ judgement. (her)",
+        "answer": "her",
+        "distractors": [
+          "hers",
+          "her's",
+          "hers'"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ apartments are on different floors of the building. (Sara and Tom — separate, two apartments)",
+        "answer": "Sara's and Tom's",
+        "distractors": [
+          "Sara and Tom's",
+          "Saras and Toms",
+          "Sara and Toms'"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "For ___ sake, please listen to me. (goodness — fixed idiom)",
+        "answer": "goodness'",
+        "distractors": [
+          "goodness's",
+          "goodnesses",
+          "goodness"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We finally reached ___ door after the long illness. (death — rhetorical idiom)",
+        "answer": "death's",
+        "distractors": [
+          "deaths",
+          "deaths'",
+          "death"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The lecture explored ___ beauty in fine detail. (nature — abstract, now standard)",
+        "answer": "nature's",
+        "distractors": [
+          "natures",
+          "natures'",
+          "nature"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The committee debated the ___ rights at length. (states — plural owner)",
+        "answer": "states'",
+        "distractors": [
+          "state's",
+          "states's",
+          "states"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ editorial board issued a statement. (The New York Times — modern AmE style)",
+        "answer": "The New York Times's",
+        "distractors": [
+          "The New York Times'",
+          "The New York Time's",
+          "The New York Timess"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Many tourists visit the Tower of ___ each year. (London — fixed of-name)",
+        "answer": "London",
+        "distractors": [
+          "London's",
+          "Londons",
+          "Londons'"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "For ___ sake, calm down and think. (heaven — fixed idiom)",
+        "answer": "heaven's",
+        "distractors": [
+          "heavens",
+          "heavens'",
+          "heaven"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ lessons are too easily forgotten. (history — abstract, standard)",
+        "answer": "History's",
+        "distractors": [
+          "Historys",
+          "Historys'",
+          "History"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "possessive-nouns-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The correct possessive form here is \"{answer}\": choose the form that matches the owner (singular vs plural, animate vs inanimate) and follow the apostrophe rules.",
+          "ru": "Правильная притяжательная форма здесь — «{answer}»: выбирай форму по владельцу (ед./мн. число, живое/неживое) и следуй правилам апострофа."
+        }
+      }
+    ]
   }
 };

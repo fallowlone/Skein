@@ -341,5 +341,821 @@ export const topic: GrammarTopic = {
       "Money",
       "Emotions"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "We ___ for the coast at dawn to beat the traffic. (begin a journey)",
+        "answer": "set off",
+        "distractors": [
+          "set up",
+          "set out for",
+          "set in"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You need to ___ at the hotel reception before you can get your room key.",
+        "answer": "check in",
+        "distractors": [
+          "check out",
+          "check up",
+          "check off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Hurry up and ___ the bus — the doors are about to close. (board)",
+        "answer": "get on",
+        "distractors": [
+          "get off",
+          "get in",
+          "get over"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'll ___ you ___ from the airport at eight, so wait by the arrivals gate. (collect)",
+        "answer": "pick",
+        "distractors": [
+          "drop",
+          "take",
+          "set"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The plane finally ___ after a two-hour delay on the runway. (left the ground)",
+        "answer": "took off",
+        "distractors": [
+          "took up",
+          "took over",
+          "took out"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I think I'm ___ a cold — my throat has been sore since morning. (becoming ill with)",
+        "answer": "coming down with",
+        "distractors": [
+          "getting over",
+          "coming up with",
+          "going down on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It took him two weeks to ___ the flu and feel normal again. (recover from)",
+        "answer": "get over",
+        "distractors": [
+          "get over with",
+          "come down with",
+          "get on with"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My doctor told me to ___ sugar because of my blood pressure. (reduce)",
+        "answer": "cut down on",
+        "distractors": [
+          "cut off",
+          "cut out of",
+          "cut up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I ___ at the gym three times a week to stay fit. (exercise)",
+        "answer": "work out",
+        "distractors": [
+          "work on",
+          "work up",
+          "work off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I really ___ my new colleagues; we never argue. (have a good relationship with)",
+        "answer": "get on with",
+        "distractors": [
+          "fall out with",
+          "get over",
+          "go out of"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They ___ over money and haven't spoken since. (quarrelled)",
+        "answer": "fell out",
+        "distractors": [
+          "made up",
+          "got on",
+          "broke up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "After a week of silence they finally ___ and apologised to each other. (reconciled)",
+        "answer": "made up",
+        "distractors": [
+          "broke up",
+          "fell out",
+          "split off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ with her boyfriend after three years together. (ended the relationship)",
+        "answer": "broke up",
+        "distractors": [
+          "made up",
+          "got on",
+          "fell down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Please ___ your essay by Friday or you'll lose marks. (submit)",
+        "answer": "hand in",
+        "distractors": [
+          "hand out",
+          "hand over",
+          "hand down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Don't worry, I'll ___ how the machine works eventually. (understand after thought)",
+        "answer": "figure out",
+        "distractors": [
+          "look up",
+          "give up",
+          "work on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you don't know the word, ___ it ___ in the dictionary. (search for)",
+        "answer": "look",
+        "distractors": [
+          "give",
+          "work",
+          "hand"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Learning the violin is hard, but don't ___ — keep practising. (stop trying)",
+        "answer": "give up",
+        "distractors": [
+          "give in to",
+          "give out",
+          "give off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Please ___ the oven before you leave the kitchen. (switch off)",
+        "answer": "turn off",
+        "distractors": [
+          "turn on",
+          "turn up",
+          "turn down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "These old magazines are useless — just ___ them ___. (put in the rubbish)",
+        "answer": "throw",
+        "distractors": [
+          "clean",
+          "wash",
+          "turn"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The whole family helped to ___ after the party. (tidy)",
+        "answer": "clean up",
+        "distractors": [
+          "wash up",
+          "throw away",
+          "turn off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He never ___; the meeting started without him. (arrived)",
+        "answer": "showed up",
+        "distractors": [
+          "showed off",
+          "came over",
+          "dropped in"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I went to the station to ___ my parents ___ before their train left. (say goodbye to)",
+        "answer": "see",
+        "distractors": [
+          "pick",
+          "drop",
+          "check"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The driver had to ___ when the engine started smoking. (stop at the roadside)",
+        "answer": "pull over",
+        "distractors": [
+          "pull up",
+          "pull through",
+          "pull off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The painkiller will ___ in about four hours, so take another then. (stop having effect)",
+        "answer": "wear off",
+        "distractors": [
+          "wear out",
+          "wear down",
+          "ease off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Her arthritis tends to ___ in cold, damp weather. (suddenly become worse)",
+        "answer": "flare up",
+        "distractors": [
+          "build up",
+          "break out",
+          "ease off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "After months of overtime she completely ___ and had to take leave. (became exhausted)",
+        "answer": "burnt out",
+        "distractors": [
+          "worked out",
+          "wore off",
+          "calmed down"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They ___ the moment they met and have been close ever since. (got along instantly)",
+        "answer": "hit it off",
+        "distractors": [
+          "fell out",
+          "drifted apart",
+          "made up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "After he moved abroad, the old friends slowly ___. (became less close)",
+        "answer": "drifted apart",
+        "distractors": [
+          "got back together",
+          "hit it off",
+          "fell out"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She was furious because her date ___ her ___ at the restaurant. (failed to meet)",
+        "answer": "stood",
+        "distractors": [
+          "chatted",
+          "made",
+          "saw"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The manager agreed to ___ a new project despite the heavy workload. (accept responsibility for)",
+        "answer": "take on",
+        "distractors": [
+          "take over",
+          "take off",
+          "take up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When the director retired, the deputy ___ her duties. (assumed control of)",
+        "answer": "took over",
+        "distractors": [
+          "took on",
+          "took up",
+          "took out"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The company had to ___ two hundred workers when sales collapsed. (dismiss for redundancy)",
+        "answer": "lay off",
+        "distractors": [
+          "call off",
+          "put off",
+          "step down"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The concert was ___ because of the storm. (cancelled)",
+        "answer": "called off",
+        "distractors": [
+          "put off",
+          "wrapped up",
+          "laid off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Let's ___ the meeting now and finish the rest tomorrow. (conclude)",
+        "answer": "wrap up",
+        "distractors": [
+          "wind up about",
+          "catch up",
+          "follow up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I've been away, so I need to ___ all my unread emails. (do delayed work)",
+        "answer": "catch up on",
+        "distractors": [
+          "keep up with",
+          "come up with",
+          "follow up on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It took years, but they finally ___ the mortgage in full. (cleared the debt)",
+        "answer": "paid off",
+        "distractors": [
+          "paid in",
+          "paid back",
+          "paid out"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm ___ a deposit for a flat, so I can't go on holiday this year. (gradually accumulating money)",
+        "answer": "saving up for",
+        "distractors": [
+          "running out of",
+          "forking out for",
+          "splashing out on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "That mechanic charged me double — I think I got ___. (overcharged dishonestly)",
+        "answer": "ripped off",
+        "distractors": [
+          "paid off",
+          "forked out",
+          "written off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She was so upset that she ___ in tears during the meeting. (lost emotional control)",
+        "answer": "broke down",
+        "distractors": [
+          "cheered up",
+          "calmed down",
+          "chilled out"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Try to ___ — there's no point getting so angry over a small mistake. (become less agitated)",
+        "answer": "calm down",
+        "distractors": [
+          "freak out",
+          "cheer up",
+          "speak up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I didn't want to ___ the topic of money at dinner. (introduce into conversation)",
+        "answer": "bring up",
+        "distractors": [
+          "bring on",
+          "bring about",
+          "bring out"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Speak slowly — it's the only way to ___ your point ___ to the audience. (communicate successfully)",
+        "answer": "get",
+        "distractors": [
+          "bring",
+          "run",
+          "catch"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It took me a while to ___ the local accent. (begin to understand)",
+        "answer": "catch on to",
+        "distractors": [
+          "brush up on",
+          "look up",
+          "come up with"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The firm plans to ___ its new banking app across Europe next quarter. (launch to the public)",
+        "answer": "roll out",
+        "distractors": [
+          "scale up",
+          "branch out",
+          "wind down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "To meet demand, the factory had to ___ production over the holidays. (increase sharply)",
+        "answer": "ramp up",
+        "distractors": [
+          "wind down",
+          "phase out",
+          "write off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The CEO will formally ___ control to her successor next month. (transfer)",
+        "answer": "hand over",
+        "distractors": [
+          "take over",
+          "sign off on",
+          "step down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The board refused to ___ the proposal until the figures were verified. (formally approve)",
+        "answer": "sign off on",
+        "distractors": [
+          "roll out",
+          "write off",
+          "branch out"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The retailer hopes to ___ the Asian market with a budget line. (enter successfully)",
+        "answer": "break into",
+        "distractors": [
+          "break out of",
+          "branch out",
+          "break down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Burglars ___ the house while the family was on holiday. (entered illegally)",
+        "answer": "broke into",
+        "distractors": [
+          "broke out of",
+          "broke down",
+          "broke up"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The judge ___ the first-time offender ___ with a warning. (released without punishment)",
+        "answer": "let",
+        "distractors": [
+          "locked",
+          "turned",
+          "put"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Police worked for months to ___ the missing suspect. (locate after searching)",
+        "answer": "track down",
+        "distractors": [
+          "take down",
+          "turn in",
+          "crack down on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The government promised to ___ tax evasion with tougher penalties. (take strict action against)",
+        "answer": "crack down on",
+        "distractors": [
+          "come up against",
+          "call for",
+          "stem from"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Without protection, the species could ___ within a decade. (become extinct)",
+        "answer": "die out",
+        "distractors": [
+          "wipe out",
+          "run out",
+          "use up"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The reforms were intended to ___ lasting change in the system. (cause to happen)",
+        "answer": "bring about",
+        "distractors": [
+          "give rise to",
+          "account for",
+          "build on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In the conclusion the author ___ a limitation of earlier studies. (draws attention to)",
+        "answer": "points out",
+        "distractors": [
+          "touches on",
+          "builds on",
+          "goes into"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This recent paper ___ the framework proposed in the 2019 study. (uses as a foundation)",
+        "answer": "builds on",
+        "distractors": [
+          "draws on",
+          "accounts for",
+          "rules out"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "A single factor cannot ___ such a large rise in prices. (explain)",
+        "answer": "account for",
+        "distractors": [
+          "amount to",
+          "rule out",
+          "point out"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The investigators were able to ___ sabotage after examining the wreckage. (eliminate as a possibility)",
+        "answer": "rule out",
+        "distractors": [
+          "zero in on",
+          "account for",
+          "bring about"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Fighting ___ along the border after the ceasefire collapsed. (started suddenly)",
+        "answer": "broke out",
+        "distractors": [
+          "broke into",
+          "broke down",
+          "broke up"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Several senators ___ against the proposed bill in the press. (publicly criticised)",
+        "answer": "spoke out",
+        "distractors": [
+          "weighed in",
+          "held out",
+          "came out"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The minister ___ amid mounting pressure over the scandal. (resigned from office)",
+        "answer": "stepped down",
+        "distractors": [
+          "stepped in",
+          "stood out",
+          "stepped up"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I need time to ___ the offer before I give them an answer. (consider carefully)",
+        "answer": "mull over",
+        "distractors": [
+          "dwell on",
+          "carry out",
+          "touch on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Stop ___ your past mistakes — focus on what you can change now. (thinking obsessively about)",
+        "answer": "dwelling on",
+        "distractors": [
+          "mulling over",
+          "reflecting on",
+          "coming to terms with"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I just can't ___ how the new regulations are supposed to work. (fully understand)",
+        "answer": "get my head around",
+        "distractors": [
+          "come to terms with",
+          "sleep on",
+          "mull over"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The studio decided to ___ the new single this Friday. (release — informal but standard)",
+        "answer": "drop",
+        "distractors": [
+          "roll out",
+          "blow up",
+          "sell out"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The network ___ the troubled drama after just one season. (cancelled abruptly)",
+        "answer": "pulled the plug on",
+        "distractors": [
+          "rolled out",
+          "picked up",
+          "blew up"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The franchise ___ over a billion dollars at the box office. (earned in large amounts)",
+        "answer": "raked in",
+        "distractors": [
+          "sold out",
+          "blew up",
+          "bombed"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Before any upgrade, always ___ your data to an external drive. (make a safety copy of)",
+        "answer": "back up",
+        "distractors": [
+          "boot up",
+          "wipe out",
+          "patch up"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The faulty update ___ thousands of files on the server. (erased)",
+        "answer": "wiped out",
+        "distractors": [
+          "backed up",
+          "booted up",
+          "patched up"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The patient ___ chest pain and shortness of breath. (came to medical attention with)",
+        "answer": "presented with",
+        "distractors": [
+          "worked up",
+          "followed up on",
+          "pulled through"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Doctors ordered a full ___ to identify the cause of the fever. (diagnostic investigation)",
+        "answer": "work-up",
+        "distractors": [
+          "follow-up",
+          "rule-out",
+          "kick-in"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It was touch and go, but the patient ___ after the surgery. (survived a crisis)",
+        "answer": "pulled through",
+        "distractors": [
+          "went under",
+          "kicked in",
+          "flared up"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Under fire, the spokesman tried to ___ his earlier statement. (retract a position)",
+        "answer": "walk back",
+        "distractors": [
+          "double down on",
+          "gloss over",
+          "play down"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Rather than apologise, the senator chose to ___ his controversial claim. (defend more firmly)",
+        "answer": "double down on",
+        "distractors": [
+          "walk back",
+          "back out of",
+          "gloss over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "After weeks of talks, the merger ___ at the last minute. (collapsed)",
+        "answer": "fell through",
+        "distractors": [
+          "fell in line",
+          "came together",
+          "bowed out"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The report deliberately ___ the most damaging findings. (treated superficially to hide them)",
+        "answer": "glossed over",
+        "distractors": [
+          "zeroed in on",
+          "played up",
+          "took aim at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The campaign worked hard to ___ support among young voters. (energetically gather)",
+        "answer": "drum up",
+        "distractors": [
+          "stir up",
+          "play down",
+          "gloss over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Loyal members of the party quickly ___ the embattled leader. (united in support of)",
+        "answer": "rallied behind",
+        "distractors": [
+          "took aim at",
+          "crossed over",
+          "bowed out of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "In a formal legal filing, you would write that the firm ___, not that it went belly up. (became insolvent — formal phrasal)",
+        "answer": "underwent liquidation",
+        "distractors": [
+          "went belly up",
+          "blew up",
+          "sold out"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "common-phrasal-verb-groups-by-topic-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The correct filler is \"{answer}\": the right phrasal verb is chosen by the topic and meaning of the sentence, not by any regular inflection.",
+          "ru": "Правильная вставка — «{answer}»: нужный phrasal verb определяется темой и смыслом предложения, а не регулярной формой."
+        }
+      }
+    ]
   }
 };

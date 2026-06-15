@@ -329,5 +329,517 @@ export const topic: GrammarTopic = {
       "now",
       "future"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "When I ___ (arrive), she was already cooking dinner.",
+        "answer": "arrived",
+        "distractors": [
+          "was arriving",
+          "have arrived"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I was reading quietly when the phone suddenly ___ (ring).",
+        "answer": "rang",
+        "distractors": [
+          "was ringing",
+          "had rung"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'll call you when I ___ (get) home tonight.",
+        "answer": "get",
+        "distractors": [
+          "will get",
+          "got"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If it ___ (rain) tomorrow, we'll stay at home.",
+        "answer": "rains",
+        "distractors": [
+          "will rain",
+          "rained"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She said she ___ (be) tired after the long flight.",
+        "answer": "was",
+        "distractors": [
+          "is",
+          "has been"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "By the time we got to the cinema, the film ___ (already start).",
+        "answer": "had already started",
+        "distractors": [
+          "already started",
+          "has already started"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I ___ (see) him yesterday near the station.",
+        "answer": "saw",
+        "distractors": [
+          "have seen",
+          "had seen"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "As soon as the meeting ___ (finish), I'll send you the notes.",
+        "answer": "finishes",
+        "distractors": [
+          "will finish",
+          "finished"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He told me he ___ (never be) to Japan.",
+        "answer": "had never been",
+        "distractors": [
+          "has never been",
+          "was never"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "While she ___ (cook), the children were watching TV.",
+        "answer": "was cooking",
+        "distractors": [
+          "cooked",
+          "cooks"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We ___ (live) in this town since 2015, and we still love it.",
+        "answer": "have lived",
+        "distractors": [
+          "live",
+          "lived"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Don't worry, I'll wait here until you ___ (come) back.",
+        "answer": "come",
+        "distractors": [
+          "will come",
+          "came"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Right now the kids ___ (play) in the garden.",
+        "answer": "are playing",
+        "distractors": [
+          "play",
+          "played"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Last week I ___ (lose) my keys, but I found them on Monday.",
+        "answer": "lost",
+        "distractors": [
+          "have lost",
+          "was losing"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "\"I will call you,\" she promised, so I knew she ___ (call).",
+        "answer": "would call",
+        "distractors": [
+          "will call",
+          "called"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "By the time she realised her mistake, she ___ (already send) the email.",
+        "answer": "had already sent",
+        "distractors": [
+          "already sent",
+          "has already sent"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He told me he ___ (work) on the project for months before he quit.",
+        "answer": "had been working",
+        "distractors": [
+          "has been working",
+          "worked"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "While I was waiting, I met someone I ___ (not see) for years.",
+        "answer": "hadn't seen",
+        "distractors": [
+          "didn't see",
+          "haven't seen"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When the movie ___ (end), we'll grab some dinner together.",
+        "answer": "ends",
+        "distractors": [
+          "will end",
+          "ended"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She said she was exhausted because she ___ (be) up all night.",
+        "answer": "had been",
+        "distractors": [
+          "was",
+          "has been"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I ___ (study) for three hours when my sister finally came home.",
+        "answer": "had been studying",
+        "distractors": [
+          "was studying",
+          "studied"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He admitted that he ___ (forget) all about our appointment.",
+        "answer": "had forgotten",
+        "distractors": [
+          "forgot",
+          "has forgotten"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If I ___ (have) more time, I would have finished the report properly.",
+        "answer": "had had",
+        "distractors": [
+          "had",
+          "would have"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "By the time you read this, I ___ (leave) the country.",
+        "answer": "will have left",
+        "distractors": [
+          "leave",
+          "left"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The manager explained that the figures ___ (rise) steadily over the quarter.",
+        "answer": "had risen",
+        "distractors": [
+          "have risen",
+          "rose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She must ___ (forget) her password, because she can't log in.",
+        "answer": "have forgotten",
+        "distractors": [
+          "forget",
+          "forgot"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They asked me whether I ___ (finish) the assignment yet.",
+        "answer": "had finished",
+        "distractors": [
+          "finished",
+          "have finished"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He claimed he ___ (not know) anything about the missing documents.",
+        "answer": "didn't know",
+        "distractors": [
+          "doesn't know",
+          "hadn't known"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I should ___ (call) you earlier; I'm sorry I forgot.",
+        "answer": "have called",
+        "distractors": [
+          "call",
+          "called"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "While the committee was debating, the protesters outside ___ (grow) more impatient.",
+        "answer": "were growing",
+        "distractors": [
+          "grew",
+          "had grown"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "In Act 3, Hamlet ___ (hesitate), and the moment of revenge slips away.",
+        "answer": "hesitates",
+        "distractors": [
+          "hesitated",
+          "had hesitated"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Orwell ___ (warn) us against totalitarianism in every chapter of the novel.",
+        "answer": "warns",
+        "distractors": [
+          "warned",
+          "had warned"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Orwell ___ (write) 1984 in 1948, drawing on the politics of his age.",
+        "answer": "wrote",
+        "distractors": [
+          "writes",
+          "has written"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She walked into the room where she ___ (spend) her entire childhood.",
+        "answer": "had spent",
+        "distractors": [
+          "spent",
+          "has spent"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Had she ___ (know) the truth earlier, she would have acted differently.",
+        "answer": "known",
+        "distractors": [
+          "knew",
+          "had known"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If I had studied harder, I ___ (be) a lawyer now instead of a clerk.",
+        "answer": "would be",
+        "distractors": [
+          "would have been",
+          "will be"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Recent research ___ (show) that reading reshapes cognition; earlier studies had suggested the same.",
+        "answer": "shows",
+        "distractors": [
+          "showed",
+          "has shown"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The witness claimed he ___ (not see) the defendant before the incident at all.",
+        "answer": "had not seen",
+        "distractors": [
+          "did not see",
+          "has not seen"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In the experiment, we ___ (administer) the test to fifty participants over two weeks.",
+        "answer": "administered",
+        "distractors": [
+          "administer",
+          "have administered"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "By the time the book ends, the protagonist ___ (understand) what the reader has suspected all along.",
+        "answer": "has understood",
+        "distractors": [
+          "understood",
+          "had understood"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In 1453, Constantinople ___ (fall), and the medieval world quietly comes to an end.",
+        "answer": "falls",
+        "distractors": [
+          "fell",
+          "had fallen"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I will have finished the draft by the time you ___ (arrive) tonight.",
+        "answer": "arrive",
+        "distractors": [
+          "will arrive",
+          "arrived"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Dickens reminds us that injustice ___ (breed) resentment, a theme he developed throughout his career.",
+        "answer": "breeds",
+        "distractors": [
+          "bred",
+          "had bred"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He spoke as if nothing ___ (happen), though the whole street had heard the crash.",
+        "answer": "had happened",
+        "distractors": [
+          "happened",
+          "has happened"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She had read the letter a hundred times; the words ___ (be) painfully familiar by now.",
+        "answer": "were",
+        "distractors": [
+          "are",
+          "had been"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She was going to tell him that she ___ (know) all along, but in the end she said nothing.",
+        "answer": "had known",
+        "distractors": [
+          "knew",
+          "has known"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Police ___ (arrest) a suspect overnight, the morning bulletin reported, hours after the robbery.",
+        "answer": "have arrested",
+        "distractors": [
+          "arrest",
+          "arrested"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He ___ (say) that no one had ever doubted him, had he only been asked.",
+        "answer": "would have said",
+        "distractors": [
+          "would say",
+          "had said"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Kant, ___ (write) in the late 18th century, argues that reason is universal.",
+        "answer": "writing",
+        "distractors": [
+          "wrote",
+          "writes"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The witness maintained that he ___ (not be) present when the events took place.",
+        "answer": "had not been",
+        "distractors": [
+          "was not",
+          "has not been"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "You think she would have stayed silent? She wouldn't have. She ___ (not) — she spoke.",
+        "answer": "didn't",
+        "distractors": [
+          "doesn't",
+          "hadn't"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "They wondered if the disaster ___ (can) have been prevented with better planning.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "could have"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "By the time the narrator returns to the city, everything he remembers ___ (vanish).",
+        "answer": "has vanished",
+        "distractors": [
+          "vanished",
+          "had vanished"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I thought you ___ (leave) by now; what kept you here so long?",
+        "answer": "would have left",
+        "distractors": [
+          "had left",
+          "will leave"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "mixed-tenses-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The correct form is \"{answer}\" — the surrounding time markers, clause type, and narrative or reported-speech frame fix which tense is required; a mixed-tense skill is choosing the form the context demands.",
+          "ru": "Верная форма — «{answer}»: маркеры времени, тип придаточного и рамка повествования или косвенной речи задают нужное время. Смысл умения mixed tenses — выбрать форму, которой требует контекст."
+        }
+      }
+    ]
   }
 };

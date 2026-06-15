@@ -245,5 +245,608 @@ export const topic: GrammarTopic = {
       "full clause",
       "recoverable gap"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "ellipsis-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Ellipsis drops recoverable words; the gap is filled by the right auxiliary, modal, 'to', wh-word, or substitute — here '{answer}'.",
+          "ru": "Эллипсис опускает восстановимые слова; пропуск заполняется нужным вспомогательным, модальным, 'to', wh-словом или субститутом — здесь '{answer}'."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "Are you coming to the meeting? — Yes, I ___.",
+        "answer": "am",
+        "distractors": [
+          "do",
+          "will",
+          "coming"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Have you finished the report? — Yes, I ___.",
+        "answer": "have",
+        "distractors": [
+          "did",
+          "am",
+          "do"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Can she drive a manual car? — Yes, she ___.",
+        "answer": "can",
+        "distractors": [
+          "does",
+          "is",
+          "could"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Do you like jazz? — Yes, I ___.",
+        "answer": "do",
+        "distractors": [
+          "am",
+          "like",
+          "have"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Will it rain tomorrow? — I think ___.",
+        "answer": "so",
+        "distractors": [
+          "not",
+          "it",
+          "yes"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Is she coming to the party? — I'm afraid ___.",
+        "answer": "not",
+        "distractors": [
+          "so",
+          "no",
+          "none"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Do you need a hand with that? — I hope ___.",
+        "answer": "so",
+        "distractors": [
+          "not",
+          "yes",
+          "it"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She plays the violin, and so ___ I.",
+        "answer": "do",
+        "distractors": [
+          "am",
+          "does",
+          "can"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He works in finance, and so ___ his wife.",
+        "answer": "does",
+        "distractors": [
+          "do",
+          "is",
+          "has"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They've been to Japan, and so ___ we.",
+        "answer": "have",
+        "distractors": [
+          "did",
+          "do",
+          "are"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I can't swim very well. — Neither ___ I.",
+        "answer": "can",
+        "distractors": [
+          "do",
+          "am",
+          "could"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I haven't seen that film. — Neither ___ I.",
+        "answer": "have",
+        "distractors": [
+          "did",
+          "do",
+          "am"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She doesn't eat meat. — Nor ___ he.",
+        "answer": "does",
+        "distractors": [
+          "do",
+          "is",
+          "has"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You can leave early if you want ___.",
+        "answer": "to",
+        "distractors": [
+          "it",
+          "so",
+          "leave"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I didn't call her, but I meant ___.",
+        "answer": "to",
+        "distractors": [
+          "it",
+          "so",
+          "call"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He never apologised, though he ought ___.",
+        "answer": "to",
+        "distractors": [
+          "have",
+          "so",
+          "it"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She speaks French better than her brother ___.",
+        "answer": "does",
+        "distractors": [
+          "is",
+          "speaks",
+          "do"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He runs faster than I ___.",
+        "answer": "do",
+        "distractors": [
+          "am",
+          "does",
+          "run"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My laptop is newer than yours ___.",
+        "answer": "is",
+        "distractors": [
+          "does",
+          "are",
+          "be"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Would you like some tea? — Yes, I ___.",
+        "answer": "would",
+        "distractors": [
+          "do",
+          "like",
+          "am"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He can speak Spanish, but his sister ___.",
+        "answer": "can't",
+        "distractors": [
+          "doesn't",
+          "isn't",
+          "won't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Did anyone lock the door? — I think Tom ___.",
+        "answer": "did",
+        "distractors": [
+          "does",
+          "is",
+          "has"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Are the kids ready? — They ___, finally.",
+        "answer": "are",
+        "distractors": [
+          "do",
+          "have",
+          "is"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I haven't sent the invoice yet, but I will ___ tonight.",
+        "answer": "do",
+        "distractors": [
+          "it",
+          "so",
+          "be"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Someone phoned while I was out, but I don't know ___.",
+        "answer": "who",
+        "distractors": [
+          "that",
+          "whom called",
+          "they"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He muttered something, but I couldn't catch ___.",
+        "answer": "what",
+        "distractors": [
+          "that",
+          "which thing",
+          "it what"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She's resigning, but nobody's quite sure ___.",
+        "answer": "when",
+        "distractors": [
+          "that",
+          "then",
+          "which"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They moved abroad, though I forget exactly ___.",
+        "answer": "where",
+        "distractors": [
+          "that",
+          "there",
+          "which"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He promised to help, but I doubt he actually ___.",
+        "answer": "will",
+        "distractors": [
+          "does",
+          "is",
+          "helps"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She said she'd finish it, and she finally ___.",
+        "answer": "did",
+        "distractors": [
+          "does",
+          "has",
+          "is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I expected him to object, but in the end he ___.",
+        "answer": "didn't",
+        "distractors": [
+          "doesn't",
+          "wasn't",
+          "hadn't"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "John ordered the steak, and his wife the ___.",
+        "answer": "salmon",
+        "distractors": [
+          "ordered salmon",
+          "ordered",
+          "had ordered"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "While ___ in Berlin, she studied at the conservatory.",
+        "answer": "living",
+        "distractors": [
+          "she",
+          "was",
+          "being"
+        ],
+        "alts": [
+          "staying"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "When ___ in doubt, ask a senior engineer.",
+        "answer": "in",
+        "distractors": [
+          "you",
+          "being",
+          "is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She doesn't drink coffee, but she ___ tea.",
+        "answer": "does",
+        "distractors": [
+          "drinks",
+          "is",
+          "do"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I don't speak Mandarin, but I ___ read it a little.",
+        "answer": "do",
+        "distractors": [
+          "am",
+          "reads",
+          "does"
+        ],
+        "alts": [
+          "can"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He was asked to apologise, and eventually he ___.",
+        "answer": "did",
+        "distractors": [
+          "does",
+          "was",
+          "is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You said you'd call, but you never ___.",
+        "answer": "did",
+        "distractors": [
+          "do",
+          "have",
+          "called"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She might join us later, but I don't think she ___.",
+        "answer": "will",
+        "distractors": [
+          "does",
+          "is",
+          "joins"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They could have warned us, but they chose not ___.",
+        "answer": "to",
+        "distractors": [
+          "it",
+          "so",
+          "warn"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Some delegates argued for the merger, others ___ it.",
+        "answer": "against",
+        "distractors": [
+          "argued",
+          "for",
+          "not"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The vote passed, though I can't recall by ___ many.",
+        "answer": "how",
+        "distractors": [
+          "that",
+          "which",
+          "what"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Has the build deployed yet? — It ___, just now.",
+        "answer": "has",
+        "distractors": [
+          "does",
+          "did",
+          "is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He believed in discipline, she ___ freedom.",
+        "answer": "in",
+        "distractors": [
+          "believed",
+          "on",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Some chase fame; others, ___.",
+        "answer": "fortune",
+        "distractors": [
+          "chase fortune",
+          "chasing",
+          "for fortune"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The first draft was promising; the second, ___.",
+        "answer": "weak",
+        "distractors": [
+          "was weak",
+          "being weak",
+          "weakly"
+        ],
+        "alts": [
+          "disappointing",
+          "dull"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I'd love the red one, not the blue ___.",
+        "answer": "one",
+        "distractors": [
+          "ones",
+          "its",
+          "of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Some books here are worth reading, others ___.",
+        "answer": "not",
+        "distractors": [
+          "aren't worth",
+          "no",
+          "none"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Could you sign off on the release? — Will ___.",
+        "answer": "do",
+        "distractors": [
+          "doing",
+          "be",
+          "so"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Have you read the whole thread? — Been there, ___ that.",
+        "answer": "done",
+        "distractors": [
+          "did",
+          "doing",
+          "do"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "That argument was airtight. — Couldn't agree ___.",
+        "answer": "more",
+        "distractors": [
+          "any",
+          "most",
+          "much"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Strong in theory; ___ in practice.",
+        "answer": "weak",
+        "distractors": [
+          "is weak",
+          "weakness",
+          "weakly"
+        ],
+        "alts": [
+          "poor"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "To the optimist, opportunity; to the pessimist, ___.",
+        "answer": "risk",
+        "distractors": [
+          "is risk",
+          "a risking",
+          "riskily"
+        ],
+        "alts": [
+          "danger",
+          "threat"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She came; she saw; she ___.",
+        "answer": "conquered",
+        "distractors": [
+          "was conquering",
+          "conquer",
+          "did conquered"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He prefers the aisle seat; I, the ___.",
+        "answer": "window",
+        "distractors": [
+          "prefer window",
+          "windows",
+          "at window"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Did the patch land? — ___ it.",
+        "answer": "Got",
+        "distractors": [
+          "Get",
+          "Getting",
+          "Have"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

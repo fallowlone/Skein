@@ -309,5 +309,751 @@ export const topic: GrammarTopic = {
       "up = rise / complete / start",
       "down = fall / reduce / suppress"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "phrasal-verbs-with-up-down-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The reader chooses the phrasal verb or particle (up/down) that fits the context; the correct answer is '{answer}'.",
+          "ru": "Читатель выбирает phrasal verb или частицу (up/down), подходящую по контексту; правильный ответ — «{answer}»."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "Please ___ me at 7 — I have an early flight. (hint: stop sleeping)",
+        "answer": "wake up",
+        "distractors": [
+          "calm down",
+          "give up",
+          "slow down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You're driving too fast — ___! (hint: reduce speed)",
+        "answer": "slow down",
+        "distractors": [
+          "grow up",
+          "show up",
+          "stand up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ in a small village and only moved to the city at eighteen. (hint: matured)",
+        "answer": "grew up",
+        "distractors": [
+          "broke down",
+          "turned up",
+          "looked up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Don't ___ now — you're almost finished! (hint: quit)",
+        "answer": "give up",
+        "distractors": [
+          "wake up",
+          "sit down",
+          "write down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "When he heard the news, he ___ and cried. (hint: lost emotional control)",
+        "answer": "broke down",
+        "distractors": [
+          "grew up",
+          "stood up",
+          "looked up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Please ___ — there are plenty of empty chairs. (hint: take a seat)",
+        "answer": "sit down",
+        "distractors": [
+          "stand up",
+          "wake up",
+          "show up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The music is too loud — could you turn it ___ a bit? (hint: lower the volume)",
+        "answer": "down",
+        "distractors": [
+          "up",
+          "off",
+          "over"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'll ___ the new word in the dictionary. (hint: search for it)",
+        "answer": "look up",
+        "distractors": [
+          "turn down",
+          "give up",
+          "calm down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I feel dizzy; I need to ___ for a few minutes. (hint: rest horizontally)",
+        "answer": "lie down",
+        "distractors": [
+          "stand up",
+          "grow up",
+          "show up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Quick, ___ the address before you forget it. (hint: record on paper)",
+        "answer": "write down",
+        "distractors": [
+          "look up",
+          "turn down",
+          "break down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Can you ___ the kids from school at three? (hint: collect them)",
+        "answer": "pick up",
+        "distractors": [
+          "give up",
+          "calm down",
+          "slow down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Stop shouting and ___ — we can talk about this calmly. (hint: become less angry)",
+        "answer": "calm down",
+        "distractors": [
+          "speed up",
+          "stand up",
+          "grow up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He didn't ___ to the party, even though he had promised to come. (hint: appear / arrive)",
+        "answer": "show up",
+        "distractors": [
+          "sit down",
+          "write down",
+          "give up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The teacher told the children to ___ straight in their chairs. (hint: upright posture)",
+        "answer": "sit up",
+        "distractors": [
+          "lie down",
+          "turn down",
+          "look up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We need to ___ if we want to catch the train. (hint: go faster)",
+        "answer": "speed up",
+        "distractors": [
+          "slow down",
+          "calm down",
+          "break down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "As soon as the alarm rang, I ___ and left the bed. (hint: rise from bed)",
+        "answer": "got up",
+        "distractors": [
+          "sat down",
+          "lay down",
+          "broke down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They had an argument but ___ the next day. (hint: reconciled)",
+        "answer": "made up",
+        "distractors": [
+          "broke down",
+          "slowed down",
+          "wrote down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The old car ___ on the motorway and we called a tow truck. (hint: stopped working)",
+        "answer": "broke down",
+        "distractors": [
+          "grew up",
+          "showed up",
+          "made up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The meeting ___ lasting three hours instead of one. (hint: resulted in)",
+        "answer": "ended up",
+        "distractors": [
+          "brought up",
+          "looked up",
+          "backed down"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm trying to cut ___ on sugar because my dentist warned me. (hint: reduce consumption)",
+        "answer": "down",
+        "distractors": [
+          "up",
+          "off",
+          "in"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She always ___ her older sister, who became a doctor. (hint: admired)",
+        "answer": "looked up to",
+        "distractors": [
+          "looked down on",
+          "put up with",
+          "cut down on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The noise from the party finally ___ after midnight. (hint: subsided)",
+        "answer": "died down",
+        "distractors": [
+          "ended up",
+          "took up",
+          "brought up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ an interesting point during the discussion that nobody had considered. (hint: introduced a topic)",
+        "answer": "brought up",
+        "distractors": [
+          "backed down",
+          "cut down",
+          "played down"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I can't put ___ with his constant complaining any longer. (hint: tolerate)",
+        "answer": "up",
+        "distractors": [
+          "down",
+          "off",
+          "in"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "After much pressure, the manager refused to ___ from his decision. (hint: retreat from a position)",
+        "answer": "back down",
+        "distractors": [
+          "back up",
+          "end up",
+          "take up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Something urgent ___ at work, so I had to cancel dinner. (hint: arose unexpectedly)",
+        "answer": "came up",
+        "distractors": [
+          "came down",
+          "died down",
+          "cut down"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Recently I've ___ yoga to help me relax in the evenings. (hint: started as a hobby)",
+        "answer": "taken up",
+        "distractors": [
+          "turned down",
+          "let down",
+          "narrowed down"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I think I'm coming ___ with a cold — my throat is sore. (hint: catching an illness)",
+        "answer": "down",
+        "distractors": [
+          "up",
+          "off",
+          "over"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The government tried to ___ the seriousness of the crisis. (hint: make it seem less important)",
+        "answer": "play down",
+        "distractors": [
+          "bring up",
+          "take up",
+          "end up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You promised to help, so please don't ___ at the last minute. (hint: disappoint)",
+        "answer": "let me down",
+        "distractors": [
+          "look me up",
+          "bring me up",
+          "take me up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We need to ___ the list of candidates to just three. (hint: reduce the options)",
+        "answer": "narrow down",
+        "distractors": [
+          "bring up",
+          "put up",
+          "end up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It all comes ___ to whether we can afford the rent. (hint: is essentially a matter of)",
+        "answer": "down",
+        "distractors": [
+          "up",
+          "off",
+          "over"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ the job offer because the salary was too low. (hint: rejected)",
+        "answer": "turned down",
+        "distractors": [
+          "took up",
+          "brought up",
+          "looked up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He worked hard to ___ for the time he had lost while ill. (hint: compensate)",
+        "answer": "make up",
+        "distractors": [
+          "put up",
+          "cut down",
+          "back down"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "To ___, the project succeeded but went over budget. (hint: summarise briefly)",
+        "answer": "sum up",
+        "distractors": [
+          "take up",
+          "come up",
+          "die down"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He has never ___ his early promise as a footballer. (hint: met expectations of)",
+        "answer": "lived up to",
+        "distractors": [
+          "looked down on",
+          "cut down on",
+          "put up with"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The government finally ___ on tax evasion with heavy fines. (hint: suppressed forcefully)",
+        "answer": "cracked down",
+        "distractors": [
+          "backed down",
+          "played down",
+          "wound down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "After years of silence, she finally ___ about her difficult childhood. (hint: became emotionally candid)",
+        "answer": "opened up",
+        "distractors": [
+          "broke down",
+          "owned up",
+          "stirred up"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He refused to own ___ to his mistake, blaming everyone but himself. (hint: confess / admit)",
+        "answer": "up",
+        "distractors": [
+          "down",
+          "off",
+          "in"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The lawyer will ___ the contract before we sign it. (hint: compose a document)",
+        "answer": "draw up",
+        "distractors": [
+          "break down",
+          "track down",
+          "play down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Heavy traffic ___ us for almost an hour. (hint: delayed)",
+        "answer": "held up",
+        "distractors": [
+          "broke down",
+          "backed down",
+          "wound down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___ when he saw the damage to his new car, shouting at everyone. (hint: lost his temper)",
+        "answer": "blew up",
+        "distractors": [
+          "calmed down",
+          "owned up",
+          "settled down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The detectives eventually ___ the suspect in another city. (hint: located after a search)",
+        "answer": "tracked down",
+        "distractors": [
+          "played down",
+          "drew up",
+          "wound down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Let me break it ___ for you so each step is clear. (hint: analyse into parts)",
+        "answer": "down",
+        "distractors": [
+          "up",
+          "off",
+          "over"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The press came ___ hard on the minister after the scandal. (hint: criticised harshly)",
+        "answer": "down",
+        "distractors": [
+          "up",
+          "off",
+          "over"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We still need to ___ the exact date for the launch. (hint: fix precisely)",
+        "answer": "nail down",
+        "distractors": [
+          "play down",
+          "wind down",
+          "break down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It took him a long time to ___ after his wild twenties. (hint: become established / grow calm)",
+        "answer": "settle down",
+        "distractors": [
+          "stir up",
+          "blow up",
+          "open up"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Always ___ your files before installing a new operating system. (hint: make a copy)",
+        "answer": "back up",
+        "distractors": [
+          "back down",
+          "draw up",
+          "play down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I hate the way he ___ to junior staff as if they were children. (hint: speaks condescendingly)",
+        "answer": "talks down",
+        "distractors": [
+          "owns up",
+          "opens up",
+          "backs up"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The agitator was trying to ___ trouble among the workers. (hint: provoke)",
+        "answer": "stir up",
+        "distractors": [
+          "wind down",
+          "nail down",
+          "back down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Witnesses say the gang ___ the bank in broad daylight. (hint: robbed)",
+        "answer": "held up",
+        "distractors": [
+          "broke down",
+          "settled down",
+          "owned up"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I put his rudeness ___ to exhaustion rather than malice. (hint: attribute to a cause)",
+        "answer": "down",
+        "distractors": [
+          "up",
+          "off",
+          "over"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I really ___ the presentation and forgot half my slides. (hint: botched it)",
+        "answer": "screwed up",
+        "distractors": [
+          "settled down",
+          "wound down",
+          "owned up"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She likes to ___ at the weekend by reading and taking slow walks. (hint: relax / scale back)",
+        "answer": "wind down",
+        "distractors": [
+          "blow up",
+          "stir up",
+          "crack down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Critics panned the film, but audiences lapped it ___ enthusiastically. (hint: enjoyed it greatly)",
+        "answer": "up",
+        "distractors": [
+          "down",
+          "off",
+          "over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The ancient manuscript was ___ through the generations. (hint: passed to descendants)",
+        "answer": "handed down",
+        "distractors": [
+          "brought down",
+          "drawn up",
+          "tracked down"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The CEO has announced she will ___ next month after a decade in charge. (hint: resign from her post)",
+        "answer": "stand down",
+        "distractors": [
+          "stand up",
+          "wind down",
+          "settle down"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We're ___ to our last bottle of wine, so use it carefully. (hint: have only this much left)",
+        "answer": "down",
+        "distractors": [
+          "up",
+          "off",
+          "over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Tensions have been ___ since the ceasefire was agreed. (hint: gradually subsiding)",
+        "answer": "simmering down",
+        "distractors": [
+          "blowing up",
+          "cracking down",
+          "stirring up"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I've ___ all the milk, so there is none left for the morning. (hint: completive: consumed it entirely)",
+        "answer": "used up",
+        "distractors": [
+          "topped up",
+          "filled up",
+          "stocked up"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Tears ___ in her eyes as she read the letter. (hint: rose / gathered)",
+        "answer": "welled up",
+        "distractors": [
+          "died down",
+          "settled down",
+          "wound down"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "After so many years abroad, can she still ___ to her predecessor's legacy? (hint: meet the standard)",
+        "answer": "measure up",
+        "distractors": [
+          "talk down",
+          "play down",
+          "back down"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The veteran reporter quickly ___ the new intern and decided he had promise. (hint: assessed / evaluated)",
+        "answer": "sized up",
+        "distractors": [
+          "played down",
+          "wound down",
+          "backed down"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Newspaper headline: \"Talks ___ as both sides walk out.\" (hint: collapsed / failed)",
+        "answer": "break down",
+        "distractors": [
+          "break up",
+          "wind down",
+          "back down"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Criticism ___ on the author after the controversial interview. (hint: came in great quantity, figuratively)",
+        "answer": "rained down",
+        "distractors": [
+          "welled up",
+          "wound down",
+          "simmered down"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He told the rowdy crowd to ___ before the speaker arrived. (hint: be quiet — informal)",
+        "answer": "pipe down",
+        "distractors": [
+          "open up",
+          "stand down",
+          "own up"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "What have those children been ___ all afternoon? It's been far too quiet. (hint: plotting / doing — be up to)",
+        "answer": "up to",
+        "distractors": [
+          "down to",
+          "off with",
+          "over with"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The store has ___ all winter coats by thirty percent. (hint: reduced the price)",
+        "answer": "marked down",
+        "distractors": [
+          "handed down",
+          "wound down",
+          "talked down"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "After months of unemployment, things are finally ___ for him again. (hint: improving — set phrase)",
+        "answer": "looking up",
+        "distractors": [
+          "looking down",
+          "winding down",
+          "settling down"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The judge ___ a harsh verdict in the corruption case. (hint: delivered formally — fixed collocation)",
+        "answer": "handed down",
+        "distractors": [
+          "drew up",
+          "marked down",
+          "tracked down"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She had to ___ her emotions and keep a professional face during the bad news. (hint: suppress by effort — intensive 'down')",
+        "answer": "fight down",
+        "distractors": [
+          "blow up",
+          "open up",
+          "well up"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The startup's new app really ___ once influencers began sharing it. (hint: became popular suddenly)",
+        "answer": "took off",
+        "distractors": [
+          "took down",
+          "took up",
+          "took over"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

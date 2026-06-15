@@ -396,5 +396,681 @@ export const topic: GrammarTopic = {
       "interrupting event",
       "now"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "At 8 p.m. yesterday, I ___ TV. (watch)",
+        "answer": "was watching",
+        "distractors": [
+          "watched",
+          "were watching",
+          "am watching"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She ___ when the phone rang. (read)",
+        "answer": "was reading",
+        "distractors": [
+          "read",
+          "were reading",
+          "reads"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We ___ dinner when the lights went out. (have)",
+        "answer": "were having",
+        "distractors": [
+          "had",
+          "was having",
+          "have"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "What were you ___ at nine o'clock last night? (do)",
+        "answer": "doing",
+        "distractors": [
+          "do",
+          "did",
+          "done"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "They ___ in the garden all afternoon. (play)",
+        "answer": "were playing",
+        "distractors": [
+          "played",
+          "was playing",
+          "play"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "While I ___ , he was cleaning the kitchen. (cook)",
+        "answer": "was cooking",
+        "distractors": [
+          "cooked",
+          "were cooking",
+          "cook"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "It ___ hard when we left the house. (rain)",
+        "answer": "was raining",
+        "distractors": [
+          "rained",
+          "were raining",
+          "rains"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The children ___ a film when I came home. (watch)",
+        "answer": "were watching",
+        "distractors": [
+          "watched",
+          "was watching",
+          "watch"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He ___ to music while she did her homework. (listen)",
+        "answer": "was listening",
+        "distractors": [
+          "listened",
+          "were listening",
+          "listens"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I ___ for the bus when it started to snow. (wait)",
+        "answer": "was waiting",
+        "distractors": [
+          "waited",
+          "were waiting",
+          "wait"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "My parents ___ TV when I got back. (watch)",
+        "answer": "were watching",
+        "distractors": [
+          "watched",
+          "was watching",
+          "watch"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She ___ her homework at six o'clock. (do)",
+        "answer": "was doing",
+        "distractors": [
+          "did",
+          "were doing",
+          "does"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We ___ along the beach when the storm broke. (walk)",
+        "answer": "were walking",
+        "distractors": [
+          "walked",
+          "was walking",
+          "walk"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The baby ___ when I checked on her. (sleep)",
+        "answer": "was sleeping",
+        "distractors": [
+          "slept",
+          "were sleeping",
+          "sleeps"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "They weren't ___ attention during the lesson. (pay)",
+        "answer": "paying",
+        "distractors": [
+          "pay",
+          "paid",
+          "pays"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The sun ___ and the birds were singing when we set off. (shine)",
+        "answer": "was shining",
+        "distractors": [
+          "shone",
+          "were shining",
+          "shines"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "While she ___ , her brother was playing video games. (study)",
+        "answer": "was studying",
+        "distractors": [
+          "studied",
+          "were studying",
+          "studies"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I ___ home when I saw the accident. (walk)",
+        "answer": "was walking",
+        "distractors": [
+          "walked",
+          "were walking",
+          "walk"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I ___ if you could give me a hand. (wonder)",
+        "answer": "was wondering",
+        "distractors": [
+          "wondered",
+          "were wondering",
+          "wonder"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The kids ___ outside when it started to rain. (play)",
+        "answer": "were playing",
+        "distractors": [
+          "played",
+          "was playing",
+          "play"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "In 2018 I ___ in Berlin and loving every minute of it. (live)",
+        "answer": "was living",
+        "distractors": [
+          "lived",
+          "were living",
+          "live"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We ___ of taking a short break next week. (think)",
+        "answer": "were thinking",
+        "distractors": [
+          "thought",
+          "was thinking",
+          "think"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The wind ___ colder as the sun went down. (get)",
+        "answer": "was getting",
+        "distractors": [
+          "got",
+          "were getting",
+          "gets"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "While the teacher ___ , the students were taking notes. (speak)",
+        "answer": "was speaking",
+        "distractors": [
+          "spoke",
+          "were speaking",
+          "speaks"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He was always ___ about something or other. (complain)",
+        "answer": "complaining",
+        "distractors": [
+          "complain",
+          "complained",
+          "complains"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They were constantly ___ about money that summer. (argue)",
+        "answer": "arguing",
+        "distractors": [
+          "argue",
+          "argued",
+          "argues"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ hoping you'd come to the party. (be)",
+        "answer": "was",
+        "distractors": [
+          "were",
+          "is",
+          "been"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "While he ___ , his wife was working late. (study)",
+        "answer": "was studying",
+        "distractors": [
+          "studied",
+          "were studying",
+          "studies"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "When I saw him, he ___ to himself. (smile)",
+        "answer": "was smiling",
+        "distractors": [
+          "smiled",
+          "were smiling",
+          "smiles"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Waiters ___ between the tables and the band was playing. (rush)",
+        "answer": "were rushing",
+        "distractors": [
+          "rushed",
+          "was rushing",
+          "rush"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We ___ the proposal when you walked in. (discuss)",
+        "answer": "were discussing",
+        "distractors": [
+          "discussed",
+          "was discussing",
+          "discuss"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He was constantly ___ his phone during the meeting. (check)",
+        "answer": "checking",
+        "distractors": [
+          "check",
+          "checked",
+          "checks"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When I looked over, she ___ quietly in the corner. (cry)",
+        "answer": "was crying",
+        "distractors": [
+          "cried",
+          "were crying",
+          "cries"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "While the minister ___ , protesters were gathering outside. (speak)",
+        "answer": "was speaking",
+        "distractors": [
+          "spoke",
+          "were speaking",
+          "speaks"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I ___ to ask you a favour, if that's all right. (hope)",
+        "answer": "was hoping",
+        "distractors": [
+          "hoped",
+          "were hoping",
+          "hope"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The dog ___ , the kettle was whistling, and I couldn't think. (bark)",
+        "answer": "was barking",
+        "distractors": [
+          "barked",
+          "were barking",
+          "barks"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Everyone ___ intently when the speaker suddenly paused. (listen)",
+        "answer": "was listening",
+        "distractors": [
+          "listened",
+          "were listening",
+          "listens"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We ___ to Paris that weekend, but the flight got cancelled. (fly)",
+        "answer": "were flying",
+        "distractors": [
+          "flew",
+          "was flying",
+          "fly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ a therapist at the time, though few people knew. (see)",
+        "answer": "was seeing",
+        "distractors": [
+          "saw",
+          "were seeing",
+          "sees"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The coffee machine ___ as the café slowly filled up. (hiss)",
+        "answer": "was hissing",
+        "distractors": [
+          "hissed",
+          "were hissing",
+          "hisses"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I ___ to call you at three, but I got distracted. (plan)",
+        "answer": "was planning",
+        "distractors": [
+          "planned",
+          "were planning",
+          "plan"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "At midnight she was still ___ the last chapter. (write)",
+        "answer": "writing",
+        "distractors": [
+          "write",
+          "wrote",
+          "written"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "By the time I arrived, the meeting was already ___ . (end)",
+        "answer": "ending",
+        "distractors": [
+          "end",
+          "ended",
+          "ends"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "At the turn of the century, the country ___ rapid industrialisation. (experience)",
+        "answer": "was experiencing",
+        "distractors": [
+          "experienced",
+          "were experiencing",
+          "experiences"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She said she ___ on a new project at the time. (work)",
+        "answer": "was working",
+        "distractors": [
+          "worked",
+          "were working",
+          "works"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We ___ for rather more support from management. (hope)",
+        "answer": "were hoping",
+        "distractors": [
+          "hoped",
+          "was hoping",
+          "hope"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I was actually ___ to suggest the same thing. (go)",
+        "answer": "going",
+        "distractors": [
+          "go",
+          "went",
+          "gone"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___ his report when the power suddenly went out. (finish)",
+        "answer": "was finishing",
+        "distractors": [
+          "finished",
+          "were finishing",
+          "finishes"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In the 1920s, the world ___ at an extraordinary pace. (change)",
+        "answer": "was changing",
+        "distractors": [
+          "changed",
+          "were changing",
+          "changes"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They ___ us rather sooner than we managed to arrive. (expect)",
+        "answer": "were expecting",
+        "distractors": [
+          "expected",
+          "was expecting",
+          "expect"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He told me he ___ next month for a new job. (move)",
+        "answer": "was moving",
+        "distractors": [
+          "moved",
+          "were moving",
+          "moves"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Politics ___ radical while art broke new ground. (become)",
+        "answer": "was becoming",
+        "distractors": [
+          "became",
+          "were becoming",
+          "becomes"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I was just ___ that this approach might not work. (think)",
+        "answer": "thinking",
+        "distractors": [
+          "think",
+          "thought",
+          "thinks"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "As I walked through the garden, the light ___ and the air was turning cool. (fade)",
+        "answer": "was fading",
+        "distractors": [
+          "faded",
+          "were fading",
+          "fades"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She ___ for the door when she heard the voice behind her. (reach)",
+        "answer": "was reaching",
+        "distractors": [
+          "reached",
+          "were reaching",
+          "reaches"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "In those years the empire ___ while a new order emerged. (crumble)",
+        "answer": "was crumbling",
+        "distractors": [
+          "crumbled",
+          "were crumbling",
+          "crumbles"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I ___ whether you might possibly reconsider your decision. (wonder)",
+        "answer": "was wondering",
+        "distractors": [
+          "wondered",
+          "were wondering",
+          "wonder"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The jury ___ while the whole nation watched the courthouse. (deliberate)",
+        "answer": "was deliberating",
+        "distractors": [
+          "deliberated",
+          "were deliberating",
+          "deliberates"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The river ___ , the stars were appearing, and somewhere a dog barked. (flow)",
+        "answer": "was flowing",
+        "distractors": [
+          "flowed",
+          "were flowing",
+          "flows"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The letters ___ on his desk while nothing went as planned. (pile)",
+        "answer": "were piling",
+        "distractors": [
+          "piled",
+          "was piling",
+          "pile"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The old order ___ way to the new across the continent. (give)",
+        "answer": "was giving",
+        "distractors": [
+          "gave",
+          "were giving",
+          "gives"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I ___ we could arrange a meeting at your earliest convenience. (hope)",
+        "answer": "was hoping",
+        "distractors": [
+          "hoped",
+          "were hoping",
+          "hope"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "While the family waited outside, reporters ___ on the steps. (gather)",
+        "answer": "were gathering",
+        "distractors": [
+          "gathered",
+          "was gathering",
+          "gather"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Europe ___ economically, socially, and politically in that decade. (transform)",
+        "answer": "was transforming",
+        "distractors": [
+          "transformed",
+          "were transforming",
+          "transforms"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The defendant's family ___ anxiously outside the courtroom. (wait)",
+        "answer": "was waiting",
+        "distractors": [
+          "waited",
+          "were waiting",
+          "waits"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "past-continuous-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Past continuous (was/were + V-ing): the correct answer is {answer}. The past simple, the wrong auxiliary, or the base/present form is wrong here.",
+          "ru": "Past Continuous (was/were + глагол-ing): правильный ответ — {answer}. Past Simple, неверный вспомогательный глагол или базовая/настоящая форма здесь неверны."
+        }
+      }
+    ]
   }
 };

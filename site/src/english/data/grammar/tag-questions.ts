@@ -417,5 +417,693 @@ export const topic: GrammarTopic = {
       "Positive → negative",
       "Negative → positive"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "tag-questions-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The tag mirrors the main clause's auxiliary or be and reverses its polarity, ending in a pronoun; the correct tag here is \"{answer}\".",
+          "ru": "Хвостик повторяет вспомогательный глагол или be главной части и меняет полярность, заканчиваясь местоимением; правильный тег здесь — «{answer}»."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "You're from Russia, ___?",
+        "answer": "aren't you",
+        "distractors": [
+          "isn't it",
+          "are you",
+          "don't you"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She doesn't eat meat, ___?",
+        "answer": "does she",
+        "distractors": [
+          "doesn't she",
+          "is she",
+          "does it"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "They went home early, ___?",
+        "answer": "didn't they",
+        "distractors": [
+          "did they",
+          "weren't they",
+          "didn't them"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "It isn't cold today, ___?",
+        "answer": "is it",
+        "distractors": [
+          "isn't it",
+          "is there",
+          "does it"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We're late again, ___?",
+        "answer": "aren't we",
+        "distractors": [
+          "are we",
+          "isn't it",
+          "don't we"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "You like coffee, ___?",
+        "answer": "don't you",
+        "distractors": [
+          "do you",
+          "aren't you",
+          "doesn't it"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He works on Saturdays, ___?",
+        "answer": "doesn't he",
+        "distractors": [
+          "does he",
+          "doesn't it",
+          "isn't he"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Maria is a doctor, ___?",
+        "answer": "isn't she",
+        "distractors": [
+          "isn't Maria",
+          "isn't it",
+          "doesn't she"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The shops aren't open yet, ___?",
+        "answer": "are they",
+        "distractors": [
+          "aren't they",
+          "is it",
+          "do they"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Your brother lives in Madrid, ___?",
+        "answer": "doesn't he",
+        "distractors": [
+          "does he",
+          "isn't he",
+          "doesn't it"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "You saw the film last night, ___?",
+        "answer": "didn't you",
+        "distractors": [
+          "did you",
+          "weren't you",
+          "haven't you"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "This bus goes to the centre, ___?",
+        "answer": "doesn't it",
+        "distractors": [
+          "does it",
+          "isn't it",
+          "doesn't this"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "They were at the party, ___?",
+        "answer": "weren't they",
+        "distractors": [
+          "were they",
+          "didn't they",
+          "weren't them"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I'm not too loud, ___?",
+        "answer": "am I",
+        "distractors": [
+          "aren't I",
+          "are you",
+          "isn't it"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The cat doesn't bite, ___?",
+        "answer": "does it",
+        "distractors": [
+          "doesn't it",
+          "is it",
+          "does the cat"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "You can drive, ___?",
+        "answer": "can't you",
+        "distractors": [
+          "don't you",
+          "can you",
+          "couldn't you"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He will come to the meeting, ___?",
+        "answer": "won't he",
+        "distractors": [
+          "will he",
+          "doesn't he",
+          "isn't he"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She should apologise, ___?",
+        "answer": "shouldn't she",
+        "distractors": [
+          "should she",
+          "doesn't she",
+          "wouldn't she"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We must be quiet in here, ___?",
+        "answer": "mustn't we",
+        "distractors": [
+          "must we",
+          "don't we",
+          "aren't we"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They have finished the project, ___?",
+        "answer": "haven't they",
+        "distractors": [
+          "have they",
+          "didn't they",
+          "don't they"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They haven't left yet, ___?",
+        "answer": "have they",
+        "distractors": [
+          "haven't they",
+          "did they",
+          "do they"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Pass me the salt, ___?",
+        "answer": "will you",
+        "distractors": [
+          "do you",
+          "aren't you",
+          "shall we"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Don't be late tomorrow, ___?",
+        "answer": "will you",
+        "distractors": [
+          "won't you",
+          "do you",
+          "are you"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Let's watch a film tonight, ___?",
+        "answer": "shall we",
+        "distractors": [
+          "will we",
+          "shan't we",
+          "do we"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Let's not argue about this, ___?",
+        "answer": "shall we",
+        "distractors": [
+          "will we",
+          "shan't we",
+          "won't we"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'm right about this, ___?",
+        "answer": "aren't I",
+        "distractors": [
+          "amn't I",
+          "am I",
+          "isn't it"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You could help me later, ___?",
+        "answer": "couldn't you",
+        "distractors": [
+          "could you",
+          "don't you",
+          "wouldn't you"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We won't need tickets, ___?",
+        "answer": "will we",
+        "distractors": [
+          "won't we",
+          "do we",
+          "shall we"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He's been to Japan, ___?",
+        "answer": "hasn't he",
+        "distractors": [
+          "has he",
+          "didn't he",
+          "isn't he"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Open the window for a moment, ___?",
+        "answer": "will you",
+        "distractors": [
+          "do you",
+          "shall we",
+          "are you"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You'll send the report by Friday, ___?",
+        "answer": "right",
+        "distractors": [
+          "aren't you",
+          "won't they",
+          "isn't it"
+        ],
+        "cefr": "B2",
+        "alts": [
+          "won't you"
+        ]
+      },
+      {
+        "stem": "You signed the contract, ___?",
+        "answer": "correct",
+        "distractors": [
+          "didn't it",
+          "weren't you",
+          "right then"
+        ],
+        "cefr": "B2",
+        "alts": [
+          "didn't you"
+        ]
+      },
+      {
+        "stem": "Oh, so you know him, ___?",
+        "answer": "do you",
+        "distractors": [
+          "don't you",
+          "are you",
+          "did you"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "So you think you're clever, ___?",
+        "answer": "do you",
+        "distractors": [
+          "don't you",
+          "aren't you",
+          "are you"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There's a problem with the build, ___?",
+        "answer": "isn't there",
+        "distractors": [
+          "isn't it",
+          "is there",
+          "doesn't it"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There weren't many people there, ___?",
+        "answer": "were there",
+        "distractors": [
+          "weren't there",
+          "was there",
+          "were they"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Nobody told you about the change, ___?",
+        "answer": "did they",
+        "distractors": [
+          "didn't they",
+          "did he",
+          "didn't anyone"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Nothing went wrong, ___?",
+        "answer": "did it",
+        "distractors": [
+          "didn't it",
+          "did they",
+          "was it"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She never complains, ___?",
+        "answer": "does she",
+        "distractors": [
+          "doesn't she",
+          "did she",
+          "does it"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He hardly ever visits, ___?",
+        "answer": "does he",
+        "distractors": [
+          "doesn't he",
+          "did he",
+          "does she"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Everyone agrees with the plan, ___?",
+        "answer": "don't they",
+        "distractors": [
+          "doesn't he",
+          "doesn't it",
+          "don't you"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Someone left the door open, ___?",
+        "answer": "didn't they",
+        "distractors": [
+          "didn't he",
+          "did they",
+          "didn't someone"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "There's no milk left, ___?",
+        "answer": "is there",
+        "distractors": [
+          "isn't there",
+          "is it",
+          "does it"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We meet at six, ___?",
+        "answer": "yeah",
+        "distractors": [
+          "aren't we",
+          "shall we",
+          "isn't it"
+        ],
+        "cefr": "B2",
+        "alts": [
+          "don't we"
+        ]
+      },
+      {
+        "stem": "You'll call me when it's done, ___?",
+        "answer": "OK",
+        "distractors": [
+          "won't they",
+          "aren't you",
+          "isn't it"
+        ],
+        "cefr": "B2",
+        "alts": [
+          "won't you"
+        ]
+      },
+      {
+        "stem": "I suppose you're tired, ___?",
+        "answer": "aren't you",
+        "distractors": [
+          "don't I",
+          "isn't it",
+          "amn't I"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I think he's the boss now, ___?",
+        "answer": "isn't he",
+        "distractors": [
+          "don't I",
+          "isn't it",
+          "doesn't he"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You do remember the deadline, ___?",
+        "answer": "don't you",
+        "distractors": [
+          "do you",
+          "aren't you",
+          "didn't you"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She did warn you about this, ___?",
+        "answer": "didn't she",
+        "distractors": [
+          "did she",
+          "doesn't she",
+          "hadn't she"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You wouldn't mind waiting, ___?",
+        "answer": "would you",
+        "distractors": [
+          "wouldn't you",
+          "do you",
+          "could you"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He must have left already, ___?",
+        "answer": "mustn't he",
+        "distractors": [
+          "hasn't he",
+          "didn't he",
+          "doesn't he"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "That wasn't very fair, ___?",
+        "answer": "was it",
+        "distractors": [
+          "wasn't it",
+          "is it",
+          "were they"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You'll do the dishes, ___?",
+        "answer": "won't you",
+        "distractors": [
+          "will you",
+          "don't you",
+          "aren't you"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Oh, you're an expert now, ___?",
+        "answer": "are you",
+        "distractors": [
+          "aren't you",
+          "do you",
+          "don't you"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It's a beautiful day, ___?",
+        "answer": "isn't it",
+        "distractors": [
+          "is it",
+          "doesn't it",
+          "isn't there"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You were at the scene that night, ___?",
+        "answer": "weren't you",
+        "distractors": [
+          "were you",
+          "wasn't it",
+          "didn't you"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "You knew about the transaction, ___?",
+        "answer": "didn't you",
+        "distractors": [
+          "did you",
+          "hadn't you",
+          "weren't you"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Nobody's perfect, ___?",
+        "answer": "are they",
+        "distractors": [
+          "aren't they",
+          "is he",
+          "are we"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Times change, ___?",
+        "answer": "don't they",
+        "distractors": [
+          "doesn't it",
+          "don't times",
+          "aren't they"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We've been through worse, ___?",
+        "answer": "haven't we",
+        "distractors": [
+          "have we",
+          "didn't we",
+          "don't we"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "You wouldn't happen to know where she went, ___?",
+        "answer": "would you",
+        "distractors": [
+          "wouldn't you",
+          "do you",
+          "did you"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Nobody really changes, ___?",
+        "answer": "do they",
+        "distractors": [
+          "don't they",
+          "does he",
+          "do we"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "So you're saying it was all my fault, ___?",
+        "answer": "are you",
+        "distractors": [
+          "aren't you",
+          "do you",
+          "don't you"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "This is exactly what you wanted, ___?",
+        "answer": "isn't it",
+        "distractors": [
+          "is it",
+          "wasn't it",
+          "don't you"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "You knew the risks when you signed, ___?",
+        "answer": "didn't you",
+        "distractors": [
+          "did you",
+          "weren't you",
+          "hadn't you"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

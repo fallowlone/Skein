@@ -266,5 +266,544 @@ export const topic: GrammarTopic = {
       "Informal phrasal verb",
       "Formal Latinate verb"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "phrasal-verbs-formal-informal-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Pick the verb whose register and domain match the framing in parentheses; the correct filler is {answer}.",
+          "ru": "Выберите глагол, регистр и сфера которого соответствуют подсказке в скобках; правильный ответ — {answer}."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "We regret to inform you that the conference has been ___ due to low enrolment. (formal notice)",
+        "answer": "cancelled",
+        "distractors": [
+          "called off",
+          "knocked off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Please ___ your completed application form to the registry by Friday. (formal instruction)",
+        "answer": "submit",
+        "distractors": [
+          "hand in",
+          "turn in"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The board has decided to ___ the launch until the third quarter. (formal email)",
+        "answer": "postpone",
+        "distractors": [
+          "put off",
+          "hold off on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The committee will ___ the complaint and report its findings next month. (formal report)",
+        "answer": "investigate",
+        "distractors": [
+          "look into",
+          "dig into"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Management intends to ___ a new set of safety guidelines this year. (formal memo)",
+        "answer": "establish",
+        "distractors": [
+          "set up",
+          "put up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Applicants must ___ the contaminated samples in the labelled bins. (formal lab notice)",
+        "answer": "dispose of",
+        "distractors": [
+          "get rid of",
+          "chuck out"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The research team will ___ a detailed survey across all regional offices. (formal research plan)",
+        "answer": "conduct",
+        "distractors": [
+          "knock out",
+          "whip up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We are pleased to ___ a comprehensive proposal for your review. (formal cover letter)",
+        "answer": "submit",
+        "distractors": [
+          "hand in",
+          "send over"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Hey, let's ___ the meeting till next week — I'm swamped today. (text to a friend)",
+        "answer": "put off",
+        "distractors": [
+          "postpone",
+          "defer"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Can you ___ why the printer keeps jamming? It's driving me nuts. (casual chat to a colleague)",
+        "answer": "look into",
+        "distractors": [
+          "investigate",
+          "examine"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ a brilliant idea for the party over coffee. (casual story)",
+        "answer": "came up with",
+        "distractors": [
+          "devised",
+          "formulated"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We need to ___ all this junk before the new tenants move in. (casual chat)",
+        "answer": "get rid of",
+        "distractors": [
+          "dispose of",
+          "eliminate"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They ___ the picnic because of the rain — such a shame. (casual chat)",
+        "answer": "called off",
+        "distractors": [
+          "cancelled",
+          "annulled"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I had to ___ his offer; the commute was just too long. (casual chat)",
+        "answer": "turn down",
+        "distractors": [
+          "decline",
+          "reject"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Could you ___ the kids from school at three today? (text to a partner)",
+        "answer": "pick up",
+        "distractors": [
+          "collect",
+          "fetch"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He totally ___ that excuse — there was no traffic at all. (casual gossip)",
+        "answer": "made up",
+        "distractors": [
+          "fabricated",
+          "invented"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Just ___ with the presentation; I'll catch up. (casual chat)",
+        "answer": "go on",
+        "distractors": [
+          "proceed",
+          "continue"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We finally ___ what was wrong with the router. (casual chat)",
+        "answer": "found out",
+        "distractors": [
+          "ascertained",
+          "discovered"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The agency was contracted to ___ the new payroll system across all branches. (formal report)",
+        "answer": "implement",
+        "distractors": [
+          "set up",
+          "roll out"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We must respectfully ___ the invitation owing to a prior engagement. (formal RSVP)",
+        "answer": "decline",
+        "distractors": [
+          "turn down",
+          "say no to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The auditors will ___ the discrepancy before signing the accounts. (formal audit)",
+        "answer": "examine",
+        "distractors": [
+          "look into",
+          "poke at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The vendor failed to ___ the goods on the agreed date. (formal complaint)",
+        "answer": "deliver",
+        "distractors": [
+          "drop off",
+          "bring over"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The findings ___ the conclusion that the model is fundamentally flawed. (academic paper — fixed phrasal)",
+        "answer": "give rise to",
+        "distractors": [
+          "give rise",
+          "give rise of"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "All staff must strictly ___ the data-protection policy at all times. (corporate policy)",
+        "answer": "adhere to",
+        "distractors": [
+          "stick to",
+          "go along with"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The researchers were asked to ___ from discussing preliminary results publicly. (academic ethics notice)",
+        "answer": "refrain",
+        "distractors": [
+          "hold back",
+          "back off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In 2019 the firm ___ an ambitious programme of overseas expansion. (corporate history)",
+        "answer": "embarked on",
+        "distractors": [
+          "kicked off",
+          "got going on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "These three factors together ___ the entire observed variance. (statistics paper)",
+        "answer": "account for",
+        "distractors": [
+          "make up for",
+          "answer for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The government proposes to ___ coal subsidies gradually by 2030. (policy white paper)",
+        "answer": "phase out",
+        "distractors": [
+          "chuck out",
+          "knock out"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The experiment was ___ under tightly controlled conditions. (methodology section)",
+        "answer": "carried out",
+        "distractors": [
+          "pulled off",
+          "knocked out"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Honestly, he just ___ the whole afternoon instead of finishing the slides. (very casual chat)",
+        "answer": "goofed off",
+        "distractors": [
+          "refrained",
+          "abstained"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The intern ___ at the last minute and never showed up for the demo. (casual chat — lost nerve)",
+        "answer": "chickened out",
+        "distractors": [
+          "declined",
+          "withdrew formally"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "After the leak, the spokesperson had to ___ the earlier statement. (political news)",
+        "answer": "walk back",
+        "distractors": [
+          "abolish",
+          "renounce"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Regulators are expected to ___ on insider trading after the scandal. (news headline register)",
+        "answer": "crack down",
+        "distractors": [
+          "suppress",
+          "repress"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The startup plans to ___ its delivery service to five new cities. (business email)",
+        "answer": "roll out",
+        "distractors": [
+          "promulgate",
+          "institute"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Tenants must ___ the terms of the lease for its full duration. (tenancy agreement)",
+        "answer": "abide by",
+        "distractors": [
+          "put up with",
+          "go easy on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We will ___ with the merger once due diligence is complete. (formal corporate statement)",
+        "answer": "proceed",
+        "distractors": [
+          "go on",
+          "carry on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Contractors must ___ all relevant building regulations. (legal clause)",
+        "answer": "comply with",
+        "distractors": [
+          "go along with",
+          "put up with"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Let's just ___ the broken units rather than pay to repair them. (casual office chat)",
+        "answer": "chuck out",
+        "distractors": [
+          "dispose of",
+          "decommission"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The reforms are likely to ___ a sharp increase in compliance costs. (economics paper)",
+        "answer": "bring about",
+        "distractors": [
+          "whip up",
+          "stir up"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The minister refused to ___ from her controversial position on the tax. (broadsheet news)",
+        "answer": "back down",
+        "distractors": [
+          "abdicate",
+          "recant"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The patient ___ acute chest pain and shortness of breath. (clinical note)",
+        "answer": "presented with",
+        "distractors": [
+          "came down with",
+          "got"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Clinicians moved quickly to ___ a myocardial infarction before discharge. (clinical note)",
+        "answer": "rule out",
+        "distractors": [
+          "throw out",
+          "wave off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The bank had to ___ the impaired loans on its balance sheet. (financial filing)",
+        "answer": "write off",
+        "distractors": [
+          "scratch off",
+          "rub out"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The conglomerate intends to ___ its loss-making logistics arm next year. (financial press)",
+        "answer": "spin off",
+        "distractors": [
+          "peel away",
+          "shave off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The two parties shall ___ a binding agreement upon signature. (contract)",
+        "answer": "enter into",
+        "distractors": [
+          "go into",
+          "get into"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "By signing below, the claimant agrees to ___ all rights to future appeal. (legal waiver)",
+        "answer": "waive",
+        "distractors": [
+          "give up",
+          "let go of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Ultimately, the dispute ___ a single question of jurisdiction. (legal-philosophical essay)",
+        "answer": "boils down to",
+        "distractors": [
+          "dwindles to",
+          "shrinks to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The whole argument ___ one unproven assumption about rationality. (philosophy essay)",
+        "answer": "hinges on",
+        "distractors": [
+          "pivots round",
+          "swings off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The administration's intransigence ___ a constitutional crisis. (heavy literary register)",
+        "answer": "precipitated",
+        "distractors": [
+          "dug in",
+          "fell apart"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The diplomats agreed to ___ to their counterparts to reopen the channel. (political journalism)",
+        "answer": "reach out",
+        "distractors": [
+          "solicit",
+          "petition"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Under pressure, the chief executive chose to ___ on the contested strategy rather than retreat. (business profile)",
+        "answer": "double down",
+        "distractors": [
+          "entrench formally",
+          "redouble in writing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The literary critic argued that the novel ___ a meditation on grief. (literary essay)",
+        "answer": "amounts to",
+        "distractors": [
+          "sums up to",
+          "totals to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The medication's effects gradually ___ over the following six hours. (pharmacology note)",
+        "answer": "wore off",
+        "distractors": [
+          "dissolved away",
+          "evaporated off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We must ___ from any comment while the investigation is ongoing. (formal press statement)",
+        "answer": "refrain",
+        "distractors": [
+          "hold off",
+          "lay off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The new evidence may ___ a re-examination of the original verdict. (legal commentary)",
+        "answer": "prompt",
+        "distractors": [
+          "kick off",
+          "spark off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The therapy team agreed to ___ the level of care after the relapse. (clinical handover)",
+        "answer": "step up",
+        "distractors": [
+          "escalate in writing",
+          "amplify"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The reviewer praised how the prose ___ between heavy clauses and light ones. (style critique)",
+        "answer": "alternates",
+        "distractors": [
+          "flip-flops",
+          "bounces around"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

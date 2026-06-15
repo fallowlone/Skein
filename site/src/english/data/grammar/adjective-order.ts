@@ -331,5 +331,517 @@ export const topic: GrammarTopic = {
       "Purpose",
       "NOUN"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "templates": [
+      {
+        "id": "adjective-order-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "English fixes the order of stacked adjectives (OSASCOMP: opinion, size, age, shape, colour, origin, material, purpose). The correct ordering is {answer}.",
+          "ru": "Английский фиксирует порядок прилагательных перед существительным (OSASCOMP: мнение, размер, возраст, форма, цвет, происхождение, материал, назначение). Правильный порядок — {answer}."
+        }
+      }
+    ],
+    "contexts": [
+      {
+        "stem": "She bought a ___ dress for the party. (hint: black, beautiful, small)",
+        "answer": "beautiful small black",
+        "distractors": [
+          "black small beautiful",
+          "small black beautiful"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He drives a ___ car to work. (hint: red, new, fast)",
+        "answer": "fast new red",
+        "distractors": [
+          "red new fast",
+          "new red fast"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I sat on an ___ chair in the corner. (hint: wooden, old, comfortable)",
+        "answer": "comfortable old wooden",
+        "distractors": [
+          "wooden old comfortable",
+          "old wooden comfortable"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They live in a ___ house near the river. (hint: big, white, lovely)",
+        "answer": "lovely big white",
+        "distractors": [
+          "white big lovely",
+          "big white lovely"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She wore a ___ scarf to the wedding. (hint: silk, long, elegant)",
+        "answer": "elegant long silk",
+        "distractors": [
+          "silk long elegant",
+          "long silk elegant"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We saw a ___ student in the library. (hint: German, young, tall)",
+        "answer": "tall young German",
+        "distractors": [
+          "German young tall",
+          "young tall German"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He gave me a ___ box of chocolates. (hint: round, small, pretty)",
+        "answer": "pretty small round",
+        "distractors": [
+          "round small pretty",
+          "small round pretty"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I want a ___ table for the kitchen. (hint: wooden, big, round)",
+        "answer": "big round wooden",
+        "distractors": [
+          "wooden round big",
+          "round wooden big"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She adopted a ___ kitten last week. (hint: grey, tiny, adorable)",
+        "answer": "adorable tiny grey",
+        "distractors": [
+          "grey tiny adorable",
+          "tiny grey adorable"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He bought a ___ jacket at the market. (hint: leather, brown, nice)",
+        "answer": "nice brown leather",
+        "distractors": [
+          "leather brown nice",
+          "brown leather nice"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We rented a ___ apartment downtown. (hint: modern, small, clean)",
+        "answer": "clean small modern",
+        "distractors": [
+          "modern small clean",
+          "small modern clean"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She found a ___ ring in the drawer. (hint: gold, old, beautiful)",
+        "answer": "beautiful old gold",
+        "distractors": [
+          "gold old beautiful",
+          "old gold beautiful"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They built a ___ fence around the garden. (hint: metal, tall, grey)",
+        "answer": "tall grey metal",
+        "distractors": [
+          "metal grey tall",
+          "grey metal tall"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He ordered a ___ pizza for dinner. (hint: Italian, large, delicious)",
+        "answer": "delicious large Italian",
+        "distractors": [
+          "Italian large delicious",
+          "large Italian delicious"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She painted a ___ vase on the canvas. (hint: blue, tall, slim)",
+        "answer": "tall slim blue",
+        "distractors": [
+          "blue slim tall",
+          "slim blue tall"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I packed my ___ bag for the trip. (hint: canvas, green, sturdy)",
+        "answer": "sturdy green canvas",
+        "distractors": [
+          "canvas green sturdy",
+          "green canvas sturdy"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He wore a ___ hat in the rain. (hint: black, wide, old)",
+        "answer": "old wide black",
+        "distractors": [
+          "black wide old",
+          "wide black old"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The museum displays an ___ vase from the Han period. (hint: ceramic, ancient, Chinese)",
+        "answer": "ancient Chinese ceramic",
+        "distractors": [
+          "Chinese ancient ceramic",
+          "ceramic Chinese ancient"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She carried a ___ handbag through the airport. (hint: leather, black, small)",
+        "answer": "small black leather",
+        "distractors": [
+          "leather black small",
+          "black leather small"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He inherited a ___ clock from his grandfather. (hint: German, antique, wooden)",
+        "answer": "antique German wooden",
+        "distractors": [
+          "wooden German antique",
+          "German wooden antique"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We admired the ___ statue in the gallery. (hint: marble, Roman, ancient)",
+        "answer": "ancient Roman marble",
+        "distractors": [
+          "marble Roman ancient",
+          "Roman marble ancient"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She showed me a ___ photograph of the coast. (hint: faded, square, old)",
+        "answer": "old square faded",
+        "distractors": [
+          "square old faded",
+          "faded square old"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They served the soup in a ___ bowl. (hint: ceramic, deep, white)",
+        "answer": "deep white ceramic",
+        "distractors": [
+          "ceramic white deep",
+          "white ceramic deep"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He restored a ___ motorcycle in his garage. (hint: Italian, black, vintage)",
+        "answer": "vintage black Italian",
+        "distractors": [
+          "Italian black vintage",
+          "black Italian vintage"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She wears a ___ coat every winter. (hint: woollen, grey, heavy)",
+        "answer": "heavy grey woollen",
+        "distractors": [
+          "woollen grey heavy",
+          "grey woollen heavy"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The chef chopped them with a ___ knife. (hint: steel, sharp, long)",
+        "answer": "long sharp steel",
+        "distractors": [
+          "steel sharp long",
+          "sharp steel long"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We crossed a ___ bridge over the valley. (hint: iron, narrow, old)",
+        "answer": "old narrow iron",
+        "distractors": [
+          "iron narrow old",
+          "narrow iron old"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He sketched a ___ tower on the map. (hint: stone, tall, round)",
+        "answer": "tall round stone",
+        "distractors": [
+          "stone round tall",
+          "round stone tall"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She framed a ___ painting above the fireplace. (hint: French, oil, striking)",
+        "answer": "striking French oil",
+        "distractors": [
+          "oil French striking",
+          "French oil striking"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They unpacked a ___ rug for the hallway. (hint: Persian, woollen, intricate)",
+        "answer": "intricate Persian woollen",
+        "distractors": [
+          "woollen Persian intricate",
+          "Persian intricate woollen"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He admired a ___ guitar in the shop window. (hint: Spanish, wooden, handsome)",
+        "answer": "handsome Spanish wooden",
+        "distractors": [
+          "wooden Spanish handsome",
+          "Spanish wooden handsome"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The cottage had a ___ door at the back. (hint: oak, low, heavy)",
+        "answer": "heavy low oak",
+        "distractors": [
+          "oak low heavy",
+          "low oak heavy"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We toured a ___ cottage in the Cotswolds. (hint: English, old, charming)",
+        "answer": "charming old English",
+        "distractors": [
+          "old English charming",
+          "English charming old"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She drew a ___ diagram on the whiteboard. (hint: rectangular, neat, small)",
+        "answer": "neat small rectangular",
+        "distractors": [
+          "rectangular small neat",
+          "small rectangular neat"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He described a ___ engine on the assembly line. (hint: Japanese, electric, compact)",
+        "answer": "compact Japanese electric",
+        "distractors": [
+          "electric Japanese compact",
+          "Japanese electric compact"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The shop sold a ___ teapot at a fair price. (hint: porcelain, blue, delicate)",
+        "answer": "delicate blue porcelain",
+        "distractors": [
+          "porcelain blue delicate",
+          "blue porcelain delicate"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They restored a ___ cabinet for the museum. (hint: Victorian, mahogany, ornate)",
+        "answer": "ornate Victorian mahogany",
+        "distractors": [
+          "mahogany Victorian ornate",
+          "Victorian mahogany ornate"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She unveiled a ___ sculpture in the courtyard. (hint: bronze, towering, abstract)",
+        "answer": "abstract towering bronze",
+        "distractors": [
+          "bronze towering abstract",
+          "towering bronze abstract"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He polished a ___ trophy after the match. (hint: silver, gleaming, tall)",
+        "answer": "tall gleaming silver",
+        "distractors": [
+          "silver gleaming tall",
+          "gleaming silver tall"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We crossed a ___ courtyard to reach the chapel. (hint: cobbled, wide, medieval)",
+        "answer": "wide medieval cobbled",
+        "distractors": [
+          "cobbled medieval wide",
+          "medieval cobbled wide"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The reporter photographed a ___ engineer at the site. (hint: French-born, fifty-year-old, distinguished)",
+        "answer": "distinguished fifty-year-old French-born",
+        "distractors": [
+          "French-born fifty-year-old distinguished",
+          "fifty-year-old French-born distinguished"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She owns a ___ piano in the drawing room. (hint: German, grand, magnificent)",
+        "answer": "magnificent grand German",
+        "distractors": [
+          "German grand magnificent",
+          "grand German magnificent"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They examined a ___ manuscript under glass. (hint: Latin, fragile, medieval)",
+        "answer": "fragile medieval Latin",
+        "distractors": [
+          "Latin medieval fragile",
+          "medieval Latin fragile"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The dealer offered a ___ watch at auction. (hint: Swiss, gold, exquisite)",
+        "answer": "exquisite Swiss gold",
+        "distractors": [
+          "gold Swiss exquisite",
+          "Swiss gold exquisite"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He photographed a ___ skyline at dusk. (hint: glittering, vast, urban)",
+        "answer": "vast glittering urban",
+        "distractors": [
+          "urban glittering vast",
+          "glittering urban vast"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The paper profiled a ___ diplomat ahead of the summit. (hint: Geneva-based, semi-retired, controversial)",
+        "answer": "controversial semi-retired Geneva-based",
+        "distractors": [
+          "Geneva-based semi-retired controversial",
+          "semi-retired Geneva-based controversial"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The auction featured a ___ tapestry from the abbey. (hint: Flemish, woven, exquisite)",
+        "answer": "exquisite Flemish woven",
+        "distractors": [
+          "woven Flemish exquisite",
+          "Flemish woven exquisite"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She inherited a ___ estate in the highlands. (hint: Scottish, sprawling, ancestral)",
+        "answer": "sprawling ancestral Scottish",
+        "distractors": [
+          "Scottish ancestral sprawling",
+          "ancestral Scottish sprawling"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The firm acquired a ___ subsidiary last quarter. (hint: oil-producing, state-owned, struggling)",
+        "answer": "struggling state-owned oil-producing",
+        "distractors": [
+          "oil-producing state-owned struggling",
+          "state-owned oil-producing struggling"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He delivered a ___ speech to the assembly. (hint: rousing, lengthy, impassioned)",
+        "answer": "impassioned lengthy rousing",
+        "distractors": [
+          "lengthy rousing impassioned",
+          "rousing lengthy impassioned"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The critic praised a ___ novel set in wartime. (hint: French, sprawling, masterful)",
+        "answer": "masterful sprawling French",
+        "distractors": [
+          "French sprawling masterful",
+          "sprawling French masterful"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "They restored a ___ facade on the boulevard. (hint: stone, baroque, crumbling)",
+        "answer": "crumbling baroque stone",
+        "distractors": [
+          "stone baroque crumbling",
+          "baroque stone crumbling"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The gallery acquired a ___ portrait of the duchess. (hint: oil, Renaissance, luminous)",
+        "answer": "luminous Renaissance oil",
+        "distractors": [
+          "oil Renaissance luminous",
+          "Renaissance oil luminous"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He negotiated with a ___ executive over dinner. (hint: Tokyo-based, hard-nosed, formidable)",
+        "answer": "formidable hard-nosed Tokyo-based",
+        "distractors": [
+          "Tokyo-based hard-nosed formidable",
+          "hard-nosed Tokyo-based formidable"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

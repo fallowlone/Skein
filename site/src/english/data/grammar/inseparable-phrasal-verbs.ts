@@ -311,5 +311,674 @@ export const topic: GrammarTopic = {
       "particle",
       "object"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "inseparable-phrasal-verbs-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Inseparable phrasal/prepositional verbs lock to one fixed particle ({answer}); choose the right preposition for the verb and meaning, and never drop it.",
+          "ru": "Неразделимые phrasal/prepositional verbs закреплены за одной частицей ({answer}); выбирай правильный предлог по глаголу и смыслу и не опускай его."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I'm looking ___ my keys; I can't find them anywhere. (search)",
+        "answer": "for",
+        "distractors": [
+          "after",
+          "at",
+          "into"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Could you look ___ the children while I'm at work? (take care)",
+        "answer": "after",
+        "distractors": [
+          "for",
+          "up",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Stop talking and listen ___ me for a second.",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "for",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Look ___ this photo — isn't it beautiful?",
+        "answer": "at",
+        "distractors": [
+          "after",
+          "on",
+          "to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We're still waiting ___ the bus; it's twenty minutes late.",
+        "answer": "for",
+        "distractors": [
+          "on",
+          "to",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Whether we go to the beach depends ___ the weather.",
+        "answer": "on",
+        "distractors": [
+          "from",
+          "of",
+          "to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She takes ___ her mother — they have the same smile. (resemble a parent)",
+        "answer": "after",
+        "distractors": [
+          "over",
+          "up",
+          "to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We've run ___ of milk, so I'll buy some on the way home.",
+        "answer": "out",
+        "distractors": [
+          "off",
+          "over",
+          "up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I came ___ an old letter while cleaning the attic. (find by chance)",
+        "answer": "across",
+        "distractors": [
+          "after",
+          "up",
+          "to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He doesn't get ___ with his new boss; they argue constantly. (have a good relationship)",
+        "answer": "on",
+        "distractors": [
+          "over",
+          "across",
+          "off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Let's talk ___ the plan over coffee tomorrow.",
+        "answer": "about",
+        "distractors": [
+          "on",
+          "of",
+          "with"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Please get ___ the bus at the next stop. (leave a vehicle)",
+        "answer": "off",
+        "distractors": [
+          "out",
+          "down",
+          "away"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She had to go ___ a difficult year after the accident. (live through)",
+        "answer": "through",
+        "distractors": [
+          "over",
+          "across",
+          "into"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "What does the abbreviation USB stand ___?",
+        "answer": "for",
+        "distractors": [
+          "of",
+          "to",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You can rely ___ Tom; he never breaks a promise.",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "to",
+          "in"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I can't put up ___ this constant noise any longer. (tolerate)",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "for",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She comes ___ as very confident in interviews. (give an impression)",
+        "answer": "across",
+        "distractors": [
+          "off",
+          "up",
+          "through"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I ran ___ an old colleague at the conference yesterday. (meet by chance)",
+        "answer": "into",
+        "distractors": [
+          "over",
+          "across",
+          "through"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm really looking forward ___ meeting your parents.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "at",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Don't look down ___ people just because they earn less. (despise)",
+        "answer": "on",
+        "distractors": [
+          "at",
+          "to",
+          "by"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You can always count ___ me when things go wrong.",
+        "answer": "on",
+        "distractors": [
+          "with",
+          "to",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It took her months to get ___ the breakup. (recover emotionally)",
+        "answer": "over",
+        "distractors": [
+          "off",
+          "across",
+          "by"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Our team can deal ___ a few thousand requests per second.",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "on",
+          "about"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The detective decided to look ___ the suspicious payments. (investigate)",
+        "answer": "into",
+        "distractors": [
+          "after",
+          "up",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I really look up ___ my old physics teacher. (respect)",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "on",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He insisted ___ paying for the whole dinner himself.",
+        "answer": "on",
+        "distractors": [
+          "to",
+          "with",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Several colleagues objected ___ working over the weekend.",
+        "answer": "to",
+        "distractors": [
+          "on",
+          "for",
+          "against"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It took me a while to get used ___ driving on the left.",
+        "answer": "to",
+        "distractors": [
+          "with",
+          "for",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I don't feel ___ cooking tonight; let's order takeout. (want to)",
+        "answer": "like",
+        "distractors": [
+          "for",
+          "about",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Promise you'll stand ___ me if there's trouble. (stay loyal to)",
+        "answer": "by",
+        "distractors": [
+          "for",
+          "off",
+          "into"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She fell ___ the scam and lost all her savings. (be deceived by)",
+        "answer": "for",
+        "distractors": [
+          "into",
+          "to",
+          "with"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "This blue tie goes ___ your grey suit perfectly. (match)",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "for",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I think I'll go ___ the grilled salmon. (choose)",
+        "answer": "for",
+        "distractors": [
+          "with",
+          "to",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "All members must abide ___ the rules of the association. (obey)",
+        "answer": "by",
+        "distractors": [
+          "to",
+          "with",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The new policy adheres ___ the principles set out last year. (stick to)",
+        "answer": "to",
+        "distractors": [
+          "with",
+          "by",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This situation calls ___ immediate and decisive action. (require)",
+        "answer": "for",
+        "distractors": [
+          "on",
+          "to",
+          "off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It's been hard to cope ___ the stress of the deadline.",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "on",
+          "against"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "For an informal meeting we can dispense ___ the usual paperwork. (do without)",
+        "answer": "with",
+        "distractors": [
+          "of",
+          "off",
+          "from"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The author draws ___ years of fieldwork in her book. (use as a resource)",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "into",
+          "with"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Next month the firm will embark ___ an ambitious expansion. (begin)",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "to",
+          "with"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The sequel failed to live up ___ the original's reputation.",
+        "answer": "to",
+        "distractors": [
+          "with",
+          "for",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We'll just have to make do ___ what we've got. (manage)",
+        "answer": "with",
+        "distractors": [
+          "of",
+          "for",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Only a desperate negotiator would resort ___ threats. (turn to)",
+        "answer": "to",
+        "distractors": [
+          "on",
+          "with",
+          "into"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "After the experiment failed, they reverted ___ the older method. (go back)",
+        "answer": "to",
+        "distractors": [
+          "on",
+          "into",
+          "with"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Whatever happens, let's stick ___ the original plan.",
+        "answer": "to",
+        "distractors": [
+          "on",
+          "by",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I don't subscribe ___ the view that money buys happiness. (agree with)",
+        "answer": "to",
+        "distractors": [
+          "with",
+          "on",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "These figures depend ___ the budget, not the other way round.",
+        "answer": "on",
+        "distractors": [
+          "from",
+          "of",
+          "to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This urgent matter must be dealt ___ before Friday. (passive)",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "on",
+          "off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You can bank ___ her honesty; she's never lied to me. (rely strongly)",
+        "answer": "on",
+        "distractors": [
+          "with",
+          "to",
+          "in"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Good editors will agree ___ a topic before they argue about wording.",
+        "answer": "on",
+        "distractors": [
+          "from",
+          "of",
+          "into"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Time is running ___; we have only an hour before the launch. (ending)",
+        "answer": "out",
+        "distractors": [
+          "on",
+          "over",
+          "off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We must abide ___ the strict terms of the international treaty.",
+        "answer": "by",
+        "distractors": [
+          "to",
+          "with",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The new evidence brought the conspiracy ___ light. (revealed)",
+        "answer": "to",
+        "distractors": [
+          "into",
+          "up",
+          "under"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Reformers vowed to do away ___ the outdated regulation. (abolish)",
+        "answer": "with",
+        "distractors": [
+          "of",
+          "off",
+          "from"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "A leader must rise ___ petty insults and stay focused. (be morally superior to)",
+        "answer": "above",
+        "distractors": [
+          "over",
+          "up",
+          "beyond"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "When negotiations stall, hidden interests come ___ play. (become active)",
+        "answer": "into",
+        "distractors": [
+          "in",
+          "to",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We can no longer make allowance ___ such repeated delays. (take into account)",
+        "answer": "for",
+        "distractors": [
+          "of",
+          "to",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The board took issue ___ the auditor's harsh conclusions. (disagree)",
+        "answer": "with",
+        "distractors": [
+          "on",
+          "to",
+          "against"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The whole industry is hedging ___ a sudden drop in demand. (insure against)",
+        "answer": "against",
+        "distractors": [
+          "for",
+          "on",
+          "from"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Please bear ___ me while I find the right document. (be patient)",
+        "answer": "with",
+        "distractors": [
+          "for",
+          "on",
+          "to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The minister chose to back ___ of the controversial deal. (withdraw)",
+        "answer": "out",
+        "distractors": [
+          "off",
+          "down",
+          "away"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "When pressed, she will stand up ___ what she believes in. (defend)",
+        "answer": "for",
+        "distractors": [
+          "to",
+          "with",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The committee resolved to put a stop ___ the wasteful spending.",
+        "answer": "to",
+        "distractors": [
+          "on",
+          "of",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "His thesis draws ___ decades of meticulous archival research. (formal: use)",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "into",
+          "by"
+        ],
+        "alts": [
+          "upon"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

@@ -333,5 +333,591 @@ export const topic: GrammarTopic = {
       "relative pronoun",
       "rest of clause"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "relative-pronouns-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Relative pronouns are a choice among forms (who/which/that/whose/where/when/whom/what), so the correct filler depends on the antecedent, the clause type, and the register — here \"{answer}\".",
+          "ru": "Относительные местоимения — это выбор из форм (who/which/that/whose/where/when/whom/what), поэтому правильный вариант зависит от антецедента, типа придаточного и регистра — здесь «{answer}»."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I have a colleague ___ speaks four languages fluently.",
+        "answer": "who",
+        "alts": [
+          "that"
+        ],
+        "distractors": [
+          "which",
+          "whose"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "This is the bicycle ___ I bought at the weekend.",
+        "answer": "that",
+        "alts": [
+          "which"
+        ],
+        "distractors": [
+          "who",
+          "whose"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She introduced me to a writer ___ novels I had loved as a teenager.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "that"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The village ___ my grandparents lived has only one shop.",
+        "answer": "where",
+        "distractors": [
+          "which",
+          "when",
+          "who"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I will never forget the morning ___ the storm hit the coast.",
+        "answer": "when",
+        "distractors": [
+          "where",
+          "which",
+          "whose"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The teacher ___ explained the topic was very patient.",
+        "answer": "who",
+        "alts": [
+          "that"
+        ],
+        "distractors": [
+          "which",
+          "whom"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Here is the laptop ___ keeps crashing during meetings.",
+        "answer": "that",
+        "alts": [
+          "which"
+        ],
+        "distractors": [
+          "who",
+          "whom"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We visited the museum ___ holds the famous bronze statues.",
+        "answer": "that",
+        "alts": [
+          "which"
+        ],
+        "distractors": [
+          "who",
+          "where"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The neighbour ___ dog barks all night finally apologised.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "that"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "That is the café ___ we first met ten years ago.",
+        "answer": "where",
+        "distractors": [
+          "which",
+          "that",
+          "when"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Do you remember the year ___ we moved to the city?",
+        "answer": "when",
+        "distractors": [
+          "where",
+          "which",
+          "whose"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The children ___ planted the trees came back to water them.",
+        "answer": "who",
+        "alts": [
+          "that"
+        ],
+        "distractors": [
+          "which",
+          "whose"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I found the keys ___ I had lost last Tuesday.",
+        "answer": "that",
+        "alts": [
+          "which"
+        ],
+        "distractors": [
+          "who",
+          "whose"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She married a man ___ family runs a vineyard.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "whom"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The students ___ studied hard passed the exam without trouble.",
+        "answer": "who",
+        "alts": [
+          "that"
+        ],
+        "distractors": [
+          "which",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My brother, ___ lives in Canada, is a heart surgeon.",
+        "answer": "who",
+        "distractors": [
+          "that",
+          "which",
+          "whom"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The Eiffel Tower, ___ attracts millions of tourists, was once unpopular.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "who",
+          "where"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The person to ___ I spoke at reception was extremely helpful.",
+        "answer": "whom",
+        "distractors": [
+          "who",
+          "which",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "This is the hotel ___ we stayed during the conference.",
+        "answer": "where",
+        "distractors": [
+          "which",
+          "that",
+          "whom"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The project ___ we worked on for months was finally approved.",
+        "answer": "that",
+        "alts": [
+          "which"
+        ],
+        "distractors": [
+          "who",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Our manager, ___ proposal was rejected, took the news calmly.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "whom"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The candidate ___ we interviewed yesterday accepted the offer.",
+        "answer": "whom",
+        "alts": [
+          "who",
+          "that"
+        ],
+        "distractors": [
+          "which",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Venice, ___ is built on water, is slowly sinking.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "who",
+          "where"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The committee, ___ members disagreed sharply, postponed the vote.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "whom"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The bridge ___ collapsed last winter is being rebuilt now.",
+        "answer": "that",
+        "alts": [
+          "which"
+        ],
+        "distractors": [
+          "who",
+          "whom"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My aunt, ___ I rarely see, sent a long letter this week.",
+        "answer": "whom",
+        "alts": [
+          "who"
+        ],
+        "distractors": [
+          "which",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The factory ___ the parts are assembled runs around the clock.",
+        "answer": "where",
+        "distractors": [
+          "which",
+          "that",
+          "when"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The variable ___ determines the outcome must be isolated first.",
+        "answer": "that",
+        "distractors": [
+          "which",
+          "who",
+          "whose"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The variable, ___ is central to our study, was measured repeatedly.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "who",
+          "whom"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ matters most in this field is reproducibility, not novelty.",
+        "answer": "What",
+        "distractors": [
+          "Which",
+          "That",
+          "Who"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ wrote this anonymous report clearly understood the data.",
+        "answer": "Whoever",
+        "distractors": [
+          "Whomever",
+          "Whatever",
+          "Whichever"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Take ___ equipment you need from the storeroom.",
+        "answer": "whatever",
+        "distractors": [
+          "whichever",
+          "whoever",
+          "whomever"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This is the theory on ___ our entire model is based.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "whom"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Tell me ___ you actually saw, not what you assumed.",
+        "answer": "what",
+        "distractors": [
+          "which",
+          "that",
+          "whom"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ shall I say is calling, sir?",
+        "answer": "Who",
+        "distractors": [
+          "Whom",
+          "Which",
+          "What"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The researcher, ___ work has been cited thousands of times, gave the keynote.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "whom"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ she goes, she somehow makes friends within an hour.",
+        "answer": "Wherever",
+        "distractors": [
+          "Whatever",
+          "Whoever",
+          "Whenever"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The data ___ we collected over the summer revealed a clear pattern.",
+        "answer": "that",
+        "alts": [
+          "which"
+        ],
+        "distractors": [
+          "what",
+          "whose"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You may call me ___ you finish reviewing the draft.",
+        "answer": "whenever",
+        "distractors": [
+          "wherever",
+          "whoever",
+          "whatever"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The reason ___ the experiment failed is still unclear to the team.",
+        "answer": "why",
+        "distractors": [
+          "which",
+          "what",
+          "whom"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He arrived two hours late, ___ annoyed the entire committee.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "who"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She apologised in front of everyone, ___ I had genuinely not expected.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "whom"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ we urgently need is more time, not more meetings.",
+        "answer": "What",
+        "distractors": [
+          "Which",
+          "That",
+          "Whatever"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The phenomenon to ___ the author repeatedly refers is well documented.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "whom"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She is such a leader ___ one rarely encounters in politics.",
+        "answer": "as",
+        "distractors": [
+          "that",
+          "which",
+          "who"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The car, the engine of ___ had already failed twice, was finally scrapped.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "whose",
+          "what"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The minister resigned without warning, ___ threw the party into chaos.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "who"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ he did next was quietly resign from the board.",
+        "answer": "What",
+        "distractors": [
+          "Which",
+          "That",
+          "Whatever"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The dignitary to ___ the letter was addressed never replied.",
+        "answer": "whom",
+        "distractors": [
+          "who",
+          "which",
+          "whose"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It was her honesty, ___ no one could question, that won them over.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "whom"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The applicant, ___ rights are hereby affirmed, may appeal the decision.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "whom"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "All ___ I want from this negotiation is a fair settlement.",
+        "answer": "that",
+        "alts": [
+          "I want"
+        ],
+        "distractors": [
+          "which",
+          "what",
+          "who"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The funding was cut overnight, ___ forced the lab to close.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "who"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

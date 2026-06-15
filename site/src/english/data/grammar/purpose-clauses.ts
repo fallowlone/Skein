@@ -338,5 +338,581 @@ export const topic: GrammarTopic = {
       "main clause (action)",
       "purpose clause (why)"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I went to the shop ___ buy some bread.",
+        "answer": "to",
+        "distractors": [
+          "for to",
+          "for",
+          "that"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She called me ___ invite me to the party.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "for to",
+          "so"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He studied hard ___ to pass the exam.",
+        "answer": "in order",
+        "distractors": [
+          "so that",
+          "because",
+          "for"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I opened the window ___ that the cat could go out.",
+        "answer": "so",
+        "distractors": [
+          "in order",
+          "such",
+          "for"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She spoke loudly so that everyone ___ hear her.",
+        "answer": "could",
+        "distractors": [
+          "hears",
+          "to hear",
+          "hearing"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I left early in order not ___ miss the train.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "that",
+          "so"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She spoke quietly ___ as not to wake the baby.",
+        "answer": "so",
+        "distractors": [
+          "in order",
+          "such",
+          "for"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "This key is for ___ the back door.",
+        "answer": "opening",
+        "distractors": [
+          "to open",
+          "open",
+          "opens"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He bought a car in order ___ travel more.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "that",
+          "so"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "A knife is used ___ cutting.",
+        "answer": "for",
+        "distractors": [
+          "to",
+          "in order",
+          "so"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I set an alarm so as not ___ oversleep.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "that",
+          "so"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She whispered so that the children ___ hear.",
+        "answer": "wouldn't",
+        "distractors": [
+          "don't",
+          "not",
+          "didn't"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We turned off the lights ___ to save electricity.",
+        "answer": "so as",
+        "distractors": [
+          "because",
+          "such that",
+          "for"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He ran fast ___ catch the bus.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "that",
+          "for to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'm learning English ___ get a better job.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "so",
+          "that"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She studies law with a view to ___ a judge.",
+        "answer": "becoming",
+        "distractors": [
+          "become",
+          "to become",
+          "becomes"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She attended the conference for the purpose of ___.",
+        "answer": "networking",
+        "distractors": [
+          "to network",
+          "network",
+          "networked"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Take an umbrella ___ case it rains.",
+        "answer": "in",
+        "distractors": [
+          "if",
+          "so",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He took the job with a view ___ gaining experience.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "for",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She left early ___ avoid the traffic.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "in case",
+          "that"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We met with the aim ___ reaching an agreement.",
+        "answer": "of",
+        "distractors": [
+          "to",
+          "for",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He spoke quietly ___ he wake the baby.",
+        "answer": "lest",
+        "distractors": [
+          "unless",
+          "so that",
+          "in case"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Take a map in case you ___ lost.",
+        "answer": "get",
+        "distractors": [
+          "will get",
+          "would get",
+          "got"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm saving money ___ that we can buy a house next year.",
+        "answer": "so",
+        "distractors": [
+          "in order",
+          "such",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I work out regularly so as ___ stay healthy.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "that",
+          "of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She studies law with a view to ___ in international courts.",
+        "answer": "working",
+        "distractors": [
+          "work",
+          "to work",
+          "works"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'll leave a key so that you ___ come in.",
+        "answer": "can",
+        "distractors": [
+          "to come",
+          "coming",
+          "come"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Take notes ___ you forget.",
+        "answer": "lest",
+        "distractors": [
+          "if",
+          "unless",
+          "so as"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He saved every receipt for the purpose of ___ his expenses.",
+        "answer": "claiming",
+        "distractors": [
+          "to claim",
+          "claim",
+          "claimed"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She wore gloves ___ avoid leaving fingerprints.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "in case",
+          "lest"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The policy is designed ___ protect vulnerable populations.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "such that",
+          "of"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She remained silent for fear ___ revealing too much.",
+        "answer": "of",
+        "distractors": [
+          "to",
+          "that",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In order ___ the results may be verified, the data are public.",
+        "answer": "that",
+        "distractors": [
+          "to",
+          "for",
+          "so"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The device is calibrated ___ that measurements remain consistent.",
+        "answer": "such",
+        "distractors": [
+          "so",
+          "in order",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They left the country in the hope ___ finding a better life.",
+        "answer": "of",
+        "distractors": [
+          "to",
+          "for",
+          "that"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She kept quiet for fear of ___ her job.",
+        "answer": "losing",
+        "distractors": [
+          "to lose",
+          "lose",
+          "lost"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The app is designed ___ help students revise.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "such that",
+          "of"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In order that the reader ___ understand, the author gives examples.",
+        "answer": "may",
+        "distractors": [
+          "understands",
+          "to understand",
+          "understanding"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This instrument is used ___ measure air pressure.",
+        "answer": "to",
+        "distractors": [
+          "for measure",
+          "of",
+          "that"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They hid the gold ___ it be found by the soldiers.",
+        "answer": "lest",
+        "distractors": [
+          "unless",
+          "so that",
+          "in case"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He chose his words carefully for fear of ___ anyone.",
+        "answer": "offending",
+        "distractors": [
+          "to offend",
+          "offend",
+          "offended"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This room is intended ___ private meetings only.",
+        "answer": "for",
+        "distractors": [
+          "to",
+          "such that",
+          "that"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The bridge was engineered ___ that it can withstand earthquakes.",
+        "answer": "such",
+        "distractors": [
+          "so as",
+          "in order",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She enrolled in evening classes with the intention ___ retraining.",
+        "answer": "of",
+        "distractors": [
+          "to",
+          "for",
+          "that"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The minister spoke first ___ forestall any rebellion in the party.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "such that",
+          "of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The company slashed prices in a bid ___ regain market share.",
+        "answer": "to",
+        "distractors": [
+          "to regaining",
+          "of",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She trained rigorously with an eye ___ Olympic qualification.",
+        "answer": "to",
+        "distractors": [
+          "on",
+          "for",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The reform was undertaken in pursuit ___ greater efficiency.",
+        "answer": "of",
+        "distractors": [
+          "to",
+          "for",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ to make amends, he offered a public apology.",
+        "answer": "Wishing",
+        "distractors": [
+          "To wishing",
+          "Wished",
+          "For wishing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The CEO spoke first to forestall ___ from shareholders.",
+        "answer": "criticism",
+        "distractors": [
+          "to criticise",
+          "criticising of",
+          "being criticised of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The bank raised rates in an effort ___ curb inflation.",
+        "answer": "to",
+        "distractors": [
+          "to curbing",
+          "of curbing",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ to avoid detection, the smugglers travelled by night.",
+        "answer": "Hoping",
+        "distractors": [
+          "To hoping",
+          "For hoping",
+          "Hoped"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The firm restructured in an attempt ___ cut costs.",
+        "answer": "to",
+        "distractors": [
+          "of cutting",
+          "at cutting",
+          "for cutting"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He invested heavily with a view ___ expanding overseas.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "on",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The treaty was signed in pursuit ___ lasting peace.",
+        "answer": "of",
+        "distractors": [
+          "to",
+          "for",
+          "at"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "purpose-clauses-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Purpose clauses select among connectors and forms (to / in order to / so as to / so that + modal / for + -ing / lest + base / with a view to + -ing / in a bid to + inf); the correct filler is \"{answer}\".",
+          "ru": "Придаточные цели требуют выбора связки и формы (to / in order to / so as to / so that + модал / for + -ing / lest + база / with a view to + герундий / in a bid to + инфинитив); правильный вариант — «{answer}»."
+        }
+      }
+    ]
   }
 };

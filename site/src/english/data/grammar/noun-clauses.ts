@@ -253,5 +253,591 @@ export const topic: GrammarTopic = {
       "complement",
       "after preposition"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I don't know ___ she lives now.",
+        "answer": "where",
+        "distractors": [
+          "which",
+          "what",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Tell me ___ you want for dinner.",
+        "answer": "what",
+        "distractors": [
+          "which",
+          "that",
+          "who"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ he said at the meeting was completely untrue.",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "Which",
+          "Who"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She asked me ___ the train had already left.",
+        "answer": "whether",
+        "distractors": [
+          "that",
+          "what",
+          "which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm not sure ___ he'll agree to the plan.",
+        "answer": "if",
+        "distractors": [
+          "that",
+          "what",
+          "which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Do you remember ___ we first met?",
+        "answer": "where",
+        "distractors": [
+          "which",
+          "that",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The problem is ___ we can't afford the repairs.",
+        "answer": "that",
+        "distractors": [
+          "what",
+          "which",
+          "whether"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Nobody understood ___ the machine had stopped.",
+        "answer": "why",
+        "distractors": [
+          "which",
+          "that",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I wonder ___ the project will be finished on time.",
+        "answer": "whether",
+        "distractors": [
+          "that",
+          "what",
+          "which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Can you explain ___ this device actually works?",
+        "answer": "how",
+        "distractors": [
+          "that",
+          "which",
+          "what"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He told us ___ the decision had already been made.",
+        "answer": "that",
+        "distractors": [
+          "what",
+          "whether",
+          "which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I have no idea ___ broke the window.",
+        "answer": "who",
+        "distractors": [
+          "which",
+          "that",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Tell me ___ he went after the lecture.",
+        "answer": "where",
+        "distractors": [
+          "where did he go",
+          "which",
+          "that"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I don't know ___ she wants from us.",
+        "answer": "what",
+        "distractors": [
+          "what does she want",
+          "which",
+          "that"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She wasn't sure ___ to call him or wait.",
+        "answer": "whether",
+        "distractors": [
+          "if",
+          "that",
+          "what"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The teacher asked ___ everyone had finished the test.",
+        "answer": "whether",
+        "distractors": [
+          "that",
+          "what",
+          "which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ surprised everyone was how calm he stayed.",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "Which",
+          "How"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We were curious ___ the meeting had been postponed.",
+        "answer": "why",
+        "distractors": [
+          "which",
+          "that",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I believe ___ she made the right choice.",
+        "answer": "that",
+        "distractors": [
+          "what",
+          "whether",
+          "which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Do you know ___ phone this is?",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "what"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I can't recall ___ many people attended.",
+        "answer": "how",
+        "distractors": [
+          "that",
+          "which",
+          "what"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The fact is ___ no one warned us in advance.",
+        "answer": "that",
+        "distractors": [
+          "what",
+          "whether",
+          "which"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He couldn't decide ___ road to take.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "whether",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It is unclear ___ the funding will be approved.",
+        "answer": "whether",
+        "distractors": [
+          "that",
+          "what",
+          "which"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The committee recommended that he ___ (promote) to senior partner.",
+        "answer": "be promoted",
+        "distractors": [
+          "is promoted",
+          "was promoted",
+          "promotes"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It is essential that every member ___ (attend) the briefing.",
+        "answer": "attend",
+        "distractors": [
+          "attends",
+          "attended",
+          "is attending"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The director insisted that the report ___ (submit) by Friday.",
+        "answer": "be submitted",
+        "distractors": [
+          "is submitted",
+          "was submitted",
+          "submits"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Success depends on ___ the team can adapt quickly.",
+        "answer": "whether",
+        "distractors": [
+          "if",
+          "that",
+          "what"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I can't decide ___ to accept the offer or stay here.",
+        "answer": "whether",
+        "distractors": [
+          "if",
+          "that",
+          "which"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It turned out ___ the rumours were completely false.",
+        "answer": "that",
+        "distractors": [
+          "what",
+          "whether",
+          "which"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ she actually knew about the plan remains unclear.",
+        "answer": "Whether",
+        "distractors": [
+          "If",
+          "That",
+          "What"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We talked about ___ she really felt during the crisis.",
+        "answer": "how",
+        "distractors": [
+          "that",
+          "whether",
+          "if"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They demanded that the documents ___ (release) immediately.",
+        "answer": "be released",
+        "distractors": [
+          "are released",
+          "were released",
+          "release"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I'm interested in ___ you said about the new policy.",
+        "answer": "what",
+        "distractors": [
+          "that",
+          "whether",
+          "if"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It is strange ___ he didn't show up to his own party.",
+        "answer": "that",
+        "distractors": [
+          "what",
+          "whether",
+          "which"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The lawyer asked me ___ I had seen the contract before.",
+        "answer": "whether",
+        "distractors": [
+          "that",
+          "what",
+          "which"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It's vital that the patient ___ (remain) calm during the scan.",
+        "answer": "remain",
+        "distractors": [
+          "remains",
+          "remained",
+          "is remaining"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Take ___ you need from the supply cupboard.",
+        "answer": "whatever",
+        "distractors": [
+          "whichever thing",
+          "that",
+          "what does"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He proposed that the meeting ___ (move) to next week.",
+        "answer": "be moved",
+        "distractors": [
+          "is moved",
+          "was moved",
+          "moves"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She wondered ___ long she had been asleep.",
+        "answer": "how",
+        "distractors": [
+          "that",
+          "whether",
+          "which"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "My main concern is ___ we have enough time left.",
+        "answer": "whether",
+        "distractors": [
+          "that",
+          "what",
+          "which"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ called the office, ignore them for now.",
+        "answer": "Whoever",
+        "distractors": [
+          "Whomever",
+          "That who",
+          "Which person"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He asked me ___ the bank was, and I pointed left.",
+        "answer": "where",
+        "distractors": [
+          "where was",
+          "which",
+          "that"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He was surprised at the fact ___ she refused the promotion.",
+        "answer": "that",
+        "distractors": [
+          "which",
+          "what",
+          "whether"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ determines long-term success is persistence, not raw talent.",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "Which",
+          "How that"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Honestly, I don't ___ he's the right person for the role.",
+        "answer": "think",
+        "distractors": [
+          "think that not",
+          "suppose not",
+          "believe not that"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He ordered that the prisoner ___ (release) at dawn.",
+        "answer": "be released",
+        "distractors": [
+          "is released",
+          "was released",
+          "releases"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ the experiment ultimately succeeds depends on the funding.",
+        "answer": "Whether",
+        "distractors": [
+          "If",
+          "That",
+          "What"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I'm fully aware of the fact ___ time is running short.",
+        "answer": "that",
+        "distractors": [
+          "which",
+          "what",
+          "whether"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ it comes down to is a single missing signature.",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "Which",
+          "How"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The thing about this argument is ___ it ignores the data.",
+        "answer": "that",
+        "distractors": [
+          "what",
+          "which",
+          "whether"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ surprised the panel was that he agreed so readily.",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "Which",
+          "How"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The judge ruled ___ the defendant was not guilty.",
+        "answer": "that",
+        "distractors": [
+          "what",
+          "whether",
+          "which"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It is imperative that the board ___ (review) the merger today.",
+        "answer": "review",
+        "distractors": [
+          "reviews",
+          "reviewed",
+          "is reviewing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He raised the question of ___ the policy was ethical at all.",
+        "answer": "whether",
+        "distractors": [
+          "that",
+          "what",
+          "if"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ she intends to do with the inheritance remains a mystery.",
+        "answer": "What",
+        "distractors": [
+          "That",
+          "Which",
+          "How that"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "noun-clauses-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Noun clauses use statement word order and a specific clause-introducer; '{answer}' is the form the embedded clause, trigger verb, or subjunctive requires here.",
+          "ru": "Именное придаточное сохраняет прямой порядок слов и требует определённого вводного слова; здесь правильно '{answer}'."
+        }
+      }
+    ]
   }
 };

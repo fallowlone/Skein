@@ -325,5 +325,591 @@ export const topic: GrammarTopic = {
       "fixed arrangement",
       "future time"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "future-with-present-continuous-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The present continuous (am/is/are + -ing) marks an already-fixed future arrangement; \"{answer}\" fits only when the context shows the plan is settled. \"Will\" signals a prediction or on-the-spot decision, \"be going to\" an intention, and the present simple a public timetable.",
+          "ru": "Present Continuous (am/is/are + -ing) обозначает уже назначенную договорённость в будущем; «{answer}» подходит, только когда контекст показывает, что план зафиксирован. «Will» — предсказание или спонтанное решение, «be going to» — намерение, Present Simple — официальное расписание."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I'm ___ the dentist on Tuesday — the appointment is already booked. (see)",
+        "answer": "seeing",
+        "distractors": [
+          "going to see",
+          "will see",
+          "see"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We're ___ a party next Saturday; the invitations went out yesterday. (have)",
+        "answer": "having",
+        "distractors": [
+          "going to have",
+          "will have",
+          "have"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She's ___ her new job on Monday — it's all agreed with HR. (start)",
+        "answer": "starting",
+        "distractors": [
+          "going to start",
+          "will start",
+          "starts"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "What ___ you doing this evening? Are you free? (be)",
+        "answer": "are",
+        "distractors": [
+          "will",
+          "do",
+          "are going"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They're not ___ to the wedding; they already sent their apologies. (come)",
+        "answer": "coming",
+        "distractors": [
+          "going to come",
+          "will come",
+          "come"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I can't make lunch — I'm ___ tennis at one o'clock. (play)",
+        "answer": "playing",
+        "distractors": [
+          "going to play",
+          "will play",
+          "play"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He's ___ to London on Friday; the train is reserved. (travel)",
+        "answer": "travelling",
+        "distractors": [
+          "going to travel",
+          "will travel",
+          "travels"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We're ___ dinner with the Millers tonight — it's been planned for weeks. (have)",
+        "answer": "having",
+        "distractors": [
+          "going to have",
+          "will have",
+          "have"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Look at those clouds — I think it ___ soon. (rain)",
+        "answer": "will rain",
+        "distractors": [
+          "is raining",
+          "rains",
+          "is going to raining"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The shop ___ at nine every morning, so we can go early. (open)",
+        "answer": "opens",
+        "distractors": [
+          "is opening",
+          "will open",
+          "opening"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Don't worry about the bags — I ___ you carry them. (help)",
+        "answer": "will help",
+        "distractors": [
+          "am helping",
+          "help",
+          "am going to helping"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She's ___ to Paris tomorrow morning — her flight is at seven. (fly)",
+        "answer": "flying",
+        "distractors": [
+          "going to fly",
+          "will fly",
+          "flies"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'm ___ my parents this weekend; we arranged it last week. (visit)",
+        "answer": "visiting",
+        "distractors": [
+          "going to visit",
+          "will visit",
+          "visit"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you coming to the cinema with us tonight? (be)",
+        "answer": "Are",
+        "distractors": [
+          "Will",
+          "Do",
+          "Does"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We're ___ to a new flat on Friday — the removal van is booked. (move)",
+        "answer": "moving",
+        "distractors": [
+          "going to move",
+          "will move",
+          "move"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'd love to stay, but I'm ___ my sister at the station at six. (meet)",
+        "answer": "meeting",
+        "distractors": [
+          "going to meet",
+          "will meet",
+          "meet"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The film ___ at eight, so let's get there by quarter to. (start)",
+        "answer": "starts",
+        "distractors": [
+          "is starting",
+          "will start",
+          "starting"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'm not sure what I'll do later, but I ___ him if I see him. (tell)",
+        "answer": "will tell",
+        "distractors": [
+          "am telling",
+          "tell",
+          "am going to telling"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They're ___ their exam results on Thursday; the date is fixed. (get)",
+        "answer": "getting",
+        "distractors": [
+          "going to get",
+          "will get",
+          "get"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We're ___ the new website next week — everything is ready. (release)",
+        "answer": "releasing",
+        "distractors": [
+          "going to release",
+          "will release",
+          "release"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm ___ the 7 a.m. train to Manchester; my ticket's already printed. (catch)",
+        "answer": "catching",
+        "distractors": [
+          "going to catch",
+          "will catch",
+          "catches"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She's ___ a presentation tomorrow — it's on the agenda. (give)",
+        "answer": "giving",
+        "distractors": [
+          "going to give",
+          "will give",
+          "gives"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The team is ___ the report this week; review begins on Monday. (finalise)",
+        "answer": "finalising",
+        "distractors": [
+          "going to finalise",
+          "will finalise",
+          "finalises"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It ___ tomorrow, according to the forecast — there's no arrangement involved. (rain)",
+        "answer": "will rain",
+        "distractors": [
+          "is raining",
+          "is going to raining",
+          "rains"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The train ___ at six, so we mustn't be late to the platform. (leave)",
+        "answer": "leaves",
+        "distractors": [
+          "is leaving",
+          "will leave",
+          "leaving"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You ___ thirty next year — quite a milestone. (be)",
+        "answer": "will be",
+        "distractors": [
+          "are being",
+          "are",
+          "is being"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ you coming to the conference? It would be lovely to see you there. (be)",
+        "answer": "Are",
+        "distractors": [
+          "Will",
+          "Do",
+          "Does"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She's ___ to Canada in June; the relocation is confirmed. (move)",
+        "answer": "moving",
+        "distractors": [
+          "going to move",
+          "will move",
+          "moves"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They're not ___ the meeting tomorrow — they've already declined. (attend)",
+        "answer": "attending",
+        "distractors": [
+          "going to attend",
+          "will attend",
+          "attend"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'm ___ out on Monday and meeting the team on Tuesday — both fixed. (fly)",
+        "answer": "flying",
+        "distractors": [
+          "going to fly",
+          "will fly",
+          "flies"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I don't know him yet, but I ___ him at tomorrow's induction. (meet)",
+        "answer": "will meet",
+        "distractors": [
+          "am meeting",
+          "meet",
+          "am knowing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Hold on — I think I ___ that offer after all. (accept)",
+        "answer": "will accept",
+        "distractors": [
+          "am accepting",
+          "accept",
+          "am going to accepting"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We're ___ the product next month; the press release is scheduled. (launch)",
+        "answer": "launching",
+        "distractors": [
+          "going to launch",
+          "will launch",
+          "launch"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The doctor ___ patients from nine to five, so book before then. (see)",
+        "answer": "sees",
+        "distractors": [
+          "is seeing",
+          "will see",
+          "seeing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We're ___ the agreement next week — please confirm your attendance. (finalise)",
+        "answer": "finalising",
+        "distractors": [
+          "going to finalise",
+          "will finalise",
+          "finalise"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The committee is ___ the proposal on Friday; it's on the docket. (review)",
+        "answer": "reviewing",
+        "distractors": [
+          "going to review",
+          "will review",
+          "reviews"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I'm ___ we can meet before the end of the month. (hope)",
+        "answer": "hoping",
+        "distractors": [
+          "going to hope",
+          "will hope",
+          "hopes"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The board is ___ on Thursday to discuss the merger. (convene)",
+        "answer": "convening",
+        "distractors": [
+          "going to convene",
+          "will convene",
+          "convenes"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We're ___ out the update next quarter, as the roadmap states. (roll)",
+        "answer": "rolling",
+        "distractors": [
+          "going to roll",
+          "will roll",
+          "rolls"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Negotiations are ___ next week after the recess. (resume)",
+        "answer": "resuming",
+        "distractors": [
+          "going to resume",
+          "will resume",
+          "resumes"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I'm ___ for the position — my application is in the system. (apply)",
+        "answer": "applying",
+        "distractors": [
+          "going to apply",
+          "will apply",
+          "applies"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She said she ___ to Rome on Monday, so she'd already left. (be flying)",
+        "answer": "was flying",
+        "distractors": [
+          "is flying",
+          "will fly",
+          "flies"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He told me he ___ a new role in January. (be starting)",
+        "answer": "was starting",
+        "distractors": [
+          "is starting",
+          "will start",
+          "starts"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The minister is ___ stakeholders next week, the statement says. (meet)",
+        "answer": "meeting",
+        "distractors": [
+          "going to meet",
+          "will meet",
+          "meets"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The results are ___ out shortly — keep an eye on your inbox. (come)",
+        "answer": "coming",
+        "distractors": [
+          "going to come",
+          "will come",
+          "come"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We're ___ at a Q2 launch, though nothing is signed yet. (look)",
+        "answer": "looking",
+        "distractors": [
+          "going to look",
+          "will look",
+          "looks"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I'm ___ the director this afternoon — I'll raise your concerns then. (see)",
+        "answer": "seeing",
+        "distractors": [
+          "going to see",
+          "will see",
+          "sees"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We're ___ the contract on Monday; it's the firmest commitment we can give. (sign)",
+        "answer": "signing",
+        "distractors": [
+          "going to sign",
+          "will sign",
+          "signs"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The delegation is ___ in Geneva on Monday for the talks. (arrive)",
+        "answer": "arriving",
+        "distractors": [
+          "going to arrive",
+          "will arrive",
+          "arrives"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She's ___ the keynote at the summit; afterwards, she's flying to Tokyo. (give)",
+        "answer": "giving",
+        "distractors": [
+          "going to give",
+          "will give",
+          "gives"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We're ___ several strategic options before committing to one. (explore)",
+        "answer": "exploring",
+        "distractors": [
+          "going to explore",
+          "will explore",
+          "explores"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We're meeting at three and ___ the proposal next month. (discuss)",
+        "answer": "will discuss",
+        "distractors": [
+          "discussing",
+          "are discussing",
+          "discuss"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The conference ___ on the 5th of June every year. (take)",
+        "answer": "takes place",
+        "distractors": [
+          "is taking place",
+          "will take place",
+          "taking place"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The nations are ___ at the UN to ratify the accord. (meet)",
+        "answer": "meeting",
+        "distractors": [
+          "going to meet",
+          "will meet",
+          "meets"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We're ___ to finalise the deal this month, all being well. (aim)",
+        "answer": "aiming",
+        "distractors": [
+          "going to aim",
+          "will aim",
+          "aims"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "By Friday we'll have wrapped up, but right now I'm ___ out tomorrow. (fly)",
+        "answer": "flying",
+        "distractors": [
+          "going to fly",
+          "will fly",
+          "flies"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

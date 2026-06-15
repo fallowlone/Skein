@@ -457,5 +457,508 @@ export const topic: GrammarTopic = {
       "(object)",
       "adverb of manner"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "He speaks English ___. (well)",
+        "answer": "well",
+        "distractors": [
+          "good",
+          "goodly"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "She walks ___ in the park. (slow)",
+        "answer": "slowly",
+        "distractors": [
+          "slow",
+          "slowely"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The children played ___ in the garden. (quiet)",
+        "answer": "quietly",
+        "distractors": [
+          "quiet",
+          "quietely"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "My brother runs ___. (fast)",
+        "answer": "fast",
+        "distractors": [
+          "fastly",
+          "fastily"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Please drive ___. (careful)",
+        "answer": "carefully",
+        "distractors": [
+          "careful",
+          "carefuly"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The dog barked ___ at the stranger. (loud)",
+        "answer": "loudly",
+        "distractors": [
+          "loud",
+          "loudely"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "She closed the door ___ so the baby would sleep. (soft)",
+        "answer": "softly",
+        "distractors": [
+          "soft",
+          "softily"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "He answered every question ___. (correct)",
+        "answer": "correctly",
+        "distractors": [
+          "correct",
+          "correctely"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "They finished the test ___. (quick)",
+        "answer": "quickly",
+        "distractors": [
+          "quick",
+          "quicly"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Grandpa speaks ___ so we can understand. (clear)",
+        "answer": "clearly",
+        "distractors": [
+          "clear",
+          "clearely"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "She smiled ___ when she saw the gift. (happy)",
+        "answer": "happily",
+        "distractors": [
+          "happyly",
+          "happy"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "You can open this jar ___. (easy)",
+        "answer": "easily",
+        "distractors": [
+          "easyly",
+          "easy"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He shut the laptop ___ after the bad news. (angry)",
+        "answer": "angrily",
+        "distractors": [
+          "angryly",
+          "angry"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The nurse lifted the patient ___. (gentle)",
+        "answer": "gently",
+        "distractors": [
+          "gentlely",
+          "gentley"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Just explain it ___ and they'll get it. (simple)",
+        "answer": "simply",
+        "distractors": [
+          "simplely",
+          "simpley"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The doors open ___ when you step close. (automatic)",
+        "answer": "automatically",
+        "distractors": [
+          "automaticly",
+          "automaticaly"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She feels ___ today after a good rest. (happy)",
+        "answer": "happy",
+        "distractors": [
+          "happily",
+          "happyly"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "This soup tastes ___. (good)",
+        "answer": "good",
+        "distractors": [
+          "well",
+          "goodly"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He works ___ every single day. (= with effort)",
+        "answer": "hard",
+        "distractors": [
+          "hardly",
+          "hardily"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I can ___ hear you over this noise. (= barely)",
+        "answer": "hardly",
+        "distractors": [
+          "hard",
+          "hardily"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "They arrived ___ last night, after midnight. (= not early)",
+        "answer": "late",
+        "distractors": [
+          "lately",
+          "latly"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I haven't seen him ___. (= recently)",
+        "answer": "lately",
+        "distractors": [
+          "late",
+          "latingly"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The garden looks ___ in the spring sun. (beautiful)",
+        "answer": "beautiful",
+        "distractors": [
+          "beautifully",
+          "beautifuly"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She sang the song ___ at the school show. (beautiful)",
+        "answer": "beautifully",
+        "distractors": [
+          "beautiful",
+          "beautifuly"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She explained the rule ___ to the whole class. (clear)",
+        "answer": "clearly",
+        "distractors": [
+          "clear",
+          "clearely"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Don't work so ___ — take a break. (= with effort)",
+        "answer": "hard",
+        "distractors": [
+          "hardly",
+          "hardily"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Drive ___ on until you reach the bridge. (= no turning)",
+        "answer": "straight",
+        "distractors": [
+          "straightly",
+          "straite"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He sang ___ at the concert last night. (beautiful)",
+        "answer": "beautifully",
+        "distractors": [
+          "beautiful",
+          "beautyfully"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I feel ___ today, thank you — fully recovered. (= in good health)",
+        "answer": "well",
+        "distractors": [
+          "good",
+          "goodly"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___, the train began to move out of the station. (fronted, dramatic; slow)",
+        "answer": "Slowly",
+        "distractors": [
+          "Slow",
+          "Slowely"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The engineer reviewed the report ___ before signing. (thorough)",
+        "answer": "thoroughly",
+        "distractors": [
+          "thorough",
+          "throughly"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She often walks ___ when she is late. (quick)",
+        "answer": "quickly",
+        "distractors": [
+          "quick",
+          "quickily"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The plane flew ___ above the clouds. (= at a great height)",
+        "answer": "high",
+        "distractors": [
+          "highly",
+          "heighly"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He whispered the secret ___ in her ear. (soft)",
+        "answer": "softly",
+        "distractors": [
+          "soft",
+          "softily"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "In a formal report: She drives ___ to work every morning. (slow)",
+        "answer": "slowly",
+        "distractors": [
+          "slow",
+          "slowely"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "This textbook comes ___ recommended by the reviewers. (= very)",
+        "answer": "highly",
+        "distractors": [
+          "high",
+          "heighly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She cares ___ about the outcome of the project. (= figurative, intensely)",
+        "answer": "deeply",
+        "distractors": [
+          "deep",
+          "deeperly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The divers went ___ to inspect the wreck. (= literally, far down)",
+        "answer": "deep",
+        "distractors": [
+          "deeply",
+          "deepily"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___, I don't know the answer to that question. (sentence adverb; honest)",
+        "answer": "Honestly",
+        "distractors": [
+          "Honest",
+          "Honestily"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We ___ missed the last train by a minute. (= almost)",
+        "answer": "nearly",
+        "distractors": [
+          "near",
+          "nearily"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Don't come too ___ — the paint is still wet. (= close)",
+        "answer": "near",
+        "distractors": [
+          "nearly",
+          "nearily"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The cake was ___ decorated for the wedding. (careful)",
+        "answer": "carefully",
+        "distractors": [
+          "careful",
+          "carefuly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He handled the complaint ___, calming everyone down. (= as a phrase: with care → adverb form, diplomatic)",
+        "answer": "diplomatically",
+        "distractors": [
+          "diplomatic",
+          "diplomaticly"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She spoke ___ about the loss, telling the plain truth. (= manner: in a truthful way; honest)",
+        "answer": "honestly",
+        "distractors": [
+          "honest",
+          "honestily"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The document has been ___ reviewed by the panel. (thorough)",
+        "answer": "thoroughly",
+        "distractors": [
+          "thorough",
+          "throughly"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She tried ___ to concentrate despite the noise. (= with great effort)",
+        "answer": "hard",
+        "distractors": [
+          "hardly",
+          "hardily"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The findings were ___ documented in the appendix. (meticulous)",
+        "answer": "meticulously",
+        "distractors": [
+          "meticulous",
+          "meticously"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The samples were ___ analysed in the lab. (systematic)",
+        "answer": "systematically",
+        "distractors": [
+          "systematic",
+          "systematicly"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They laughed ___ at his joke. (= a fitting collocation, not 'severely'; hearty)",
+        "answer": "heartily",
+        "distractors": [
+          "severely",
+          "heartfully"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The committee ___ approved the budget after long debate. (= judgement stance; eventual)",
+        "answer": "eventually",
+        "distractors": [
+          "eventual",
+          "eventualy"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He bellowed his approval ___ from the back row. (loud)",
+        "answer": "loudly",
+        "distractors": [
+          "loud",
+          "loudely"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___, she placed the letter on the desk and left. (fronted for rhythm; silent)",
+        "answer": "Silently",
+        "distractors": [
+          "Silent",
+          "Silentily"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "They agreed, albeit ___, to the new terms. (= unwillingly; reluctant)",
+        "answer": "reluctantly",
+        "distractors": [
+          "reluctant",
+          "reluctantily"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "adverbs-of-manner-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Adverbs of manner say how an action happens; the correct filler here is “{answer}”.",
+          "ru": "Наречие образа действия говорит, как происходит действие; правильный вариант здесь — «{answer}»."
+        }
+      }
+    ]
   }
 };
