@@ -461,5 +461,571 @@ export const topic: GrammarTopic = {
       "can = present ability / possibility",
       "could = past ability / softer or hypothetical"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I ___ play the guitar a little.",
+        "answer": "can",
+        "distractors": [
+          "cans",
+          "could not"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "She ___ swim very well.",
+        "answer": "can",
+        "distractors": [
+          "cans",
+          "can to"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "We ___ meet you at the station tomorrow.",
+        "answer": "can",
+        "distractors": [
+          "cans",
+          "could not"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ you open the window, please?",
+        "answer": "Can",
+        "distractors": [
+          "Cans",
+          "Could not"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "He ___ speak French, but he is learning.",
+        "answer": "can't",
+        "distractors": [
+          "cans",
+          "can to"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ I sit here?",
+        "answer": "Can",
+        "distractors": [
+          "Cans",
+          "Could not"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "My brother ___ ride a bike now.",
+        "answer": "can",
+        "distractors": [
+          "cans",
+          "can to"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "You ___ go home early today.",
+        "answer": "can",
+        "distractors": [
+          "cans",
+          "can't to"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I ___ find my keys anywhere.",
+        "answer": "can't",
+        "distractors": [
+          "cans",
+          "could have"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "___ they help us carry these boxes?",
+        "answer": "Can",
+        "distractors": [
+          "Cans",
+          "Could not"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "When I was five, I ___ run very fast.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "could of"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ you pass me the salt, please?",
+        "answer": "Could",
+        "distractors": [
+          "Cans",
+          "Could of"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She ___ read at the age of four.",
+        "answer": "could",
+        "distractors": [
+          "cans",
+          "could of"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "It ___ rain tomorrow, so take a jacket.",
+        "answer": "could",
+        "distractors": [
+          "cans",
+          "could of"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "As a child he ___ name every dinosaur.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "could of"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I ___ hear you — please speak louder.",
+        "answer": "can't",
+        "distractors": [
+          "could of",
+          "cans"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ I leave my bag with you for a moment?",
+        "answer": "Could",
+        "distractors": [
+          "Cans",
+          "Could of"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "That ___ be true; I'm not certain yet.",
+        "answer": "could",
+        "distractors": [
+          "can to",
+          "could of"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "My grandmother ___ play the piano beautifully when she was young.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "could of"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ you turn the music down a little?",
+        "answer": "Could",
+        "distractors": [
+          "Cans",
+          "Could of"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Yesterday, after hours of trying, I ___ fix the printer.",
+        "answer": "was able to",
+        "distractors": [
+          "could",
+          "can"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ play chess when she was only six.",
+        "answer": "could",
+        "distractors": [
+          "was able to",
+          "can"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "That ___ be his sister — they look nothing alike.",
+        "answer": "can't",
+        "distractors": [
+          "couldn't",
+          "mustn't"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "After a long search, the firefighters ___ rescue everyone.",
+        "answer": "were able to",
+        "distractors": [
+          "could",
+          "can"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It ___ get very cold here in October.",
+        "answer": "can",
+        "distractors": [
+          "could",
+          "was able to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "That ___ be John knocking — he said he might drop by.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "was able to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I tried hard and finally ___ pass the driving test.",
+        "answer": "was able to",
+        "distractors": [
+          "could",
+          "can"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ be at home — I just saw her at the office.",
+        "answer": "can't",
+        "distractors": [
+          "couldn't be",
+          "mustn't"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you possibly lend me some money until Friday?",
+        "answer": "Could",
+        "distractors": [
+          "Can able to",
+          "Was able to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I ___ finish the test yesterday; I ran out of time.",
+        "answer": "couldn't",
+        "distractors": [
+          "wasn't able",
+          "can't"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Despite the storm, the pilot ___ land the plane safely.",
+        "answer": "was able to",
+        "distractors": [
+          "could",
+          "can"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "In summer it ___ stay light here until almost midnight.",
+        "answer": "can",
+        "distractors": [
+          "could be",
+          "was able to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You ___ told me about the meeting — I missed it completely!",
+        "answer": "could have",
+        "distractors": [
+          "could of",
+          "can have"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ missed the train; that's why he's late.",
+        "answer": "could have",
+        "distractors": [
+          "could of",
+          "can have"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ finished it so quickly — it took me a whole week.",
+        "answer": "can't have",
+        "distractors": [
+          "couldn't of",
+          "can't of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We ___ go to Italy this summer if you'd like.",
+        "answer": "could",
+        "distractors": [
+          "can have",
+          "could of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You ___ been more careful with the glasses.",
+        "answer": "could have",
+        "distractors": [
+          "could of",
+          "can have"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "How ___ you say something so hurtful to her?",
+        "answer": "could",
+        "distractors": [
+          "can have",
+          "could of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ stolen it — he was with me all evening.",
+        "answer": "couldn't have",
+        "distractors": [
+          "couldn't of",
+          "can't of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ be quite difficult when she's tired.",
+        "answer": "can",
+        "distractors": [
+          "could have",
+          "can't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You ___ warned me about the traffic before I left!",
+        "answer": "could have",
+        "distractors": [
+          "could of",
+          "can have"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They ___ already left — their car is still in the drive.",
+        "answer": "can't have",
+        "distractors": [
+          "couldn't of",
+          "can't of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We ___ stay at a hotel or with my cousin — both work.",
+        "answer": "could",
+        "distractors": [
+          "can have",
+          "could of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Winters here ___ get surprisingly harsh.",
+        "answer": "can",
+        "distractors": [
+          "could have",
+          "can't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It ___ be argued that the methodology lacks rigour.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "cannot but"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I was wondering if you ___ spare a few minutes of your time.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "could of"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This approach ___ well prove problematic in the long run.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "cannot but"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The results ___ suggest a correlation, though more data is needed.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "cannot but"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ it be that we have been missing the point entirely?",
+        "answer": "Could",
+        "distractors": [
+          "Can",
+          "Cannot"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "One ___ argue that the evidence is far from conclusive.",
+        "answer": "could",
+        "distractors": [
+          "can't but",
+          "cannot but"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You ___ go now; the meeting is over.",
+        "answer": "can",
+        "distractors": [
+          "could have",
+          "cannot but"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This interpretation ___ well be the most convincing one.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "cannot but"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I cannot ___ feeling that something is wrong here.",
+        "answer": "help",
+        "distractors": [
+          "but",
+          "of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "One cannot ___ admire her unwavering courage.",
+        "answer": "but",
+        "distractors": [
+          "but to",
+          "help but to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Nothing ___ have prepared him for what he saw.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "could of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I ___ agree with you more on this point.",
+        "answer": "couldn't",
+        "distractors": [
+          "can't",
+          "cannot but"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Such a reading ___ plausibly be defended on structural grounds.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "cannot but"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She ___ have been waiting outside all this time, poor thing.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "could of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "You ___ have called — a reproach, since you clearly didn't.",
+        "answer": "could",
+        "distractors": [
+          "might",
+          "could of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "One cannot help ___ wonder what the author truly intended.",
+        "answer": "but",
+        "distractors": [
+          "but to",
+          "of"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "can-could-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Choose the modal form that fits the meaning and register of this sentence: {answer}. Match present ability/permission (can), past ability or softer/hypothetical sense (could), confident negative deduction (can't / can't have), a single past success (was/were able to), or the modal perfect (could have).",
+          "ru": "Выберите модальную форму, подходящую по смыслу и регистру предложения: {answer}. Различайте настоящую способность/разрешение (can), способность в прошлом либо более вежливый/гипотетический оттенок (could), уверенное отрицательное умозаключение (can't / can't have), один конкретный успех в прошлом (was/were able to) и modal perfect (could have). Помните: после модального нет to, can не добавляет -s, а could of — ошибочная запись could have."
+        }
+      }
+    ]
   }
 };
