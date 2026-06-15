@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "prepositions-of-time",
   "title": {
-    "en": "",
+    "en": "Prepositions of Time",
     "ru": "Prepositions Of Time"
   },
   "cefr": "A1",
@@ -17,233 +17,530 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "prepositions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "Prepositions of time answer the question **when?** At A1, three of them cover almost everything, and each fits a different size of time. Use **at** for an exact clock time — at 7 o'clock, at 3:30 — and for the points noon and midnight (at noon, at midnight): \"The lesson starts at 9.\" Use **on** for a single day or date — on Monday, on Friday, on 5 May, on my birthday: \"I work on Monday.\" Use **in** for a longer stretch — a month, a year, or a part of the day — in May, in 2024, in the morning, in the evening: \"My birthday is in July.\" Learn one exception straight away: it is **at night**, never \"in night\". A quick mental picture: a point on the clock takes at, a day takes on, and a big block of time takes in. Memorise them as fixed pairs (at 7, on Monday, in May, at night) instead of translating word by word.",
         "ru": "Предлоги времени отвечают на вопрос **когда?** На A1 три главных: `at`, `on`, `in`.\n\n**`at` + точное время (часы):**\n- `at 7 o’clock` (в 7 часов)\n- `at 3:30` (в 3:30)\n- `at noon` (в полдень), `at midnight` (в полночь)\n\nПример: `The lesson starts at 9.` (Урок начинается в 9.)\n\n**`on` + день недели, дата:**\n- `on Monday` (в понедельник)\n- `on Friday` (в пятницу)\n- `on 5 May` (5 мая)\n- `on my birthday` (в мой день рождения)\n\nПример: `I work on Monday.` (Я работаю в понедельник.)\n\n**`in` + месяц, год, время суток (утро, день, вечер):**\n- `in May` (в мае)\n- `in 2024` (в 2024 году)\n- `in the morning` (утром)\n- `in the evening` (вечером)\n\nПример: `My birthday is in July.` (Мой день рождения в июле.)\n\n**Важное исключение:** `at night` — ночью (не `in night`!).\n- `I read at night.` (Я читаю ночью.)\n\n**Простая схема:**\n- Точка во времени (часы, ночь) → `at`.\n- День → `on`.\n- Большой период (месяц, год, утро) → `in`.\n\n**Частая ошибка.** Русский \"в понедельник\" — мы говорим \"в\", но по-английски это `on Monday`, не `in Monday`. Запоминай: `on` для дней."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "at + clock time/noon/midnight | on + day/date | in + month/year/part of day | at night",
+        "ru": "at + точное время/noon/midnight | on + день/дата | in + месяц/год/часть дня | at night"
       },
       "examples": [
         {
           "en": "I wake up at 7 o’clock.",
-          "ru": "Я просыпаюсь в 7 часов."
+          "ru": "Я просыпаюсь в 7 часов.",
+          "note": {
+            "en": "clock time",
+            "ru": "время по часам"
+          }
         },
         {
           "en": "We have a lesson on Tuesday.",
-          "ru": "У нас урок во вторник."
+          "ru": "У нас урок во вторник.",
+          "note": {
+            "en": "day",
+            "ru": "день"
+          }
         },
         {
           "en": "My birthday is in June.",
-          "ru": "Мой день рождения в июне."
+          "ru": "Мой день рождения в июне.",
+          "note": {
+            "en": "month",
+            "ru": "месяц"
+          }
         },
         {
           "en": "I drink coffee in the morning.",
-          "ru": "Я пью кофе утром."
+          "ru": "Я пью кофе утром.",
+          "note": {
+            "en": "part of day",
+            "ru": "часть дня"
+          }
         },
         {
           "en": "I sleep at night.",
-          "ru": "Я сплю ночью."
+          "ru": "Я сплю ночью.",
+          "note": {
+            "en": "exception",
+            "ru": "исключение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "at 7 o’clock, on Monday, in May. Исключение: at night."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I work in Monday.",
+          "right": "I work on Monday.",
+          "why": {
+            "en": "A day of the week takes on, not in, even though Russian uses \"в\".",
+            "ru": "День недели требует on, а не in."
+          }
+        },
+        {
+          "wrong": "My birthday is at June.",
+          "right": "My birthday is in June.",
+          "why": {
+            "en": "A month takes in, not at.",
+            "ru": "Месяц требует in, а не at."
+          }
+        },
+        {
+          "wrong": "I sleep in night.",
+          "right": "I sleep at night.",
+          "why": {
+            "en": "Night is the fixed exception: at night.",
+            "ru": "Night — фиксированное исключение: at night."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2, widen your stock of time prepositions beyond at/on/in. Use **before** for something earlier (I have breakfast before work) and **after** for something later (let's meet after lunch). Mark a span with **from … to** or **from … until/till** (I work from 9 to 5; the shop is open from Monday to Friday), and an end point alone with **until/till** (I'll stay until Sunday). Show how long something lasts with **for** + a length of time (I lived there for two years; we waited for an hour), and the start of an ongoing situation with **since** + a point (I have lived here since 2020; she has worked here since Monday). Say how far back something was with **ago**, placed after the amount (I saw her two days ago). Note a few set phrases: at the weekend (BrE) / on the weekend (AmE), at Christmas, at the moment. Finally, drop the preposition entirely before **last, next, this, every, yesterday, today, tomorrow** — say \"last Monday\" and \"next week\", never \"on last Monday\".",
         "ru": "На A2 расширь запас предлогов времени.\n\n**`before` = до, перед:**\n- `I have breakfast before work.` (Я завтракаю перед работой.)\n- `She called me before the meeting.` (Она позвонила мне до встречи.)\n\n**`after` = после:**\n- `Let’s meet after lunch.` (Давай встретимся после обеда.)\n- `I feel tired after work.` (Я устаю после работы.)\n\n**`from … to / until`:**\n- `I work from 9 to 5.` (Я работаю с 9 до 5.)\n- `The shop is open from Monday to Friday.` (Магазин работает с понедельника по пятницу.)\n- `I’ll stay until Sunday.` (Останусь до воскресенья.)\n\n**`for` = в течение (длительность):**\n- `I lived there for two years.` (Я жил там два года.)\n- `We waited for an hour.` (Мы ждали час.)\n\n**`since` = с какого-то момента (начало):**\n- `I have lived here since 2020.` (Я живу здесь с 2020 года.)\n- `She has worked there since Monday.` (Она работает там с понедельника.)\n\n**`ago` = назад (после числа):**\n- `I saw her two days ago.` (Я видел её два дня назад.)\n- `He moved here a month ago.` (Он переехал сюда месяц назад.)\n\n**Особые случаи с `at`:**\n- `at the weekend` (на выходных — BrE) / `on the weekend` (AmE).\n- `at Christmas`, `at Easter` (праздничные периоды).\n- `at the moment` (в данный момент).\n\n**Без предлога (no preposition):**\nПеред `last`, `next`, `this`, `every`, `yesterday`, `today`, `tomorrow` предлог НЕ нужен:\n- `I saw her last Monday.` (НЕ `on last Monday`.)\n- `See you next week.` (НЕ `on next week`.)\n- `I go to the gym every day.` (НЕ `on every day`.)\n\n**Частая ошибка.** Русское \"два года\" переводят как `during two years` — нет! Правильно `for two years`. `during` идёт со словом-событием (during the war, during the film), а `for` — с длительностью."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "before/after + time | from … to/until + span | for + duration | since + start point | number + ago | no preposition + last/next/this/every",
+        "ru": "before/after + время | from … to/until + период | for + длительность | since + точка начала | число + ago | без предлога + last/next/this/every"
       },
       "examples": [
         {
           "en": "I have worked here for five years.",
-          "ru": "Я работаю здесь пять лет."
+          "ru": "Я работаю здесь пять лет.",
+          "note": {
+            "en": "for + duration",
+            "ru": "for + длительность"
+          }
         },
         {
           "en": "She has been sick since Monday.",
-          "ru": "Она болеет с понедельника."
+          "ru": "Она болеет с понедельника.",
+          "note": {
+            "en": "since + start",
+            "ru": "since + начало"
+          }
         },
         {
           "en": "We met three weeks ago.",
-          "ru": "Мы встретились три недели назад."
+          "ru": "Мы встретились три недели назад.",
+          "note": {
+            "en": "number + ago",
+            "ru": "число + ago"
+          }
         },
         {
           "en": "The shop is open from 8 to 10.",
-          "ru": "Магазин работает с 8 до 10."
+          "ru": "Магазин работает с 8 до 10.",
+          "note": {
+            "en": "from … to",
+            "ru": "from … to"
+          }
         },
         {
           "en": "I’ll see you next Friday.",
-          "ru": "Увидимся в следующую пятницу."
+          "ru": "Увидимся в следующую пятницу.",
+          "note": {
+            "en": "no preposition",
+            "ru": "без предлога"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "for + длительность, since + точка начала, ago после числа. Last/next без предлога."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I lived there during two years.",
+          "right": "I lived there for two years.",
+          "why": {
+            "en": "For goes with a length of time; during goes with an event or named period.",
+            "ru": "For — с длительностью; during — с событием или периодом."
+          }
+        },
+        {
+          "wrong": "See you on next week.",
+          "right": "See you next week.",
+          "why": {
+            "en": "Drop the preposition before next/last/this/every.",
+            "ru": "Опускай предлог перед next/last/this/every."
+          }
+        },
+        {
+          "wrong": "He moved here since two months.",
+          "right": "He moved here two months ago.",
+          "why": {
+            "en": "Use ago after an amount to count back; since marks a fixed start point, not a length.",
+            "ru": "Используй ago после количества; since — фиксированная точка начала, а не длительность."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, sort out the confusable pairs. **For vs during**: for + a length of time (I slept for two hours), during + an event or period (I slept during the meeting); the two can even share one sentence — \"During the flight I slept for three hours.\" **In vs within**: in + a period means after it elapses (I'll finish in an hour), within + a period means no later than, inside that span (I'll finish within an hour). **By vs until/till**: by marks a deadline, the latest moment something must be done (finish the report by Friday), while until marks an action lasting up to that moment (work until Friday). **On time vs in time**: on time means punctual, exactly to schedule (the train arrived on time), in time means with a margin to spare (we arrived in time for the film). **At the end vs in the end**: at the end of + X is a literal close (at the end of the month), in the end is a discourse marker meaning eventually (in the end, we decided to stay). Use **over** for a period taken as a whole (over the weekend, over the years). And remember the aspect rule: **since** almost always pulls the present perfect — \"I have lived here since 2020,\" never \"I live here since 2020.\"",
         "ru": "На B1 разберись с тонкими парами.\n\n**`for` vs `during`:**\n- `for` + длительность (сколько?): `for two hours`, `for three days`.\n- `during` + событие/период (когда именно?): `during the meeting`, `during the summer`.\n\nПримеры:\n- `I slept for two hours.` (Я спал два часа.)\n- `I slept during the meeting.` (Я спал во время собрания.)\n\nОба могут быть в одном предложении: `During the flight I slept for three hours.`\n\n**`in` vs `within`:**\n- `in` = через, по прошествии: `I’ll finish in an hour.` (Закончу через час.)\n- `within` = в пределах: `I’ll finish within an hour.` (Закончу в течение часа — не позже.)\n\n**`by` vs `until`:**\n- `by` = к моменту, не позднее (deadline): `Finish the report by Friday.` (К пятнице.)\n- `until` / `till` = вплоть до (процесс до момента): `Work until Friday.` (Работай до пятницы — всё время.)\n\nКлассическая ошибка:\n- `I’ll be here until 5` (я тут всё это время, до 5).\n- `I’ll come by 5` (приду к 5 — к моменту).\n\n**`on time` vs `in time`:**\n- `on time` = вовремя, точно по расписанию: `The train arrived on time.`\n- `in time` = с запасом, до крайнего срока: `We arrived in time for the film.` (Успели к фильму.)\n\n**`at the end` vs `in the end`:**\n- `at the end of` + X (физический/временной конец X): `at the end of the month`, `at the end of the book`.\n- `in the end` = в итоге, в конце концов: `In the end, we decided to stay.` (В итоге мы решили остаться.)\n\n**`over` = за период (часто с событиями):**\n- `over the weekend` (на выходных), `over the years` (с годами), `over Christmas` (на Рождество).\n\n**Времена с `since`:**\n`since` почти всегда требует Present Perfect или Past Perfect:\n- ✓ `I have lived here since 2020.`\n- ✗ `I live here since 2020.` — ошибка."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "for + duration vs during + event | in (after) vs within (no later than) | by (deadline) vs until (up to) | on time vs in time | since + present perfect",
+        "ru": "for + длительность vs during + событие | in (через) vs within (не позднее) | by (к сроку) vs until (вплоть до) | on time vs in time | since + Present Perfect"
       },
       "examples": [
         {
           "en": "I’ll call you back within an hour.",
-          "ru": "Перезвоню в течение часа."
+          "ru": "Перезвоню в течение часа.",
+          "note": {
+            "en": "within = no later than",
+            "ru": "within = не позднее"
+          }
         },
         {
           "en": "Please finish the report by Monday.",
-          "ru": "Пожалуйста, закончи отчёт к понедельнику."
+          "ru": "Пожалуйста, закончи отчёт к понедельнику.",
+          "note": {
+            "en": "by = deadline",
+            "ru": "by = к сроку"
+          }
         },
         {
           "en": "The bus arrived on time.",
-          "ru": "Автобус пришёл вовремя."
+          "ru": "Автобус пришёл вовремя.",
+          "note": {
+            "en": "on time",
+            "ru": "вовремя"
+          }
         },
         {
           "en": "We got to the cinema in time for the film.",
-          "ru": "Мы успели в кино до начала фильма."
+          "ru": "Мы успели в кино до начала фильма.",
+          "note": {
+            "en": "in time",
+            "ru": "с запасом"
+          }
         },
         {
           "en": "During the summer I was in Spain.",
-          "ru": "Летом я был в Испании."
+          "ru": "Летом я был в Испании.",
+          "note": {
+            "en": "during + period",
+            "ru": "during + период"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "by = к моменту (deadline); until = до момента (всё время). On time ≠ in time."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Finish the report until Friday.",
+          "right": "Finish the report by Friday.",
+          "why": {
+            "en": "By marks a deadline; until marks an action continuing up to that point.",
+            "ru": "By — крайний срок; until — действие вплоть до момента."
+          }
+        },
+        {
+          "wrong": "I live here since 2020.",
+          "right": "I have lived here since 2020.",
+          "why": {
+            "en": "Since requires the present perfect, not the present simple.",
+            "ru": "Since требует Present Perfect, а не Present Simple."
+          }
+        },
+        {
+          "wrong": "We arrived on time for the film and caught the start with minutes to spare.",
+          "right": "We arrived in time for the film and caught the start with minutes to spare.",
+          "why": {
+            "en": "In time means with a margin to spare; on time means exactly punctual.",
+            "ru": "In time — с запасом; on time — точно по расписанию."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, handle the finer shades of duration and time framing. Use **throughout** for the whole length of something (it rained throughout the night; throughout his career, he won many awards). Reach for the more formal **amid / amidst** to set an event against a background (amid the crisis, amid growing concerns) where during would feel too plain. In business and formal writing, **prior to** replaces before (prior to the meeting, please read the document) and **following / subsequent to** replaces after (following the announcement, the share price rose). Watch the range convention: American English says from Monday **through** Friday (clearly inclusive), while British English says from Monday **to** Friday (sometimes clarified as \"to Friday inclusive\"). Strengthen since with **ever since** (ever since she moved, I have been lonely), and distinguish **at any time** (at any moment — you can call at any time) from the adverbial **any time** (whenever — come any time). Open a notice with **as of** for a start date (as of Monday, new rules apply). Keep idioms ready: in the nick of time, ahead of time/schedule, behind schedule, at short notice. Finally, never put **for** before a specific point — say \"I'll see you tomorrow,\" not \"for tomorrow\"; for is for duration only.",
         "ru": "На B2 — нюансы длительности и временных рамок.\n\n**`throughout` = на протяжении всего:**\n- `It rained throughout the night.` (Весь ночь шёл дождь.)\n- `Throughout his career, he won many awards.` (На протяжении карьеры он выиграл много наград.)\n\n**`amid / amidst` (в разгар):**\n- `amid the crisis` (в разгар кризиса), `amid growing concerns` (на фоне растущих опасений).\n- Более формальный, чем `during`.\n\n**`prior to` = до (формальное):**\n- `Prior to the meeting, please read the document.` (До собрания, пожалуйста, прочитайте документ.)\n- Эквивалент: `before`, но звучит официально.\n\n**`subsequent to` / `following` = после (формальное):**\n- `Following the announcement, the share price rose.` (После объявления акции выросли.)\n- `Subsequent to the decision, changes were made.` (Вслед за решением были сделаны изменения.)\n\n**`from … through` (AmE) vs `from … to` (BrE):**\nAmE: `from Monday through Friday` включает пятницу.\nBrE: `from Monday to Friday` — обычно включает пятницу, но возможна двусмысленность. Поэтому иногда уточняют `from Monday to Friday inclusive`.\n\n**`ever since`:**\nУсиленный `since`: с тех самых пор.\n- `Ever since she moved, I have been lonely.`\n\n**`at any time` vs `any time`:**\n- `at any time` (в любой момент времени): `You can call at any time.`\n- `any time` (когда угодно, без `at` как наречие): `Come any time.`\n\n**Временные коллокации с событиями:**\n- `in the nick of time` (в самый последний момент)\n- `ahead of time` / `ahead of schedule` (заранее)\n- `behind schedule` (с опозданием)\n- `at short notice` (в короткие сроки)\n\n**`as of` = начиная с:**\n- `As of Monday, new rules apply.` (С понедельника действуют новые правила.)\n- Часто в деловой переписке.\n\n**Ошибка с `for`:**\nС указанием конкретных времён `for` НЕ нужен:\n- ✗ `I’ll see you for tomorrow.`\n- ✓ `I’ll see you tomorrow.`\n`for` нужен для длительности, а не для точки."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "throughout + whole period | prior to / following + noun (formal) | from … through (AmE) vs to (BrE) | ever since | as of + start date",
+        "ru": "throughout + весь период | prior to / following + сущ. (формально) | from … through (AmE) vs to (BrE) | ever since | as of + дата начала"
       },
       "examples": [
         {
           "en": "It rained throughout the night.",
-          "ru": "Дождь шёл всю ночь."
+          "ru": "Дождь шёл всю ночь.",
+          "note": {
+            "en": "throughout",
+            "ru": "throughout"
+          }
         },
         {
           "en": "Prior to the meeting, please read the agenda.",
-          "ru": "До собрания прочитайте повестку."
+          "ru": "До собрания прочитайте повестку.",
+          "note": {
+            "en": "prior to (formal)",
+            "ru": "prior to (формально)"
+          }
         },
         {
           "en": "Following the announcement, the team gathered.",
-          "ru": "После объявления команда собралась."
+          "ru": "После объявления команда собралась.",
+          "note": {
+            "en": "following (formal)",
+            "ru": "following (формально)"
+          }
         },
         {
           "en": "As of next Monday, the policy changes.",
-          "ru": "С понедельника политика меняется."
+          "ru": "С понедельника политика меняется.",
+          "note": {
+            "en": "as of = start date",
+            "ru": "as of = дата начала"
+          }
         },
         {
           "en": "The project was completed ahead of schedule.",
-          "ru": "Проект выполнен с опережением графика."
+          "ru": "Проект выполнен с опережением графика.",
+          "note": {
+            "en": "ahead of schedule",
+            "ru": "с опережением"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "prior to / following — формальные before / after для деловой письменной речи."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'll finish in an hour at the latest.",
+          "right": "I'll finish within an hour at the latest.",
+          "why": {
+            "en": "In an hour means after an hour passes; within an hour means no later than that span.",
+            "ru": "In an hour — через час; within an hour — не позднее этого срока."
+          }
+        },
+        {
+          "wrong": "I'll see you for tomorrow.",
+          "right": "I'll see you tomorrow.",
+          "why": {
+            "en": "For marks duration, not a specific point in time.",
+            "ru": "For обозначает длительность, а не точку времени."
+          }
+        },
+        {
+          "wrong": "Prior to the gig, we grabbed a beer.",
+          "right": "Before the gig, we grabbed a beer.",
+          "why": {
+            "en": "Prior to is too formal next to the casual gig/grabbed; match the register.",
+            "ru": "Prior to слишком формально рядом с разговорным gig/grabbed; держи единый регистр."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, time prepositions become register-sensitive and start interacting with tense. **Since + clause** introduces a starting point in the past simple while the main verb sits in the present perfect: \"Since I started working here, I have learned a lot.\" **By the time + clause** pairs with the future perfect for a future cut-off (by the time we arrive, the film will have started) or the past perfect for a past one (by the time I got home, everyone had left). Treat **till** and **until** as synonyms — until is the more formal — and in writing avoid the casual spellings til/'til. Use **in the course of** as a formal equivalent of during (in the course of our investigation, we found new evidence) and **pending** for \"awaiting the outcome of\" (pending the investigation, he is suspended). Note **upon** as the formal counterpart of on with a noun or gerund (upon arrival, please show your ID = on arriving). Exploit fronting for emphasis: after a negative or restrictive time adverbial, invert the auxiliary — \"Not until later did I realise my mistake,\" \"Only after the meeting did she speak.\" And keep a register scale for \"before\" in mind: before (neutral) → ahead of (events: ahead of the conference) → prior to / in advance of (formal).",
         "ru": "На C1 различия становятся **register-sensitive**.\n\n**`since` + clause:**\n`since` может вводить придаточное времени, где главный глагол в Present Perfect:\n- `Since I started working here, I have learned a lot.`\n\nВ первом клаузе — Past Simple (точка начала), в главном — Present Perfect (длительность до сих пор).\n\n**`by the time` + Future / Past:**\n- `By the time we arrive, the film will have started.` (Future Perfect — к моменту прибытия фильм уже начнётся.)\n- `By the time I got home, everyone had left.` (Past Perfect — когда я вернулся, все уже ушли.)\n\n**`till` vs `until`:**\nОни синонимы. `until` более формальный, `till` разговорный. В письме избегай `til` или `’til` — это неформальное написание.\n\n**`in the course of` = в ходе, в процессе:**\n- `In the course of our investigation, we found new evidence.` (В ходе расследования мы нашли новые улики.)\n- Формальный эквивалент `during`.\n\n**`at / in this juncture` (в этот момент, в данной ситуации):**\n- `At this juncture, we must pause.` — стилистически высокий регистр.\n\n**Contrasts в аргументации:**\n- `whereas` (тогда как) — контраст.\n- `while` — и время, и контраст: `While he was reading, she was cooking.` (время) vs `While I agree with some points, I disagree with others.` (контраст).\n\n**`pending` = в ожидании, до:**\n- `Pending the outcome of the investigation, he is suspended.` (В ожидании результата расследования он отстранён.)\n\n**Fronting с временными предлогами:**\n- `Not until later did I realize my mistake.` (Только позже я понял свою ошибку.) — инверсия после отрицательного наречия.\n- `Only after the meeting did she speak.` (Только после встречи она заговорила.)\n\n**Регистровая шкала синонимов \"до\":**\n- `before` — нейтрально.\n- `prior to` — формально.\n- `ahead of` — деловое, часто с событием: `ahead of the conference`.\n- `in advance of` — формально, с событием.\n\n**`upon` = по (формально, = on + gerund):**\n- `Upon arrival, please show your ID.` (По прибытии покажите документ.)\n- Эквивалент: `On arriving` или `When you arrive`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "since + past-simple clause + present-perfect main | by the time + future/past perfect | upon + noun/gerund (formal) | negative time adverbial + inversion",
+        "ru": "since + придаточное в Past Simple + главное в Present Perfect | by the time + Future/Past Perfect | upon + сущ./герундий (формально) | отрицательное наречие времени + инверсия"
       },
       "examples": [
         {
           "en": "By the time we got there, the event had started.",
-          "ru": "К тому моменту, как мы пришли, мероприятие уже началось."
+          "ru": "К тому моменту, как мы пришли, мероприятие уже началось.",
+          "note": {
+            "en": "by the time + past perfect",
+            "ru": "by the time + Past Perfect"
+          }
         },
         {
           "en": "Upon completion of the course, you will receive a certificate.",
-          "ru": "По завершении курса вы получите сертификат."
+          "ru": "По завершении курса вы получите сертификат.",
+          "note": {
+            "en": "upon = formal on",
+            "ru": "upon = формальный on"
+          }
         },
         {
           "en": "In the course of the meeting, several points were raised.",
-          "ru": "В ходе собрания было поднято несколько вопросов."
+          "ru": "В ходе собрания было поднято несколько вопросов.",
+          "note": {
+            "en": "in the course of",
+            "ru": "в ходе"
+          }
         },
         {
           "en": "Pending further review, the decision is on hold.",
-          "ru": "До дальнейшего рассмотрения решение отложено."
+          "ru": "До дальнейшего рассмотрения решение отложено.",
+          "note": {
+            "en": "pending = awaiting",
+            "ru": "pending = в ожидании"
+          }
         },
         {
           "en": "Not until 2020 did the project finally launch.",
-          "ru": "Только в 2020 году проект наконец запустили."
+          "ru": "Только в 2020 году проект наконец запустили.",
+          "note": {
+            "en": "fronting + inversion",
+            "ru": "вынос + инверсия"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Upon + noun/gerund = формальное \"по\": upon arrival, upon completion."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "By the time we arrive, the film has started.",
+          "right": "By the time we arrive, the film will have started.",
+          "why": {
+            "en": "A future cut-off after by the time needs the future perfect.",
+            "ru": "Будущая точка после by the time требует Future Perfect."
+          }
+        },
+        {
+          "wrong": "Not until later I realised my mistake.",
+          "right": "Not until later did I realise my mistake.",
+          "why": {
+            "en": "Fronting a negative time adverbial triggers subject–auxiliary inversion.",
+            "ru": "Вынос отрицательного наречия времени вперёд требует инверсии подлежащего и вспомогательного глагола."
+          }
+        },
+        {
+          "wrong": "On arrival of the documents, sign here. (in informal speech)",
+          "right": "When the documents arrive, sign here.",
+          "why": {
+            "en": "Upon/on + noun belongs to a formal register; in casual speech a when-clause fits better.",
+            "ru": "Upon/on + сущ. — формальный регистр; в разговоре уместнее придаточное с when."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, time prepositions shape the rhythm and argumentative structure of a text, and tiny semantic differences carry weight. Journalistic and academic frames replace a plain after: **in the wake of** the crisis, **against the backdrop of** rising tensions, **on the heels of** the announcement, **in the aftermath of** the storm. Mind the delicate contrasts of framing nouns: at the time of (the moment — at the time of his death), in the time of (the era — in the time of Shakespeare), by the time of (the cut-off — by the time of the vote), from the time of (the origin — from the time of his appointment). Legal and contractual English freezes certain forms — henceforth, hereafter, heretofore, thenceforth, in perpetuity, at the expiration of — and high-register idioms include at the eleventh hour, within living memory, in the fullness of time, and the colloquial in the nick of time. Keep aspectual discipline: **during** never takes a clock point (during the afternoon, not \"during 3 pm\"). Deploy elegant hedging with as early as, as late as, no later than, no earlier than, and parallel frames like from the outset to the conclusion or from dawn till dusk. The overriding skill is register matching: never let a formal preposition collide with a colloquial verb — \"Prior to the gig, we grabbed a beer\" jars; choose either \"Before the gig …\" or \"Prior to the concert, we had a drink.\"",
         "ru": "На C2 временные предлоги — часть **ритма** и **аргументативной структуры** текста.\n\n**Stylistic inversions:**\n- `In the wake of the crisis, reforms followed.` (В результате / после кризиса последовали реформы.)\n- `Against the backdrop of rising tensions, negotiations resumed.` (На фоне растущей напряжённости переговоры возобновились.)\n\nЭти обороты заменяют `after` в журналистском и академическом стиле.\n\n**Delicate semantic differences:**\n- `at the time of` — точечно, в момент: `at the time of his death`.\n- `in the time of` — в эпоху: `in the time of Shakespeare`.\n- `by the time of` — к моменту: `by the time of the vote`.\n- `from the time of` — с момента: `from the time of his appointment`.\n\nВыбор предлога меняет temporal scope.\n\n**Legal / academic frozen phrases:**\n- `henceforth` (отныне), `hereafter` (впредь), `heretofore` (ранее, до сих пор), `thenceforth` (с того момента).\n- Используются в юридических документах. В академическом письме допустимо, но редко.\n\n**`within living memory` (на памяти ныне живущих):**\n- `This is the worst storm within living memory.`\n\n**`in perpetuity` (навечно, юридически):**\n- `The rights are granted in perpetuity.`\n\n**`at the eleventh hour` (в последний момент):**\n- `The deal was saved at the eleventh hour.`\n\n**`in the nick of time` (в самый последний момент — разговорно):**\n- `He arrived in the nick of time.`\n\n**Nuanced aspects:**\n- `during` обычно не ставят с точкой времени. ✗ `during 3 pm`. Только с периодом: `during the afternoon`.\n- `in` с годами переходит в `of` в academic: `the events of 1989` (вместо `in 1989` в некоторых контекстах — `of` маркер тематической связи).\n\n**Historic present + temporal preposition:**\nВ исторических / журналистских текстах:\n- `In 1815, Napoleon is defeated at Waterloo.` (В 1815 году Наполеон терпит поражение при Ватерлоо.) — повествовательный present.\n\n**Regional / dialectal:**\n- `of a Sunday` (BrE archaic) = on Sundays (по воскресеньям).\n- `Sundays` (AmE) = every Sunday.\n\n**Elegant hedging:**\n- `as early as` (уже): `as early as 1920`.\n- `as late as` (ещё): `as late as yesterday`.\n- `no later than` (не позднее): `no later than Friday`.\n- `no earlier than` (не раньше): `no earlier than noon`.\n\n**Параллельные временные структуры:**\n- `From the outset…to the conclusion` (с начала до конца).\n- `From dawn till dusk` (от рассвета до заката) — идиома.\n\n**Register notes.** Смешение высокого и низкого регистров в одном предложении — ошибка стиля:\n- ✗ `Prior to the gig, we grabbed a beer.` (prior to слишком формально для gig/grabbed.)\n- ✓ `Before the gig, we grabbed a beer.` ИЛИ ✓ `Prior to the concert, we had a drink.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "in the wake of / against the backdrop of + noun (journalistic) | at/in/by/from the time of + noun (scope contrasts) | henceforth / in perpetuity (legal) | as early/late as, no later than (hedging)",
+        "ru": "in the wake of / against the backdrop of + сущ. (журналистика) | at/in/by/from the time of + сущ. (контрасты охвата) | henceforth / in perpetuity (юр.) | as early/late as, no later than (хеджирование)"
       },
       "examples": [
         {
           "en": "In the wake of the reform, productivity surged.",
-          "ru": "После реформы производительность резко выросла."
+          "ru": "После реформы производительность резко выросла.",
+          "note": {
+            "en": "journalistic frame",
+            "ru": "журналистский оборот"
+          }
         },
         {
           "en": "The rights are granted in perpetuity.",
-          "ru": "Права предоставляются навечно."
+          "ru": "Права предоставляются навечно.",
+          "note": {
+            "en": "in perpetuity (legal)",
+            "ru": "in perpetuity (юр.)"
+          }
         },
         {
           "en": "The treaty was signed at the eleventh hour.",
-          "ru": "Договор был подписан в самый последний момент."
+          "ru": "Договор был подписан в самый последний момент.",
+          "note": {
+            "en": "at the eleventh hour",
+            "ru": "в последний момент"
+          }
         },
         {
           "en": "Henceforth, all submissions must be electronic.",
-          "ru": "Отныне все заявки должны быть электронными."
+          "ru": "Отныне все заявки должны быть электронными.",
+          "note": {
+            "en": "henceforth (legal)",
+            "ru": "henceforth (юр.)"
+          }
         },
         {
           "en": "As early as 1910, the concept had been proposed.",
-          "ru": "Уже в 1910 году концепция была предложена."
+          "ru": "Уже в 1910 году концепция была предложена.",
+          "note": {
+            "en": "as early as = hedging",
+            "ru": "as early as = хеджирование"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Register matching: prior to / in the wake of — formal; before / after — neutral. Не смешивай."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The reform was finalised during 3 pm.",
+          "right": "The reform was finalised at 3 pm.",
+          "why": {
+            "en": "During takes a period, never a clock point; a clock point takes at.",
+            "ru": "During сочетается с периодом, а не с точкой времени; точка требует at."
+          }
+        },
+        {
+          "wrong": "Prior to the gig, we grabbed a beer.",
+          "right": "Before the gig, we grabbed a beer.",
+          "why": {
+            "en": "Mixing a formal preposition with a colloquial verb breaks register; keep the level consistent.",
+            "ru": "Смешение формального предлога с разговорным глаголом ломает регистр; держи уровень единым."
+          }
+        },
+        {
+          "wrong": "In the time of his death, he was abroad.",
+          "right": "At the time of his death, he was abroad.",
+          "why": {
+            "en": "At the time of marks the moment; in the time of marks an era.",
+            "ru": "At the time of — момент; in the time of — эпоха."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "at-in-on-time",
+    "prepositions-in-phrases",
+    "prepositions-of-movement",
+    "adverbs-of-frequency"
+  ],
+  "crossTopic": [
+    "present-perfect-simple",
+    "past-simple",
+    "present-simple",
+    "future-simple-will"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "at = a point",
+      "on = a day",
+      "in = a period",
+      "for/since = duration vs start",
+      "by/until = deadline vs up to"
+    ]
+  }
 };

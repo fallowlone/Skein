@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "countable-uncountable-nouns",
   "title": {
-    "en": "",
+    "en": "Countable and Uncountable Nouns",
     "ru": "Countable Uncountable Nouns"
   },
   "cefr": "A1",
@@ -17,32 +17,46 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "nouns",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "English nouns split into two groups. Countable nouns are separate things you can count: one apple, two apples, three apples. In the singular they take a or an (a book, an egg), and they form a plural with -s (books, cars). Uncountable nouns are substances, liquids, or general ideas you cannot count one by one: bread, water, milk, sugar, rice, money, music, time, help. They have no plural -s and never take a or an: say water, not a water or waters. To talk about an amount of an uncountable noun, use some: some bread, some water. A quick test: if you can naturally put a number straight in front of the word (two sandwiches), it is countable; if you cannot (you can't say two breads), it is uncountable.",
         "ru": "Слова в английском делятся на две группы: те, что можно посчитать, и те, что нельзя.\n\n**Исчисляемые** (countable) — предметы, которые можно считать: один, два, три.\n- `an apple` (яблоко), `two apples` (два яблока)\n- `a book`, `three books`\n- `a car`, `five cars`\n\nТакие слова имеют форму множественного числа с **-s**, и перед ними в единственном числе стоит `a` или `an`.\n\n**Неисчисляемые** (uncountable) — вещества, жидкости, общие понятия. Их нельзя посчитать по штукам.\n- `bread` (хлеб), `water` (вода), `milk` (молоко)\n- `sugar` (сахар), `rice` (рис), `money` (деньги)\n\nТакие слова **не имеют множественного числа** и не используются с `a` / `an`. Говори `bread`, а не `a bread`. Говори `water`, а не `waters`.\n\n**Как запомнить:**\n- Представь, можно ли предмет взять в руки по одному? Да — исчисляемое. Нет (жидкость, масса) — неисчисляемое.\n- `sandwich` можно посчитать → `a sandwich`, `two sandwiches`.\n- `bread` нельзя посчитать буханками без слова «буханка» → просто `some bread`.\n\nВместо числа используй слово `some` (немного) для неисчисляемых: `some bread`, `some water`.\n\n**Простые часто встречающиеся неисчисляемые:** `bread`, `water`, `milk`, `coffee`, `tea`, `sugar`, `salt`, `rice`, `meat`, `cheese`, `butter`, `money`, `music`, `time`, `air`, `help`. Все они в обычной речи идут без `-s` и без `a`. Запомни их и не пытайся сосчитать штуками — в английском это невозможно без специальных слов вроде `a cup of`, `a piece of`.\n\n**Проверочный вопрос:** можно ли сказать «одна, две, три» перед этим словом по-русски так же естественно, как по-английски? Если можно — слово, скорее всего, исчисляемое. Если нет (вода, хлеб, время) — неисчисляемое."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "a / an + singular countable; countable + -s for plural; some + uncountable",
+        "ru": "a / an + исчисляемое в ед. ч.; исчисляемое + -s во мн. ч.; some + неисчисляемое"
       },
       "examples": [
         {
           "en": "I eat an apple every day.",
-          "ru": "Я ем яблоко каждый день."
+          "ru": "Я ем яблоко каждый день.",
+          "note": {
+            "en": "countable, a/an",
+            "ru": "исчисляемое, a/an"
+          }
         },
         {
           "en": "She wants some water.",
-          "ru": "Она хочет немного воды."
+          "ru": "Она хочет немного воды.",
+          "note": {
+            "en": "uncountable, some",
+            "ru": "неисчисляемое, some"
+          }
         },
         {
           "en": "We have three sandwiches.",
-          "ru": "У нас три сэндвича."
+          "ru": "У нас три сэндвича.",
+          "note": {
+            "en": "plural -s",
+            "ru": "мн. ч. -s"
+          }
         },
         {
           "en": "He bought some bread.",
@@ -56,30 +70,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Если можно посчитать по штукам — ставь a/an и добавляй -s; если нет — используй some."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I want a bread.",
+          "right": "I want some bread.",
+          "why": {
+            "en": "Bread is uncountable, so it takes no a; use some for an amount.",
+            "ru": "Bread неисчисляемое, поэтому без a; для количества используй some."
+          }
+        },
+        {
+          "wrong": "She drinks two waters.",
+          "right": "She drinks two glasses of water.",
+          "why": {
+            "en": "Uncountable nouns have no plural -s; count them with a container word.",
+            "ru": "У неисчисляемых нет -s во мн. ч.; считай их через слово-контейнер."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "To talk about amounts of uncountable nouns more precisely, use a container or measure word: number + container + of + uncountable noun. Examples: a glass of water, a cup of coffee, a bottle of milk, a piece of bread, a slice of cheese, a kilo of sugar, a bar of chocolate. In the plural, only the container changes, not the substance: two cups of tea (not two teas), three bottles of water. Use some in positive statements and polite offers (I want some tea; Would you like some coffee?) and any in questions and negatives (Do you have any milk? There isn't any sugar). Both some and any work with plural countables (some apples) and with uncountables (some bread). Do not add -s to an uncountable word like breads or waters.",
         "ru": "Теперь учимся говорить о количестве точнее, используя **контейнеры и меры**. Это позволяет «считать» неисчисляемые вещи.\n\n**Формула:** `число + контейнер + of + неисчисляемое`\n- `a glass of water` (стакан воды)\n- `a cup of coffee` (чашка кофе)\n- `a bottle of milk` (бутылка молока)\n- `a piece of bread` (кусок хлеба)\n- `a slice of cheese` (ломтик сыра)\n- `a kilo of sugar` (килограмм сахара)\n- `a bar of chocolate` (плитка шоколада)\n\nВо множественном числе меняется только контейнер, а не сам продукт:\n- `two cups of tea` (две чашки чая), не `two teas`\n- `three bottles of water` (три бутылки воды)\n\n**Some и any:**\n- `some` используется в утверждениях и вежливых просьбах: `I want some tea.`\n- `any` — в вопросах и отрицаниях: `Do you have any milk?` `There isn't any sugar.`\n\nОба работают и с исчисляемыми во множественном числе (`some apples`), и с неисчисляемыми (`some bread`).\n\n**Частая ошибка:** попытаться добавить **-s** к неисчисляемому слову: `breads`, `waters`. Так нельзя в обычной речи (есть исключения в C2).\n\n**Полезные комбинации с контейнерами:**\n- `a loaf of bread` (буханка хлеба)\n- `a bag of rice` (пакет риса)\n- `a carton of juice` (пакет сока)\n- `a tube of toothpaste` (тюбик зубной пасты)\n- `a bar of soap` (кусок мыла)\n- `a slice of cake` (кусок торта)\n- `a spoonful of sugar` (ложка сахара)\n\nВыучи эти блоки как готовые фразы, чтобы в магазине или кафе не задумываться над конструкцией.\n\n**Ещё про `some` и `any`:**\n- `some` используется, когда ты уверен, что вещь есть: `I have some money.`\n- `any` — в вопросах и отрицаниях, когда количество неизвестно или нулевое: `Do you have any money?`, `I don't have any money.`\n- В вежливых предложениях и просьбах используется `some`, а не `any`: `Would you like some coffee?`\n- Оба слова работают и с исчисляемыми во множественном числе, и с неисчисляемыми — это их сильная сторона."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "number + container + of + uncountable; some / any + (uncountable or plural countable)",
+        "ru": "число + контейнер + of + неисчисляемое; some / any + (неисчисляемое или мн. ч. исчисляемого)"
       },
       "examples": [
         {
           "en": "Can I have a glass of water?",
-          "ru": "Можно мне стакан воды?"
+          "ru": "Можно мне стакан воды?",
+          "note": {
+            "en": "container: glass of",
+            "ru": "контейнер: glass of"
+          }
         },
         {
           "en": "She drinks three cups of coffee a day.",
-          "ru": "Она выпивает три чашки кофе в день."
+          "ru": "Она выпивает три чашки кофе в день.",
+          "note": {
+            "en": "plural container",
+            "ru": "контейнер во мн. ч."
+          }
         },
         {
           "en": "Do you have any bread?",
-          "ru": "У тебя есть хлеб?"
+          "ru": "У тебя есть хлеб?",
+          "note": {
+            "en": "any in question",
+            "ru": "any в вопросе"
+          }
         },
         {
           "en": "I bought a bottle of olive oil.",
@@ -93,26 +137,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Чтобы посчитать неисчисляемое, добавь контейнер: a piece of, a cup of, a bottle of."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She drinks three coffees a day.",
+          "right": "She drinks three cups of coffee a day.",
+          "why": {
+            "en": "Count uncountable coffee with a container; change the container, not the noun.",
+            "ru": "Считай неисчисляемое coffee через контейнер; меняй контейнер, а не само слово."
+          }
+        },
+        {
+          "wrong": "Do you have some bread?",
+          "right": "Do you have any bread?",
+          "why": {
+            "en": "Use any (not some) in a neutral question.",
+            "ru": "В нейтральном вопросе используй any, а не some."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Match the quantifier to the noun type. Use many with countables (many books) and much with uncountables (much time, much money); much sounds formal in positive sentences, where a lot of is more natural. A lot of / lots of work with both. Use a few with countables (a few apples) and a little with uncountables (a little sugar). Note the difference in feeling: a few / a little means some, enough (positive), while few / little means hardly any, not enough (negative). Learn the tricky uncountables that look countable in other languages: information, advice, news (always singular: the news is good), furniture, luggage, equipment, homework, work, money, research, knowledge, progress. Count them with a piece of: a piece of advice, a piece of information. Some nouns have two natures by meaning: business (in general) vs a business (a company), paper (material) vs a paper (a newspaper or article), chicken (the meat) vs a chicken (the bird). When in doubt, a lot of or some is a safe choice for both types.",
         "ru": "На B1 нужно различать квантификаторы и выучить неочевидные неисчисляемые слова.\n\n**Much vs many vs a lot of:**\n- `many` — только с исчисляемыми: `many books`, `many friends`.\n- `much` — только с неисчисляемыми: `much time`, `much money`. Звучит формально; в утверждениях чаще `a lot of`.\n- `a lot of` / `lots of` — универсально, подходит обоим: `a lot of books`, `a lot of time`.\n- `a little` — неисчисляемое (немного): `a little sugar`.\n- `a few` — исчисляемое (несколько): `a few apples`.\n\n**Неочевидные неисчисляемые (важно запомнить):**\n- `information` (информация) — `a piece of information`\n- `advice` (совет) — `a piece of advice`\n- `news` (новости) — всегда ед.ч.: `The news is good.`\n- `furniture` (мебель), `luggage` (багаж), `equipment` (оборудование)\n- `homework` (домашнее задание), `work` (работа как дело)\n- `hair` (волосы как масса, но `a hair` — один волос)\n- `money`, `research`, `knowledge`, `progress`\n\n**Двойная природа:**\n- `business` (бизнес в целом, неисч.) / `a business` (компания, исч.)\n- `paper` (бумага, неисч.) / `a paper` (газета или статья, исч.)\n- `chicken` (курятина, неисч.) / `a chicken` (курица как птица, исч.)\n\n**Типичная ошибка:** `many informations`, `an advice`. Правильно: `a lot of information`, `a piece of advice`.\n\n**Маленький тест:** если хочешь сказать «один совет», вспомни, что `advice` неисчисляемое. Правильная форма — `a piece of advice`. То же с `a piece of news`, `a piece of furniture`, `a piece of information`, `a piece of luggage`. Слово `piece` — универсальный помощник, когда надо «посчитать» неисчисляемое.\n\n**Little vs a little, few vs a few:**\n- `a little / a few` = немного (положительный оттенок, достаточно)\n- `little / few` = мало (отрицательный оттенок, не хватает)\n- `I have a little time.` (у меня есть немного времени) vs `I have little time.` (у меня мало времени, почти нет).\n\n**Важные неочевидные неисчисляемые:**\n- `traffic` (движение на дороге): `There is a lot of traffic.`\n- `weather` (погода): `The weather is nice.` — не `a weather`.\n- `scenery` (пейзаж, собирательно): `beautiful scenery`.\n- `accommodation` (жильё, BrE): `We found accommodation in the city.`\n- `luck` (удача): `Wish me luck!`\n\nИзбегай говорить `a weather`, `a traffic`, `a homework` — все эти слова фиксированно неисчисляемые в английском, даже если в русском кажется логичным поставить «одна» или «один».\n\n**Практический совет:** когда сомневаешься, попробуй сказать фразу с `a lot of` или `some` — они работают и с исчисляемыми, и с неисчисляемыми. Это безопасный выбор в большинстве случаев и поможет тебе звучать естественно в разговоре."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "many / a few + plural countable; much / a little + uncountable; a lot of + both; a piece of + uncountable",
+        "ru": "many / a few + мн. ч. исчисляемого; much / a little + неисчисляемое; a lot of + оба; a piece of + неисчисляемое"
       },
       "examples": [
         {
           "en": "I don't have much time today.",
-          "ru": "Сегодня у меня мало времени."
+          "ru": "Сегодня у меня мало времени.",
+          "note": {
+            "en": "much + uncountable",
+            "ru": "much + неисчисляемое"
+          }
         },
         {
           "en": "She gave me some good advice.",
-          "ru": "Она дала мне хороший совет."
+          "ru": "Она дала мне хороший совет.",
+          "note": {
+            "en": "advice = uncountable",
+            "ru": "advice = неисчисляемое"
+          }
         },
         {
           "en": "We bought new furniture for the flat.",
@@ -120,7 +190,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "How much luggage do you have?",
-          "ru": "Сколько у тебя багажа?"
+          "ru": "Сколько у тебя багажа?",
+          "note": {
+            "en": "much luggage",
+            "ru": "much luggage"
+          }
         },
         {
           "en": "He has a lot of knowledge about history.",
@@ -130,30 +204,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Information, advice, news, furniture — всегда неисчисляемые; используй piece of или a lot of."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She gave me many useful informations.",
+          "right": "She gave me a lot of useful information.",
+          "why": {
+            "en": "Information is uncountable: no plural -s and use much / a lot of, not many.",
+            "ru": "Information неисчисляемое: без -s, и используй much / a lot of, а не many."
+          }
+        },
+        {
+          "wrong": "Can I ask you an advice?",
+          "right": "Can I ask you for a piece of advice?",
+          "why": {
+            "en": "Advice is uncountable; count a single one with a piece of.",
+            "ru": "Advice неисчисляемое; один совет считается через a piece of."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, watch for regional differences and agreement. In British English collective bodies often take plural agreement (The staff are happy; the team are), while American English prefers singular (The staff is happy). Data is plural in formal science (the data are) but singular in business and everyday AmE (the data is). Compare sport (BrE) with sports (AmE), and maths (BrE) with math (AmE) — both uncountable. Some nouns are fixed plural: police and cattle always take are (The police are investigating). Some have one form for singular and plural: species, series, means (one species, two species). Many nouns switch between countable and uncountable depending on meaning: experience (general skill) vs an experience (one event), room (space) vs a room (a bedroom), glass (material) vs a glass (a drinking glass), iron (the metal) vs an iron (the appliance), time (in general) vs a time (an occasion), light (illumination) vs a light (a lamp). Read the meaning, then choose the form.",
         "ru": "На B2 появляются региональные различия и нюансы согласования.\n\n**Британский vs американский английский:**\n- `staff` (персонал) — в BrE часто множественное согласование: `The staff are happy.` В AmE чаще ед.: `The staff is happy.`\n- `data` — в формальной науке множественное (`data are`), в бизнесе и AmE часто единственное (`data is`).\n- `sport` (BrE) / `sports` (AmE): `He likes sport.` vs `He likes sports.`\n- `maths` (BrE) / `math` (AmE) — оба неисчисляемые.\n- `accommodation` (BrE, неисч.) / `accommodations` (AmE, мн.) — «жильё».\n\n**Ловушки:**\n- `police` всегда множественное: `The police are investigating.`\n- `cattle` множественное: `The cattle are grazing.`\n- `means` (средство/средства) — без изменения: `This means is effective.` или `These means are effective.`\n- `species`, `series` — одна форма для ед. и мн.: `one species / two species`.\n\n**Тонкости с абстрактами:**\n- `experience` (опыт в целом, неисч.) / `an experience` (одно событие, исч.): `I have a lot of experience.` vs `I had an interesting experience.`\n- `room` (пространство, неисч.) / `a room` (комната, исч.): `Is there room for me?` vs `I booked a room.`\n- `glass` (стекло, неисч.) / `a glass` (стакан, исч.).\n- `iron` (железо) / `an iron` (утюг).\n\nУмение переключаться между исчисляемой и неисчисляемой трактовкой — признак продвинутого уровня. Выбирай значение по контексту.\n\n**Ещё пары с двумя значениями:**\n- `work` (работа как деятельность, неисч.) / `a work` (произведение искусства, исч.): `a work of art`, `the works of Shakespeare`.\n- `time` (время, неисч.) / `a time` (раз, случай, исч.): `three times`, `have a good time`.\n- `light` (свет, неисч.) / `a light` (лампа, источник света, исч.).\n- `hair` (волосы на голове, неисч., собирательно) / `a hair` (один волос, исч.): `I found a hair in my soup.`\n\nНаучиться различать эти два смысла приходит с чтением — особенно помогает художественная литература и новости, где такие переходы встречаются постоянно.\n\n**Как проверить себя:** произнеси предложение вслух. Если добавление `-s` или `a` звучит странно или меняет смысл, ты, скорее всего, наткнулся на двойную природу слова. Остановись, подумай, в каком смысле ты его используешь — общем или конкретном — и выбери правильную форму."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "collective + are/is (BrE/AmE); same-meaning noun, two forms: uncountable (mass) vs a + countable (instance)",
+        "ru": "собирательное + are/is (BrE/AmE); одно слово, две формы: неисчисляемое (масса) vs a + исчисляемое (экземпляр)"
       },
       "examples": [
         {
           "en": "The staff are meeting tomorrow. (BrE)",
-          "ru": "Сотрудники встречаются завтра."
+          "ru": "Сотрудники встречаются завтра.",
+          "note": {
+            "en": "BrE plural agreement",
+            "ru": "BrE мн. согласование"
+          }
         },
         {
           "en": "The data is surprising. (AmE, casual)",
-          "ru": "Данные удивительные."
+          "ru": "Данные удивительные.",
+          "note": {
+            "en": "AmE: data is",
+            "ru": "AmE: data is"
+          }
         },
         {
           "en": "Could you pass me a glass?",
-          "ru": "Можешь передать мне стакан?"
+          "ru": "Можешь передать мне стакан?",
+          "note": {
+            "en": "a glass = countable",
+            "ru": "a glass = исчисляемое"
+          }
         },
         {
           "en": "I had a strange experience yesterday.",
@@ -167,17 +271,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Слова вроде experience, room, glass могут быть и исчисляемыми, и неисчисляемыми — смотри контекст."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I have a lot of experiences in marketing.",
+          "right": "I have a lot of experience in marketing.",
+          "why": {
+            "en": "Experience as accumulated skill is uncountable; an experience is a single event.",
+            "ru": "Experience как накопленный опыт неисчисляемо; an experience — отдельное событие."
+          }
+        },
+        {
+          "wrong": "The police is investigating the case.",
+          "right": "The police are investigating the case.",
+          "why": {
+            "en": "Police takes plural agreement and a plural verb.",
+            "ru": "Police согласуется во мн. ч. и берёт глагол во мн. ч."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "Academic writing leans on abstract uncountables: research, evidence, knowledge, understanding, awareness, feedback, progress, insight, literature (in the sense of published scholarship). Say The research suggests... (not researches) and The evidence is compelling; count single units with a piece of evidence or several pieces of evidence. Note that analysis is countable (analyses), but data and information are not. Keep the prescriptive distinction between fewer and less: fewer with countables (fewer students, fewer mistakes), less with uncountables (less time, less money) — the shop sign 10 items or less is technically wrong (fewer). Parallel to this, use a number of with countables and an amount of with uncountables (a large amount of water, a number of students). Useful academic frames let you quantify abstractions cleanly: a body of research, a wealth of information, a great deal of attention, considerable progress. And remember the polarity of little / a little: little evidence means almost none, a little evidence means some, but a small amount.",
         "ru": "На C1 важна работа с **абстрактными неисчисляемыми** в академическом стиле. Это слова, без которых не обойтись в эссе, отчётах, научных текстах.\n\n**Академические неисчисляемые:**\n- `research` (исследование/я): `The research suggests...` — не `researches`.\n- `evidence` (доказательство): `The evidence is compelling.` Для штучного использования — `a piece of evidence`, `several pieces of evidence`.\n- `knowledge`, `understanding`, `awareness`, `feedback`\n- `progress`, `insight` (но `insights` допускается как множественное от «озарений»)\n- `literature` (в смысле «научная литература»): `the literature on climate change`.\n- `analysis` — исчисляемое, но `data`, `information` — нет.\n\n**Fewer vs less:** предписывающая норма требует различать.\n- `fewer` с исчисляемыми: `fewer students`, `fewer mistakes`.\n- `less` с неисчисляемыми: `less time`, `less money`.\n- В магазинах часто видно `10 items or less` — технически неправильно (`fewer`), но широко принято.\n- В формальных текстах обязательно соблюдай различие.\n\n**Amount vs number:**\n- `amount of` — неисч.: `a large amount of water`.\n- `number of` — исч.: `a number of students`.\n- Путать их — типичная ошибка.\n\n**Тонкая работа с обобщениями:**\n- `Research has shown that...` — акад. формулировка.\n- `Evidence suggests...` — без артикля, абстрактно.\n- Сравни: `There is little evidence for this claim.` (мало) vs `There is a little evidence.` (небольшое количество, но есть).\n\n`Little` / `a little` отличаются оттенком: `little` с негативом (почти нет), `a little` — позитивно (немного, но есть).\n\n**Ещё полезные академические конструкции:**\n- `a body of research` (корпус исследований): `a substantial body of evidence`.\n- `a wealth of information` (обилие сведений).\n- `a great deal of attention` (большое внимание).\n- `considerable progress` (значительный прогресс) — без артикля.\n\nВ научных статьях эти формулы появляются часто; выучи их как готовые блоки. Они позволяют говорить о количестве абстрактных понятий, не нарушая правил неисчисляемости.\n\n**Сложные случаи с `experience` в академическом письме:**\n- `evidence of experience` — общее: свидетельство опыта как такового.\n- `evidence of experiences` — конкретные переживания, множественное.\n- `prior experience in the field` — абстрактный, общий опыт в области.\n\nЧасто на экзаменах предлагают выбрать между двумя вариантами — определить, говорится ли об опыте как о качестве или как о серии событий. Это тонкость продвинутого C1."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "fewer + countable / less + uncountable; a number of + countable / an amount of + uncountable; a body / wealth / great deal of + uncountable",
+        "ru": "fewer + исчисляемое / less + неисчисляемое; a number of + исчисляемое / an amount of + неисчисляемое; a body / wealth / great deal of + неисчисляемое"
       },
       "examples": [
         {
@@ -186,15 +308,27 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "There is little evidence to support the claim.",
-          "ru": "Доказательств в поддержку утверждения мало."
+          "ru": "Доказательств в поддержку утверждения мало.",
+          "note": {
+            "en": "little = almost none",
+            "ru": "little = почти нет"
+          }
         },
         {
           "en": "Fewer students enrolled this year.",
-          "ru": "В этом году записалось меньше студентов."
+          "ru": "В этом году записалось меньше студентов.",
+          "note": {
+            "en": "fewer + countable",
+            "ru": "fewer + исчисляемое"
+          }
         },
         {
           "en": "A large amount of data was collected.",
-          "ru": "Был собран большой объём данных."
+          "ru": "Был собран большой объём данных.",
+          "note": {
+            "en": "amount of + data",
+            "ru": "amount of + data"
+          }
         },
         {
           "en": "The feedback from participants was valuable.",
@@ -204,17 +338,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В академическом стиле: research, evidence, knowledge — всегда неисчисляемые."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The researches show a clear trend.",
+          "right": "The research shows a clear trend.",
+          "why": {
+            "en": "Research is uncountable: no plural, singular verb shows.",
+            "ru": "Research неисчисляемо: без мн. ч., глагол в ед. ч. shows."
+          }
+        },
+        {
+          "wrong": "There were less students this year.",
+          "right": "There were fewer students this year.",
+          "why": {
+            "en": "Students are countable, so use fewer, not less.",
+            "ru": "Students исчисляемы, поэтому fewer, а не less."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, the interesting move is the controlled shift of a noun across the countable / uncountable boundary for nuance. A normally uncountable noun becomes countable to mean a portion, a type, or an instance: Two coffees, please (two servings); French cheeses are famous (varieties); the wines of Bordeaux (kinds); three sugars (lumps or spoonfuls). This is a stylistic, often conversational device; in formal or scientific prose prefer the precise form (three teaspoons of sugar). Abstract nouns can take an article when they denote a concrete instance: kindness vs an act of kindness or a kindness; beauty vs a beauty or the beauties of nature; freedom vs the freedoms guaranteed by law; a truth (universal truths), a death (several deaths in the accident). The general-to-specific switch changes meaning: I love music (music in general) vs These are his best works (individual pieces). Crucially, some words stay rigidly uncountable: researches, evidences, informations are wrong at every level — but analyses, hypotheses, theories are countable. Feel where the semantic core is: mass/abstraction or instance. The final check: can one / two / three stand directly before the word here? If yes, it is countable in this use; if not, reach for a partitive (a piece of, a cup of) or rephrase without a number.",
         "ru": "На уровне C2 интересен **переход существительных** между исчисляемой и неисчисляемой трактовкой и его смысловые оттенки.\n\n**Сорт / порция / разновидность:**\n- `Two coffees, please.` — две порции кофе в кафе.\n- `French cheeses are famous.` — разные сорта сыра.\n- `The wines of Bordeaux are exceptional.` — виды вин.\n- `Three sugars, please.` — три ложки/кубика сахара.\n\nЭто стилистический приём; в научной и формальной прозе его лучше избегать в пользу более точных формулировок (`three teaspoons of sugar`).\n\n**Абстрактные существительные с артиклем:**\n- `kindness` (неисч.) → `an act of kindness` или `a kindness` (доброе дело).\n- `beauty` (неисч.) → `a beauty` (красавица/красотка) или `the beauties of nature`.\n- `freedom` → `the freedoms guaranteed by law` (конкретные свободы).\n- `fear` → `fears about the economy` (конкретные опасения).\n\nПереход от абстрактного к конкретному меняет смысл. `I love music.` — музыка вообще. `He composed beautiful music.` — всё ещё абстрактно. `These are his best works.` — отдельные произведения.\n\n**Специализированные сдвиги:**\n- `a coffee` = a coffee shop / a cup of coffee (от контекста).\n- `a beer` = порция, а не марка (в отличие от `a Heineken`).\n- `a truth` (истина как утверждение): `universal truths`.\n- `a death` — конкретный случай смерти: `several deaths in the accident`.\n\n**Регистр:** использование `researches`, `evidences`, `informations` — ошибка, даже если логически хочется. Эти слова фиксированно неисчисляемые. Но `analyses`, `hypotheses`, `theories` — исчисляемые.\n\nНа C2 важно чувствовать, где идёт смысловое ядро: масса/абстракция или экземпляр. Этому нельзя научить правилом — только чтением и слушанием большого объёма естественного английского.\n\n**Финальный ориентир:** в сомнениях проверь, можно ли перед словом поставить `one / two / three` напрямую. Если да — слово в этом контексте исчисляемое. Если неестественно — неисчисляемое, и тогда ищи партитив (`a piece of`, `a cup of`, `a bottle of`) или переформулируй в общее утверждение без числа."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "uncountable -> a / plural for portion / type / instance; abstract + a / the for a concrete case",
+        "ru": "неисчисляемое -> a / мн. ч. для порции / сорта / экземпляра; абстрактное + a / the для конкретного случая"
       },
       "examples": [
         {
@@ -223,11 +375,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We ordered two teas and a coffee.",
-          "ru": "Мы заказали два чая и кофе."
+          "ru": "Мы заказали два чая и кофе.",
+          "note": {
+            "en": "portions: teas/coffee",
+            "ru": "порции: teas/coffee"
+          }
         },
         {
           "en": "Her kindnesses were remembered for years.",
-          "ru": "Её добрые поступки помнили годами."
+          "ru": "Её добрые поступки помнили годами.",
+          "note": {
+            "en": "instances of kindness",
+            "ru": "экземпляры kindness"
+          }
         },
         {
           "en": "There have been three deaths from the disease.",
@@ -235,15 +395,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The beauties of the Alps are breathtaking.",
-          "ru": "Красоты Альп захватывают дух."
+          "ru": "Красоты Альп захватывают дух.",
+          "note": {
+            "en": "the beauties = specific",
+            "ru": "the beauties = конкретные"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Никогда не говори informations или evidences — даже на C2 эти слова жёстко неисчисляемые."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The report contains many evidences.",
+          "right": "The report contains a great deal of evidence.",
+          "why": {
+            "en": "Evidence stays uncountable even at C2; never form evidences.",
+            "ru": "Evidence остаётся неисчисляемым даже на C2; форма evidences недопустима."
+          }
+        },
+        {
+          "wrong": "He shared several useful informations.",
+          "right": "He shared several useful pieces of information.",
+          "why": {
+            "en": "Information has no plural; count units with pieces of.",
+            "ru": "У information нет мн. ч.; единицы считаются через pieces of."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "singular-plural-nouns",
+    "indefinite-article",
+    "abstract-nouns",
+    "collective-nouns"
+  ],
+  "crossTopic": [
+    "there-is-there-are",
+    "indefinite-pronouns",
+    "comparative-adjectives",
+    "definite-article"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Countable (a / -s / number)",
+      "Uncountable (some / no -s / no a)"
+    ]
+  }
 };

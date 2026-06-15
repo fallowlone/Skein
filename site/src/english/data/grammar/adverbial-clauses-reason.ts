@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "adverbial-clauses-reason",
   "title": {
-    "en": "",
+    "en": "Adverbial Clauses of Reason",
     "ru": "Adverbial Clauses Reason"
   },
   "cefr": "A2",
@@ -16,19 +16,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conjunctions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "branch",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "An adverbial clause of reason answers the question \"why?\" — it gives the reason for what happens in the main clause. The most common linker is **because**. It joins two clauses: the main clause (the result) and the reason clause: `I stayed home because I was sick.`\n\n**Word order.** The reason can come after or before the main clause:\n- After: `I didn't come because it was raining.` (no comma)\n- Before: `Because it was raining, I didn't come.` (use a comma)\n\nPutting the reason first gives it more emphasis.\n\n**because vs because of.** This is the key trap. Use **because** + a *clause* (with its own subject and verb), but **because of** + a *noun*:\n- because + clause: `because it was cold`\n- because of + noun: `because of the cold weather`\n\nSo `I stayed home because I was tired` and `I stayed home because of my tiredness` are both correct, but `because of I was tired` is wrong — `because of` cannot be followed by a clause.\n\nIn speaking, a short answer with just the reason clause is natural: `Why are you late? — Because my car broke down.` In formal writing, give a full sentence.",
         "ru": "**Придаточные причины** отвечают на вопрос «почему?». Они объясняют причину того, что происходит в главном предложении.\n\nСамый частый союз — `because` (потому что). Он соединяет два предложения: главное (результат) и придаточное (причина).\n\n- `I stayed home because I was sick.` (Я остался дома, потому что был болен.)\n- `She's happy because she passed the test.` (Она счастлива, потому что сдала тест.)\n\n**Порядок частей.** Можно поставить причину до или после главного:\n- После: `I didn't come because it was raining.` (без запятой)\n- До: `Because it was raining, I didn't come.` (с запятой)\n\nВторой вариант подчёркивает причину.\n\n**Самая частая ошибка русскоговорящего** — смешивать `because` и `because of`.\n- `because` + **предложение** (с подлежащим и глаголом): `because it was cold`.\n- `because of` + **существительное**: `because of the cold weather`.\n\nСравни:\n- ✓ `I stayed home because I was tired.`\n- ✓ `I stayed home because of my tiredness.`\n- ✗ `I stayed home because of I was tired.` (неправильно)\n\n**Короткие ответы с `because`.** В разговоре можно ответить одним придаточным: `Why are you late? — Because my car broke down.` В письменной речи формально нужен полный ответ."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "main clause + because + subject + verb  /  Because + subject + verb, main clause",
+        "ru": "главное предложение + because + подлежащее + глагол  /  Because + подлежащее + глагол, главное предложение"
       },
       "examples": [
         {
@@ -41,11 +43,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We stayed inside because of the rain.",
-          "ru": "Мы остались внутри из-за дождя."
+          "ru": "Мы остались внутри из-за дождя.",
+          "note": {
+            "en": "because of + noun",
+            "ru": "because of + существительное"
+          }
         },
         {
           "en": "Because he was tired, he went to bed early.",
-          "ru": "Поскольку он устал, он рано лёг спать."
+          "ru": "Поскольку он устал, он рано лёг спать.",
+          "note": {
+            "en": "reason first (comma)",
+            "ru": "причина впереди (запятая)"
+          }
         },
         {
           "en": "He's not here because he's at work.",
@@ -55,22 +65,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Because + предложение, because of + существительное. Не путай: because it rained vs because of the rain."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I stayed home because of I was tired.",
+          "right": "I stayed home because I was tired.",
+          "why": {
+            "en": "Use because + clause; because of takes only a noun.",
+            "ru": "because + предложение; because of только перед существительным."
+          }
+        },
+        {
+          "wrong": "Because it was raining I didn't come.",
+          "right": "Because it was raining, I didn't come.",
+          "why": {
+            "en": "When the reason clause comes first, add a comma before the main clause.",
+            "ru": "Если придаточное причины стоит первым, перед главным ставится запятая."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, add more reason linkers and learn to choose them by register and by how new the information is.\n\n**New conjunctions:**\n- **since** — \"because,\" used when the reason is already known to the listener: `Since you're here, let's start.`\n- **as** — \"because,\" slightly more formal: `As it was late, we went home.`\n- **seeing (that) / seeing as** — \"as,\" informal: `Seeing as you're my friend, I'll help you.`\n- **given (that)** — formal: `Given that she's new, she's doing well.`\n\n**because vs since vs as.** *Because* is neutral and puts the focus on the reason as new information — it is the standard answer to \"why?\". *Since* and *as* treat the reason as already assumed or shared, and often open the sentence. *As* can sound more formal or literary.\n\n**Prepositions of reason** (followed by a noun):\n- **because of** + noun\n- **due to** + noun (formal)\n- **owing to** + noun (formal)\n- **thanks to** + noun (a positive reason): `Thanks to your help, we succeeded.`\n\n**Two-part phrases:**\n- `The reason (why / that) ... is (that) ...`: `The reason I called is that I need help.`\n- `That's why ...`: `That's why I didn't tell you.`\n\nClassic error: `The reason is because...` is redundant — say `The reason is that...`.",
         "ru": "На B1 добавляй новые союзы причины и учись выбирать их по регистру и информационному фокусу.\n\n**Новые союзы:**\n- `since` — потому что (причина уже известна собеседнику): `Since you're here, let's start.`\n- `as` — так как (более формальный): `As it was late, we went home.`\n- `seeing (that) / seeing as` — поскольку, раз уж (разговорный): `Seeing as you're my friend, I'll help you.`\n- `given (that)` — учитывая, что (формальный): `Given that she's new, she's doing well.`\n\n**Because vs Since vs As.**\n- `Because` — нейтральный, фокус на причине как новой информации. Стандарт для ответов на «почему?».\n- `Since` — причина уже предполагается известной. Часто в начале предложения.\n- `As` — формальнее, тоже «известная» причина. Может звучать литературно.\n\nСравни:\n- `Why is he late? — Because his car broke down.` (новая информация — because.)\n- `Since you already know the story, I won't repeat it.` (собеседник знает.)\n- `As the meeting had already started, she quietly sat down.` (формальный narrative.)\n\n**Предлоги причины:**\n- `because of` + noun.\n- `due to` + noun (формальный).\n- `owing to` + noun (формальный).\n- `thanks to` + noun (положительная причина): `Thanks to your help, we succeeded.`\n\n**Two-part phrases:**\n- `The reason (why / that) ... is (that) ...`: `The reason I called is that I need help.`\n- `That's why ...`: `That's why I didn't tell you.`\n\n**Типичная ошибка:** `The reason is because...` звучит избыточно. Лучше `The reason is that...`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "since / as / given that + subject + verb, main clause  /  due to / owing to / thanks to + noun",
+        "ru": "since / as / given that + подлежащее + глагол, главное предложение  /  due to / owing to / thanks to + существительное"
       },
       "examples": [
         {
           "en": "Since you're the expert, you should decide.",
-          "ru": "Раз ты эксперт, ты и должен решать."
+          "ru": "Раз ты эксперт, ты и должен решать.",
+          "note": {
+            "en": "known reason",
+            "ru": "известная причина"
+          }
         },
         {
           "en": "As I had already eaten, I didn't want dessert.",
@@ -82,32 +114,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Thanks to her advice, I passed the interview.",
-          "ru": "Благодаря её совету я прошёл собеседование."
+          "ru": "Благодаря её совету я прошёл собеседование.",
+          "note": {
+            "en": "positive reason",
+            "ru": "положительная причина"
+          }
         },
         {
           "en": "The reason I'm here is that I need your help.",
-          "ru": "Причина, по которой я здесь — мне нужна твоя помощь."
+          "ru": "Причина, по которой я здесь — мне нужна твоя помощь.",
+          "note": {
+            "en": "The reason ... is that",
+            "ru": "оборот The reason ... is that"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Since/as = «известная причина», because = «новая причина, фокус». В начале предложения чаще since/as."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The reason I called is because I need help.",
+          "right": "The reason I called is that I need help.",
+          "why": {
+            "en": "After \"The reason ... is\", use \"that\", not \"because\" — they overlap.",
+            "ru": "После \"The reason ... is\" нужен \"that\", а не \"because\"."
+          }
+        },
+        {
+          "wrong": "We arrived late due to it was raining.",
+          "right": "We arrived late due to the rain. / ... because it was raining.",
+          "why": {
+            "en": "due to / owing to take a noun, not a clause.",
+            "ru": "due to / owing to требуют существительное, а не предложение."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, you control formal and academic ways to express cause.\n\n**Academic / formal causal connectives:**\n- **in that** — \"in the sense that\": `This policy is flawed in that it ignores low-income families.`\n- **inasmuch as** — \"because\" (very formal).\n- **for** (literary) — \"for / since\": `He did not speak, for he was afraid.` It only follows the main clause and always takes a comma.\n- **on the grounds that** — \"on the basis that\": `The proposal was rejected on the grounds that it was too expensive.`\n- **given (the fact) that** — \"considering that.\"\n\n**Noun phrases for cause:** `due to the fact that` and `owing to the fact that` (= because, formal), `in view of` + noun, `on account of` + noun.\n\n**Linking to the result.** Result markers go in the second clause: **hence** (= therefore, formal), **thus**, **therefore**, **consequently**: `He failed the exam; hence, he must repeat it.`\n\n**Reduced (participle) clauses for cause** — possible when the subject is the same in both parts:\n- `Being tired, I went to bed.` = Because I was tired ...\n- `Having finished the project, she relaxed.` = Because she had finished ...\n- `Exhausted from the trip, they fell asleep.` = Because they were exhausted ...\n\n**Register tip on due to.** Strictly, *due to* modifies a noun (`The delay was due to bad weather`), while *because of* modifies a verb. In modern colloquial use `due to` often replaces `because of` (`We were late due to traffic`), but keep the distinction in formal writing.",
         "ru": "На B2 важны формальные и академические варианты.\n\n**Academic / formal causal connectives:**\n- `in that` — в том смысле, что: `This policy is flawed in that it ignores low-income families.`\n- `inasmuch as` — поскольку (очень формально).\n- `for` (literary) — ибо: `He did not speak, for he was afraid.` Ставится только после главного, всегда с запятой.\n- `on the grounds that` — на том основании, что: `The proposal was rejected on the grounds that it was too expensive.`\n- `given (the fact) that` — учитывая, что.\n\n**Noun phrases for cause:**\n- `due to the fact that` = because (в формальном).\n- `owing to the fact that` = because.\n- `in view of` + noun.\n- `on account of` + noun.\n\n**Соотношение с follow-up:**\n- `hence` (hence = therefore, formal): `He failed the exam; hence, he must repeat it.`\n- `thus`, `therefore`, `consequently` — маркеры следствия, стоят во втором предложении.\n\n**Common mistake at B2.** `Due to` традиционно требует существительного как подлежащего, но сейчас в обиходе `due to` часто заменяет `because of`. В формальном письме сохраняй различие:\n- Traditional: `The delay was due to bad weather.` (due to modifies noun 'delay'.)\n- Modern colloquial: `We were late due to traffic.` (как because of.)\n\n**Cause через participle clauses (reduced):**\n- `Being tired, I went to bed.` = `Because I was tired, ...`\n- `Having finished the project, she relaxed.` = `Because she had finished ...`\n- `Exhausted from the trip, they fell asleep.` = `Because they were exhausted ...`\n\nРедукция работает, когда подлежащее совпадает в обеих частях.\n\n**Register stratification:**\n- Informal: `because`, `seeing as`, `'cos (cuz)`.\n- Neutral: `because`, `since`.\n- Formal: `as`, `given that`, `in that`.\n- Academic: `due to`, `owing to`, `in view of`, `inasmuch as`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "main clause + in that / on the grounds that + clause  /  Being / Having + past participle, main clause",
+        "ru": "главное предложение + in that / on the grounds that + придаточное  /  Being / Having + причастие, главное предложение"
       },
       "examples": [
         {
           "en": "The project was cancelled on the grounds that it exceeded the budget.",
-          "ru": "Проект был отменён на том основании, что превысил бюджет."
+          "ru": "Проект был отменён на том основании, что превысил бюджет.",
+          "note": {
+            "en": "on the grounds that",
+            "ru": "оборот on the grounds that"
+          }
         },
         {
           "en": "Given that the evidence is limited, no conclusion can be drawn.",
@@ -115,48 +177,94 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Being unfamiliar with the software, he asked for help.",
-          "ru": "Будучи незнакомым с программой, он попросил помощи."
+          "ru": "Будучи незнакомым с программой, он попросил помощи.",
+          "note": {
+            "en": "reduced (Being)",
+            "ru": "редукция (Being)"
+          }
         },
         {
           "en": "The law is unjust in that it punishes victims.",
-          "ru": "Закон несправедлив в том смысле, что наказывает жертв."
+          "ru": "Закон несправедлив в том смысле, что наказывает жертв.",
+          "note": {
+            "en": "in that",
+            "ru": "оборот in that"
+          }
         },
         {
           "en": "Having studied medicine, she recognized the symptoms immediately.",
-          "ru": "Изучив медицину, она сразу распознала симптомы."
+          "ru": "Изучив медицину, она сразу распознала симптомы.",
+          "note": {
+            "en": "reduced (Having)",
+            "ru": "редукция (Having)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Participle clauses (Being tired / Having finished) — элегантный формальный способ выразить причину."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "For he was afraid, he did not speak.",
+          "right": "He did not speak, for he was afraid.",
+          "why": {
+            "en": "Literary \"for\" cannot open a sentence; it follows the main clause after a comma.",
+            "ru": "Литературное \"for\" не может стоять в начале — только после главного через запятую."
+          }
+        },
+        {
+          "wrong": "Being tired, the lesson ended early.",
+          "right": "Being tired, I went to bed.",
+          "why": {
+            "en": "A reduced clause must share the subject of the main clause (dangling participle otherwise).",
+            "ru": "Редуцированное причастие должно иметь то же подлежащее, что и главное предложение."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, choose causal constructions by fine register and discourse function.\n\n**Discourse-level causal markers:**\n- **in light of** + noun: `In light of recent events, we'll postpone the meeting.`\n- **as a result of** + noun / gerund.\n- **given (the fact) that** — acknowledging a known circumstance.\n- **seeing that / seeing as how** — informal.\n- **what with** + noun — colloquial, listing contributing causes: `What with the rain and the traffic, we gave up.`\n\n**Cause vs reason vs motivation:**\n- Cause = physical / objective: `The tree fell because of the wind.`\n- Reason = mental / chosen: `She resigned because she was unhappy.`\n- Motivation = `out of` + noun: `She helped out of kindness.`\n\n**Formal written constructions:** `This is attributable to ...`, `X stems from Y`, `X is a consequence of Y`, `X is predicated on Y` (academic).\n\n**Emphatic inversion (rare):** `So great was the shock that she couldn't speak.` (= Because the shock was so great ...)\n\n**Hedged academic causation** — for tentative causal links: `may be due to`, `can be attributed to`, `appears to stem from`, `might account for`.\n\n**Trap: due to vs owing to.** Both are formal. Prescriptively, *due to* is an adjective phrase after *be* (`The problem is due to ...`), while *owing to* is a preposition that can open a sentence (`Owing to bad weather, ...`). In practice the distinction is now blurred.",
         "ru": "На C1 выбирай причинные конструкции по тонкому регистру и дискурсивной функции.\n\n**Discourse-level causal markers:**\n- `in light of` + noun: `In light of recent events, we'll postpone the meeting.` (Учитывая события...)\n- `as a result of` + noun / gerund.\n- `given (the fact) that` — признание известного обстоятельства.\n- `seeing that / seeing as how` — informal.\n- `what with` + noun — разговорный: `What with the rain and the traffic, we gave up.`\n\n**Subtle cause-vs-reason distinction:**\n- Cause = physical/objective: `The tree fell because of the wind.`\n- Reason = mental/purpose: `She resigned because she was unhappy.`\n- Motivation: `out of + noun`: `She helped out of kindness.` (из доброты)\n\n**Formal written constructions:**\n- `This is attributable to + noun / gerund.`\n- `X stems from Y.`\n- `X is a consequence of Y.`\n- `X is predicated on Y.` (X основывается на Y — academic)\n\n**Inversion with causal emphasis (rare):**\n- `So great was the shock that she couldn't speak.` (= Because the shock was so great...)\n\n**Причинно-уступительный контраст:**\n- `Even given that ... ` — даже учитывая.\n- `Not that... but rather...` — не потому что, а потому что: `I'm not angry, not that I wasn't provoked, but because...`\n\n**Hedging in academic causation:**\n- `may be due to`, `can be attributed to`, `appears to stem from`, `might account for` — осторожные формулировки для неуверенных причинных связей.\n\n**Trap:** смешение `due to` и `owing to`. Обе формальные. Strict grammarians требуют `due to` только как adjective (after be): `The problem is due to...`, а `owing to` как preposition в начале: `Owing to bad weather, ...`. В современной практике различие размыто."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "In light of / As a result of + noun, main clause  /  X is attributable to / stems from + noun",
+        "ru": "In light of / As a result of + существительное, главное предложение  /  X is attributable to / stems from + существительное"
       },
       "examples": [
         {
           "en": "In light of the new evidence, the verdict was reversed.",
-          "ru": "Учитывая новые доказательства, приговор был отменён."
+          "ru": "Учитывая новые доказательства, приговор был отменён.",
+          "note": {
+            "en": "in light of + noun",
+            "ru": "in light of + существительное"
+          }
         },
         {
           "en": "The decline can be attributed to poor management.",
-          "ru": "Спад можно объяснить плохим управлением."
+          "ru": "Спад можно объяснить плохим управлением.",
+          "note": {
+            "en": "hedged: can be attributed to",
+            "ru": "осторожно: can be attributed to"
+          }
         },
         {
           "en": "She acted out of pure compassion, not obligation.",
-          "ru": "Она действовала из чистого сочувствия, не из обязательства."
+          "ru": "Она действовала из чистого сочувствия, не из обязательства.",
+          "note": {
+            "en": "motivation: out of",
+            "ru": "мотив: out of"
+          }
         },
         {
           "en": "What with the delays and the costs, we abandoned the plan.",
-          "ru": "Учитывая задержки и расходы, мы отказались от плана."
+          "ru": "Учитывая задержки и расходы, мы отказались от плана.",
+          "note": {
+            "en": "what with (colloquial)",
+            "ru": "what with (разговорный)"
+          }
         },
         {
           "en": "The failure stems from a fundamental design flaw.",
@@ -166,46 +274,118 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Out of + noun показывает мотив (out of love, out of fear), а due to / because of — объективную причину."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She helped because of kindness.",
+          "right": "She helped out of kindness.",
+          "why": {
+            "en": "For an inner motive use \"out of + noun\", not \"because of\".",
+            "ru": "Для внутреннего мотива используется \"out of + существительное\", а не \"because of\"."
+          }
+        },
+        {
+          "wrong": "Owing to he was late, we started without him.",
+          "right": "Owing to his lateness, we started without him.",
+          "why": {
+            "en": "owing to / in light of / as a result of take a noun phrase, not a clause.",
+            "ru": "owing to / in light of / as a result of требуют именную группу, а не предложение."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, causal constructions become a fine rhetorical instrument.\n\n**Rhetorical / elevated causation:**\n- **by virtue of** + noun — \"in virtue of, owing to\": `By virtue of his position, he had access to classified documents.`\n- **for the simple reason that** — emphatic.\n- **all the more so because / since** — \"all the more so given that\": `She deserves praise, all the more so since she worked alone.`\n- **if only because** — \"even if just because\": `Read this book, if only because it will change your perspective.`\n\n**Legal / scientific:** `pursuant to` + noun, `arising from / out of` + noun, `consequent upon` + noun (very formal), `whereas` (legal preamble).\n\n**Denying or qualifying a cause:** `It wasn't that ...; rather ...`, `Far be it from me to X, but Y`, `Not for nothing ... does / is ...`: `Not for nothing is she called the queen of chess.`\n\n**Complex / nested causation:** `X, which is itself the result of Y, causes Z`; causal chains: `Because of X, which led to Y, we ultimately saw Z.`\n\n**Discourse structuring in extended argument:** `The fundamental reason ... is ...`, `What underlies this is ...`, `At the root of the problem lies ...`, `The crux of the matter is that ...`.\n\n**Literary / archaic \"for\":** `He rejoiced, for the day was beautiful.`\n\n**Hedged formulas for contested or statistical causation:** `This may be (partially) explained by ...`, `One possible account of X is that ...`, `X is consistent with the hypothesis that ...`.",
         "ru": "На C2 причинные конструкции становятся тонким риторическим инструментом.\n\n**Philosophical / rhetorical causation:**\n- `by virtue of + noun` — в силу: `By virtue of his position, he had access to classified documents.`\n- `for the simple reason that` — по той простой причине, что (эмфаза).\n- `all the more so because / since` — тем более, что: `She deserves praise, all the more so since she worked alone.`\n- `if only because` — хотя бы потому, что: `Read this book, if only because it will change your perspective.`\n\n**Legal / scientific:**\n- `pursuant to + noun` — в соответствии с (legal cause).\n- `arising from / out of + noun` — проистекающий из.\n- `consequent upon + noun` — вследствие (very formal).\n- `whereas` (legal preamble) — in light of.\n\n**Negative causation / denial of cause:**\n- `It wasn't that ...; rather ...` — дело было не в том, что; скорее...\n- `Far be it from me to X, but Y` — я не хочу делать X, но Y (полемический).\n- `Not for nothing ... does / is ...` — не зря ...: `Not for nothing is she called the queen of chess.`\n\n**Complex nested causation:**\n- `X, which is itself the result of Y, causes Z.`\n- `Causal chains: Because of X, which led to Y, we ultimately saw Z.`\n\n**Discourse structuring in extended argument:**\n- `The fundamental reason ... is ...`\n- `What underlies this is ...`\n- `At the root of the problem lies ...`\n- `The crux of the matter is that ...`\n\n**Nuance: 'for' as literary/biblical cause:**\n- `He rejoiced, for the day was beautiful.` — архаично-литературный.\n\n**Register-triggered choices в академическом письме.** Для представления причинности без сильного утверждения:\n- `This may be (partially) explained by ...`\n- `One possible account of X is that ...`\n- `X is consistent with the hypothesis that ...`\n\nИспользуй эти hedged формулы, когда причинность статистическая или спорная."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "By virtue of / Consequent upon / Arising from + noun, main clause  /  Not for nothing + auxiliary + subject ...",
+        "ru": "By virtue of / Consequent upon / Arising from + существительное, главное предложение  /  Not for nothing + вспомогательный глагол + подлежащее ..."
       },
       "examples": [
         {
           "en": "By virtue of his seniority, he chaired the meeting.",
-          "ru": "В силу своего старшинства, он председательствовал на встрече."
+          "ru": "В силу своего старшинства, он председательствовал на встрече.",
+          "note": {
+            "en": "by virtue of + noun",
+            "ru": "by virtue of + существительное"
+          }
         },
         {
           "en": "Her thesis, arising from years of fieldwork, revolutionized the field.",
-          "ru": "Её диссертация, выросшая из многолетней полевой работы, произвела революцию в дисциплине."
+          "ru": "Её диссертация, выросшая из многолетней полевой работы, произвела революцию в дисциплине.",
+          "note": {
+            "en": "arising from + noun",
+            "ru": "arising from + существительное"
+          }
         },
         {
           "en": "Not for nothing is this novel considered a masterpiece.",
-          "ru": "Недаром этот роман считают шедевром."
+          "ru": "Недаром этот роман считают шедевром.",
+          "note": {
+            "en": "Not for nothing (inversion)",
+            "ru": "Not for nothing (инверсия)"
+          }
         },
         {
           "en": "The crisis, consequent upon years of mismanagement, was inevitable.",
-          "ru": "Кризис, последовавший за годами плохого управления, был неизбежен."
+          "ru": "Кризис, последовавший за годами плохого управления, был неизбежен.",
+          "note": {
+            "en": "consequent upon + noun",
+            "ru": "consequent upon + существительное"
+          }
         },
         {
           "en": "I recommend this film, if only because the cinematography is breathtaking.",
-          "ru": "Рекомендую этот фильм, хотя бы потому, что операторская работа захватывающая."
+          "ru": "Рекомендую этот фильм, хотя бы потому, что операторская работа захватывающая.",
+          "note": {
+            "en": "if only because",
+            "ru": "оборот if only because"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "By virtue of + noun — элегантная формула «в силу»: by virtue of his position / by virtue of her experience."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Not for nothing she is called the queen of chess.",
+          "right": "Not for nothing is she called the queen of chess.",
+          "why": {
+            "en": "Fronted \"Not for nothing\" triggers subject-auxiliary inversion.",
+            "ru": "Вынесенное вперёд \"Not for nothing\" требует инверсии подлежащего и вспомогательного глагола."
+          }
+        },
+        {
+          "wrong": "By virtue of he was senior, he chaired the meeting.",
+          "right": "By virtue of his seniority, he chaired the meeting.",
+          "why": {
+            "en": "by virtue of / consequent upon take a noun phrase, never a clause.",
+            "ru": "by virtue of / consequent upon требуют именную группу, а не предложение."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "adverbial-clauses-condition",
+    "adverbial-clauses-contrast",
+    "adverbial-clauses-time",
+    "subordinating-conjunctions"
+  ],
+  "crossTopic": [
+    "result-clauses",
+    "purpose-clauses",
+    "past-simple",
+    "present-perfect-simple"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "main clause (result)",
+      "reason clause"
+    ]
+  }
 };

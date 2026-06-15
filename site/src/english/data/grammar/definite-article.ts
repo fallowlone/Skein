@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "definite-article",
   "title": {
-    "en": "",
+    "en": "The Definite Article",
     "ru": "Definite Article"
   },
   "cefr": "A1",
@@ -17,24 +17,35 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "articles",
+  "egp": [
+    "EGP:A1 the with specific/unique nouns",
+    "EGP:A2 the with superlatives and ordinals",
+    "EGP:B1 the for shared/situational reference",
+    "EGP:B2 the with geographical and media nouns",
+    "EGP:C1 generic the with species and abstractions",
+    "EGP:C2 the in headline, legal and diplomatic register"
+  ],
+  "archetype": "highlight",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "Use **the** before a noun when both you and your listener already know which exact thing you mean. English forces you to mark this knowledge with a word; in many languages context alone does the job, but English does not let you skip it.\n\nReach for **the** when:\n- The thing was already mentioned: *I saw a dog. The dog was big.* (first new, then the same one).\n- There is only one of it in the situation: *Open the door, please.* (one obvious door).\n- It is unique in the world: *the sun*, *the moon*, *the sky*.\n- It is clear from shared context: *The teacher is nice.* (our teacher).\n\nDo not use **the** before people's names (*Maria*, not *the Maria*) or most city names (*Moscow*, *Berlin*).\n\nThe simplest rule of all: a new thing mentioned for the first time takes **a/an**; the same thing the second time takes **the**, because now it is known.",
         "ru": "**Определённый артикль `the`** ставится перед существительным, когда и ты, и твой собеседник знают, о каком именно предмете идёт речь.\n\nВ русском языке артиклей нет — мы понимаем контекст по интонации и порядку слов. В английском обязательно отмечать словом `the`, что предмет знаком.\n\n**Когда ставим the:**\n- Предмет уже упоминался: `I saw a dog. The dog was big.` (Сначала новое, потом то же самое.)\n- Предмет один в данной ситуации: `Open the door, please.` (В комнате одна дверь — понятно, какая.)\n- Единственный в мире: `the sun` (солнце), `the moon` (луна), `the sky` (небо).\n- Предмет знаком по контексту: `The teacher is nice.` (наш учитель в школе).\n\n**Когда НЕ ставим the:**\n- Перед именами людей: не `the Maria`, а просто `Maria`.\n- Перед большинством названий городов: `Moscow`, `Berlin`, `New York`.\n- В общих высказываниях (об этом дальше).\n\n**The читается по-разному:**\n- `the` перед согласным звуком — как «зэ»: `the book`.\n- `the` перед гласным звуком — как «зи»: `the apple`, `the hour`.\n\nНе бойся ставить `the`. Если ты и собеседник точно знаете, о каком предмете речь, — ставь.\n\n**Очень простая схема:**\n- Новый предмет, про который ты говоришь впервые → `a` или `an`.\n- Тот же предмет во второй раз → `the`, потому что теперь он уже знакомый.\n\nПример: `I saw a cat. The cat was black.` — сначала кошка появляется в рассказе (новая), потом мы уже про неё знаем (определённая).\n\n**Почему русским студентам трудно:** в русском нет артиклей, и мы понимаем контекст по интонации. В английском это слово `the` обязательно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "the + (specific / already-known / unique) noun",
+        "ru": "the + (конкретное / уже известное / единственное) существительное"
       },
       "examples": [
         {
           "en": "The sun is bright today.",
-          "ru": "Солнце сегодня яркое."
+          "ru": "Солнце сегодня яркое.",
+          "note": {
+            "en": "unique",
+            "ru": "единственный"
+          }
         },
         {
           "en": "Please close the window.",
@@ -42,7 +53,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I have a cat. The cat is black.",
-          "ru": "У меня есть кошка. Эта кошка чёрная."
+          "ru": "У меня есть кошка. Эта кошка чёрная.",
+          "note": {
+            "en": "second mention",
+            "ru": "второе упоминание"
+          }
         },
         {
           "en": "The teacher asked a question.",
@@ -56,26 +71,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "The — когда оба знают, о каком именно предмете речь."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She is the Maria.",
+          "right": "She is Maria.",
+          "why": {
+            "en": "No the before a personal name.",
+            "ru": "Перед именем человека the не ставится."
+          }
+        },
+        {
+          "wrong": "Look at moon!",
+          "right": "Look at the moon!",
+          "why": {
+            "en": "Unique objects like the moon always take the.",
+            "ru": "Перед единственными объектами (the moon) всегда нужен the."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2 several patterns make **the** obligatory regardless of context.\n\n- **Superlatives:** *the best*, *the biggest*, *the most interesting*. Anything ending in *-est* or formed with *most + adjective* needs **the**: *the best day of my life*.\n- **Ordinals:** *the first*, *the second*, *the last*: *the first time I've been here*.\n- **Unique objects:** *the sun*, *the moon*, *the Earth*, *the sea*, *the sky*, *the world*.\n- **Fixed phrases:** *the same*, *the only*, *the right / the wrong*: *We have the same car.*\n- **Nouns with of:** *the capital of France*, *the end of the book*.\n\nNote that days and months take no article (*on Monday*, *in January*), but *the weekend* keeps **the** (*at the weekend*). Also watch newspaper names: *the Times* (the is part of the title), but *Time* the magazine has none.",
         "ru": "На A2 добавляются новые случаи, где `the` обязательно.\n\n**Суперлативы (превосходная степень):**\n- `the best`, `the biggest`, `the most interesting`\n- `It was the best day of my life.` (Это был лучший день в моей жизни.)\n- Перед любой формой `-est` или `most + прилагательное` всегда `the`.\n\n**Порядковые числительные:**\n- `the first`, `the second`, `the third`, `the last`\n- `This is the first time I've been here.` (Это первый раз, когда я здесь.)\n- `He won the second prize.` (Он получил второй приз.)\n\n**Уникальные объекты:**\n- `the sun`, `the moon`, `the Earth`, `the sea`, `the sky`, `the world`\n- `The Earth moves around the sun.`\n\n**Фиксированные выражения:**\n- `the same` (такой же): `We have the same car.`\n- `the only` (единственный): `She is the only one here.`\n- `the right / the wrong`: `Take the right road.`\n\n**В названиях с of:**\n- `the capital of France`, `the end of the book`, `the beginning of the day`.\n\n**Типичная ошибка:** забывать `the` перед суперлативами. Неправильно: `He is best student.` Правильно: `He is the best student.`\n\n**Ещё примеры уникальных объектов:**\n- `the sky` (небо), `the sea` (море), `the ocean` (океан), `the countryside` (сельская местность), `the city centre` (центр города), `the environment` (окружающая среда).\n\nВсё это вещи, которые понятны без уточнения — их не нужно выбирать из многих. Поэтому ставим `the`.\n\n**С названиями дней и месяцев артикль не нужен:**\n- `Monday`, `Tuesday` — без артикля: `See you on Monday.`\n- `January`, `March` — тоже без: `in January`.\n- Но: `the weekend` (с артиклем): `on the weekend`, `at the weekend`.\n\n**Уличные фразы без `the`:** `by chance`, `at home`, `in bed` — об этом больше на B1.\n\n**С частями тела после `the`:**\n- В английском части тела упоминаются с `the` или притяжательным: `pat on the back` (похлопать по спине), `a pain in the neck` (боль в шее).\n- Но в нейтральных предложениях чаще притяжательное: `She brushed her hair.`, `He broke his leg.`\n\n**The самых частых мест в городе:**\n- `the cinema`, `the theatre`, `the restaurant`, `the bank`, `the post office`, `the supermarket`, `the station`, `the airport`.\n- `I'm going to the bank.` (в конкретный банк в моей ситуации).\n\n**The с газетами:**\n- `the newspaper` — утренняя газета как часть рутины: `I read the newspaper every morning.`\n- Также: `the news` (новости): `The news is on at seven.`\n\n**Важно не путать с именами:** `the Times` (определённая газета), но `Time` (журнал) — без `the`. В первом случае `the` — часть названия."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "the + superlative / ordinal / unique noun + (of ...)",
+        "ru": "the + превосходная степень / порядковое / единственный объект + (of ...)"
       },
       "examples": [
         {
           "en": "She is the best dancer in the class.",
-          "ru": "Она лучшая танцовщица в классе."
+          "ru": "Она лучшая танцовщица в классе.",
+          "note": {
+            "en": "superlative",
+            "ru": "превосходная степень"
+          }
         },
         {
           "en": "This is the first time I've seen snow.",
-          "ru": "Это первый раз, когда я вижу снег."
+          "ru": "Это первый раз, когда я вижу снег.",
+          "note": {
+            "en": "ordinal",
+            "ru": "порядковое числительное"
+          }
         },
         {
           "en": "He gave the same answer twice.",
@@ -93,17 +134,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Перед best, first, only, same — всегда ставь the."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He is best student.",
+          "right": "He is the best student.",
+          "why": {
+            "en": "Superlatives always take the.",
+            "ru": "Перед превосходной степенью всегда the."
+          }
+        },
+        {
+          "wrong": "It was first time I saw snow.",
+          "right": "It was the first time I saw snow.",
+          "why": {
+            "en": "Ordinals like first take the.",
+            "ru": "Перед порядковыми (first) ставится the."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the choice of **the** is driven by **shared knowledge** and situational definiteness rather than a fixed rule.\n\n- **Common knowledge:** *the government*, *the economy*, *the weather*, *the police*, *the internet*. Every country has one, so it is clear which is meant.\n- **Situational reference:** *Please pass the salt.* (the salt we can see), *Could you close the door?* (the nearest one), *The bus is late.* (the one we are waiting for).\n- **Generic the + adjective = a group of people:** *the rich*, *the poor*, *the elderly*, *the unemployed* — adjective with no following noun, plural meaning: *The rich get richer.*\n- **Musical instruments (skill):** *She plays the piano.* (though modern usage drops it in band contexts: *He plays guitar in a band.*)\n- **the or no the with institutions:** *go to school* (to study) vs *go to the school* (the building); *in prison* vs *in the prison*; *at home* (never *the home*).",
         "ru": "На B1 важна идея **общеизвестности** и ситуативной определённости — когда `the` диктуется не грамматикой, а общим знанием.\n\n**Общее знание:**\n- `the government`, `the economy`, `the weather`, `the police`, `the internet`\n- `The government announced new taxes.` (В любой стране есть правительство — ясно о каком речь.)\n- `The weather is terrible.` (очевидно, где мы находимся).\n\n**Ситуативная определённость (в помещении/стране/ситуации):**\n- `Please pass the salt.` (соль на столе, которую мы видим).\n- `Could you close the door?` (ближайшая дверь).\n- `The bus is late.` (тот автобус, который мы ждём).\n\n**Обобщённое the + группа людей:**\n- `the rich`, `the poor`, `the elderly`, `the unemployed`\n- `The rich get richer.` (Богатые становятся богаче.)\n- Эти формы используются только с прилагательными без существительного.\n\n**Музыкальные инструменты (когда говорим об умении играть):**\n- `She plays the piano.`\n- `He learned the guitar as a child.`\n- Но: в современном употреблении без `the` тоже встречается, особенно в речи о рок/поп: `He plays guitar in a band.`\n\n**Места с the и без:**\n- `go to school` (учиться) vs `go to the school` (зайти в здание школы).\n- `in prison` (отбывать срок) vs `in the prison` (находиться в здании тюрьмы).\n- `at home` (дома) — никогда `at the home`.\n\nРазличие тонкое, но важное.\n\n**Обобщение про `the`:** ключевой вопрос — определён ли предмет? Если да (известен нам и собеседнику, единственный в контексте, уже упоминался, находится в непосредственной ситуации), то ставим `the`. Если нет — используем `a/an` для одного нового предмета или нулевой артикль для общего смысла.\n\n**Ещё о школе, тюрьме, работе:**\n- `at work` (на работе, занимаясь работой)\n- `at home` (дома) — всегда без `the`.\n- `in town` (в городе, в центре) — фиксированная фраза без артикля.\n- `in bed` (в постели, спит) vs `on the bed` (лежит на кровати, необязательно спит)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "the + (shared-knowledge noun / situational noun / adjective-as-group)",
+        "ru": "the + (общеизвестное / ситуативное существительное / прилагательное-группа людей)"
       },
       "examples": [
         {
@@ -112,7 +171,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The rich have many advantages.",
-          "ru": "У богатых много преимуществ."
+          "ru": "У богатых много преимуществ.",
+          "note": {
+            "en": "the + adjective",
+            "ru": "the + прилагательное"
+          }
         },
         {
           "en": "She plays the violin beautifully.",
@@ -120,7 +183,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He's gone to school.",
-          "ru": "Он ушёл в школу (учиться)."
+          "ru": "Он ушёл в школу (учиться).",
+          "note": {
+            "en": "no the: study",
+            "ru": "без the: учёба"
+          }
         },
         {
           "en": "Can you turn on the light?",
@@ -130,22 +197,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "The + прилагательное = группа людей: the poor, the young, the unemployed."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The rich gets richer.",
+          "right": "The rich get richer.",
+          "why": {
+            "en": "the + adjective takes a plural verb (it means a group of people).",
+            "ru": "the + прилагательное берёт глагол во множественном (это группа людей)."
+          }
+        },
+        {
+          "wrong": "She goes to the school every day to study.",
+          "right": "She goes to school every day.",
+          "why": {
+            "en": "Use no article for the activity (studying), the only for the building.",
+            "ru": "Без артикля — про учёбу; the — только про здание."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 **the** appears with inventions, media, time-of-day phrases, and geography, where the choice follows established convention.\n\n- **Inventions / species (generic the):** *The telephone changed communication.*, *The computer revolutionized work.* A formal, generalising style; everyday speech prefers the bare plural (*Cars are important.*).\n- **Media:** *the radio*, *the news*, *the press*, *the media* — but *on TV* usually has no **the**.\n- **Parts of the day:** *in the morning / afternoon / evening* (with **the**) versus *at night / noon / midnight / dawn* (no article).\n- **Geography with the:** rivers, seas, oceans, mountain ranges, island and country groups — *the Thames*, *the Atlantic*, *the Alps*, *the Netherlands*, *the United States*.\n- **Geography without the:** single mountains, lakes, continents, most countries — *Mount Everest*, *Lake Baikal*, *Africa*, *Germany*.\n- **Fixed formulas:** learn them as blocks — *in the end*, *on the whole*, *by the way*, *at the moment*, *on the other hand*. Here **the** is not a choice; it is part of the phrase.",
         "ru": "На B2 добавляются **изобретения, инструменты и фиксированные выражения**, где выбор артикля зависит от жанра и устоявшейся практики.\n\n**Изобретения и виды (обобщённое `the`):**\n- `The telephone changed communication.` (Телефон как изобретение.)\n- `The computer revolutionized work.`\n- `The car is a symbol of modern life.`\n\nЭто формальный, обобщающий стиль. В обычной речи можно сказать и `Cars are important.` — множественное число без артикля.\n\n**СМИ:**\n- `the radio`, `the news`, `the press`, `the media` (`the` встречается, но `media` всё чаще без).\n- `I heard it on the radio.` / `I saw it on TV.` (исключение: `TV` обычно без `the`).\n\n**Части дня:**\n- `in the morning`, `in the afternoon`, `in the evening` — с `the`.\n- `at night`, `at noon`, `at midnight`, `at dawn` — без артикля.\n\n**Реки, моря, океаны, горные цепи, группы островов:**\n- `the Thames`, `the Atlantic`, `the Alps`, `the Bahamas`.\n\n**Отдельные горы, озёра, континенты, большинство стран — без the:**\n- `Mount Everest`, `Lake Baikal`, `Africa`, `Germany`.\n- Исключения: `the United Kingdom`, `the Netherlands`, `the United States` — страны с составными названиями.\n\n**Иерархические названия:**\n- `the president`, `the Queen`, `the prime minister` — с `the`, когда говорим об институте.\n- Без `the`, когда это имя + титул: `Queen Elizabeth`, `President Biden`.\n\n**Фиксированные формулы:** учи как блок — `in the end`, `on the whole`, `by the way`, `at the moment`, `on the other hand`.\n\n**Ещё полезные закрепившиеся выражения:**\n- `in the meantime` (тем временем), `on the contrary` (напротив), `at the same time` (в то же время), `in the future` (в будущем), `in the past` (в прошлом), `on the radio`, `in the newspaper`.\n\nВ этих формулах `the` не выбирается по смыслу — это просто часть устоявшегося оборота. Меняешь `the` — и фраза перестаёт звучать по-английски.\n\n**Газеты: `The Times`, `The Guardian`, `The New York Times` — `the` часть названия, пишется с большой буквы в редакционном стиле.**\n\n**Реки, моря, группы островов — всегда с `the`:**\n- `the Thames`, `the Danube`, `the Volga`, `the Nile`, `the Amazon`.\n- `the Black Sea`, `the Pacific Ocean`, `the Atlantic`.\n- `the Philippines`, `the Netherlands`, `the Maldives`.\n\n**Отдельные горы, озёра и большинство стран — без `the`:**\n- `Mount Everest`, `Mount Elbrus`, `Lake Baikal`, `Lake Geneva`.\n- `Russia`, `Germany`, `Japan`, `Spain`, `Italy`, `Brazil`.\n\n**Страны с `the`:** там, где в названии есть слова `Kingdom`, `States`, `Republic`, `Federation`, `Union` — или по исторической традиции (`the Netherlands`)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "the + (generic invention / river-sea-range / time-of-day phrase / fixed formula)",
+        "ru": "the + (родовое изобретение / река-море-цепь / часть дня / устойчивый оборот)"
       },
       "examples": [
         {
           "en": "The internet has transformed daily life.",
-          "ru": "Интернет преобразил повседневную жизнь."
+          "ru": "Интернет преобразил повседневную жизнь.",
+          "note": {
+            "en": "generic invention",
+            "ru": "родовое изобретение"
+          }
         },
         {
           "en": "We met in the morning and talked till noon.",
@@ -153,7 +242,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The Thames flows through London.",
-          "ru": "Темза протекает через Лондон."
+          "ru": "Темза протекает через Лондон.",
+          "note": {
+            "en": "river: the",
+            "ru": "река: the"
+          }
         },
         {
           "en": "The prime minister addressed the nation.",
@@ -161,28 +254,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "On the whole, the trip was a success.",
-          "ru": "В целом поездка была успешной."
+          "ru": "В целом поездка была успешной.",
+          "note": {
+            "en": "fixed formula",
+            "ru": "устойчивый оборот"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Реки, моря, группы островов — с the; отдельные горы и большинство стран — без."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I saw it on the TV last night.",
+          "right": "I saw it on TV last night.",
+          "why": {
+            "en": "TV takes no article, although radio does (on the radio).",
+            "ru": "TV — без артикля, хотя radio с ним (on the radio)."
+          }
+        },
+        {
+          "wrong": "We met at the noon.",
+          "right": "We met at noon.",
+          "why": {
+            "en": "at noon / at night take no article, unlike in the morning.",
+            "ru": "at noon / at night — без артикля, в отличие от in the morning."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the key is **generic the** and the stylistic weight it carries.\n\n- **Generic the for a whole species or class:** *The tiger is an endangered species.*, *The Russian novel flourished in the 19th century.* This belongs to academic and journalistic prose; conversation prefers the bare plural (*Tigers are endangered.*).\n- **Three ways to generalise the same idea:** *A computer is useful.* / *The computer is useful.* / *Computers are useful.* All are correct, but the second reads like the thesis of an academic article.\n- **Abstractions with and without the:** *Love is all you need.* (love in general) versus *The love of money is the root of all evil.* (a specific love). *Life is short.* versus *The life of a soldier is hard.*\n- **Institutional the (capitalised):** *the Church*, *the Crown*, *the State*, *the Law* as institutions, distinct from *the church on the corner* (a building).\n- **Register:** headlines drop articles (*President meets PM*); academic abstracts compress them; formal essays keep them strict. A useful default in academic writing is the bare plural for generalisations, reserving *the tiger* for genuinely taxonomic contexts.",
         "ru": "На C1 важно понять **генерическое `the`** и его стилистическую нагрузку.\n\n**Обобщённое the перед видами/существами:**\n- `The tiger is an endangered species.` — тигр как вид.\n- `The elephant never forgets.` — элефант как символ.\n- `The Russian novel flourished in the 19th century.` — русский роман как жанр.\n\nЭто характерно для научной, публицистической и формальной речи. В разговорной предпочитают множественное без артикля: `Tigers are endangered.` или `A tiger never forgets.`\n\n**Три способа обобщить одно и то же:**\n1. `A computer is useful.` (неисчисл. родовой)\n2. `The computer is useful.` (формально-обобщ.)\n3. `Computers are useful.` (нейтр. разгов.)\n\nВсе три грамматически правильны, но имеют разные оттенки. Вариант 2 звучит как тезис академической статьи.\n\n**Абстракции с the и без:**\n- `Love is all you need.` (любовь как таковая, без артикля).\n- `The love of money is the root of all evil.` (конкретная любовь — к деньгам).\n- `Life is short.` — жизнь в общем смысле.\n- `The life of a soldier is hard.` — конкретный вид жизни.\n\n**Институциональный the:**\n- `the Church`, `the Crown`, `the State`, `the Law` (с большой буквы — институт).\n- `the church on the corner` (здание, обычное использование).\n\n**Стилистика:**\n- В заголовках новостей часто опускают артикли: `President meets PM` вместо `The president meets the prime minister`.\n- В научных аннотациях (abstracts) тоже компрессированный стиль без лишних артиклей.\n- В формальных эссе артикли строго соблюдаются.\n\n**Нетривиальный случай:** `in hospital` (BrE) vs `in the hospital` (AmE) — оба правильны в своём варианте.\n\n**Стилистическая рекомендация C1:** в академическом письме предпочитай множественное число без артикля для обобщений (`Tigers are endangered.`) — это нейтральный и безопасный выбор. Конструкцию с `the tiger` используй только в явно обобщающем контексте (эволюционная биология, таксономия), где ты обсуждаешь вид как категорию. В личных эссе лучше избегать — звучит слишком формально."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "the + singular noun = the whole species / class / institution",
+        "ru": "the + существительное в ед. ч. = весь вид / класс / институт"
       },
       "examples": [
         {
           "en": "The novel as a literary form emerged in the 18th century.",
-          "ru": "Роман как литературная форма возник в 18 веке."
+          "ru": "Роман как литературная форма возник в 18 веке.",
+          "note": {
+            "en": "the + genre",
+            "ru": "the + жанр"
+          }
         },
         {
           "en": "The wolf is a social animal.",
@@ -190,11 +309,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The State cannot intervene in private affairs.",
-          "ru": "Государство не может вмешиваться в частные дела."
+          "ru": "Государство не может вмешиваться в частные дела.",
+          "note": {
+            "en": "institution",
+            "ru": "институт"
+          }
         },
         {
           "en": "The love of power corrupts.",
-          "ru": "Любовь к власти развращает."
+          "ru": "Любовь к власти развращает.",
+          "note": {
+            "en": "specific love",
+            "ru": "конкретная любовь"
+          }
         },
         {
           "en": "Life begins at forty.",
@@ -204,26 +331,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "The + животное/объект в ед.ч. = вид или символ в формальном стиле."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The tigers are an endangered species.",
+          "right": "The tiger is an endangered species.",
+          "why": {
+            "en": "Generic the takes a singular noun and a singular verb.",
+            "ru": "Родовое the требует существительного и глагола в единственном числе."
+          }
+        },
+        {
+          "wrong": "The love is all you need.",
+          "right": "Love is all you need.",
+          "why": {
+            "en": "An abstraction in its general sense takes no article.",
+            "ru": "Абстракция в общем смысле идёт без артикля."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 **the** operates within genre conventions — headlines, abstracts, diplomatic and legal prose — where its presence or absence is dictated by register, not by a single rule.\n\n- **Headline style:** articles are almost always dropped (*PM resigns*, *Storm hits coast*); the full sentence would be *The PM resigned yesterday.* This is space-saving compression, not error.\n- **Abstracts and theses:** often compressed (*Paper examines role of...*), but the body of the article keeps articles in full.\n- **Titles and offices:** *President Biden* / *Queen Elizabeth* (name, no **the**) versus *the President of the United States* / *the Queen of England* (office, with **the**).\n- **Shifting usage:** *Ukraine* now stands without an article; *the Ukraine* is avoided as politically dated. *The Gambia* and *the Congo* keep theirs by tradition.\n- **Rhetorical effects:** *the one and only*, *the very idea*, *the likes of which we have never seen* — emphatic, elevated register.\n- **Ultra-fine distinctions:** *go to court* (the institution / a trial) vs *go to the court* (the building); *take place* (idiom) vs *take the place*; *hold office* vs *hold the office of President*. At this level the article shifts the genre register of a phrase even when both versions are grammatical.",
         "ru": "На C2 артикль `the` работает в жанровых стилях: **заголовки, академические аннотации, дипломатическая и юридическая проза**. Здесь выбор артикля диктуется не правилом, а конвенцией жанра.\n\n**Заголовки газет (headline style):**\n- Артикли опускаются почти всегда: `PM resigns`, `President visits Kyiv`, `Storm hits coast`.\n- Полная форма: `The PM resigned yesterday.`\n- Это не ошибка, а экономия места.\n\n**Академические аннотации и тезисы:**\n- Часто компрессированные: `Paper examines role of...` вместо `This paper examines the role of...`\n- Но в основном тексте статьи артикли обязательны.\n\n**Титулы и должности:**\n- Когда титул используется как имя: `President Biden`, `Queen Elizabeth`, `Dr. Smith` — без `the`.\n- Когда это должность в контексте: `the President of the United States`, `the Queen of England` — с `the`.\n- В протоколах: `the Honourable Member`, `the Right Reverend`.\n\n**Сдвиги узуса:**\n- `Ukraine` — сейчас без артикля. Ранее встречалось `the Ukraine` (периферия СССР); после 1991 г. носители языка избегают этой формы как политически устаревшей.\n- `the Gambia`, `the Congo` — остались с артиклем по традиции.\n- `the Lebanon` — раньше было, сейчас редкость; обычно `Lebanon`.\n\n**Риторические эффекты:**\n- `the one and only` (тот самый, единственный): эмфатично.\n- `the very idea` (сама мысль): эмоционально подчёркнуто.\n- `the likes of which we have never seen` — высокий стиль.\n\n**Сверхтонкие дистинкции:**\n- `go to court` (суд как институт, судебный процесс) vs `go to the court` (здание).\n- `take place` (идиома, без артикля) vs `take the place` (буквальное занятие места).\n- `hold office` (занимать должность) vs `hold the office of President` (занимать конкретный пост).\n\nНа уровне C2 носители чувствуют эти различия как интонационные: присутствие или отсутствие `the` меняет жанровый регистр фразы, даже если грамматически обе версии приемлемы.\n\n**Финал:** артикль `the` — один из самых частотных компонентов английского языка и один из самых непривычных для русскоговорящего. На C2 умение выбрать правильный артикль или сознательно его опустить — это маркер не только грамотности, но и стилистического вкуса."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "the present / dropped by genre convention (headline, abstract, office, idiom)",
+        "ru": "the присутствует / опускается по конвенции жанра (заголовок, аннотация, должность, идиома)"
       },
       "examples": [
         {
           "en": "President meets EU leaders in Brussels. (headline)",
-          "ru": "Президент встречается с лидерами ЕС в Брюсселе."
+          "ru": "Президент встречается с лидерами ЕС в Брюсселе.",
+          "note": {
+            "en": "headline: dropped",
+            "ru": "заголовок: опущен"
+          }
         },
         {
           "en": "The President of France addressed parliament yesterday.",
-          "ru": "Президент Франции обратился к парламенту вчера."
+          "ru": "Президент Франции обратился к парламенту вчера.",
+          "note": {
+            "en": "office: the",
+            "ru": "должность: the"
+          }
         },
         {
           "en": "Russia and Ukraine resumed talks.",
@@ -231,7 +384,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The very thought of it unsettles me.",
-          "ru": "Сама мысль об этом меня тревожит."
+          "ru": "Сама мысль об этом меня тревожит.",
+          "note": {
+            "en": "emphatic the",
+            "ru": "эмфатическое the"
+          }
         },
         {
           "en": "The ceremony will take place in the grand hall.",
@@ -241,9 +398,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В заголовках и компрессированных жанрах the опускается; в академическом тексте — всегда соблюдай."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He went to the court to stand trial.",
+          "right": "He went to court to stand trial.",
+          "why": {
+            "en": "go to court (the institution / process) drops the; the court means the building.",
+            "ru": "go to court (институт/процесс) — без the; the court — это здание."
+          }
+        },
+        {
+          "wrong": "She visited the Ukraine last year.",
+          "right": "She visited Ukraine last year.",
+          "why": {
+            "en": "Ukraine now takes no article; the Ukraine is politically dated.",
+            "ru": "Ukraine теперь без артикля; the Ukraine политически устарело."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "indefinite-article",
+    "zero-article",
+    "article-with-proper-nouns",
+    "countable-uncountable-nouns"
+  ],
+  "crossTopic": [
+    "superlative-adjectives",
+    "noun-phrases",
+    "singular-plural-nouns",
+    "defining-relative-clauses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "new (a/an)",
+      "known (the)"
+    ]
+  }
 };

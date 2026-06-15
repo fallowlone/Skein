@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "third-conditional",
   "title": {
-    "en": "",
+    "en": "Third Conditional",
     "ru": "Third Conditional"
   },
   "cefr": "B1",
@@ -15,24 +15,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conditionals",
+  "egp": [
+    "EGP:can-use-third-conditional-to-talk-about-impossible-past-situations-and-their-results"
+  ],
+  "archetype": "branch",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "The **third conditional** talks about the **past that did not happen**. You imagine a different past and its different result.\n\n**Form:** `If + past perfect, would have + past participle (V3)`.\n\n- `If I had studied harder, I would have passed the exam.` — but I didn't study, so I didn't pass.\n- `If you had told me, I would have helped.` — you didn't tell me, so I didn't help.\n\nUse it for **regret** (`If I had woken up earlier, I wouldn't have been late.`), **criticism** (`If he had listened, this wouldn't have happened.`), and an **imagined past** (`If we had taken that train, we would have arrived on time.`).\n\n**Two rules to memorise:**\n- In the **if-clause**, use `had + V3` with **no** *would*.\n- In the **main clause**, use `would have + V3`.\n\n**Contractions:** `I had` → `I'd` (`If I'd known…`); `would have` → `would've`. Note that `I'd` can mean *I had* or *I would* — context decides.\n\n**Second vs third:** second conditional = unreal **present/future** (`If I had money, I would travel.`); third conditional = unreal **past** (`If I had had money, I would have travelled.`).",
         "ru": "**Third conditional** (третье условное) — это про **прошлое**, которое **не случилось**. Мы представляем, что было бы, если бы в прошлом всё сложилось иначе.\n\n**Формула:** `If + Past Perfect, would have + причастие прошедшего времени (V3)`\n\n- `If I had studied harder, I would have passed the exam.` (Если бы я учился усерднее, я бы сдал экзамен.) — на самом деле не учился и не сдал.\n- `If you had told me, I would have helped.` (Если бы ты мне сказал, я бы помог.) — не сказал, не помог.\n\n**Важно:** Third conditional описывает **воображаемое прошлое**. То, что **не произошло**. Используется для:\n- **Сожаления:** `If I had woken up earlier, I wouldn't have been late.` (Если бы я встал раньше, я бы не опоздал.)\n- **Критики:** `If he had listened to me, this wouldn't have happened.` (Если бы он меня послушал, этого бы не случилось.)\n- **Воображаемого прошлого:** `If we had taken that train, we would have arrived on time.` (Если бы мы сели на тот поезд, мы бы приехали вовремя.)\n\n**Построение Past Perfect:** `had + V3 (причастие прошедшего времени)`.\n- Правильные глаголы: `had worked`, `had lived`, `had studied`.\n- Неправильные: `had gone`, `had been`, `had seen`, `had done`, `had taken`.\n\n**Главные ошибки:**\n- ❌ `If I would have studied…` → ✅ `If I had studied…` (в if-части — **без** would.)\n- ❌ `I would studied` → ✅ `I would have studied` (в главной части — **have + V3**.)\n- ❌ `had went` → ✅ `had gone` (неправильная форма причастия.)\n\n**Короткие формы:**\n- `I had` → `I'd`: `If I'd known…` (Если бы я знал…)\n- `would have` → `would've`: `I would've gone.` (Я бы пошёл.)\n\n**Осторожно:** `I'd` может означать `I had` или `I would` — контекст решает. `If I'd known` = `If I had known`. `I'd help` = `I would help`.\n\n**Разница Second и Third:**\n- Second — нереальное настоящее/будущее: `If I had money, I would travel.` (у меня нет денег сейчас.)\n- Third — нереальное прошлое: `If I had had money, I would have travelled.` (тогда у меня не было денег.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "If + subject + had + V3, subject + would have + V3",
+        "ru": "If + подлежащее + had + V3, подлежащее + would have + V3"
       },
       "examples": [
         {
           "en": "If I had known, I would have called you.",
-          "ru": "Если бы я знал, я бы тебе позвонил."
+          "ru": "Если бы я знал, я бы тебе позвонил.",
+          "note": {
+            "en": "regret",
+            "ru": "сожаление"
+          }
         },
         {
           "en": "She wouldn't have missed the flight if she had left earlier.",
@@ -44,130 +50,294 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "What would you have done if you had seen the accident?",
-          "ru": "Что бы ты сделал, если бы увидел ДТП?"
+          "ru": "Что бы ты сделал, если бы увидел ДТП?",
+          "note": {
+            "en": "question",
+            "ru": "вопрос"
+          }
         },
         {
           "en": "If he had listened, this problem wouldn't have happened.",
-          "ru": "Если бы он слушал, этой проблемы бы не было."
+          "ru": "Если бы он слушал, этой проблемы бы не было.",
+          "note": {
+            "en": "criticism",
+            "ru": "критика"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В if-части — had + V3 (без would); в главной — would have + V3."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If I would have studied, I would have passed.",
+          "right": "If I had studied, I would have passed.",
+          "why": {
+            "en": "Never use *would* in the if-clause; use *had + V3*.",
+            "ru": "В if-части не используется would — только had + V3."
+          }
+        },
+        {
+          "wrong": "I would studied harder.",
+          "right": "I would have studied harder.",
+          "why": {
+            "en": "The main clause needs *have + V3* after *would*.",
+            "ru": "В главной части после would нужно have + V3."
+          }
+        },
+        {
+          "wrong": "If I had went, I would have seen it.",
+          "right": "If I had gone, I would have seen it.",
+          "why": {
+            "en": "Use the past participle (*gone*), not the past simple (*went*).",
+            "ru": "Нужна форма причастия (gone), а не прошедшего времени (went)."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the third conditional expands with modals, finer shades of regret and criticism, and alternative connectors.\n\n**1. Could / might have in the main clause.** Swap `would have` for another modal to show how sure the result is: `If you had asked, I could have helped.` (ability), `If we had left earlier, we might have caught the train.` (probability), `If he had tried, he could have won.` (unrealised potential). `would` = certain, `could` = it was possible, `might` = maybe.\n\n**2. Unless.** `Unless you had warned me, I wouldn't have known.` = `If you hadn't warned me…`.\n\n**3. But for + noun** — a compact, written-register alternative: `But for your help, I wouldn't have finished.` = `If it hadn't been for your help…`.\n\n**4. If it hadn't been for + noun** highlights the decisive factor: `If it hadn't been for Sarah, we would have lost.`\n\n**5. Inversion (formal).** Drop *if* and front *had*: `Had I known about the meeting, I would have come.` / `Had it not been for him, we would have failed.` Common in literary and business writing.\n\n**6. Third vs mixed for regret.** `If I had studied medicine, I would have become a doctor.` (past result) vs `If I had studied medicine, I would be a doctor now.` (a present result of a past condition — mixed).",
         "ru": "На B2 Third conditional расширяется модалами, нюансами сожаления и критики, и альтернативными союзами.\n\n**1. Could have / might have — вариации в главной части:**\nВместо `would have` используются другие модалы:\n- `If you had asked, I could have helped.` (Если бы ты попросил, я мог бы помочь.) — способность/возможность.\n- `If we had left earlier, we might have caught the train.` (Если бы мы вышли раньше, мы могли бы успеть на поезд.) — вероятность.\n- `If he had tried, he could have won.` (Если бы он попытался, он мог бы выиграть.) — потенциал, который не реализовался.\n\nВыбор модала показывает, насколько говорящий уверен в том, что случилось бы: `would` — точно, `could` — имелась возможность, `might` — может быть.\n\n**2. Unless в Third conditional:**\n- `Unless you had warned me, I wouldn't have known.` = `If you hadn't warned me, I wouldn't have known.` (Если бы ты меня не предупредил, я бы не узнал.)\n\n**3. But for + noun — компактная альтернатива:**\n- `But for your help, I wouldn't have finished.` = `If it hadn't been for your help…` (Если бы не твоя помощь, я бы не закончил.)\n- `But for the weather, we would have gone hiking.` (Если бы не погода, мы бы пошли в поход.)\n\nЭто формально и компактно, типично для письменной речи.\n\n**4. If it hadn't been for + noun:**\n- `If it hadn't been for Sarah, we would have lost the game.` (Если бы не Сара, мы бы проиграли.)\n\nЭта конструкция выделяет решающий фактор.\n\n**5. Регрет и критика — pragmatic functions:**\nTh конкретный третий conditional выражает:\n- Сожаление (своё): `If I had listened to my parents, I wouldn't have made that mistake.`\n- Критика (другого): `If you had been more careful, this wouldn't have happened.` — звучит осуждающе.\n- Благодарность через воображаемое зло: `If you hadn't arrived in time, disaster would have struck.`\n\nИнтонация и контекст решают, сожаление это, критика или облегчение.\n\n**6. Инверсия Had I known (formal):**\n- `Had I known about the meeting, I would have come.` (Знай я о встрече, я бы пришёл.)\n- `Had it not been for him, we would have failed.` (Не будь его, мы бы провалились.)\n\nЭто формальная инверсия, заменяет `If I had known…`. Типична для литературного и делового стиля.\n\n**7. Типичные ошибки на B2:**\n- Смешение модалов: ❌ `If I had known, I could helped.` → ✅ `I could have helped.`\n- Неправильная причастие: ❌ `I would have saw him.` → ✅ `I would have seen him.`\n- `would have in if-clause`: ❌ `If I would have known…` — распространённая американская разговорная форма, но формально неправильна. Придерживайся `If I had known…`.\n\n**8. Third vs Second для регрета:**\n- Third: `If I had studied medicine, I would have become a doctor.` (Не изучал — не стал.) — конкретное прошлое решение.\n- Mixed: `If I had studied medicine, I would be a doctor now.` (Не изучал тогда — не доктор сейчас.) — последствие длится до сих пор.\n\nНа B2 важно уметь различать, касаются последствия прошлого момента или текущего состояния."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Had + subject + V3, subject + would/could/might have + V3",
+        "ru": "Had + подлежащее + V3, подлежащее + would/could/might have + V3"
       },
       "examples": [
         {
           "en": "If you had told me earlier, I could have cancelled the meeting.",
-          "ru": "Если бы ты сказал раньше, я мог бы отменить встречу."
+          "ru": "Если бы ты сказал раньше, я мог бы отменить встречу.",
+          "note": {
+            "en": "could have",
+            "ru": "could have"
+          }
         },
         {
           "en": "We might have won if we had played better.",
-          "ru": "Мы могли бы выиграть, если бы играли лучше."
+          "ru": "Мы могли бы выиграть, если бы играли лучше.",
+          "note": {
+            "en": "might have",
+            "ru": "might have"
+          }
         },
         {
           "en": "Had I realised the risk, I wouldn't have invested.",
-          "ru": "Если бы я осознал риск, я бы не инвестировал."
+          "ru": "Если бы я осознал риск, я бы не инвестировал.",
+          "note": {
+            "en": "inversion",
+            "ru": "инверсия"
+          }
         },
         {
           "en": "But for her intervention, the project would have collapsed.",
-          "ru": "Если бы не её вмешательство, проект бы развалился."
+          "ru": "Если бы не её вмешательство, проект бы развалился.",
+          "note": {
+            "en": "but for",
+            "ru": "but for"
+          }
         },
         {
           "en": "If it hadn't been for the delay, we would have caught the connecting flight.",
-          "ru": "Если бы не задержка, мы бы успели на стыковочный рейс."
+          "ru": "Если бы не задержка, мы бы успели на стыковочный рейс.",
+          "note": {
+            "en": "if it hadn't been for",
+            "ru": "if it hadn't been for"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Инверсия Had I known… — формальная замена If I had known…; используй её в деловом письме."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If I had known, I could helped.",
+          "right": "If I had known, I could have helped.",
+          "why": {
+            "en": "Modal-perfect needs *have*: could/might/would + *have* + V3.",
+            "ru": "Модальный перфект требует have: could/might/would + have + V3."
+          }
+        },
+        {
+          "wrong": "Had I have known, I would have come.",
+          "right": "Had I known, I would have come.",
+          "why": {
+            "en": "Inversion uses *had + subject + V3* — no extra *have* in the if-part.",
+            "ru": "В инверсии — had + подлежащее + V3, без лишнего have в условной части."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the third conditional is a tool for nuanced analysis of the past: regret, counterfactual reasoning, historical comment, and diplomatic criticism.\n\n**1. Inversion as default register.** `Had the committee acted sooner, the crisis could have been averted.` / `Had it not been for the blizzard, the expedition would have succeeded.` This is standard in academic, historical, legal, and literary prose and feels more polished than *if…had…*.\n\n**2. Modal palette.** `would have` = confident counterfactual; `could have` = the possibility/ability existed but went unused; `might have` = probability, not certainty; `should have` = it was expected but didn't happen (a note of criticism or regret: `He should have called.`); `ought to have` = a formal *should have*.\n\n**3. Counterfactual reasoning** in history and politics: `If the treaty had been ratified, the war might have been shorter.` A careful writer flags the speculative nature of such claims.\n\n**4. Hedged counterfactuals** distance the author from a categorical claim: `It is plausible that, had the experiment been repeated, similar results would have emerged.`\n\n**5. But for / were it not for / had it not been for** are the formal alternatives to *if…hadn't been for*.\n\n**6. Counterfactuals without if**, via *otherwise*: `She arrived on time; otherwise, she would have missed the opening.`\n\n**7. Third vs mixed.** Feel the difference between a result located in the past (`…his life would have been different.`) and one that persists now (`…he would be living in Paris now.`).\n\n**8. Politeness register.** `We would have appreciated advance notice.` — criticism delivered through a courteous third conditional, typical of business and diplomatic English.",
         "ru": "На C1 Third conditional — инструмент нюансированного анализа прошлого: сожаления, контрфактуального размышления, исторического анализа, дипломатичной критики.\n\n**1. Inversion в расширенном использовании:**\n- `Had the committee acted sooner, the crisis could have been averted.`\n- `Had it not been for the blizzard, the expedition would have succeeded.`\n- `Had circumstances permitted, a different decision would have been made.`\n\nИнверсия — стандарт в академических, исторических, юридических и литературных текстах. Она заменяет `If…had…` и создаёт более формальный, отполированный тон.\n\n**2. Модальная палитра — тонкие различения:**\n- `would have` — уверенный контрфактуал.\n- `could have` — была возможность / способность, но не реализовалась.\n- `might have` — вероятность, не уверенность.\n- `should have` — ожидалось, но не произошло (оттенок критики или сожаления): `He should have called.` (Ему следовало позвонить.)\n- `ought to have` — формальное «должен был бы».\n\nВ главной части Third conditional:\n- `If he had studied, he would have passed.` — точно сдал бы.\n- `If he had studied, he might have passed.` — возможно, сдал бы.\n- `If he had studied, he could have passed.` — имелся потенциал для сдачи.\n\n**3. Counterfactual reasoning в истории и политике:**\nTh является языком контрфактуального анализа:\n- `If the treaty had been ratified, the war might have been shorter.`\n- `Had the revolution failed, the subsequent reforms would not have occurred.`\n\nC1-писатель обращается с такими суждениями аккуратно — осознавая их спекулятивную природу.\n\n**4. Hedged counterfactuals:**\nВ академическом письме часто встречаются комбинации:\n- `It is plausible that, had the experiment been repeated, similar results would have emerged.`\n- `One might argue that, if the evidence had surfaced earlier, the verdict would have differed.`\n\nЭти «хеджи» дистанцируют автора от категоричного суждения.\n\n**5. But for / were it not for / had it not been for:**\nФормальные альтернативы `if…hadn't been for`:\n- `But for the storm, the flight would have proceeded.`\n- `Were it not for my colleagues, the report would not have been completed.` — смешение с Second по форме, но смысл контрфактуальный.\n- `Had it not been for the delay, we would have arrived on schedule.`\n\n**6. Third conditional без if — через союзы otherwise/or:**\n- `She arrived on time; otherwise, she would have missed the opening.`\n- `Fortunately, he called; otherwise, I wouldn't have known.`\n\nЭто элегантный способ выразить контрфактуал без `if`-клаузы.\n\n**7. Mixed interpretations:**\nTh может сочетаться с Second в сложном рассуждении:\n- `If he had accepted the offer, he would be living in Paris now.` — mixed.\n- `If he had accepted the offer, his life would have been different.` — third.\n\nC1-уровень — чувствовать разницу между последствием в момент прошлого и последствием, длящимся до сих пор.\n\n**8. Реаль пэкет использования для вежливости:**\n- `I would have preferred to be consulted.` (Я бы предпочёл, чтобы со мной посоветовались.) — дипломатичное выражение неудовольствия.\n- `We would have appreciated advance notice.` (Мы были бы признательны за предварительное уведомление.) — критика через вежливый Third.\n\nЭто регистр делового и дипломатического английского.\n\n**9. Dismissive или sarcastic Third:**\n- `Oh, if only I had known.` (О, если бы я только знал.) — в контексте может звучать искренне или саркастично.\n- `You would have thought he'd have called.` (Можно было бы подумать, что он позвонит.) — разговорная критика."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Had + subject + (not) + V3, subject + would/could/might/should have + (been) + V3",
+        "ru": "Had + подлежащее + (not) + V3, подлежащее + would/could/might/should have + (been) + V3"
       },
       "examples": [
         {
           "en": "Had the regulation been enforced, the accident would not have occurred.",
-          "ru": "Если бы правило соблюдалось, аварии бы не произошло."
+          "ru": "Если бы правило соблюдалось, аварии бы не произошло.",
+          "note": {
+            "en": "inversion + passive",
+            "ru": "инверсия + пассив"
+          }
         },
         {
           "en": "But for his timely intervention, the negotiations might have collapsed.",
-          "ru": "Если бы не его своевременное вмешательство, переговоры могли бы сорваться."
+          "ru": "Если бы не его своевременное вмешательство, переговоры могли бы сорваться.",
+          "note": {
+            "en": "but for",
+            "ru": "but for"
+          }
         },
         {
           "en": "One could argue that, had the evidence been available earlier, the outcome would have differed.",
-          "ru": "Можно утверждать, что, будь доказательства доступны раньше, исход был бы иным."
+          "ru": "Можно утверждать, что, будь доказательства доступны раньше, исход был бы иным.",
+          "note": {
+            "en": "hedged",
+            "ru": "хедж"
+          }
         },
         {
           "en": "We would have preferred more transparent communication throughout the process.",
-          "ru": "Мы бы предпочли более прозрачную коммуникацию на протяжении всего процесса."
+          "ru": "Мы бы предпочли более прозрачную коммуникацию на протяжении всего процесса.",
+          "note": {
+            "en": "polite criticism",
+            "ru": "вежливая критика"
+          }
         },
         {
           "en": "Had it not been for her leadership, the team would have disintegrated.",
-          "ru": "Не будь её руководства, команда бы распалась."
+          "ru": "Не будь её руководства, команда бы распалась.",
+          "note": {
+            "en": "had it not been for",
+            "ru": "had it not been for"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Had I known / Had it not been for — инверсия для академического и делового регистра; избегай If I would have в формальном письме."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If had the regulation been enforced, the accident wouldn't have happened.",
+          "right": "Had the regulation been enforced, the accident wouldn't have happened.",
+          "why": {
+            "en": "Inversion replaces *if* — you cannot keep both *if* and the fronted *had*.",
+            "ru": "Инверсия заменяет if — нельзя оставлять и if, и вынесенное вперёд had."
+          }
+        },
+        {
+          "wrong": "He would have understanded the risk.",
+          "right": "He would have understood the risk.",
+          "why": {
+            "en": "Use the correct irregular past participle (*understood*).",
+            "ru": "Используй правильное причастие неправильного глагола (understood)."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the third conditional is a refined stylistic instrument: you control register, modality, and rhetorical function, including subtle contrasts with mixed conditionals.\n\n**1. Counterfactual history.** `Had Caesar crossed the Rubicon a year later, the course of European history would have been altered.` A literary, academically contested genre of *what-if* writing.\n\n**2. Modal micro-distinctions.** `would have` (categorical), `should have` (norm of expectation unmet), `ought to have` (moral/logical necessity), `could have` (an unactualised possibility), `might have` (weak probability). The modal you pick encodes your epistemic and moral stance.\n\n**3. Rhetorical, accusatory third.** `Had the warnings been heeded, the tragedy would have been averted.` — assigns responsibility without naming it.\n\n**4. Diplomatic and legal register.** `We would have preferred that the matter had been handled differently.` — conflict de-escalation where a blunt *you were wrong* is impossible.\n\n**5. Compressed counterfactuals.** `Without him, we would have failed.` / `Another hour, and we would have been too late.` — the condition carried by a noun phrase or punctuation, no *if* at all.\n\n**6. Cleft constructions** for emphasis: `What would have made a difference was earlier communication.`\n\n**7. Free-standing *would have*** in speech, with the if-clause recovered from context: A: *Why didn't you tell me?* B: `I would have, but you weren't there.`\n\n**8. Configuration as worldview.** `If he had been listening, he would have understood.` (past) vs `Had he been listening then, he would understand now.` (mixed) — the tense choice is a stance on time and causation.",
         "ru": "На C2 Third conditional — изощрённый стилистический инструмент. Ты управляешь регистром, модальностью и риторической функцией, включая тонкие отличия от Mixed conditionals.\n\n**1. Counterfactual history и литературный анализ:**\n- `Had Caesar crossed the Rubicon a year later, the course of European history would have been altered.`\n- `Had Dostoevsky not been exiled, his later novels might never have been written.`\n\nЭто жанр контрфактуальной истории (what-if history) — академически спорный, но литературно мощный.\n\n**2. Subtle distinctions между модалами:**\n- `would have` — категоричный контрфактуал: «это бы случилось».\n- `should have` — норма ожидания: «должно было случиться, но не случилось».\n- `ought to have` — моральная или логическая необходимость.\n- `must have` (в отличие от остальных, не строго Third, но близко): «наверняка случилось бы» — с оттенком дедукции.\n- `could have` — возможность, которая не актуализировалась.\n- `might have` — слабая вероятность.\n- `may have` — эпистемическая (редко в Third).\n\nВыбор модала — это выбор эпистемической и моральной позиции говорящего.\n\n**3. Rhetorical Third — критика через предположение:**\n- `Had the government prioritised education, we would not face this shortage today.`\n- `Had the warnings been heeded, the tragedy would have been averted.`\n\nЭто обвинительный приём — подразумевает ответственность, не озвучивая её прямо.\n\n**4. Third conditional в дипломатии и юриспруденции:**\n- `We would have preferred that the matter had been handled differently.` (Мы бы предпочли, чтобы вопрос был решён иначе.)\n- `Had the clause been included, the dispute would not have arisen.`\n\nЭто регистр ликвидации конфликтов, где прямое «вы виноваты» недопустимо.\n\n**5. Compressed counterfactuals:**\nC2-писатель умеет компрессировать Third conditional в лаконичные формы:\n- `Without him, we would have failed.` = `If it hadn't been for him…`\n- `A different decision would have produced a different outcome.` — контрфактуал без `if`.\n- `Another hour, and we would have been too late.` — условие через пунктуацию.\n\n**6. Cleft constructions:**\n- `It is the rain that would have stopped us, had we been less determined.`\n- `What would have made a difference was earlier communication.`\n\nЭто риторические усиления контрфактуала.\n\n**7. Ironic и self-deprecating Third:**\n- `If only I had listened to my grandmother.` (Если бы я только послушал бабушку.) — сожаление с ностальгическим оттенком.\n- `I would have done it, but then I thought better of it.` (Я бы это сделал, но потом передумал.) — отступление.\n- `I would've, but…` — разговорное клише, часто иронично.\n\n**8. Free-standing would have:**\nВ разговорной речи Third conditional часто теряет if-клаузу, оставляя только would have в качестве ответа:\n- A: `Why didn't you tell me?` B: `I would have, but you weren't there.`\n- A: `Did you see the movie?` B: `Yes, and you would have loved it.` (имплицитное «если бы посмотрел».)\n\nC2-говорящий понимает, что имплицитное условие восстанавливается из контекста.\n\n**9. Перекрёсток с Past Perfect narratives:**\nВ сложных нарративах Third conditional встроен в более широкий пост-анализ:\n- `By the time she realised her mistake, the damage had been done. Had she caught it sooner, recovery would have been possible; as it was, nothing remained but regret.`\n\nУправление смешанной темпоральностью — признак высшей языковой зрелости.\n\n**10. Choice of tense signals worldview:**\n- `If he had been listening, he would have understood.` — судит о прошлом неспособность понимать.\n- `If he were listening, he would understand.` — Second, о настоящем (сейчас не слушает).\n- `Had he been listening then, he would understand now.` — Mixed.\n\nВыбор конфигурации — философский выбор о времени и причинности."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Had + subject + (not) + V3, … would/should/could/might have + (been) + V3 — or compressed without if",
+        "ru": "Had + подлежащее + (not) + V3, … would/should/could/might have + (been) + V3 — или компрессия без if"
       },
       "examples": [
         {
           "en": "Had the ancient texts survived intact, our understanding of the period would have been transformed.",
-          "ru": "Если бы древние тексты сохранились в целости, наше понимание этой эпохи было бы преобразовано."
+          "ru": "Если бы древние тексты сохранились в целости, наше понимание этой эпохи было бы преобразовано.",
+          "note": {
+            "en": "counterfactual history",
+            "ru": "контрфактуальная история"
+          }
         },
         {
           "en": "It would have been preferable had the matter been addressed privately.",
-          "ru": "Было бы предпочтительнее, если бы вопрос был решён в частном порядке."
+          "ru": "Было бы предпочтительнее, если бы вопрос был решён в частном порядке.",
+          "note": {
+            "en": "diplomatic",
+            "ru": "дипломатичный"
+          }
         },
         {
           "en": "A different approach, and the crisis would have been avoided entirely.",
-          "ru": "Другой подход — и кризиса удалось бы полностью избежать."
+          "ru": "Другой подход — и кризиса удалось бы полностью избежать.",
+          "note": {
+            "en": "compressed",
+            "ru": "компрессия"
+          }
         },
         {
           "en": "Had she been consulted, her expertise would have proved invaluable.",
-          "ru": "Если бы с ней посоветовались, её экспертиза оказалась бы бесценной."
+          "ru": "Если бы с ней посоветовались, её экспертиза оказалась бы бесценной.",
+          "note": {
+            "en": "inversion",
+            "ru": "инверсия"
+          }
         },
         {
           "en": "I would have, but circumstances intervened.",
-          "ru": "Я бы сделал, но обстоятельства вмешались."
+          "ru": "Я бы сделал, но обстоятельства вмешались.",
+          "note": {
+            "en": "free-standing",
+            "ru": "без if-клаузы"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Без if — but for, without, otherwise, had it not been for: компактные контрфактуалы для формального регистра."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Had not it been for her leadership, the team would have disintegrated.",
+          "right": "Had it not been for her leadership, the team would have disintegrated.",
+          "why": {
+            "en": "In negative inversion, *not* follows the subject: *Had it not been for…*.",
+            "ru": "В отрицательной инверсии not идёт после подлежащего: Had it not been for…"
+          }
+        },
+        {
+          "wrong": "A different approach, and the crisis would have been avoid entirely.",
+          "right": "A different approach, and the crisis would have been avoided entirely.",
+          "why": {
+            "en": "Passive perfect needs the past participle: *would have been avoided*.",
+            "ru": "Перфектный пассив требует причастия: would have been avoided."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "second-conditional",
+    "mixed-conditionals",
+    "first-conditional",
+    "zero-conditional"
+  ],
+  "crossTopic": [
+    "past-perfect-simple",
+    "modal-perfect",
+    "inversion",
+    "will-would"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Past condition (didn't happen)",
+      "Imagined past result"
+    ]
+  }
 };

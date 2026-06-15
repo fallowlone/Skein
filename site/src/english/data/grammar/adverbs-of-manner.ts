@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "adverbs-of-manner",
   "title": {
-    "en": "",
+    "en": "Adverbs of Manner",
     "ru": "Adverbs Of Manner"
   },
   "cefr": "A1",
@@ -17,24 +17,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "adverbs",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "An adverb of manner says **how** an action happens — it describes the verb. The basic rule is simple: take an adjective and add **-ly**: `slow → slowly`, `quick → quickly`, `quiet → quietly`, `careful → carefully`, `loud → loudly`.\n\n**Position:** the adverb usually comes **after the verb** — `He runs fast.`, not `He fast runs.` If the verb has a direct object, the adverb comes **after the object**, not between the verb and its object: `She reads the book quickly.` (not `She reads quickly the book.`)\n\n**Two words to memorise:**\n- The adverb of `good` is **`well`**, not `goodly`: `She sings well.` (never `She sings good.`)\n- `fast` keeps the same form as the adjective — there is no `fastly`: `a fast car` / `He runs fast.`",
         "ru": "Наречие образа действия говорит, **как** что-то происходит. Оно описывает глагол.\n\n**Как сделать наречие:** возьми прилагательное и добавь `-ly`.\n- `slow → slowly` (медленно)\n- `quick → quickly` (быстро)\n- `quiet → quietly` (тихо)\n- `careful → carefully` (осторожно)\n- `loud → loudly` (громко)\n\n**Примеры:**\n- `He drives carefully.` (Он водит осторожно.)\n- `She sings quietly.` (Она поёт тихо.)\n- `We work slowly.` (Мы работаем медленно.)\n\n**Где ставить:** обычно **после глагола**.\n- Right: `He runs fast.`\n- Wrong: `He fast runs.`\n\nЕсли есть прямой объект, наречие идёт **после** объекта:\n- `She reads the book quickly.` (не `She reads quickly the book.`)\n- `He speaks English slowly.`\n\n**Два особых слова:**\n- `good` (прилагательное) → `well` (наречие).\n  - `She is a good singer.` + `She sings well.`\n  - Wrong: `She sings good.`\n- `fast` — одинаково для прилагательного и наречия.\n  - `a fast car` / `He runs fast.`\n  - Wrong: `He runs fastly.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb (+ object) + adverb(-ly)",
+        "ru": "подлежащее + глагол (+ дополнение) + наречие(-ly)"
       },
       "examples": [
         {
           "en": "He speaks English well.",
-          "ru": "Он хорошо говорит по-английски."
+          "ru": "Он хорошо говорит по-английски.",
+          "note": {
+            "en": "well, not 'good'",
+            "ru": "well, не 'good'"
+          }
         },
         {
           "en": "She walks slowly in the park.",
@@ -46,7 +52,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "My brother runs fast.",
-          "ru": "Мой брат бегает быстро."
+          "ru": "Мой брат бегает быстро.",
+          "note": {
+            "en": "fast = no -ly",
+            "ru": "fast — без -ly"
+          }
         },
         {
           "en": "Please drive carefully.",
@@ -56,26 +66,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Adjective + ly. Good → well, fast → fast (без ly)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She sings good.",
+          "right": "She sings well.",
+          "why": {
+            "en": "The adverb of good is the irregular form well, not good.",
+            "ru": "Наречие от good — особая форма well, а не good."
+          }
+        },
+        {
+          "wrong": "He runs fastly.",
+          "right": "He runs fast.",
+          "why": {
+            "en": "fast is already an adverb; there is no -ly form.",
+            "ru": "fast уже наречие; формы с -ly не существует."
+          }
+        },
+        {
+          "wrong": "She reads quickly the book.",
+          "right": "She reads the book quickly.",
+          "why": {
+            "en": "The manner adverb follows the object, not the bare verb.",
+            "ru": "Наречие образа действия ставится после дополнения, а не сразу после глагола."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2, learn when to use an **adjective** and when to use an **adverb** with verbs.\n\n**Adjective after linking verbs** (`be`, `feel`, `seem`, `look`, `taste`, `smell`): these describe a state, so they take an adjective — `She feels happy.`, `The soup tastes good.`, `He seems tired.`\n\n**Adverb after action verbs:** `She sings beautifully.`, `He drives carefully.`, `They work hard.`\n\n**Spelling rules for -ly adverbs:** adjective in `-y` → `-ily` (`happy → happily`, `easy → easily`); adjective in consonant + `-le` → drop `-e`, add `-y` (`gentle → gently`, `simple → simply`); adjective in `-ic` → add `-ally` (`basic → basically`, `automatic → automatically`).\n\n**Irregular and flat forms:** `good → well`, `fast → fast`, `hard → hard`, `late → late`, `early → early`.\n\n**Watch the meaning traps:** `hard` (= with effort: `She works hard.`) is different from `hardly` (= barely: `I can hardly hear you.`). Likewise `late` (= not early: `He arrived late.`) is different from `lately` (= recently: `I haven't seen him lately.`).",
         "ru": "На A2 различай **прилагательное** и **наречие** с глаголами.\n\n**Прилагательное — после `be`, `feel`, `seem`, `look`, `taste`, `smell`:**\nЭти глаголы описывают состояние — после них идёт прилагательное:\n- `She feels happy.` (Она чувствует себя счастливой.)\n- `The soup tastes good.` (Суп хороший на вкус.)\n- `He seems tired.` (Он кажется уставшим.)\n\n**Наречие — с глаголом действия (action verb):**\nПосле глагола, описывающего что-то делать:\n- `She sings beautifully.` (Она поёт красиво.)\n- `He drives carefully.` (Он водит осторожно.)\n- `They work hard.` (Они много работают.)\n\n**Правила написания наречий:**\n- Если прилагательное на `-y`: меняем на `-ily` → `happy → happily`, `easy → easily`, `angry → angrily`.\n- Если на `-le` (после согласной): меняем `-e` на `-y` → `gentle → gently`, `simple → simply`.\n- Если на `-ic`: добавляем `-ally` → `basic → basically`, `automatic → automatically`.\n\n**Irregular (особые формы):**\n- `good → well`\n- `fast → fast`\n- `hard → hard` (усердно / сильно)\n- `late → late` (не `lately` = в последнее время)\n- `early → early` (не меняется)\n\n**`Hard` vs `hardly`:**\n- `hard` = усердно: `She works hard.` (Она усердно работает.)\n- `hardly` = едва: `I can hardly hear you.` (Я едва тебя слышу.) — другое значение!\n\nНе смешивай: `She works hardly.` = она едва работает (почти не работает) — это ошибка, если ты имел в виду «усердно».\n\n**`Late` vs `lately`:**\n- `late` = поздно: `He arrived late.`\n- `lately` = в последнее время: `I haven’t seen him lately.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "be/feel/seem + adjective  vs  action verb + adverb(-ly)",
+        "ru": "be/feel/seem + прилагательное  vs  глагол действия + наречие(-ly)"
       },
       "examples": [
         {
           "en": "She feels happy today.",
-          "ru": "Она чувствует себя счастливой сегодня."
+          "ru": "Она чувствует себя счастливой сегодня.",
+          "note": {
+            "en": "feel + adjective",
+            "ru": "feel + прилагательное"
+          }
         },
         {
           "en": "He works hard every day.",
-          "ru": "Он усердно работает каждый день."
+          "ru": "Он усердно работает каждый день.",
+          "note": {
+            "en": "hard = with effort",
+            "ru": "hard = усердно"
+          }
         },
         {
           "en": "The cat moves quietly.",
@@ -83,7 +127,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I can hardly hear you.",
-          "ru": "Я едва тебя слышу."
+          "ru": "Я едва тебя слышу.",
+          "note": {
+            "en": "hardly = barely",
+            "ru": "hardly = едва"
+          }
         },
         {
           "en": "They arrived late last night.",
@@ -93,17 +141,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "После sense-глаголов (feel / seem / taste) — прилагательное; после action-глаголов — наречие. Hard (тяжело) ≠ hardly (едва)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She feels happily.",
+          "right": "She feels happy.",
+          "why": {
+            "en": "Linking verbs like feel take an adjective, not a manner adverb.",
+            "ru": "Глаголы-связки вроде feel требуют прилагательного, а не наречия образа действия."
+          }
+        },
+        {
+          "wrong": "She works hardly.",
+          "right": "She works hard.",
+          "why": {
+            "en": "hardly means 'barely'; the adverb meaning 'with effort' is hard.",
+            "ru": "hardly значит 'едва'; наречие со значением 'усердно' — hard."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, refine where the manner adverb sits and tell it apart from other adverbs.\n\n**Default position** is after the verb or after the object: `She explained the rule clearly.` Splitting the verb and object (`She explained clearly the rule.`) sounds awkward and is avoided.\n\n**Position can shift the emphasis.** `He answered the question quickly.` stresses the speed of the action; `He quickly answered the question.` reads more like a quick reaction. Both are correct.\n\n**Mid-position** (before the main verb) works with auxiliaries: `She is carefully reading.`, `He has quietly left.`\n\n**Front position** for drama or written style: `Slowly, she opened the door.`\n\n**Manner vs frequency:** manner answers *how* (`She walks quickly.`), frequency answers *how often* (`She often walks.`); both can appear together (`She often walks quickly.`).\n\n**Order of several adverbs is Manner – Place – Time (MPT):** `She sang beautifully at the concert last night.`, not `She sang last night beautifully at the concert.`\n\n**Flat adverbs** (no `-ly`) share the adjective form: `fast`, `hard`, `late`, `early`, `straight`, `high` — `Don't work so hard.`, `Drive straight on.`\n\n**`well` as an adjective** of health: `I feel well today.` means 'in good health', while `I feel good.` is closer to 'in good spirits'.",
         "ru": "На B1 укрепи позицию наречия manner в сложных предложениях и различай от других наречий.\n\n**Стандартная позиция — после глагола или объекта:**\n- `She explained the rule clearly.` (не между глаголом и объектом).\n- Wrong: `She explained clearly the rule.` — редко, плохо звучит.\n- Right: `She clearly explained the rule.` (перед глаголом — если manner = «явно, очевидно»).\n\n**Пример смещения смысла от позиции:**\n- `He answered the question quickly.` — быстрое действие (how).\n- `He quickly answered the question.` — быстрая реакция (when, mid-position).\n\nОбе правильны, но акцент чуть разный.\n\n**Mid-position (перед main verb):**\n- С be: после: `She is carefully reading.`\n- С auxiliary: между: `She is carefully reading.`, `He has quietly left.`\n\n**Наречие в начале:**\nДля драматизма / письменного стиля:\n- `Slowly, she opened the door.` (медленно, с эффектом).\n- `Quietly, he approached the room.`\n\n**Manner vs frequency:**\n- Manner: `She walks quickly.` (как?)\n- Frequency: `She often walks.` (как часто?)\n\nОба могут быть в одном предложении:\n- `She often walks quickly.` (частота перед manner, или manner в конце).\n\n**Несколько наречий подряд — порядок MPT (Manner, Place, Time):**\n- `She sang beautifully at the concert last night.` (manner → place → time).\n- Wrong: `She sang last night beautifully at the concert.`\n\n**Flat adverbs (без `-ly`):**\nНекоторые adverbs имеют ту же форму, что прилагательные:\n- `fast`, `hard`, `late`, `early`, `straight`, `high`, `low`, `near`.\n\nПримеры:\n- `Don’t work so hard.`\n- `Drive straight on.`\n- `Fly high!`\n\n**`Well` как прилагательное:**\n- `I feel well.` (Я чувствую себя хорошо / здоров.) — тут `well` = прилагательное «здоров».\n- `I feel good.` (Я в хорошем настроении.) — оба правильны, но значения чуть разные."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "... verb (+ object) + Manner + Place + Time",
+        "ru": "... глагол (+ дополнение) + Manner + Place + Time"
       },
       "examples": [
         {
@@ -112,11 +178,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Slowly, the train began to move.",
-          "ru": "Медленно поезд начал двигаться."
+          "ru": "Медленно поезд начал двигаться.",
+          "note": {
+            "en": "fronted for effect",
+            "ru": "вынесено для эффекта"
+          }
         },
         {
           "en": "He sang beautifully at the concert last night.",
-          "ru": "Он прекрасно спел на концерте прошлой ночью."
+          "ru": "Он прекрасно спел на концерте прошлой ночью.",
+          "note": {
+            "en": "Manner-Place-Time order",
+            "ru": "порядок Manner-Place-Time"
+          }
         },
         {
           "en": "Don’t work so hard.",
@@ -124,36 +198,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I feel well today, thank you.",
-          "ru": "Я сегодня хорошо себя чувствую, спасибо."
+          "ru": "Я сегодня хорошо себя чувствую, спасибо.",
+          "note": {
+            "en": "well = in good health",
+            "ru": "well = здоров"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Порядок нескольких adverbs: Manner → Place → Time."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She sang last night beautifully at the concert.",
+          "right": "She sang beautifully at the concert last night.",
+          "why": {
+            "en": "Multiple adverbs follow Manner-Place-Time order.",
+            "ru": "Несколько наречий идут в порядке Manner-Place-Time."
+          }
+        },
+        {
+          "wrong": "She explained clearly the rule.",
+          "right": "She explained the rule clearly.",
+          "why": {
+            "en": "Do not split the verb from its object with the manner adverb.",
+            "ru": "Не разрывай глагол и дополнение наречием образа действия."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, treat **flat adverbs** as a register choice and explore manner across structures.\n\n**Flat adverbs in informal speech:** dropping `-ly` is common in casual English and on signs — `Drive slow!`, `Come quick!`, `Speak loud!`, plus idioms like `Think big.`, `Play nice.` Standard and formal writing keep the `-ly` form.\n\n**Double forms with split meanings:** `deep` (literal, `dive deep`) vs `deeply` (figurative, `care deeply`); `hard` (with effort) vs `hardly` (barely); `near` (close) vs `nearly` (almost); `late` vs `lately`; `high` (literal) vs `highly` (very, `highly recommended`).\n\n**Sentence adverbs** modify the whole clause rather than one verb — `Honestly, I don't know.`, `Frankly, this is unacceptable.`, `Obviously, she was tired.` These act as disjuncts, not manner adverbs. Compare manner `She spoke honestly.` (= told the truth) with disjunct `Honestly, she spoke.` (= speaking honestly, she did speak).\n\n**Participles can carry manner:** `He left, smiling.`, `She watched, fascinated.` — a more literary touch.\n\n**Prepositional phrases** can replace a manner adverb: `carefully → with care`, `quickly → in a hurry`, `angrily → in anger`.\n\n**Style tip:** stacking `-ly` adverbs signals weak prose; a precise verb beats `walked very quickly and angrily` — write `stormed out`.",
         "ru": "На B2 добавь **flat adverbs** как register note и изучи тонкости manner в разных структурах.\n\n**Flat adverbs в разговорном регистре:**\nВ неформальной речи возможны формы без `-ly`, которые грамматически \"прилагательные\", но используются как наречия:\n- `Drive slow!` (разговорное) vs `Drive slowly.` (стандарт).\n- `Come quick!` vs `Come quickly.`\n- `Speak loud!` vs `Speak loudly.`\n- `Think big.`, `Play nice.` — идиомы.\n\nЭто правильно в casual speech и на знаках (`Drive slow — children crossing`), но в formal writing — избегай.\n\n**Double forms (два варианта):**\n- `deep / deeply`: `dive deep` (буквально) vs `care deeply` (переносно).\n- `hard / hardly`: `work hard` (усердно) vs `hardly work` (едва работать).\n- `near / nearly`: `come near` (близко) vs `nearly died` (чуть не умер).\n- `late / lately`: `arrived late` (поздно) vs `haven’t seen lately` (в последнее время).\n- `high / highly`: `fly high` (буквально) vs `highly recommended` (очень).\n\n**Clause-modifying adverbs:**\nНекоторые -ly наречия модифицируют всю фразу, не отдельный глагол:\n- `Honestly, I don’t know.` (говоря честно).\n- `Frankly, this is unacceptable.`\n- `Obviously, she was tired.`\n\nЭто называется **sentence adverbs** — по функции ближе к disjunct, чем к manner.\n\n**Manner vs disjunct:**\n- Manner (образ действия): `She spoke honestly.` (говорила честно — как?).\n- Disjunct (комментарий): `Honestly, she spoke.` (честно говоря, она сказала).\n\n**Participle-based manner:**\n- `He left, smiling.` (участник в роли manner — смеясь).\n- `She watched, fascinated.` (очарованно).\nЭто более литературный стиль.\n\n**Prepositional manner phrases:**\nНаречие manner можно заменить фразой:\n- `carefully` → `with care`.\n- `quickly` → `in a hurry`, `at speed`.\n- `angrily` → `in anger`, `with anger`.\n\n**Style tip:**\nМного `-ly` наречий подряд — признак слабой прозы. Вместо нескольких наречий — сильный глагол:\n- Weak: `He walked very quickly and angrily.`\n- Strong: `He stormed out.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + adverb(-ly)  /  verb + with/in + noun (manner phrase)",
+        "ru": "глагол + наречие(-ly)  /  глагол + with/in + сущ. (фраза образа действия)"
       },
       "examples": [
         {
           "en": "Drive slow — children crossing!",
-          "ru": "Едь медленно — дети переходят!"
+          "ru": "Едь медленно — дети переходят!",
+          "note": {
+            "en": "flat adverb (informal)",
+            "ru": "flat adverb (разговорное)"
+          }
         },
         {
           "en": "She cares deeply about the issue.",
-          "ru": "Её глубоко волнует этот вопрос."
+          "ru": "Её глубоко волнует этот вопрос.",
+          "note": {
+            "en": "deeply = figurative",
+            "ru": "deeply = переносное"
+          }
         },
         {
           "en": "Honestly, I don’t know the answer.",
-          "ru": "Честно говоря, я не знаю ответа."
+          "ru": "Честно говоря, я не знаю ответа.",
+          "note": {
+            "en": "sentence adverb",
+            "ru": "наречие-комментарий"
+          }
         },
         {
           "en": "He left, smiling quietly to himself.",
@@ -161,32 +269,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She handled the situation with great care.",
-          "ru": "Она справилась с ситуацией очень осторожно."
+          "ru": "Она справилась с ситуацией очень осторожно.",
+          "note": {
+            "en": "manner as a phrase",
+            "ru": "образ действия фразой"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Flat adverbs (drive slow) — разговорные. В formal writing — добавь -ly."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She drives slow to work every morning. (in a formal report)",
+          "right": "She drives slowly to work every morning.",
+          "why": {
+            "en": "Flat adverbs belong to casual speech; formal writing needs -ly.",
+            "ru": "Flat adverbs уместны в разговорной речи; в формальном письме нужно -ly."
+          }
+        },
+        {
+          "wrong": "I recommend this book high.",
+          "right": "I recommend this book highly.",
+          "why": {
+            "en": "The figurative 'very' sense uses highly, not the literal flat form high.",
+            "ru": "Переносное значение 'очень' передаётся через highly, а не через буквальное high."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, manner adverbs interact subtly with **scope** and sentence syntax.\n\n**With infinitives,** placing the adverb before the infinitive is more emphatic: `She tried hard to concentrate.`, `He attempted bravely to intervene.`\n\n**Stance / clause-modifying adverbs** evaluate the whole clause rather than the verb: truth (`undoubtedly`, `certainly`, `clearly`), judgement (`wisely`, `rightly`, `foolishly`, `fortunately`), source (`reportedly`, `allegedly`, `apparently`). Some are ambiguous: `She wisely refused the offer.` can be manner ('refused in a wise way') or stance ('it was wise of her to refuse') — context decides.\n\n**Scope ambiguity:** in `He quickly decided to leave.`, the adverb normally modifies the nearer verb (a quick decision), not the leaving.\n\n**In the passive,** the manner adverb usually sits before the past participle: `The cake was carefully decorated.`, `The document has been thoroughly reviewed.`\n\n**Avoid stacking** manner adverbs: prefer `He spoke slowly and with great care.` or a precise verb (`He enunciated.`) over `He spoke slowly, carefully, and clearly.`\n\n**Register climbs** from informal (`quick`, `slow`) through neutral (`carefully`, `clearly`) to academic (`thoroughly`, `meticulously`, `systematically`). Formal prose often **nominalises**: `He acted decisively.` → `His decisiveness was clear.` Finally, mind **collocation** — `severely punish` works but `severely laugh` does not.",
         "ru": "На C1 manner-наречия взаимодействуют со **scope** и **synt предложения** тонко.\n\n**Manner-наречие с инфинитивом:**\n- `She tried hard to concentrate.` (усердно пыталась).\n- `He attempted bravely to intervene.` (пытался храбро).\nПозиция перед infinitive эмфатичнее, чем после.\n\n**Clause-modifying / stance adverbs:**\nЭти наречия не модифицируют глагол, а дают оценку всему предложению:\n- **Truth:** `undoubtedly`, `certainly`, `surely`, `clearly`.\n- **Judgement:** `wisely`, `rightly`, `foolishly`, `fortunately`.\n- **Source:** `reportedly`, `allegedly`, `apparently`.\n\nПример:\n- `She wisely refused the offer.` — can be manner («отказалась мудро») OR stance («она поступила мудро, отказавшись»). Context решает.\n\n**Scope ambiguity:**\n- `He quickly decided to leave.` — быстрое решение (`decided quickly`) or быстрый уход (`to leave quickly`)? Обычно первое (наречие модифицирует ближайший глагол).\n\n**Наречие manner в passive:**\n- `The cake was carefully decorated.` (наречие между was и past participle).\n- `The document has been thoroughly reviewed.`\n\nПозиция: обычно перед past participle.\n\n**Multiple manner adverbs:**\nДва подряд редко звучат хорошо. Если нужны — разделяй:\n- Weak: `He spoke slowly, carefully, and clearly.`\n- Better: `He spoke slowly and with great care.`\n- Best: сильный глагол: `He enunciated.`\n\n**Manner как hinge в сложных структурах:**\n- `Handling the matter diplomatically, she averted a crisis.` (participle + manner).\n- `Having acted decisively, the team secured the win.`\n\n**Register hierarchy:**\n- Academic: `thoroughly`, `meticulously`, `systematically`, `markedly`.\n- Neutral: `carefully`, `slowly`, `clearly`.\n- Informal: `quick`, `slow`, `loud` (flat forms).\n\n**Nominalisation:**\nФормальная проза часто заменяет adverb на noun phrase:\n- `He acted decisively.` → `His decisiveness was clear.`\n- `She responded thoughtfully.` → `Her response was thoughtful.`\n\n**Collocation restrictions:**\nНе любое manner + verb — естественно:\n- `severely punish` (OK), `*severely laugh` (no).\n- `wholeheartedly agree` (OK), `*wholeheartedly run` (no).\n\nВ словаре collocation смотри, какие наречия идут с глаголом."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + be/have + adverb + past participle (passive manner)",
+        "ru": "подлежащее + be/have + наречие + причастие (образ действия в пассиве)"
       },
       "examples": [
         {
           "en": "She wisely refused the offer.",
-          "ru": "Она мудро отказалась от предложения."
+          "ru": "Она мудро отказалась от предложения.",
+          "note": {
+            "en": "stance or manner",
+            "ru": "оценка или образ действия"
+          }
         },
         {
           "en": "The document has been thoroughly reviewed.",
-          "ru": "Документ был тщательно проверен."
+          "ru": "Документ был тщательно проверен.",
+          "note": {
+            "en": "adverb before participle",
+            "ru": "наречие перед причастием"
+          }
         },
         {
           "en": "Having acted decisively, the team secured the victory.",
@@ -194,7 +332,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He spoke with great care and precision.",
-          "ru": "Он говорил с большой осторожностью и точностью."
+          "ru": "Он говорил с большой осторожностью и точностью.",
+          "note": {
+            "en": "manner as a phrase",
+            "ru": "образ действия фразой"
+          }
         },
         {
           "en": "The findings were meticulously documented.",
@@ -204,22 +346,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Academic writing: переведи adverb в noun phrase (acted decisively → showed decisiveness)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The document has been reviewed thoroughly by the team carefully.",
+          "right": "The document has been thoroughly reviewed by the team.",
+          "why": {
+            "en": "Avoid stacking manner adverbs; place one before the participle.",
+            "ru": "Не нагромождай наречия образа действия; ставь одно перед причастием."
+          }
+        },
+        {
+          "wrong": "They severely laughed at the joke.",
+          "right": "They laughed heartily at the joke.",
+          "why": {
+            "en": "severely does not collocate with laugh; choose an adverb that fits the verb.",
+            "ru": "severely не сочетается с laugh; выбери наречие, подходящее к глаголу."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, choosing between a **manner adverb** and an alternative is a stylistic decision.\n\n**Strong verbs beat verb + adverb:** `walked slowly → ambled, sauntered, strolled`; `looked quickly → glanced`; `spoke loudly → bellowed, shouted`; `ate hungrily → devoured`; `laughed noisily → roared, cackled`. Orwell's rule applies: don't use an adverb when a precise verb exists.\n\n**When adverbs still earn their place:** no exact verb exists (`She waved her hand dismissively.`); the adverb adds genuinely new information (`He agreed reluctantly.` — the reluctance contrasts with the agreement); or for humour and irony (Tom Swifties: `\"I'm dying,\" Tom said gravely.`).\n\n**Literary manner** exploits position and rhythm: a trailing `-ly` adverb adds a pause (`The shadows lengthened, slowly.`); participle + manner + inversion reads elegantly (`Smiling faintly, she took his hand.`).\n\n**Corpus note:** the top manner adverbs (`slowly`, `quickly`, `carefully`, `easily`, `well`, `hard`, `softly`, `gently`, `firmly`, `clearly`) work in any register; rarer ones (`resolutely`, `imperiously`, `inscrutably`) carry character in literature.\n\n**Fine contrasts:** `wholeheartedly` is warmer than `unreservedly`; `grudgingly` is more emotive than `reluctantly`; `studiously` implies pointed effort, often in avoidance.\n\n**The editor's test:** if removing the adverb loses no meaning, cut it; if it does, keep it — but first check for a precise verb.",
         "ru": "На C2 выбор между **manner adverb** и **альтернативой** — стилистическое решение.\n\n**Adverbs vs stronger verbs:**\nСлабая проза: verb + adverb.\nСильная проза: precise verb.\n- `walked slowly` → `ambled`, `sauntered`, `strolled`.\n- `looked quickly` → `glanced`.\n- `spoke loudly` → `bellowed`, `shouted`.\n- `ate hungrily` → `devoured`.\n- `laughed noisily` → `roared`, `cackled`.\n\nPрavилo Оруэлла: “Never use a long word where a short one will do” — и: не используй adverb, если есть точный глагол.\n\n**Когда adverbs всё же нужны:**\n- Когда точный глагол отсутствует: `She waved her hand dismissively.`\n- Когда adverb несёт новую информацию: `He agreed reluctantly.` (reluctance — contrast).\n- В юмористической/ироничной прозе: `Tom Swifties` (\"I'm dying,\" Tom said gravely).\n\n**Poetic / literary manner:**\n- Naked -ly наречия на концах предложений в поэзии эффективны:\n  - `The shadows lengthened, slowly.` (пауза + manner).\n- Participle + manner + inversion: `Smiling faintly, she took his hand.`\n\n**Corpus observations:**\nВ топ-10 manner adverbs по corpus: `slowly`, `quickly`, `carefully`, `easily`, `well`, `hard`, `softly`, `gently`, `firmly`, `clearly`. Эти работают в любом регистре.\n\nРедкие: `resolutely`, `imperiously`, `inscrutably` — подают character и работают в литературе.\n\n**Stylistic compression:**\nВ журналистике и коммерческом письме manner часто уносят в scene:\n- `She answered calmly.` → `\"Yes,\" she said, calm as ever.` (через atmosphere).\n\n**Nuanced contrasts:**\n- `unreservedly` vs `wholeheartedly` — оба «безоговорочно», но `wholeheartedly` теплее.\n- `grudgingly` vs `reluctantly` — оба «неохотно», но `grudgingly` эмоциональнее.\n- `studiously` vs `deliberately` — намеренно, но `studiously` = подчёркнуто, особенно в избегании.\n\n**Fronting для эмфазы:**\n- `Silently, she watched.` — медленный ритм.\n- `Brilliantly, he solved the puzzle.` — восхищение (но иногда sarcastic).\n- Риск: fronting stance adverbs может быть двусмыслен.\n\n**Финал: редакторский тест.**\nПри финальной редакции — спроси: убрать adverb — потеряется смысл? Нет → убери. Да → оставь, но проверь, нет ли точного глагола."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "precise verb  >  verb + adverb(-ly)  (stylistic choice)",
+        "ru": "точный глагол  >  глагол + наречие(-ly)  (стилистический выбор)"
       },
       "examples": [
         {
           "en": "She sauntered through the gallery, uninterested.",
-          "ru": "Она лениво прошлась по галерее, не проявляя интереса."
+          "ru": "Она лениво прошлась по галерее, не проявляя интереса.",
+          "note": {
+            "en": "strong verb beats adverb",
+            "ru": "сильный глагол вместо наречия"
+          }
         },
         {
           "en": "He bellowed his approval from the back row.",
@@ -227,11 +391,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "\"I’m dying,\" Tom said gravely.",
-          "ru": "\"Я умираю\", — серьёзно сказал Том."
+          "ru": "\"Я умираю\", — серьёзно сказал Том.",
+          "note": {
+            "en": "Tom Swifty (ironic)",
+            "ru": "Tom Swifty (ироничное)"
+          }
         },
         {
           "en": "Silently, she placed the letter on the desk.",
-          "ru": "Тихо она положила письмо на стол."
+          "ru": "Тихо она положила письмо на стол.",
+          "note": {
+            "en": "fronted for rhythm",
+            "ru": "вынесено для ритма"
+          }
         },
         {
           "en": "They agreed, albeit reluctantly, to the terms.",
@@ -241,9 +413,45 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Сильный глагол часто бьёт verb + adverb: sauntered вместо walked slowly."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She walked very slowly through the gallery.",
+          "right": "She sauntered through the gallery.",
+          "why": {
+            "en": "A precise verb often replaces a weak verb + manner adverb.",
+            "ru": "Точный глагол часто заменяет слабый глагол + наречие образа действия."
+          }
+        },
+        {
+          "wrong": "He spoke loudly and angrily and quickly.",
+          "right": "He ranted.",
+          "why": {
+            "en": "Three stacked manner adverbs are weak prose; compress into one strong verb.",
+            "ru": "Три нагромождённых наречия — слабая проза; сожми в один сильный глагол."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "adverbs-of-frequency",
+    "adverbs-of-degree",
+    "adjective-vs-adverb",
+    "word-order-svoa"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "past-simple",
+    "passive-present-simple",
+    "comparative-adjectives"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "subject",
+      "verb",
+      "(object)",
+      "adverb of manner"
+    ]
+  }
 };

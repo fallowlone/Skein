@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "negative-questions",
   "title": {
-    "en": "",
+    "en": "Negative Questions",
     "ru": "Negative Questions"
   },
   "cefr": "B1",
@@ -15,24 +15,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "questions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "A negative question puts the auxiliary verb into its negative form: \"Don't you...?\", \"Isn't she...?\", \"Haven't you...?\", \"Can't he...?\". The word order is exactly the same as an ordinary question; you simply use the contracted negative auxiliary at the front.\n\nForm it from any normal question:\n- \"Do you like pizza?\" becomes \"Don't you like pizza?\"\n- \"Is she coming?\" becomes \"Isn't she coming?\"\n- \"Have you seen it?\" becomes \"Haven't you seen it?\"\n\nIn modern spoken English the contracted form (don't, isn't, can't) is the normal choice. The full form (do you not, is she not) sounds formal or emphatic.\n\nNegative questions have two everyday jobs at this level. First, they show surprise or a thwarted expectation: the speaker assumed the answer would be \"yes\" and is checking. \"Don't you like coffee?\" implies \"I thought you did.\" Second, with \"Why don't...?\" they make a friendly suggestion or invitation: \"Why don't you come with us?\" is an offer, not a real question about reasons.\n\nThe big trap is answering. In English, \"yes\" always means the positive action is true and \"no\" always means it is not, no matter how the question is worded. So to \"Don't you like coffee?\" you say \"Yes, I do\" if you like it and \"No, I don't\" if you don't. You cannot say \"Yes\" to agree with the negative.",
         "ru": "**Отрицательные вопросы** — это вопросы вида `Don't you…?`, `Isn't she…?`, `Haven't you…?` Грамматически они строятся как обычный вопрос, но со вспомогательным глаголом в отрицательной форме.\n\n**Образование:**\n- `Do you like pizza?` → `Don't you like pizza?` (Ты разве не любишь пиццу?)\n- `Is she coming?` → `Isn't she coming?` (Она разве не идёт?)\n- `Can he swim?` → `Can't he swim?` (Он разве не умеет плавать?)\n- `Have you seen it?` → `Haven't you seen it?` (Ты разве не видел?)\n\nВ современном английском короткая форма (`don't`, `isn't`) звучит естественнее, чем полная (`do you not`, `is she not`).\n\n**Две основные функции:**\n\n1. **Выражение ожидания / удивления:**\nГоворящий думал, что ответ — «да», и удивлён обратному.\n- `Don't you like coffee?` (Ты разве не любишь кофе?) — я думал, любишь.\n- `Isn't it cold today?` (Разве сегодня не холодно?) — я думаю, что холодно.\n- `Haven't we met before?` (Разве мы раньше не встречались?) — кажется, встречались.\n\n2. **Предложение / приглашение:**\n- `Why don't you come with us?` (Почему бы тебе не пойти с нами?) — приглашение.\n- `Why don't we take a break?` (Почему бы нам не сделать перерыв?)\n- `Don't you want to try?` (Разве не хочешь попробовать?)\n\nЗдесь нет буквального ожидания отрицательного ответа — это просто вежливое предложение.\n\n**Русское соответствие:**\n«Разве не…?» или «Неужели не…?» — близкий перевод. Но тонкости есть: в русском «Разве не любишь?» может быть нейтральным вопросом; в английском `Don't you like?` всегда несёт эмоциональный оттенок.\n\n**Как отвечать — ловушка:**\n- `Don't you like coffee?`\n- Если любишь → `Yes, I do.` (Да, люблю.)\n- Если не любишь → `No, I don't.` (Нет, не люблю.)\n\n**Правило:** `Yes` всегда значит положительное действие, `No` — отрицательное. Это не зависит от формы вопроса.\n\nВ русском путают: «Разве ты не хочешь?» — «Да, не хочу» (согласие с отрицанием). В английском так нельзя. `Yes` = хочу, `No` = не хочу.\n\n**Типичные ошибки B1:**\n- `Don't you can swim?` — двойной вспомогательный. Правильно: `Can't you swim?`\n- `Amn't I right?` — нет в стандартном английском. Правильно: `Aren't I right?`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "negative auxiliary (Don't / Isn't / Can't / Haven't) + subject + main verb?",
+        "ru": "отрицательный вспомогательный (Don't / Isn't / Can't / Haven't) + подлежащее + смысловой глагол?"
       },
       "examples": [
         {
           "en": "Don't you know the answer?",
-          "ru": "Ты разве не знаешь ответ?"
+          "ru": "Ты разве не знаешь ответ?",
+          "note": {
+            "en": "surprise",
+            "ru": "удивление"
+          }
         },
         {
           "en": "Isn't she your sister?",
@@ -40,7 +46,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Why don't you ask your teacher?",
-          "ru": "Почему бы тебе не спросить учителя?"
+          "ru": "Почему бы тебе не спросить учителя?",
+          "note": {
+            "en": "suggestion",
+            "ru": "предложение"
+          }
         },
         {
           "en": "Haven't you finished your homework yet?",
@@ -54,22 +64,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Отвечая на Don't you…?, ориентируйся на факт: Yes = да, делаю / No = нет, не делаю."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Don't you can swim?",
+          "right": "Can't you swim?",
+          "why": {
+            "en": "Use one negative auxiliary; don't stack \"don't\" with a modal.",
+            "ru": "Один отрицательный вспомогательный: нельзя ставить don't перед модальным."
+          }
+        },
+        {
+          "wrong": "Amn't I right?",
+          "right": "Aren't I right?",
+          "why": {
+            "en": "Standard English has no \"amn't\"; the negative question of \"I am\" is \"aren't I\".",
+            "ru": "В стандартном английском нет amn't; отрицательная форма от I am — aren't I."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the skill is reading the shade of meaning, because the same negative-question form can carry very different attitudes. Surprise or disbelief: \"Don't you remember?\", \"Haven't they arrived yet?\". Reproach or disappointment: \"Couldn't you have called?\", \"Didn't you know this was important?\" carry a complaint, not genuine curiosity. Intonation usually settles it: a rising tone is a real question; a falling tone is a reproach or a statement in disguise.\n\nNegative questions are also a standard politeness device. \"Why don't you...?\" and \"Why don't we...?\" are the neutral way to suggest something. \"Couldn't you help me?\" is softer and more tentative than \"Can you help me?\", and \"Wouldn't you like some tea?\" sounds warm and hospitable.\n\nA further B2 use is the rhetorical negative question, which states something rather than asks: \"Who doesn't love a holiday?\" means everyone does; \"Isn't that obvious?\" means of course it is. These expect agreement, not information.\n\nNote the register split: \"Do you not like it?\" (separated \"not\") is colder and more formal than the everyday \"Don't you like it?\". In business contexts handle negative questions with care, since they can easily sound like an accusation. The answer rule from B1 still holds in emotional contexts: to \"Don't you think he's wrong?\" answer \"Yes\" to mean \"yes, he is wrong\" and \"No\" to mean \"no, he isn't\".",
         "ru": "На B2 учимся тонко различать **оттенки** отрицательных вопросов.\n\n**Удивление / disbelief:**\n- `You haven't met her? Really?` (Ты её не встречал? Правда?) — удивление.\n- `Don't you remember?` (Ты разве не помнишь?) — лёгкое изумление.\n- `Haven't they arrived yet?` (Они ещё не приехали?) — ожидание другого.\n\n**Упрёк / disappointment:**\n- `Couldn't you have called?` (Не мог бы ты позвонить?) — укор, что не позвонил.\n- `Didn't you know this was important?` (Ты разве не знал, что это важно?) — упрёк.\n- `Wouldn't it be nicer to ask first?` (Не было бы лучше сначала спросить?)\n\nИнтонация решает: восходящая — настоящий вопрос; нисходящая — упрёк, утверждение.\n\n**Предложение (suggestion):**\n- `Why don't you try again?` (Почему бы тебе не попробовать ещё раз?)\n- `Why don't we leave early?` (Почему бы нам не уйти пораньше?)\n- `Wouldn't it be easier to…?` (Не было бы проще…?)\n\n`Why don't you/we…?` — стандартная, вежливая форма предложения.\n\n**Вежливые просьбы:**\n- `Couldn't you help me?` — мягче, чем `Can you help me?`\n- `Wouldn't you like some tea?` — гостеприимно, вежливо.\n\n**Риторические отрицательные вопросы:**\n- `Who doesn't love a holiday?` (Кто не любит отпуск?) — все любят.\n- `Isn't that obvious?` (Разве это не очевидно?) — конечно, очевидно.\n- `Hasn't everyone struggled with this?` (Разве не каждый с этим сталкивался?)\n\nЭти вопросы не ждут ответа — они утверждают через риторический приём.\n\n**Прагматические нюансы:**\n- `Do you not like it?` — более формальная, холодная форма.\n- `Don't you like it?` — эмоциональная, разговорная.\n\nВыбор между ними — стилистический. В деловой речи осторожно — отрицательные вопросы часто звучат как обвинение.\n\n**Типичные B2 ошибки:**\n- Перевод русского «Разве ты не пришёл?» как нейтрального вопроса. В английском `Didn't you come?` звучит с удивлением или упрёком. Нейтральный факт — `Did you come?`\n\n**Ответы в эмоциональном контексте:**\n- `Don't you think he's wrong?` — `Yes, absolutely.` / `No, I don't think so.`\n- Русскоязычные часто отвечают `Yes` в значении «да, согласен с твоим отрицанием» — ошибка. Здесь `Yes` = думаю, что он неправ; `No` = не думаю.\n\n**Formal alternative — `do you not think`:**\n- `Do you not think we should reconsider?` (Не думаете ли вы, что нам следует пересмотреть?) — вежливо, формально.\n- В деловой переписке и презентациях используется для мягкого несогласия."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "negative aux / modal (Didn't / Wouldn't / Couldn't / Why don't) + subject + verb? (rising = question, falling = reproach)",
+        "ru": "отриц. вспомог. / модальный (Didn't / Wouldn't / Couldn't / Why don't) + подлежащее + глагол? (восходящий тон = вопрос, нисходящий = упрёк)"
       },
       "examples": [
         {
           "en": "Didn't I tell you to be careful?",
-          "ru": "Я разве не говорил тебе быть осторожным?"
+          "ru": "Я разве не говорил тебе быть осторожным?",
+          "note": {
+            "en": "reproach",
+            "ru": "упрёк"
+          }
         },
         {
           "en": "Wouldn't it be better to wait until morning?",
@@ -77,7 +109,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Why don't you join us for dinner?",
-          "ru": "Почему бы тебе не поужинать с нами?"
+          "ru": "Почему бы тебе не поужинать с нами?",
+          "note": {
+            "en": "suggestion",
+            "ru": "предложение"
+          }
         },
         {
           "en": "Haven't you heard the news?",
@@ -85,28 +121,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Isn't that a beautiful sunset?",
-          "ru": "Разве это не прекрасный закат?"
+          "ru": "Разве это не прекрасный закат?",
+          "note": {
+            "en": "rhetorical",
+            "ru": "риторический"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Нисходящая интонация в отрицательном вопросе часто сигнализирует упрёк или утверждение, не вопрос."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Didn't you come? (meaning a plain neutral check)",
+          "right": "Did you come?",
+          "why": {
+            "en": "\"Didn't you come?\" sounds surprised or reproachful; a neutral fact uses the positive question.",
+            "ru": "Didn't you come? звучит с удивлением или упрёком; нейтральный факт — Did you come?"
+          }
+        },
+        {
+          "wrong": "Don't you think he's wrong? — Yes, I don't think so.",
+          "right": "Don't you think he's wrong? — No, I don't think so.",
+          "why": {
+            "en": "\"Yes\" can never pair with a negative verb; use \"No\" to deny.",
+            "ru": "Yes не сочетается с отрицательным глаголом; для отрицания нужно No."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the negative question is a discourse and rhetorical tool, and the issue is no longer form but pragmatic control. The rhetorical negative question builds shared ground: \"Haven't we all been there?\", \"Who among us isn't guilty of this?\" invite the audience to answer \"yes\" silently and thereby adopt the speaker's stance. It is a staple of essays, speeches, and persuasion.\n\nDepending on intonation and context, the same device can be a gentle suggestion (\"Why don't we...?\"), a reproach (\"Didn't I tell you?\"), an intensified claim (\"Don't you see it's wrong?\"), or cold scepticism (\"Aren't you being hasty?\"). A C1 speaker chooses among these deliberately, where a learner often misjudges the tone and comes across as too blunt or too obsequious.\n\nNegative questions combine naturally with modals to grade force: \"Shouldn't you be at work?\" is a reproach, \"Couldn't we have discussed this first?\" a regretful complaint, \"Wouldn't you agree that...?\" an invitation to consent, and \"Mightn't it be wiser to...?\" a maximally cautious proposal. Contrast confrontational use (\"Don't you think you're overreacting?\") with collaborative use (\"Don't you find this interesting?\").\n\nIn formal written and academic English, negative questions are rare because the form is essentially spoken; when they appear they take high-register shapes like \"Is it not the case that...?\" or \"Might it not be argued that...?\". In a formal email, prefer rewording: instead of \"Don't you think we should...?\" use \"I was wondering whether we might consider...\".",
         "ru": "На C1 отрицательные вопросы становятся **риторическим и дискурсивным инструментом**.\n\n**Rhetorical negation:**\n- `Haven't we all been there?` (Разве не все мы там были?) — создание общности.\n- `Who among us isn't guilty of this?` (Кто среди нас в этом не виноват?) — философская смягчающая формула.\n- `Isn't history full of such examples?` (Разве история не полна таких примеров?)\n\nРиторический отрицательный вопрос — стандартный приём эссе, речи, проповеди. Он приглашает аудиторию ответить `Yes` мысленно, тем самым принимая авторскую позицию.\n\n**Политика вежливости:**\nОтрицательный вопрос — сильный социальный инструмент. В зависимости от интонации и контекста он может быть:\n- Мягким предложением (`Why don't we…?`)\n- Упрёком (`Didn't I tell you?`)\n- Усиленным вопросом (`Don't you see it's wrong?`)\n- Холодным сомнением (`Aren't you being hasty?`)\n\nНоситель C1 выбирает между ними осознанно. Иностранец часто промахивается с тоном — звучит то слишком резко, то слишком подобострастно.\n\n**Negative questions + modals:**\n- `Shouldn't you be at work?` (Ты разве не должен быть на работе?) — упрёк.\n- `Couldn't we have discussed this first?` (Не могли ли мы это сначала обсудить?) — укор.\n- `Wouldn't you agree that…?` (Разве вы не согласились бы, что…?) — приглашение к согласию.\n- `Mightn't it be wiser to…?` (Не было бы ли разумнее…?) — максимально осторожное предложение.\n\n**Confrontational vs collaborative:**\n- Confrontational: `Don't you think you're overreacting?` — обвинение в избыточной реакции.\n- Collaborative: `Don't you find this interesting?` — приглашение разделить интерес.\n\nРазница — в интонации и выборе глагола.\n\n**Negative questions in debate:**\n- `Doesn't this prove my point?` (Разве это не доказывает мою мысль?) — риторический акцент.\n- `Is it not the case that…?` (Разве не так, что…?) — очень формальное, почти судебное.\n- `Am I wrong in thinking that…?` (Я ошибаюсь, полагая, что…?) — вежливое предложение альтернативной точки зрения.\n\n**Formal written English:**\nВ академическом письме отрицательные вопросы **редки** — они устные. Если встречаются, то в виде `Is it not the case that…?`, `Might it not be argued that…?` — высокорегистровые варианты.\n\n**Prosodic awareness:**\nДля C1 принципиально умение **слышать** оттенок отрицательного вопроса. Практикуй:\n- Подкасты интервью (BBC, NPR) — ведущие используют rhetorical neg questions.\n- Политические дебаты — confrontational negation.\n- Реклама — collaborative neg: `Don't you deserve a break?`\n\n**Ambivalent cases:**\n- `You don't happen to know, do you?` — очень вежливая просьба об информации, без ожидания положительного ответа.\n- `Not that I don't appreciate it, but…` — предисловие к критике, в котором двойное отрицание создаёт вежливое смягчение.\n\n**Русско-английский сдвиг:**\nРусское «А не хотите ли…?» — приглашение. Прямой перевод `Don't you want…?` тоже приглашение, но сильнее звучит как упрёк. Более нейтральные варианты в английском: `Would you like…?`, `How about…?`\n\n**В формальном email:**\n- Вместо `Don't you think we should…?` → `I was wondering whether we might consider…`\n- Вместо `Haven't you received it?` → `I wanted to check whether the email has reached you.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "negative modal / aux (Shouldn't / Wouldn't / Mightn't / Is it not) + subject + verb? — force tuned by modal and intonation",
+        "ru": "отриц. модальный / вспомог. (Shouldn't / Wouldn't / Mightn't / Is it not) + подлежащее + глагол? — сила задаётся модальным и интонацией"
       },
       "examples": [
         {
           "en": "Is it not the case that the defendant was warned?",
-          "ru": "Разве не правда, что обвиняемый был предупреждён?"
+          "ru": "Разве не правда, что обвиняемый был предупреждён?",
+          "note": {
+            "en": "formal / legal",
+            "ru": "формально / юридически"
+          }
         },
         {
           "en": "Wouldn't you agree this approach is flawed?",
@@ -118,7 +180,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Mightn't it be wiser to postpone the decision?",
-          "ru": "Не было бы ли разумнее отложить решение?"
+          "ru": "Не было бы ли разумнее отложить решение?",
+          "note": {
+            "en": "tentative",
+            "ru": "осторожно"
+          }
         },
         {
           "en": "Shouldn't the committee have been consulted?",
@@ -128,34 +194,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "На C1 отрицательный вопрос — тонкий инструмент: риторика, упрёк, приглашение. Интонация решает всё."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Don't you want to join us? (as a neutral invitation)",
+          "right": "Would you like to join us?",
+          "why": {
+            "en": "A direct \"Don't you want...?\" can sound like pressure or reproach; use \"Would you like...?\" or \"How about...?\" to stay neutral.",
+            "ru": "Прямое Don't you want...? может звучать как давление; для нейтральности — Would you like...? или How about...?"
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the negative question operates across high rhetorical and genre-specific registers, and mastery means hearing and producing fine pragmatic distinctions rather than getting the form right. The separated form \"Does X not...?\" marks the parliamentary register (\"Does the Prime Minister not accept that...?\"); in ordinary speech it sounds stiff. The Socratic method chains negative questions to lead an interlocutor to a foregone conclusion (\"Is it not the case, then, that virtue is knowledge?\"), recognisable in philosophical dialogue and lectures.\n\nIn cross-examination the leading negative question is a standard tactic: \"Didn't you, in fact, see the defendant that night?\" plants the fact inside the question, leaving the witness only to confirm or deny. Sermons and exhortation use a solemn, mobilising form (\"Are we not called to be better?\"). In literature, negative questions frame a character's inner speech and self-justification, often in chains (\"Hadn't he warned her? Hadn't he made it clear?\"); archaic elevated forms survive as recognisable allusions (\"Hath he not eyes?\").\n\nA C2 speaker tunes the formula by tiny increments: softest \"Would you perhaps not think...?\", neutral \"Don't you think...?\", challenging \"Do you really not see...?\", accusatory \"Didn't I tell you?\". Irony rides on the form too: \"Oh, doesn't that sound familiar?\" or \"Isn't that just what we needed?\" sound sarcastic precisely because \"no\" suggests itself while the speaker means \"yes, exactly, and it's bad\". In written business English they are almost absent, replaced by \"I was wondering...\", \"Could you confirm...\"; when they do appear it is as polite disagreement (\"Do you not feel that...?\").",
         "ru": "На C2 отрицательные вопросы работают в **высоких риторических и жанровых регистрах** — суд, парламент, проповедь, литература.\n\n**Parliamentary negation:**\nВ британских дебатах отрицательный вопрос — классический приём.\n- `Does the Prime Minister not accept that…?` (Премьер-министр не согласен с тем, что…?)\n- `Would the Secretary not concede that…?` (Министр не признал бы, что…?)\n\nФорма `Does X not…?` (c раздельным `not`) — маркер парламентского регистра. В обычной речи звучит чопорно.\n\n**Socratic method:**\n- `Is it not the case, then, that virtue is knowledge?` (Не получается ли, что добродетель есть знание?)\n\nКлассическая сократовская форма — цепочка отрицательных вопросов, ведущая собеседника к предопределённому выводу. Узнаваемо в философских диалогах, академических лекциях.\n\n**Cross-examination:**\n- `Didn't you, in fact, see the defendant that night?` (Не видели ли вы, на самом деле, обвиняемого в ту ночь?)\n- `Isn't it true that you received the money?` (Разве не правда, что вы получили деньги?)\n\nЮридическая leading question в форме отрицательного вопроса — стандартная тактика. Свидетель либо подтверждает (Yes), либо отрицает (No), но сам факт поставлен уже в вопросе.\n\n**Sermons and exhortation:**\n- `Are we not called to be better?` (Разве мы не призваны быть лучше?)\n- `Shall we not rise to the occasion?` (Разве не восстанем мы навстречу событию?)\n\nТоржественная, мобилизующая функция. Характерно для церковной риторики, мемориальных речей.\n\n**Literary uses:**\nВ прозе отрицательный вопрос часто оформляет внутреннюю речь героя.\n- `Hadn't he warned her? Hadn't he made it clear?` — несобственно-прямая речь, внутреннее самооправдание.\n- У Henry James, Ian McEwan, Kazuo Ishiguro — плотные цепочки таких вопросов как маркер сомнения персонажа.\n\n**Archaic and elevated forms:**\n- `Hath he not eyes? Hath he not hands?` (Shakespeare, Merchant of Venice) — классическое ритмизированное чередование.\n- В современном английском эти формы — архаизмы, но узнаваемы.\n\n**Pragmatic tuning:**\nНа C2 говорящий меняет формулу в зависимости от желаемого эффекта:\n- Softest: `Would you perhaps not think…?`\n- Neutral: `Don't you think…?`\n- Challenging: `Do you really not see…?`\n- Accusatory: `Didn't I tell you?`\n\nКаждая ступень — минимальный сдвиг, ощутимый носителю.\n\n**Ирония:**\n- `Oh, doesn't that sound familiar?` (О, разве это не звучит знакомо?) — саркастично о повторяющейся ситуации.\n- `Isn't that just what we needed?` — сарказм о нежелательном.\n\nИрония в отрицательном вопросе сильнее, чем в обычном: `No` просится сам собой, но говорящий подразумевает именно `Yes, exactly — and it's bad`.\n\n**Double negation в вопросе:**\n- `Isn't it not the case…?` — двойная отрицательная форма, крайне редкая, но встречается в философском дискурсе.\n- Обычно воспринимается как неуклюжая; носитель C2 распознаёт и избегает.\n\n**Negative questions в письменном деловом английском:**\nПочти отсутствуют — заменяются формулами `I was wondering…`, `Could you confirm…`, `May I ask…`. Если встречаются, то в виде `Do you not feel that…?` — вежливое несогласие.\n\n**Финал:** отрицательный вопрос на C2 — это **не грамматика, а прагматика**. Распознавать интонационные нюансы, функции риторики, жанровые конвенции — вот чем отличается владение C2 от просто правильного образования формы."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "elevated form: Does / Would / Is + subject + not + verb? OR ironic contracted Isn't / Doesn't + subject + verb? — register and intonation carry the meaning",
+        "ru": "высокий регистр: Does / Would / Is + подлежащее + not + глагол? ИЛИ ироничное стяжённое Isn't / Doesn't + подлежащее + глагол? — смысл несут регистр и интонация"
       },
       "examples": [
         {
           "en": "Would my honourable friend not agree that further delay is indefensible?",
-          "ru": "Не согласился бы мой уважаемый коллега, что дальнейшая задержка недопустима?"
+          "ru": "Не согласился бы мой уважаемый коллега, что дальнейшая задержка недопустима?",
+          "note": {
+            "en": "parliamentary",
+            "ru": "парламентский"
+          }
         },
         {
           "en": "Is it not written that judgement shall come?",
-          "ru": "Разве не написано, что наступит суд?"
+          "ru": "Разве не написано, что наступит суд?",
+          "note": {
+            "en": "scriptural",
+            "ru": "библейский"
+          }
         },
         {
           "en": "Didn't you, in fact, alter the document before submission?",
-          "ru": "Разве вы, на самом деле, не изменили документ перед подачей?"
+          "ru": "Разве вы, на самом деле, не изменили документ перед подачей?",
+          "note": {
+            "en": "cross-examination",
+            "ru": "перекрёстный допрос"
+          }
         },
         {
           "en": "Hadn't she warned him of the consequences? Hadn't she been clear?",
-          "ru": "Разве она не предупреждала его о последствиях? Разве не была ясна?"
+          "ru": "Разве она не предупреждала его о последствиях? Разве не была ясна?",
+          "note": {
+            "en": "literary",
+            "ru": "литературный"
+          }
         },
         {
           "en": "Do you really not see how damaging this could be?",
@@ -165,9 +257,45 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Формальное Does X not…? — парламентский регистр; Don't you…? — разговорный. Выбор маркирует жанр."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Does the Prime Minister not accept that...? (in casual conversation)",
+          "right": "Doesn't the PM accept that...?",
+          "why": {
+            "en": "The separated \"not\" form is parliamentary; in everyday speech it sounds pompous, so contract it.",
+            "ru": "Раздельная форма с not — парламентский регистр; в обычной речи звучит напыщенно, нужно стяжение."
+          }
+        },
+        {
+          "wrong": "Isn't it not the case that...?",
+          "right": "Isn't it the case that...?",
+          "why": {
+            "en": "Double negation in a question is clumsy and unidiomatic; one negative is enough.",
+            "ru": "Двойное отрицание в вопросе неуклюже и неидиоматично; достаточно одного отрицания."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "yes-no-questions",
+    "tag-questions",
+    "wh-questions",
+    "negative-sentences"
+  ],
+  "crossTopic": [
+    "can-could",
+    "will-would",
+    "should-ought-to",
+    "present-perfect-simple"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "positive question",
+      "negate auxiliary",
+      "negative question",
+      "expectation / suggestion / reproach"
+    ]
+  }
 };

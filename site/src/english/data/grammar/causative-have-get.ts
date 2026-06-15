@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "causative-have-get",
   "title": {
-    "en": "",
+    "en": "Causative 'have' and 'get'",
     "ru": "Causative Have Get"
   },
   "cefr": "B2",
@@ -14,19 +14,24 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "verb-patterns",
+  "egp": [
+    "EGP:B2 can use 'have + object + past participle' to talk about arranging a service",
+    "EGP:B2 can use 'get + object + past participle' informally for the same meaning",
+    "EGP:C1 can use 'have someone + bare infinitive' and 'get someone + to-infinitive' for delegated and persuaded actions",
+    "EGP:C2 can choose 'have' versus 'get' to signal neutrality, responsibility or moral colouring"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "The causative is how English says you did not do something yourself: someone else did it for you, usually because you arranged or paid for it. The core pattern is subject + have/get + object + past participle (V3): 'I had my hair cut', 'We got the roof repaired'. The object is the thing affected, and the past participle is what was done to it. 'Have' and 'get' carry the same meaning here, but 'have' is slightly more formal and neutral while 'get' is more conversational. Both verbs are irregular in the past: 'had' and 'got'. Notice how the causative differs from the ordinary active and the ordinary passive. 'I cut my hair' means you did it with your own hands; 'My hair was cut' is a plain passive where the agent does not matter; 'I had my hair cut' says you arranged the service and someone else did the work. The same form also describes unpleasant things that happen to you, where you are the victim rather than the organiser: 'He had his wallet stolen', 'She had her passport stolen at the airport'. It does not mean you ordered the theft; it means you experienced it. Word order is the thing learners get wrong most: the object always comes before the participle (have + object + V3), never have + V3 + object.",
         "ru": "**Causative have / get** — каузативная конструкция. Используется, когда **ты не делаешь что-то сам**, а **организуешь, чтобы кто-то другой это сделал для тебя** (часто за деньги или как услугу).\n\n**Две основные формулы:**\n\n**1. Have something done** (более формально):\n- `I had my hair cut.` (Мне подстригли волосы — я заплатил парикмахеру.)\n- `We had the roof repaired.` (Нам починили крышу.)\n- `She had her car washed.` (Ей помыли машину.)\n\n**2. Get something done** (разговорнее):\n- `I got my hair cut.` (Мне подстригли волосы.)\n- `We got the roof repaired.` (Мы отремонтировали крышу — наняли кого-то.)\n- `She got her car washed.` (Ей помыли машину.)\n\n**Формула:** `subject + have/get + object + past participle (V3)`.\n\n**Сравни с обычным пассивом и активом:**\n\n| Конструкция | Смысл |\n|---|---|\n| `I cut my hair.` | Я сам себе подстриг волосы. |\n| `My hair was cut.` | Мои волосы были подстрижены (пассив — агент не важен). |\n| `I had my hair cut.` | Мне подстригли волосы (я заплатил / организовал). |\n\n**Когда использовать causative:**\n1. **Услуги:** `I had my suit cleaned.` / `I got my shoes repaired.`\n2. **Неприятности, жертва чего-то:** `He had his wallet stolen.` (У него украли кошелёк — он пострадал.) / `She got her car broken into.`\n3. **Делегирование работы:** `The company had the report translated.` (Компания организовала перевод отчёта.)\n\n**Разница have vs get:**\n- `Have` — нейтральнее, формальнее.\n- `Get` — разговорное, более динамичное, часто с оттенком усилия или достижения.\n- В прошлом: `had / got`. Оба неправильные!\n- ❌ `I getted my hair cut` → ✅ `I got my hair cut`.\n- ❌ `I got my hair cutted` → ✅ `I got my hair cut`. (cut — V3 совпадает с инфинитивом для этого глагола.)\n\n**Типичные ошибки русских учеников:**\n- ❌ `I had repaired my car.` → ✅ `I had my car repaired.` (Порядок: have + object + V3, не have + V3 + object.)\n- ❌ `I cut my hair yesterday.` (если имеешь в виду «постригся в парикмахерской»). → ✅ `I had my hair cut yesterday.` или `I got my hair cut yesterday.`\n- ❌ `My hair got cutted.` → ✅ `My hair got cut.`\n- ❌ Пропуск объекта: `I had repaired.` → ✅ `I had it repaired.` или `I had my watch repaired.`\n\n**Отрицание и вопрос:**\n- `I didn't have my car serviced this year.`\n- `Did you get your teeth checked?`\n- `Where did she have her wedding dress made?`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + have/get + object + past participle (V3)",
+        "ru": "подлежащее + have/get + объект + причастие прошедшего времени (V3)"
       },
       "examples": [
         {
@@ -35,11 +40,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We're getting our kitchen remodeled next month.",
-          "ru": "Нам переделают кухню в следующем месяце."
+          "ru": "Нам переделают кухню в следующем месяце.",
+          "note": {
+            "en": "future arrangement",
+            "ru": "планируемое действие"
+          }
         },
         {
           "en": "She had her passport stolen at the airport.",
-          "ru": "У неё украли паспорт в аэропорту."
+          "ru": "У неё украли паспорт в аэропорту.",
+          "note": {
+            "en": "victim sense",
+            "ru": "значение жертвы"
+          }
         },
         {
           "en": "You should get your eyes tested once a year.",
@@ -47,40 +60,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Did you have the documents translated?",
-          "ru": "Ты отдал документы на перевод?"
+          "ru": "Ты отдал документы на перевод?",
+          "note": {
+            "en": "question",
+            "ru": "вопрос"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "I had my hair cut = мне подстригли. I cut my hair = я сам подстригся. Порядок: have/get + объект + V3."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I had repaired my car.",
+          "right": "I had my car repaired.",
+          "why": {
+            "en": "In the causative the object comes before the participle; 'had repaired my car' is the past perfect and means you did it yourself, not that you arranged it.",
+            "ru": "В каузативе объект стоит перед причастием; 'had repaired my car' — это past perfect и значит, что ты сам это сделал, а не организовал."
+          }
+        },
+        {
+          "wrong": "I cut my hair at the salon yesterday.",
+          "right": "I had my hair cut at the salon yesterday.",
+          "why": {
+            "en": "If a professional did the work, use the causative; 'I cut my hair' says you used the scissors yourself.",
+            "ru": "Если работу сделал специалист, нужен каузатив; 'I cut my hair' значит, что ножницами орудовал ты сам."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the causative splits into two further patterns that name the person who acts, and the choice of verb changes the meaning. 'Have someone do something' uses the bare infinitive and sounds like an instruction from a position of authority: 'I had the technician check the machine', 'She had her assistant send the emails'. 'Get someone to do something' uses the to-infinitive and adds the idea of persuading or talking someone into it, often with effort: 'I got the technician to check the machine', 'She got her landlord to fix the heating'. So you now control four shapes: have + object + V3 (a service done to a thing), get + object + V3 (the same, more informal), have + person + bare infinitive (a delegated order), and get + person + to-infinitive (a persuaded action). The causative also stretches across tenses for arranged services: present continuous for fixed future plans ('We're having the new system installed next Monday') and present perfect for completed arrangements ('I've had my car serviced three times this year'). Formal and business writing strongly prefers 'have' over 'get': 'The company had the entire factory inspected by outside auditors'. The 'victim' use widens too, covering setbacks like 'He had his identity stolen' or 'I had my application rejected'. Russian has no single equivalent, expressing these meanings with a reflexive verb, an impersonal plural or an explicit phrase, so English packs them all into one form.",
         "ru": "На C1 causative have/get расширяется до различения **услуги-события** и **организации активного действия**. Также появляется каузатив с базовой формой глагола: `have someone do` и `get someone to do`.\n\n**1. Have someone do something** (base form — чистый инфинитив):\n- `I had the technician check the machine.` (Я попросил техника проверить машину — мой запрос, его действие.)\n- `She had her assistant send the emails.` (Она поручила ассистенту отправить письма.)\n\nСмысл: **я организовал, чтобы он сделал**. Звучит как инструкция, распоряжение.\n\n**2. Get someone to do something** (с частицей to):\n- `I got the technician to check the machine.` (Я добился, чтобы техник проверил машину.)\n- `She got her husband to help with dinner.` (Она уговорила мужа помочь с ужином.)\n\nСмысл: **я убедил/уговорил его сделать**. Часто с усилием, уговорами.\n\n**Разница:**\n- `Have X do Y` — авторитетная просьба, ожидание, что будет выполнено (часто иерархическая).\n- `Get X to do Y` — уговоры, убеждение, может включать трудности.\n\n**3. Сравнение четырёх форм каузатива:**\n\n| Форма | Пример | Оттенок |\n|---|---|---|\n| have + object + V3 | I had my car repaired. | Услуга, мне сделали |\n| get + object + V3 | I got my car repaired. | Услуга, я организовал (informal) |\n| have someone + V (base) | I had him repair my car. | Распоряжение |\n| get someone + to V | I got him to repair my car. | Уговорил/убедил |\n\n**4. Services vs arranged actions:**\n- Service event: `I had my watch fixed.` (одна покупка услуги.)\n- Arranged action: `I had the plumber come at 8 am.` (организовал приход сантехника.)\n- Arranged + услуга: `I had the plumber fix the pipe.` (попросил сделать конкретную работу.)\n\n**5. Negative experiences (неприятные события):**\nCausative используется для событий, которые случились **с тобой**, даже без твоего желания:\n- `He had his bike stolen.` (У него украли велосипед — он жертва.)\n- `She got her phone broken.` (У неё сломался/сломали телефон.)\n- `I had my application rejected.` (Мою заявку отклонили.)\n\nЭто не значит, что ты заказал кражу — это значит, что ты **испытал** это событие. Важное отличие от русского, где мы просто говорим «у меня украли» без каузативной конструкции.\n\n**6. Get-passive в причинной функции:**\n- `I got fired.` (Меня уволили.) — пассив с get.\n- `He got caught.` (Его поймали.)\n\nЭто близко к causative, но здесь нет объекта-вещи, это просто неформальный пассив.\n\n**7. Causative в formal writing:**\nФормальные тексты используют have, избегают get:\n- Business: `The firm had the audit completed by an external agency.`\n- Academic: `The researchers had the samples analysed at an independent lab.`\n- Legal: `The plaintiff had her signature witnessed by a notary.`\n\n**8. Continuous and perfect forms:**\n- `I'm having my house painted this week.` (Мне красят дом на этой неделе.)\n- `I've had my car serviced three times this year.` (Мне трижды обслужили машину в этом году.)\n- `I had been having the results checked when the call came.` — редко, но грамматически возможно.\n\n**9. Common C1 errors:**\n- **Пропуск to с get + someone:** ❌ `I got him check the engine.` → ✅ `I got him to check the engine.`\n- **Добавление to с have + someone:** ❌ `I had him to check the engine.` → ✅ `I had him check the engine.`\n- **Путаница с обычным пассивом:** русские ученики часто говорят `My hair was cut` когда нужен `I had my hair cut` — разный фокус.\n\n**10. Russian contrastive:**\nРусский не имеет точного аналога causative. Русский говорит «я подстригся» (возвратный глагол) или «мне подстригли» (неопределённо-личная форма) или «я отдал машину в ремонт» (эксплицитно). Английский инкапсулирует все эти смыслы в одну элегантную форму `have/get + object + V3`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + have + person + bare infinitive  /  subject + get + person + to + infinitive",
+        "ru": "подлежащее + have + человек + инфинитив без to  /  подлежащее + get + человек + to + инфинитив"
       },
       "examples": [
         {
           "en": "I had my assistant draft the proposal while I was away.",
-          "ru": "Я поручил ассистенту составить проект предложения, пока был в отъезде."
+          "ru": "Я поручил ассистенту составить проект предложения, пока был в отъезде.",
+          "note": {
+            "en": "have + person + bare inf",
+            "ru": "have + человек + инфинитив без to"
+          }
         },
         {
           "en": "She finally got her landlord to fix the heating.",
-          "ru": "Она наконец уговорила арендодателя починить отопление."
+          "ru": "Она наконец уговорила арендодателя починить отопление.",
+          "note": {
+            "en": "get + person + to-inf",
+            "ru": "get + человек + to-инфинитив"
+          }
         },
         {
           "en": "He had his identity stolen during the data breach.",
-          "ru": "У него украли личность во время утечки данных."
+          "ru": "У него украли личность во время утечки данных.",
+          "note": {
+            "en": "victim sense",
+            "ru": "значение жертвы"
+          }
         },
         {
           "en": "We're having the new system installed next Monday.",
-          "ru": "Нам установят новую систему в следующий понедельник."
+          "ru": "Нам установят новую систему в следующий понедельник.",
+          "note": {
+            "en": "continuous, future",
+            "ru": "continuous, будущее"
+          }
         },
         {
           "en": "The company had the entire factory inspected by outside auditors.",
@@ -90,26 +141,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Have X do Y — распоряжение; get X to do Y — уговор. Эти две формы не взаимозаменяемы."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I got him check the engine.",
+          "right": "I got him to check the engine.",
+          "why": {
+            "en": "'Get + person' needs the to-infinitive, so the 'to' cannot be dropped.",
+            "ru": "После 'get + человек' нужен to-инфинитив, поэтому 'to' опускать нельзя."
+          }
+        },
+        {
+          "wrong": "I had him to check the engine.",
+          "right": "I had him check the engine.",
+          "why": {
+            "en": "'Have + person' takes the bare infinitive, so adding 'to' is wrong; only 'get' uses 'to'.",
+            "ru": "После 'have + человек' идёт инфинитив без to, поэтому 'to' добавлять нельзя; 'to' берёт только 'get'."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the causative becomes a fine instrument for marking agency, responsibility and moral colour, and the choice between 'have' and 'get' carries the weight. Get-causatives often hint that the subject was partly to blame or that the event was somehow strange: 'He got himself arrested', 'They got themselves into a situation from which there was no easy exit', 'I got my car stolen' (with the unspoken suggestion that it could have been avoided). The neutral counterpart 'I had my car stolen' simply reports misfortune. The reflexive form 'have/get + oneself + V3' is literary and deliberate: 'He got himself elected by making promises he could not keep' implies effort or manipulation, while 'She had herself photographed in front of the palace' implies design and a degree of formality. Narrative prose uses the causative for compression and characterisation: 'Every morning he had his coffee brought to his desk' paints status in six words; 'He had his enemies silenced one by one' paints sinister power. Watch the overlap with stative meaning ('I have my hair cut short' can describe an arrangement or simply a current state) and with modals expressing advice ('You really should have this looked at by a specialist'). Across the register ladder the same idea climbs from the spoken 'we got the place painted' to the corporate 'the board had the audit conducted by an external firm'. The C2 skill is choosing the form on purpose: 'have' for neutral arrangement, 'get' for effort or blame, and the reflexive for intent.",
         "ru": "На C2 causative have/get — **тонкий инструмент выражения ответственности, агентности и моральной окраски**. Особенно важна разница между `have` и `get` для передачи эмоционального отношения к событию.\n\n**1. Blame and responsibility через get:**\nGet-causative часто несёт оттенок **частичной ответственности жертвы** или **странности события**:\n- `He got himself arrested.` (Он дал себя арестовать — сам виноват или странно поступил.)\n- `She got her reputation ruined.` (Ей разрушили репутацию — с оттенком: могла избежать.)\n- `They got themselves into trouble.` (Они попали в передрягу — сами виноваты.)\n\nСравни:\n- `He was arrested.` — нейтральный пассив.\n- `He got arrested.` — с оттенком удивления или того, что что-то пошло не так.\n- `He had himself arrested.` — редкая форма, значит преднамеренно (например, для ареста в качестве протеста).\n\n**2. Have vs get — subtle moral distinction:**\n- `I had my car stolen.` — нейтральный факт, жертва обстоятельств.\n- `I got my car stolen.` — с оттенком: не надо было оставлять незапертой / можно было избежать.\n\nНа C2 ты чувствуешь эту разницу и выбираешь форму осознанно.\n\n**3. Advanced reflexive causative:**\n- `She had herself photographed in front of the palace.` (Она заказала фото себя на фоне дворца — формальнее, умысел.)\n- `He got himself elected.` (Он добился избрания — с оттенком усилий или манипуляции.)\n- `They had themselves invited.` (Они устроили, чтобы их пригласили.)\n\nРефлексивная каузативная форма — литературная, редкая в разговорной речи.\n\n**4. Fictional and narrative causative:**\nВ рассказах причастные конструкции используются для быстрой характеристики:\n- `Every morning he had his coffee brought to his desk.` — ритуал, статус.\n- `She had her dresses made in Paris.` — богатство, элегантность.\n- `He had his enemies silenced one by one.` — зловещая власть.\n\nМастера прозы экономят слова через causative.\n\n**5. Causative with adjective complements (rare, advanced):**\n- `She had the room ready in an hour.` — не V3, а прилагательное.\n- `He got the kids dressed quickly.` — аналогично.\n- `They had everything packed before noon.` — V3, но значение статусное.\n\nЭтот паттерн `have/get + object + adj/V3` часто размыт между каузативным и статусным значением.\n\n**6. Causative in continuous and perfect:**\n- `I've been having the reports translated as they come in.` — повторяющаяся организованная услуга.\n- `She had been having her medications delivered monthly.` — регулярный договор в прошлом.\n\nЭти формы редки, но грамматически допустимы для детального описания.\n\n**7. Distinguishing from similar structures:**\n- `I have my hair cut short.` — caustive: мне стригут коротко.\n- `I have my hair cut short` (stative): у меня волосы пострижены коротко.\n\nКонтекст и интонация различают. В письме — `I have short hair` для состояния.\n\n**8. Formal vs informal causative:**\n- Formal / business: `have` > `get`. `The board had the audit conducted by KPMG.`\n- Informal / spoken: `get` > `have`. `We got the place painted last weekend.`\n- Neutral writing: `have`.\n\n**9. Common C2 refinements:**\n- **Elliptical causative:** `Get that sorted.` (разговорное: сделай это, или пусть сделают.)\n- **Causative in imperatives:** `Have your passport ready.` — приготовь заранее, приказ.\n- **Interaction with modals:** `You should have this checked immediately.` (модал + have + object + V3 — совет о каузативе.)\n\n**10. Russian-English subtlety:**\nРусский легко говорит «у меня украли машину» — это грамматически простое предложение без каузатива. Английский эквивалент — `My car was stolen` (нейтрально) или `I had my car stolen` (с caustative, подчёркивает меня как пострадавшего). Выбор формы на английском — вопрос фокуса: что важнее — машина или я? В русском это выражается порядком слов и интонацией.\n\nВ русском «я подстригся» vs «меня подстригли» — разница в агентности, но без каузативной структуры. В английском `I had my hair cut` специально выражает: не я сам подстригся, не пассив, а я организовал услугу.\n\n**11. Mastery:**\nНа C2 ты используешь causative осознанно для:\n- Подчёркивания услуги и делегирования.\n- Выражения моральной окраски (get) или нейтральности (have).\n- Элегантной компрессии повествования.\n- Различения организации действия от самого действия.\n- Выражения тонких оттенков причинности и ответственности.\n\nТы знаешь, что `got himself killed` — это не просто «его убили», а «он навлёк на себя смерть своим поведением»."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + have/get + oneself + past participle  /  subject + have/get + object + past participle (chosen for tone)",
+        "ru": "подлежащее + have/get + себя + причастие прошедшего времени  /  подлежащее + have/get + объект + причастие прошедшего времени (выбор по оттенку)"
       },
       "examples": [
         {
           "en": "He got himself elected by making promises he could not keep.",
-          "ru": "Он добился избрания, давая обещания, которые не мог выполнить."
+          "ru": "Он добился избрания, давая обещания, которые не мог выполнить.",
+          "note": {
+            "en": "reflexive, blame/effort",
+            "ru": "рефлексив, вина/усилие"
+          }
         },
         {
           "en": "She had her manuscripts preserved in a university archive.",
-          "ru": "Она организовала хранение своих рукописей в университетском архиве."
+          "ru": "Она организовала хранение своих рукописей в университетском архиве.",
+          "note": {
+            "en": "formal arrangement",
+            "ru": "формальная организация"
+          }
         },
         {
           "en": "By the end of the campaign, he had his reputation thoroughly destroyed.",
@@ -117,19 +194,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "You really should have this looked at by a specialist.",
-          "ru": "Тебе действительно стоит показать это специалисту."
+          "ru": "Тебе действительно стоит показать это специалисту.",
+          "note": {
+            "en": "modal + causative",
+            "ru": "модал + каузатив"
+          }
         },
         {
           "en": "They got themselves into a situation from which there was no easy exit.",
-          "ru": "Они попали в ситуацию, из которой не было лёгкого выхода."
+          "ru": "Они попали в ситуацию, из которой не было лёгкого выхода.",
+          "note": {
+            "en": "get, self-blame",
+            "ru": "get, самовина"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Get часто подразумевает частичную вину или неожиданность (got himself arrested); have — нейтрально (had my hair cut)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He had himself elected by lying.",
+          "right": "He got himself elected by lying.",
+          "why": {
+            "en": "For an outcome won through effort or manipulation, 'get oneself + V3' carries the right colouring; 'have oneself' sounds neutral or merely ceremonial.",
+            "ru": "Для результата, добытого усилием или манипуляцией, нужен 'get oneself + V3'; 'have oneself' звучит нейтрально или церемониально."
+          }
+        },
+        {
+          "wrong": "You should have looked at this by a specialist.",
+          "right": "You should have this looked at by a specialist.",
+          "why": {
+            "en": "With a modal the causative keeps its order modal + have + object + past participle; moving the object after the participle turns it into a perfect modal with a different meaning.",
+            "ru": "С модальным глаголом каузатив сохраняет порядок модал + have + объект + причастие; перенос объекта после причастия даёт перфектный модал с другим смыслом."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "passive-present-simple",
+    "verb-plus-infinitive",
+    "passive-with-modals"
+  ],
+  "crossTopic": [
+    "present-perfect-simple",
+    "passive-present-simple",
+    "past-simple",
+    "reflexive-pronouns"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "subject",
+      "have/get",
+      "object",
+      "past participle"
+    ]
+  }
 };

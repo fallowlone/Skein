@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "intensifiers",
   "title": {
-    "en": "",
+    "en": "Intensifiers",
     "ru": "Intensifiers"
   },
   "cefr": "B1",
@@ -15,28 +15,38 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "adverbs",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "scale",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Intensifiers make another word (usually an adjective) stronger. The key pair is `so` and `such`. Use `so` before an adjective with no noun after it: `The film is so interesting`, `It was so cold`. Use `such` when a noun follows: `such an interesting film`, `such a kind person`. With an uncountable noun or a plural noun, drop the article: `such cold weather`, `such nice people`. The simple test: `so` = no noun, `such` = with a noun. `Really` and `pretty` are common informal intensifiers; in formal writing replace them with `very`, `quite`, or `fairly`.",
         "ru": "Intensifiers — это слова, которые **усиливают** другое слово (обычно прилагательное).\n\n**Главная пара: `so` и `such`.**\n\n**`So` + прилагательное (без существительного):**\n- `The film is so interesting!` (Фильм такой интересный!)\n- `She is so kind.` (Она такая добрая.)\n- `It was so cold last night.`\n\n**`Such` + (a/an) + прилагательное + существительное:**\n- `It is such an interesting film!` (Это такой интересный фильм!)\n- `She is such a kind person.` (Она такой добрый человек.)\n- `It was such cold weather.` (с неисчисл. — без артикля)\n- `They are such nice people.` (с plural — без артикля)\n\n**Правило:** `so` = без существительного; `such` = с существительным.\n\n**Частые ошибки:**\n- Wrong: `so a good film` → Right: `such a good film` или `so good a film` (formal).\n- Wrong: `such interesting` → Right: `such an interesting book` или `so interesting`.\n- Wrong: `such a people` → Right: `such people` (нет артикля с plural).\n\n**`Really` и `pretty` (informal intensifiers):**\n- `really` = очень: `really tired`, `really good`.\n- `pretty` = довольно, неплохо: `pretty cold`, `pretty well`.\n\nВ formal writing их заменяй на `very`, `quite`, `fairly`.\n\n**`Too` как intensifier эмоции (разговорно):**\n- `She is too kind!` (Она такая добрая!) — экспрессия, не «слишком».\n\nНо обычно `too` = «слишком» (больше нужного):\n- `The coffee is too hot.` (нельзя пить)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "so + adjective | such + (a/an) + adjective + noun",
+        "ru": "so + прилагательное | such + (a/an) + прилагательное + существительное"
       },
       "examples": [
         {
           "en": "The movie was so funny!",
-          "ru": "Фильм был такой смешной!"
+          "ru": "Фильм был такой смешной!",
+          "note": {
+            "en": "so + adj",
+            "ru": "so + прил."
+          }
         },
         {
           "en": "It was such a nice day.",
-          "ru": "Был такой хороший день."
+          "ru": "Был такой хороший день.",
+          "note": {
+            "en": "such + a + adj + noun",
+            "ru": "such + a + прил. + сущ."
+          }
         },
         {
           "en": "She is such a talented artist.",
@@ -48,36 +58,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "They are such kind people.",
-          "ru": "Они такие добрые люди."
+          "ru": "Они такие добрые люди.",
+          "note": {
+            "en": "plural, no article",
+            "ru": "мн. ч., без артикля"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "So + прилагательное без существительного; such + (a/an) + прилагательное + существительное. Not so a car — but such a car."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is so a good film.",
+          "right": "It is such a good film.",
+          "why": {
+            "en": "Use `such`, not `so`, before an article + noun.",
+            "ru": "Перед артиклем + существительным нужен such, а не so."
+          }
+        },
+        {
+          "wrong": "She is such kind.",
+          "right": "She is so kind. / She is such a kind person.",
+          "why": {
+            "en": "`Such` needs a noun; with a bare adjective use `so`.",
+            "ru": "Such требует существительного; с одним прилагательным нужен so."
+          }
+        },
+        {
+          "wrong": "They are such a nice people.",
+          "right": "They are such nice people.",
+          "why": {
+            "en": "Drop the article before a plural noun.",
+            "ru": "Перед существительным во мн. ч. артикль не ставится."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, lock in intensifier + adjective collocations. Maximum intensifiers pair with ungradable adjectives: `absolutely wonderful`, `completely different`, `totally unexpected`, `utterly exhausted`. Many pairs are fixed and not interchangeable: `bitterly cold` (not `bitterly happy`), `deeply sorry`, `highly likely`, `fully aware`. `So` and `such` also build result clauses: `so + adjective + that...` (`so cold that the lake froze`) and `such + (a) + adjective + noun + that...`. In formal or literary English you may meet the inversion `so + adjective + a + noun`: `so rare an opportunity`. Intensifiers reach beyond adjectives too: verbs (`I really like it`, `she totally agrees`), nouns (`a total mess`, `an absolute disaster`), and adverbs (`extremely carefully`).",
         "ru": "На B2 укрепи работу с коллокациями intensifier + adjective.\n\n**Maximum intensifiers (с ungradable):**\n- `absolutely` + `wonderful, amazing, perfect, terrible`.\n- `completely` + `different, wrong, unknown`.\n- `totally` + `unexpected, free, different`.\n- `utterly` + `exhausted, ruined, pointless`.\n\n**Collocation rules — не все intensifiers идут со всеми adj:**\n- `bitterly cold` ✓ / `bitterly happy` ✗\n- `deeply sorry` ✓ / `deeply tall` ✗\n- `highly likely` ✓ / `highly hot` ✗\n- `fully aware` ✓ / `fully happy` (редко)\n\nIntensifier + adjective — часто фиксированная пара.\n\n**Top 10 коллокаций:**\n| intensifier | typical adj |\n|---|---|\n| absolutely | delighted, impossible, ridiculous |\n| bitterly | cold, disappointed, opposed |\n| deeply | concerned, grateful, moved |\n| fully | aware, booked, equipped |\n| highly | likely, recommended, unusual |\n| perfectly | clear, normal, well |\n| strongly | believe, disagree, recommend |\n| totally | agree, different, wrong |\n| utterly | exhausted, fascinated, convinced |\n| widely | known, accepted, believed |\n\n**`So` как subordinator:**\n- `so + adj + that ...` : `It was so cold that the lake froze.`\n- `such + (a) + adj + noun + that ...` : `She is such a good teacher that everyone loves her.`\n\n**Formal inversion: `so + adj + a + noun`:**\n- `So good a film deserves awards.` (= Such a good film...)\n- `So rare an opportunity...` (= Such a rare opportunity)\n\nВстречается в formal/literary English.\n\n**`Pretty` vs `fairly` vs `quite` (шкала):**\n- `fairly` — слабее: `fairly good` = неплохо.\n- `pretty` — разговорно, среднее: `pretty good` = довольно хорошо.\n- `quite` — UK: `quite good` (среднее) / US: `quite good` (сильное).\n- `really` — почти `very`: `really good`.\n\n**Intensifier вне прилагательного:**\nIntensifier может усиливать verb / noun / adverb:\n- Verb: `I really like it.`, `He strongly believes.`, `She totally agrees.`\n- Noun: `a total mess`, `an absolute disaster`, `a complete fool`.\n- Adverb: `very quickly`, `extremely carefully`.\n\n**Intensifier в начале — эмфаза:**\n- `Absolutely, I agree!` (как отдельная реплика).\n- `Totally.` — разговорная реакция согласия."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "so + adj + that... | such + (a) + adj + noun + that... | so + adj + a + noun (formal)",
+        "ru": "so + прил. + that... | such + (a) + прил. + сущ. + that... | so + прил. + a + сущ. (формальн.)"
       },
       "examples": [
         {
           "en": "The film was so boring that I fell asleep.",
-          "ru": "Фильм был такой скучный, что я уснул."
+          "ru": "Фильм был такой скучный, что я уснул.",
+          "note": {
+            "en": "so...that result",
+            "ru": "so...that (результат)"
+          }
         },
         {
           "en": "She is such a talented writer that everyone wants to read her.",
-          "ru": "Она такая талантливая писательница, что все хотят её читать."
+          "ru": "Она такая талантливая писательница, что все хотят её читать.",
+          "note": {
+            "en": "such...that result",
+            "ru": "such...that (результат)"
+          }
         },
         {
           "en": "I am bitterly disappointed with the result.",
-          "ru": "Я горько разочарован результатом."
+          "ru": "Я горько разочарован результатом.",
+          "note": {
+            "en": "fixed pair",
+            "ru": "фикс. пара"
+          }
         },
         {
           "en": "They are totally different from their parents.",
@@ -85,36 +137,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "It was so rare an opportunity that I had to accept.",
-          "ru": "Это была такая редкая возможность, что я должен был согласиться."
+          "ru": "Это была такая редкая возможность, что я должен был согласиться.",
+          "note": {
+            "en": "formal inversion",
+            "ru": "формальная инверсия"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Fixed pairs: bitterly cold, deeply sorry, highly likely. Учи коллокации."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I am bitterly happy.",
+          "right": "I am deeply happy. / I am bitterly disappointed.",
+          "why": {
+            "en": "`Bitterly` collocates with negatives (cold, disappointed), not with `happy`.",
+            "ru": "Bitterly сочетается с негативными словами (cold, disappointed), а не с happy."
+          }
+        },
+        {
+          "wrong": "It was so cold weather that we stayed in.",
+          "right": "It was such cold weather that we stayed in.",
+          "why": {
+            "en": "A noun follows, so use `such`, not `so`.",
+            "ru": "После идёт существительное, поэтому нужен such, а не so."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, the choice of intensifier is a question of register and style. Distinguish intensifiers from stance adverbs: an intensifier strengthens an adjective (`very talented`), while a stance adverb (`honestly`, `frankly`, `undoubtedly`, `arguably`) modifies the whole statement. Match register: informal (`super`, `totally`, `dead`, `wicked`), neutral (`very`, `quite`, `pretty`), formal (`highly`, `greatly`, `deeply`, `considerably`), literary (`utterly`, `exceedingly`, `profoundly`). Some intensifiers are age-marked (`awfully`, `jolly`, `frightfully`). Overused boosters (`very`, `really`, `extremely`) flatten meaning; strong writing prefers a precise adjective: `very tired` -> `drained`; `extremely important` -> `critical`. British understatement reverses force: `rather nice` and `not bad at all` often mean very good. Negative concord intensifies a negative claim: `not in the least interested`, `nowhere near good enough`.",
         "ru": "На C1 выбор intensifier — вопрос **регистра и стиля**.\n\n**Stance adverbs (рядом с intensifier):**\nStance adverbs выражают отношение говорящего; часто работают как sentence-level intensifiers:\n- `honestly`, `frankly`, `admittedly`, `undoubtedly`, `arguably`, `allegedly`.\n- `Honestly, this is the worst idea.` — отношение.\n- `Undoubtedly, she is talented.` — уверенность.\n\nРазличие: intensifier усиливает прилагательное (`very talented`), stance модифицирует всё утверждение (`undoubtedly talented`).\n\n**Stance nouns:**\n- `a matter of absolute urgency`.\n- `a question of considerable importance`.\n- `an issue of utmost concern`.\n\nЭто более формальные эквиваленты adverb + adj.\n\n**Register hierarchy — intensifier:**\n- Informal/colloquial: `super`, `totally`, `really`, `mega`, `dead` (BrE), `wicked` (BrE).\n- Neutral: `very`, `quite`, `pretty`, `fairly`.\n- Formal: `highly`, `greatly`, `deeply`, `extremely`, `considerably`.\n- Literary: `utterly`, `exceedingly`, `profoundly`, `immensely`.\n\n**Age-marked intensifiers:**\n- `awfully` (old-fashioned): `awfully nice of you`.\n- `jolly` (very British): `jolly good show`.\n- `frightfully`, `terribly` (old-fashioned upper-class).\n- `amazingly`, `incredibly` (modern, overused).\n\n**Overused intensifiers:**\n`Very`, `really`, `so`, `extremely` — инфляция смысла. В сильной прозе предпочитают precise adj:\n- `very tired` → `drained`, `spent`, `bone-weary`.\n- `really good` → `excellent`, `superb`, `first-rate`.\n- `extremely important` → `critical`, `paramount`, `essential`.\n\n**Intensifier + negative adj:**\n- `deeply disappointed`, `bitterly resentful`, `utterly devastated`.\n- `acutely aware`, `painfully obvious`, `distressingly common`.\n\n**Understatement (BrE):**\n- `rather nice` = very nice.\n- `a bit of a disaster` = a major disaster.\n- `not bad at all` = excellent.\n- `I’m slightly tired` (часто = exhausted, ironic).\n\n**Colloquial modifiers of noun:**\n- `a right mess` (BrE): полный бардак.\n- `an absolute nightmare`: полный кошмар.\n- `a total wreck`: полный развал.\n\n**Syntactic constraints:**\nНекоторые intensifiers занимают только определённые позиции:\n- `pretty` — только attributive-ish (`pretty tired`), не `*pretty tired`.\n- `altogether` — перед adj (`altogether different`).\n- `every bit as good` — идиома равенства.\n\n**Negative concord:**\n- `not in the least interested` = совсем не заинтересован.\n- `nowhere near good enough` = далеко не достаточно.\n\nЭто intensifier отрицания — усиливают negative claim."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "intensifier + adjective | stance adverb + whole clause | not in the least / nowhere near + adjective",
+        "ru": "интенсификатор + прилагательное | stance-наречие + всё предложение | not in the least / nowhere near + прилагательное"
       },
       "examples": [
         {
           "en": "She is utterly devastated by the news.",
-          "ru": "Она полностью разбита новостью."
+          "ru": "Она полностью разбита новостью.",
+          "note": {
+            "en": "literary maximizer",
+            "ru": "литературный максимайзер"
+          }
         },
         {
           "en": "Honestly, his proposal is rather embarrassing.",
-          "ru": "Честно говоря, его предложение довольно неловкое."
+          "ru": "Честно говоря, его предложение довольно неловкое.",
+          "note": {
+            "en": "stance adverb",
+            "ru": "stance-наречие"
+          }
         },
         {
           "en": "I’m not in the least interested in the offer.",
-          "ru": "Я совершенно не заинтересован в предложении."
+          "ru": "Я совершенно не заинтересован в предложении.",
+          "note": {
+            "en": "negative concord",
+            "ru": "усиление отрицания"
+          }
         },
         {
           "en": "It was a matter of absolute urgency.",
@@ -128,22 +214,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Stance adverb (honestly, arguably) модифицирует всё предложение, не adjective."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Undoubtedly talented, she sang very.",
+          "right": "Undoubtedly talented, she sang very well.",
+          "why": {
+            "en": "An intensifier needs the word it strengthens; `very` cannot stand alone.",
+            "ru": "Интенсификатору нужно усиливаемое слово; very не может стоять отдельно."
+          }
+        },
+        {
+          "wrong": "I am not interested in the least bit.",
+          "right": "I am not in the least interested.",
+          "why": {
+            "en": "The fixed phrase is `not in the least + adjective`.",
+            "ru": "Устойчивая конструкция — not in the least + прилагательное."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, intensity must be register-appropriate, especially in persuasion and academic writing. Persuasive rhetoric leans on maximizers (`absolutely essential`, `utterly unprecedented`); serious editors trim them. In academic prose, swap intensifier + adjective for precise lexis (`very common` -> `prevalent`, `very rare` -> `scarce`) and prefer hedges (`somewhat`, `rather`, `moderately`, `arguably`) over boosters; `notably`, `strikingly`, `markedly`, and `substantially` are accepted academic boosters. Tone can flip an intensifier into irony: `Oh, how utterly fascinating`, `Awfully kind of you`. Sociolinguistic markers (`dead good`, `proper nice`, `wicked cool`, `bloody brilliant`) signal register and stay out of professional writing. Watch for register mismatch: `His thesis is super compelling` and `The data is bloody clear` clash with academic tone. A note for Russian speakers: `очень` and `так` are not one-to-one with `very` and `so` — `I am exhausted` is cleaner and stronger than `I am so tired`. Craft check: more than two intensifiers per paragraph signals weak prose.",
         "ru": "На C2 — **register-appropriate intensity** в persuasion и академическом письме.\n\n**Persuasive rhetoric и intensifier:**\nПолитические речи и реклама часто полагаются на maximizers:\n- `absolutely essential`, `completely transformative`, `utterly unprecedented`.\nВ серьёзной прессе редакторы такое сокращают.\n\n**Akademichesky craft:**\n- Замена intensifier на precise lexis: `very common` → `prevalent`; `very rare` → `scarce`.\n- Hedging через intensifier: `arguably`, `ostensibly`, `notionally`.\n- `Notably`, `strikingly`, `markedly`, `substantially` — принятые academic boosters.\n\n**Избыточная интенсификация (ошибка письма):**\nСтуденты-носители часто злоупотребляют:\n- Bad: `This is a really, really good essay.` → редактор: `This is a good essay` (reality check).\n- Bad: `It was absolutely, totally amazing.` → редактор: `It was remarkable.`\n\n**Rhetorical irony through intensifier:**\n- `Oh, how utterly fascinating.` (sarcastic).\n- `Awfully kind of you to stop by.` (ironic).\n- `Absolutely brilliant.` (can be praise or sarcasm — tone decides).\n\n**Sociolinguistic markers:**\n- `dead good`, `proper nice` (BrE informal, working-class coded).\n- `wicked cool`, `mad crazy` (AmE slang).\n- `fucking awesome` (taboo intensifier).\n- `bloody brilliant` (BrE, mild taboo).\n\nВ professional writing эти — вне правил.\n\n**Intensifier + passive construction:**\n- `deeply regretted`, `widely acknowledged`, `broadly recognized`, `universally accepted`.\n- Это стандартные коллокации в научной и журналистской прозе.\n\n**`Somewhat`, `rather`, `moderately` — academic hedging:**\n- `The findings are somewhat inconclusive.`\n- `The evidence is rather limited.`\n- `Results were moderately significant.`\n\nВ академическом письме hedging необходим, maximizers — подозрительны.\n\n**Register mismatch — ошибка:**\n- Bad: `The data is bloody clear.` (register clash).\n- Bad: `His thesis is super compelling.` (super не academic).\n- Bad: `Her proof is mega solid.` (mega sl slang).\n\n**Intensifier в headlines:**\n- `Totally shocking revelation.`\n- `Absolutely devastating defeat.`\n- `Utterly unprecedented scale.`\n\nTabloid-журналистика полагается на maximizers; quality press избегает.\n\n**Cross-linguistic issue для Russian speakers:**\nРусский `очень` и `так` не один-к-одному с английскими `very` и `so`. Calquing «я так устал» в «I am so tired» — OK разговорно, но `I am exhausted` — сильнее и чище.\n\n**Final craft:**\n1. Перечитай: сколько intensifier на абзац? Больше 2 — слабость.\n2. Замени дважды используемое intensifier разнообразием или precise lexis.\n3. Проверь register consistency.\n4. В academic — hedging > maximizers.\n5. В persuasion — maximizers оправданы, но не inflate."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "hedge (somewhat / rather / arguably) + adjective | maximizer (absolutely / utterly) + ungradable adjective",
+        "ru": "хедж (somewhat / rather / arguably) + прилагательное | максимайзер (absolutely / utterly) + неградуируемое прилагательное"
       },
       "examples": [
         {
           "en": "The findings are somewhat inconclusive, though arguably significant.",
-          "ru": "Результаты несколько неоднозначны, но, пожалуй, значимы."
+          "ru": "Результаты несколько неоднозначны, но, пожалуй, значимы.",
+          "note": {
+            "en": "academic hedge",
+            "ru": "академический хедж"
+          }
         },
         {
           "en": "Her speech was utterly devastating in its precision.",
@@ -151,23 +259,74 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Oh, how absolutely fascinating, she said, clearly unimpressed.",
-          "ru": "О, как совершенно увлекательно, — сказала она, явно не впечатлённая."
+          "ru": "О, как совершенно увлекательно, — сказала она, явно не впечатлённая.",
+          "note": {
+            "en": "ironic tone",
+            "ru": "ироничный тон"
+          }
         },
         {
           "en": "The evidence is widely acknowledged across the field.",
-          "ru": "Доказательства широко признаны в области."
+          "ru": "Доказательства широко признаны в области.",
+          "note": {
+            "en": "passive collocation",
+            "ru": "коллокация в пассиве"
+          }
         },
         {
           "en": "It was bloody brilliant, frankly.",
-          "ru": "Это было, чёрт возьми, блестяще, честно говоря."
+          "ru": "Это было, чёрт возьми, блестяще, честно говоря.",
+          "note": {
+            "en": "taboo / informal",
+            "ru": "табу / неформ."
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В academic — hedging (somewhat, arguably). В persuasion — maximizers, но без overkill."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "His thesis is super compelling and mega solid.",
+          "right": "His thesis is highly compelling and well supported.",
+          "why": {
+            "en": "`Super` and `mega` are slang; academic writing needs neutral or formal boosters.",
+            "ru": "Super и mega — сленг; в академическом письме нужны нейтральные или формальные усилители."
+          }
+        },
+        {
+          "wrong": "This is a really, really good essay.",
+          "right": "This is a strong essay.",
+          "why": {
+            "en": "Doubling an intensifier weakens prose; use one precise word instead.",
+            "ru": "Удвоение интенсификатора ослабляет текст; лучше одно точное слово."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "adverbs-of-degree",
+    "gradable-vs-ungradable-adjectives",
+    "result-clauses",
+    "comparative-adjectives"
+  ],
+  "crossTopic": [
+    "adjective-vs-adverb",
+    "indefinite-article",
+    "countable-uncountable-nouns",
+    "result-clauses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "fairly",
+      "pretty",
+      "quite",
+      "really",
+      "very",
+      "so / such",
+      "absolutely"
+    ]
+  }
 };

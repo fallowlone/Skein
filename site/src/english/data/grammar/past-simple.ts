@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "past-simple",
   "title": {
-    "en": "",
+    "en": "Past Simple",
     "ru": "Past Simple"
   },
   "cefr": "A0",
@@ -18,28 +18,38 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "A0": {
       "cefr": "A0",
       "explain": {
-        "en": "",
+        "en": "Use the Past Simple to talk about something that already finished in the past: yesterday, last week, a moment ago. To make it, you change the verb. Regular verbs just add -ed: work -> worked, play -> played, open -> opened. Irregular verbs have their own special forms you must memorise: go -> went, see -> saw, eat -> ate, have -> had, do -> did, say -> said. The verb be has two past forms: was (I/he/she/it) and were (you/we/they). To make a negative, use didn't + the base verb (no -ed): I didn't work, she didn't go. To ask a question, start with Did + base verb: Did you work? Did she go? Common time words are yesterday, last week, and ... ago.",
         "ru": "**Past Simple** — это время, когда мы говорим о том, что случилось **раньше**, в прошлом. Например: «вчера я гулял», «я ел пиццу», «она позвонила».\n\nВ английском языке для прошлого времени мы меняем форму глагола.\n\n**Правильные глаголы** — просто прибавляем `-ed`:\n- `work → worked` (работать)\n- `play → played` (играть)\n- `open → opened` (открывать)\n- `call → called` (звонить)\n- `wait → waited` (ждать)\n\n**Неправильные глаголы** — у них свои особые формы, их надо учить:\n- `go → went` (идти)\n- `see → saw` (видеть)\n- `eat → ate` (есть)\n- `have → had` (иметь)\n- `be → was/were` (быть)\n- `do → did` (делать)\n- `say → said` (сказать)\n- `make → made` (делать)\n- `get → got` (получать)\n\n**Примеры:**\n- `I worked yesterday.` (Я работал вчера.)\n- `She went to school.` (Она ходила в школу.)\n- `We saw a film.` (Мы посмотрели фильм.)\n- `He ate pizza.` (Он ел пиццу.)\n\n**`Was` и `were`** — формы глагола `to be`:\n- `I was`, `He/She/It was`\n- `You were`, `We were`, `They were`\n\n- `I was at home.` (Я был дома.)\n- `They were happy.` (Они были счастливы.)\n\n**Отрицание** с `didn't` + обычная (первая) форма глагола:\n- `I didn't work.` (Я не работал.)\n- `She didn't go.` (Она не пошла.)\n\n**После `didn't` — глагол без `-ed`!** Нельзя `didn't worked`, только `didn't work`.\n\n**Вопрос** с `Did`:\n- `Did you work?` (Ты работал?)\n- `Did she go?` (Она пошла?)\n\n**Слова-подсказки:** `yesterday` (вчера), `last week` (на прошлой неделе), `ago` (назад)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb-ed / irregular past form  (negative: subject + didn't + base verb)",
+        "ru": "подлежащее + глагол-ed / неправильная форма  (отрицание: подлежащее + didn't + базовый глагол)"
       },
       "examples": [
         {
           "en": "I played football yesterday.",
-          "ru": "Я играл в футбол вчера."
+          "ru": "Я играл в футбол вчера.",
+          "note": {
+            "en": "regular verb",
+            "ru": "правильный глагол"
+          }
         },
         {
           "en": "She went to Paris last summer.",
-          "ru": "Она ездила в Париж прошлым летом."
+          "ru": "Она ездила в Париж прошлым летом.",
+          "note": {
+            "en": "irregular verb",
+            "ru": "неправильный глагол"
+          }
         },
         {
           "en": "We didn't watch TV.",
@@ -51,23 +61,45 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He was very tired.",
-          "ru": "Он был очень уставшим."
+          "ru": "Он был очень уставшим.",
+          "note": {
+            "en": "verb 'be'",
+            "ru": "глагол 'be'"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После didn't глагол всегда в первой форме: didn't go, не didn't went."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She didn't went.",
+          "right": "She didn't go.",
+          "why": {
+            "en": "After didn't the verb stays in its base form, never the past form.",
+            "ru": "После didn't глагол остаётся в базовой форме, а не в форме прошедшего времени."
+          }
+        },
+        {
+          "wrong": "Did you went?",
+          "right": "Did you go?",
+          "why": {
+            "en": "Did already marks the past, so the main verb is the base form.",
+            "ru": "Did уже передаёт прошедшее время, поэтому основной глагол стоит в базовой форме."
+          }
+        }
+      ]
     },
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "Use the Past Simple when the action is completely finished in the past, usually with a clear time. Positive: regular verbs add -ed (played), irregular verbs change form (went). Negative and question for ordinary verbs use did: didn't play / Did ... play?, didn't go / Did ... go? The verb be is special: it does NOT use did. Make negatives directly (wasn't / weren't) and questions by inversion (Was ...? / Were ...?). Spelling of -ed: most verbs +ed (worked); verbs ending in -e add only -d (lived); consonant + y becomes -ied (studied); short consonant-vowel-consonant words double the last letter (stopped). The -ed ending has three sounds: /t/ after voiceless sounds (worked), /d/ after voiced sounds and vowels (played), and /id/ after -t or -d (wanted). Typical time markers: yesterday, last night/week, two days ago, in 2010, when I was young.",
         "ru": "**Past Simple** используется, когда действие **полностью в прошлом**. Есть чёткое время или понимание, что это закончилось.\n\n**Форма:**\n\n| Тип | Утверждение | Отрицание | Вопрос |\n|---|---|---|---|\n| Правильные | played | didn't play | Did ... play? |\n| Неправильные | went | didn't go | Did ... go? |\n| to be | was/were | wasn't/weren't | Was/Were ...? |\n\n**Правила `-ed`:**\n- Обычно `+ed`: `work → worked`, `play → played`\n- После `-e` → `+d`: `live → lived`, `love → loved`\n- После согласной + `-y` → `-ied`: `study → studied`, `try → tried`\n- Короткое слово согласная+гласная+согласная — удвоение: `stop → stopped`, `plan → planned`\n\n**Произношение `-ed` (три варианта):**\n- `/t/` после глухих: `worked`, `stopped`, `asked`\n- `/d/` после звонких и гласных: `played`, `lived`, `called`\n- `/ɪd/` после `-t` или `-d`: `wanted`, `needed`\n\n**Неправильные глаголы — базовый список:**\n- `go → went`, `come → came`, `see → saw`, `do → did`, `have → had`\n- `eat → ate`, `drink → drank`, `sleep → slept`, `buy → bought`, `think → thought`\n- `say → said`, `tell → told`, `give → gave`, `take → took`, `find → found`\n- `get → got`, `make → made`, `know → knew`, `feel → felt`, `leave → left`\n- `read → read` (пишется одинаково, читается по-разному)\n\n**Time markers (слова времени):**\n- `yesterday` (вчера)\n- `last night/week/month/year/Monday`\n- `... ago` (two days ago, a week ago)\n- `in 2010`, `in the morning`\n- `when I was young` (когда я был молодым)\n\n**Главные ошибки:**\n- ❌ `I didn't went` → ✅ `I didn't go` (после didn't — базовая форма)\n- ❌ `She goed` → ✅ `She went` (неправильный глагол)\n- ❌ `Did you went?` → ✅ `Did you go?`\n- Смешивать `was`/`were`: `I was`, `you were`, `he was`, `they were`\n\n**`To be` — особый случай:** не нужен `didn't`, отрицание прямо: `I wasn't at home.`, `They weren't happy.`\n- `Was he there?` (Он там был?)\n- `Were you at home?` (Ты был дома?)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb-ed / irregular  |  did/didn't + base verb  |  was/were (be)",
+        "ru": "подлежащее + глагол-ed / неправильная форма  |  did/didn't + базовый глагол  |  was/were (для be)"
       },
       "examples": [
         {
@@ -76,7 +108,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She bought a new car two months ago.",
-          "ru": "Она купила новую машину два месяца назад."
+          "ru": "Она купила новую машину два месяца назад.",
+          "note": {
+            "en": "+ ago",
+            "ru": "+ ago"
+          }
         },
         {
           "en": "They didn't like the film.",
@@ -84,32 +120,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "What did you do yesterday?",
-          "ru": "Что ты делал вчера?"
+          "ru": "Что ты делал вчера?",
+          "note": {
+            "en": "wh-question",
+            "ru": "вопрос с wh-"
+          }
         },
         {
           "en": "We weren't at the party.",
-          "ru": "Нас не было на вечеринке."
+          "ru": "Нас не было на вечеринке.",
+          "note": {
+            "en": "be negative",
+            "ru": "отрицание be"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После did и didn't — всегда базовая форма глагола: did you go?, I didn't go."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She goed home.",
+          "right": "She went home.",
+          "why": {
+            "en": "Go is irregular; you cannot add -ed to it.",
+            "ru": "Go — неправильный глагол, к нему нельзя добавить -ed."
+          }
+        },
+        {
+          "wrong": "We was at the party.",
+          "right": "We were at the party.",
+          "why": {
+            "en": "We/you/they take were, not was.",
+            "ru": "С we/you/they используется were, а не was."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2 you build connected stories in the past and widen your irregular-verb range. Link events in order with first, then, after that, finally, and join clauses with and, but, so: I got up early and went for a run; I was tired, so I stayed home. The key contrast to master is Past Simple vs Present Perfect. With a finished past time (yesterday, last week, in 2010, ago), always use Past Simple: I saw him yesterday (not 'have seen ... yesterday'). When the time is unknown or the period is still open, use Present Perfect: I have seen him; I have seen him today. Questions about a specific past moment use Past Simple: When did you arrive? When did they leave? Keep growing irregular verbs: begin/began, break/broke, catch/caught, choose/chose, lose/lost, pay/paid, teach/taught, write/wrote.",
         "ru": "На A2 ты учишься строить **связные рассказы** в прошлом и расширяешь список неправильных глаголов.\n\n**Связывание событий:**\n- `First`, `then`, `after that`, `finally` — чтобы связать действия:\n- `First I had breakfast, then I went to work, after that I met a friend, and finally I came home.`\n\n**Одновременные действия:**\n- `while` — одно действие происходило в то время, когда происходило другое:\n- `While I was cooking, she called me.` (смешанное время, учтёшь в past continuous).\n\nНа A2 достаточно простого соединения через `and`, `but`, `so`:\n- `I got up early and went for a run.`\n- `I was tired, so I stayed home.`\n\n**Расширенный список неправильных глаголов:**\n- `begin → began`, `break → broke`, `bring → brought`\n- `catch → caught`, `choose → chose`, `cut → cut`\n- `fall → fell`, `feel → felt`, `fight → fought`, `fly → flew`\n- `forget → forgot`, `give → gave`, `grow → grew`\n- `hear → heard`, `hit → hit`, `hold → held`, `keep → kept`\n- `lose → lost`, `meet → met`, `pay → paid`, `put → put`\n- `run → ran`, `send → sent`, `show → showed`, `sit → sat`\n- `stand → stood`, `teach → taught`, `tell → told`, `wear → wore`, `write → wrote`\n\n**Past Simple vs Present Perfect:**\nC конкретным временем в прошлом (yesterday, last week, in 2010, ago, when) — всегда Past Simple:\n- ✅ `I saw him yesterday.`\n- ❌ `I have seen him yesterday.`\n\nКогда неважно когда или период ещё идёт — Present Perfect:\n- `I have seen him.` (когда-то)\n- `I have seen him today.` (сегодня ещё не закончилось)\n\n**Вопросы с `when`:**\nЕсли `when` о конкретном моменте в прошлом — используй Past Simple:\n- `When did you arrive?` (Когда ты приехал?)\n- `When did they leave?` (Когда они уехали?)\n\n**Типичные истории на A2:**\n- Вчерашний день: `Yesterday I got up at 7. I had breakfast and went to work. I had meetings all day. In the evening I met a friend and we had dinner.`\n- Путешествие: `Last summer we went to Italy. We visited Rome and Florence. The weather was great and the food was amazing.`\n\n**Ошибки A2:**\n- Путать Past Simple и Present Perfect с time markers.\n- Использовать `was` + infinitive для прошлого: ❌ `I was go` → ✅ `I went`.\n- Путать `was` и `were`: `We were` (не `we was`)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "first / then / after that + subject + past verb  (vs Present Perfect for unfinished time)",
+        "ru": "first / then / after that + подлежащее + глагол в прошедшем  (Present Perfect — для незакончившегося периода)"
       },
       "examples": [
         {
           "en": "Last weekend we visited my grandparents.",
-          "ru": "В прошлые выходные мы навещали бабушку и дедушку."
+          "ru": "В прошлые выходные мы навещали бабушку и дедушку.",
+          "note": {
+            "en": "narrative",
+            "ru": "повествование"
+          }
         },
         {
           "en": "I lost my wallet on the bus yesterday.",
@@ -121,7 +187,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "When did you start learning English?",
-          "ru": "Когда ты начал учить английский?"
+          "ru": "Когда ты начал учить английский?",
+          "note": {
+            "en": "when-question",
+            "ru": "вопрос с when"
+          }
         },
         {
           "en": "The kids weren't at home when I called.",
@@ -131,17 +201,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Связывай действия в истории словами first, then, after that, finally."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I have seen him yesterday.",
+          "right": "I saw him yesterday.",
+          "why": {
+            "en": "A finished past time word forces Past Simple, not Present Perfect.",
+            "ru": "Слово, обозначающее законченное прошлое, требует Past Simple, а не Present Perfect."
+          }
+        },
+        {
+          "wrong": "I was go to work.",
+          "right": "I went to work.",
+          "why": {
+            "en": "Do not combine was with a base verb; use the single past form.",
+            "ru": "Нельзя соединять was с базовым глаголом; используется одна форма прошедшего времени."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the Past Simple is the backbone of narrative, working alongside other past tenses. It carries the chain of completed events: I walked into the room, saw the broken window, and called the police. Contrast it with the Past Continuous, which sets the background or ongoing process: I was walking home when it started to rain; When I arrived, he was cooking dinner. Keep the Past Simple vs Present Perfect distinction sharp: I lost my keys (a past fact) vs I've lost my keys (the result matters now); I visited Paris in 2019 (specific) vs I've visited Paris (life experience). For repeated past actions you can also use used to, which stresses that it is no longer true: I used to play tennis (but not now). In reported speech, present shifts back to past: 'I am tired' -> She said she was tired. Watch out: after when in a future sense, use the present, not the past (I'll call when he arrives).",
         "ru": "На B1 Past Simple — это основа **повествования**, и важно уметь выстраивать истории с разными временами.\n\n**Past Simple для хронологии событий:**\nКогда ты рассказываешь историю, основное время — Past Simple. Он создаёт последовательность:\n- `I walked into the room, saw the broken window, and called the police.`\n- `She opened the letter, read it, and smiled.`\n\n**Past Simple vs Past Continuous:**\n- Past Simple — завершённое действие: `I walked home.`\n- Past Continuous — фон, процесс: `I was walking home when it started to rain.`\n\n**Сочетание в одном предложении:**\n- `When I arrived, he was cooking dinner.` (Когда я пришёл — Past Simple; он готовил — Past Continuous, процесс в тот момент.)\n- `I was reading when the phone rang.` (Я читал — фон; телефон зазвонил — событие в этот момент.)\n\n**Past Simple vs Present Perfect:**\nВажное различие для B1:\n- `I lost my keys.` (Просто факт в прошлом, возможно их уже нашли.)\n- `I've lost my keys.` (Потерял и сейчас их нет — результат в настоящем.)\n- `I visited Paris in 2019.` (Конкретный факт.)\n- `I've visited Paris.` (Опыт в жизни, когда — неважно.)\n\n**Past Simple с `used to`:**\nВместо Past Simple для повторяющихся действий в прошлом можно использовать `used to`:\n- `I played tennis every week.` ≈ `I used to play tennis every week.`\n- Разница: `used to` подчёркивает, что **сейчас это не так**. `I used to smoke` — сейчас не курю.\n\n**Вопросы с подробностями:**\n- `What time did you get up?`\n- `How long did the meeting last?`\n- `Where did you go on holiday?`\n- `Why did you leave early?`\n- `How did you meet?`\n\n**Reported speech — backshift:**\nКогда передаёшь чужие слова, Present → Past:\n- `\"I am tired.\"` → `She said she was tired.`\n- `\"I live in Paris.\"` → `He said he lived in Paris.`\n\n**Расширенный список неправильных глаголов:**\n- `arise → arose`, `awake → awoke`, `bear → bore`\n- `bite → bit`, `bleed → bled`, `blow → blew`\n- `breed → bred`, `burst → burst`, `cast → cast`\n- `cost → cost`, `creep → crept`, `deal → dealt`\n- `dig → dug`, `draw → drew`, `drive → drove`\n- `hang → hung` (вешал) / `hanged` (казнили)\n- `lay → laid`, `lead → led`, `lean → leant/leaned`\n- `quit → quit`, `ride → rode`, `ring → rang`\n- `rise → rose`, `shake → shook`, `shine → shone`\n- `speak → spoke`, `strike → struck`, `swim → swam`\n\n**Типичные ошибки B1:**\n- Использование Past Simple в придаточных после `when` во времени настоящего: ❌ `I'll call when he arrived` → ✅ `when he arrives`.\n- Смешивание Past Simple и Present Perfect: ориентируйся на time markers.\n- Неправильные формы: `swam` (не `swimmed`), `rang` (не `ringed`)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Past Simple (events) + Past Continuous (background): ... was/were + -ing when + past verb",
+        "ru": "Past Simple (события) + Past Continuous (фон): ... was/were + -ing when + глагол в прошедшем"
       },
       "examples": [
         {
@@ -154,36 +242,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He said he wanted to help.",
-          "ru": "Он сказал, что хочет помочь."
+          "ru": "Он сказал, что хочет помочь.",
+          "note": {
+            "en": "reported speech",
+            "ru": "косвенная речь"
+          }
         },
         {
           "en": "We used to go camping every summer.",
-          "ru": "Мы раньше каждое лето ездили в походы."
+          "ru": "Мы раньше каждое лето ездили в походы.",
+          "note": {
+            "en": "used to",
+            "ru": "used to"
+          }
         },
         {
           "en": "The phone rang while I was cooking.",
-          "ru": "Телефон зазвонил, пока я готовил."
+          "ru": "Телефон зазвонил, пока я готовил.",
+          "note": {
+            "en": "interrupted action",
+            "ru": "прерванное действие"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В reported speech Present → Past: \"I am tired\" → He said he was tired."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "When I arrived, he leaved.",
+          "right": "When I arrived, he left.",
+          "why": {
+            "en": "Leave is irregular: the past form is left, not 'leaved'.",
+            "ru": "Leave — неправильный глагол: форма прошедшего — left, а не 'leaved'."
+          }
+        },
+        {
+          "wrong": "I'll call when he arrived.",
+          "right": "I'll call when he arrives.",
+          "why": {
+            "en": "A future time clause after when uses the present, not the Past Simple.",
+            "ru": "Придаточное будущего после when требует настоящего времени, а не Past Simple."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the Past Simple interacts with used to, would, and other past forms to shade meaning. Both Past Simple and used to describe past habits or states, but used to highlights a contrast with the present (no longer true), while the Past Simple is neutral: I smoked for ten years (a fact) vs I used to smoke (but not now). Note that used to has no present form. The form would also expresses past repeated actions, but only actions, never states: When I was young, I would play football every day is fine, but 'I would live in Moscow' is wrong; use I used to live / I lived. So used to covers both actions and states, would covers only actions, and the Past Simple covers everything. In narrative, the Past Simple carries the foreground events while the Past Perfect marks earlier events and the Past Continuous supplies background. The Past Simple also creates distance for politeness and hypotheses: I wondered if you could help (softer); If I had more time, I would read more; I wish I knew the answer. With single past achievements use was able to / managed to, not could: I managed to climb the mountain, not 'I could climb the mountain last year'.",
         "ru": "На B2 Past Simple сочетается с `used to`, `would`, и с другими временами для создания нюансированного повествования.\n\n**Past Simple vs `used to`:**\n- Оба описывают прошлые привычки или состояния.\n- `used to` подчёркивает контраст с настоящим (больше не так).\n- Past Simple нейтрален — просто факт в прошлом.\n\nСравни:\n- `I smoked for ten years.` (Курил 10 лет — нейтрально.)\n- `I used to smoke.` (Курил — но сейчас не курю.)\n\n**`Used to` только для прошлого:**\n- `I used to live in Moscow.` (Раньше жил.)\n- Нет формы `use to` в настоящем. Для настоящего — Present Simple: `I live in Moscow.`\n\n**Past Simple vs `would` for past habits:**\n- `would` — только для **повторяющихся действий**, не для состояний.\n- ✅ `When I was young, I would play football every day.` (действие)\n- ❌ `I would live in Moscow.` (состояние — нельзя would)\n- ✅ `I used to live in Moscow.` (состояние — used to можно)\n- ✅ `I lived in Moscow.` (Past Simple — всегда можно)\n\n`used to` покрывает и действия, и состояния. `would` — только действия. Past Simple — и то, и другое.\n\n**Narrative tenses — background and foreground:**\nВ сложном повествовании:\n- **Past Perfect** — события до основной точки: `I had finished dinner when he arrived.`\n- **Past Continuous** — фон в тот момент: `I was watching TV when she called.`\n- **Past Simple** — основные события в последовательности: `I got up, made coffee, and left.`\n\n**Distance and hypotheticals:**\nPast Simple используется для **вежливости** и **гипотез**:\n- `I wondered if you could help.` (Мягче, чем `I wonder`.)\n- `I wanted to ask you something.` (Вежливая просьба.)\n- `If I had more time, I would read more.` (Гипотетическое условие — 2nd conditional.)\n- `I wish I knew the answer.` (Желание — но не знаю.)\n\nВ этих конструкциях Past Simple не значит «в прошлом» — он создаёт **дистанцию** для вежливости или нереальности.\n\n**Past Simple с modals:**\n- `could` — мог в прошлом: `I could swim when I was 5.`\n- `should have` — должен был (но не сделал): `I should have called you.`\n- `must have` — должно быть (вывод): `He must have left early.`\n\nНо `could` для одиночного достижения в прошлом не используется:\n- ❌ `I could climb the mountain last year.`\n- ✅ `I was able to climb the mountain last year.` или `I managed to climb...`\n\n**Typical B2 errors:**\n- `would` для прошлого состояния: ❌ `I would know him` → ✅ `I knew him` / `I used to know him`.\n- Путаница `used to` и `to be used to`: `I used to smoke` (раньше курил) vs `I am used to smoking` (привык курить).\n- `could` vs `was able to` для единичного успеха."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "would + base verb (repeated past actions only)  |  used to + base verb (actions and states)",
+        "ru": "would + базовый глагол (только повторяющиеся действия)  |  used to + базовый глагол (действия и состояния)"
       },
       "examples": [
         {
           "en": "When I was a student, I would stay up late writing essays.",
-          "ru": "Когда я был студентом, я засиживался допоздна, пиша эссе."
+          "ru": "Когда я был студентом, я засиживался допоздна, пиша эссе.",
+          "note": {
+            "en": "would habit",
+            "ru": "привычка с would"
+          }
         },
         {
           "en": "I used to love science fiction, but now I prefer biographies.",
@@ -191,48 +313,94 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She managed to finish the project on time.",
-          "ru": "Ей удалось закончить проект вовремя."
+          "ru": "Ей удалось закончить проект вовремя.",
+          "note": {
+            "en": "managed to",
+            "ru": "managed to"
+          }
         },
         {
           "en": "If I knew the answer, I would tell you.",
-          "ru": "Если бы я знал ответ, я бы тебе сказал."
+          "ru": "Если бы я знал ответ, я бы тебе сказал.",
+          "note": {
+            "en": "hypothetical",
+            "ru": "гипотеза"
+          }
         },
         {
           "en": "I was wondering if you had a moment.",
-          "ru": "Я хотел спросить, не найдётся ли у вас минутки."
+          "ru": "Я хотел спросить, не найдётся ли у вас минутки.",
+          "note": {
+            "en": "polite distance",
+            "ru": "вежливая дистанция"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "would — только для действий в прошлом, не для состояний; used to — и то, и другое."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I would live in Moscow.",
+          "right": "I used to live in Moscow.",
+          "why": {
+            "en": "Would expresses repeated actions, not states; live is a state, so use used to or the Past Simple.",
+            "ru": "Would выражает повторяющиеся действия, а не состояния; live — состояние, поэтому нужно used to или Past Simple."
+          }
+        },
+        {
+          "wrong": "I could climb the mountain last year.",
+          "right": "I managed to climb the mountain last year.",
+          "why": {
+            "en": "For a single past success use was able to / managed to; could implies general ability.",
+            "ru": "Для единичного успеха в прошлом используется was able to / managed to; could означает общую способность."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the Past Simple sits inside a fine system of narrative distance and tense harmony. It sets the default storytelling distance; switching to the historic present (She walks in and sees him) is a deliberate, dramatic choice. In subordinate clauses, tenses must agree relative to the reference point: I thought he was tired; I thought he had been sick (earlier past); I thought he would be here (future-in-the-past). Modals backshift too: can -> could, will -> would, may -> might, must / have to -> had to. Keep the harmony unless you state a timeless truth (I told you the earth is round). The Past Simple also appears in the past subjunctive for present or future meaning: It was time he went home; I wish I had a car; Suppose he came tomorrow. For nostalgic descriptions of past habits, would paints the scene more lyrically than the neutral Past Simple or the contrastive used to. In formal conditionals, inversion replaces if: Had I known, I would have come; Were I in your position, I would accept. Use the Past Perfect rather than the Past Simple where clause order would otherwise be ambiguous: When I arrived, he had already left clarifies that he left first.",
         "ru": "На C1 Past Simple встраивается в тонкую систему **narrative distance** и **tense harmony**.\n\n**1. Narrative distance:**\nPast Simple создаёт стандартную повествовательную дистанцию. В литературе выбор между Past Simple и историческим Present значим:\n- `She walked into the room and saw him.` (Обычное повествование — Past.)\n- `She walks into the room and sees him.` (Historical present — драматично, непосредственно.)\n\n**2. Tense harmony (согласование времён):**\nВ сложноподчинённом предложении все времена должны быть согласованы относительно точки отсчёта:\n- `I thought he was tired.` (оба в прошлом — нормально)\n- `I thought he had been sick.` (Past Perfect для ещё более раннего прошлого)\n- `I thought he would be here.` (would для будущего в прошлом)\n\nНарушение согласования звучит неестественно:\n- ❌ `I said he is tired.` (если не универсальная истина) → ✅ `I said he was tired.`\n- Исключение: `I told you the earth is round.` (вечная истина — Present можно сохранить).\n\n**3. Modal harmony в прошлом:**\n- `can → could`\n- `will → would`\n- `may → might`\n- `must → had to` (для обязательства)\n- `have to → had to`\n\n`I must leave.` → `I had to leave.`\n\n**4. Past Simple в narrative subjunctive:**\n- `It was time he went home.` (Пора ему было идти домой — Past Simple со значением настоящего/будущего.)\n- `I wish I had a car.` (Хочу иметь машину — Past Simple для гипотетики.)\n- `Suppose he came tomorrow. What would we do?` (Past Simple после `suppose` для гипотезы.)\n\n**5. Tonкие нюансы с `used to` и `would`:**\nВ продвинутом использовании `would` для прошлых привычек часто несёт оттенок **ностальгии** или **воспоминания**:\n- `Every Sunday, we would go to the lake. Father would bring sandwiches, and mother would read under a tree.`\n\nТакой отрывок звучит лирично, Past Simple дал бы более нейтральный тон. `Used to` нейтрально и обычно вводит контраст. `Would` раскрывает пейзаж.\n\n**6. Past Simple в conditional inversion (formal):**\n- `Had I known, I would have come.` (Если бы я знал — формальная инверсия.)\n- `Were I in your position, I would accept.` (Если бы я был на твоём месте.)\n\n**7. Aspect interaction с modals:**\n- `He could have been lying.` (Возможно, он лгал — epistemic возможность.)\n- `She should have been warned.` (Её следовало предупредить — пассивная форма с критикой.)\n- `They must have left already.` (Должно быть, они уже ушли — уверенный вывод.)\n\n**8. Stylistic errors at C1:**\n- Слишком частое использование Past Simple там, где нужен Past Perfect для ясности порядка: `When I arrived, he left` (неоднозначно — ушёл до или после?) vs `When I arrived, he had already left` (ясно — ушёл до).\n- Неправильное согласование в reported speech: `He said he is going` (допустимо, если он всё ещё едет) vs `He said he was going` (нейтрально, стандартный backshift)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "tense harmony: present -> Past Simple, must/have to -> had to; formal inversion: Had/Were + subject ...",
+        "ru": "согласование времён: present -> Past Simple, must/have to -> had to; формальная инверсия: Had/Were + подлежащее ..."
       },
       "examples": [
         {
           "en": "She told me she had never been there before.",
-          "ru": "Она сказала, что никогда там не была."
+          "ru": "Она сказала, что никогда там не была.",
+          "note": {
+            "en": "backshift",
+            "ru": "согласование времён"
+          }
         },
         {
           "en": "It was high time someone addressed the issue.",
-          "ru": "Давно пора было кому-то решить эту проблему."
+          "ru": "Давно пора было кому-то решить эту проблему.",
+          "note": {
+            "en": "subjunctive",
+            "ru": "сослагательное"
+          }
         },
         {
           "en": "Every summer, we would drive up to the mountains and camp by the lake.",
-          "ru": "Каждое лето мы уезжали в горы и разбивали лагерь у озера."
+          "ru": "Каждое лето мы уезжали в горы и разбивали лагерь у озера.",
+          "note": {
+            "en": "nostalgic would",
+            "ru": "ностальгическое would"
+          }
         },
         {
           "en": "Had he arrived on time, we would have finished by now.",
-          "ru": "Если бы он приехал вовремя, мы бы уже закончили."
+          "ru": "Если бы он приехал вовремя, мы бы уже закончили.",
+          "note": {
+            "en": "conditional inversion",
+            "ru": "инверсия в условном"
+          }
         },
         {
           "en": "He could have told me earlier, but he didn't.",
@@ -242,34 +410,68 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Для ностальгического описания привычек в прошлом выбирай would, не used to."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I said he is tired.",
+          "right": "I said he was tired.",
+          "why": {
+            "en": "Standard backshift moves the present to the past after a past reporting verb, unless it is a permanent truth.",
+            "ru": "Стандартное согласование переводит настоящее в прошедшее после глагола в прошедшем, кроме постоянных истин."
+          }
+        },
+        {
+          "wrong": "When I arrived, he left.",
+          "right": "When I arrived, he had already left.",
+          "why": {
+            "en": "Use the Past Perfect for the earlier event so the order of actions is unambiguous.",
+            "ru": "Для более раннего события используйте Past Perfect, чтобы порядок действий был однозначным."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the Past Simple is a matter of register, style, and aspect interplay. In literary prose the choice between Past Simple, Past Continuous, and Past Perfect controls rhythm and focus: The wind blew. Leaves fell. She walked on (clipped, fast) versus The wind was blowing. Leaves were falling. She walked on (atmosphere plus action). Keep registers separate: when discussing a literary text the convention is the present (Hamlet kills Polonius), but when discussing the author and era it is the past (Shakespeare died in 1616); mixing the two within one statement reads as an error. In free indirect speech the Past Simple blends external action with a character's unspoken thoughts (He walked home. The world was unfair. Nothing ever changed). Aspect distinctions stay subtle: He stood there for an hour (a fact) vs He was standing there for an hour (the process) vs He had stood there for an hour (duration up to a later point). In academic writing the Past Simple reports specific studies (Smith (2010) found that ...) while the Present Perfect generalises a field (Research has shown ...). Beware the cross-linguistic trap: I lived in Moscow for ten years means you no longer live there, whereas I have lived there means you still do. In British English, an unfinished time period (this morning, while it is still morning) blocks the Past Simple; American English allows it.",
         "ru": "На C2 Past Simple — это выбор регистра, стилистики и взаимодействия с aspect. Ошибки здесь тонкие, часто связанные с культурной нормой и риторикой.\n\n**1. Literary aspect interaction:**\nВ высокой прозе выбор между Past Simple, Past Continuous и Past Perfect создаёт ритм и фокус:\n- `The wind blew. Leaves fell. She walked on.` (Past Simple — минимализм, быстрый темп.)\n- `The wind was blowing. Leaves were falling. She walked on.` (Continuous + Simple — атмосфера + действие.)\n- `The wind had blown for hours. Now the leaves fell.` (Past Perfect + Simple — глубина времени.)\n\nНа C2 ты контролируешь этот ритм.\n\n**2. Historic Present vs Past в литературном анализе:**\nПри обсуждении произведения литературы принято использовать Present (`Hamlet kills Polonius`), но при обсуждении автора и его жизни — Past (`Shakespeare died in 1616`). Смешение недопустимо:\n- `Shakespeare writes Hamlet in 1600, but he dies in 1616.` (ошибка — разные регистры)\n- `Shakespeare wrote Hamlet around 1600; he died in 1616.` (оба Past — биография)\n- `In the play, Hamlet kills Polonius. Shakespeare completed the play around 1600.` (разделено: текст — Present, биография — Past)\n\n**3. Journalistic conventions:**\n- Заголовки часто Present Simple (`Minister Resigns`), но в корпусе — Past Simple для событий и Present Perfect для выводов.\n- Past Simple в главном предложении часто связан с Past Perfect в придаточном для установления порядка.\n\n**4. Free indirect speech:**\nВ современной прозе Past Simple смешивается с мыслями персонажа без прямых кавычек:\n- `He walked home. The world was unfair. Nothing ever changed. He needed a drink.`\n\nЗдесь первое предложение — внешнее действие, остальные — внутренний монолог, но все в Past Simple. Это требует чуткости к переходам.\n\n**5. Subtle aspect distinctions:**\n- `He stood there for an hour.` (Past Simple — факт о длительности.)\n- `He was standing there for an hour.` (Past Continuous — подчёркивает процесс.)\n- `He had stood there for an hour.` (Past Perfect — длительность до другой точки.)\n\n**6. Conditional and counterfactual uses:**\n- `If only I had listened.` (Past Perfect — сожаление о прошлом.)\n- `If only I listened.` (Past Simple — сожаление о настоящей привычке.)\n- `Suppose we accepted the offer. What then?` (Past Simple — гипотеза.)\n\n**7. Register и formality:**\n- В академическом письме Past Simple используется для описания конкретных исследований (`Smith (2010) found that...`).\n- Present Perfect — для обобщения области (`Research has shown...`).\n- Переключение регистра между ними — тонкий сигнал.\n\n**8. Cultural traps:**\n- Русский говорит «я жил в Москве 10 лет» — может означать «сейчас тоже». В английском это два разных высказывания: `I lived in Moscow for 10 years` (уже не живу) vs `I have lived in Moscow for 10 years` (всё ещё живу).\n- Русское «сделал» + время = Past Simple; без времени и с результатом = Present Perfect. Перевод требует понимания контекста.\n\n**9. C2 common errors:**\n- Неоправданное переключение на historical present в обычном повествовании звучит искусственно.\n- Past Simple с unfinished time period (`today`, `this morning` если ещё утро) — в британском английском строго неверно; в американском допустимо.\n- Overuse of Past Simple в reported speech о вечных истинах — лучше сохранять Present."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "register split: literary text -> present; author/biography/research findings -> Past Simple",
+        "ru": "разделение регистров: текст произведения -> present; автор/биография/результаты исследований -> Past Simple"
       },
       "examples": [
         {
           "en": "Shakespeare wrote his sonnets in the 1590s, though many were published later.",
-          "ru": "Шекспир написал свои сонеты в 1590-х, хотя многие были опубликованы позже."
+          "ru": "Шекспир написал свои сонеты в 1590-х, хотя многие были опубликованы позже.",
+          "note": {
+            "en": "biography",
+            "ru": "биография"
+          }
         },
         {
           "en": "Had she heeded the warnings, the tragedy might have been averted.",
-          "ru": "Если бы она прислушалась к предупреждениям, трагедию можно было бы предотвратить."
+          "ru": "Если бы она прислушалась к предупреждениям, трагедию можно было бы предотвратить.",
+          "note": {
+            "en": "counterfactual inversion",
+            "ru": "контрфактическая инверсия"
+          }
         },
         {
           "en": "He stood by the window, and the city lay quiet beneath him.",
-          "ru": "Он стоял у окна, а город тихо лежал под ним."
+          "ru": "Он стоял у окна, а город тихо лежал под ним.",
+          "note": {
+            "en": "literary parallelism",
+            "ru": "литературный параллелизм"
+          }
         },
         {
           "en": "The author suggested that truth was rarely simple.",
-          "ru": "Автор предположил, что истина редко бывает простой."
+          "ru": "Автор предположил, что истина редко бывает простой.",
+          "note": {
+            "en": "reported, backshifted",
+            "ru": "косвенная речь, согласование"
+          }
         },
         {
           "en": "If only we had known sooner, everything would have been different.",
@@ -279,9 +481,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "При обсуждении текста произведения — Present; при обсуждении автора и эпохи — Past."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Shakespeare writes Hamlet in 1600, but he dies in 1616.",
+          "right": "Shakespeare wrote Hamlet around 1600; he died in 1616.",
+          "why": {
+            "en": "Biographical and historical facts about the author take the Past Simple; do not mix in the literary present.",
+            "ru": "Биографические и исторические факты об авторе требуют Past Simple; нельзя смешивать с литературным настоящим."
+          }
+        },
+        {
+          "wrong": "I did it this morning.",
+          "right": "I have done it this morning.",
+          "why": {
+            "en": "In British English an unfinished period such as this morning (while still morning) takes the Present Perfect, not the Past Simple.",
+            "ru": "В британском английском незакончившийся период вроде this morning (пока ещё утро) требует Present Perfect, а не Past Simple."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "present-perfect-simple",
+    "past-continuous",
+    "past-perfect-simple",
+    "used-to"
+  ],
+  "crossTopic": [
+    "reported-statements",
+    "second-conditional",
+    "wh-questions",
+    "adverbs-of-frequency"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "past",
+      "now",
+      "future"
+    ]
+  }
 };

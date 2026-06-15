@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "will-would",
   "title": {
-    "en": "",
+    "en": "Will and Would",
     "ru": "Will Would"
   },
   "cefr": "A2",
@@ -16,36 +16,54 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "modals",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "`Will` is the modal you reach for to talk about the **future** and to announce a **decision made right now**. `Would` is its softer, more polite cousin.\n\n**Will for the future:**\n- `I will call you tomorrow.`\n- `She will help us.`\n\n**Will for on-the-spot decisions** — things you decide in the moment:\n- `The phone is ringing. — I'll get it!`\n- `I'll have tea, please.`\n\n**Forms:**\n- Affirmative: `I will go.` / the short form `I'll go.`\n- Negative: `I will not go.` / `I won't go.`\n- Question: `Will you go?`\n\n**The core rule:** after `will`, use the **base verb** — no `to` and no `-s`:\n- not `She will to go.`\n- not `She wills go.`\n- `She will go.`\n\n**Would for polite requests and offers:**\n- `Would you help me?`\n- `Would you like some coffee?`\n\n`Would you like...?` is an extremely common, polite way to ask *do you want...?*\n\n**Would as a gentler `will`:** `Will you come?` is direct; `Would you come?` is softer.\n\nIn speech the short form `I'll` is completely normal; in formal writing, prefer the full `I will`.",
         "ru": "**Will** — модальный глагол для **будущего** и для **мгновенных решений**. **Would** — его «вежливая» версия для просьб и предложений.\n\n**Will для будущего:**\n- `I will call you tomorrow.` (Я позвоню тебе завтра.)\n- `She will help us.` (Она нам поможет.)\n\n**Will для спонтанных решений:**\n- `— The phone is ringing. — I'll get it!` (Я подниму!) — я решил прямо сейчас.\n- `I'll have tea, please.` (Чай, пожалуйста.) — решаю в момент заказа.\n\n**Формы:**\n- Утверждение: `I will go.` / `I'll go.` (короткая форма)\n- Отрицание: `I will not go.` / `I won't go.`\n- Вопрос: `Will you go?`\n\n**Главное правило:** после `will` — глагол **без to** и **без -s**:\n- ❌ `She will to go.`\n- ❌ `She wills go.`\n- ✅ `She will go.`\n\n**Would для вежливых просьб и предложений:**\n- `Would you help me?` (Не мог бы ты мне помочь?)\n- `Would you like some coffee?` (Хочешь кофе?)\n\n`Would you like...?` — очень частое выражение. Оно значит «хочешь ли?» и звучит вежливо.\n\n**Would — более мягкая версия will:**\n- `Will you come?` (Ты придёшь?) — прямо.\n- `Would you come?` (Ты бы пришёл?) — мягче.\n\n**Will vs won't для обещаний и отказов:**\n- `I will do my best.` (Я постараюсь.) — обещание.\n- `He won't listen to me.` (Он не слушает меня / не желает слушать.) — отказ.\n\n**Частые ошибки:**\n- ❌ `I will to come.` → ✅ `I will come.`\n- ❌ `Will you to help?` → ✅ `Will you help?`\n- Короткое `I'll` вместо `I will` — в речи это стандартно, но в формальном письме пиши полную форму."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + will + base verb (no to, no -s); short form 'll, negative won't",
+        "ru": "подлежащее + will + глагол в начальной форме (без to, без -s); краткая форма 'll, отрицание won't"
       },
       "examples": [
         {
           "en": "I'll see you tomorrow.",
-          "ru": "Увидимся завтра."
+          "ru": "Увидимся завтра.",
+          "note": {
+            "en": "future",
+            "ru": "будущее"
+          }
         },
         {
           "en": "Will you open the door, please?",
-          "ru": "Откроешь дверь, пожалуйста?"
+          "ru": "Откроешь дверь, пожалуйста?",
+          "note": {
+            "en": "polite request",
+            "ru": "вежливая просьба"
+          }
         },
         {
           "en": "Would you like some tea?",
-          "ru": "Хочешь чаю?"
+          "ru": "Хочешь чаю?",
+          "note": {
+            "en": "polite offer",
+            "ru": "вежливое предложение"
+          }
         },
         {
           "en": "We won't be late.",
-          "ru": "Мы не опоздаем."
+          "ru": "Мы не опоздаем.",
+          "note": {
+            "en": "negative won't",
+            "ru": "отрицание won't"
+          }
         },
         {
           "en": "She'll probably call later.",
@@ -55,108 +73,218 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Would you like...? — вежливый способ спросить «хочешь ли?» — очень частое выражение."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I will to come.",
+          "right": "I will come.",
+          "why": {
+            "en": "After `will` the verb has no `to`.",
+            "ru": "После will глагол идёт без to."
+          }
+        },
+        {
+          "wrong": "She will goes home.",
+          "right": "She will go home.",
+          "why": {
+            "en": "After `will` the verb stays in its base form, with no `-s`.",
+            "ru": "После will глагол остаётся в начальной форме, без -s."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, `will/would` stretch into **predictions**, **conditionals**, and **past habits**.\n\n**1. Will for predictions** expresses what you believe about the future, often with `I think` or `probably`:\n- `It will rain tomorrow.`\n- `I think he'll come.`\n- `She'll probably be late.`\n\n**2. Will vs going to.** Use `will` for a spontaneous decision or an opinion-based prediction (`I'll help you.`, `It'll rain.`); use `going to` for a plan you already made or a prediction based on present evidence (`I'm going to study tonight.`, `It's going to rain — look at those clouds.`).\n\n**3. Would in the second conditional** (`if` + past simple, `would` + base verb) describes an unreal, hypothetical situation:\n- `If I had more money, I would travel.`\n- `What would you do if you won the lottery?`\n\n**4. Would for past habits** — repeated past **actions** (a stand-in for *used to*):\n- `When I was a child, I would visit my grandparents every summer.`\nUse `would` only for repeated actions, never for past **states**: say `I used to live in Moscow.`, not `I would live in Moscow.`\n\n**5. Would for polite requests:** `Would you mind opening the window?`, `Would it be possible to reschedule?`\n\n**6. Won't / wouldn't for refusal** — they attach a sense of stubborn unwillingness to the subject: `The car won't start.`, `He wouldn't listen to me.`\n\n**7. Shall vs will.** Modern English uses `shall` mainly in offers and suggestions: `Shall I open the window?`, `Shall we go?` For the plain future, `will` is the everyday choice.",
         "ru": "На B1 `will/would` расширяются до **условных предложений**, **предсказаний** и **прошлых привычек**.\n\n**1. Will для предсказаний:**\n- `It will rain tomorrow.` (Завтра пойдёт дождь.)\n- `He'll be famous one day.` (Он когда-нибудь станет знаменитым.)\n- `You'll love this book.` (Тебе понравится эта книга.)\n\nWill выражает уверенность говорящего в будущем. Часто с `I think`, `probably`:\n- `I think he'll come.` (Думаю, он придёт.)\n- `She'll probably be late.` (Она, наверное, опоздает.)\n\n**2. Will vs going to:**\n- `will` — спонтанное решение, предсказание по мнению: `I'll help you.` / `It'll rain.`\n- `going to` — запланированное решение, предсказание по признакам: `I'm going to study tonight.` / `It's going to rain — look at those clouds.`\n\nНа B1 эта разница важна. На экзамене типичный вопрос: какое время выбрать?\n\n**3. Would в second conditional (if + past simple, would + base):**\n- `If I had more money, I would travel.` (Если бы у меня было больше денег, я бы путешествовал.)\n- `What would you do if you won the lottery?` (Что бы ты делал, если бы выиграл в лотерею?)\n\nЭто гипотетическая ситуация, не реальная. По-русски — «бы».\n\n**4. Would для прошлых привычек:**\n- `When I was a child, I would visit my grandparents every summer.` (Когда я был ребёнком, я ездил к дедушке с бабушкой каждое лето.)\n- `She would often read late into the night.` (Она часто читала до поздней ночи.)\n\nВажно: `would` для привычек — только для повторяющихся **действий**, не для состояний. Для состояний используй `used to`:\n- ❌ `I would live in Moscow.` (постоянное состояние)\n- ✅ `I used to live in Moscow.`\n\n**5. Would для вежливых просьб:**\n- `Would you mind opening the window?` (Не могли бы вы открыть окно?)\n- `Would it be possible to reschedule?` (Было бы возможно перенести?)\n\n**6. Won't / wouldn't для отказа (refusal):**\n- `The car won't start.` (Машина не заводится / не желает заводиться.)\n- `He wouldn't listen to me.` (Он не желал меня слушать.)\n\nПрипишет «упрямое нежелание» подлежащему.\n\n**7. Shall vs will:**\nНа B1 важно знать, что `shall` в современном английском используется редко, в основном:\n- `Shall I...?` — предложение помощи: `Shall I open the window?` (Открыть окно?)\n- `Shall we...?` — предложение действия: `Shall we go?` (Пойдём?)\n\nДля будущего 1-го лица в речи почти всегда `will`.\n\n**8. Типичные ошибки:**\n- ❌ `If I will have time, I will call.` → ✅ `If I have time, I will call.` (после if — present simple в 1st conditional)\n- ❌ `I would to go.` → ✅ `I would go.`\n- ❌ `He would live here when he was young.` (wrong for state) → ✅ `He used to live here.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "if + past simple, ... would + base verb (2nd conditional); would + base verb = repeated past action",
+        "ru": "if + past simple, ... would + глагол в начальной форме (2-е условное); would + глагол = повторяющееся действие в прошлом"
       },
       "examples": [
         {
           "en": "If I were you, I wouldn't do that.",
-          "ru": "Я бы на твоём месте этого не делал."
+          "ru": "Я бы на твоём месте этого не делал.",
+          "note": {
+            "en": "second conditional",
+            "ru": "второе условное"
+          }
         },
         {
           "en": "Shall I carry that for you?",
-          "ru": "Можно я это понесу?"
+          "ru": "Можно я это понесу?",
+          "note": {
+            "en": "Shall I...? offer",
+            "ru": "предложение Shall I...?"
+          }
         },
         {
           "en": "When we were kids, we would build forts in the garden.",
-          "ru": "Когда мы были детьми, мы строили крепости в саду."
+          "ru": "Когда мы были детьми, мы строили крепости в саду.",
+          "note": {
+            "en": "past habit",
+            "ru": "привычка в прошлом"
+          }
         },
         {
           "en": "I'll probably be home around eight.",
-          "ru": "Я, наверное, буду дома около восьми."
+          "ru": "Я, наверное, буду дома около восьми.",
+          "note": {
+            "en": "prediction",
+            "ru": "предсказание"
+          }
         },
         {
           "en": "Would you mind waiting a moment?",
-          "ru": "Не могли бы вы подождать минутку?"
+          "ru": "Не могли бы вы подождать минутку?",
+          "note": {
+            "en": "polite request",
+            "ru": "вежливая просьба"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Would для прошлых привычек — только для действий; для состояний используй used to."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If I will have time, I will call.",
+          "right": "If I have time, I will call.",
+          "why": {
+            "en": "After `if` in the first conditional, use the present simple, not `will`.",
+            "ru": "После if в первом условном используется present simple, а не will."
+          }
+        },
+        {
+          "wrong": "I would live in Moscow when I was young.",
+          "right": "I used to live in Moscow when I was young.",
+          "why": {
+            "en": "For a past state, use `used to`; `would` works only for repeated past actions.",
+            "ru": "Для состояния в прошлом используй used to; would годится только для повторяющихся действий."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, `will/would` work across **narrative `would`**, **hypothetical contexts**, and **predictive patterns**.\n\n**1. Narrative would** describes recurring scenes in the past — a standard literary device that builds a remembering tone: `Every Sunday, my grandfather would take us fishing.`, `She would always wear a red scarf.`\n\n**2. Would as the past of `will` in reported speech.** Direct `He said, \"I will help.\"` becomes reported `He said he would help.` The same shift gives *future-in-the-past*: `I knew she would come.`, `They promised they would call.`\n\n**3. Second and third conditionals.** Second (hypothesis about now/future): `If I had more time, I would read more.` Third (hypothesis about the past): `If I had studied harder, I would have passed.` **Mixed** — past condition, present result: `If I had studied medicine, I would be a doctor now.`\n\n**4. Will for characteristic, slightly annoying habits.** Stressed, `will` marks behaviour typical of someone: `He will keep interrupting me.`, `She will eat the last cookie.`\n\n**5. Would have + past participle** is hypothetical past — the result clause of a third conditional: `I would have helped you, but I was busy.`, `She wouldn't have said that.`\n\n**6. Will for logical deduction** about the present, close to `must`: `That will be the postman at the door.`, `He will be at work now.`\n\n**7. I would say / I would think** soften an opinion: `I would say it's about 5 miles.`\n\n**8. Will in the first conditional:** `If it rains, I will stay home.` — present simple after `if`, `will` in the main clause (never `If it will rain...`).\n\n**9. Useful would expressions:** `Would you rather...?`, `I would rather not.`, `I wouldn't be surprised if...`",
         "ru": "На B2 `will/would` используются в **narrative would**, **hypothetical contexts** и **predictive patterns**.\n\n**1. Would в narrative past (повествование):**\n- `Every Sunday, my grandfather would take us fishing.` (Каждое воскресенье дедушка брал нас на рыбалку.)\n- `She would always wear a red scarf.` (Она всегда носила красный шарф.)\n\nЭто стандартный литературный приём для описания повторяющихся сцен в прошлом. Создаёт атмосферу воспоминаний.\n\n**2. Would как past of will в reported speech:**\n- Direct: `He said, \"I will help.\"`\n- Reported: `He said he would help.`\n\nТо же для будущего в прошлом:\n- `I knew she would come.` (Я знал, что она придёт.)\n- `They promised they would call.` (Они обещали, что позвонят.)\n\n**3. Second and third conditionals:**\n- **Second (гипотеза о настоящем/будущем):** `If I had more time, I would read more.` (Если бы у меня было больше времени, я бы больше читал.)\n- **Third (гипотеза о прошлом):** `If I had studied harder, I would have passed.` (Если бы я учился усерднее, я бы сдал.)\n\n**Mixed conditional:**\n- `If I had studied medicine, I would be a doctor now.` (Если бы я учился на врача, я бы сейчас был врачом.) — условие в прошлом, результат в настоящем.\n\n**4. Will для характеристики (habitual, slight annoyance):**\n- `He will keep interrupting me.` (Он вечно меня перебивает.) — раздражение.\n- `She will eat the last cookie.` (Она обязательно съест последнее печенье.) — характерно для неё.\n\nУдарение на `will` подчёркивает раздражение.\n\n**5. Would have + past participle:**\n- `I would have helped you, but I was busy.` (Я бы помог, но был занят.)\n- `She wouldn't have said that.` (Она бы такого не сказала.)\n\nГипотеза о прошлом, часть третьего условного.\n\n**6. Will для logical deduction:**\n- `That will be the postman at the door.` (Это, должно быть, почтальон у двери.) — логический вывод о настоящем, похоже на must.\n- `He will be at work now.` (Он сейчас на работе, скорее всего.)\n\n**7. I would say / I would think — softening:**\n- `I would say it's about 5 miles.` (Я бы сказал, это миль 5.)\n- `I would think she's already left.` (Я бы подумал, что она уже ушла.)\n\nЭто осторожное выражение мнения.\n\n**8. Will в первом условном:**\n- `If it rains, I will stay home.` (Если пойдёт дождь, я останусь дома.)\n- После `if` — present simple; в главной части — will.\n\nНе: ❌ `If it will rain, I will stay.`\n\n**9. Would в expressions:**\n- `Would you rather...?` (Ты бы предпочёл...?)\n- `I would rather not.` (Я бы предпочёл не.)\n- `I wouldn't be surprised if...` (Я бы не удивился, если...)\n\n**10. Typical B2 mistakes:**\n- ❌ `If I would have time...` → ✅ `If I had time...`\n- ❌ `I wish I would know.` → ✅ `I wish I knew.` (wish + past simple)\n- ❌ `He would help me yesterday.` → ✅ `He helped me yesterday.` (real past, not hypothetical)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "would + base verb = narrative past habit; would have + past participle = hypothetical past (3rd conditional)",
+        "ru": "would + глагол = повествовательная привычка в прошлом; would have + причастие = гипотетическое прошлое (3-е условное)"
       },
       "examples": [
         {
           "en": "She would sit by the window for hours, reading.",
-          "ru": "Она часами сидела у окна и читала."
+          "ru": "Она часами сидела у окна и читала.",
+          "note": {
+            "en": "narrative would",
+            "ru": "повествовательное would"
+          }
         },
         {
           "en": "If I were rich, I would buy a house by the sea.",
-          "ru": "Если бы я был богатым, я бы купил дом у моря."
+          "ru": "Если бы я был богатым, я бы купил дом у моря.",
+          "note": {
+            "en": "second conditional",
+            "ru": "второе условное"
+          }
         },
         {
           "en": "I would have called, but I lost your number.",
-          "ru": "Я бы позвонил, но потерял твой номер."
+          "ru": "Я бы позвонил, но потерял твой номер.",
+          "note": {
+            "en": "would have = hypothetical past",
+            "ru": "would have = гипотетическое прошлое"
+          }
         },
         {
           "en": "That will be John — he always arrives at this time.",
-          "ru": "Это, должно быть, Джон — он всегда приходит в это время."
+          "ru": "Это, должно быть, Джон — он всегда приходит в это время.",
+          "note": {
+            "en": "will = logical deduction",
+            "ru": "will = логический вывод"
+          }
         },
         {
           "en": "Would you rather stay home or go out tonight?",
-          "ru": "Ты бы предпочёл остаться дома или пойти куда-нибудь сегодня вечером?"
+          "ru": "Ты бы предпочёл остаться дома или пойти куда-нибудь сегодня вечером?",
+          "note": {
+            "en": "would you rather",
+            "ru": "would you rather"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Narrative would — часто в литературе для описания повторяющихся сцен в прошлом."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If I would have time, I would read more.",
+          "right": "If I had time, I would read more.",
+          "why": {
+            "en": "In a second conditional, the `if`-clause takes the past simple, not `would`.",
+            "ru": "Во втором условном в придаточном с if используется past simple, а не would."
+          }
+        },
+        {
+          "wrong": "I wish I would know the answer.",
+          "right": "I wish I knew the answer.",
+          "why": {
+            "en": "After `wish` about the present, use the past simple, not `would`.",
+            "ru": "После wish о настоящем используется past simple, а не would."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, `will/would` become instruments of **tentativeness**, **politeness**, and **epistemic stance**.\n\n**1. Distancing would in tentative opinions** creates rhetorical distance and softens a claim: `I would argue that the evidence is inconclusive.`, `One would expect more rigour from a peer-reviewed article.`, `I would imagine she's feeling overwhelmed.`\n\n**2. Would in a hypothetical academic register:** `If one were to accept this premise, the conclusion would follow.`, `This would suggest a fundamental flaw in the methodology.`\n\n**3. Will in predictive mode** is standard in academic and business prose for forecasts: `The shift will have significant consequences.`, `Further research will shed light on this phenomenon.`\n\n**4. Would in a polite, diplomatic register** — the longer and more elaborate the frame, the more formal and deferential: `Would it be at all possible to extend the deadline?`, `I would appreciate it if you could review this.`, `Would you be so kind as to confirm?`\n\n**5. Would for softening criticism:** `I would suggest that the argument requires more support.`, `One would have thought this was common knowledge.`\n\n**6. Counterfactual reasoning with inversion** — no `if` needed: `Had we known earlier, we would have acted differently.`, `Were she to resign, who would replace her?`\n\n**7. Future perfect continuous** with `will have been + -ing`: `By next year, I will have been working here for a decade.`\n\n**8. Wouldn't for persistent refusal:** `The car wouldn't start this morning.`, `She wouldn't admit her mistake.`\n\n**9. Would + perfect infinitive speculates about the past:** `She would have been about thirty at the time.`, `He would have known, surely.`\n\n**10. Full `I will` for determination** sounds emphatic in speech: `I will not tolerate this behaviour.`, `I will be there, come what may.`\n\n**11. Hedging clusters** are standard C1+ writing: `I would tentatively suggest...`, `It would not be unreasonable to assume...`",
         "ru": "На C1 `will/would` — инструменты **tentativeness**, **politeness** и **epistemic stance**.\n\n**1. Distancing would в tentative opinions:**\n- `I would argue that the evidence is inconclusive.` (Я бы сказал, что доказательства не убедительны.)\n- `One would expect more rigour from a peer-reviewed article.` (Следовало бы ожидать большей строгости от рецензируемой статьи.)\n- `I would imagine she's feeling overwhelmed.` (Мне представляется, она перегружена.)\n\n`Would` в мнениях создаёт риторическую дистанцию и смягчает утверждение.\n\n**2. Would в hypothetical academic register:**\n- `If one were to accept this premise, the conclusion would follow.` (Если принять эту посылку, вывод следует.)\n- `This would suggest a fundamental flaw in the methodology.` (Это указывало бы на фундаментальный недостаток методологии.)\n\n**3. Will in predictive mode:**\nВ академическом и деловом английском `will` используется для прогнозов и ожиданий:\n- `The shift will have significant consequences.` (Этот сдвиг будет иметь значительные последствия.)\n- `Further research will shed light on this phenomenon.` (Дальнейшие исследования прольют свет на это явление.)\n\n**4. Would в polite diplomatic register:**\n- `Would it be at all possible to extend the deadline?` (Было бы вообще возможно продлить срок?)\n- `I would appreciate it if you could review this.` (Я был бы признателен, если бы вы это рассмотрели.)\n- `Would you be so kind as to confirm?` (Не будете ли вы так любезны подтвердить?)\n\nЧем длиннее и «завинченнее» конструкция, тем выше уровень вежливости и формальности.\n\n**5. Would в softening criticism:**\n- `I would suggest that the argument requires more support.` (Я бы предложил, чтобы аргумент имел больше подкрепления.)\n- `One would have thought this was common knowledge.` (Казалось бы, это общеизвестно.)\n\n`Would` в таких конструкциях смягчает потенциально резкое замечание.\n\n**6. Counterfactual reasoning:**\n- `Had we known earlier, we would have acted differently.` (Знали бы мы раньше, мы бы действовали иначе.)\n- `Were she to resign, who would replace her?` (Если бы она ушла в отставку, кто бы её заменил?)\n\nНа C1 ты свободно используешь инверсию в условных (without `if`).\n\n**7. Will have + been + -ing (future perfect continuous):**\n- `By next year, I will have been working here for a decade.` (К следующему году я буду здесь работать уже десятилетие.)\n\n**8. Wouldn't для последовательного отказа (stubborn refusal):**\n- `The car wouldn't start this morning.` (Машина сегодня утром никак не заводилась.)\n- `She wouldn't admit her mistake.` (Она никак не желала признать свою ошибку.)\n\n**9. Would + perfect infinitive for speculation about past:**\n- `She would have been about thirty at the time.` (Ей тогда было бы около тридцати.) — догадка о прошлом.\n- `He would have known, surely.` (Он, конечно, знал бы.)\n\n**10. Will в promises and determinations:**\n- `I will not tolerate this behaviour.` (Я не потерплю такого поведения.) — решимость.\n- `I will be there, come what may.` (Я буду там, что бы ни случилось.)\n\nПолная форма `I will` (не `I'll`) в речи звучит эмфатически, подчёркивая решимость.\n\n**11. Hedging cluster с would:**\n- `I would tentatively suggest...`\n- `One would perhaps be inclined to think...`\n- `It would not be unreasonable to assume...`\n\nЭти академические цепочки — стандарт C1+ письма."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "would + hedge (argue / suggest / imagine) = tentative opinion; Had / Were + subject ... would (have) = inverted counterfactual",
+        "ru": "would + смягчитель (argue / suggest / imagine) = осторожное мнение; Had / Were + подлежащее ... would (have) = контрфактическая инверсия"
       },
       "examples": [
         {
           "en": "I would argue that the author's interpretation is somewhat reductive.",
-          "ru": "Я бы сказал, что интерпретация автора несколько редуктивна."
+          "ru": "Я бы сказал, что интерпретация автора несколько редуктивна.",
+          "note": {
+            "en": "academic hedge",
+            "ru": "академический смягчитель"
+          }
         },
         {
           "en": "Would it be at all possible to discuss this matter next week?",
-          "ru": "Было бы вообще возможно обсудить этот вопрос на следующей неделе?"
+          "ru": "Было бы вообще возможно обсудить этот вопрос на следующей неделе?",
+          "note": {
+            "en": "diplomatic request",
+            "ru": "дипломатичная просьба"
+          }
         },
         {
           "en": "Had we consulted her earlier, the outcome would have been different.",
-          "ru": "Если бы мы проконсультировались с ней раньше, исход был бы другим."
+          "ru": "Если бы мы проконсультировались с ней раньше, исход был бы другим.",
+          "note": {
+            "en": "inverted counterfactual",
+            "ru": "инверсия в условном"
+          }
         },
         {
           "en": "By the time the report is published, the policy will have been in effect for over a year.",
-          "ru": "К моменту публикации отчёта политика будет действовать уже более года."
+          "ru": "К моменту публикации отчёта политика будет действовать уже более года.",
+          "note": {
+            "en": "future perfect continuous",
+            "ru": "future perfect continuous"
+          }
         },
         {
           "en": "One would be inclined to think that such an error was deliberate.",
@@ -166,30 +294,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "I would argue / I would suggest — академические hedges для аккуратного выражения позиции."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I will argue that the evidence is inconclusive.",
+          "right": "I would argue that the evidence is inconclusive.",
+          "why": {
+            "en": "For a hedged academic opinion, `would` adds the expected tentativeness; `will` states it as a flat fact.",
+            "ru": "Для смягчённого академического мнения would добавляет нужную осторожность; will звучит как прямая констатация."
+          }
+        },
+        {
+          "wrong": "If we had known earlier, we would acted differently.",
+          "right": "Had we known earlier, we would have acted differently.",
+          "why": {
+            "en": "A counterfactual about the past needs `would have` + past participle in the result clause.",
+            "ru": "Контрфактическое утверждение о прошлом требует would have + причастие в главной части."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, `will/would` are subtle stylistic tools for **pragmatic softening**, **counterfactual reasoning**, and **rhetorical framing**.\n\n**1. Pragmatic softeners in professional writing:** `I would be grateful if you would reconsider.` (double `would` for maximum courtesy), `Would you be good enough to clarify?`, `One would have thought a simpler explanation sufficed.`\n\n**2. Emphatic will with contrastive stress** signals stubbornness or criticism, instantly recognised by native speakers: `She WILL have her way.`, `He WILL be late, won't he?`, `They WILL insist on that.`\n\n**3. Would in counterfactual irrealis,** often with literary inversion `were I / had I / should I`: `If wishes were horses, beggars would ride.`, `Were I in your position, I would resign.`\n\n**4. Would in modal harmony and nested hypotheticals:** `If he were to ask, I would suggest that we should wait.`, `She would say she wouldn't have done it had she known.` — read effortlessly at C2.\n\n**5. Stressed will for habitual criticism:** `She WILL interrupt people!`; the idiom `Boys WILL be boys.`\n\n**6. Would-have-been counterfactual speculation:** `The reform, had it passed, would have transformed the sector.`, `She would have been thirty-two at the time of the incident.`\n\n**7. Conditional perfect in reported counterfactuals:** `He said he would have come had he been invited.`, `They claimed they would not have signed had they known the consequences.`\n\n**8. Will vs shall in legal register** — traditional `The Lessee shall pay the rent.` vs plain-English `The Lessee will/must pay the rent.`; at C2 you read the implication of each.\n\n**9. Idiomatic surprise:** `Would you believe it, he actually apologised.`, `Who would have thought it?`\n\n**10. Rhetorical framing** lets a writer distance themselves from a view: `Some would argue that...`, `Critics would have us believe that...`, `One would be hard pressed to find a better example.`\n\n**11. Dated and regional forms** you should recognise even if you never use them: `Would that I could!` (archaic optative), `It would appear that...` (a careful, formal `It seems that...`).",
         "ru": "На C2 `will/would` — сложные стилистические инструменты для **pragmatic softening**, **counterfactual reasoning** и **rhetorical framing**.\n\n**1. Pragmatic softeners в professional writing:**\n- `I would be grateful if you would reconsider.` — двойное would для максимальной вежливости.\n- `Would you be good enough to clarify?` — эдвардианский регистр вежливости, всё ещё актуален в formal correspondence.\n- `One would have thought a simpler explanation sufficed.` — риторическое недоумение.\n\n**2. Emphatic will с contrastive stress:**\n- `She WILL have her way.` (Она же добьётся своего.) — ударение на will подчёркивает упрямство подлежащего.\n- `He WILL be late, won't he?` — обречённое принятие привычного поведения.\n- `They WILL insist on that.` — критика настойчивости.\n\nЭто регулярная интонационная черта английского, которую носитель распознаёт мгновенно.\n\n**3. Would в counterfactual irrealis:**\n- `If wishes were horses, beggars would ride.` (Пословица, букв. «Если бы желания были лошадьми, нищие ездили бы верхом».)\n- `Were I in your position, I would resign.` (Будь я на вашем месте, я бы подал в отставку.)\n\nИнверсия `were I / had I / should I` — литературный и formal counterfactual.\n\n**4. Would в modal harmony и nested hypotheticals:**\n- `If he were to ask, I would suggest that we should wait.` — двойное условное с subjunctive.\n- `She would say she wouldn't have done it had she known.` — nested counterfactual.\n\nНа C2 эти сложные структуры читаются без усилий.\n\n**5. Will в habitual criticism (stressed):**\n- `She WILL interrupt people!` (Она вечно всех перебивает!)\n- `Boys WILL be boys.` (Мальчишки есть мальчишки.) — идиома.\n\n**6. Would-have-been counterfactual speculation:**\n- `The reform, had it passed, would have transformed the sector.` (Реформа, если бы она прошла, преобразила бы сектор.)\n- `She would have been thirty-two at the time of the incident.` (На момент инцидента ей было бы тридцать два.)\n\n**7. Would в conditional perfect for reported counterfactuals:**\n- `He said he would have come had he been invited.` (Он сказал, что пришёл бы, если бы его пригласили.)\n- `They claimed they would not have signed had they known the consequences.` (Они утверждали, что не подписали бы, если бы знали последствия.)\n\n**8. Pragmatic softeners in professional writing:**\n- `I would be most obliged if you could...` — очень формальная просьба.\n- `Should you find it agreeable, we would be pleased to...` — дипломатический протокол.\n- `It would be our pleasure to welcome you.` — корпоративная вежливость.\n\n**9. Will vs shall в legal register:**\n- Traditional legal: `The Lessee shall pay the rent.`\n- Plain English: `The Lessee will pay the rent.` или `The Lessee must pay the rent.`\n\nНа C2 ты различаешь эти регистры и понимаешь импликации.\n\n**10. Would you believe / would you credit it — idiomatic:**\n- `Would you believe it, he actually apologised.` (Представляешь, он даже извинился.)\n- `Who would have thought it?` (Кто бы мог подумать?)\n\nРазговорные обороты удивления.\n\n**11. Subtle rhetorical framing:**\n- `Some would argue that...` — автор отмежёвывается от мнения, которое собирается цитировать.\n- `Critics would have us believe that...` — тон полемики, несогласие.\n- `One would be hard pressed to find a better example.` — эмфатическая похвала через отрицание.\n\n**12. Dated and regional uses:**\n- `Would that I could!` (Если б я только мог!) — архаический optative.\n- `I would fain believe...` — архаический литературный регистр (Sir Walter Scott).\n\nНа C2 ты распознаёшь эти формы в текстах, даже если не используешь их сам.\n\n**13. Distancing would in academic stance:**\n- `One would be inclined to view this as evidence of...` — максимальная дистанция автора.\n- `It would appear that...` — аккуратный, формальный вариант `It seems that...`\n- `One would do well to remember...` — совет, сформулированный от третьего лица."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Were / Had + subject ... would (have) = literary counterfactual; stressed WILL = habitual criticism / stubbornness",
+        "ru": "Were / Had + подлежащее ... would (have) = литературное контрфактическое; ударное WILL = критика привычки / упрямство"
       },
       "examples": [
         {
           "en": "Were I to accept this offer, I would be compromising my principles.",
-          "ru": "Если бы я принял это предложение, я бы поступился принципами."
+          "ru": "Если бы я принял это предложение, я бы поступился принципами.",
+          "note": {
+            "en": "inverted irrealis",
+            "ru": "инверсия в ирреальном условии"
+          }
         },
         {
           "en": "She WILL insist on doing things her own way, won't she?",
-          "ru": "Она же всегда настаивает на своём, правда?"
+          "ru": "Она же всегда настаивает на своём, правда?",
+          "note": {
+            "en": "emphatic stressed WILL",
+            "ru": "эмфатическое ударное WILL"
+          }
         },
         {
           "en": "One would be hard pressed to name a more influential thinker of that era.",
-          "ru": "Трудно назвать более влиятельного мыслителя той эпохи."
+          "ru": "Трудно назвать более влиятельного мыслителя той эпохи.",
+          "note": {
+            "en": "rhetorical understatement",
+            "ru": "риторическое преуменьшение"
+          }
         },
         {
           "en": "The agreement, had it been ratified, would have reshaped international trade.",
@@ -197,15 +355,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Would that we had acted sooner.",
-          "ru": "Если б мы только действовали раньше."
+          "ru": "Если б мы только действовали раньше.",
+          "note": {
+            "en": "archaic optative",
+            "ru": "архаический оптатив"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Эмфатическое WILL с ударением выражает упрямую привычку или критику: She WILL be late!"
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If I would have known, I would have acted sooner.",
+          "right": "Had I known, I would have acted sooner.",
+          "why": {
+            "en": "The `if`-clause of a past counterfactual never takes `would have`; use the past perfect (or inversion `Had I known`).",
+            "ru": "В придаточном прошлого контрфактического условия не ставят would have; используется past perfect (или инверсия Had I known)."
+          }
+        },
+        {
+          "wrong": "Would that I can help you.",
+          "right": "Would that I could help you.",
+          "why": {
+            "en": "The archaic optative `Would that...` is followed by a past-form verb (`could`), not a present one.",
+            "ru": "После архаического оптатива Would that... идёт глагол в форме прошедшего (could), а не настоящего."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "future-simple-will",
+    "can-could",
+    "may-might",
+    "shall"
+  ],
+  "crossTopic": [
+    "first-conditional",
+    "second-conditional",
+    "third-conditional",
+    "reported-statements"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "will = future / instant decision / prediction",
+      "would = polite, hypothetical, or past-habitual counterpart"
+    ]
+  }
 };

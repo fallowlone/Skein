@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "purpose-clauses",
   "title": {
-    "en": "",
+    "en": "Purpose Clauses",
     "ru": "Purpose Clauses"
   },
   "cefr": "B1",
@@ -15,19 +15,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conjunctions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "branch",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "A purpose clause answers the question \"why?\" or \"what for?\" — it explains the aim of the action in the main clause.\n\n**The four core patterns:**\n\n**1. to + infinitive** — the simplest, most common way: `I went to the shop to buy bread.` Use it when the subject of the main clause and the purpose is the same person (I went, I buy).\n\n**2. in order to + infinitive** — the same meaning, slightly more formal: `He studied hard in order to pass the exam.`\n\n**3. so as to + infinitive** — also more formal, common with negatives: `She left early so as to avoid traffic.`\n\n**4. so that + clause** — use this when the two subjects are different, or when you need a modal verb: `I opened the window so that the cat could go out.` (I opened it; the cat goes out.) With *so that*, use a modal: present/future → **can / will**; past → **could / would**: `She spoke loudly so that everyone could hear.`\n\n**Negative purpose** (\"so as not to\"):\n- **in order not to** + infinitive: `I left early in order not to miss the train.`\n- **so as not to** + infinitive: `She spoke quietly so as not to wake the baby.`\n- **so that ... won't / wouldn't**: `She whispered so that the children wouldn't hear.`\n\n**The big trap for learners.** Russian \"для того чтобы\" is *not* translated word-for-word. Never write `for to buy` — after a preposition English uses either a plain infinitive of purpose (`to buy`) or a gerund (`for buying`). Use **for + noun / -ing** to give the function of a thing: `A knife is used for cutting.` / `This key is for opening the back door.`",
         "ru": "**Придаточные цели** отвечают на вопрос «зачем / для чего?». Они объясняют цель действия главного предложения.\n\n**Основные конструкции:**\n\n**1. to + инфинитив** (самый простой способ):\n- `I went to the shop to buy bread.` (Я пошёл в магазин, чтобы купить хлеб.)\n- `She called to invite me.` (Она позвонила, чтобы пригласить меня.)\n\n**2. in order to + инфинитив** (формальнее):\n- `He studied hard in order to pass the exam.` (Он усердно учился, чтобы сдать экзамен.)\n\n**3. so as to + инфинитив** (формальнее):\n- `She left early so as to avoid traffic.` (Она рано уехала, чтобы избежать пробок.)\n\n**4. so that + предложение** (когда субъект в главном и цели разный):\n- `I opened the window so that the cat could go out.` (Я открыл окно, чтобы кошка могла выйти.)\n- `She spoke loudly so that everyone could hear.` (Она говорила громко, чтобы все могли слышать.)\n\nС `so that` обычно используй can/could, will/would, may/might — модальные глаголы:\n- Present/future: `so that ... can / will`.\n- Past: `so that ... could / would`.\n\n**Отрицательная цель:**\n- `in order not to + inf`: `I left early in order not to miss the train.`\n- `so as not to + inf`: `She spoke quietly so as not to wake the baby.`\n- ✗ `not to miss` отдельно без in order / so as — некорректно в стандарте.\n\n**Частая ошибка русскоговорящего:** использовать `for + inf`. ✗ `for to buy` — неправильно. ✓ `to buy`. Русское «для чтобы» не переводится буквально.\n\n**For + noun / gerund** — цель через существительное или -ing:\n- `I came here for help.`\n- `A knife is used for cutting.`\n- `She exercises for health.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "main clause + (in order / so as) to + infinitive  /  main clause + so that + subject + can / could / will / would + verb",
+        "ru": "главное предложение + (in order / so as) to + инфинитив  /  главное предложение + so that + подлежащее + can / could / will / would + глагол"
       },
       "examples": [
         {
@@ -36,138 +38,302 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He bought a car in order to travel more.",
-          "ru": "Он купил машину, чтобы больше путешествовать."
+          "ru": "Он купил машину, чтобы больше путешествовать.",
+          "note": {
+            "en": "in order to",
+            "ru": "оборот in order to"
+          }
         },
         {
           "en": "She whispered so that the children wouldn't hear.",
-          "ru": "Она шептала, чтобы дети не услышали."
+          "ru": "Она шептала, чтобы дети не услышали.",
+          "note": {
+            "en": "so that (different subject)",
+            "ru": "so that (разные субъекты)"
+          }
         },
         {
           "en": "I set an alarm so as not to oversleep.",
-          "ru": "Я поставил будильник, чтобы не проспать."
+          "ru": "Я поставил будильник, чтобы не проспать.",
+          "note": {
+            "en": "so as not to (negative)",
+            "ru": "so as not to (отрицание)"
+          }
         },
         {
           "en": "This key is for opening the back door.",
-          "ru": "Этот ключ — для открытия задней двери."
+          "ru": "Этот ключ — для открытия задней двери.",
+          "note": {
+            "en": "for + -ing (function)",
+            "ru": "for + -ing (назначение)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "To + inf — самый простой способ выразить цель. So that + clause — когда субъект разный в главном и цели."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I went to the shop for to buy bread.",
+          "right": "I went to the shop to buy bread.",
+          "why": {
+            "en": "Never use \"for + to\". Use a plain to-infinitive for purpose.",
+            "ru": "Никогда не используйте \"for + to\". Цель выражается простым to-инфинитивом."
+          }
+        },
+        {
+          "wrong": "I opened the window so that the cat go out.",
+          "right": "I opened the window so that the cat could go out.",
+          "why": {
+            "en": "After \"so that\" you need a modal (can/could/will/would), not a bare verb.",
+            "ru": "После \"so that\" нужен модальный глагол (can/could/will/would), а не голый глагол."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, sharpen your choice of construction by register and by the structure of the sentence.\n\n**Register scale** (neutral → formal):\n- **to + infinitive** — neutral, works everywhere.\n- **in order to** — more formal, academic.\n- **so as to** — formal, almost fixed.\n- **with a view to / with the aim of / for the purpose of + -ing** — formal and bureaucratic: `She studies law with a view to becoming a judge.` Note the **gerund** after these (a preposition cannot take a to-infinitive).\n\n**When to choose *so that* (not a simple to-infinitive):**\n- Different subjects: `I'll leave a key so that you can come in.`\n- When a modal is needed: `He whispered so that they wouldn't hear.`\n- For more complex aims: `I'm saving money so that we can buy a house next year.`\n\n**When to choose *to / in order to*:** one subject across the clause (`I came to help.`) or a short, direct aim (`He ran to catch the bus.`).\n\n**lest** — formal / literary \"so that ... not\", normally with the subjunctive (base form): `He spoke quietly lest he wake the baby.` / `Take notes lest you forget.`\n\n**in case** — a purpose of *precaution*, not the same as a purpose clause: `Take an umbrella in case it rains.` It means \"as a precaution against,\" not \"in order to.\" Note: `in case ≠ if`.\n\n**Negative purpose toolkit:** *in order not to* / *so as not to* (formal), *so that ... won't / wouldn't* (neutral), and the very useful **to avoid + -ing**: `She left early to avoid traffic.`",
         "ru": "На B2 развивай точность выбора конструкций.\n\n**Регистровая разница:**\n- `to + inf` — нейтрально, универсально.\n- `in order to` — формальнее, академический.\n- `so as to` — формальный, почти идиоматический.\n- `so that` — универсально, для разных субъектов.\n- `with a view to + gerund` — формальный: `She studies law with a view to becoming a judge.`\n- `with the aim of + gerund` — формальный: `We met with the aim of reaching an agreement.`\n- `for the purpose of + gerund` — бюрократически-формальный.\n\n**When to use so that (not simple to):**\n- Разные субъекты: `I'll leave a key so that you can come in.` (Я → key, you → come in.)\n- Когда нужен modal: `He whispered so that they wouldn't hear.`\n- Когда цель сложная: `I'm saving money so that we can buy a house next year.`\n\n**When to use to/in order to:**\n- Один субъект в главном и цели: `I came to help.` (I → came, I → help.)\n- Короткая прямая цель: `He ran to catch the bus.`\n\n**Lest — formal/literary 'чтобы не':**\n- `He spoke quietly lest he wake the baby.` (= so that he wouldn't wake...)\n- `Take notes lest you forget.` (= so that you don't forget...)\n- Обычно с subjunctive (wake, not wakes/woke).\n\n**In case — purpose of precaution:**\n- `Take an umbrella in case it rains.` (не чтобы, а на случай если.)\n- `In case ≠ if` — оно выражает предусмотрительность, не условие.\n\n**Common B2 error:** `for to do` — never correct. После prepositions нет to-inf, только gerund:\n- ✗ `Knife for to cut.`\n- ✓ `Knife for cutting.` / `Knife to cut (bread).`\n\n**Negative purpose:**\n- `in order not to`: formal.\n- `so as not to`: formal.\n- `so that ... wouldn't / won't`: neutral.\n- `to avoid + gerund`: очень полезная альтернатива: `She left early to avoid traffic.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "with a view to / with the aim of / for the purpose of + -ing  /  lest + subject + base form  /  to avoid + -ing",
+        "ru": "with a view to / with the aim of / for the purpose of + герундий  /  lest + подлежащее + базовая форма  /  to avoid + герундий"
       },
       "examples": [
         {
           "en": "He took the job with a view to gaining experience.",
-          "ru": "Он взял работу, имея в виду получение опыта."
+          "ru": "Он взял работу, имея в виду получение опыта.",
+          "note": {
+            "en": "with a view to + -ing",
+            "ru": "with a view to + герундий"
+          }
         },
         {
           "en": "She attended the conference for the purpose of networking.",
-          "ru": "Она посетила конференцию с целью завязать контакты."
+          "ru": "Она посетила конференцию с целью завязать контакты.",
+          "note": {
+            "en": "for the purpose of + -ing",
+            "ru": "for the purpose of + герундий"
+          }
         },
         {
           "en": "Take a map in case you get lost.",
-          "ru": "Возьми карту на случай, если заблудишься."
+          "ru": "Возьми карту на случай, если заблудишься.",
+          "note": {
+            "en": "in case (precaution)",
+            "ru": "in case (предосторожность)"
+          }
         },
         {
           "en": "I work out regularly so as to stay healthy.",
-          "ru": "Я регулярно тренируюсь, чтобы оставаться здоровым."
+          "ru": "Я регулярно тренируюсь, чтобы оставаться здоровым.",
+          "note": {
+            "en": "so as to",
+            "ru": "оборот so as to"
+          }
         },
         {
           "en": "She spoke quietly lest she disturb the others.",
-          "ru": "Она говорила тихо, чтобы не беспокоить остальных."
+          "ru": "Она говорила тихо, чтобы не беспокоить остальных.",
+          "note": {
+            "en": "lest (formal/literary)",
+            "ru": "lest (формальный/литературный)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "In case ≠ if. Take an umbrella in case it rains (на всякий случай) vs if it rains, take an umbrella (только если будет)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She studies law with a view to become a judge.",
+          "right": "She studies law with a view to becoming a judge.",
+          "why": {
+            "en": "\"With a view to\" ends in a preposition, so it takes a gerund, not an infinitive.",
+            "ru": "\"With a view to\" заканчивается предлогом, поэтому требует герундий, а не инфинитив."
+          }
+        },
+        {
+          "wrong": "Take an umbrella if it rains.",
+          "right": "Take an umbrella in case it rains.",
+          "why": {
+            "en": "\"In case\" expresses precaution (do it as a safeguard); \"if\" makes the action conditional on the event.",
+            "ru": "\"In case\" выражает предосторожность; \"if\" делает действие зависимым от условия."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, deploy less common purpose formulas for precision and style.\n\n**Literary / ceremonial *lest*:** `Lest we forget.` / `They hid the gold lest it be found.` — note the subjunctive (be, not is/was).\n\n**Formal *in order that*** + may/might/should + clause: `In order that the reader may understand, the author provides examples.`\n\n**Stating the purpose of a tool or function:**\n- **for + noun / -ing**: `A chair for sitting.`\n- **to + infinitive** (with a stranded preposition if needed): `A chair to sit on.`\n- **used to / designed to / intended for** + complement: `The app is designed to help students.` / `The room is intended for meetings.`\n\n**Academic framing of an aim:** `The aim of this paper is to ...`, `This study seeks to ...`, `The objective is to ...`, plus *with the intention of / in the hope of* + -ing.\n\n**Purpose vs result — a key C1 distinction.** Purpose is the *intended* aim (`He studied to pass.`); result is what *actually happened* (`He studied so hard that he passed.`). *So that* can express either, depending on context and the modal.\n\n**Negative-purpose expansions:** *to avoid + -ing*, and **for fear of + -ing** (\"out of fear that\"): `She didn't speak for fear of offending him.` More formally, *for fear that* + clause.\n\n**so that vs such that.** *So that* marks purpose; **such that** marks manner / result and is formal: `The device is calibrated such that measurements remain consistent.`",
         "ru": "На C1 используй редкие формулы цели для выразительности.\n\n**Archaic/literary lest:**\n- `Lest we forget.` (Чтобы мы не забыли — церемониально, надпись на мемориалах.)\n- `They hid the gold lest it be found.` (Subjunctive mood.)\n\n**Formal purpose inversion:**\n- `In order that X may Y` (formal written): `In order that the reader may understand, the author provides examples.`\n\n**Purpose of a tool/function:**\n- `for + noun / gerund`: `A chair for sitting.`\n- `to + inf`: `A chair to sit on.` (с preposition at the end если требуется.)\n- `used to + inf`: `This is used to measure temperature.`\n- `intended for + noun / purpose`: `The room is intended for meetings.`\n- `designed to + inf`: `The app is designed to help students.`\n\n**Stylistic choices in academic writing:**\n- `with the intention of + gerund`\n- `in the hope of + gerund`\n- `with the view that + clause` (rare)\n- `to the end that + clause` (archaic)\n\n**Purpose vs result confusion:**\n- Purpose: intended, planned. `He studied to pass.` (цель — pass.)\n- Result: what actually happened. `He studied so hard that he passed.` (результат — pass.)\n- `So that` может быть и purpose, и result в зависимости от контекста и modal.\n\n**Negative purpose expansions:**\n- `to avoid + gerund`: элегантная альтернатива.\n- `for fear of + gerund`: из страха: `She didn't speak for fear of offending him.`\n- `for fear that + clause`: более формально.\n\n**Purpose in formal letters and essays:**\n- `The aim of this paper is to + inf.`\n- `This study seeks to + inf.`\n- `The objective is to + inf.`\n- `Our goal in doing X is to + inf.`\n\n**Common C1 nuance:** `so that` vs `such that`. `So that` = purpose. `Such that` = manner/result, formal: `The machine is designed such that any user can operate it.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "in order that + subject + may / might / should + verb  /  for fear of + -ing  /  designed / intended to + infinitive",
+        "ru": "in order that + подлежащее + may / might / should + глагол  /  for fear of + герундий  /  designed / intended to + инфинитив"
       },
       "examples": [
         {
           "en": "The policy is designed to protect vulnerable populations.",
-          "ru": "Политика разработана для защиты уязвимых групп населения."
+          "ru": "Политика разработана для защиты уязвимых групп населения.",
+          "note": {
+            "en": "designed to (function)",
+            "ru": "designed to (назначение)"
+          }
         },
         {
           "en": "She remained silent for fear of revealing too much.",
-          "ru": "Она молчала из страха выдать слишком многое."
+          "ru": "Она молчала из страха выдать слишком многое.",
+          "note": {
+            "en": "for fear of + -ing",
+            "ru": "for fear of + герундий"
+          }
         },
         {
           "en": "In order that the results may be verified, the data are publicly available.",
-          "ru": "Для того чтобы результаты могли быть проверены, данные общедоступны."
+          "ru": "Для того чтобы результаты могли быть проверены, данные общедоступны.",
+          "note": {
+            "en": "in order that ... may",
+            "ru": "in order that ... may"
+          }
         },
         {
           "en": "The device is calibrated such that measurements remain consistent.",
-          "ru": "Устройство откалибровано так, что измерения остаются постоянными."
+          "ru": "Устройство откалибровано так, что измерения остаются постоянными.",
+          "note": {
+            "en": "such that (manner/result)",
+            "ru": "such that (образ/результат)"
+          }
         },
         {
           "en": "They left the country in the hope of finding a better life.",
-          "ru": "Они покинули страну в надежде найти лучшую жизнь."
+          "ru": "Они покинули страну в надежде найти лучшую жизнь.",
+          "note": {
+            "en": "in the hope of + -ing",
+            "ru": "in the hope of + герундий"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "For fear of + gerund — элегантная идиома «из опасения что»: She kept quiet for fear of losing her job."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The machine is designed so that any user can operate it, such that it is reliable.",
+          "right": "The machine is designed such that any user can operate it.",
+          "why": {
+            "en": "\"Such that\" expresses manner/result; do not confuse it with purpose \"so that\".",
+            "ru": "\"Such that\" выражает образ действия / результат; не путайте с целевым \"so that\"."
+          }
+        },
+        {
+          "wrong": "She kept quiet for fear of to lose her job.",
+          "right": "She kept quiet for fear of losing her job.",
+          "why": {
+            "en": "\"For fear of\" ends in the preposition \"of\", so it takes a gerund.",
+            "ru": "\"For fear of\" заканчивается предлогом \"of\", поэтому требует герундий."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, purpose constructions become an instrument of stylistic nuance.\n\n**Rare formal purpose phrases:**\n- **with a view to / with an eye to + -ing** — formal intention aimed at an outcome: `She's training with an eye to the Olympics.`\n- **in a bid to / in an attempt to / in an effort to + infinitive** — journalistic and formal alternatives to plain \"to\": `The company lowered prices in a bid to attract customers.`\n\n**Reduced purpose clauses (participles):** `Hoping to avoid detection, the thief slipped away.` / `Wishing to make a statement, she dressed in black.`\n\n**Elliptical *for*-purpose phrases:** `A gift for her.` / `Time for sleep.` — the aim is implied.\n\n**Object + to-infinitive after verbs of requesting:** `I sent her a message to confirm.` / `I asked them to stay.`\n\n**Rhetorical / legal markers:** *to wit* (\"namely\"): `He was charged with fraud, to wit, forging signatures.`; the archaic *to the end that*; *inasmuch as*.\n\n**Negative-purpose idioms:** *lest anyone think ...*, *for fear (that) ...*, and **to forestall + -ing** (\"to prevent in advance\"): `The CEO spoke first to forestall criticism.`\n\n**Academic / policy register:** `The rationale behind X is to ...`, `X is undertaken in pursuit of Y`, `X is instrumental in achieving Y`.\n\n**Intent vs accident.** Adverbs of intent (*deliberately, intentionally, purposefully*) vs without intent (*inadvertently, unwittingly, accidentally*) signal whether an aim was real.\n\n**Subtle C2 contrast: reason vs purpose after abstract nouns.** `the reason for staying` (causal, gerund) vs `a reason to stay` (purpose/motive, infinitive).",
         "ru": "На C2 конструкции цели становятся инструментом стилистической нюансировки.\n\n**Rare formal purpose phrases:**\n- `with a view to + gerund`: formal intention, с оглядкой на результат.\n- `with an eye to + gerund`: с прицелом на: `She's training with an eye to the Olympics.`\n- `in a bid to + inf`: в попытке (journalistic): `The company lowered prices in a bid to attract customers.`\n- `in an attempt to + inf`: в попытке.\n- `in an effort to + inf`: в стремлении.\n\n**Reduced purpose clauses (participles):**\n- `Hoping to avoid detection, the thief slipped away.` (purpose expressed by participial phrase.)\n- `Wishing to make a statement, she dressed in black.`\n\n**Elliptical for-purpose phrases:**\n- `A gift for her.` (цель неявна — для неё.)\n- `Time for sleep.` (для чего — sleep.)\n\n**Causative purpose through verbs of requesting:**\n- `I sent her a message to confirm.` (цель — confirm.)\n- `I asked them to stay.` (цель asking — что они останутся.)\n- С объектом + to-inf.\n\n**Rhetorical purpose markers:**\n- `to wit` (formal/legal) — а именно: `He was charged with fraud, to wit, forging signatures.`\n- `to the end that` (archaic) — с той целью, что.\n- `inasmuch as X + modal + Y` — в той мере, в какой X может Y.\n\n**Negative purpose idioms:**\n- `lest anyone think...` — чтобы никто не подумал...\n- `for fear (that)` — из опасения.\n- `to forestall + gerund` — чтобы предотвратить: `The CEO spoke first to forestall criticism.`\n\n**Academic / policy writing:**\n- `The rationale behind X is to + inf.`\n- `X is undertaken in pursuit of Y.`\n- `Y is the objective that X serves.`\n- `X is instrumental in achieving Y.`\n\n**Nuance between intentions and outcomes:**\n- `Deliberately, intentionally, purposefully` — adverbs of intent.\n- `Inadvertently, unwittingly, accidentally` — without intent.\n- На C2 точный подбор этих слов показывает, была ли цель реальной или результат случайный.\n\n**Subtle error at C2:** смешение `to + inf` и `for + gerund` после abstract nouns.\n- `The reason to stay` (цель стать — to stay.)\n- `The reason for staying` (причина — staying.)\n- Обычно `reason for + gerund` (causal), `reason to + inf` (purpose/motive)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "in a bid / an attempt / an effort to + infinitive  /  -ing participle phrase, main clause  /  to forestall + -ing",
+        "ru": "in a bid / an attempt / an effort to + инфинитив  /  причастный оборот на -ing, главное предложение  /  to forestall + герундий"
       },
       "examples": [
         {
           "en": "She trained rigorously with an eye to Olympic qualification.",
-          "ru": "Она усердно тренировалась с прицелом на олимпийский отбор."
+          "ru": "Она усердно тренировалась с прицелом на олимпийский отбор.",
+          "note": {
+            "en": "with an eye to + noun",
+            "ru": "with an eye to + существительное"
+          }
         },
         {
           "en": "The minister spoke first to forestall any rebellion in the party.",
-          "ru": "Министр выступил первым, чтобы предотвратить любое восстание в партии."
+          "ru": "Министр выступил первым, чтобы предотвратить любое восстание в партии.",
+          "note": {
+            "en": "to forestall + -ing",
+            "ru": "to forestall + герундий"
+          }
         },
         {
           "en": "The company slashed prices in a bid to regain market share.",
-          "ru": "Компания резко снизила цены в попытке вернуть долю рынка."
+          "ru": "Компания резко снизила цены в попытке вернуть долю рынка.",
+          "note": {
+            "en": "in a bid to (journalistic)",
+            "ru": "in a bid to (журналистский)"
+          }
         },
         {
           "en": "The reform was undertaken in pursuit of greater efficiency.",
-          "ru": "Реформа была предпринята ради большей эффективности."
+          "ru": "Реформа была предпринята ради большей эффективности.",
+          "note": {
+            "en": "in pursuit of + noun",
+            "ru": "in pursuit of + существительное"
+          }
         },
         {
           "en": "Wishing to make amends, he offered a public apology.",
-          "ru": "Желая искупить вину, он принёс публичные извинения."
+          "ru": "Желая искупить вину, он принёс публичные извинения.",
+          "note": {
+            "en": "reduced participle (Wishing)",
+            "ru": "редукция причастия (Wishing)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "In a bid to / in an effort to / in an attempt to — журналистские / формальные альтернативы simple 'to'."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The company lowered prices in a bid to attracting customers.",
+          "right": "The company lowered prices in a bid to attract customers.",
+          "why": {
+            "en": "\"In a bid / an attempt / an effort to\" is followed by a to-infinitive, not a gerund.",
+            "ru": "\"In a bid / an attempt / an effort to\" требует to-инфинитив, а не герундий."
+          }
+        },
+        {
+          "wrong": "Hoping to avoid detection, the alarm went off.",
+          "right": "Hoping to avoid detection, the thief slipped away.",
+          "why": {
+            "en": "A reduced -ing purpose clause must share the subject of the main clause (no dangling participle).",
+            "ru": "Редуцированный причастный оборот цели должен иметь то же подлежащее, что и главное предложение."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "adverbial-clauses-reason",
+    "result-clauses",
+    "verb-plus-infinitive",
+    "subordinating-conjunctions"
+  ],
+  "crossTopic": [
+    "modal-perfect",
+    "can-could",
+    "verb-plus-gerund",
+    "prepositions-after-verbs"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "main clause (action)",
+      "purpose clause (why)"
+    ]
+  }
 };

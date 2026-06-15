@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "future-perfect",
   "title": {
-    "en": "",
+    "en": "Future Perfect",
     "ru": "Future Perfect"
   },
   "cefr": "B2",
@@ -14,19 +14,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:can-talk-about-completion-before-a-future-time-using-will-have-past-participle"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "Use the Future Perfect to look at an action as already finished by a point in the future. You stand mentally at that future moment and look back: what will already be done?\n\nForm it with **will have + past participle**: I will have finished, she will have arrived, they will have left. The contraction I'll have / she'll have is common in speech.\n\nIt answers two questions about a future deadline:\n1. Completion by a point: By 6 pm, I will have finished the report. By next year, she will have graduated.\n2. Duration up to a point: By July, I will have worked here for five years.\n\nIt almost always needs a future reference point — typically by + a time (by Monday, by 2030), by the time + Present Simple (by the time you arrive), before + a future point, or in + a length of time (in three hours).\n\nA key rule: after by the time, before, and when, use the Present Simple, never will. The future point is already implied by the main verb. So: By the time you arrive, I will have finished — not 'By the time you will arrive'.\n\nNegatives and questions follow the auxiliary: I won't have finished by then; Will you have arrived by 10?\n\nCompare the three futures: I'll finish at 5 (a single future act), I'll be finishing at 5 (in progress at 5), I'll have finished by 5 (already done before 5).",
         "ru": "**Future Perfect** — время для действия, которое будет **завершено к определённому моменту в будущем**. Представь: к концу этого года — что будет уже сделано?\n\n**Форма:** `will have` + past participle (3-я форма)\n\n- `I will have finished` (часто `I'll have finished`)\n- `She will have arrived`\n- `They will have left`\n\n**Когда использовать:**\n\n1. **Завершение к будущей точке:**\n   - `By 6 pm, I will have finished the report.` (К 6 часам я закончу отчёт.)\n   - `By next year, she will have graduated.` (К следующему году она закончит учёбу.)\n\n2. **Длительность к будущей точке:**\n   - `By July, I will have worked here for 5 years.` (К июлю я проработаю здесь 5 лет.)\n   - `Next month, they will have been married for 20 years.` (Через месяц они будут женаты 20 лет.)\n\n**Ключевые маркеры:**\n- `by + будущая точка` (by 5 pm, by Monday, by 2030)\n- `by the time + Present Simple` (by the time you arrive)\n- `before + будущая точка`\n- `in X years/months/hours`\n\n**Важно: после `by the time` — Present Simple:**\n- ✅ `By the time you arrive, I will have finished.`\n- ❌ `By the time you will arrive...`\n\n**Визуализация:**\n```\nСейчас ------ [действие идёт или начнётся] ------ БУДУЩАЯ ТОЧКА\n                                                        │\n                                       К этому моменту: will have done\n```\n\n**Отрицание и вопрос:**\n- `I won't have finished by then.` (К тому времени я не закончу.)\n- `Will you have arrived by 10?` (Ты приедешь к 10?)\n\n**Разница с Future Simple и Future Continuous:**\n- `I'll finish at 5.` (Закончу в 5.)\n- `I'll be finishing at 5.` (Буду заканчивать в 5.)\n- `I'll have finished by 5.` (К 5 уже закончу.)\n\n**Типичные ошибки:**\n- `will` в by-the-time-clause: ❌ `by the time he will come` → ✅ `by the time he comes`.\n- Использование для действия в процессе, а не для завершения.\n- Путаница Future Perfect и Present Perfect: Present Perfect не используется для будущего.\n\n**Контексты, где Future Perfect незаменим:**\n- Проекты с дедлайнами: `We will have completed the project by December.`\n- Юбилеи и достижения: `By the end of this year, I will have lived here for 10 years.`\n- Прогнозы результата: `By 2030, robots will have changed everything.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + will have + past participle (V3)",
+        "ru": "подлежащее + will have + 3-я форма глагола (V3)"
       },
       "examples": [
         {
@@ -43,27 +45,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I won't have read the book by Friday — it's too long.",
-          "ru": "К пятнице я не прочту книгу — она слишком длинная."
+          "ru": "К пятнице я не прочту книгу — она слишком длинная.",
+          "note": {
+            "en": "negative",
+            "ru": "отрицание"
+          }
         },
         {
           "en": "Will you have eaten by the time we arrive?",
-          "ru": "Ты успеешь поесть до того, как мы приедем?"
+          "ru": "Ты успеешь поесть до того, как мы приедем?",
+          "note": {
+            "en": "question",
+            "ru": "вопрос"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После by the time — Present Simple, не will: by the time you arrive, I will have finished."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "By the time he will come, I will have left.",
+          "right": "By the time he comes, I will have left.",
+          "why": {
+            "en": "After 'by the time' use the Present Simple; the future is carried by the main clause.",
+            "ru": "После by the time используется Present Simple; будущее выражает главная часть."
+          }
+        },
+        {
+          "wrong": "By Friday I will have read it. (with no deadline anywhere)",
+          "right": "By Friday I will have read it. / I'll read it on Friday.",
+          "why": {
+            "en": "The Future Perfect needs a future reference point such as 'by + time'; without a deadline use the Future Simple.",
+            "ru": "Future Perfect требует будущей точки (by + время); без дедлайна используется Future Simple."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the Future Perfect is a precise tool for project, academic, and predictive writing, where you commit to a result being complete relative to a stated future point.\n\nIn project and business English it sets a clear temporal commitment: By the end of Q3, we will have launched three products. The team will have completed testing by November.\n\nIn academic and futurology writing it frames estimates: By the end of this decade, AI will have transformed most industries. By 2050, climate change will have displaced hundreds of millions.\n\nChoose Simple vs Continuous deliberately: By 5 pm I will have finished the task (result) versus By 5 pm I will have been working for eight hours (duration of an ongoing process). Simple foregrounds the completed outcome; Continuous foregrounds how long the activity has run.\n\nThe time frame is usually marked by by the time + Present Simple, by + a date, before + a future point, or in + a length of time. In reported speech, will have backshifts to would have: \"By next year I will have retired\" becomes She said she would have retired by the following year.\n\nIt also appears in conditional-style sentences expressing inevitability: By the time he apologises, it will have been too late. Stative verbs sit naturally here too: By June I will have known her for ten years.\n\nThe main C1 risks are overuse (it is a marked tense — do not reach for it where the Future Simple suffices) and slipping the wrong verb form after the auxiliary.",
         "ru": "На C1 Future Perfect используется в проектных, академических и прогностических контекстах для точного указания на завершение к будущему моменту.\n\n**1. Project management and deadlines:**\n- `By the end of Q3, we will have launched three products.` (К концу 3-го квартала мы запустим три продукта.)\n- `The team will have completed the testing phase by November.` (Команда завершит фазу тестирования к ноябрю.)\n\nВ деловом английском Future Perfect создаёт чёткое временнóе обязательство.\n\n**2. Academic predictions and estimations:**\n- `By the end of this decade, AI will have transformed most industries.` (К концу десятилетия ИИ трансформирует большинство отраслей.)\n- `By 2050, climate change will have displaced hundreds of millions.` (К 2050 году климатические изменения вытеснят сотни миллионов людей.)\n\nЭто характерный жанр футурологических и прогностических текстов.\n\n**3. Achievement and completion:**\n- `By the time she retires, she will have served as CEO for two decades.` (Когда она уйдёт на пенсию, она проработает CEO два десятилетия.)\n- `By graduation, you will have completed 40 courses.`\n\n**4. Future Perfect vs Future Continuous:**\n- `By 5 pm, I will have been working for eight hours.` (Будет работать 8 часов — Continuous для процесса.)\n- `By 5 pm, I will have finished the task.` (Закончит задачу — Simple для завершения.)\n\nSimple — для результата/завершения, Continuous — для длительности процесса.\n\n**5. Time expressions с Future Perfect:**\n- `By the time...` + Present Simple: `By the time he calls, I will have already left.`\n- `In + amount of time`: `In five years, he will have graduated.`\n- `By + specific date`: `By January 1st, they will have moved.`\n- `Before + future point`: `Before the deadline, we will have submitted everything.`\n\n**6. Future Perfect in conditionals:**\n- `If you send the report by Friday, we will have enough time to review it.` (Обычное conditional, Present + will.)\n- `By the time he apologises, it will have been too late.` (Conditional-like: выражает неизбежность к моменту.)\n\n**7. Reported speech — backshift:**\n- `\"By next year, I will have retired.\"` → `She said that by the following year, she would have retired.`\n\n`Will have` → `would have` в reported speech.\n\n**8. Exam and test contexts:**\nВ экзаменах IELTS/TOEFL/CAE Future Perfect часто тестируется с `by + time` конструкциями. Правильность выбора зависит от наличия явной будущей точки.\n\n**9. Stative verbs в Future Perfect:**\n- `By June, I will have known her for ten years.` (Познакомимся — 10 лет.)\n- `By the time we meet, we will have been apart for a decade.`\n\nStative verbs естественно сочетаются с Future Perfect Simple.\n\n**10. C1 typical errors:**\n- Overuse в обычной речи: Future Perfect — маркированное время, не используй его там, где достаточно Future Simple.\n- `will have` + первая форма: ❌ `I will have go` → ✅ `I will have gone`.\n- Смешение с Future Perfect Continuous: Simple — результат, Continuous — процесс/длительность.\n- Путаница с present perfect: для будущего завершения нужен Future Perfect, не Present Perfect."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + will have + V3 (+ by / before / by the time + Present Simple)",
+        "ru": "подлежащее + will have + V3 (+ by / before / by the time + Present Simple)"
       },
       "examples": [
         {
@@ -76,7 +104,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She said that by June, she would have completed her dissertation.",
-          "ru": "Она сказала, что к июню закончит диссертацию."
+          "ru": "Она сказала, что к июню закончит диссертацию.",
+          "note": {
+            "en": "reported speech",
+            "ru": "косвенная речь"
+          }
         },
         {
           "en": "The company will have expanded into twelve new markets by 2027.",
@@ -90,17 +122,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "By + дата/момент + will have + V3: строгая конструкция для завершения к будущей точке."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "By June I will have go to Paris.",
+          "right": "By June I will have gone to Paris.",
+          "why": {
+            "en": "After 'will have' use the past participle (V3), not the base form.",
+            "ru": "После will have ставится 3-я форма (V3), а не инфинитив."
+          }
+        },
+        {
+          "wrong": "She said that by June she will have completed her dissertation.",
+          "right": "She said that by June she would have completed her dissertation.",
+          "why": {
+            "en": "In reported speech 'will have' backshifts to 'would have'.",
+            "ru": "В косвенной речи will have переходит в would have."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the Future Perfect expresses subtle temporal relations in formal, journalistic, and predictive registers, often compressing a forecast and its timestamp into one clause.\n\nIn headlines and summaries it packs prediction plus deadline tightly: By year's end, one million vehicles will have been recalled. Sales will have doubled by Q4.\n\nA hallmark use is retrospective framing from a future vantage point: When historians look back, they will have seen this decade as a turning point. The construction lets the writer view the present as if already past.\n\nThe passive Future Perfect is the standard in business and legal communication: By the time you read this, the decision will have been made. All applications will have been reviewed by Friday. It also drives rhetorical questions in essays and speeches: What will we have built by the end of the century?\n\nThe Simple/Continuous contrast becomes a fine stylistic choice: By 5 she will have written the chapter (result) versus By 5 she will have been writing for eight hours (duration). It pairs with conditional frames of inevitability: Unless something unforeseen happens, the report will have been filed by Monday.\n\nMastery is signalled by restraint: the tense is marked, so a dense run of Future Perfects reads as heavy. Use it to pinpoint completion against a future point, to build a retrospective-future perspective, or to state a formal projection — not as a default future.",
         "ru": "На C2 Future Perfect — инструмент точного выражения сложных временных отношений в формальных текстах, журналистике и прогностических жанрах.\n\n**1. Compressed future perfect в заголовках и резюме:**\n- `By year's end, 1 million vehicles will have been recalled.` (К концу года будет отозван миллион автомобилей.)\n- `Sales will have doubled by Q4.`\n\nВ журналистике и отчётах Future Perfect пакует прогноз и временную отметку в одно предложение.\n\n**2. Retrospective framing from future point:**\n- `When historians look back, they will have seen 2020 as a turning point.` (Когда историки посмотрят назад, они увидят 2020 как переломный момент.)\n- `Future generations will have judged us by our response to climate change.` (Будущие поколения будут судить нас по нашей реакции на изменение климата.)\n\nЭтот оборот создаёт перспективу будущего взгляда на настоящее.\n\n**3. Formal business projections:**\n- `By the end of the fiscal year, the company will have divested three subsidiaries.` (К концу финансового года компания продаст три дочерних предприятия.)\n- `Revenue growth will have exceeded 20% by Q2.`\n\nТакой регистр характерен для инвесторских презентаций и годовых отчётов.\n\n**4. Future Perfect Simple vs Continuous — precise contrast:**\n- `By 5, she will have written the chapter.` (Simple — завершит.)\n- `By 5, she will have been writing for eight hours.` (Continuous — продолжительность.)\n\nВыбор мотивирован: результат ли важен или процесс.\n\n**5. Future Perfect в conditional structures:**\n- `If all goes well, we will have closed the deal by Friday.` (При нормальном развитии — закроем к пятнице.)\n- `Unless something unforeseen happens, the report will have been filed by Monday.` (Если не случится непредвиденного — отчёт будет сдан к понедельнику.)\n\n**6. Mixed conditional с Future Perfect:**\n- `If they don't intervene, the damage will have been done by then.` (Если не вмешаются, ущерб уже будет нанесён.)\n- `Unless we act now, we will have lost the chance.` (Если не действуем сейчас — мы потеряем шанс.)\n\n**7. Passive Future Perfect:**\n- `By the time you read this, the decision will have been made.` (К моменту, когда вы это прочтёте, решение будет принято.)\n- `All applications will have been reviewed by Friday.`\n\nПассив с Future Perfect — стандарт в деловой и юридической коммуникации.\n\n**8. Rhetorical Future Perfect:**\n- `Will we have done enough?` (Сделаем ли мы достаточно?)\n- `What will we have built by the end of the century?`\n\nРиторические вопросы в Future Perfect — сильный стилистический приём в эссе и речах.\n\n**9. Literary and reflective use:**\n- `One day, when all this will have passed, we will remember.` (Однажды, когда всё это уже пройдёт, мы будем вспоминать.)\n- `By the time the reader reaches this line, the war will have changed everything.`\n\nЛитературный Future Perfect создаёт многослойную временную перспективу.\n\n**10. Subtle errors at C2:**\n- Избыток Future Perfect в тексте — создаёт ощущение тяжеловесности.\n- Использование Future Perfect для действия в процессе: ❌ `By 5, I will have been working on the report` (если ещё не закончил, но Simple — для завершения) → уточни: Continuous для длительности, Simple для результата.\n- Путаница с `will have been` Continuous: последнее редко, очень специфично.\n- Нарушение согласования в reported speech.\n\n**11. Stylistic choices:**\n- В официальной коммуникации Future Perfect + passive — нейтральный стандарт.\n- В academic writing Future Perfect подчёркивает гипотетическое будущее с определённой точкой завершения.\n- В журналистике Future Perfect создаёт прогноз или сценарий.\n\n**12. Tonкая грань:**\n- `We will achieve our goal.` (Future Simple — простое утверждение.)\n- `We will have achieved our goal by 2030.` (Future Perfect — с временной отметкой.)\n- `We are going to achieve our goal.` (Будущее намерение.)\n\n**13. Mastery diagnostic:**\nНа C2 ты выбираешь Future Perfect, когда нужно:\n- Точно отметить завершение относительно будущей точки.\n- Создать ретроспективное будущее зрение.\n- Формально выразить прогноз или проект.\n- Подчеркнуть достижение или длительность к моменту.\n\nОшибочное или чрезмерное использование Future Perfect — маркер неуверенности в регистре."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + will have + (been +) V3 — active or passive, against a future reference point",
+        "ru": "подлежащее + will have + (been +) V3 — актив или пассив, относительно будущей точки"
       },
       "examples": [
         {
@@ -113,7 +163,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "All submissions will have been reviewed by a panel of three experts before publication.",
-          "ru": "Все заявки будут рассмотрены комиссией из трёх экспертов до публикации."
+          "ru": "Все заявки будут рассмотрены комиссией из трёх экспертов до публикации.",
+          "note": {
+            "en": "passive",
+            "ru": "пассив"
+          }
         },
         {
           "en": "By the time you reach the final chapter, you will have traversed three centuries of history.",
@@ -121,15 +175,55 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Unless policy shifts dramatically, the opportunity will have been lost by 2030.",
-          "ru": "Если политика резко не изменится, возможность будет упущена к 2030 году."
+          "ru": "Если политика резко не изменится, возможность будет упущена к 2030 году.",
+          "note": {
+            "en": "conditional frame",
+            "ru": "условный оборот"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "By the time you read this, the decision will have been made — классический пассив Future Perfect."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "By Friday the report will have wrote.",
+          "right": "By Friday the report will have been written.",
+          "why": {
+            "en": "The passive Future Perfect is 'will have been + V3'; the participle must be passive, not active.",
+            "ru": "Пассив Future Perfect — will have been + V3; причастие должно быть страдательным."
+          }
+        },
+        {
+          "wrong": "By 5 I will have been finishing the report. (meaning it is done)",
+          "right": "By 5 I will have finished the report.",
+          "why": {
+            "en": "Use the Simple for a completed result; the Continuous would signal an ongoing process, not completion.",
+            "ru": "Для завершённого результата нужен Simple; Continuous обозначал бы процесс, а не завершение."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "future-simple-will",
+    "future-continuous",
+    "present-perfect-simple",
+    "passive-future"
+  ],
+  "crossTopic": [
+    "adverbial-clauses-time",
+    "passive-perfect-tenses",
+    "first-conditional",
+    "reported-statements"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "now",
+      "action completed",
+      "future point",
+      "will have done"
+    ]
+  }
 };

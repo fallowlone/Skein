@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "it-as-subject",
   "title": {
-    "en": "",
+    "en": "It As Subject",
     "ru": "It As Subject"
   },
   "cefr": "B1",
@@ -15,36 +15,57 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "pronouns",
+  "egp": [
+    "EGP:can-use-it-as-a-dummy-subject-for-weather-time-and-distance",
+    "EGP:can-use-it-as-a-preparatory-subject-with-be-plus-adjective-plus-to-infinitive-or-that-clause",
+    "EGP:can-use-it-as-a-preparatory-object-after-verbs-like-find-make-think",
+    "EGP:can-use-it-with-passive-reporting-verbs-and-cleft-structures-for-emphasis-and-distancing"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "English sentences need a subject. Where Russian can drop it, English fills the slot with the empty pronoun 'it'. Use 'it' as the subject in four core cases.\n\n1. Weather, time, date, distance, environment: 'It's raining.' / 'It's cold today.' / 'It's 5 o'clock.' / 'It's Monday.' / 'It's 10 miles to the city.' / 'It's dark.' Here 'it' has no meaning of its own; it just holds the subject position. You cannot say 'Is raining' without 'it'.\n\n2. Preparatory (dummy) 'it' for evaluation: 'It is important to study.' / 'It was kind of you to help.' The real content is the to-infinitive or that-clause; 'it' points forward to it. Pattern: It + be + adjective + (to-infinitive / that-clause).\n\n3. It + be + noun + to-infinitive / that-clause: 'It is a pleasure to meet you.' / 'It is a fact that he lied.'\n\n4. It seems / appears / happens / turns out (that): 'It seems that she's busy.' / 'It turns out he was right.'\n\nAlso use 'it' to identify: 'Who is it? — It's me.'\n\nWatch the difference between 'it' and 'there': 'It is a problem.' (refers to something / holds a clause) vs 'There is a problem.' (says something exists).",
         "ru": "`It` в английском — не только местоимение («оно»), но и специальное подлежащее в нескольких важных конструкциях, где русский часто обходится без подлежащего.\n\n**1. Погода, время, расстояние, среда:**\n- `It's raining.` (Идёт дождь.)\n- `It's cold today.` (Сегодня холодно.)\n- `It's 5 o'clock.` (Сейчас 5 часов.)\n- `It's Monday.` (Сегодня понедельник.)\n- `It's Christmas tomorrow.`\n- `It's summer.`\n- `It's 10 miles to the city.` (До города 10 миль.)\n- `It's dark.` / `It's quiet.`\n\nВ английском нельзя сказать «is raining» без `it`. Подлежащее обязательно.\n\n**2. Dummy `it` (формальное подлежащее, реальное содержание — в clause):**\n- `It is important to study.` (Важно учиться.)\n- `It is easy to make mistakes.`\n- `It is difficult to learn Chinese.`\n- `It was kind of you to help.`\n\nПаттерн: `It + be + adjective + (to + inf или that-clause).`\n\n**3. It + be + noun + to-inf / that-clause:**\n- `It is a pleasure to meet you.`\n- `It is my duty to inform you.`\n- `It is a fact that he lied.`\n\n**4. It seems / it appears / it happens + (that):**\n- `It seems that she's busy.`\n- `It appears (that) we're wrong.`\n- `It turns out (that) he was right.`\n- `It happens that I'm free.`\n\n**5. Identification:**\n- `Who is it? — It's me.`\n- `What is it? — It's a gift.`\n- `Knock knock! — Who is it?`\n\n**Частая ошибка русскоговорящего:** пропускать `it`.\n- ✗ `Is raining.` → ✓ `It is raining.`\n- ✗ `Is cold.` → ✓ `It is cold.`\n- ✗ `Is important to study.` → ✓ `It is important to study.`\n\nВ русском «холодно», «важно учиться» — без подлежащего. В английском — обязательно `It is`.\n\n**Не путать it и there:**\n- `It is a book.` (identification — это книга.)\n- `There is a book.` (existence — есть книга.)\n- `It is a problem.` (it refers to a previous topic, or used as placeholder for the clause.)\n- `There is a problem.` (existence.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "It + be + adjective / noun + (to-infinitive / that-clause)",
+        "ru": "It + be + прилагательное / существительное + (to-инфинитив / that-предложение)"
       },
       "examples": [
         {
           "en": "It's raining heavily.",
-          "ru": "Идёт сильный дождь."
+          "ru": "Идёт сильный дождь.",
+          "note": {
+            "en": "weather",
+            "ru": "погода"
+          }
         },
         {
           "en": "It's 8 o'clock.",
-          "ru": "Сейчас 8 часов."
+          "ru": "Сейчас 8 часов.",
+          "note": {
+            "en": "time",
+            "ru": "время"
+          }
         },
         {
           "en": "It's important to get enough sleep.",
-          "ru": "Важно высыпаться."
+          "ru": "Важно высыпаться.",
+          "note": {
+            "en": "dummy it",
+            "ru": "формальное it"
+          }
         },
         {
           "en": "It seems like a good idea.",
-          "ru": "Похоже на хорошую идею."
+          "ru": "Похоже на хорошую идею.",
+          "note": {
+            "en": "it seems",
+            "ru": "кажется"
+          }
         },
         {
           "en": "It was my pleasure to help you.",
@@ -54,34 +75,76 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В английском предложение ОБЯЗАТЕЛЬНО имеет подлежащее. Для погоды, времени, оценки — It is rain / hot / 5 o'clock / important."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Is raining.",
+          "right": "It is raining.",
+          "why": {
+            "en": "Every English clause needs a subject; weather verbs take dummy 'it'.",
+            "ru": "В английском у каждого предложения есть подлежащее; для погоды это формальное it."
+          }
+        },
+        {
+          "wrong": "Is important to study.",
+          "right": "It is important to study.",
+          "why": {
+            "en": "An evaluative adjective + to-infinitive needs preparatory 'it' as subject.",
+            "ru": "Оценочное прилагательное + to-инфинитив требуют формального подлежащего it."
+          }
+        },
+        {
+          "wrong": "It is a problem with the printer.",
+          "right": "There is a problem with the printer.",
+          "why": {
+            "en": "Use 'there is' to state that something exists, not 'it is'.",
+            "ru": "Существование чего-либо вводится через there is, а не it is."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, control 'it' as a preparatory subject through extraposition: when the real subject is a long clause, move it to the end and put 'it' in the subject slot. Awkward: 'That he left without saying goodbye is strange.' Natural: 'It is strange that he left without saying goodbye.'\n\nThe extraposed element can be a that-clause ('It is obvious that he's lying.'), an if/whether-clause ('It doesn't matter if you're late.' / 'It remains unclear whether she'll agree.'), a wh-clause ('It matters how you approach it.'), a to-infinitive ('It's important to understand.'), or an -ing clause ('It's no use crying.' / 'It's worth trying.').\n\nUse evaluative 'it' with the subjunctive after adjectives of necessity: 'It is essential that you be on time.' / 'It is crucial that we act quickly.'\n\nThe same logic extends to a preparatory OBJECT after verbs like find, make, think, consider: Subject + verb + it + adjective/noun + that-clause / to-infinitive. 'I find it strange that he left.' / 'She made it clear that she disapproved.' / 'We consider it impossible to complete the task.'\n\nIn discourse, distinguish 'it' (anaphoric, refers to an entity already mentioned: 'I saw the movie. It was great.') from 'this/that' (often refer to a whole clause or event, more marked: 'She rejected the offer. That surprised us.').\n\nKeep choosing correctly between 'it' (evaluation, weather, time, a clause) and 'there' (existence).",
         "ru": "На B2 углубляй использование dummy it и extraposition.\n\n**Extraposition — перенос тяжёлого clause:**\nWhen subject clause is long, move it to the end and use `it` as placeholder.\n- Awkward: `That he left without saying goodbye is strange.`\n- Better: `It is strange that he left without saying goodbye.`\n\nRule: `It + be + adj/noun + that-clause / to-inf / -ing clause.`\n\n**With что (that) clauses:**\n- `It is obvious that he's lying.`\n- `It is true that history repeats itself.`\n- `It is clear that we need help.`\n- `It seems that no one noticed.`\n- `It appears that the deadline has passed.`\n\n**With if / whether clauses:**\n- `It doesn't matter if you're late.`\n- `It remains unclear whether she'll agree.`\n\n**With wh-clauses:**\n- `It is interesting what you said.`\n- `It matters how you approach it.`\n\n**With gerund / infinitive:**\n- `It's worth trying.`\n- `It's no use crying.`\n- `It's important to understand.`\n- `It's time to go.`\n- `It takes time to learn.`\n- `It costs a lot to fly there.`\n\n**It as 'evaluation subject':**\n- `It is essential that you come.` (subjunctive possible: `It is essential that you be on time.`)\n- `It is necessary that all members attend.`\n- `It is crucial that we act quickly.`\n\n**Verb + it + complement structures:**\n- `I find it strange that he left.`\n- `She made it clear (that) she disapproved.`\n- `We consider it impossible to complete the task.`\n- `He thinks it wise to wait.`\n\nSubject + verb + `it` + adjective/noun + that-clause / to-inf.\n\n**It vs this / that (discourse use):**\n- `It` — often placeholder, anaphoric (refers to previously mentioned): `I saw the movie. It was great.`\n- `This` — just-mentioned, proximate: `The team won the championship. This was unexpected.`\n- `That` — more distant / contrastive: `She rejected the offer. That surprised us.`\n\nIn discourse, `it` often refers to entity; `this/that` often refers to clause / event.\n\n**It in emphatic constructions (cleft):**\n- `It was John who called.` (cleft sentence — emphasizes John.)\n- `It is quality that matters.` (cleft — emphasizes quality.)\n- Detailed in cleft sentences topic.\n\n**Common B2 errors:**\n- Using `it` when `there` needed for existence: ✗ `It is a problem with the computer.` → ✓ `There is a problem with the computer.`\n- Using `there` when `it` needed for evaluation: ✗ `There is important to study.` → ✓ `It is important to study.`\n\n**Test for choice it vs there:**\n- Does subject describe existence (something being there)? → `there is`.\n- Does subject introduce evaluative / clausal / weather / time content? → `it is`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "It + be + adjective / noun + that-clause / to-infinitive / -ing  •  S + find/make/think + it + complement",
+        "ru": "It + be + прилагательное / существительное + that / to-инфинитив / -ing  •  S + find/make/think + it + дополнение"
       },
       "examples": [
         {
           "en": "It is essential that we meet the deadline.",
-          "ru": "Крайне важно, чтобы мы уложились в срок."
+          "ru": "Крайне важно, чтобы мы уложились в срок.",
+          "note": {
+            "en": "subjunctive",
+            "ru": "сослагательное"
+          }
         },
         {
           "en": "I find it difficult to concentrate in noise.",
-          "ru": "Мне трудно сосредоточиться в шуме."
+          "ru": "Мне трудно сосредоточиться в шуме.",
+          "note": {
+            "en": "preparatory object",
+            "ru": "формальное дополнение"
+          }
         },
         {
           "en": "It's no use arguing with him.",
-          "ru": "Бесполезно с ним спорить."
+          "ru": "Бесполезно с ним спорить.",
+          "note": {
+            "en": "no use + -ing",
+            "ru": "no use + -ing"
+          }
         },
         {
           "en": "It appears that the problem has been solved.",
-          "ru": "Похоже, проблема решена."
+          "ru": "Похоже, проблема решена.",
+          "note": {
+            "en": "it appears",
+            "ru": "оказывается"
+          }
         },
         {
           "en": "It takes dedication to master a language.",
@@ -91,83 +154,211 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Extraposition — вместо тяжёлого subject-clause используй it + be + adj + that...: It is obvious that... вместо That... is obvious."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "There is important to study.",
+          "right": "It is important to study.",
+          "why": {
+            "en": "Evaluation takes 'it', not existential 'there'.",
+            "ru": "Оценка вводится через it, а не через there."
+          }
+        },
+        {
+          "wrong": "I find strange that he left.",
+          "right": "I find it strange that he left.",
+          "why": {
+            "en": "A preparatory object 'it' is obligatory before the adjective when a clause follows.",
+            "ru": "Перед прилагательным нужен формальный объект it, если дальше идёт придаточное."
+          }
+        },
+        {
+          "wrong": "It is no use to cry.",
+          "right": "It's no use crying.",
+          "why": {
+            "en": "'It's no use' / 'It's worth' take the -ing form, not the to-infinitive.",
+            "ru": "После it's no use / it's worth используется -ing, а не to-инфинитив."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, deploy more advanced 'it' patterns.\n\nPassive reporting for impersonal distancing, common in news and academic prose: 'It is said that he resigned.' / 'It is believed that she's innocent.' / 'It was thought that...'. Note the equivalent personal construction, which is more concise: 'He is said to have resigned.'\n\nTime-span structures: 'It has been five years since I saw her.' / 'It is two years since the tragedy.' / 'It was a long time before he recovered.'\n\n'It takes' + time/effort + to-infinitive: 'It takes time to build trust.' / 'It took me three hours to finish.'\n\nImpersonal evaluation with modals: 'It must have been hard for her.' / 'It might be easier to postpone.'\n\nUrgency with 'it's (high/about) time' + past subjunctive — the past form signals 'overdue', not past time: 'It's high time we left.' / 'It's about time he apologized.'\n\nCleft sentences put 'it' in focus position to emphasise one element: 'It was in 1995 that the company was founded.' / 'It is through education that societies progress.' This pairs with what-clefts: 'It is not what you have but who you are that matters.'\n\nFixed evaluative frames: 'It's a shame/pity/relief that...', 'It is the case that...', 'It is our view that...'. Plus idioms where 'it' is an empty slot: 'Sleep on it.' / 'Call it a day.' / 'As luck would have it...'.\n\nAvoid doubling the placeholder: not 'It is obvious it that he lied' but 'It is obvious that he lied.'",
         "ru": "На C1 владей более сложными конструкциями с `it`.\n\n**It + passive reporting verb + that-clause:**\n- `It is said (that) he resigned.`\n- `It is believed (that) she's innocent.`\n- `It is reported (that) talks have collapsed.`\n- `It is widely known that...`\n- `It was thought that...`\n- `It was feared that...`\n\nPassive formula для formal distancing. Common in news and academic writing.\n\n**Alternative personal construction:**\n- Impersonal: `It is said that he resigned.`\n- Personal: `He is said to have resigned.`\n\nBoth grammatical; personal construction more concise.\n\n**It + be + time expression + since / when:**\n- `It has been five years since I saw her.`\n- `It is two years since the tragedy.`\n- `It was a long time before he recovered.`\n- `It's been ages since we talked.`\n\n**It + take + time / effort / patience:**\n- `It takes time to build trust.`\n- `It takes effort to succeed.`\n- `It took me three hours to finish.`\n- `It takes two to tango.` (idiom.)\n\n**Impersonal with modal:**\n- `It must have been hard for her.`\n- `It might be easier to postpone.`\n- `It could be true.`\n- `It should be clear by now.`\n\n**It + be + high/about time + past:**\n- `It's high time we left.` (subjunctive past — пора бы уже уйти.)\n- `It's about time he apologized.`\n- `It's time you went to bed.`\nNote: past form = subjunctive urgency, not actually past time.\n\n**Cleft sentences:**\n- `It was in 1995 that the company was founded.`\n- `It is through education that societies progress.`\n- Focus on the phrase after `it was / is`.\n\n**Pseudo-cleft with it:**\n- `What matters is not what you have but who you are.` (what-cleft)\n- `It is not what you have but who you are that matters.` (it-cleft equivalent.)\n\n**Complex evaluative patterns:**\n- `It's a shame / pity / relief / comfort / miracle / surprise that...`\n- `It is a question of (whether / how) + clause.`\n- `It is the case that + clause.`\n- `It is our view that + clause.`\n\n**Fixed idioms with it:**\n- `Take it or leave it.`\n- `Make it or break it.`\n- `Have it your way.`\n- `Call it a day.`\n- `Sleep on it.`\n- `Think it over.`\n- `As luck would have it...`\n- `As it happens...`\n- `Come what may...` (archaic).\n\n**Redundant it in complex structures (AVOID):**\n- ✗ `It is obvious it that he lied.` (double it)\n- ✓ `It is obvious that he lied.`\n\n**Common C1 trap:** calque of Russian impersonal:\n- `Мне кажется, что...` → `It seems to me that...` ✓\n- `Кажется, что...` → `It seems that...` ✓\n- BUT: `Можно сказать, что...` → NOT `It can be said that...` (formal, correct). More natural: `One could say that... / You could say that...`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "It + be + reported-participle + that-clause  •  It + take + time/effort + to-inf  •  It + be + (high) time + past-subjunctive",
+        "ru": "It + be + причастие-сообщения + that  •  It + take + время/усилие + to-инф  •  It + be + (high) time + прош. сослагательное"
       },
       "examples": [
         {
           "en": "It has been six months since we last met.",
-          "ru": "Прошло шесть месяцев с нашей последней встречи."
+          "ru": "Прошло шесть месяцев с нашей последней встречи.",
+          "note": {
+            "en": "time since",
+            "ru": "прошло с тех пор"
+          }
         },
         {
           "en": "It is said that she is writing a new book.",
-          "ru": "Говорят, что она пишет новую книгу."
+          "ru": "Говорят, что она пишет новую книгу.",
+          "note": {
+            "en": "passive report",
+            "ru": "пассивное сообщение"
+          }
         },
         {
           "en": "It's high time you took this seriously.",
-          "ru": "Давно пора тебе отнестись к этому серьёзно."
+          "ru": "Давно пора тебе отнестись к этому серьёзно.",
+          "note": {
+            "en": "high time",
+            "ru": "давно пора"
+          }
         },
         {
           "en": "It takes considerable skill to do this well.",
-          "ru": "Нужно немало мастерства, чтобы делать это хорошо."
+          "ru": "Нужно немало мастерства, чтобы делать это хорошо.",
+          "note": {
+            "en": "it takes",
+            "ru": "требуется"
+          }
         },
         {
           "en": "It was my decision that changed everything.",
-          "ru": "Именно моё решение всё изменило."
+          "ru": "Именно моё решение всё изменило.",
+          "note": {
+            "en": "cleft",
+            "ru": "выделительная"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "It is said / believed / reported that... — formal distancing для news и academic. Alternative personal: He is said to have done X."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is high time we leave.",
+          "right": "It's high time we left.",
+          "why": {
+            "en": "After 'it's high time', use the past subjunctive to mark something overdue.",
+            "ru": "После it's high time используется прошедшее сослагательное для значения «давно пора»."
+          }
+        },
+        {
+          "wrong": "It is passed two years since the accident.",
+          "right": "It is two years since the accident.",
+          "why": {
+            "en": "Use 'It is + time-span + since', with no extra verb.",
+            "ru": "Используется It is + промежуток времени + since без лишнего глагола."
+          }
+        },
+        {
+          "wrong": "It is obvious it that he lied.",
+          "right": "It is obvious that he lied.",
+          "why": {
+            "en": "Use a single placeholder; do not repeat 'it' before the that-clause.",
+            "ru": "Формальное it ставится один раз; перед that его не дублируют."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, wield 'it' as a precise stylistic instrument.\n\nEmphatic clefts for drama: 'It was he, of all people, who betrayed us.' / 'It is not what you say but how you say it that counts.'\n\nAcademic and legal extraposition formulae for hedging or assertion: 'It must be borne in mind that...', 'It should be noted that...', 'It goes without saying that...', 'It remains to be seen whether...'. In contracts: 'It is hereby agreed that...', 'It shall be understood that...'.\n\nLiterary 'it' for mental events with an indeterminate trigger: 'It occurred to me that...', 'It struck me that...', 'It dawned on me that...'.\n\n'It' supports marked syntax: inversion ('Little did it matter to him what others thought.', 'Such is the nature of politics that...') and balanced rhetorical openings ('It is a truth universally acknowledged that...', 'It was the best of times, it was the worst of times...').\n\nDiscourse 'it' summarises a preceding event ('He failed. It was devastating.'); 'this/that' do the same but feel more emphatic and marked.\n\nMany idioms use a meaningful but empty 'it' slot: 'wing it', 'rough it', 'stick it out', 'call it quits', 'lord it over someone'.\n\nStyle watch-outs: overusing 'it is/it was' in academic writing creates a tentative, impersonal tone — balance it with active voice. For most modern registers, prefer 'It's me who...' or a rephrase ('I'm the one who...') over the very formal 'It is I who...'. Keep referential 'it' (replacing a noun) distinct from dummy 'it' (a placeholder), which is easy to confuse in long sentences.",
         "ru": "На C2 владей `it` as versatile stylistic tool.\n\n**Emphatic doubling:**\n- `It was he, of all people, who betrayed us.`\n- `It is not what you say but how you say it that counts.`\n- Dramatic emphasis via cleft.\n\n**It-extraposition for academic / legal prose:**\n- `It must be borne in mind that...`\n- `It should be noted that...`\n- `It is worth emphasizing that...`\n- `It goes without saying that...`\n- `It is fair to say that...`\n- `It is beyond dispute that...`\n- `It is generally accepted that...`\n- `It remains to be seen whether...`\n\nAcademic hedging and assertion formulae.\n\n**Legal / contractual 'it':**\n- `It is hereby agreed that...`\n- `It shall be understood that...`\n- `It is provided that...`\n- `It is stipulated in Article 5 that...`\nLegal formulaic subjects.\n\n**Literary 'it' as indeterminate actor:**\n- `It occurred to me that...`\n- `It struck me that...`\n- `It dawned on me that...`\n- `It entered my head that...`\n- Mental / perceptive events with it as dummy subject.\n\n**Rhetorical contradictions:**\n- `It is a truth universally acknowledged that a single man...` (Austen, Pride and Prejudice — classic cleft opening.)\n- `It is the best of times, it is the worst of times...` (Dickens.)\n- Formal registers love it-constructions for balanced syntax.\n\n**Philosophical evaluative:**\n- `It is in our nature to...`\n- `It is of the essence of X to...`\n- `It is characteristic of Y that...`\n- `It is the mark of a wise person to...`\n- Discursive evaluation.\n\n**Inversion with it:**\n- `Little did it matter to him what others thought.` (negative inversion with 'it'.)\n- `So great is its influence that...`\n- `Such is the nature of politics that...`\n\n**Discourse 'it' (summarising pronoun):**\n- `He failed. It was devastating.` (it refers to failing.)\n- `She refused to apologize. This / that / it shocked us.` — `it` more casual; `this / that` more emphatic / marked.\n\n**Idiomatic intensifiers with 'it':**\n- `Have it out (with someone)` — выяснить.\n- `Go at it` — взяться.\n- `Make a day of it` — провести целый день.\n- `Lord it over (someone)` — свысока.\n- `Rough it` — жить в простых условиях.\n- `Brave it out` — держаться.\n- `Wing it` — импровизировать.\n- `Stick it out` — выдержать.\n- `Chance it` — рискнуть.\n- `Call it quits / Call it a day` — закончить.\n\nIn all these, `it` is empty, meaningful slot.\n\n**Rhetorical question constructions:**\n- `Why is it that X?`\n- `How is it that Y?`\n- `What is it about Z that W?`\n\nEmphasis via focusing interrogative.\n\n**Weather / condition elaborated:**\n- `It was a dark and stormy night.` (famous literary opening.)\n- `It was the kind of afternoon when nothing mattered.`\n- Establishing atmospheric or existential setting.\n\n**Common C2 pitfalls:**\n- Overuse of it is / it was in academic writing creates tentative, impersonal tone. Balance with active voice.\n- Avoid `It is I who...` for modern usage; `It is me who...` (informal) or `I am the one who...` (rephrase) often preferable outside very formal contexts.\n- Distinguish referential it (replaces noun) from dummy it (placeholder) — confusion possible in long sentences.\n\n**Style takeaway:** `It` is powerful because it's semantically empty but grammatically essential. Master its functions: weather, time, distance, dummy, cleft, discourse anaphora, idiom slot."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "It-cleft: It + be + focus + relative  •  It + modal/be + reporting-frame + that-clause  •  inversion: Such/So ... is it that ...",
+        "ru": "It-выделение: It + be + фокус + относит.  •  It + модал/be + рамка-сообщения + that  •  инверсия: Such/So ... is it that ..."
       },
       "examples": [
         {
           "en": "It is often argued that technology has eroded attention spans.",
-          "ru": "Часто утверждают, что технологии сократили продолжительность внимания."
+          "ru": "Часто утверждают, что технологии сократили продолжительность внимания.",
+          "note": {
+            "en": "academic hedge",
+            "ru": "академическая осторожность"
+          }
         },
         {
           "en": "So complex is the problem that no single solution will suffice.",
-          "ru": "Проблема настолько сложна, что одного решения недостаточно."
+          "ru": "Проблема настолько сложна, что одного решения недостаточно.",
+          "note": {
+            "en": "inversion",
+            "ru": "инверсия"
+          }
         },
         {
           "en": "It dawned on her that she had been deceived all along.",
-          "ru": "Она осознала, что её обманывали всё это время."
+          "ru": "Она осознала, что её обманывали всё это время.",
+          "note": {
+            "en": "mental event",
+            "ru": "ментальное событие"
+          }
         },
         {
           "en": "It is hereby agreed that both parties shall share liability.",
-          "ru": "Настоящим согласовано, что обе стороны делят ответственность."
+          "ru": "Настоящим согласовано, что обе стороны делят ответственность.",
+          "note": {
+            "en": "legal frame",
+            "ru": "юридическая формула"
+          }
         },
         {
           "en": "It is a truth universally acknowledged that good manners open doors.",
-          "ru": "Общепризнанная истина, что хорошие манеры открывают двери."
+          "ru": "Общепризнанная истина, что хорошие манеры открывают двери.",
+          "note": {
+            "en": "rhetorical opening",
+            "ru": "риторическое начало"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Discursive 'it is said / believed / argued that' — standard formal distancing. Альтернативно personal: X is said / believed to..."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is I who am to blame.",
+          "right": "It's me who's to blame.",
+          "why": {
+            "en": "In modern usage, 'It's me who...' (or a rephrase) is more natural than the hypercorrect 'It is I who...'.",
+            "ru": "В современном языке It's me who... естественнее, чем гиперкорректное It is I who..."
+          }
+        },
+        {
+          "wrong": "It is hereby agreed both parties shall share liability.",
+          "right": "It is hereby agreed that both parties shall share liability.",
+          "why": {
+            "en": "Formal extraposition keeps 'that' to introduce the deferred clause.",
+            "ru": "В формальной экстрапозиции вынесенное придаточное вводится через that."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "there-is-there-are",
+    "personal-pronouns",
+    "cleft-sentences",
+    "demonstrative-pronouns"
+  ],
+  "crossTopic": [
+    "verb-plus-infinitive",
+    "noun-clauses",
+    "passive-present-simple",
+    "adjective-plus-infinitive"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "It",
+      "be",
+      "complement",
+      "(to-inf / that-clause)"
+    ]
+  }
 };

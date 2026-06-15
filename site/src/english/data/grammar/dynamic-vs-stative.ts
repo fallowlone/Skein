@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "dynamic-vs-stative",
   "title": {
-    "en": "",
+    "en": "Dynamic vs Stative Verbs",
     "ru": "Dynamic Vs Stative"
   },
   "cefr": "B2",
@@ -14,65 +14,121 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "aspect",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "Sort verbs into two families. **Dynamic verbs** describe actions and processes that have a start and an end (`run`, `eat`, `write`, `build`, `learn`). They work in both the Simple and the Continuous: *I run every day* / *I'm running now.* **Stative verbs** describe states, not actions — possession, emotion, opinion, the senses, relationships (`know`, `love`, `own`, `belong`, `seem`, `cost`, `contain`). They normally appear only in the Simple: *I know her*, never *I'm knowing her.* A quick test: ask whether *I am …-ing* sounds natural in the ordinary sense. If yes, the verb is dynamic; if no, it is stative. The trap is the set of verbs that switch family with their meaning. `think` is stative for an opinion (*I think you're right*) but dynamic for the mental process (*I'm thinking about it*); `have` is stative for possession (*I have a car*) but dynamic for an activity (*I'm having lunch*); `see` is stative for understanding (*I see what you mean*) but dynamic for an arranged meeting (*I'm seeing Anna tonight*); `be` is stative for a permanent trait (*He is kind*) but dynamic for temporary behaviour (*He is being kind*). Senses behave the same way: *The soup tastes good* (quality, stative) versus *I'm tasting the soup* (the action, dynamic). Watch the verbs learners misfile: `cost`, `owe`, `weigh` (for mass), `fit`, `matter`, `depend`, `contain` are stative, while `enjoy`, `wait`, `stay`, and `learn` are dynamic.",
         "ru": "На B2 важно чётко понимать разницу между **dynamic verbs** (динамические — действия, процессы) и **stative verbs** (статические — состояния, отношения).\n\n**Dynamic verbs** — описывают **действия, процессы, изменения**:\n- `run`, `eat`, `write`, `build`, `sleep`, `learn`, `play`, `work`, `cook`\n- Можно в Simple **и** в Continuous: `I run every day.` / `I'm running now.`\n\n**Stative verbs** — описывают **состояния, чувства, отношения**:\n- `know`, `love`, `believe`, `own`, `belong`, `seem`, `contain`, `cost`\n- Обычно только в Simple: `I know her.` (Не `I'm knowing her.`)\n\n**Простой тест — progressive compatibility:**\n- Можно ли сказать `I am ... -ing` с этим глаголом в обычном смысле?\n- Если да — dynamic. Если нет — stative.\n\n**Minimal pairs — двойные значения:**\n\n| Глагол | Stative (Simple) | Dynamic (Continuous) |\n|---|---|---|\n| think | I think he's right. (мнение) | I'm thinking about it. (обдумываю) |\n| have | I have a car. (владею) | I'm having lunch. (ем/пью) |\n| see | I see what you mean. (понимаю) | I'm seeing Anna tonight. (встречусь) |\n| taste | The soup tastes good. (качество) | I'm tasting the soup. (пробую) |\n| be | He is kind. (черта) | He is being kind. (поведение сейчас) |\n| smell | The flowers smell sweet. (пахнут) | She's smelling the flowers. (нюхает) |\n| feel | I feel tired. (ощущение) | The doctor is feeling my pulse. (трогает) |\n\n**Tests для классификации:**\n\n1. **Action test:** Glагол описывает физическое или умственное действие, которое можно начать и закончить? → dynamic.\n   - `eat` — да, действие. Dynamic.\n   - `know` — нет, состояние. Stative.\n\n2. **Progressive test:** Звучит ли `I am X-ing` естественно в обычном смысле? → dynamic.\n   - `I am running` — да. Dynamic.\n   - `I am knowing` — нет. Stative.\n\n3. **Imperative test:** Можно ли приказать это делать? → обычно dynamic.\n   - `Run!` — да. Dynamic.\n   - `Know!` — нет. Stative.\n\n**Problematic verbs — часто путают:**\n- `cost`: stative — `The book costs $10.` Не `is costing`.\n- `owe`: stative — `He owes me money.` Не `is owing`.\n- `weigh` (в значении массы): stative — `It weighs 5 kg.`\n- `weigh` (взвешивать): dynamic — `She's weighing the ingredients.`\n- `measure` (иметь размер): stative — `The room measures 4m.`\n- `measure` (мерить): dynamic — `He's measuring the room.`\n- `fit` (подходить): stative — `The dress fits me.`\n- `matter`: stative — `It matters to me.`\n- `depend`: stative — `It depends on you.`\n\n**Common B2 errors:**\n- Использование stative verbs в Continuous без учёта значения.\n- Неправильная классификация `enjoy` (dynamic), `wait` (dynamic), `stay` (dynamic).\n- Неуместное использование Simple для dynamic verbs в процессе: `I run now` → `I'm running now`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "stative verb → Simple only; dynamic verb → Simple or Continuous (be + verb-ing)",
+        "ru": "статический глагол → только Simple; динамический глагол → Simple или Continuous (be + глагол-ing)"
       },
       "examples": [
         {
           "en": "I know the answer.",
-          "ru": "Я знаю ответ."
+          "ru": "Я знаю ответ.",
+          "note": {
+            "en": "stative: know",
+            "ru": "статический: know"
+          }
         },
         {
           "en": "I'm learning the answer.",
-          "ru": "Я учу ответ."
+          "ru": "Я учу ответ.",
+          "note": {
+            "en": "dynamic: learn",
+            "ru": "динамический: learn"
+          }
         },
         {
           "en": "She has a headache.",
-          "ru": "У неё болит голова."
+          "ru": "У неё болит голова.",
+          "note": {
+            "en": "have = possess (stative)",
+            "ru": "have = владеть (статический)"
+          }
         },
         {
           "en": "She is having a wonderful time.",
-          "ru": "Она прекрасно проводит время."
+          "ru": "Она прекрасно проводит время.",
+          "note": {
+            "en": "have = experience (dynamic)",
+            "ru": "have = переживать (динамический)"
+          }
         },
         {
           "en": "This soup tastes amazing; the chef is tasting it now.",
-          "ru": "Суп потрясающий; шеф сейчас его пробует."
+          "ru": "Суп потрясающий; шеф сейчас его пробует.",
+          "note": {
+            "en": "taste: quality vs action",
+            "ru": "taste: качество и действие"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Stative = состояние, только Simple; dynamic = действие, можно и Simple, и Continuous."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'm knowing the answer.",
+          "right": "I know the answer.",
+          "why": {
+            "en": "`know` is a stative verb of cognition — use the Simple, not the Continuous.",
+            "ru": "`know` — статический глагол познания: нужен Simple, а не Continuous."
+          }
+        },
+        {
+          "wrong": "I run now.",
+          "right": "I'm running now.",
+          "why": {
+            "en": "A dynamic action happening at this moment takes the Present Continuous.",
+            "ru": "Динамическое действие в данный момент требует Present Continuous."
+          }
+        },
+        {
+          "wrong": "The book is costing $10.",
+          "right": "The book costs $10.",
+          "why": {
+            "en": "`cost` is stative when it states a fixed price — keep it in the Simple.",
+            "ru": "`cost` статичен, когда называет фиксированную цену — оставляйте Simple."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the line blurs into a question of nuance and collocation. Many classically stative verbs become acceptable in the Continuous when they signal a temporary state, an emotional process, or a gradual change: *I'm missing you* (an ongoing feeling), *We're expecting a delivery* (active anticipation), *I've been considering your offer* (deliberation), *I'm understanding more every day* (a process unfolding). But acceptability is collocational, not rule-driven: *I'm loving this book* and *I'm hating every minute* are idiomatic, whereas *I'm owning a car* and *I'm believing the story* are not — learn these by exposure. Register matters too. In academic and formal prose, stative cognition verbs stay in the Simple (*The study shows*, *The theory holds*, *Research indicates*); the colloquial Continuous (*I'm finding that*, *We're realising*) belongs to speech. Several verbs flip category with meaning at this level: `appear` (seem vs perform on TV), `mean` (signify vs intend), `expect` (suppose vs await), `imagine` (suppose vs picture mentally), `weigh` (have mass vs assess). Perception verbs often pair with `can`: *I can see the mountain* reads more naturally than the bare Simple, while the Continuous is reserved for special senses or idioms. Note the `live`/`stay` contrast: *I live in Moscow* (permanent) versus *I'm living in Moscow* (temporary), and *I'm staying at a hotel* (inherently temporary, dynamic). The firmly stative verbs — `consist`, `contain`, `comprise` — resist the Continuous in every register.",
         "ru": "На C1 различение dynamic и stative становится тонкой игрой с нюансами значений и коллокациями.\n\n**1. Advanced exceptions:**\nНекоторые глаголы традиционно stative становятся dynamic в особых контекстах:\n- `I'm missing you.` (Скучаю сейчас — эмоциональный процесс.)\n- `We're expecting a package.` (Ждём — активное ожидание.)\n- `They're having doubts.` (Возникают сомнения — процесс.)\n- `I've been considering your offer.` (Рассматриваю — обдумывание.)\n\n**2. Collocational realities:**\nВ реальной речи некоторые комбинации звучат естественно, другие — нет:\n- ✅ `I'm loving this book.` (разговорно допустимо)\n- ❌ `I'm owning a car.` (нет)\n- ✅ `I'm hating every minute.` (эмоциональное)\n- ❌ `I'm believing the story.` (нет; лучше `I believe`)\n- ✅ `I'm meaning to call.` (редко, но в значении «собираюсь»)\n- ❌ `I'm needing help.` (очень редко; обычно `I need`)\n\nКоллокации нужно знать по опыту и корпусам.\n\n**3. Stative verbs in limited progressive uses:**\n- `think` — только в значении «обдумывать».\n- `have` — только в идиоматических выражениях.\n- `see` — только как «встречаться» или «ходить на свидание».\n- `feel` — и stative (`I feel tired`) и borderline dynamic (`I'm feeling better` — временно).\n- `taste/smell/look` — stative о качестве, dynamic о действии.\n\n**4. Perception verbs с `can`:**\n- `I can see the mountain.` (Вижу — Stative восприятие в Simple с `can`.)\n- `I see the mountain.` (Тоже верно, но `can see` часто звучит естественнее.)\n- Continuous: `I'm seeing stars.` (Плохо чувствую — идиома.)\n\n**5. Academic vs colloquial distinctions:**\n- Academic: `The study shows...`, `The theory holds...`, `Research indicates...` — только Simple для stative cognition.\n- Colloquial: `I'm finding that...`, `I've been thinking...`, `We're realising...` — Continuous допустим для процесса.\n\n**6. Verbs that shift category by meaning:**\n\n| Глагол | Stative meaning | Dynamic meaning |\n|---|---|---|\n| `be` | характеристика (`she is tall`) | поведение (`she's being tall` — редко, для демонстрации) |\n| `appear` | казаться (`he appears ready`) | появляться (`she's appearing on TV`) |\n| `mean` | иметь смысл (`what does this mean?`) | намереваться (`I'm meaning to call`) |\n| `expect` | считать (`I expect you're right`) | ждать (`I'm expecting guests`) |\n| `imagine` | предполагать (`I imagine so`) | представлять (`I'm imagining a beach`) |\n| `weigh` | иметь массу (`it weighs 5kg`) | взвешивать (`she's weighing the options`) |\n\n**7. Progressive for gradual processes:**\nНекоторые stative verbs становятся приемлемыми в Continuous, если выражают **постепенное изменение**:\n- `I'm understanding more every day.` (Понимаю всё больше — процесс.)\n- `The world is becoming more complex.` (Становится — процесс.)\n- `She's growing to love her new job.` (Приходит к любви — процесс.)\n\n**8. Stative в пассиве:**\n- `The book is known to everyone.` (Stative, можно в пассиве.)\n- `She is loved by all.` (Stative в пассиве.)\n- `The answer is being known gradually.` — неестественно.\n\nСтатические глаголы редко идут в пассивном Continuous.\n\n**9. Common C1 errors:**\n- Путаница `live` — stative о постоянном месте жительства, dynamic о временном: `I live in Moscow` (постоянно) vs `I'm living in Moscow` (временно).\n- Путаница `stay` — dynamic (`I'm staying at a hotel`).\n- Неправильное использование dynamic verbs в Simple для действий в процессе.\n- Неуместный Continuous с формальными stative verbs (`consist`, `contain`, `comprise`)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "stative verb + Continuous → only when temporary / emotional / gradual process",
+        "ru": "статический глагол + Continuous → только когда временность / эмоция / постепенный процесс"
       },
       "examples": [
         {
           "en": "I've been thinking about what you said — I'm starting to see your point.",
-          "ru": "Я обдумывал то, что ты сказал — начинаю понимать твою позицию."
+          "ru": "Я обдумывал то, что ты сказал — начинаю понимать твою позицию.",
+          "note": {
+            "en": "process: thinking + dawning understanding",
+            "ru": "процесс: обдумывание + начало понимания"
+          }
         },
         {
           "en": "We're expecting a major delivery this afternoon.",
-          "ru": "Сегодня днём мы ожидаем крупную поставку."
+          "ru": "Сегодня днём мы ожидаем крупную поставку.",
+          "note": {
+            "en": "expect = await (dynamic)",
+            "ru": "expect = ждать (динамический)"
+          }
         },
         {
           "en": "The committee is considering several candidates.",
@@ -80,32 +136,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She's weighing the pros and cons carefully.",
-          "ru": "Она тщательно взвешивает все за и против."
+          "ru": "Она тщательно взвешивает все за и против.",
+          "note": {
+            "en": "weigh = assess (dynamic)",
+            "ru": "weigh = взвешивать (динамический)"
+          }
         },
         {
           "en": "He is being unusually patient today.",
-          "ru": "Он сегодня необычайно терпелив."
+          "ru": "Он сегодня необычайно терпелив.",
+          "note": {
+            "en": "be = temporary behaviour",
+            "ru": "be = временное поведение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Проверь коллокацию: 'I'm expecting guests' — да; 'I'm knowing the answer' — нет."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The book is consisting of three parts.",
+          "right": "The book consists of three parts.",
+          "why": {
+            "en": "`consist of` is firmly stative and rejects the Continuous in every register.",
+            "ru": "`consist of` строго статичен и не допускает Continuous ни в каком регистре."
+          }
+        },
+        {
+          "wrong": "I'm living in Moscow all my life.",
+          "right": "I've lived in Moscow all my life.",
+          "why": {
+            "en": "The Continuous of `live` means temporary residence, so it clashes with `all my life`; use a perfect form for a permanent, lifelong fact.",
+            "ru": "Continuous с `live` означает временное проживание и противоречит `all my life`; для постоянного факта нужен перфект."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the distinction collapses into fine stylistic and semantic choices, and the textbook rule openly diverges from corpus reality. Most verbs carry mixed aspect: `love` is stative as a lasting feeling (*I love my children*) yet dynamic as present enjoyment (*I'm loving every minute of this*). Some verbs are genuinely aspect-neutral — `live`, `work`, `study` — where Simple and Continuous differ only in permanence. A hard core resists the Continuous almost absolutely: `own`, `possess`, `belong to`, `contain`, `consist of`, `comprise`, `include`, `lack`, `concern`, `matter`, `resemble`, `owe`, `depend on`. Register is decisive: *The evidence suggests* is correct academic style, while *The evidence is suggesting* is tolerable in journalism but reads as carelessness in a scientific paper; *The court finds* is right, *The court is finding* is not. A near-native ear also knows the productive corpus patterns — *I'm loving* in advertising and social media, *I've been meaning to* for deferred intentions, *We're wondering* as a polite request, *She's being* + adjective for temporary behaviour, *I'm thinking* to soften a proposal. The progressive frequently adds a layer of meaning: *I hear what you're saying* (I understand) versus *I'm hearing what you're saying, but…* (I register it while disagreeing). Literary prose may even bend the rule for effect — *She was understanding, slowly and painfully, what he had always been* — to dramatise a gradual realisation. Mastery is the ability to flex one verb across meanings, honour register norms, sense when the Continuous adds nuance (temporariness, process, politeness, emotional emphasis) and when it is simply an error, and resist transferring a Russian present-tense reflex onto an English stative verb.",
         "ru": "На C2 разграничение dynamic и stative сводится к тонким стилистическим и смысловым различиям. Теоретическое правило и классная практика часто расходятся.\n\n**1. Theoretical description vs classroom simplification:**\nКлассическая грамматика делит verbs на stative и dynamic. Корпусная лингвистика показывает: большинство глаголов имеют **смешанный аспект**, и категория зависит от контекста.\n\nНапример, `love`:\n- `I love my children.` (Stative — постоянное чувство.)\n- `I'm loving every minute of this.` (Dynamic — текущий процесс наслаждения.)\n\n`Love` — не чисто stative; он может быть dynamic при необходимости.\n\n**2. Aspect-neutral verbs:**\nНекоторые глаголы могут быть обеими без изменения значения:\n- `live`: `I live here` / `I'm living here` — разница только в постоянности.\n- `work`: `I work here` / `I'm working here` — то же.\n- `study`: обе формы, нюанс временности.\n\n**3. Verbs that strongly resist Continuous:**\n- `own`, `possess`, `belong to`, `contain`, `consist of`, `comprise`, `include`, `lack`, `concern`, `matter`, `seem` (в значении «казаться»), `cost`, `owe`, `resemble`, `depend on` (почти всегда).\n\nЭти глаголы в Continuous звучат неестественно.\n\n**4. Verbs that shift category subtly:**\n- `enjoy` — формально dynamic, но часто ощущается как close to stative: `I enjoy reading` (постоянно нравится) / `I'm enjoying this book` (процесс).\n- `prefer` — stative, но: `I'm preferring tea these days` — редкое, подчёркивает временный выбор.\n- `hope` — stative, но: `I'm hoping for good news` — допустимо, с оттенком процесса.\n\n**5. Academic and formal style:**\nВ академическом и юридическом регистре Continuous со stative verbs воспринимается как ошибка или небрежность:\n- `The evidence suggests...` (верно)\n- `The evidence is suggesting...` (допустимо в журналистском стиле, но не в научной статье)\n- `The court finds...` (верно)\n- `The court is finding...` (неправильно или очень редкое)\n\n**6. Corpus patterns for near-native speakers:**\nНа C2 ты знаешь, какие комбинации встречаются в речи носителей:\n- `I'm loving` — частое в рекламе и соцсетях.\n- `I've been meaning to` — очень частое для отложенных намерений.\n- `We're wondering` — стандартная форма вежливого запроса.\n- `She's being` + adjective — продуктивная конструкция для поведения.\n- `I'm thinking` — частое в мягких предложениях.\n\n**7. Subtle meaning changes:**\n- `I hear what you're saying.` (Stative — понимаю.)\n- `I'm hearing what you're saying, but...` (Dynamic — принимаю, но не согласен; часто предшествует несогласию.)\n- `I see.` (Понял.)\n- `I'm seeing now what you mean.` (Начинаю понимать.)\n\nПрогрессивная форма часто добавляет процесс осознания.\n\n**8. Literary and psychological depth:**\n- `She was knowing, without wanting to, that everything had changed.` (Неправильно по классике, но у некоторых авторов встречается для передачи постепенного осознания.)\n- `He was understanding the truth slowly.` (Редко, но возможно для описания psychological process.)\n\nТакие формы характерны для экспериментальной прозы.\n\n**9. Common near-native errors at C2:**\n- Использование Continuous со stative verbs в формальном регистре.\n- Недоиспользование Continuous в контекстах, где он передаёт важный нюанс (временность, процесс, вежливость).\n- Путаница идиоматических uses: `having a party` (dynamic) vs `having two cats` (stative).\n- Автоматический перевод русских конструкций: русское «я сейчас чувствую» ≠ `I am feeling`; контекст решает.\n\n**10. Mastery markers:**\nНа C2 владение dynamic vs stative проявляется в:\n- Гибком использовании одних и тех же глаголов в разных значениях.\n- Соблюдении регистровых норм.\n- Способности чувствовать, когда Continuous добавляет смысл, а когда — ошибка.\n- Понимании теоретической классификации и её разумных исключений.\n- Распознавании стилистических эффектов продвинутого Continuous со stative.\n\n**11. Stylistic test:**\nКогда выбираешь между Simple и Continuous для borderline верба, спроси:\n- Это постоянное состояние? → Simple.\n- Это процесс, развитие, временность? → Continuous.\n- Это вежливое смягчение? → Continuous.\n- Это вечная истина или факт? → Simple.\n- Это эмоциональное усиление? → Continuous допустим.\n\nЭтот выбор — последняя ступень зрелого владения временем и аспектом."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "borderline verb → Simple for a permanent state/truth; Continuous for process / temporariness / politeness / emotional emphasis",
+        "ru": "пограничный глагол → Simple для постоянного состояния/истины; Continuous для процесса / временности / вежливости / эмоционального усиления"
       },
       "examples": [
         {
           "en": "I'm increasingly doubting whether this approach will work.",
-          "ru": "Я всё больше сомневаюсь, что этот подход сработает."
+          "ru": "Я всё больше сомневаюсь, что этот подход сработает.",
+          "note": {
+            "en": "doubt as a developing process",
+            "ru": "сомнение как развивающийся процесс"
+          }
         },
         {
           "en": "The committee is carefully weighing each option on its merits.",
@@ -113,23 +199,69 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She was understanding, slowly and painfully, what he had always been.",
-          "ru": "Она постепенно и мучительно понимала, кем он всегда был."
+          "ru": "Она постепенно и мучительно понимала, кем он всегда был.",
+          "note": {
+            "en": "literary: gradual realisation",
+            "ru": "литературный приём: постепенное осознание"
+          }
         },
         {
           "en": "I'm hearing you, but I'm not sure I agree.",
-          "ru": "Я тебя слышу, но не уверен, что согласен."
+          "ru": "Я тебя слышу, но не уверен, что согласен.",
+          "note": {
+            "en": "hearing = registering, not just understanding",
+            "ru": "hearing = принимаю к сведению, не просто понимаю"
+          }
         },
         {
           "en": "The evidence is suggesting a more complex picture than we first assumed.",
-          "ru": "Доказательства указывают на более сложную картину, чем мы предполагали изначально."
+          "ru": "Доказательства указывают на более сложную картину, чем мы предполагали изначально.",
+          "note": {
+            "en": "journalistic register, not academic",
+            "ru": "журналистский регистр, не академический"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "На C2 проверяй: это постоянное состояние — Simple, процесс/временность/вежливость — Continuous."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The evidence is suggesting a clear conclusion.",
+          "right": "The evidence suggests a clear conclusion.",
+          "why": {
+            "en": "In formal or academic register, a stative cognition verb belongs in the Simple; the Continuous reads as carelessness here.",
+            "ru": "В формальном или академическом регистре статический глагол познания требует Simple; Continuous здесь воспринимается как небрежность."
+          }
+        },
+        {
+          "wrong": "This house is belonging to my family.",
+          "right": "This house belongs to my family.",
+          "why": {
+            "en": "`belong to` is in the hard core of verbs that reject the Continuous at any level.",
+            "ru": "`belong to` входит в ядро глаголов, не допускающих Continuous ни на каком уровне."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "stative-verbs",
+    "present-continuous",
+    "present-simple",
+    "present-perfect-continuous"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "present-continuous",
+    "passive-present-simple",
+    "verb-plus-gerund"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Stative (Simple only)",
+      "Dynamic (Simple + Continuous)"
+    ]
+  }
 };
