@@ -428,5 +428,571 @@ export const topic: GrammarTopic = {
       "must (internal / strong)",
       "have to (external rule)"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I ___ finish this report tonight — I promised the team.",
+        "answer": "must",
+        "distractors": [
+          "have",
+          "has"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She ___ to take the bus to work every morning.",
+        "answer": "has",
+        "distractors": [
+          "have",
+          "must"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We ___ to wear a uniform at this school.",
+        "answer": "have",
+        "distractors": [
+          "has",
+          "must"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "You ___ smoke in here — it is forbidden.",
+        "answer": "mustn't",
+        "distractors": [
+          "don't have to",
+          "needn't"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "It's Saturday, so you ___ get up early.",
+        "answer": "don't have to",
+        "distractors": [
+          "mustn't",
+          "can't"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Drivers ___ stop at a red light.",
+        "answer": "must",
+        "distractors": [
+          "has to",
+          "don't have to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He ___ wake up at five this morning to catch the train.",
+        "answer": "had to",
+        "distractors": [
+          "must",
+          "musted"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Children ___ play with matches.",
+        "answer": "mustn't",
+        "distractors": [
+          "don't have to",
+          "haven't to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I ___ go now or I'll miss my bus.",
+        "answer": "must",
+        "distractors": [
+          "has to",
+          "had to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "My brother ___ to share a room with me.",
+        "answer": "has",
+        "distractors": [
+          "have",
+          "must"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We ___ pay for the tickets — they're free.",
+        "answer": "don't have to",
+        "distractors": [
+          "mustn't",
+          "can't"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "You ___ touch that wire — it's dangerous.",
+        "answer": "mustn't",
+        "distractors": [
+          "don't have to",
+          "needn't"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Last week I ___ work two extra shifts.",
+        "answer": "had to",
+        "distractors": [
+          "must",
+          "have to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She ___ remember to call her mother on Sunday.",
+        "answer": "must",
+        "distractors": [
+          "has",
+          "have"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Passengers ___ to show their tickets at the gate.",
+        "answer": "have",
+        "distractors": [
+          "has",
+          "must"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "You ___ be quiet in the library.",
+        "answer": "must",
+        "distractors": [
+          "has to",
+          "don't have to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I'm tired because I ___ study all night before the exam.",
+        "answer": "had to",
+        "distractors": [
+          "must",
+          "musted"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Tomorrow I'll ___ to work late because of the deadline.",
+        "answer": "have",
+        "distractors": [
+          "must",
+          "had"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I've ___ to leave in five minutes — the taxi is here.",
+        "answer": "got",
+        "distractors": [
+          "have",
+          "had"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you have to pay for parking yesterday?",
+        "answer": "Did",
+        "distractors": [
+          "Do",
+          "Must"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We'll ___ to tell them the truth eventually.",
+        "answer": "have",
+        "distractors": [
+          "must",
+          "had"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You ___ open that door — there's a fire behind it.",
+        "answer": "mustn't",
+        "distractors": [
+          "don't have to",
+          "needn't"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Students ___ have to attend the optional lecture if they're busy.",
+        "answer": "don't",
+        "distractors": [
+          "mustn't",
+          "won't"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ to finish the project by Friday — the client insists.",
+        "answer": "has",
+        "distractors": [
+          "have",
+          "must"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He ___ be tired — he's been working all day without a break.",
+        "answer": "must",
+        "distractors": [
+          "has to",
+          "had to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Next month we ___ have to move to a new office.",
+        "answer": "will",
+        "distractors": [
+          "must",
+          "do"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Because it was raining, we ___ to take a taxi home.",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "must"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You ___ have to book in advance — they always have free tables.",
+        "answer": "don't",
+        "distractors": [
+          "mustn't",
+          "won't"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I'll ___ to renew my passport before the trip.",
+        "answer": "have",
+        "distractors": [
+          "must",
+          "had"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ I really come to the meeting? It sounds pointless.",
+        "answer": "Must",
+        "distractors": [
+          "Do",
+          "Have"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ be exhausted — she worked sixteen hours straight.",
+        "answer": "must",
+        "distractors": [
+          "can't",
+          "mustn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ have left already — her coat is gone from the hook.",
+        "answer": "must",
+        "distractors": [
+          "had to",
+          "has to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "That ___ be her husband — she's been single for years.",
+        "answer": "can't",
+        "distractors": [
+          "mustn't",
+          "must not"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Your English has improved so much — you ___ have practised a lot.",
+        "answer": "must",
+        "distractors": [
+          "can't",
+          "mustn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "All passengers ___ wear seatbelts during takeoff and landing.",
+        "answer": "must",
+        "distractors": [
+          "have",
+          "don't have to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Look at the frost on the grass — it ___ have been cold last night.",
+        "answer": "must",
+        "distractors": [
+          "can't",
+          "mustn't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ be at home — all the lights are off and the car's gone.",
+        "answer": "can't",
+        "distractors": [
+          "mustn't",
+          "doesn't have to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ have forgotten our meeting — he's never this late.",
+        "answer": "must",
+        "distractors": [
+          "must of",
+          "can't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He's smiling — he ___ be the new manager everyone mentioned.",
+        "answer": "must",
+        "distractors": [
+          "has to",
+          "had to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They ___ have seen us; otherwise they'd have stopped to wait.",
+        "answer": "must",
+        "distractors": [
+          "must of",
+          "had to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Applicants ___ submit the completed form by the first of May.",
+        "answer": "must",
+        "distractors": [
+          "have",
+          "don't have to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You left at noon, so you ___ have arrived by now.",
+        "answer": "must",
+        "distractors": [
+          "must of",
+          "can't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Candidates ___ required to hold a valid passport for the role.",
+        "answer": "are",
+        "distractors": [
+          "must",
+          "have"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You simply ___ try the chocolate cake — it's absolutely brilliant.",
+        "answer": "must",
+        "distractors": [
+          "have to",
+          "are required to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Personal data ___ not be retained beyond the contractual period.",
+        "answer": "must",
+        "distractors": [
+          "can",
+          "does"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They ___ have been waiting for hours — look how impatient they are.",
+        "answer": "must",
+        "distractors": [
+          "can't",
+          "mustn't"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Employees ___ notify HR of any change in their home address.",
+        "answer": "must",
+        "distractors": [
+          "are required",
+          "have"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You ___ to submit the form, but it's a good idea to do it early.",
+        "answer": "need",
+        "distractors": [
+          "must",
+          "are required"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___ have been under enormous pressure at the time of the merger.",
+        "answer": "must",
+        "distractors": [
+          "can't",
+          "mustn't"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Medications ___ not be stored above twenty-five degrees Celsius.",
+        "answer": "must",
+        "distractors": [
+          "can",
+          "do"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The report ___ to have been submitted last week, but it slipped through.",
+        "answer": "was",
+        "distractors": [
+          "had",
+          "must"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Applicants are ___ to submit the form before the panel convenes.",
+        "answer": "required",
+        "distractors": [
+          "must",
+          "have"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It ___ be conceded that the opposing argument has some merit.",
+        "answer": "must",
+        "distractors": [
+          "can't",
+          "have to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Had he been warned, he ___ surely have acted differently.",
+        "answer": "must",
+        "distractors": [
+          "can't",
+          "had to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "One ___ not confuse correlation with causation in the analysis.",
+        "answer": "must",
+        "distractors": [
+          "can",
+          "does"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "If you ___ know, I've already decided to resign from the board.",
+        "answer": "must",
+        "distractors": [
+          "have to",
+          "need to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It is imperative that she ___ the hearing in person.",
+        "answer": "attend",
+        "distractors": [
+          "must attend",
+          "attends"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She ___ have known about the breach — the evidence makes it impossible.",
+        "answer": "can't",
+        "distractors": [
+          "mustn't",
+          "must"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Under plain-drafting guidelines, the Commission ___ ensure compliance.",
+        "answer": "must",
+        "distractors": [
+          "shall not",
+          "may"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The author ___ be commended for the remarkable clarity of her prose.",
+        "answer": "must",
+        "distractors": [
+          "can't",
+          "have to"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "must-have-to-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Choose the form of obligation or deduction that fits the meaning and grammar of the sentence: {answer}. Remember: must takes the bare infinitive and has no past (use had to); mustn't is prohibition while don't have to is absence of obligation; for a negative deduction use can't, not mustn't.",
+          "ru": "Выберите форму обязанности или вывода, подходящую по смыслу и грамматике: {answer}. Помни: после must — инфинитив без to, и у must нет прошедшего (используй had to); mustn't — это запрет, а don't have to — отсутствие обязанности; для отрицательного вывода — can't, а не mustn't."
+        }
+      }
+    ]
   }
 };
