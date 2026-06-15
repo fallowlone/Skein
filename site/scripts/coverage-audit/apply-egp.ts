@@ -8,10 +8,18 @@ import type { GrammarTopic } from "~/english/grammar-types";
 
 const isReal = (id: string): boolean => /^egp\.[a-c][12]\./.test(id);
 
-export function applyEgp(topic: GrammarTopic, egpIds: string[], validEgp: Set<string>): GrammarTopic {
-  const placeholder = topic.egp.length === 0 || !topic.egp.some(isReal);
-  if (!placeholder) return topic;
+export function applyEgp(topic: GrammarTopic, egpIds: string[], validEgp: Set<string>, force = false): GrammarTopic {
   const clean = egpIds.filter((id) => validEgp.has(id));
+  const placeholder = topic.egp.length === 0 || !topic.egp.some(isReal);
+  if (!placeholder) {
+    // Already real-tagged. Default: leave it. With force: UNION new valid ids in
+    // (gap-fill re-tagging, Task 7) — additive and idempotent.
+    if (!force) return topic;
+    const existing = topic.egp.filter(isReal);
+    const merged = [...existing, ...clean.filter((id) => !existing.includes(id))];
+    if (merged.length === existing.length) return topic; // nothing new
+    return { ...structuredClone(topic), egp: merged };
+  }
   if (clean.length === 0) return topic; // leave placeholder so the gate flags it
   return { ...structuredClone(topic), egp: clean };
 }
@@ -24,6 +32,7 @@ export async function main(): Promise<void> {
   const grammarDir = resolve(here, "../../src/english/data/grammar");
   const egpDir = resolve(here, "../../src/english/data/egp");
   if (!existsSync(patchesDir)) { console.error(`no egp-patches dir: ${patchesDir}`); process.exit(1); }
+  const force = process.argv.includes("--force");
 
   // Build the valid-id set from the band modules (NOT the Vite barrel).
   const bandFiles = readdirSync(egpDir).filter(
@@ -50,7 +59,7 @@ export async function main(): Promise<void> {
     if (!parsed.success) { console.error(`bad egp patch ${f}`); skipped++; continue; }
     const topic = byId.get(parsed.data.id);
     if (!topic) { console.error(`unknown topic ${parsed.data.id}`); skipped++; continue; }
-    const merged = applyEgp(topic, parsed.data.egp, validEgp);
+    const merged = applyEgp(topic, parsed.data.egp, validEgp, force);
     if (merged === topic) { skipped++; continue; }
     writeFileSync(join(grammarDir, `${topic.id}.ts`), serializeTopic(merged), "utf8");
     applied++;
