@@ -4,6 +4,9 @@ import {
   validateGrammarTopic,
   authoringErrors,
   type GrammarTopic,
+  type TopicGenSpec,
+  type Template,
+  type TaggedContext,
 } from "./grammar-types";
 
 function minimalSkeleton(): GrammarTopic {
@@ -68,5 +71,31 @@ describe("authoringErrors (completeness, post-authoring)", () => {
     t.lessons.A1!.explain.en = "Use it for habits and facts.";
     t.lessons.A1!.structure = { en: "subject + verb(+s)", ru: "подлежащее + глагол(+s)" };
     expect(authoringErrors(t)).toEqual([]);
+  });
+});
+
+describe("tagged-context schema", () => {
+  it("a TopicGenSpec accepts a contexts array and a usesContext template", () => {
+    const ctx: TaggedContext = {
+      stem: "I bought ___ apple at the market.",
+      answer: "an",
+      distractors: ["a", "the", "—"],
+      cefr: "A1",
+    };
+    const tpl: Template = {
+      id: "art-ctx",
+      type: "fill_in_blank",
+      cefrMin: "A1",
+      cefrMax: "A2",
+      pattern: "{context}",
+      slots: {},
+      deriveKey: "context",
+      usesContext: true,
+      framings: ["cloze", "mc"],
+      rationale: { en: "Choose the article that fits.", ru: "Выберите подходящий артикль." },
+    };
+    const spec: TopicGenSpec = { pools: [], templates: [tpl], features: [], contexts: [ctx] };
+    expect(spec.contexts?.[0].answer).toBe("an");
+    expect(spec.templates[0].framings).toEqual(["cloze", "mc"]);
   });
 });
