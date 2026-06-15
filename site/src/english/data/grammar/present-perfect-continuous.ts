@@ -283,5 +283,571 @@ export const topic: GrammarTopic = {
       "now",
       "visible result"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "present-perfect-continuous-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The present perfect continuous (have/has + been + -ing) is correct here: {answer} stresses the duration or ongoing process up to now, not a finished result.",
+          "ru": "Здесь нужен present perfect continuous (have/has + been + -ing): {answer} подчёркивает длительность или процесс до настоящего момента, а не завершённый результат."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I ___ Spanish for six months and I still go to class. (learn)",
+        "answer": "have been learning",
+        "distractors": [
+          "am learning",
+          "learned",
+          "have learnt"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ here since January, so she knows everyone. (work)",
+        "answer": "has been working",
+        "distractors": [
+          "is working",
+          "worked",
+          "works"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You look exhausted — have you ___ again? (run)",
+        "answer": "been running",
+        "distractors": [
+          "been run",
+          "ran",
+          "run"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It ___ all day, so the streets are flooded. (rain)",
+        "answer": "has been raining",
+        "distractors": [
+          "is raining",
+          "rained",
+          "rains"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "How long have you ___ for the bus? (wait)",
+        "answer": "been waiting",
+        "distractors": [
+          "been waited",
+          "waited",
+          "wait"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My hands are dirty because I ___ in the garden. (work)",
+        "answer": "have been working",
+        "distractors": [
+          "am working",
+          "worked",
+          "work"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They ___ to the gym a lot lately. (go)",
+        "answer": "have been going",
+        "distractors": [
+          "are going",
+          "went",
+          "go"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We ___ in this flat since 2019 and we love it. (live)",
+        "answer": "have been living",
+        "distractors": [
+          "are living",
+          "lived",
+          "live"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He ___ on the same essay for three hours. (work)",
+        "answer": "has been working",
+        "distractors": [
+          "is working",
+          "worked",
+          "works"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I ___ badly all week — I really need a holiday. (sleep)",
+        "answer": "have been sleeping",
+        "distractors": [
+          "am sleeping",
+          "slept",
+          "sleep"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The baby's eyes are red — has she ___? (cry)",
+        "answer": "been crying",
+        "distractors": [
+          "been cried",
+          "cried",
+          "cry"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My brother ___ the guitar since he was ten. (play)",
+        "answer": "has been playing",
+        "distractors": [
+          "is playing",
+          "played",
+          "plays"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We ___ for over an hour and the doctor still hasn't called us. (wait)",
+        "answer": "have been waiting",
+        "distractors": [
+          "are waiting",
+          "waited",
+          "wait"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The kids ___ outside since lunch. (play)",
+        "answer": "have been playing",
+        "distractors": [
+          "are playing",
+          "played",
+          "play"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I ___ to call you all morning, but your phone is off. (try)",
+        "answer": "have been trying",
+        "distractors": [
+          "am trying",
+          "tried",
+          "try"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Look at the garden! Someone ___ here — there's fresh soil everywhere. (dig)",
+        "answer": "has been digging",
+        "distractors": [
+          "is digging",
+          "dug",
+          "digs"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ from home this week because of the building repairs. (work)",
+        "answer": "has been working",
+        "distractors": [
+          "is working",
+          "worked",
+          "works"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Why are your clothes covered in paint? — I ___ the fence. (paint)",
+        "answer": "have been painting",
+        "distractors": [
+          "am painting",
+          "painted",
+          "paint"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ with us this week while his flat is being decorated. (stay)",
+        "answer": "has been staying",
+        "distractors": [
+          "is staying",
+          "stayed",
+          "stays"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The whole team ___ on the launch since dawn. (work)",
+        "answer": "has been working",
+        "distractors": [
+          "is working",
+          "worked",
+          "works"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Someone ___ in here — I can still smell the smoke. (smoke)",
+        "answer": "has been smoking",
+        "distractors": [
+          "is smoking",
+          "smoked",
+          "smokes"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I ___ for this exam since September and it's finally next week. (study)",
+        "answer": "have been studying",
+        "distractors": [
+          "am studying",
+          "studied",
+          "study"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We ___ about your proposal, and we have a few questions. (think)",
+        "answer": "have been thinking",
+        "distractors": [
+          "are thinking",
+          "thought",
+          "think"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The company ___ losses for three quarters in a row. (report)",
+        "answer": "has been reporting",
+        "distractors": [
+          "is reporting",
+          "reported",
+          "reports"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You're soaked! Have you ___ in the rain again? (cycle)",
+        "answer": "been cycling",
+        "distractors": [
+          "been cycled",
+          "cycled",
+          "cycle"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My colleagues ___ overtime all month to hit the deadline. (do)",
+        "answer": "have been doing",
+        "distractors": [
+          "are doing",
+          "did",
+          "do"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I ___ to tell you something for ages — can we talk? (mean)",
+        "answer": "have been meaning",
+        "distractors": [
+          "am meaning",
+          "meant",
+          "mean"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You ___ dirty dishes in the sink again all week. (leave)",
+        "answer": "have been leaving",
+        "distractors": [
+          "are leaving",
+          "left",
+          "leave"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We ___ complaints about the new checkout system. (get)",
+        "answer": "have been getting",
+        "distractors": [
+          "are getting",
+          "got",
+          "get"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She ___ in extra hours lately, and it shows in the results. (put)",
+        "answer": "has been putting",
+        "distractors": [
+          "is putting",
+          "put",
+          "puts"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Our engineers ___ on a fix since the outage began. (work)",
+        "answer": "have been working",
+        "distractors": [
+          "are working",
+          "worked",
+          "work"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___ everyone about my promotion before I even announced it. (tell)",
+        "answer": "has been telling",
+        "distractors": [
+          "is telling",
+          "told",
+          "tells"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I ___ — maybe we should reconsider the whole approach. (think)",
+        "answer": "have been thinking",
+        "distractors": [
+          "am thinking",
+          "thought",
+          "think"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They ___ to reach you for days; please reply. (try)",
+        "answer": "have been trying",
+        "distractors": [
+          "are trying",
+          "tried",
+          "try"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We ___ whether you'd be interested in joining the board. (wonder)",
+        "answer": "have been wondering",
+        "distractors": [
+          "are wondering",
+          "wondered",
+          "wonder"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The supplier ___ delivery dates for two months now. (miss)",
+        "answer": "has been missing",
+        "distractors": [
+          "is missing",
+          "missed",
+          "misses"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You ___ about the noise for months — let's actually fix it. (complain)",
+        "answer": "have been complaining",
+        "distractors": [
+          "are complaining",
+          "complained",
+          "complain"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She ___ someone from the marketing team, apparently. (see)",
+        "answer": "has been seeing",
+        "distractors": [
+          "is seeing",
+          "saw",
+          "sees"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She ___ for women's rights for four decades and shows no sign of stopping. (campaign)",
+        "answer": "has been campaigning",
+        "distractors": [
+          "is campaigning",
+          "campaigned",
+          "campaigns"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We ___ at this problem through the wrong lens the whole time. (look)",
+        "answer": "have been looking",
+        "distractors": [
+          "are looking",
+          "looked",
+          "look"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The government ___ transparency since 2010, yet nothing has changed. (promise)",
+        "answer": "has been promising",
+        "distractors": [
+          "is promising",
+          "promised",
+          "promises"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Philosophers ___ with this question for millennia. (wrestle)",
+        "answer": "have been wrestling",
+        "distractors": [
+          "are wrestling",
+          "wrestled",
+          "wrestle"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I ___ you this for years, and you still won't listen! (tell)",
+        "answer": "have been telling",
+        "distractors": [
+          "am telling",
+          "told",
+          "tell"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Scholars ___ the authorship of the text for centuries. (debate)",
+        "answer": "have been debating",
+        "distractors": [
+          "are debating",
+          "debated",
+          "debate"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The nation ___ for its identity ever since independence. (search)",
+        "answer": "has been searching",
+        "distractors": [
+          "is searching",
+          "searched",
+          "searches"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He ___ in the national team for fifteen years, and the fans adore him. (play)",
+        "answer": "has been playing",
+        "distractors": [
+          "is playing",
+          "played",
+          "plays"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Critics ___ the director's late work for its quiet ambition. (praise)",
+        "answer": "have been praising",
+        "distractors": [
+          "are praising",
+          "praised",
+          "praise"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The committee ___ the same loophole for years without closing it. (overlook)",
+        "answer": "has been overlooking",
+        "distractors": [
+          "is overlooking",
+          "overlooked",
+          "overlooks"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We ___ a new framework, and it's nearly ready to ship. (develop)",
+        "answer": "have been developing",
+        "distractors": [
+          "are developing",
+          "developed",
+          "develop"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Researchers ___ this hypothesis since the 1990s. (test)",
+        "answer": "have been testing",
+        "distractors": [
+          "are testing",
+          "tested",
+          "test"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I ___ her since university, so I trust her completely. (know)",
+        "answer": "have known",
+        "distractors": [
+          "have been knowing",
+          "am knowing",
+          "know"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He ___ this house for over twenty years. (own)",
+        "answer": "has owned",
+        "distractors": [
+          "has been owning",
+          "is owning",
+          "owns"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I ___ exactly what you mean since you first explained it. (understand)",
+        "answer": "have understood",
+        "distractors": [
+          "have been understanding",
+          "am understanding",
+          "understand"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They ___ to that club since it opened. (belong)",
+        "answer": "have belonged",
+        "distractors": [
+          "have been belonging",
+          "are belonging",
+          "belong"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

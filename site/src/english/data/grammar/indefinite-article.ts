@@ -520,5 +520,651 @@ export const topic: GrammarTopic = {
       "consonant sound -> a",
       "vowel sound -> an"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I have ___ cat at home.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "She is eating ___ apple.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "This is ___ book about animals.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "one"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "He has ___ egg for breakfast.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "We have ___ dog and a cat.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "Can I have ___ orange, please?",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "There is ___ house near the river.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "one"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "My sister wants ___ umbrella.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "Look! It is ___ big elephant.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "I need ___ pen to write.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "She studies at ___ university in London.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A0"
+      },
+      {
+        "stem": "We waited for ___ hour at the station.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "one"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "My mother is ___ nurse.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "He is ___ artist from Italy.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I am ___ student at this school.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "one"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "My father is ___ engineer.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "What ___ clever boy!",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "It is ___ beautiful morning today.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "She wants to be ___ pilot one day.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "He is ___ honest man, everyone trusts him.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "That's ___ great idea!",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "She is ___ American, but she lives in Paris.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I saw ___ dog yesterday; the dog was very friendly.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "A dolphin is ___ mammal, not a fish.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "An elephant is ___ enormous animal.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He visits his parents twice ___ month.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The car goes a hundred kilometres ___ hour.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Apples cost five dollars ___ kilo here.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "It's ___ sort of game you play with cards.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I need ___ new jacket for the winter.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We met a girl at the party; ___ girl was from Spain.",
+        "answer": "the",
+        "distractors": [
+          "a",
+          "an"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "There was ___ man with a beard at the door.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Let's meet in half ___ hour.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He has ___ terrible cold and can't come.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She goes to the gym three times ___ week.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Once upon ___ time, there lived a king.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I bought ___ pair of jeans yesterday.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We left in ___ hurry and forgot the keys.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "As ___ rule, the shop closes at six.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Let's have ___ look at the menu.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He gave me ___ ring after the meeting.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I think she has ___ headache.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "A good friend is ___ honest companion.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "A good teacher listens to ___ students.",
+        "answer": "—",
+        "distractors": [
+          "a",
+          "an",
+          "the"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ water is essential for all life.",
+        "answer": "—",
+        "distractors": [
+          "A",
+          "An",
+          "The"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She brought me ___ glass of water.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ dogs need daily exercise to stay healthy.",
+        "answer": "—",
+        "distractors": [
+          "A",
+          "An",
+          "The"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "An apology costs ___ nothing.",
+        "answer": "—",
+        "distractors": [
+          "a",
+          "an",
+          "the"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "A person is judged by ___ company they keep.",
+        "answer": "the",
+        "distractors": [
+          "a",
+          "an"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ love often conquers fear.",
+        "answer": "—",
+        "distractors": [
+          "A",
+          "An",
+          "The"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "An honest answer is ___ always best.",
+        "answer": "—",
+        "distractors": [
+          "a",
+          "an",
+          "the"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He travels ___ train every morning.",
+        "answer": "by",
+        "distractors": [
+          "by a",
+          "by the",
+          "on the"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She was appointed ___ director last year.",
+        "answer": "—",
+        "distractors": [
+          "a",
+          "an",
+          "the"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ by step, we reached the summit.",
+        "answer": "Step",
+        "distractors": [
+          "A step",
+          "The step",
+          "Steps"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Wanted: ___ reliable babysitter for weekends.",
+        "answer": "—",
+        "distractors": [
+          "a",
+          "an",
+          "the"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I saw the match ___ TV last night.",
+        "answer": "on",
+        "distractors": [
+          "on a",
+          "on the",
+          "in the"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They walked hand in ___ along the beach.",
+        "answer": "hand",
+        "distractors": [
+          "a hand",
+          "the hand",
+          "hands"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He was elected ___ chairman of the committee.",
+        "answer": "—",
+        "distractors": [
+          "a",
+          "an",
+          "the"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We discussed it face to ___ over coffee.",
+        "answer": "face",
+        "distractors": [
+          "a face",
+          "the face",
+          "faces"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She received ___ excellent education at Oxford.",
+        "answer": "an",
+        "distractors": [
+          "a",
+          "the"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He has ___ thorough knowledge of French.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "There is ___ certain charm about old cities.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ 5 demonstrates the inverse relationship.",
+        "answer": "Figure",
+        "distractors": [
+          "The Figure",
+          "A Figure",
+          "The figure"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He spoke with ___ confidence that surprised us.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He has ___ deep love of music.",
+        "answer": "a",
+        "distractors": [
+          "an",
+          "the"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ fell as we reached the silent valley.",
+        "answer": "Night",
+        "distractors": [
+          "A night",
+          "The night",
+          "An night"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ 3 shows the rise in temperature.",
+        "answer": "Table",
+        "distractors": [
+          "The Table",
+          "A table",
+          "The table"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "indefinite-article-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A0",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Choose the correct word for the blank: {answer}.",
+          "ru": "Выберите правильное слово для пропуска: {answer}."
+        }
+      }
+    ]
   }
 };

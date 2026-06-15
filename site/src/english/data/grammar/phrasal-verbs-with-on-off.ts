@@ -342,5 +342,831 @@ export const topic: GrammarTopic = {
       "on = power up / continue / attach",
       "off = power down / separate / depart"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "phrasal-verbs-with-on-off-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "On signals power-up, continuation or attachment; off signals power-down, cessation, separation or departure. The correct answer is {answer}; the distractors swap the particle or pick a verb whose particle does not carry that meaning.",
+          "ru": "On — включение, продолжение, присоединение; off — выключение, прекращение, отделение, уход. Верный ответ — {answer}; отвлекающие варианты меняют частицу или берут глагол, частица которого не передаёт нужный смысл."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "Please ___ the lights when you leave the office. (hint: switch off)",
+        "answer": "turn off",
+        "distractors": [
+          "turn on",
+          "go off",
+          "put off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It's cold in here — could you ___ the heater? (hint: switch on)",
+        "answer": "turn on",
+        "distractors": [
+          "turn off",
+          "take off",
+          "put off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It's freezing outside, so ___ your warm coat before you go. (hint: dress)",
+        "answer": "put on",
+        "distractors": [
+          "take off",
+          "turn off",
+          "set off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "When you come inside, please ___ your muddy boots. (hint: remove)",
+        "answer": "take off",
+        "distractors": [
+          "put on",
+          "turn on",
+          "go on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Keep ___ walking — we're almost at the top. (hint: continue)",
+        "answer": "on",
+        "distractors": [
+          "off",
+          "up",
+          "out"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The party ___ until well past midnight. (hint: continued)",
+        "answer": "went on",
+        "distractors": [
+          "went off",
+          "set off",
+          "took off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The alarm clock ___ at six and woke the whole house. (hint: rang)",
+        "answer": "went off",
+        "distractors": [
+          "went on",
+          "came on",
+          "carried on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We ___ for the mountains at dawn to beat the traffic. (hint: departed)",
+        "answer": "set off",
+        "distractors": [
+          "set on",
+          "took on",
+          "went on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They ___ the meeting at the last minute because the client cancelled. (hint: cancelled)",
+        "answer": "called off",
+        "distractors": [
+          "called on",
+          "put on",
+          "turned on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Carry ___ with your work; I'll be back in a minute. (hint: continue)",
+        "answer": "on",
+        "distractors": [
+          "off",
+          "out",
+          "up"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Hold ___ a second — I need to find my keys. (hint: wait)",
+        "answer": "on",
+        "distractors": [
+          "off",
+          "up",
+          "out"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Don't ___ your homework until the last day. (hint: postpone)",
+        "answer": "put off",
+        "distractors": [
+          "put on",
+          "turn off",
+          "set off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Could you ___ these shoes to see if they fit? (hint: test by wearing)",
+        "answer": "try on",
+        "distractors": [
+          "try off",
+          "take off",
+          "put off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The thief grabbed the bag and ___ down the street. (hint: ran away)",
+        "answer": "ran off",
+        "distractors": [
+          "ran on",
+          "got on",
+          "came on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Get ___ the bus at the next stop; the station is right there. (hint: leave the vehicle)",
+        "answer": "off",
+        "distractors": [
+          "on",
+          "in",
+          "out"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Hurry up and get ___ the train before the doors close. (hint: board)",
+        "answer": "on",
+        "distractors": [
+          "off",
+          "out",
+          "down"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Stop ___ off — nobody is impressed by your new car. (hint: boast)",
+        "answer": "showing",
+        "distractors": [
+          "showing on",
+          "putting on",
+          "taking off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The milk has ___ off — it smells terrible. (hint: spoiled)",
+        "answer": "gone",
+        "distractors": [
+          "gone on",
+          "come on",
+          "carried on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I ___ off on the sofa before the film even ended. (hint: fell asleep)",
+        "answer": "dropped",
+        "distractors": [
+          "dropped on",
+          "put on",
+          "went on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ the message on to her manager straight away. (hint: relayed)",
+        "answer": "passed",
+        "distractors": [
+          "passed off",
+          "showed off",
+          "told off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The trend really ___ on with teenagers within weeks. (hint: became popular)",
+        "answer": "caught",
+        "distractors": [
+          "caught off",
+          "brushed off",
+          "showed off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She ___ off his criticism without saying a single word. (hint: dismissed)",
+        "answer": "brushed",
+        "distractors": [
+          "brushed on",
+          "caught on",
+          "put on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The painkillers ___ off after a couple of hours and the ache returned. (hint: faded)",
+        "answer": "wore",
+        "distractors": [
+          "wore out",
+          "went off",
+          "put off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "All his hard work finally ___ off when he landed the promotion. (hint: was rewarded)",
+        "answer": "paid",
+        "distractors": [
+          "paid on",
+          "showed off",
+          "came on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They ___ it off immediately and chatted like old friends. (hint: got along)",
+        "answer": "hit",
+        "distractors": [
+          "hit on",
+          "took on",
+          "broke off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The company ___ off a hundred workers during the downturn. (hint: made redundant)",
+        "answer": "laid",
+        "distractors": [
+          "laid down",
+          "let off",
+          "put off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We can always ___ on her to meet the deadline. (hint: rely)",
+        "answer": "count",
+        "distractors": [
+          "count off",
+          "back off",
+          "show off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "After graduating, she ___ on to become a respected surgeon. (hint: progressed)",
+        "answer": "went",
+        "distractors": [
+          "went off",
+          "took off",
+          "set off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The constant stress ___ on a splitting headache. (hint: triggered)",
+        "answer": "brought",
+        "distractors": [
+          "brought off",
+          "took on",
+          "went on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The firm decided to ___ on two new graduates this autumn. (hint: hire)",
+        "answer": "take on",
+        "distractors": [
+          "take off",
+          "put on",
+          "bring on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Sales have ___ off sharply since the new competitor arrived. (hint: declined)",
+        "answer": "dropped",
+        "distractors": [
+          "dropped on",
+          "paid off",
+          "caught on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She managed to ___ off a cold before the big presentation. (hint: resist)",
+        "answer": "fight",
+        "distractors": [
+          "fight on",
+          "fight back",
+          "put off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ off at me the moment I mentioned the mistake. (hint: lost his temper)",
+        "answer": "went",
+        "distractors": [
+          "went on",
+          "came on",
+          "carried on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Against the odds, the risky plan ___ off perfectly. (hint: succeeded)",
+        "answer": "came",
+        "distractors": [
+          "came on",
+          "went on",
+          "put on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The tourists got ___ off and paid triple the normal price. (hint: cheated)",
+        "answer": "ripped",
+        "distractors": [
+          "ripped on",
+          "laid off",
+          "told off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She managed to ___ off a difficult deal that nobody expected. (hint: achieve)",
+        "answer": "pull",
+        "distractors": [
+          "pull on",
+          "put on",
+          "take on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Remember to ___ off the system before you leave the lab. (hint: end the session)",
+        "answer": "log",
+        "distractors": [
+          "log on",
+          "set off",
+          "go off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He ___ on an English accent just to amuse the children. (hint: faked)",
+        "answer": "put",
+        "distractors": [
+          "put off",
+          "took on",
+          "showed off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The manager ___ him off in front of the whole team. (hint: scolded)",
+        "answer": "told",
+        "distractors": [
+          "told on",
+          "laid off",
+          "set off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "An anonymous caller ___ off the police about the robbery. (hint: secretly warned)",
+        "answer": "tipped",
+        "distractors": [
+          "tipped on",
+          "called off",
+          "set off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Everything ___ on the outcome of tomorrow's vote. (hint: depends entirely)",
+        "answer": "hinges",
+        "distractors": [
+          "hinges off",
+          "harps on",
+          "dwells on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She couldn't ___ off the feeling that she was being watched. (hint: rid herself of)",
+        "answer": "shake",
+        "distractors": [
+          "shake on",
+          "brush on",
+          "put off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The conference ___ off at ten o'clock sharp. (hint: begins an event)",
+        "answer": "kicks",
+        "distractors": [
+          "kicks on",
+          "sets on",
+          "goes on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "His enthusiasm ___ off on the entire team. (hint: transferred to)",
+        "answer": "rubbed",
+        "distractors": [
+          "rubbed on",
+          "wore on",
+          "showed off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Don't take your bad mood out ___ your family. (hint: vent it at)",
+        "answer": "on",
+        "distractors": [
+          "off",
+          "at",
+          "to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Try not to ___ on the past; what's done is done. (hint: brood over)",
+        "answer": "dwell",
+        "distractors": [
+          "dwell off",
+          "harp off",
+          "shake off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The company plans to ___ on an ambitious new venture next year. (hint: begin)",
+        "answer": "embark",
+        "distractors": [
+          "embark off",
+          "dwell on",
+          "knock off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He comes ___ as arrogant in interviews, though he's actually shy. (hint: gives the impression)",
+        "answer": "off as",
+        "distractors": [
+          "off",
+          "on as",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Let's ___ off at five and finish the rest tomorrow. (hint: stop work, informal)",
+        "answer": "knock",
+        "distractors": [
+          "knock on",
+          "kick off",
+          "set off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Stop ___ on about my driving — I get it. (hint: nag repeatedly)",
+        "answer": "harping",
+        "distractors": [
+          "harping off",
+          "dwelling off",
+          "kicking off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The fraudster tried to ___ himself off as a doctor. (hint: pretend to be)",
+        "answer": "pass",
+        "distractors": [
+          "pass on",
+          "show off",
+          "tell off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "After the spike, prices finally ___ off at a stable level. (hint: plateaued)",
+        "answer": "levelled",
+        "distractors": [
+          "levelled on",
+          "dropped on",
+          "kicked on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She ___ off the entire cake in a matter of minutes. (hint: finished quickly)",
+        "answer": "polished",
+        "distractors": [
+          "polished on",
+          "knocked on",
+          "showed off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Don't try to ___ me off with vague excuses. (hint: palm off)",
+        "answer": "fob",
+        "distractors": [
+          "fob on",
+          "harp on",
+          "knock on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Quick action by the team ___ off a major crisis. (hint: prevented)",
+        "answer": "headed",
+        "distractors": [
+          "headed on",
+          "kicked on",
+          "set on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The sudden noise completely ___ me off during the speech. (hint: disoriented)",
+        "answer": "threw",
+        "distractors": [
+          "threw on",
+          "put on",
+          "harped on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He finally ___ on to the fact that they were teasing him. (hint: realised)",
+        "answer": "caught",
+        "distractors": [
+          "caught off",
+          "dwelt on",
+          "kicked off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Many critics ___ on such casual slang in formal essays. (hint: disapprove of)",
+        "answer": "frown",
+        "distractors": [
+          "frown off",
+          "harp off",
+          "knock off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The director still has to ___ off on the final budget. (hint: formally approve)",
+        "answer": "sign",
+        "distractors": [
+          "sign on",
+          "set off",
+          "kick off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The whole strategy ___ on a single risky assumption. (hint: rests entirely on)",
+        "answer": "hinged",
+        "distractors": [
+          "hinged off",
+          "harped off",
+          "dwelt off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The burden of expectation ___ heavily on young athletes. (hint: oppresses mentally)",
+        "answer": "weighs",
+        "distractors": [
+          "weighs off",
+          "presses off",
+          "harps off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She's ___ off coffee entirely for the whole month. (hint: renounced)",
+        "answer": "sworn",
+        "distractors": [
+          "sworn on",
+          "pressed on",
+          "fended on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Despite the storm, the climbers ___ on toward the summit. (hint: persisted)",
+        "answer": "pressed",
+        "distractors": [
+          "pressed off",
+          "weighed on",
+          "swore off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Let's ___ off the evening with a glass of wine. (hint: round out)",
+        "answer": "top",
+        "distractors": [
+          "top on",
+          "press on",
+          "swear off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The grandparents absolutely ___ on their only grandson. (hint: adore)",
+        "answer": "dote",
+        "distractors": [
+          "dote off",
+          "weigh off",
+          "press off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The corporation intends to ___ off its loss-making divisions. (hint: detach as a separate entity)",
+        "answer": "hive",
+        "distractors": [
+          "hive on",
+          "press on",
+          "dote on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She skilfully ___ off the journalist's awkward questions. (hint: repelled)",
+        "answer": "fended",
+        "distractors": [
+          "fended on",
+          "doted on",
+          "pressed on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It took years for him to ___ off the habits of his old life. (hint: shed, figuratively)",
+        "answer": "slough",
+        "distractors": [
+          "slough on",
+          "press on",
+          "weigh on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Fortune seemed to ___ on her at every turn. (hint: favour)",
+        "answer": "smile",
+        "distractors": [
+          "smile off",
+          "press off",
+          "fend off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We've been seeing each other ___ and off for years. (hint: intermittently)",
+        "answer": "on",
+        "distractors": [
+          "off",
+          "up",
+          "in"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "From now ___, all reports must be submitted electronically. (hint: starting at this moment)",
+        "answer": "on",
+        "distractors": [
+          "off",
+          "up",
+          "out"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I can't give exact figures off the top of my ___, but it's roughly a thousand. (hint: spontaneously, fixed chunk)",
+        "answer": "head",
+        "distractors": [
+          "mind",
+          "memory",
+          "thoughts"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Her remarks were entirely off-the-___, with no preparation at all. (hint: improvised, fixed chunk)",
+        "answer": "cuff",
+        "distractors": [
+          "sleeve",
+          "collar",
+          "record"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He's always on the ___, never missing a single detail. (hint: alert and sharp, fixed chunk)",
+        "answer": "ball",
+        "distractors": [
+          "spot",
+          "edge",
+          "mark"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The negotiators decided to ___ off the talks after weeks of deadlock. (hint: break, sever)",
+        "answer": "break",
+        "distractors": [
+          "break on",
+          "press on",
+          "carry on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He pressed ___ with the unpopular reforms despite fierce opposition. (hint: continued resolutely)",
+        "answer": "on",
+        "distractors": [
+          "off",
+          "out",
+          "up"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She ___ off her old reputation and started afresh. (hint: discarded)",
+        "answer": "cast",
+        "distractors": [
+          "cast on",
+          "pressed on",
+          "doted on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The protesters were ___ off from the main square by the police. (hint: blocked, cordoned)",
+        "answer": "cordoned",
+        "distractors": [
+          "cordoned on",
+          "pressed on",
+          "doted on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Worries about the deadline ___ on her all night. (hint: weighed mentally)",
+        "answer": "weighed",
+        "distractors": [
+          "weighed off",
+          "pressed off",
+          "doted off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Several runners ___ off from the leading pack on the final lap. (hint: broke away from the group)",
+        "answer": "peeled",
+        "distractors": [
+          "peeled on",
+          "pressed on",
+          "doted on"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

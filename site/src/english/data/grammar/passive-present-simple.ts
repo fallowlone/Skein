@@ -324,5 +324,561 @@ export const topic: GrammarTopic = {
       "am/is/are + V3",
       "by + agent"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "English ___ in many countries.",
+        "answer": "is spoken",
+        "distractors": [
+          "speaks",
+          "is speak",
+          "spoken"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The office ___ every evening by a cleaning crew.",
+        "answer": "is cleaned",
+        "distractors": [
+          "cleans",
+          "is clean",
+          "cleaned"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "These cars ___ in Germany.",
+        "answer": "are made",
+        "distractors": [
+          "make",
+          "are make",
+          "is made"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The letters ___ by email, not by post.",
+        "answer": "are sent",
+        "distractors": [
+          "send",
+          "are send",
+          "is sent"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ breakfast served at eight in this hotel?",
+        "answer": "Is",
+        "distractors": [
+          "Does",
+          "Are",
+          "Do"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Coffee ___ here; the climate is too cold. (negative)",
+        "answer": "isn't grown",
+        "distractors": [
+          "doesn't grow",
+          "isn't grew",
+          "aren't grown"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The book ___ by a famous author. (keep the agent)",
+        "answer": "is written",
+        "distractors": [
+          "writes",
+          "is write",
+          "written"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My car ___ every year at the same garage.",
+        "answer": "is repaired",
+        "distractors": [
+          "repairs",
+          "is repair",
+          "repaired"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Shoes ___ before you enter the temple.",
+        "answer": "are removed",
+        "distractors": [
+          "remove",
+          "are remove",
+          "is removed"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The president ___ every four years.",
+        "answer": "is elected",
+        "distractors": [
+          "elects",
+          "is elect",
+          "elected"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Where ___ these phones designed?",
+        "answer": "are",
+        "distractors": [
+          "do",
+          "is",
+          "does"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Fresh bread ___ in this bakery every morning.",
+        "answer": "is baked",
+        "distractors": [
+          "bakes",
+          "is bake",
+          "baked"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The windows ___ twice a year.",
+        "answer": "are washed",
+        "distractors": [
+          "wash",
+          "are wash",
+          "is washed"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "This dish ___ with rice and vegetables.",
+        "answer": "is served",
+        "distractors": [
+          "serves",
+          "is serve",
+          "served"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The bridge ___ by tourists all summer.",
+        "answer": "is visited",
+        "distractors": [
+          "visits",
+          "is visit",
+          "visited"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Tickets ___ online before the concert.",
+        "answer": "are sold",
+        "distractors": [
+          "sell",
+          "are sell",
+          "is sold"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Breakfast ___ in the price of the room.",
+        "answer": "is included",
+        "distractors": [
+          "includes",
+          "is include",
+          "included"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It ___ that the ancient city was destroyed by an earthquake. (impersonal)",
+        "answer": "is believed",
+        "distractors": [
+          "believes",
+          "is believe",
+          "are believed"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The politician is said ___ involved in a scandal.",
+        "answer": "to be",
+        "distractors": [
+          "is",
+          "being",
+          "be"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "New vaccines ___ in several labs across the country.",
+        "answer": "are developed",
+        "distractors": [
+          "develop",
+          "are develop",
+          "is developed"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The meeting room ___ until five this afternoon.",
+        "answer": "is booked",
+        "distractors": [
+          "books",
+          "is book",
+          "booked"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It ___ that regular exercise improves memory.",
+        "answer": "is known",
+        "distractors": [
+          "knows",
+          "is know",
+          "are known"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "In the recipe, water ___ and then cooled slowly.",
+        "answer": "is boiled",
+        "distractors": [
+          "boils",
+          "is boil",
+          "boiled"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Three suspects ___ by police in connection with the theft.",
+        "answer": "are questioned",
+        "distractors": [
+          "question",
+          "are question",
+          "is questioned"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The form ___ out in black ink only.",
+        "answer": "is filled",
+        "distractors": [
+          "fills",
+          "is fill",
+          "filled"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The drug is known ___ side effects in some patients.",
+        "answer": "to cause",
+        "distractors": [
+          "causes",
+          "causing",
+          "caused"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It ___ that the talks will resume next week.",
+        "answer": "is reported",
+        "distractors": [
+          "reports",
+          "is report",
+          "are reported"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Dishes ___ fresh daily in our kitchen.",
+        "answer": "are prepared",
+        "distractors": [
+          "prepare",
+          "are prepare",
+          "is prepared"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The samples ___ in a sterile container.",
+        "answer": "are stored",
+        "distractors": [
+          "store",
+          "are store",
+          "is stored"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It ___ that the manuscript dates from the twelfth century.",
+        "answer": "is thought",
+        "distractors": [
+          "thinks",
+          "is think",
+          "are thought"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Mistakes ___, and lessons must be learned. (blame-avoiding)",
+        "answer": "are made",
+        "distractors": [
+          "make",
+          "are make",
+          "is made"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The CEO is reported ___ resignation after the scandal.",
+        "answer": "to be considering",
+        "distractors": [
+          "is considering",
+          "being considering",
+          "considers"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It ___ widely assumed that the policy will be revised.",
+        "answer": "is",
+        "distractors": [
+          "has",
+          "does",
+          "are"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The defendant ___ guilty on all three counts.",
+        "answer": "is found",
+        "distractors": [
+          "finds",
+          "is find",
+          "found"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Applications ___ within thirty working days.",
+        "answer": "are processed",
+        "distractors": [
+          "process",
+          "are process",
+          "is processed"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Smoking ___ anywhere on the premises.",
+        "answer": "is prohibited",
+        "distractors": [
+          "prohibits",
+          "is prohibit",
+          "prohibited"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He is alleged ___ committed fraud over several years.",
+        "answer": "to have",
+        "distractors": [
+          "to has",
+          "having",
+          "has"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The report is understood ___ deep cuts to the budget.",
+        "answer": "to recommend",
+        "distractors": [
+          "recommends",
+          "recommending",
+          "recommended"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In the lab, each hypothesis ___ under controlled conditions.",
+        "answer": "is tested",
+        "distractors": [
+          "tests",
+          "is test",
+          "tested"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The museum ___ by a celebrated Russian architect.",
+        "answer": "is designed",
+        "distractors": [
+          "designs",
+          "is design",
+          "designed"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It has ___ suggested that the dates should be moved.",
+        "answer": "been",
+        "distractors": [
+          "being",
+          "be",
+          "is"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "New applicants ___ by an independent panel before hiring.",
+        "answer": "are screened",
+        "distractors": [
+          "screen",
+          "are screen",
+          "is screened"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The manuscript ___ to the early medieval period.",
+        "answer": "is dated",
+        "distractors": [
+          "dates",
+          "is date",
+          "dated"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It is to ___ noted that the methodology differs from earlier work. (high register)",
+        "answer": "be",
+        "distractors": [
+          "being",
+          "been",
+          "is"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Concerns ___ often raised about the transparency of such rulings.",
+        "answer": "are",
+        "distractors": [
+          "is",
+          "does",
+          "has"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The artefact ___ by radiocarbon analysis.",
+        "answer": "is dated",
+        "distractors": [
+          "dates",
+          "is date",
+          "dated"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Responsibility is widely understood ___ with the board.",
+        "answer": "to lie",
+        "distractors": [
+          "lies",
+          "lying",
+          "to lies"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The clause ___ differently in each jurisdiction.",
+        "answer": "is interpreted",
+        "distractors": [
+          "interprets",
+          "is interpret",
+          "interpreted"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "In the headline, the form drops 'be': Minister ___ in graft probe.",
+        "answer": "accused",
+        "distractors": [
+          "is accuse",
+          "accuses",
+          "accusing"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "In casual speech he ___ promoted every single year, to everyone's surprise.",
+        "answer": "gets",
+        "distractors": [
+          "is got",
+          "get",
+          "getting"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The confidential document ___ to be destroyed after the trial. (modal passive)",
+        "answer": "is",
+        "distractors": [
+          "has",
+          "does",
+          "are"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It is to be ___ that further discussion will resolve the dispute. (formal)",
+        "answer": "hoped",
+        "distractors": [
+          "hope",
+          "hopes",
+          "hoping"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It ___ felt, in diplomatic circles, that more time is needed.",
+        "answer": "is",
+        "distractors": [
+          "has",
+          "does",
+          "are"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "passive-present-simple-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The present-simple passive joins am/is/are with the past participle (V3); '{answer}' fits the subject's number and the agentless or impersonal register of the sentence. Distractors use the active verb or the wrong/missing participle.",
+          "ru": "Пассив в Present Simple строится как am/is/are + причастие (V3); вариант '{answer}' согласуется с числом подлежащего и регистром предложения. Неверные варианты дают актив или ошибочную форму причастия."
+        }
+      }
+    ]
   }
 };

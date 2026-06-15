@@ -421,5 +421,571 @@ export const topic: GrammarTopic = {
       "preposition",
       "object"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "prepositions-after-verbs-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "English verbs take fixed dependent prepositions you cannot guess or translate literally; the correct filler is \"{answer}\" because the verb selects it as a chunk.",
+          "ru": "Английские глаголы требуют фиксированный предлог, который нельзя угадать или перевести буквально; правильный вариант — \"{answer}\", потому что глагол выбирает его как единый блок."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I listen ___ music every morning while I get ready. (verb: listen)",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "for"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We waited ___ the bus for almost half an hour. (verb: wait)",
+        "answer": "for",
+        "distractors": [
+          "to",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Look ___ that beautiful sunset over the hills! (verb: look)",
+        "answer": "at",
+        "distractors": [
+          "to",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The whole plan depends ___ the weather tomorrow. (verb: depend)",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "from"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She is looking ___ her keys, but she can't find them. (verb: look)",
+        "answer": "for",
+        "distractors": [
+          "at",
+          "to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Could you stop talking ___ politics for a moment? (verb: talk)",
+        "answer": "about",
+        "distractors": [
+          "of",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I often think ___ my old friends from school. (verb: think)",
+        "answer": "about",
+        "distractors": [
+          "on",
+          "to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I completely agree ___ you on this point. (verb: agree)",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Please don't shout; I'm trying to listen ___ the teacher. (verb: listen)",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "for"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Everyone was waiting ___ the results to be announced. (verb: wait)",
+        "answer": "for",
+        "distractors": [
+          "on",
+          "to"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The children pointed and looked ___ the elephant. (verb: look)",
+        "answer": "at",
+        "distractors": [
+          "for",
+          "on"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Our success depends ___ how hard we practise. (verb: depend)",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "in"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He apologised ___ his colleague for the late reply. (verb: apologise)",
+        "answer": "to",
+        "distractors": [
+          "with",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She apologised ___ the delay at the start of the meeting. (verb: apologise)",
+        "answer": "for",
+        "distractors": [
+          "about",
+          "of"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Thousands of graduates apply ___ this job every year. (verb: apply)",
+        "answer": "for",
+        "distractors": [
+          "to",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My sister applied ___ three different universities last autumn. (verb: apply)",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "in"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "My grandmother still believes ___ ghosts and spirits. (verb: believe)",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The other kids used to laugh ___ him because of his accent. (verb: laugh)",
+        "answer": "at",
+        "distractors": [
+          "of",
+          "over"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "There's no need to worry ___ the exam; you're well prepared. (verb: worry)",
+        "answer": "about",
+        "distractors": [
+          "for",
+          "of"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "As a child she dreamed ___ becoming an astronaut. (verb: dream)",
+        "answer": "of",
+        "distractors": [
+          "to",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We finally arrived ___ Tokyo after a twelve-hour flight. (verb: arrive)",
+        "answer": "in",
+        "distractors": [
+          "to",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The train arrived ___ the small village station right on time. (verb: arrive)",
+        "answer": "at",
+        "distractors": [
+          "to",
+          "in"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The board members chatted ___ the budget over coffee. (verb: chat)",
+        "answer": "about",
+        "distractors": [
+          "to",
+          "of"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Could you explain the new rules ___ the new employees? (verb: explain)",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I will speak ___ you about it as soon as I land. (verb: speak)",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "of"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Please reply ___ my email as soon as you can. (verb: reply)",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They are really looking forward ___ the holidays next week. (verb: look forward)",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My neighbour kindly looks ___ our cat when we travel. (verb: look)",
+        "answer": "after",
+        "distractors": [
+          "for",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The detective was sent to look ___ the mysterious disappearance. (verb: look)",
+        "answer": "into",
+        "distractors": [
+          "after",
+          "up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I really look ___ to my mentor and value her advice. (verb: look)",
+        "answer": "up",
+        "distractors": [
+          "after",
+          "into"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She talked me ___ buying a far more expensive phone. (verb: talk)",
+        "answer": "into",
+        "distractors": [
+          "out of",
+          "over"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "His friends talked him ___ quitting his stable job. (verb: talk)",
+        "answer": "out of",
+        "distractors": [
+          "into",
+          "over"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It's a big decision, so let me think it ___ tonight. (verb: think)",
+        "answer": "over",
+        "distractors": [
+          "of",
+          "up"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "That perfume reminds me ___ my grandmother's house. (verb: remind)",
+        "answer": "of",
+        "distractors": [
+          "about",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The coach blamed the striker ___ missing the penalty. (verb: blame)",
+        "answer": "for",
+        "distractors": [
+          "on",
+          "of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The new arrival was laughed ___ for his strange clothes. (verb: laugh, passive)",
+        "answer": "at",
+        "distractors": [
+          "about",
+          "over"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I get ___ well with most of my workmates. (verb: get)",
+        "answer": "on",
+        "distractors": [
+          "over",
+          "through"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It took her months to get ___ the breakup. (verb: get)",
+        "answer": "over",
+        "distractors": [
+          "on",
+          "into"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "These findings clearly contribute ___ our understanding of memory. (verb: contribute)",
+        "answer": "to",
+        "distractors": [
+          "in",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The new policy resulted ___ a sharp drop in complaints. (verb: result)",
+        "answer": "in",
+        "distractors": [
+          "from",
+          "to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The shortage resulted ___ years of poor planning. (verb: result)",
+        "answer": "from",
+        "distractors": [
+          "in",
+          "of"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Most of these problems stem ___ a lack of clear communication. (verb: stem)",
+        "answer": "from",
+        "distractors": [
+          "of",
+          "in"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "All contractors must comply ___ the safety regulations. (verb: comply)",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "by"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The expert panel consists ___ five senior researchers. (verb: consist)",
+        "answer": "of",
+        "distractors": [
+          "in",
+          "from"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "When negotiations failed, the union resorted ___ strike action. (verb: resort)",
+        "answer": "to",
+        "distractors": [
+          "on",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Online sales account ___ nearly half of total revenue. (verb: account)",
+        "answer": "for",
+        "distractors": [
+          "to",
+          "of"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "This version differs ___ the original in several key respects. (verb: differ)",
+        "answer": "from",
+        "distractors": [
+          "to",
+          "than"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She insisted ___ paying for the entire meal herself. (verb: insist)",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "to"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "For details, please refer ___ the appendix at the end. (verb: refer)",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Under the contract, the tenant is liable ___ any damage. (verb: liable)",
+        "answer": "for",
+        "distractors": [
+          "to",
+          "of"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "All offers are subject ___ final approval by the board. (verb: subject)",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Charitable donations are exempt ___ this particular tax. (verb: exempt)",
+        "answer": "from",
+        "distractors": [
+          "of",
+          "to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The researchers attribute the improvement ___ better training. (verb: attribute)",
+        "answer": "to",
+        "distractors": [
+          "on",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The English word derives ___ a Latin root. (verb: derive)",
+        "answer": "from",
+        "distractors": [
+          "of",
+          "off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "All visitors are kindly asked to refrain ___ smoking indoors. (verb: refrain)",
+        "answer": "from",
+        "distractors": [
+          "of",
+          "to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Next month the team will embark ___ an ambitious new project. (verb: embark)",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Both sides agreed to engage ___ constructive dialogue. (verb: engage)",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "with"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Rising temperatures correlate strongly ___ higher energy demand. (verb: correlate)",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "against"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I simply cannot put up ___ this constant noise any longer. (verb: put up)",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He somehow got away ___ cheating on the test. (verb: get away)",
+        "answer": "with",
+        "distractors": [
+          "from",
+          "of"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

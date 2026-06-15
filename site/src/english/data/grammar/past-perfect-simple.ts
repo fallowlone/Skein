@@ -312,5 +312,611 @@ export const topic: GrammarTopic = {
       "later past (Past Simple)",
       "now"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "past-perfect-simple-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Past perfect simple (had + V3) marks an action completed before another past point; the answer {answer} fits the earlier-past slot, while the distractors use the wrong tense, aspect, or word order.",
+          "ru": "Past Perfect Simple (had + V3) обозначает действие, завершённое до другого момента в прошлом; ответ {answer} подходит для более раннего прошлого, а отвлекающие варианты используют неверное время, вид или порядок слов."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "When I arrived at the cinema, the film ___ already started. (start)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "is"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "By the time we reached the platform, the train ___ left. (leave)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She ___ never flown before her trip to Japan. (fly)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "did"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He was upset because he ___ lost his phone. (lose)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "is"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "After we ___ eaten, we watched a movie. (eat)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "were",
+          "was"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "By the time the guests arrived, my mother ___ cooked a huge dinner. (cook)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "is"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I didn't recognise the town because it ___ changed so much. (change)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "When she got to the office, her colleagues ___ already gone home. (go)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "were",
+          "was"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We couldn't get in because we ___ forgotten the tickets. (forget)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "was",
+          "were"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Before the lesson began, the teacher ___ written the rules on the board. (write)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "is"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "By midnight the storm ___ finally passed. (pass)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I felt nervous because I ___ never given a speech before. (give)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "did"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "When the police arrived, the thief ___ already escaped. (escape)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She was relieved because the exam ___ been easier than expected. (be)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "They were hungry; they ___ not eaten all day. (eat)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "were",
+          "was"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The grass was wet because it ___ rained during the night. (rain)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "is"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "By the time I called, she ___ already gone to bed. (go)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He passed the test because he ___ studied hard. (study)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "When we got home, someone ___ broken the window. (break)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I had read the book before I ___ the film at the cinema. (see)",
+        "answer": "saw",
+        "distractors": [
+          "had seen",
+          "have seen",
+          "seeing"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If I ___ known about the meeting, I would have come. (know)",
+        "answer": "had known",
+        "distractors": [
+          "would have known",
+          "knew",
+          "have known"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She told me she ___ already met him at a conference. (meet)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "did"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I wish I ___ listened to your advice last year. (listen)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "would",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If only I ___ taken that job in Berlin. (take)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "would",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If they ___ left earlier, they would have caught the ferry. (leave)",
+        "answer": "had left",
+        "distractors": [
+          "would have left",
+          "left",
+          "have left"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He said he ___ seen the documents the previous day. (see)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "saw"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "By the time the police arrived, the thief ___ disappeared. (disappear)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She would have passed the interview if she ___ prepared properly. (prepare)",
+        "answer": "had prepared",
+        "distractors": [
+          "would have prepared",
+          "prepared",
+          "has prepared"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "No sooner ___ I sat down than the phone rang. (had — choose the right word)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "did",
+          "was"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I ___ hardly finished my coffee when the meeting started. (have — choose the right word)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "was",
+          "did"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The journalist reported that the company ___ already filed for bankruptcy. (file)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "did"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I hadn't heard of her ___ last week. (until/since — choose one)",
+        "answer": "until",
+        "distractors": [
+          "since",
+          "for",
+          "by"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When I finally opened the letter, I realised she ___ sent it three weeks earlier. (send)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "did"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He admitted that he ___ never visited the factory before that day. (visit)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "did"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If we ___ booked in advance, the trip would have been cheaper. (book)",
+        "answer": "had booked",
+        "distractors": [
+          "would have booked",
+          "booked",
+          "have booked"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She regretted the decision the moment she ___ made it. (make)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "By the time the investigation concluded, most witnesses ___ already moved abroad. (move)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "were",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Hardly ___ the decision been announced when protests erupted. (had — choose the right word)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "did",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Scarcely ___ I begun to speak when he interrupted me. (have — choose the right word)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "did",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If I ___ accepted the offer, my life would be completely different now. (accept)",
+        "answer": "had accepted",
+        "distractors": [
+          "accepted",
+          "would have accepted",
+          "have accepted"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Scholars ___ long suspected the link before it was definitively proven. (suspect)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "were",
+          "did"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She walked into the room where her father ___ died ten years earlier. (die)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "did"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "By 1945, Europe ___ changed beyond recognition. (change)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "By the time he retired, he ___ worked at the firm for forty years. (work)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She failed the course because she ___ not prepared at all. (prepare)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "did"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "No sooner ___ we arrived than it started to pour. (had — choose the right word)",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "did",
+          "were"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If I ___ left earlier, I wouldn't be stuck in this traffic now. (leave)",
+        "answer": "had left",
+        "distractors": [
+          "left",
+          "would have left",
+          "have left"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The incident ___ occurred hours before the authorities were notified. (occur)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He remembered the summer he ___ spent in Greece as a child. (spend)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ she hesitated a moment longer, the train would have left without her. (had — inverted conditional)",
+        "answer": "Had",
+        "distractors": [
+          "Have",
+          "If",
+          "Did"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "By the time the truth emerged, the damage ___ already been done. (do)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The court found that the defendant ___ acted under duress. (act)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He returned to the village he ___ left fifty years before and recognised nothing. (leave)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She had spent decades searching for an answer that ___ never existed. (exist)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The claimant ___ filed the motion prior to the statutory deadline. (file)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ I only known what awaited me, I would have turned back. (had — inverted counterfactual)",
+        "answer": "Had",
+        "distractors": [
+          "Have",
+          "If",
+          "Did"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She seemed distracted during dinner; her father ___ died that very morning. (die)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The author ___ developed these ideas over more than a decade before publishing them. (develop)",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "was",
+          "were"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

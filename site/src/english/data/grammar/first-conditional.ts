@@ -395,5 +395,535 @@ export const topic: GrammarTopic = {
       "real future",
       "no will after if"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "first-conditional-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "The first conditional is a choice among connectors (if/unless/when/in case/provided/as long as), modals (will/may/might/can/should/could) and the present-vs-will rule after the connector — all context-dependent, so the correct filler ({answer}) is fixed per sentence rather than computed by inflection.",
+          "ru": "First conditional — это выбор среди союзов (if/unless/when/in case/provided/as long as), модалов (will/may/might/can/should/could) и правила «после союза — настоящее, а не will». Всё это зависит от контекста, поэтому правильный вариант ({answer}) задаётся для каждого предложения, а не вычисляется по форме."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "If it rains tomorrow, we ___ at home. (hint: stay)",
+        "answer": "will stay",
+        "distractors": [
+          "stay",
+          "are staying"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If you don't hurry, you ___ the bus.",
+        "answer": "will miss",
+        "distractors": [
+          "miss",
+          "missed"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If I ___ John, I'll tell him the news.",
+        "answer": "see",
+        "distractors": [
+          "will see",
+          "saw"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She will be angry ___ you're late again.",
+        "answer": "if",
+        "distractors": [
+          "will",
+          "when not"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If it's sunny tomorrow, we ___ to the park.",
+        "answer": "will go",
+        "distractors": [
+          "go",
+          "went"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ you help me if I ask?",
+        "answer": "Will",
+        "distractors": [
+          "Do",
+          "Are"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If you ___ your homework, you'll feel better.",
+        "answer": "finish",
+        "distractors": [
+          "will finish",
+          "finished"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If the shop is open, I ___ some milk.",
+        "answer": "will buy",
+        "distractors": [
+          "buy",
+          "am buying"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If you don't eat, you ___ hungry later.",
+        "answer": "will be",
+        "distractors": [
+          "are",
+          "were"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I'll call you if I ___ time tonight.",
+        "answer": "have",
+        "distractors": [
+          "will have",
+          "had"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "What ___ you do if it rains?",
+        "answer": "will",
+        "distractors": [
+          "do",
+          "are"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If we leave now, we ___ the early train.",
+        "answer": "will catch",
+        "distractors": [
+          "catch",
+          "caught"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "If you study hard, you ___ pass the exam — it's quite possible.",
+        "answer": "may",
+        "distractors": [
+          "must",
+          "would"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you hurry, you'll miss the train.",
+        "answer": "Unless",
+        "distractors": [
+          "If not",
+          "When not"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Take some cash ___ the card doesn't work.",
+        "answer": "in case",
+        "distractors": [
+          "unless",
+          "if not"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you need help, you ___ call me any time.",
+        "answer": "can",
+        "distractors": [
+          "will",
+          "should not"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you see John, ___ him to call me. (imperative result)",
+        "answer": "tell",
+        "distractors": [
+          "will tell",
+          "you tell"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ I finish work, I'll meet you — I'm sure I will.",
+        "answer": "When",
+        "distractors": [
+          "Unless",
+          "In case"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Unless we ___ tickets, we won't go to the concert.",
+        "answer": "get",
+        "distractors": [
+          "don't get",
+          "will get"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you want to succeed, you ___ work harder — that's my advice.",
+        "answer": "should",
+        "distractors": [
+          "may",
+          "might"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Take an umbrella in case it ___ later.",
+        "answer": "rains",
+        "distractors": [
+          "will rain",
+          "would rain"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you ask him nicely, he ___ help — but I'm not certain.",
+        "answer": "might",
+        "distractors": [
+          "will",
+          "must"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I won't go ___ you come with me.",
+        "answer": "unless",
+        "distractors": [
+          "if",
+          "in case"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If it rains, ___ an umbrella with you. (imperative result)",
+        "answer": "take",
+        "distractors": [
+          "you taking",
+          "will take"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You can borrow the car ___ that you return it by six.",
+        "answer": "provided",
+        "distractors": [
+          "unless",
+          "in case"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'll help you ___ as you're honest with me.",
+        "answer": "as long",
+        "distractors": [
+          "in case",
+          "so long ago"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We'll hire you provided that you ___ the interview.",
+        "answer": "pass",
+        "distractors": [
+          "will pass",
+          "would pass"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ you find the money — what will you do then?",
+        "answer": "Suppose",
+        "distractors": [
+          "Unless",
+          "In case"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If you'll just ___ here, sir, I'll process your order. (polite request)",
+        "answer": "sign",
+        "distractors": [
+          "signing",
+          "to sign"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He agreed ___ condition that his name would not be published.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "by"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If you ___ leaving tomorrow, we should have dinner tonight. (continuous if-clause)",
+        "answer": "are",
+        "distractors": [
+          "will be",
+          "would be"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If you've ___, you can leave now. (perfect if-clause)",
+        "answer": "finished",
+        "distractors": [
+          "finish",
+          "will finish"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'll be upset ___ you don't come.",
+        "answer": "if",
+        "distractors": [
+          "unless",
+          "in case"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ that the weather holds, we'll climb the peak tomorrow.",
+        "answer": "Provided",
+        "distractors": [
+          "Unless",
+          "Suppose not"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "What ___ he doesn't show up to the meeting?",
+        "answer": "if",
+        "distractors": [
+          "unless",
+          "in case"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "As long as you ___ rent on time, there won't be any problems.",
+        "answer": "pay",
+        "distractors": [
+          "will pay",
+          "would pay"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ you need assistance, please don't hesitate to ask. (formal inversion)",
+        "answer": "Should",
+        "distractors": [
+          "If will",
+          "Would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If you ___ see him, tell him I called — it's unlikely, but possible.",
+        "answer": "should",
+        "distractors": [
+          "will",
+          "would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ the deal fall through, we have a backup plan.",
+        "answer": "Should",
+        "distractors": [
+          "If",
+          "Unless"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ the data is accurate, our conclusions stand.",
+        "answer": "Assuming",
+        "distractors": [
+          "Unless",
+          "Suppose not"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If you ask, he ___ help, but it's only about an even chance.",
+        "answer": "may",
+        "distractors": [
+          "will",
+          "should"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ that the market recovers, sales will improve.",
+        "answer": "Given",
+        "distractors": [
+          "Unless",
+          "Suppose"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If anyone ___ ask, say I'm out. (light distance)",
+        "answer": "should",
+        "distractors": [
+          "will",
+          "would"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Should you ___ any difficulties, contact the help desk.",
+        "answer": "encounter",
+        "distractors": [
+          "to encounter",
+          "encountering"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If you'll ___ a seat, the doctor will be with you shortly. (polite)",
+        "answer": "take",
+        "distractors": [
+          "taking",
+          "to take"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If you ask, he ___ help — a hypothetical option among others.",
+        "answer": "could",
+        "distractors": [
+          "will",
+          "must"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ the circumstances change, we will revise the plan accordingly.",
+        "answer": "Should",
+        "distractors": [
+          "If will",
+          "Unless"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If you tell anyone, I ___ never forgive you. (threat function)",
+        "answer": "will",
+        "distractors": [
+          "would",
+          "might"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If we ___ to act now, future generations will bear the consequences.",
+        "answer": "fail",
+        "distractors": [
+          "will fail",
+          "would fail"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ fate intervene, none of us can foresee the outcome. (literary inversion)",
+        "answer": "Should",
+        "distractors": [
+          "If",
+          "Unless"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "If you insist on knowing, I'll tell you — here 'will' marks ___.",
+        "answer": "willingness",
+        "distractors": [
+          "the past",
+          "obligation"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "If you ask him, he'll ___ give the same answer. (habit, ≈ always)",
+        "answer": "always",
+        "distractors": [
+          "yesterday",
+          "once"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "If society fails its children, it ___ its future.",
+        "answer": "fails",
+        "distractors": [
+          "will failing",
+          "would fail"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ circumstances dictate otherwise, the contingency plan will take effect.",
+        "answer": "Should",
+        "distractors": [
+          "If will",
+          "Were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "If the rate drops, inflation ___ follow. (prediction)",
+        "answer": "will",
+        "distractors": [
+          "would",
+          "had"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "If the market recovers, confidence returns; if confidence returns, investment ___.",
+        "answer": "follows",
+        "distractors": [
+          "will following",
+          "followed"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

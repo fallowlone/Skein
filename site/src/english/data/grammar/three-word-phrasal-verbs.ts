@@ -254,5 +254,611 @@ export const topic: GrammarTopic = {
       "preposition",
       "object"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I'm really looking forward ___ meeting your family next week.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "at",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She came ___ with a brilliant solution to the problem.",
+        "answer": "up",
+        "distractors": [
+          "out",
+          "down",
+          "off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I can't put up ___ his constant complaining any longer.",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "on",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He always gets ___ with being late and is never punished.",
+        "answer": "away",
+        "distractors": [
+          "off",
+          "out",
+          "over"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Please take ___ of yourself while I'm away.",
+        "answer": "care",
+        "distractors": [
+          "hold",
+          "note",
+          "charge"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We've run ___ of sugar, so I'll buy some on the way home.",
+        "answer": "out",
+        "distractors": [
+          "off",
+          "down",
+          "away"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I need to catch up ___ all my emails before Monday.",
+        "answer": "with",
+        "distractors": [
+          "on",
+          "to",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She gets ___ well with everyone in the office.",
+        "answer": "on",
+        "distractors": [
+          "up",
+          "along",
+          "off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I really look up ___ my older sister; she's so capable.",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "for",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Always look ___ for pickpockets in the crowded market.",
+        "answer": "out",
+        "distractors": [
+          "up",
+          "down",
+          "over"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You shouldn't look down ___ people just because they earn less.",
+        "answer": "on",
+        "distractors": [
+          "at",
+          "to",
+          "with"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She stuck up ___ her friend when the others mocked him.",
+        "answer": "for",
+        "distractors": [
+          "to",
+          "with",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'll make up ___ my mistake by working the weekend.",
+        "answer": "for",
+        "distractors": [
+          "to",
+          "with",
+          "of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It's hard to keep up ___ all the latest news these days.",
+        "answer": "with",
+        "distractors": [
+          "on",
+          "to",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Don't take advantage ___ her kindness; it isn't fair.",
+        "answer": "of",
+        "distractors": [
+          "on",
+          "from",
+          "with"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "You have to face up ___ your problems sooner or later.",
+        "answer": "to",
+        "distractors": [
+          "with",
+          "at",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I'll go along ___ your plan if everyone else agrees.",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "on",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Watch ___ for the icy patches on the path.",
+        "answer": "out",
+        "distractors": [
+          "up",
+          "over",
+          "off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It all boils ___ to whether we can afford it.",
+        "answer": "down",
+        "distractors": [
+          "up",
+          "out",
+          "over"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She talked me ___ of quitting my job.",
+        "answer": "out",
+        "distractors": [
+          "off",
+          "away",
+          "over"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He's trying to live up ___ his father's reputation.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "with",
+          "on"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Don't go back ___ your promise now.",
+        "answer": "on",
+        "distractors": [
+          "from",
+          "out",
+          "off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I never got ___ to calling her back.",
+        "answer": "around",
+        "distractors": [
+          "round",
+          "up",
+          "down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Let's get ___ to business; we've wasted enough time.",
+        "answer": "down",
+        "distractors": [
+          "up",
+          "on",
+          "over"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He managed to get ___ of the meeting by claiming he was ill.",
+        "answer": "out",
+        "distractors": [
+          "away",
+          "off",
+          "over"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "If the plan fails, we can always fall back ___ our savings.",
+        "answer": "on",
+        "distractors": [
+          "to",
+          "for",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She comes ___ as confident, though she's actually quite shy.",
+        "answer": "across",
+        "distractors": [
+          "over",
+          "off",
+          "out"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The doctor told me to cut down ___ salt and sugar.",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "off",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The new government did ___ with many of the old taxes.",
+        "answer": "away",
+        "distractors": [
+          "off",
+          "out",
+          "over"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Don't miss ___ on this once-in-a-lifetime opportunity.",
+        "answer": "out",
+        "distractors": [
+          "up",
+          "off",
+          "over"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He finally owned ___ to breaking the window.",
+        "answer": "up",
+        "distractors": [
+          "out",
+          "over",
+          "in"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I put his bad mood ___ to the lack of sleep.",
+        "answer": "down",
+        "distractors": [
+          "up",
+          "off",
+          "over"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She stood up ___ the bully and refused to back down.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "with",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He backed ___ of the deal at the last minute.",
+        "answer": "out",
+        "distractors": [
+          "off",
+          "down",
+          "away"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We came ___ against fierce opposition at the meeting.",
+        "answer": "up",
+        "distractors": [
+          "out",
+          "over",
+          "down"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I came down ___ a nasty case of flu last winter.",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "on",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "In the end it all comes down ___ trust between the partners.",
+        "answer": "to",
+        "distractors": [
+          "on",
+          "with",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He fell ___ with the wrong crowd at university.",
+        "answer": "in",
+        "distractors": [
+          "out",
+          "down",
+          "off"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She gave ___ to temptation and bought the dress.",
+        "answer": "in",
+        "distractors": [
+          "up",
+          "over",
+          "out"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I've decided to go through ___ the surgery after all.",
+        "answer": "with",
+        "distractors": [
+          "on",
+          "to",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You should stand up ___ your rights as an employee.",
+        "answer": "for",
+        "distractors": [
+          "to",
+          "with",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He wanted to get back ___ his rival for the insult.",
+        "answer": "at",
+        "distractors": [
+          "to",
+          "on",
+          "with"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The police cracked down ___ illegal street vending.",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "at",
+          "over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "I need to brush up ___ my French before the trip.",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "at",
+          "over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The CEO finally signed off ___ the new strategy.",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "at",
+          "over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The results fell short ___ everyone's expectations.",
+        "answer": "of",
+        "distractors": [
+          "on",
+          "from",
+          "to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Let's buckle down ___ the report; the deadline is tomorrow.",
+        "answer": "to",
+        "distractors": [
+          "on",
+          "with",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "You should read up ___ the topic before the interview.",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "at",
+          "over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Just chalk it ___ to experience and move on.",
+        "answer": "up",
+        "distractors": [
+          "off",
+          "down",
+          "over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Her calm attitude seems to rub off ___ the whole team.",
+        "answer": "on",
+        "distractors": [
+          "to",
+          "at",
+          "over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Exhausted, she finally gave way ___ tears.",
+        "answer": "to",
+        "distractors": [
+          "for",
+          "on",
+          "with"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Let's get down ___ brass tacks and discuss the figures.",
+        "answer": "to",
+        "distractors": [
+          "on",
+          "with",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The board will weigh in ___ the merger next week.",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "at",
+          "over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "They set out ___ a long journey across the desert.",
+        "answer": "on",
+        "distractors": [
+          "for",
+          "to",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Rising costs have bumped up ___ our budget ceiling.",
+        "answer": "against",
+        "distractors": [
+          "into",
+          "onto",
+          "upon"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The government promised to clamp down ___ tax evasion.",
+        "answer": "on",
+        "distractors": [
+          "of",
+          "at",
+          "over"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It took him a while to cotton on ___ the joke.",
+        "answer": "to",
+        "distractors": [
+          "at",
+          "for",
+          "with"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Let's touch base ___ the client before the launch.",
+        "answer": "with",
+        "distractors": [
+          "to",
+          "on",
+          "at"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "three-word-phrasal-verbs-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Three-word phrasal verbs are fixed verb + particle + preposition chunks; '{answer}' is the element this idiom requires, and a different word would change or break the meaning.",
+          "ru": "Трёхсловные phrasal verbs — фиксированные чанки глагол + частица + предлог; '{answer}' — именно тот элемент, которого требует эта идиома, а другое слово изменило бы или разрушило смысл."
+        }
+      }
+    ]
   }
 };
