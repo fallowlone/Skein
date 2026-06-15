@@ -186,3 +186,8 @@ export type SpeechReview = {
   scoreBand: "A2" | "B1" | "B2" | "C1";
   practiceNext: string[];
 };
+
+export type {
+  Cefr, GrammarFamily, ExerciseType, GrammarLesson, GrammarTopic,
+  TopicGenSpec, Pool, Template, Register,
+} from "./grammar-types";
