@@ -650,7 +650,7 @@ export const topic: GrammarTopic = {
         "cefr": "B2"
       },
       {
-        "stem": "___ given that the budget is tight, the plan is ambitious.",
+        "stem": "___ the budget is tight, the plan is ambitious.",
         "answer": "Given that",
         "distractors": [
           "Unless",
