@@ -112,17 +112,18 @@ export function twoBoxScene(left: string, right: string): Layer[] {
     ks: { o: { a: 1, k: [{ t: 6, s: [0] }, { t: 16, s: [100] }] }, p: st([W / 2, H / 2, 0]), a: st([0, 0, 0]), s: st([100, 100, 100]), r: st(0) },
     shapes: [group(rect(3, 200, 1, COLOR.line))],
   };
+  const revL = reveal(8), revR = reveal(16);
   return [
     textLayer(left, W / 2 - 180, H / 2, 12, 30, COLOR.accent),
     textLayer(right, W / 2 + 180, H / 2, 20, 30, COLOR.warn),
     {
       ty: 4, nm: "boxL", ip: 0, op: OP, st: 0,
-      ks: { ...reveal(8), p: st([W / 2 - 180, H / 2, 0]), a: st([0, 0, 0]), r: st(0) } as Layer["ks"],
+      ks: { o: revL.o, p: st([W / 2 - 180, H / 2, 0]), a: st([0, 0, 0]), s: revL.s, r: st(0) },
       shapes: [group(rect(280, 150, 16, COLOR.surface))],
     },
     {
       ty: 4, nm: "boxR", ip: 0, op: OP, st: 0,
-      ks: { ...reveal(16), p: st([W / 2 + 180, H / 2, 0]), a: st([0, 0, 0]), r: st(0) } as Layer["ks"],
+      ks: { o: revR.o, p: st([W / 2 + 180, H / 2, 0]), a: st([0, 0, 0]), s: revR.s, r: st(0) },
       shapes: [group(rect(280, 150, 16, COLOR.surface))],
     },
     divider,
