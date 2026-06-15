@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { verbForm, nounPlural, adjForm } from "./morphology";
+import { verbForm, nounPlural, adjForm, negate, questionAux, possessive } from "./morphology";
 
 describe("verbForm", () => {
   it("regular + irregular present 3sg", () => {
@@ -45,5 +45,28 @@ describe("adjForm", () => {
     expect(adjForm("modern", "comparative")).toBe("more modern");
     expect(adjForm("reliable", "comparative")).toBe("more reliable");
     expect(adjForm("modern", "superlative")).toBe("most modern");
+  });
+});
+
+describe("negate", () => {
+  it("present uses don't/doesn't by subject; past uses didn't", () => {
+    expect(negate("work", "present", "She")).toBe("doesn't work");
+    expect(negate("work", "present", "They")).toBe("don't work");
+    expect(negate("go", "past", "He")).toBe("didn't go");
+  });
+});
+
+describe("questionAux", () => {
+  it("returns Do/Does/Did by tense and subject", () => {
+    expect(questionAux("present", "She")).toBe("Does");
+    expect(questionAux("present", "They")).toBe("Do");
+    expect(questionAux("past", "I")).toBe("Did");
+  });
+});
+
+describe("possessive", () => {
+  it("adds 's, or bare ' after a final s", () => {
+    expect(possessive("dog")).toBe("dog's");
+    expect(possessive("James")).toBe("James'");
   });
 });
