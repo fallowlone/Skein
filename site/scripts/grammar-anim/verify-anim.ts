@@ -54,8 +54,9 @@ async function main(): Promise<void> {
       continue;
     }
     byArchetype.set(r.archetype, (byArchetype.get(r.archetype) ?? 0) + 1);
-    const issues = structurallyValid(r.doc());
-    if (JSON.stringify(r.doc()) !== JSON.stringify(r.doc())) issues.push("non-deterministic");
+    const first = r.doc();
+    const issues = structurallyValid(first);
+    if (JSON.stringify(first) !== JSON.stringify(r.doc())) issues.push("non-deterministic");
     if (issues.length) problems.push({ id: t.id, archetype: r.archetype, issues });
   }
 

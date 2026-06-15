@@ -40,7 +40,7 @@ export function GrammarAnimation({ doc, reducedMotion, label = "Grammar animatio
       });
       // Reduced motion: hold the final frame instead of animating/looping.
       if (reduced && anim) {
-        anim.addEventListener("DOMLoaded", () => anim && anim.goToAndStop(doc.op, true));
+        anim.addEventListener("DOMLoaded", () => { if (!cancelled && anim) anim.goToAndStop(doc.op, true); });
       }
     });
 
