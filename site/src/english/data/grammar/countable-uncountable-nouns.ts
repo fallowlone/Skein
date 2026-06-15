@@ -25,7 +25,10 @@ export const topic: GrammarTopic = {
     "egp.b1.nouns-determiners.quantifiers-much-many-a-few",
     "egp.b2.nouns-determiners.uncountable-nouns-partitives",
     "egp.c1.nouns-determiners.complex-quantifiers-and-partitives",
-    "egp.c2.nouns-determiners.complex-quantifier-scope"
+    "egp.c2.nouns-determiners.complex-quantifier-scope",
+    "egp.a1.nouns-determiners.much-many-a-lot-of",
+    "egp.a2.nouns-determiners.every-all-determiners",
+    "egp.b2.nouns-determiners.quantifiers-most-few-several"
   ],
   "archetype": "contrast-pair",
   "lessons": {
