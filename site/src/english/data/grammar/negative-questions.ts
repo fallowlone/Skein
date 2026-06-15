@@ -17,7 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "questions",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.questions-negation.negation-be",
+    "egp.a1.questions-negation.negation-dont-doesnt",
+    "egp.c1.questions-negation.rhetorical-and-tag-nuance",
+    "egp.c2.questions-negation.rhetorical-and-echo-questions"
   ],
   "archetype": "transformation",
   "lessons": {

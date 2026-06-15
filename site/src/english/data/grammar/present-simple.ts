@@ -20,7 +20,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "tenses",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.tenses-aspect.present-simple-habits",
+    "egp.a1.tenses-aspect.present-simple-third-person-s",
+    "egp.a1.questions-negation.negation-dont-doesnt",
+    "egp.a2.tenses-aspect.present-simple-frequency",
+    "egp.b1.conditionals.if-clauses-with-when-unless"
   ],
   "archetype": "timeline",
   "lessons": {

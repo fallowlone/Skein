@@ -17,7 +17,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "articles",
   "egp": [
-    "EGP:proper-nouns-the"
+    "egp.b1.nouns-determiners.articles-general-vs-specific",
+    "egp.c1.nouns-determiners.article-use-with-abstract-and-generic-nouns",
+    "egp.c2.nouns-determiners.article-use-with-abstractions"
   ],
   "archetype": "map",
   "lessons": {

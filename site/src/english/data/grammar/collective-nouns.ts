@@ -17,7 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "nouns",
   "egp": [
-    "EGP:can-use-collective-nouns-with-singular-or-plural-verbs"
+    "egp.c1.pronouns.antecedent-clarity-in-complex-text",
+    "egp.c1.nouns-determiners.complex-quantifiers-and-partitives",
+    "egp.c2.pronouns.anaphora-across-discourse",
+    "egp.c2.nouns-determiners.complex-quantifier-scope"
   ],
   "archetype": "contrast-pair",
   "lessons": {

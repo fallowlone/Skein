@@ -19,7 +19,13 @@ export const topic: GrammarTopic = {
   ],
   "family": "adjectives",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.adjectives-adverbs.comparative-adjectives",
+    "egp.a2.adjectives-adverbs.as-as-comparisons",
+    "egp.b1.adjectives-adverbs.comparatives-and-superlatives",
+    "egp.b1.adjectives-adverbs.as-as-comparisons",
+    "egp.b2.adjectives-adverbs.modifying-comparatives",
+    "egp.c1.adjectives-adverbs.complex-comparative-structures",
+    "egp.c2.adjectives-adverbs.marked-comparative-structures"
   ],
   "archetype": "comparison",
   "lessons": {

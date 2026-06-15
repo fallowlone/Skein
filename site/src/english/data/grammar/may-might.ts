@@ -18,11 +18,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "modals",
   "egp": [
-    "EGP:A2:MODALITY:may for possibility",
-    "EGP:A2:MODALITY:may for polite permission requests",
-    "EGP:B1:MODALITY:might for present/future possibility",
-    "EGP:B2:MODALITY:may/might + have + past participle for past possibility",
-    "EGP:C1:MODALITY:may/might in concessive and hedging structures"
+    "egp.a2.modality.may-might-possibility",
+    "egp.b1.modality.might-may-could-possibility",
+    "egp.b2.modality.past-deduction-must-have",
+    "egp.b2.modality.modals-of-probability-present",
+    "egp.c1.modality.graded-epistemic-certainty",
+    "egp.c1.modality.hedging-and-tentativeness"
   ],
   "archetype": "scale",
   "lessons": {

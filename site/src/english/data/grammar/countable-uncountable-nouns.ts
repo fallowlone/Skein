@@ -19,7 +19,13 @@ export const topic: GrammarTopic = {
   ],
   "family": "nouns",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.nouns-determiners.indefinite-article-a-an",
+    "egp.a1.nouns-determiners.quantifiers-some-any",
+    "egp.a2.nouns-determiners.countable-uncountable-quantifiers",
+    "egp.b1.nouns-determiners.quantifiers-much-many-a-few",
+    "egp.b2.nouns-determiners.uncountable-nouns-partitives",
+    "egp.c1.nouns-determiners.complex-quantifiers-and-partitives",
+    "egp.c2.nouns-determiners.complex-quantifier-scope"
   ],
   "archetype": "contrast-pair",
   "lessons": {

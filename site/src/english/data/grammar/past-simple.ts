@@ -20,7 +20,13 @@ export const topic: GrammarTopic = {
   ],
   "family": "tenses",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.tenses-aspect.past-simple-regular",
+    "egp.a1.tenses-aspect.past-simple-common-irregular",
+    "egp.a1.questions-negation.past-simple-questions-negation-did",
+    "egp.a2.tenses-aspect.past-simple-regular-negatives-questions",
+    "egp.a2.tenses-aspect.used-to-past-habits",
+    "egp.b1.tenses-aspect.present-perfect-vs-past-simple",
+    "egp.b2.tenses-aspect.used-to-vs-would-past-habits"
   ],
   "archetype": "timeline",
   "lessons": {

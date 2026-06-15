@@ -18,7 +18,14 @@ export const topic: GrammarTopic = {
   ],
   "family": "modals",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.tenses-aspect.will-future-decisions-predictions",
+    "egp.a2.modality.would-like-offers-wants",
+    "egp.b1.verbs.will-spontaneous-decisions",
+    "egp.b1.verbs.going-to-plans-predictions",
+    "egp.b1.conditionals.second-conditional-hypothetical",
+    "egp.b2.conditionals.third-conditional-unreal-past",
+    "egp.b2.conditionals.mixed-conditionals",
+    "egp.b2.tenses-aspect.future-in-the-past"
   ],
   "archetype": "contrast-pair",
   "lessons": {

@@ -16,7 +16,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "passive",
   "egp": [
-    "EGP:best-effort"
+    "egp.b2.passive.passive-across-tenses",
+    "egp.b2.passive.reporting-passive-it-is-said",
+    "egp.c1.passive.reporting-passive-impersonal",
+    "egp.c1.passive.passive-for-focus-and-cohesion",
+    "egp.c2.passive.reporting-passive-distancing"
   ],
   "archetype": "transformation",
   "lessons": {

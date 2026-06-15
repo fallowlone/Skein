@@ -19,7 +19,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "pronouns",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.nouns-determiners.demonstratives-this-that",
+    "egp.b2.discourse-cohesion.reference-substitution-it-this-such",
+    "egp.c1.pronouns.summative-this-and-such",
+    "egp.c2.pronouns.anaphora-across-discourse"
   ],
   "archetype": "contrast-pair",
   "lessons": {

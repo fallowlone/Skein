@@ -18,7 +18,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "adverbs",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.adjectives-adverbs.adjective-after-be",
+    "egp.a2.adjectives-adverbs.adverbs-of-manner",
+    "egp.b1.adjectives-adverbs.ed-vs-ing-adjectives",
+    "egp.c1.adjectives-adverbs.adverb-position-for-scope-and-emphasis"
   ],
   "archetype": "contrast-pair",
   "lessons": {

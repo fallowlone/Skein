@@ -17,7 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "relative-clauses",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.clauses.defining-relative-clauses",
+    "egp.b1.clauses.relative-clauses-where-whose",
+    "egp.b2.clauses.relative-clauses-with-prepositions",
+    "egp.c2.clauses.nested-subordination-control"
   ],
   "archetype": "slot-fill",
   "lessons": {
