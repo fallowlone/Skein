@@ -149,6 +149,7 @@ export function transformScene(from: string, to: string): Layer[] {
 
 /** root forks into branches (conditionals). labels[0]=root, rest=branches. */
 export function branchScene(root: string, branches: string[]): Layer[] {
+  if (!branches.length) return chipLayer(root, W / 2, H / 2, 8, 180, COLOR.surface, COLOR.accent);
   const ys = spread(branches.length, 140, 360);
   const connectors: Layer[] = branches.map((_, i) => ({
     ty: 4, nm: `conn:${i}`, ip: 0, op: OP, st: 0,
@@ -185,8 +186,9 @@ export function swapScene(a: string, b: string): Layer[] {
 
 /** two-column mapping rows (e.g. pronoun ↔ possessive). pairs from labels/items. */
 export function mapScene(pairs: Array<[string, string]>): Layer[] {
-  const ys = spread(pairs.length, 110, 360);
-  return pairs.flatMap(([l, r], i) => [
+  const safe: Array<[string, string]> = pairs.length ? pairs : [["—", "—"]];
+  const ys = spread(safe.length, 110, 360);
+  return safe.flatMap(([l, r], i) => [
     ...chipLayer(l, W / 2 - 150, ys[i], 8 + i * 6, 180, COLOR.surface, COLOR.ink),
     ...chipLayer(r, W / 2 + 150, ys[i], 14 + i * 6, 180, COLOR.surface, COLOR.accent),
     {
