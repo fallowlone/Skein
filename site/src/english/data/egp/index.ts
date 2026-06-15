@@ -5,7 +5,10 @@
 import type { EgpEntry } from "./types";
 import { cefrIndex } from "~/english/grammar-types";
 
-const mods = import.meta.glob<{ entries: EgpEntry[] }>("./*.ts", { eager: true });
+// Exclude *.test.ts at the glob level: an eager glob IMPORTS every match (the
+// runtime filter below only drops them from the array), and importing a test file
+// pulls in `vitest`, which crashes the Astro prerender build.
+const mods = import.meta.glob<{ entries: EgpEntry[] }>(["./*.ts", "!./*.test.ts"], { eager: true });
 
 export const EGP_INVENTORY: EgpEntry[] = Object.entries(mods)
   .filter(([p]) => !/\/(index|types)\.ts$/.test(p) && !p.includes(".test."))
