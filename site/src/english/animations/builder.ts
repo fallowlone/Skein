@@ -39,7 +39,9 @@ export function textLayer(text: string, x: number, y: number, at: number, size =
   const { o } = reveal(at);
   return {
     ty: 5, nm: `label:${text}`, ip: 0, op: OP, st: 0,
-    ks: { o, p: st([x, y, 0]), a: st([0, 0, 0]), s: st([100, 100, 100]), r: st(0) },
+    // Lottie text anchors on the baseline; shift down by ~0.34·size so the cap-height
+    // center sits on the given (x, y) — i.e. (x, y) is the optical center of the line.
+    ks: { o, p: st([x, y + size * 0.34, 0]), a: st([0, 0, 0]), s: st([100, 100, 100]), r: st(0) },
     t: { d: { k: [{ t: 0, s: { s: size, f: "sans", t: text, j: 2, tr: 0, lh: size + 6, ls: 0, fc: [fc[0], fc[1], fc[2]] } } ] }, p: {}, m: { g: 1, a: st([0, 0]) }, a: [] },
   };
 }
@@ -60,7 +62,7 @@ export function chipLayer(text: string, x: number, y: number, at: number, w = 13
     ks: { o, p: st([x, y, 0]), a: st([0, 0, 0]), s, r: st(0) },
     shapes: [group(rect(w, 58, 12, fill))],
   };
-  return [textLayer(text, x, y - 9, at + 2, 26, fc), box];
+  return [textLayer(text, x, y, at + 2, 26, fc), box];
 }
 
 // ---- scene primitives (return layers top→bottom; caller appends bg) --------
@@ -174,8 +176,8 @@ export function swapScene(a: string, b: string): Layer[] {
     return [box];
   };
   return [
-    textLayer(a, xL, H / 2 - 9, 10, 26, COLOR.accent),
-    textLayer(b, xR, H / 2 - 9, 10, 26, COLOR.warn),
+    textLayer(a, xL, H / 2, 10, 26, COLOR.accent),
+    textLayer(b, xR, H / 2, 10, 26, COLOR.warn),
     ...mk(a, xL, xR),
     ...mk(b, xR, xL),
   ];
