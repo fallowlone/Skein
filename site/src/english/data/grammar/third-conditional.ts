@@ -345,5 +345,611 @@ export const topic: GrammarTopic = {
       "Past condition (didn't happen)",
       "Imagined past result"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "third-conditional-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Third conditional: the if-clause uses had + V3 and the main clause uses would/could/might/should have + V3; the answer is {answer}.",
+          "ru": "Third conditional: в if-части — had + V3, в главной — would/could/might/should have + V3; ответ — {answer}."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "If I had known, I ___ have called you.",
+        "answer": "would",
+        "distractors": [
+          "will",
+          "would not",
+          "had"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you had told me, I ___ have helped.",
+        "answer": "would",
+        "distractors": [
+          "will",
+          "can",
+          "am"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If we had taken a taxi, we would have ___ on time. (arrive)",
+        "answer": "arrived",
+        "distractors": [
+          "arrive",
+          "arriving",
+          "arrives"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If she had left earlier, she wouldn't have ___ the flight. (miss)",
+        "answer": "missed",
+        "distractors": [
+          "miss",
+          "missing",
+          "misses"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If he had listened, this problem wouldn't have ___. (happen)",
+        "answer": "happened",
+        "distractors": [
+          "happen",
+          "happening",
+          "happens"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If I had studied harder, I ___ have passed the exam.",
+        "answer": "would",
+        "distractors": [
+          "will",
+          "do",
+          "am"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If I had ___ the truth, I would have told you. (know)",
+        "answer": "known",
+        "distractors": [
+          "knew",
+          "knowed",
+          "know"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If they had ___ for help, someone would have come. (call)",
+        "answer": "called",
+        "distractors": [
+          "call",
+          "calling",
+          "calls"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If I ___ studied, I would have passed.",
+        "answer": "had",
+        "distractors": [
+          "would have",
+          "have",
+          "would"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you ___ asked me, I would have explained.",
+        "answer": "had",
+        "distractors": [
+          "would have",
+          "would",
+          "were"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If we had ___ the map, we wouldn't have got lost. (bring)",
+        "answer": "brought",
+        "distractors": [
+          "bringed",
+          "brung",
+          "bring"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "What would you have ___ if you had seen the accident? (do)",
+        "answer": "done",
+        "distractors": [
+          "did",
+          "do",
+          "doing"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If I had woken up earlier, I wouldn't have ___ late. (be)",
+        "answer": "been",
+        "distractors": [
+          "be",
+          "was",
+          "being"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If he had ___ the bus, he would have been on time. (catch)",
+        "answer": "caught",
+        "distractors": [
+          "catched",
+          "catch",
+          "caughted"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If they had saved money, they ___ have bought the house.",
+        "answer": "would",
+        "distractors": [
+          "will",
+          "can",
+          "do"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If I had ___ that film, I would have recommended it. (see)",
+        "answer": "seen",
+        "distractors": [
+          "saw",
+          "seed",
+          "see"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She would have ___ the prize if she had entered. (win)",
+        "answer": "won",
+        "distractors": [
+          "winned",
+          "win",
+          "winning"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If we had planned better, we wouldn't have ___ out of time. (run)",
+        "answer": "run",
+        "distractors": [
+          "ran",
+          "runned",
+          "running"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If I had ___ harder, I would have finished sooner. (work)",
+        "answer": "worked",
+        "distractors": [
+          "work",
+          "working",
+          "works"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you had warned me, I ___ have prepared.",
+        "answer": "would",
+        "distractors": [
+          "will",
+          "had",
+          "am"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "If you had told me earlier, I ___ have cancelled the meeting.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "could of",
+          "will"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We ___ have won if we had played better. (possibility, not certainty)",
+        "answer": "might",
+        "distractors": [
+          "may",
+          "must",
+          "will"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If he had tried, he ___ have won the race; he certainly had the ability.",
+        "answer": "could",
+        "distractors": [
+          "can",
+          "could of",
+          "would of"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ I realised the risk, I wouldn't have invested. (formal inversion)",
+        "answer": "Had",
+        "distractors": [
+          "If had",
+          "Have",
+          "Did"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ for her intervention, the project would have collapsed.",
+        "answer": "But",
+        "distractors": [
+          "If",
+          "Unless",
+          "Except"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If it ___ been for the delay, we would have caught the connecting flight.",
+        "answer": "hadn't",
+        "distractors": [
+          "wouldn't have",
+          "didn't",
+          "weren't"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ you had warned me, I wouldn't have known. (= if you hadn't warned me)",
+        "answer": "Unless",
+        "distractors": [
+          "If",
+          "But",
+          "Although"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If I had known, I could ___ helped you with the report.",
+        "answer": "have",
+        "distractors": [
+          "of",
+          "had",
+          "to"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ I known about the meeting, I would have come. (drop the 'if')",
+        "answer": "Had",
+        "distractors": [
+          "If",
+          "Have",
+          "Did"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If we had left earlier, we might have ___ the train. (catch)",
+        "answer": "caught",
+        "distractors": [
+          "catch",
+          "catched",
+          "catching"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I would have ___ him at once if I had recognised him. (see)",
+        "answer": "seen",
+        "distractors": [
+          "saw",
+          "seing",
+          "see"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "But for your help, I wouldn't have ___ the deadline. (meet)",
+        "answer": "met",
+        "distractors": [
+          "meet",
+          "meeted",
+          "meeting"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If they had asked, I ___ have lent them the car, though I'm not sure.",
+        "answer": "might",
+        "distractors": [
+          "must",
+          "can",
+          "will"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "If it hadn't been for Sarah, we would have ___ the game. (lose)",
+        "answer": "lost",
+        "distractors": [
+          "losed",
+          "lose",
+          "losing"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ it not been for the storm, the match would have gone ahead.",
+        "answer": "Had",
+        "distractors": [
+          "If",
+          "Have",
+          "Were"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Had the regulation been ___, the accident would not have occurred. (enforce)",
+        "answer": "enforced",
+        "distractors": [
+          "enforce",
+          "enforcing",
+          "enforces"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ___ have called; everyone expected it, but he didn't. (expectation unmet)",
+        "answer": "should",
+        "distractors": [
+          "would",
+          "could",
+          "might"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "One could argue that, had the evidence been available earlier, the outcome ___ have differed.",
+        "answer": "would",
+        "distractors": [
+          "will",
+          "had",
+          "has"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Had the committee acted sooner, the crisis could have been ___. (avert)",
+        "answer": "averted",
+        "distractors": [
+          "avert",
+          "averting",
+          "averts"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She arrived on time; ___, she would have missed the opening. (counterfactual without 'if')",
+        "answer": "otherwise",
+        "distractors": [
+          "therefore",
+          "however",
+          "meanwhile"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Had the treaty been ratified, the war ___ have been shorter, some historians claim.",
+        "answer": "might",
+        "distractors": [
+          "must",
+          "can",
+          "shall"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He ought ___ have informed the board, but the matter slipped his mind.",
+        "answer": "to",
+        "distractors": [
+          "of",
+          "have",
+          "not"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Were it not for my colleagues, the report would not have been ___. (complete)",
+        "answer": "completed",
+        "distractors": [
+          "complete",
+          "completing",
+          "completes"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ the regulation been enforced, the accident wouldn't have happened. (no 'if' before the fronted verb)",
+        "answer": "Had",
+        "distractors": [
+          "If had",
+          "If",
+          "Have had"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It is plausible that, had the experiment been repeated, similar results would have ___. (emerge)",
+        "answer": "emerged",
+        "distractors": [
+          "emerge",
+          "emerging",
+          "emerges"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We would have ___ more transparent communication throughout the process. (polite criticism; prefer)",
+        "answer": "preferred",
+        "distractors": [
+          "prefer",
+          "preferring",
+          "prefers"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Had ___ not been for her leadership, the team would have disintegrated.",
+        "answer": "it",
+        "distractors": [
+          "there",
+          "that",
+          "this"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Had Caesar ___ the Rubicon a year later, European history would have been altered. (cross)",
+        "answer": "crossed",
+        "distractors": [
+          "cross",
+          "crossing",
+          "crosses"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Had the warnings been ___, the tragedy would have been averted. (heed)",
+        "answer": "heeded",
+        "distractors": [
+          "heed",
+          "heeding",
+          "heeds"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "A different approach, and the crisis would have been ___ entirely. (avoid)",
+        "answer": "avoided",
+        "distractors": [
+          "avoid",
+          "avoiding",
+          "avoids"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "It would have been preferable ___ the matter been addressed privately. (inversion, no 'if')",
+        "answer": "had",
+        "distractors": [
+          "if",
+          "that",
+          "were"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "We would have preferred that the matter ___ been handled differently.",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "would have",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Had ___ not been included, the dispute would still have arisen. (the clause)",
+        "answer": "the clause",
+        "distractors": [
+          "clause had",
+          "had the clause",
+          "the clause had"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "A: Why didn't you tell me? B: I would ___, but you weren't there. (free-standing)",
+        "answer": "have",
+        "distractors": [
+          "of",
+          "had",
+          "do"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Had she been ___, her expertise would have proved invaluable. (consult)",
+        "answer": "consulted",
+        "distractors": [
+          "consult",
+          "consulting",
+          "consults"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Without him, we would have ___; he carried the whole team. (fail)",
+        "answer": "failed",
+        "distractors": [
+          "fail",
+          "failing",
+          "fails"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "What would have ___ a difference was earlier communication. (cleft; make)",
+        "answer": "made",
+        "distractors": [
+          "make",
+          "making",
+          "makes"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Had Dostoevsky not been exiled, his later novels might never have been ___. (write)",
+        "answer": "written",
+        "distractors": [
+          "wrote",
+          "writing",
+          "write"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };

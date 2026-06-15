@@ -397,5 +397,614 @@ export const topic: GrammarTopic = {
       "after",
       "until"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "___ the bell rings, the children run out to play.",
+        "answer": "When",
+        "distractors": [
+          "Until",
+          "During",
+          "Since"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I always brush my teeth ___ I go to bed.",
+        "answer": "before",
+        "distractors": [
+          "until",
+          "since",
+          "while"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We watched a film ___ we had finished dinner.",
+        "answer": "after",
+        "distractors": [
+          "until",
+          "while",
+          "during"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Please wait here ___ I come back.",
+        "answer": "until",
+        "distractors": [
+          "since",
+          "as soon as",
+          "after"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I read the news ___ I drink my morning coffee.",
+        "answer": "while",
+        "distractors": [
+          "until",
+          "before",
+          "since"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Call me ___ you get home, even if it's late.",
+        "answer": "as soon as",
+        "distractors": [
+          "until",
+          "during",
+          "by the time"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ I saw the dog, I stopped walking.",
+        "answer": "When",
+        "distractors": [
+          "Until",
+          "During",
+          "While"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She locked the door ___ she left the house.",
+        "answer": "before",
+        "distractors": [
+          "until",
+          "while",
+          "since"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Don't open the oven ___ the cake is ready.",
+        "answer": "until",
+        "distractors": [
+          "since",
+          "as soon as",
+          "before"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He listens to music ___ he is cooking.",
+        "answer": "while",
+        "distractors": [
+          "until",
+          "before",
+          "since"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I'll text you ___ the meeting ends.",
+        "answer": "as soon as",
+        "distractors": [
+          "until",
+          "during",
+          "since"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "___ we got off the bus, it started to rain.",
+        "answer": "After",
+        "distractors": [
+          "Until",
+          "During",
+          "Since"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I haven't seen Tom ___ he moved to Berlin last year.",
+        "answer": "since",
+        "distractors": [
+          "for",
+          "until",
+          "when"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ we arrived at the station, the train had already left.",
+        "answer": "By the time",
+        "distractors": [
+          "Since",
+          "Until",
+          "As soon as"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you press this button, the engine starts automatically.",
+        "answer": "Once",
+        "distractors": [
+          "Until",
+          "Since",
+          "During"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ I feel stressed, I go for a long walk.",
+        "answer": "Whenever",
+        "distractors": [
+          "Until",
+          "Since",
+          "By the time"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ I heard her voice on the phone, I knew something was wrong.",
+        "answer": "The moment",
+        "distractors": [
+          "Until",
+          "Since",
+          "During"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ she was studying, her cat slept on the desk.",
+        "answer": "While",
+        "distractors": [
+          "Until",
+          "Since",
+          "By the time"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ we drove past the old house, we slowed down to look.",
+        "answer": "As",
+        "distractors": [
+          "Until",
+          "Since",
+          "By the time"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We've lived in this town ___ 2015.",
+        "answer": "since",
+        "distractors": [
+          "for",
+          "when",
+          "until"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ you finish the report, send it straight to me.",
+        "answer": "Once",
+        "distractors": [
+          "Until",
+          "Since",
+          "During"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ the kettle boils, it switches off by itself.",
+        "answer": "As soon as",
+        "distractors": [
+          "Until",
+          "Since",
+          "By the time"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He's been much calmer ___ he started meditating.",
+        "answer": "since",
+        "distractors": [
+          "for",
+          "until",
+          "while"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ they had eaten, the children helped wash the dishes.",
+        "answer": "After",
+        "distractors": [
+          "Until",
+          "Since",
+          "During"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "No sooner had I sat down ___ the phone rang.",
+        "answer": "than",
+        "distractors": [
+          "when",
+          "that",
+          "then"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Hardly had she opened the door ___ the dog ran out.",
+        "answer": "when",
+        "distractors": [
+          "than",
+          "that",
+          "then"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ I was about to leave, the boss called me into his office.",
+        "answer": "Just as",
+        "distractors": [
+          "Until",
+          "Since",
+          "By the time"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ you're here, we can finally begin the meeting.",
+        "answer": "Now that",
+        "distractors": [
+          "Until",
+          "Whereas",
+          "During"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I took careful notes ___ the lecture.",
+        "answer": "during",
+        "distractors": [
+          "while",
+          "whenever",
+          "as soon as"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ Paul is quiet and reserved, his brother is loud and outgoing.",
+        "answer": "Whereas",
+        "distractors": [
+          "During",
+          "Until",
+          "As soon as"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ asked about the delay, the manager refused to comment.",
+        "answer": "When",
+        "distractors": [
+          "During",
+          "Whereas",
+          "Than"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "No sooner ___ the guests arrived than the rain began to pour.",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "did",
+          "were"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ completed, the application will be reviewed within five days.",
+        "answer": "Once",
+        "distractors": [
+          "During",
+          "Whereas",
+          "Than"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Hardly ___ we begun to eat when the fire alarm went off.",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "did",
+          "were"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "By the time you read this note, I ___ already left for the airport.",
+        "answer": "will have",
+        "distractors": [
+          "have",
+          "had",
+          "am"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ I was walking home, I found a wallet on the pavement.",
+        "answer": "While",
+        "distractors": [
+          "During",
+          "Whereas",
+          "Than"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Not ___ I read the contract did I understand the real terms.",
+        "answer": "until",
+        "distractors": [
+          "since",
+          "when",
+          "than"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Never ___ I seen such a remarkable performance before that night.",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "did",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Only ___ they had left did we start to relax.",
+        "answer": "after",
+        "distractors": [
+          "until",
+          "since",
+          "than"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Seldom ___ I encountered such raw talent in a beginner.",
+        "answer": "have",
+        "distractors": [
+          "had",
+          "did",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ she visited, the house filled with laughter and noise.",
+        "answer": "Whenever",
+        "distractors": [
+          "Until",
+          "Since",
+          "During"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ the negotiations progressed, tensions in the room slowly rose.",
+        "answer": "As",
+        "distractors": [
+          "Until",
+          "Since",
+          "Whereas"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He promised to write ___ soon as he had settled into his new flat.",
+        "answer": "as",
+        "distractors": [
+          "so",
+          "by",
+          "than"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Scarcely had the meeting started ___ the fire alarm went off.",
+        "answer": "when",
+        "distractors": [
+          "than",
+          "that",
+          "then"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Not until last week ___ I realise how serious the problem was.",
+        "answer": "did",
+        "distractors": [
+          "had",
+          "have",
+          "was"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I took notes ___ the conference, since there was a lot to remember.",
+        "answer": "during",
+        "distractors": [
+          "while",
+          "whenever",
+          "as soon as"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ she's free this afternoon, I'll ask her to join us, because she knows the topic well.",
+        "answer": "Since",
+        "distractors": [
+          "Until",
+          "During",
+          "Than"
+        ],
+        "cefr": "C1",
+        "alts": [
+          "As"
+        ]
+      },
+      {
+        "stem": "Every ___ he called, she happened to be out of the office.",
+        "answer": "time",
+        "distractors": [
+          "once",
+          "when",
+          "moment"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ receiving the letter, she immediately packed her bags and left.",
+        "answer": "Upon",
+        "distractors": [
+          "During",
+          "Whereas",
+          "Than"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Little ___ we know that this would be our last evening together.",
+        "answer": "did",
+        "distractors": [
+          "had",
+          "have",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "In the course ___ preparing the report, the analyst noticed an anomaly.",
+        "answer": "of",
+        "distractors": [
+          "for",
+          "with",
+          "to"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The ___ the opportunity arose, she seized it without hesitation.",
+        "answer": "instant",
+        "distractors": [
+          "during",
+          "until",
+          "whereas"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "No sooner had he put down the receiver ___ it rang again.",
+        "answer": "than",
+        "distractors": [
+          "when",
+          "that",
+          "then"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "By the time the jury returned, the defendant ___ been waiting for hours.",
+        "answer": "had",
+        "distractors": [
+          "has",
+          "will",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Only when all the guests ___ left did he finally speak his mind.",
+        "answer": "had",
+        "distractors": [
+          "have",
+          "did",
+          "was"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ the time of the incident, she was abroad on business.",
+        "answer": "At",
+        "distractors": [
+          "Whereas",
+          "Until",
+          "Than"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Upon ___ the news, she fainted on the spot.",
+        "answer": "hearing",
+        "distractors": [
+          "to hear",
+          "heard",
+          "hear"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "At the point ___ which the contract was signed, both parties were satisfied.",
+        "answer": "at",
+        "distractors": [
+          "of",
+          "in",
+          "on"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "adverbial-clauses-time-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "\"{answer}\" is the time connector or word-order element this clause requires; the other options mark a different time relation or break the inversion/structure.",
+          "ru": "«{answer}» — это временной союз или элемент порядка слов, которого требует данное придаточное; остальные варианты выражают другое временно́е отношение или нарушают инверсию/структуру."
+        }
+      }
+    ]
   }
 };

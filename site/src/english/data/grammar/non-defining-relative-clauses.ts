@@ -260,5 +260,603 @@ export const topic: GrammarTopic = {
       ", who / which / whose ... ,",
       "extra, removable information"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "Tokyo, ___ is the capital of Japan, has nearly 37 million people.",
+        "answer": "which",
+        "distractors": [
+          "who",
+          "that",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My boss, ___ is from Canada, called me this morning.",
+        "answer": "who",
+        "distractors": [
+          "which",
+          "that",
+          "whom"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The Nile, ___ flows through Egypt, is one of the longest rivers on Earth.",
+        "answer": "which",
+        "distractors": [
+          "who",
+          "that",
+          "where"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I met Sarah, ___ brother you already know.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "who's"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She moved to Berlin, ___ she had studied as a student.",
+        "answer": "where",
+        "distractors": [
+          "which",
+          "that",
+          "when"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Shakespeare, ___ wrote Hamlet, lived in the sixteenth century.",
+        "answer": "who",
+        "distractors": [
+          "which",
+          "that",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The novel, ___ I read last week, was absolutely brilliant.",
+        "answer": "which",
+        "distractors": [
+          "who",
+          "that",
+          "whom"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My sister, ___ lives in Paris, teaches at a primary school.",
+        "answer": "who",
+        "distractors": [
+          "which",
+          "that",
+          "whom"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Paris, ___ is famous for its museums, attracts millions of tourists.",
+        "answer": "which",
+        "distractors": [
+          "who",
+          "that",
+          "where"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My grandfather, ___ memory was extraordinary, recited whole poems.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "who's"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We visited the Louvre, ___ holds thousands of priceless works.",
+        "answer": "which",
+        "distractors": [
+          "who",
+          "that",
+          "where"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Mr. Adams, ___ I met at the conference, has just retired.",
+        "answer": "whom",
+        "distractors": [
+          "which",
+          "that",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "In 1969, ___ the first humans landed on the Moon, the world watched live.",
+        "answer": "when",
+        "distractors": [
+          "which",
+          "that",
+          "where"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Our school, ___ was built in 1890, still uses the original gates.",
+        "answer": "which",
+        "distractors": [
+          "who",
+          "that",
+          "where"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My uncle, ___ car was stolen last night, has called the police.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "who's"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Amsterdam, ___ I lived for three years, is built on canals.",
+        "answer": "where",
+        "distractors": [
+          "which",
+          "that",
+          "when"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The CEO, ___ everyone respects, announced her resignation.",
+        "answer": "whom",
+        "distractors": [
+          "which",
+          "that",
+          "whose"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Mount Everest, ___ rises over 8,800 metres, draws climbers each spring.",
+        "answer": "which",
+        "distractors": [
+          "who",
+          "that",
+          "where"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "My neighbours, ___ dog barks all night, have finally apologised.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "who's"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Dr. Lee, ___ I trust completely, recommended the new treatment.",
+        "answer": "whom",
+        "distractors": [
+          "which",
+          "that",
+          "who's"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He arrived two hours late, ___ annoyed absolutely everyone.",
+        "answer": "which",
+        "distractors": [
+          "who",
+          "that",
+          "what"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She refused the generous offer, ___ surprised the whole committee.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "who"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I have three sisters, two of ___ live abroad.",
+        "answer": "whom",
+        "distractors": [
+          "which",
+          "them",
+          "who"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "There are fifty manuscripts here, many of ___ I have already read.",
+        "answer": "which",
+        "distractors": [
+          "whom",
+          "them",
+          "that"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The students, most of ___ come from Asia, study extremely hard.",
+        "answer": "whom",
+        "distractors": [
+          "which",
+          "them",
+          "who"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "My aunt, to ___ I owe so much, has fallen seriously ill.",
+        "answer": "whom",
+        "distractors": [
+          "which",
+          "who",
+          "whose"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The theory, on ___ the whole experiment is based, is now disputed.",
+        "answer": "which",
+        "distractors": [
+          "whom",
+          "that",
+          "what"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The book, ___ by Hemingway in 1925, remains a genuine classic.",
+        "answer": "written",
+        "distractors": [
+          "which written",
+          "wrote",
+          "writing"
+        ],
+        "cefr": "C1",
+        "alts": [
+          "which was written"
+        ]
+      },
+      {
+        "stem": "Mary, ___ in the library at the time, didn't hear her phone.",
+        "answer": "studying",
+        "distractors": [
+          "which studied",
+          "studied",
+          "who study"
+        ],
+        "cefr": "C1",
+        "alts": [
+          "who was studying"
+        ]
+      },
+      {
+        "stem": "Einstein, ___ theory reshaped physics, was also a keen violinist.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "who's"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She is working on a project, the success of ___ remains uncertain.",
+        "answer": "which",
+        "distractors": [
+          "whom",
+          "that",
+          "it"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "They cancelled the entire trip, ___ was entirely understandable.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "who"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The factory, ___ over five hundred workers, is the region's largest.",
+        "answer": "employing",
+        "distractors": [
+          "which employs whom",
+          "employs",
+          "which employing"
+        ],
+        "cefr": "C1",
+        "alts": [
+          "which employs"
+        ]
+      },
+      {
+        "stem": "My colleagues, most of ___ have families, work flexible hours.",
+        "answer": "whom",
+        "distractors": [
+          "which",
+          "them",
+          "who"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He owns several paintings, the largest of ___ hangs in the hall.",
+        "answer": "which",
+        "distractors": [
+          "whom",
+          "them",
+          "that"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The author, ___ novel I adore, is coming to town next week.",
+        "answer": "whose",
+        "distractors": [
+          "who",
+          "which",
+          "who's"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "2020, ___ the pandemic began, proved to be a turning point.",
+        "answer": "when",
+        "distractors": [
+          "which",
+          "that",
+          "where"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The committee approved the plan, ___ no one had expected.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "who"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "We interviewed ten candidates, none of ___ met every requirement.",
+        "answer": "whom",
+        "distractors": [
+          "which",
+          "them",
+          "who"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The meeting was postponed again, ___ frustrated the investors.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "who"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The vote was unanimous, ___ was, frankly, unprecedented.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "who"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He refused to apologise, ___ I found rather revealing.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "whom"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Her father, a ___ of two wars, rarely spoke of his experiences.",
+        "answer": "veteran",
+        "distractors": [
+          "who veteran",
+          "which veteran",
+          "whom"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "who was a veteran"
+        ]
+      },
+      {
+        "stem": "The contract, the terms of ___ were deeply unfavourable, was rejected.",
+        "answer": "which",
+        "distractors": [
+          "whom",
+          "that",
+          "it"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The treaty, the signing of ___ took years of negotiation, reshaped trade.",
+        "answer": "which",
+        "distractors": [
+          "whom",
+          "that",
+          "it"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Her memoir, widely ___ as a masterpiece, sells in thirty languages.",
+        "answer": "regarded",
+        "distractors": [
+          "which regarded",
+          "regards",
+          "which is regarded whom"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "which is regarded"
+        ]
+      },
+      {
+        "stem": "The reform passed unanimously, ___, given the divisions, was a minor miracle.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "whom"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The novel, a ___ of its kind, is now taught at universities.",
+        "answer": "masterpiece",
+        "distractors": [
+          "which masterpiece",
+          "whom",
+          "who masterpiece"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "which is a masterpiece"
+        ]
+      },
+      {
+        "stem": "All of us, ___ were exhausted, finally went home before midnight.",
+        "answer": "who",
+        "distractors": [
+          "which",
+          "that",
+          "whom"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She, ___ had never flown before, gripped the armrest the whole flight.",
+        "answer": "who",
+        "distractors": [
+          "which",
+          "that",
+          "whom"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The proposal was quietly rejected, ___ was hardly surprising to anyone.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "who"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The minister resigned without warning, ___ the press had long predicted.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "whom"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Their flagship store, ___ in 1908, still occupies the same corner.",
+        "answer": "opened",
+        "distractors": [
+          "which opened whom",
+          "which opening",
+          "opens"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "which was opened",
+          "which opened"
+        ]
+      },
+      {
+        "stem": "The negotiations collapsed overnight, ___ left both sides bitter.",
+        "answer": "which",
+        "distractors": [
+          "that",
+          "what",
+          "who"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The professor, the breadth of ___ reading astonished us, never boasted.",
+        "answer": "whose",
+        "distractors": [
+          "which",
+          "whom",
+          "who's"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "non-defining-relative-clauses-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Non-defining clauses are fenced by commas, never use 'that', and never drop the pronoun; the correct filler is '{answer}'.",
+          "ru": "Non-defining clause выделяется запятыми, никогда не использует 'that' и не опускает местоимение; верный вариант — «{answer}»."
+        }
+      }
+    ]
   }
 };

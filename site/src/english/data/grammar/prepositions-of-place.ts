@@ -495,5 +495,544 @@ export const topic: GrammarTopic = {
       "next to",
       "between"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "The cat is ___ the box.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The book is ___ the table.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "under"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The dog is sleeping ___ the bed.",
+        "answer": "under",
+        "distractors": [
+          "on",
+          "in"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "My keys are ___ my bag.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The picture is ___ the wall.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "under"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The lamp is ___ to the sofa.",
+        "answer": "next",
+        "distractors": [
+          "under",
+          "in"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The bank is ___ the shop and the cafe.",
+        "answer": "between",
+        "distractors": [
+          "next",
+          "under"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "My shoes are ___ the chair.",
+        "answer": "under",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "There is some milk ___ the fridge.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The clock is ___ the wall above the door.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "under"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The ball rolled ___ the chair, so I can't reach it.",
+        "answer": "under",
+        "distractors": [
+          "on",
+          "next"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The garden is ___ the house, at the back.",
+        "answer": "behind",
+        "distractors": [
+          "in front of",
+          "between"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "There is a car parked ___ the shop entrance.",
+        "answer": "in front of",
+        "distractors": [
+          "behind",
+          "among"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "A plane flew ___ the city this morning.",
+        "answer": "over",
+        "distractors": [
+          "under",
+          "behind"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She is waiting for us ___ the bus stop.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "behind"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He felt nervous standing ___ a crowd of strangers.",
+        "answer": "among",
+        "distractors": [
+          "between",
+          "behind"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We took our seats ___ the bus and waited.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I left my umbrella ___ the car this morning.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Please wait for me ___ the entrance.",
+        "answer": "at",
+        "distractors": [
+          "behind",
+          "over"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The cat is hiding ___ the sofa where we can't see it.",
+        "answer": "behind",
+        "distractors": [
+          "in front of",
+          "over"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The kids are playing ___ school until five o'clock.",
+        "answer": "at",
+        "distractors": [
+          "on",
+          "behind"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "A heavy fog hung ___ the harbour all day.",
+        "answer": "over",
+        "distractors": [
+          "under",
+          "among"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She lives ___ a small village in France.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We arrived ___ the airport just before six.",
+        "answer": "at",
+        "distractors": [
+          "to",
+          "in"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The pharmacy is ___ the bank, just across the road.",
+        "answer": "opposite",
+        "distractors": [
+          "beside",
+          "among"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The boy jumped ___ the swimming pool with a splash.",
+        "answer": "into",
+        "distractors": [
+          "onto",
+          "off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I finally met her ___ the conference last week.",
+        "answer": "at",
+        "distractors": [
+          "to",
+          "onto"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Their office is ___ Oxford Street, near the station.",
+        "answer": "on",
+        "distractors": [
+          "at",
+          "into"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The train doesn't arrive ___ London until midnight.",
+        "answer": "in",
+        "distractors": [
+          "to",
+          "onto"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Come and sit ___ me; there's plenty of room here.",
+        "answer": "beside",
+        "distractors": [
+          "besides",
+          "opposite"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She works ___ Germany now, for a software firm.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "to"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He poured the water ___ the glass without spilling a drop.",
+        "answer": "into",
+        "distractors": [
+          "onto",
+          "off"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He has been ___ a strict diet for three weeks.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The two neighbouring countries have been ___ war for years.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "When she heard the news, she was ___ herself with joy.",
+        "answer": "beside",
+        "distractors": [
+          "besides",
+          "among"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "After losing his keys, he was clearly ___ trouble.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "Put the heavy box ___ top of the cupboard, not the shelf.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "It's freezing, so please stay ___ where it's warm.",
+        "answer": "inside",
+        "distractors": [
+          "outside",
+          "off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He suddenly ran ___ of the building shouting.",
+        "answer": "out",
+        "distractors": [
+          "outside",
+          "off"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The whole factory went ___ strike on Monday.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The drivers are ___ risk every time the brakes fail.",
+        "answer": "at",
+        "distractors": [
+          "on",
+          "in"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The new policy is still ___ discussion by the board.",
+        "answer": "under",
+        "distractors": [
+          "on",
+          "into"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "News of the scandal spread ___ the country within hours.",
+        "answer": "throughout",
+        "distractors": [
+          "among",
+          "beside"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ the guests was a famous war correspondent.",
+        "answer": "Among",
+        "distractors": [
+          "Between",
+          "Throughout"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Their cottage sits just ___ the main road, hidden by trees.",
+        "answer": "off",
+        "distractors": [
+          "out",
+          "beside"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The minister is ___ pressure to resign before Friday.",
+        "answer": "under",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "A thick cloud passed ___ the valley, blocking the sun.",
+        "answer": "over",
+        "distractors": [
+          "above",
+          "throughout"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The firm has been ___ investigation for tax fraud.",
+        "answer": "under",
+        "distractors": [
+          "on",
+          "into"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Tension grew ___ the protesters as night fell.",
+        "answer": "amid",
+        "distractors": [
+          "beside",
+          "throughout"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The merger proposal remains ___ review by the committee.",
+        "answer": "under",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ the hills stretched an endless, silent plain.",
+        "answer": "Beyond",
+        "distractors": [
+          "Among",
+          "Throughout"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The reform passed ___ the teeth of fierce opposition.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "under"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "His remarks were widely seen as ___ the pale of polite debate.",
+        "answer": "beyond",
+        "distractors": [
+          "outside",
+          "off"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She stayed remarkably composed ___ the heart of the crisis.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The contract obligations set forth ___ are legally binding.",
+        "answer": "herein",
+        "distractors": [
+          "hereon",
+          "whereon"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The proposal works ___ principle but fails in practice.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Skilled translators are very much ___ demand right now.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "prepositions-of-place-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "\"{answer}\" is the preposition the context requires; the other options are plausible but wrong here.",
+          "ru": "\"{answer}\" — предлог, которого требует контекст; остальные варианты правдоподобны, но здесь неверны."
+        }
+      }
+    ]
   }
 };

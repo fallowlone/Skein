@@ -361,5 +361,611 @@ export const topic: GrammarTopic = {
       "complement",
       "(to-inf / that-clause)"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "templates": [
+      {
+        "id": "it-as-subject-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "B1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "English needs an overt subject, so the empty/dummy subject 'it' fills the slot for weather, time, distance, evaluation, extraposed clauses, clefts and reporting frames — here the correct filler is '{answer}'.",
+          "ru": "В английском подлежащее обязательно, поэтому в безличных конструкциях (погода, время, расстояние, оценка, вынесенное придаточное, выделение, пассивное сообщение) пустое подлежащее 'it' заполняет слот — здесь правильно '{answer}'."
+        }
+      }
+    ],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "___ is raining hard, so take an umbrella.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ was very cold this morning.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "What time is the train? ___'s almost nine o'clock.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___'s Monday again, and the office is full of emails.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "How far is the airport? ___'s about twenty miles from here.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Turn on the light, please. ___'s getting dark in here.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___'s snowing outside, so the kids are excited.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Someone knocked. Who is ___? — Just the postman.",
+        "answer": "it",
+        "distractors": [
+          "there",
+          "this",
+          "that"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ is important to drink enough water every day.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ is easy to make a mistake when you are tired.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ was very kind of you to help me move.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ is a pleasure to meet you at last.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ seems that she has already left the building.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ turns out he was right about the schedule all along.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ is difficult to learn a language without practice.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Don't worry about the noise; ___'s only the wind.",
+        "answer": "it",
+        "distractors": [
+          "there",
+          "this",
+          "that"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ is a fact that the meeting was cancelled.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___'s my duty to inform you of the changes.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ appears that we took the wrong turning earlier.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ is obvious that he hasn't read the report.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ doesn't matter if you arrive a little late.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ remains unclear whether the deal will go ahead.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ is essential that every member be present at the vote.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___'s no use arguing with him once he has decided.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___'s worth checking the figures before you submit them.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ takes patience to teach a child to read.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ is true that history often repeats itself.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ is crucial that we act quickly on this warning.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ is strange that nobody noticed the error sooner.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ is necessary that all forms be signed in advance.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ seems to me that we are missing the point entirely.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ is clear that the budget will not stretch that far.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ is said that the old mill is haunted.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ is believed that the manuscript dates from the 12th century.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ is reported that talks between the two sides have collapsed.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ has been five years since I last visited my home town.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ is two years since the factory closed down.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ takes considerable skill to restore a painting like this.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ must have been hard for her to admit the truth.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___'s high time we left, or we'll miss the last bus.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___'s about time he apologized for the delay.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ was in 1995 that the company was founded.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ is through education that most societies progress.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ is a shame that the concert was rained off.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ was John, of all people, who finally objected.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ occurred to me that I had forgotten my keys.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ is widely known that the river floods every spring.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ is often argued that technology has shortened our attention spans.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ should be noted that the data covers only one region.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ goes without saying that the deadline is non-negotiable.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ must be borne in mind that the figures are provisional.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ remains to be seen whether the reforms will succeed.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ is hereby agreed that both parties shall share the costs.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ dawned on her that she had been deceived all along.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ is generally accepted that the experiment was flawed.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ struck me, as I read on, that the author was being ironic.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ is not what you say but how you say it that counts.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ is a truth universally acknowledged that good manners open doors.",
+        "answer": "It",
+        "distractors": [
+          "There",
+          "This",
+          "That"
+        ],
+        "cefr": "C2"
+      }
+    ]
   }
 };
