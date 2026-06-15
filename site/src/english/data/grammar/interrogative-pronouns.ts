@@ -19,7 +19,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "questions",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.questions-negation.wh-questions-basic",
+    "egp.a2.questions-negation.wh-questions-past-and-present",
+    "egp.b1.questions-negation.subject-vs-object-questions",
+    "egp.b1.questions-negation.indirect-questions"
   ],
   "archetype": "slot-fill",
   "lessons": {

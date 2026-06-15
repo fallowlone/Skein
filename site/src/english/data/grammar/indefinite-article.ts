@@ -20,11 +20,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "articles",
   "egp": [
-    "EGP:A1.articles.a-an",
-    "EGP:A1.articles.jobs",
-    "EGP:A2.articles.first-mention",
-    "EGP:B1.articles.fixed-expressions",
-    "EGP:B2.articles.generalisation"
+    "egp.a1.nouns-determiners.indefinite-article-a-an",
+    "egp.a2.nouns-determiners.definite-article-known-things",
+    "egp.b1.nouns-determiners.articles-general-vs-specific",
+    "egp.b2.nouns-determiners.articles-abstract-generic",
+    "egp.c1.nouns-determiners.article-use-with-abstract-and-generic-nouns",
+    "egp.c2.nouns-determiners.article-use-with-abstractions"
   ],
   "archetype": "branch",
   "lessons": {

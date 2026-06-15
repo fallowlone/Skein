@@ -16,9 +16,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "conjunctions",
   "egp": [
-    "EGP:so-such-that-result",
-    "EGP:too-enough-result",
-    "EGP:result-discourse-markers"
+    "egp.b1.clauses.so-that-such-that-result",
+    "egp.b1.adjectives-adverbs.too-and-enough",
+    "egp.b2.clauses.purpose-result-clauses"
   ],
   "archetype": "scale",
   "lessons": {

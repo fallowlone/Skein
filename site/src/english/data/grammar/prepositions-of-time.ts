@@ -19,7 +19,8 @@ export const topic: GrammarTopic = {
   ],
   "family": "prepositions",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.prepositions.time-in-on-at",
+    "egp.a2.prepositions.time-prepositions"
   ],
   "archetype": "timeline",
   "lessons": {

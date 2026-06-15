@@ -16,7 +16,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "relative-clauses",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.clauses.that-clauses-after-think-know",
+    "egp.b1.clauses.reported-questions",
+    "egp.b1.questions-negation.indirect-questions",
+    "egp.c1.clauses.nominal-that-and-wh-clauses-as-arguments",
+    "egp.c2.clauses.subjunctive-and-mandative-clauses",
+    "egp.c2.clauses.fronted-and-nominal-relatives"
   ],
   "archetype": "slot-fill",
   "lessons": {

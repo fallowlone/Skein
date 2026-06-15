@@ -17,7 +17,13 @@ export const topic: GrammarTopic = {
   ],
   "family": "conditionals",
   "egp": [
-    "EGP:can-use-third-conditional-to-talk-about-impossible-past-situations-and-their-results"
+    "egp.b2.conditionals.third-conditional-unreal-past",
+    "egp.b2.conditionals.mixed-conditionals",
+    "egp.b2.conditionals.wish-if-only-regret",
+    "egp.c1.conditionals.mixed-conditionals",
+    "egp.c1.conditionals.inverted-conditionals-no-if",
+    "egp.c1.modality.modal-perfects-speculation-past",
+    "egp.c2.conditionals.inverted-conditionals-formal"
   ],
   "archetype": "branch",
   "lessons": {

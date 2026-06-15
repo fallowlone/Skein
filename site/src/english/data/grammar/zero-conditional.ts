@@ -18,7 +18,13 @@ export const topic: GrammarTopic = {
   ],
   "family": "conditionals",
   "egp": [
-    "EGP:can-express-general-truths-with-if-present-simple-present-simple"
+    "egp.a2.conditionals.zero-conditional-facts",
+    "egp.b1.conditionals.zero-conditional-general-truths",
+    "egp.b1.conditionals.if-clauses-with-when-unless",
+    "egp.b2.conditionals.alternatives-to-if",
+    "egp.c1.conditionals.alternative-conditional-conjunctions",
+    "egp.c1.conditionals.inverted-conditionals-no-if",
+    "egp.c2.conditionals.inverted-conditionals-formal"
   ],
   "archetype": "branch",
   "lessons": {

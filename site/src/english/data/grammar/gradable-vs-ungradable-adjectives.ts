@@ -17,7 +17,14 @@ export const topic: GrammarTopic = {
   ],
   "family": "adjectives",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.adjectives-adverbs.adverbs-of-degree",
+    "egp.b2.adjectives-adverbs.intensifiers-gradable-non-gradable",
+    "egp.c1.adjectives-adverbs.gradable-vs-non-gradable-intensifiers",
+    "egp.c1.adjectives-adverbs.adverb-position-for-scope-and-emphasis",
+    "egp.c1.modality.hedging-and-tentativeness",
+    "egp.c2.adjectives-adverbs.gradable-vs-ungradable-intensification",
+    "egp.c2.adjectives-adverbs.comment-and-viewpoint-adverbials",
+    "egp.c2.modality.modal-hedging-academic-register"
   ],
   "archetype": "scale",
   "lessons": {

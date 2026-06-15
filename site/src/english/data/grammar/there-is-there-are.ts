@@ -19,7 +19,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "word-order",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.verbs.there-is-there-are",
+    "egp.a2.verbs.there-was-there-were",
+    "egp.c1.conditionals.inverted-conditionals-no-if",
+    "egp.c2.passive.reporting-passive-distancing"
   ],
   "archetype": "slot-fill",
   "lessons": {

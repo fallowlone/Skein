@@ -16,7 +16,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "phrasal-verbs",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.verbs.phrasal-verbs-common",
+    "egp.b2.verbs.phrasal-verbs-separable-transitive",
+    "egp.c2.verbs.phrasal-verb-register-control"
   ],
   "archetype": "slot-fill",
   "lessons": {

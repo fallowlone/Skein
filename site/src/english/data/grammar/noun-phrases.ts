@@ -17,7 +17,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "nouns",
   "egp": [
-    "EGP:best-effort"
+    "egp.b2.adjectives-adverbs.adjective-order-multiple",
+    "egp.b2.clauses.participle-clauses-reduced",
+    "egp.c1.nouns-determiners.complex-noun-phrase-premodification",
+    "egp.c2.nouns-determiners.premodified-noun-phrase-stacking",
+    "egp.c2.word-order.end-weight-and-extraposition"
   ],
   "archetype": "slot-fill",
   "lessons": {

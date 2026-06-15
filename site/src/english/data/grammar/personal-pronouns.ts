@@ -20,8 +20,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "pronouns",
   "egp": [
-    "EGP:A1.PRONOUNS.subject",
-    "EGP:A1.PRONOUNS.object"
+    "egp.a1.pronouns.subject-pronouns",
+    "egp.a1.pronouns.object-pronouns",
+    "egp.a1.pronouns.it-as-empty-subject",
+    "egp.a2.pronouns.object-pronouns",
+    "egp.b2.pronouns.reflexive-emphatic-pronouns",
+    "egp.c2.pronouns.indefinite-one-and-generic-reference"
   ],
   "archetype": "swap",
   "lessons": {

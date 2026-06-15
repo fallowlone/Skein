@@ -18,7 +18,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "modals",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.modality.should-advice",
+    "egp.b1.modality.should-ought-to-advice",
+    "egp.b2.modality.should-have-criticism-regret",
+    "egp.c1.conditionals.inverted-conditionals-no-if",
+    "egp.c2.clauses.subjunctive-and-mandative-clauses",
+    "egp.c2.modality.perfect-modals-retrospective-judgement"
   ],
   "archetype": "contrast-pair",
   "lessons": {

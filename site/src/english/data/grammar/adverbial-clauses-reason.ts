@@ -18,7 +18,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "conjunctions",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.clauses.reason-clauses-because",
+    "egp.b1.clauses.reason-clauses-because-since-as",
+    "egp.b2.clauses.participle-clauses-reduced",
+    "egp.b2.discourse-cohesion.linkers-cause-result-therefore",
+    "egp.c2.prepositions.complex-and-formal-prepositions"
   ],
   "archetype": "branch",
   "lessons": {

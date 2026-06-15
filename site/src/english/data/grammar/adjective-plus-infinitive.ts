@@ -17,10 +17,8 @@ export const topic: GrammarTopic = {
   ],
   "family": "verb-patterns",
   "egp": [
-    "EGP:B1 can use a range of adjectives followed by 'to' + infinitive",
-    "EGP:B2 can use 'It + be + adjective + (for/of + object) + to' + infinitive",
-    "EGP:C1 can use adjectives with 'to' + infinitive in tough-movement and with perfect infinitives",
-    "EGP:C2 can use a wide range of formal and evaluative adjective + infinitive frames"
+    "egp.b1.adjectives-adverbs.too-and-enough",
+    "egp.b2.adjectives-adverbs.adjectives-with-prepositions"
   ],
   "archetype": "slot-fill",
   "lessons": {

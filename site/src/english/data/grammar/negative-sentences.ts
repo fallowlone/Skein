@@ -19,10 +19,14 @@ export const topic: GrammarTopic = {
   ],
   "family": "word-order",
   "egp": [
-    "EGP:A1.negation.do-does-not",
-    "EGP:A2.negation.did-not",
-    "EGP:B1.negation.adverbs",
-    "EGP:C1.negation.inversion"
+    "egp.a1.questions-negation.negation-dont-doesnt",
+    "egp.a1.questions-negation.past-simple-questions-negation-did",
+    "egp.a2.questions-negation.negation-didnt-doesnt",
+    "egp.b2.questions-negation.negative-affixes-prefixes",
+    "egp.c1.questions-negation.negation-scope-and-transferred-negation",
+    "egp.c1.questions-negation.negative-and-restrictive-adverbs",
+    "egp.c2.questions-negation.scope-of-negation-control",
+    "egp.c2.questions-negation.negative-and-broad-scope-adverbials"
   ],
   "archetype": "transformation",
   "lessons": {

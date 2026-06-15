@@ -16,7 +16,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "relative-clauses",
   "egp": [
-    "EGP:best-effort"
+    "egp.b2.clauses.participle-clauses-reduced",
+    "egp.c1.clauses.participle-clauses-for-economy",
+    "egp.c2.clauses.reduced-and-verbless-clauses"
   ],
   "archetype": "transformation",
   "lessons": {

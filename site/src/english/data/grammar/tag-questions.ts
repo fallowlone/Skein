@@ -18,11 +18,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "questions",
   "egp": [
-    "EGP:A2:tag-questions-be-do",
-    "EGP:B1:tag-questions-modals-imperatives",
-    "EGP:B2:invariant-and-same-polarity-tags",
-    "EGP:C1:pragmatic-functions",
-    "EGP:C2:register-and-dialect-variation"
+    "egp.a2.questions-negation.question-tags-basic",
+    "egp.b1.questions-negation.question-tags",
+    "egp.b2.questions-negation.question-tags-nuance",
+    "egp.c1.questions-negation.rhetorical-and-tag-nuance",
+    "egp.c2.questions-negation.rhetorical-and-echo-questions"
   ],
   "archetype": "contrast-pair",
   "lessons": {

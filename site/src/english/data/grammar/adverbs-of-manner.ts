@@ -19,7 +19,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "adverbs",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.adjectives-adverbs.adverbs-of-manner",
+    "egp.a2.word-order.manner-place-time-order",
+    "egp.b1.word-order.adverb-position-frequency-manner",
+    "egp.c1.adjectives-adverbs.adverb-position-for-scope-and-emphasis",
+    "egp.c2.adjectives-adverbs.adverb-position-for-scope-and-focus"
   ],
   "archetype": "slot-fill",
   "lessons": {

@@ -17,7 +17,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "relative-clauses",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.clauses.defining-relative-clauses-who-which-that",
+    "egp.b1.clauses.defining-relative-clauses",
+    "egp.b1.clauses.relative-clauses-where-whose",
+    "egp.b2.clauses.non-defining-relative-clauses",
+    "egp.b2.clauses.relative-clauses-with-prepositions",
+    "egp.b2.pronouns.relative-pronoun-whose-which-clause"
   ],
   "archetype": "slot-fill",
   "lessons": {

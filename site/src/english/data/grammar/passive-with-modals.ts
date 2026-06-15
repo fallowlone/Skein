@@ -16,8 +16,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "passive",
   "egp": [
-    "EGP:can/could/may/might/must/should/have to + be + past participle",
-    "EGP:modal + have been + past participle"
+    "egp.b2.passive.passive-with-modals",
+    "egp.c2.passive.passive-with-causative-and-modal",
+    "egp.c2.clauses.subjunctive-and-mandative-clauses",
+    "egp.c2.modality.perfect-modals-retrospective-judgement"
   ],
   "archetype": "slot-fill",
   "lessons": {

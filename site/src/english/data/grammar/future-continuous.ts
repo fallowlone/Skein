@@ -16,8 +16,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "tenses",
   "egp": [
-    "EGP:Can use 'will be' + '-ing' to talk about actions in progress at a definite time in the future.",
-    "EGP:Can use the future continuous to make polite enquiries about plans ('Will you be needing anything else?')."
+    "egp.b2.tenses-aspect.future-continuous",
+    "egp.c1.tenses-aspect.future-perfect-and-continuous",
+    "egp.c2.tenses-aspect.aspect-for-stance-and-distance"
   ],
   "archetype": "timeline",
   "lessons": {

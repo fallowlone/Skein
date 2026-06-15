@@ -19,7 +19,14 @@ export const topic: GrammarTopic = {
   ],
   "family": "word-order",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.word-order.subject-verb-object",
+    "egp.a1.word-order.adverb-of-frequency-position",
+    "egp.a2.word-order.adverb-frequency-position",
+    "egp.a2.word-order.manner-place-time-order",
+    "egp.b1.word-order.adverb-position-frequency-manner",
+    "egp.b2.word-order.inversion-after-negative-adverbials",
+    "egp.b2.word-order.fronting-for-emphasis",
+    "egp.c1.word-order.inversion-after-negative-adverbials"
   ],
   "archetype": "slot-fill",
   "lessons": {

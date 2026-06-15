@@ -16,7 +16,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "word-order",
   "egp": [
-    "EGP:best-effort"
+    "egp.b2.word-order.inversion-after-negative-adverbials",
+    "egp.c1.word-order.inversion-after-negative-adverbials",
+    "egp.c1.conditionals.inverted-conditionals-no-if",
+    "egp.c2.word-order.inversion-after-negative-adverbials",
+    "egp.c2.word-order.inversion-after-fronted-adjuncts",
+    "egp.c2.conditionals.inverted-conditionals-formal"
   ],
   "archetype": "swap",
   "lessons": {

@@ -18,7 +18,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "verb-patterns",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.verbs.verb-plus-gerund-or-infinitive",
+    "egp.a2.verbs.infinitive-of-purpose",
+    "egp.b1.verbs.gerund-vs-infinitive-after-verbs",
+    "egp.b1.verbs.verb-plus-object-plus-infinitive",
+    "egp.b1.verbs.infinitive-of-purpose",
+    "egp.b2.verbs.verb-object-infinitive-patterns"
   ],
   "archetype": "slot-fill",
   "lessons": {

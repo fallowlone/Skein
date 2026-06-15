@@ -18,7 +18,7 @@ export const topic: GrammarTopic = {
   ],
   "family": "pronouns",
   "egp": [
-    "EGP:best-effort"
+    "egp.c1.pronouns.indefinite-and-reciprocal-fine-distinctions"
   ],
   "archetype": "swap",
   "lessons": {

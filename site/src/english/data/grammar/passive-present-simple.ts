@@ -17,8 +17,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "passive",
   "egp": [
-    "EGP:can-form-the-present-simple-passive",
-    "EGP:can-use-the-passive-to-focus-on-the-action-or-when-the-agent-is-unknown-or-unimportant"
+    "egp.b1.passive.present-simple-passive",
+    "egp.b1.passive.passive-with-by-agent",
+    "egp.b2.passive.reporting-passive-it-is-said",
+    "egp.c1.passive.reporting-passive-impersonal",
+    "egp.c1.passive.passive-for-focus-and-cohesion",
+    "egp.c2.passive.agentless-passive-for-focus"
   ],
   "archetype": "transformation",
   "lessons": {

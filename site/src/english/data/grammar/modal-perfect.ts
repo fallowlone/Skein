@@ -16,9 +16,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "modals",
   "egp": [
-    "EGP:modals-perfect-deduction-past",
-    "EGP:should-have-past-criticism",
-    "EGP:must-have-past-certainty"
+    "egp.b2.modality.past-deduction-must-have",
+    "egp.b2.modality.should-have-criticism-regret",
+    "egp.b2.modality.needn-t-have-vs-didn-t-need-to",
+    "egp.c1.modality.modal-perfects-speculation-past",
+    "egp.c2.modality.perfect-modals-retrospective-judgement"
   ],
   "archetype": "scale",
   "lessons": {

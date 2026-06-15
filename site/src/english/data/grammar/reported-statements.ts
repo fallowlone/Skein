@@ -17,12 +17,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "reported-speech",
   "egp": [
-    "EGP:B1 Can report statements using a limited range of reporting verbs (say, tell) with that-clauses.",
-    "EGP:B1 Can backshift present and future tenses into the past in reported statements.",
-    "EGP:B2 Can use a wider range of reporting verbs (admit, deny, claim, mention, explain) with appropriate structures.",
-    "EGP:B2 Can choose whether to backshift depending on whether the reported fact is still true.",
-    "EGP:C1 Can select stance reporting verbs (allege, maintain, assert, concede) to signal the writer's distance from a claim.",
-    "EGP:C2 Can use passive reporting constructions (is said to / is reported to + infinitive) and adverbs (allegedly, reportedly) for evidential distance."
+    "egp.b1.clauses.reported-statements-backshift",
+    "egp.b2.clauses.reported-speech-backshift",
+    "egp.b2.clauses.reporting-verbs-with-patterns",
+    "egp.b2.passive.reporting-passive-it-is-said",
+    "egp.c1.passive.reporting-passive-impersonal"
   ],
   "archetype": "transformation",
   "lessons": {

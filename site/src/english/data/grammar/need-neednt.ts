@@ -17,7 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "modals",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.modality.have-to-obligation",
+    "egp.b2.modality.needn-t-have-vs-didn-t-need-to",
+    "egp.c1.modality.semi-modals-and-marginal-modals",
+    "egp.c2.modality.semi-modals-and-marginal-modals"
   ],
   "archetype": "contrast-pair",
   "lessons": {

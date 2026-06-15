@@ -19,9 +19,8 @@ export const topic: GrammarTopic = {
   ],
   "family": "prepositions",
   "egp": [
-    "EGP:A1.PREP.location-in-on-under",
-    "EGP:A2.PREP.behind-in-front-of-above-below",
-    "EGP:B1.PREP.at-vs-in-vs-on-contrast"
+    "egp.a1.prepositions.place-in-on-at",
+    "egp.a2.prepositions.place-and-movement-prepositions"
   ],
   "archetype": "map",
   "lessons": {

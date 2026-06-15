@@ -18,7 +18,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "pronouns",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.pronouns.indefinite-pronouns-some-any-body",
+    "egp.b1.pronouns.indefinite-pronouns-some-any-no",
+    "egp.c1.pronouns.indefinite-and-reciprocal-fine-distinctions"
   ],
   "archetype": "slot-fill",
   "lessons": {

@@ -17,7 +17,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "reported-speech",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.clauses.reported-questions",
+    "egp.b1.questions-negation.indirect-questions",
+    "egp.b2.questions-negation.indirect-questions-embedded"
   ],
   "archetype": "transformation",
   "lessons": {

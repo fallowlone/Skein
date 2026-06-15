@@ -18,10 +18,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "tenses",
   "egp": [
-    "EGP:A2:can use 'be going to' to talk about plans and intentions",
-    "EGP:A2:can use 'be going to' to make predictions based on present evidence",
-    "EGP:B1:can contrast 'going to', 'will' and present continuous for future",
-    "EGP:B2:can use 'was/were going to' for unfulfilled plans"
+    "egp.a2.tenses-aspect.going-to-future-plans",
+    "egp.a2.tenses-aspect.will-future-decisions-predictions",
+    "egp.b1.verbs.going-to-plans-predictions",
+    "egp.b1.tenses-aspect.present-continuous-future-arrangements",
+    "egp.b2.tenses-aspect.future-in-the-past"
   ],
   "archetype": "timeline",
   "lessons": {

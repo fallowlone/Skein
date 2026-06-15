@@ -17,7 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "verb-patterns",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.verbs.gerund-vs-infinitive-after-verbs",
+    "egp.b2.verbs.gerund-vs-infinitive-meaning-change",
+    "egp.c1.verbs.complex-verb-patterns-gerund-vs-infinitive",
+    "egp.c2.verbs.verb-complementation-meaning-shifts"
   ],
   "archetype": "contrast-pair",
   "lessons": {

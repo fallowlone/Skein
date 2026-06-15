@@ -17,7 +17,14 @@ export const topic: GrammarTopic = {
   ],
   "family": "conjunctions",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.conditionals.if-clauses-with-when-unless",
+    "egp.b2.conditionals.alternatives-to-if",
+    "egp.c1.conditionals.alternative-conditional-conjunctions",
+    "egp.c1.conditionals.inverted-conditionals-no-if",
+    "egp.c1.conditionals.implied-and-elliptical-conditions",
+    "egp.c2.conditionals.alternative-conditional-conjunctions",
+    "egp.c2.conditionals.inverted-conditionals-formal",
+    "egp.c2.conditionals.implied-and-elliptical-conditionals"
   ],
   "archetype": "branch",
   "lessons": {

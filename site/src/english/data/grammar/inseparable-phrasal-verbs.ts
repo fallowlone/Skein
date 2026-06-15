@@ -17,7 +17,14 @@ export const topic: GrammarTopic = {
   ],
   "family": "phrasal-verbs",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.verbs.phrasal-verbs-common",
+    "egp.b1.prepositions.dependent-prepositions",
+    "egp.b1.prepositions.preposition-plus-gerund",
+    "egp.b2.verbs.phrasal-verbs-separable-transitive",
+    "egp.b2.prepositions.dependent-prepositions-after-verbs",
+    "egp.c1.prepositions.dependent-prepositions-precision",
+    "egp.c2.verbs.phrasal-verb-register-control",
+    "egp.c2.prepositions.preposition-stranding-vs-pied-piping"
   ],
   "archetype": "slot-fill",
   "lessons": {

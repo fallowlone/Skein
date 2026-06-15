@@ -19,7 +19,8 @@ export const topic: GrammarTopic = {
   ],
   "family": "pronouns",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.pronouns.possessive-adjectives",
+    "egp.a2.pronouns.possessive-pronouns"
   ],
   "archetype": "contrast-pair",
   "lessons": {

@@ -19,12 +19,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "articles",
   "egp": [
-    "EGP:A1 the with specific/unique nouns",
-    "EGP:A2 the with superlatives and ordinals",
-    "EGP:B1 the for shared/situational reference",
-    "EGP:B2 the with geographical and media nouns",
-    "EGP:C1 generic the with species and abstractions",
-    "EGP:C2 the in headline, legal and diplomatic register"
+    "egp.a1.nouns-determiners.definite-article-the",
+    "egp.a2.nouns-determiners.definite-article-known-things",
+    "egp.b1.nouns-determiners.articles-general-vs-specific",
+    "egp.b2.nouns-determiners.articles-abstract-generic",
+    "egp.c1.nouns-determiners.article-use-with-abstract-and-generic-nouns",
+    "egp.c2.nouns-determiners.article-use-with-abstractions"
   ],
   "archetype": "highlight",
   "lessons": {

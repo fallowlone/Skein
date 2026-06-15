@@ -18,10 +18,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "modals",
   "egp": [
-    "EGP:must-obligation",
-    "EGP:have-to-obligation",
-    "EGP:must-deduction",
-    "EGP:mustnt-prohibition"
+    "egp.a2.modality.must-mustnt-rules",
+    "egp.a2.modality.have-to-obligation",
+    "egp.b1.modality.have-to-must-obligation",
+    "egp.b1.modality.mustnt-prohibition",
+    "egp.b1.modality.must-cant-present-deduction",
+    "egp.b2.modality.modals-of-probability-present"
   ],
   "archetype": "contrast-pair",
   "lessons": {
