@@ -401,5 +401,517 @@ export const topic: GrammarTopic = {
       "conjunction",
       "clause"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "I like tea ___ coffee in the morning.",
+        "answer": "and",
+        "distractors": [
+          "but",
+          "or"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She is tall ___ thin.",
+        "answer": "and",
+        "distractors": [
+          "but",
+          "or"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I wanted to go out, ___ I was too tired.",
+        "answer": "but",
+        "distractors": [
+          "and",
+          "or"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He is rich ___ unhappy.",
+        "answer": "but",
+        "distractors": [
+          "and",
+          "or"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Would you like tea ___ juice?",
+        "answer": "or",
+        "distractors": [
+          "and",
+          "but"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We can walk ___ take the bus.",
+        "answer": "or",
+        "distractors": [
+          "and",
+          "but"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I have a brother ___ a sister.",
+        "answer": "and",
+        "distractors": [
+          "but",
+          "or"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The movie was long ___ interesting.",
+        "answer": "but",
+        "distractors": [
+          "and",
+          "or"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She called me, ___ I answered at once.",
+        "answer": "and",
+        "distractors": [
+          "but",
+          "or"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He is kind ___ very shy.",
+        "answer": "but",
+        "distractors": [
+          "and",
+          "or"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We went home ___ watched a film.",
+        "answer": "and",
+        "distractors": [
+          "but",
+          "or"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Do you want to stay ___ leave now?",
+        "answer": "or",
+        "distractors": [
+          "and",
+          "but"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "It was raining, ___ I took an umbrella.",
+        "answer": "so",
+        "distractors": [
+          "but",
+          "yet"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "She was very tired, ___ she went to bed early.",
+        "answer": "so",
+        "distractors": [
+          "but",
+          "or"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He is young, ___ remarkably experienced.",
+        "answer": "yet",
+        "distractors": [
+          "so",
+          "or"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The test was hard, ___ she passed it.",
+        "answer": "yet",
+        "distractors": [
+          "so",
+          "and"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I studied for weeks, ___ I passed the exam.",
+        "answer": "so",
+        "distractors": [
+          "but",
+          "yet"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "He was hungry, ___ he didn't eat anything.",
+        "answer": "yet",
+        "distractors": [
+          "so",
+          "and"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We went to the store, ___ we bought some milk.",
+        "answer": "and",
+        "distractors": [
+          "so",
+          "but"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It was late, ___ we weren't tired at all.",
+        "answer": "but",
+        "distractors": [
+          "so",
+          "and"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "You can call me ___ send a quick message.",
+        "answer": "or",
+        "distractors": [
+          "so",
+          "yet"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The road was icy, ___ we drove slowly.",
+        "answer": "so",
+        "distractors": [
+          "yet",
+          "but"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I stayed home, ___ I was feeling unwell.",
+        "answer": "for",
+        "distractors": [
+          "so",
+          "nor"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She stayed home, ___ she was ill.",
+        "answer": "for",
+        "distractors": [
+          "nor",
+          "so"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He doesn't smoke, ___ does he drink.",
+        "answer": "nor",
+        "distractors": [
+          "or",
+          "and"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She didn't call, ___ did she write.",
+        "answer": "nor",
+        "distractors": [
+          "or",
+          "but"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "I must leave now, ___ the train departs at six.",
+        "answer": "for",
+        "distractors": [
+          "so",
+          "yet"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The rain stopped, ___ the ground was still wet.",
+        "answer": "but",
+        "distractors": [
+          "nor",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "He wanted to join us, ___ he had too much work.",
+        "answer": "but",
+        "distractors": [
+          "for",
+          "nor"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The task was difficult, ___ rewarding.",
+        "answer": "yet",
+        "distractors": [
+          "nor",
+          "for"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "They never apologized, ___ did they explain.",
+        "answer": "nor",
+        "distractors": [
+          "or",
+          "so"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "We packed our bags, ___ the flight had already been cancelled.",
+        "answer": "but",
+        "distractors": [
+          "for",
+          "nor"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The committee was unmoved, ___ would it reconsider the appeal.",
+        "answer": "nor",
+        "distractors": [
+          "or",
+          "yet"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "She is both talented ___ hardworking.",
+        "answer": "and",
+        "distractors": [
+          "or",
+          "nor"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "You can either stay ___ leave; the choice is yours.",
+        "answer": "or",
+        "distractors": [
+          "and",
+          "nor"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He is neither wealthy ___ famous.",
+        "answer": "nor",
+        "distractors": [
+          "or",
+          "and"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Not only did she win, ___ she also broke the record.",
+        "answer": "but",
+        "distractors": [
+          "and",
+          "nor"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "I don't know whether to laugh ___ cry.",
+        "answer": "or",
+        "distractors": [
+          "and",
+          "nor"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She is not only brilliant ___ also genuinely kind.",
+        "answer": "but",
+        "distractors": [
+          "and",
+          "nor"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The theory is elegant, ___ it fails to explain the anomaly.",
+        "answer": "yet",
+        "distractors": [
+          "so",
+          "nor"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Neither the manager ___ the employees were informed.",
+        "answer": "nor",
+        "distractors": [
+          "or",
+          "and"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "It was raining heavily; ___, we cancelled the picnic.",
+        "answer": "therefore",
+        "distractors": [
+          "so",
+          "but"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "He spoke briefly, ___ every word was chosen with care.",
+        "answer": "yet",
+        "distractors": [
+          "so",
+          "for"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "The sample was contaminated; ___, the results are invalid.",
+        "answer": "therefore",
+        "distractors": [
+          "so",
+          "yet"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "She ran ___ jumped and laughed and danced through the rain.",
+        "answer": "and",
+        "distractors": [
+          "but",
+          "or"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Simple, ___ profound; concise, yet complete.",
+        "answer": "yet",
+        "distractors": [
+          "so",
+          "or"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He was brilliant, ruthless, ___ utterly sincere.",
+        "answer": "and",
+        "distractors": [
+          "but",
+          "nor"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Not a sound was heard, ___ a movement seen, nor a breath drawn.",
+        "answer": "nor",
+        "distractors": [
+          "or",
+          "and"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The evidence is compelling. ___, doubts remain.",
+        "answer": "Yet",
+        "distractors": [
+          "So",
+          "And"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Good policy is simple in principle, ___ complex in application.",
+        "answer": "yet",
+        "distractors": [
+          "so",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He did not speak, ___ did he move, nor did he seem to breathe.",
+        "answer": "nor",
+        "distractors": [
+          "or",
+          "and"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "The nation mourned, ___ the nation endured, and the nation rebuilt.",
+        "answer": "and",
+        "distractors": [
+          "but",
+          "nor"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Harsh, ___ fair: that was the verdict everyone expected.",
+        "answer": "but",
+        "distractors": [
+          "nor",
+          "for"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "She had every reason to refuse. ___ she accepted without hesitation.",
+        "answer": "Yet",
+        "distractors": [
+          "So",
+          "Nor"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "coordconj-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A2",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "Pick the coordinating conjunction that links these parts with the right relation (addition, contrast, choice, result, reason, or added negative): {answer}.",
+          "ru": "Выберите сочинительный союз, который связывает эти части с нужным отношением (добавление, контраст, выбор, результат, причина или второе отрицание): {answer}."
+        }
+      }
+    ]
   }
 };

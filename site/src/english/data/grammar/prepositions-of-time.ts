@@ -543,5 +543,655 @@ export const topic: GrammarTopic = {
       "for/since = duration vs start",
       "by/until = deadline vs up to"
     ]
+  },
+  "gen": {
+    "pools": [],
+    "features": [],
+    "contexts": [
+      {
+        "stem": "The first lesson starts ___ 9 o'clock sharp.",
+        "answer": "at",
+        "distractors": [
+          "on",
+          "in"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I always eat lunch ___ noon.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "We have a meeting ___ Monday morning.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "My sister was born ___ 5 May.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "School begins again ___ September.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "His birthday is ___ July.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I drink coffee ___ the morning.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The owls hunt ___ night.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "We usually relax ___ the evening.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The train leaves ___ 3:30.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "They got married ___ 2024.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I have a dentist appointment ___ Friday.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The shops close ___ midnight.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "We give presents ___ Christmas Day.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "It is very cold here ___ winter.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I brush my teeth ___ night before bed.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "The kids go back to class ___ the afternoon.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "on"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "Our flight departs ___ Sunday.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "A1"
+      },
+      {
+        "stem": "I have lived in this city ___ five years.",
+        "answer": "for",
+        "distractors": [
+          "since",
+          "ago"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "She has worked here ___ Monday.",
+        "answer": "since",
+        "distractors": [
+          "for",
+          "ago"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We first met three weeks ___.",
+        "answer": "ago",
+        "distractors": [
+          "since",
+          "for"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The bakery is open ___ 8 to 6.",
+        "answer": "from",
+        "distractors": [
+          "since",
+          "at"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I usually have a snack ___ work.",
+        "answer": "before",
+        "distractors": [
+          "since",
+          "ago"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Let's grab a coffee ___ the meeting ends.",
+        "answer": "after",
+        "distractors": [
+          "since",
+          "for"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "I'll wait here ___ you get back.",
+        "answer": "until",
+        "distractors": [
+          "for",
+          "ago"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "He has been studying Spanish ___ six months.",
+        "answer": "for",
+        "distractors": [
+          "since",
+          "ago"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "They have known each other ___ childhood.",
+        "answer": "since",
+        "distractors": [
+          "for",
+          "ago"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The film finished about an hour ___.",
+        "answer": "ago",
+        "distractors": [
+          "for",
+          "since"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "We waited ___ twenty minutes in the rain.",
+        "answer": "for",
+        "distractors": [
+          "since",
+          "during"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "The museum is open ___ Tuesday to Saturday.",
+        "answer": "from",
+        "distractors": [
+          "since",
+          "at"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Please call me ___ you arrive at the airport.",
+        "answer": "after",
+        "distractors": [
+          "since",
+          "for"
+        ],
+        "cefr": "A2"
+      },
+      {
+        "stem": "Send me the report ___ Friday at the latest.",
+        "answer": "by",
+        "distractors": [
+          "until",
+          "for"
+        ],
+        "cefr": "B1",
+        "alts": [
+          "before"
+        ]
+      },
+      {
+        "stem": "I'll be at my desk ___ five, so come anytime before then.",
+        "answer": "until",
+        "distractors": [
+          "by",
+          "since"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I promise to call you back ___ an hour — no later than that.",
+        "answer": "within",
+        "distractors": [
+          "in",
+          "by"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "Don't worry, I'll be done ___ an hour and then I'm free.",
+        "answer": "in",
+        "distractors": [
+          "within",
+          "since"
+        ],
+        "cefr": "B1",
+        "alts": [
+          "within"
+        ]
+      },
+      {
+        "stem": "The bus pulled in exactly ___ time, not a minute late.",
+        "answer": "on",
+        "distractors": [
+          "in",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We reached the gate just ___ time to board the flight.",
+        "answer": "in",
+        "distractors": [
+          "on",
+          "at"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I dozed off ___ the long presentation.",
+        "answer": "during",
+        "distractors": [
+          "for",
+          "since"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I slept ___ nearly nine hours last night.",
+        "answer": "for",
+        "distractors": [
+          "during",
+          "since"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "I have lived in Berlin ___ 2020, and I still love it.",
+        "answer": "since",
+        "distractors": [
+          "for",
+          "during"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "___ the end, we decided to stay home instead.",
+        "answer": "In",
+        "distractors": [
+          "At",
+          "By"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "There was a small café ___ the end of the street.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "by"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "We talked things over ___ the weekend and made a plan.",
+        "answer": "over",
+        "distractors": [
+          "at",
+          "in"
+        ],
+        "cefr": "B1",
+        "alts": [
+          "at"
+        ]
+      },
+      {
+        "stem": "Make sure the visas are ready ___ next Tuesday.",
+        "answer": "by",
+        "distractors": [
+          "until",
+          "within"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "The negotiators kept working ___ midnight to seal the deal.",
+        "answer": "until",
+        "distractors": [
+          "by",
+          "for"
+        ],
+        "cefr": "B1"
+      },
+      {
+        "stem": "It rained steadily ___ the whole night.",
+        "answer": "throughout",
+        "distractors": [
+          "during",
+          "for"
+        ],
+        "cefr": "B2",
+        "alts": [
+          "through"
+        ]
+      },
+      {
+        "stem": "___ to the meeting, please read the attached agenda.",
+        "answer": "Prior",
+        "distractors": [
+          "Before",
+          "Following"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ the announcement, the company's share price rose sharply.",
+        "answer": "Following",
+        "distractors": [
+          "After",
+          "Prior"
+        ],
+        "cefr": "B2",
+        "alts": [
+          "After"
+        ]
+      },
+      {
+        "stem": "___ of next Monday, the new return policy takes effect.",
+        "answer": "As",
+        "distractors": [
+          "Since",
+          "From"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The construction crew worked ___ of schedule and finished early.",
+        "answer": "ahead",
+        "distractors": [
+          "behind",
+          "prior"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "In American English, the office is staffed from Monday ___ Friday inclusive.",
+        "answer": "through",
+        "distractors": [
+          "to",
+          "until"
+        ],
+        "cefr": "B2",
+        "alts": [
+          "to"
+        ]
+      },
+      {
+        "stem": "___ since she left the team, morale has slowly declined.",
+        "answer": "Ever",
+        "distractors": [
+          "For",
+          "Prior"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "The witness remained calm ___ the growing tension in the courtroom.",
+        "answer": "amid",
+        "distractors": [
+          "during",
+          "by"
+        ],
+        "cefr": "B2",
+        "alts": [
+          "amidst"
+        ]
+      },
+      {
+        "stem": "I'll finish the audit ___ an hour at the latest, so expect it soon.",
+        "answer": "within",
+        "distractors": [
+          "in",
+          "by"
+        ],
+        "cefr": "B2"
+      },
+      {
+        "stem": "___ the time we arrive, the film will have already started.",
+        "answer": "By",
+        "distractors": [
+          "Until",
+          "On"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ I started working here, I have learned an enormous amount.",
+        "answer": "Since",
+        "distractors": [
+          "For",
+          "During"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ arrival, please present your passport at the front desk.",
+        "answer": "Upon",
+        "distractors": [
+          "On",
+          "After"
+        ],
+        "cefr": "C1",
+        "alts": [
+          "On"
+        ]
+      },
+      {
+        "stem": "___ the course of the inquiry, several new facts came to light.",
+        "answer": "In",
+        "distractors": [
+          "During",
+          "At"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "___ the outcome of the appeal, the officer remains suspended.",
+        "answer": "Pending",
+        "distractors": [
+          "Until",
+          "During"
+        ],
+        "cefr": "C1"
+      },
+      {
+        "stem": "Not ___ much later did I realise the mistake I had made.",
+        "answer": "until",
+        "distractors": [
+          "till",
+          "by"
+        ],
+        "cefr": "C1",
+        "alts": [
+          "till"
+        ]
+      },
+      {
+        "stem": "___ the wake of the financial crisis, sweeping reforms followed.",
+        "answer": "In",
+        "distractors": [
+          "After",
+          "During"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Under the terms of the contract, the rights are granted ___ perpetuity.",
+        "answer": "in",
+        "distractors": [
+          "for",
+          "at"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "He was abroad ___ the time of his father's death.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "by"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "Such craftsmanship was common ___ the time of the great cathedrals.",
+        "answer": "in",
+        "distractors": [
+          "at",
+          "by"
+        ],
+        "cefr": "C2"
+      },
+      {
+        "stem": "___ the backdrop of rising tensions, the two leaders met privately.",
+        "answer": "Against",
+        "distractors": [
+          "During",
+          "Amid"
+        ],
+        "cefr": "C2",
+        "alts": [
+          "Amid"
+        ]
+      },
+      {
+        "stem": "The treaty was finally salvaged ___ the eleventh hour.",
+        "answer": "at",
+        "distractors": [
+          "in",
+          "on"
+        ],
+        "cefr": "C2"
+      }
+    ],
+    "templates": [
+      {
+        "id": "prep-time-ctx",
+        "type": "fill_in_blank",
+        "cefrMin": "A1",
+        "cefrMax": "C2",
+        "pattern": "{context}",
+        "slots": {},
+        "deriveKey": "context",
+        "usesContext": true,
+        "framings": [
+          "cloze",
+          "mc"
+        ],
+        "rationale": {
+          "en": "This time slot takes \"{answer}\". Match the preposition to the size and type of the time expression — a clock point, a day, a longer period, a duration, a deadline, or a fixed phrase.",
+          "ru": "Этот временной отрезок требует \"{answer}\". Подбирайте предлог под тип и размер выражения времени: точка на часах, день, период, длительность, крайний срок или устойчивое выражение."
+        }
+      }
+    ]
   }
 };
