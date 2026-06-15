@@ -754,7 +754,9 @@ describe("RU prose is preserved verbatim from steep", () => {
       if (!existsSync(file)) continue;
       const raw = JSON.parse(readFileSync(file, "utf8")) as SteepTopic;
       const mapped = mapSteepTopic(raw);
-      const committed = (await import(`~/english/data/grammar/${kebab(topicId)}.ts`)).topic;
+      // Relative (not `~`): vitest can't resolve a `~`-aliased dynamic import
+      // with an interpolated segment — no static base to glob against.
+      const committed = (await import(`../../src/english/data/grammar/${kebab(topicId)}.ts`)).topic;
       for (const lv of mapped.levels) {
         expect(committed.lessons[lv].explain.ru).toBe(mapped.lessons[lv]!.explain.ru);
         expect(committed.lessons[lv].tip.ru).toBe(mapped.lessons[lv]!.tip.ru);
