@@ -91,8 +91,12 @@ export function fillContext(
     rationale: { en: interp(tpl.rationale.en), ru: interp(tpl.rationale.ru) },
   };
   if (framing === "mc") {
-    const options = shuffle([answer, ...(ctx.distractors ?? [])], rng);
-    return { ...base, type: "multiple_choice", options };
+    const distractors = (ctx.distractors ?? []).filter((d) => d && d.trim());
+    if (distractors.length >= 1) {
+      const options = shuffle([answer, ...distractors], rng);
+      return { ...base, type: "multiple_choice", options };
+    }
+    // No usable distractors — fall back to cloze rather than emit a 1-option MC.
   }
   return { ...base, type: "fill_in_blank" };
 }
