@@ -22,7 +22,8 @@ export const topic: GrammarTopic = {
     "egp.a2.clauses.reason-clauses-because",
     "egp.c1.word-order.inversion-after-negative-adverbials",
     "egp.c1.discourse-cohesion.ellipsis-and-substitution",
-    "egp.c2.discourse-cohesion.wide-range-cohesive-devices"
+    "egp.c2.discourse-cohesion.wide-range-cohesive-devices",
+    "egp.a1.clauses.coordination-and-but-or"
   ],
   "archetype": "slot-fill",
   "lessons": {
