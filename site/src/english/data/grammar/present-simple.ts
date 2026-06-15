@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "present-simple",
   "title": {
-    "en": "",
+    "en": "Present Simple",
     "ru": "Present Simple"
   },
   "cefr": "A0",
@@ -18,19 +18,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "tenses",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "A0": {
       "cefr": "A0",
       "explain": {
-        "en": "",
+        "en": "Use the Present Simple for things that happen again and again: habits, routines, and facts. It is not about what is happening right now; it is about what is generally true. The form is easy. With I, you, we, and they the verb does not change: I work, you work, we work, they work. But with he, she, and it you add -s to the verb: he works, she works, it works. This little -s is very important. To make a negative, use don't (I/you/we/they) or doesn't (he/she/it) plus the base verb: I don't like tea, she doesn't like tea. After doesn't the verb has no -s. To ask a question, start with Do or Does: Do you work? Does she work?",
         "ru": "**Present Simple** — это простое время, когда мы говорим о том, что кто-то делает **каждый день**, **часто** или **всегда**. Например: «я пью кофе по утрам», «она любит собак», «мы живём в Москве». Это не про то, что происходит прямо сейчас, а про привычки и факты.\n\n**Как построить предложение:**\n\n- `I work.` (Я работаю.)\n- `You work.` (Ты работаешь.)\n- `We work.` (Мы работаем.)\n- `They work.` (Они работают.)\n\nНо когда кто-то один и это не «я» и не «ты», нужно добавить **-s** в конце глагола:\n\n- `He works.` (Он работает.)\n- `She works.` (Она работает.)\n- `It works.` (Оно работает.)\n\nМаленькая **-s** — это очень важно. Русские часто забывают её. Не говори `She work` — только `She works`.\n\n**Отрицание** (сказать «нет»): мы используем `don't` или `doesn't`:\n- `I don't like tea.` (Я не люблю чай.)\n- `He doesn't like tea.` (Он не любит чай.)\n\nПосле `doesn't` глагол **без -s**. Не говори `He doesn't likes` — только `He doesn't like`.\n\n**Вопрос** начинается с `Do` или `Does`:\n- `Do you work?` (Ты работаешь?)\n- `Does she work?` (Она работает?)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb (+ -s for he/she/it)   |   don't / doesn't + base verb   |   Do / Does ... + base verb?",
+        "ru": "подлежащее + глагол (+ -s для he/she/it)   |   don't / doesn't + базовый глагол   |   Do / Does ... + базовый глагол?"
       },
       "examples": [
         {
@@ -39,7 +41,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She likes cats.",
-          "ru": "Она любит кошек."
+          "ru": "Она любит кошек.",
+          "note": {
+            "en": "3rd-person -s",
+            "ru": "окончание -s в 3-м лице"
+          }
         },
         {
           "en": "We speak Russian.",
@@ -47,27 +53,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He doesn't eat meat.",
-          "ru": "Он не ест мясо."
+          "ru": "Он не ест мясо.",
+          "note": {
+            "en": "negative",
+            "ru": "отрицание"
+          }
         },
         {
           "en": "Do you play football?",
-          "ru": "Ты играешь в футбол?"
+          "ru": "Ты играешь в футбол?",
+          "note": {
+            "en": "question",
+            "ru": "вопрос"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Для he/she/it добавляй -s в конце глагола: she works, he plays."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She work in a bank.",
+          "right": "She works in a bank.",
+          "why": {
+            "en": "With he/she/it the verb takes -s in the Present Simple.",
+            "ru": "С he/she/it глагол получает окончание -s в Present Simple."
+          }
+        },
+        {
+          "wrong": "He doesn't likes tea.",
+          "right": "He doesn't like tea.",
+          "why": {
+            "en": "After doesn't the verb stays in the base form, with no -s.",
+            "ru": "После doesn't глагол остаётся в базовой форме, без -s."
+          }
+        }
+      ]
     },
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "Use the Present Simple for habits and routines (I get up at 7), permanent facts (Water boils at 100 degrees), feelings and opinions (I love chocolate), and fixed schedules (The train leaves at 6). For I/you/we/they the verb does not change; for he/she/it add -s. The spelling of that -s follows clear rules: most verbs just add -s (work -> works); after -s, -sh, -ch, -x, -o add -es (watch -> watches, go -> goes); a consonant + y becomes -ies (study -> studies); a vowel + y just adds -s (play -> plays). Build negatives and questions with do/does and the base verb: They don't watch TV, Does he speak English? Frequency words go before the main verb but after the verb be: She always drinks tea; She is always late. Typical time markers are always, usually, often, sometimes, never, every day, on Mondays.",
         "ru": "**Present Simple** — время для привычек, фактов и повторяющихся действий. Используй его, когда что-то происходит **регулярно**, а не прямо сейчас.\n\n**Когда использовать:**\n\n1. **Привычки и распорядок:** `I get up at 7.` (Я встаю в 7.)\n2. **Факты:** `Water boils at 100 degrees.` (Вода кипит при 100 градусах.)\n3. **Чувства и мнения:** `I love chocolate.` (Я люблю шоколад.)\n4. **Расписание:** `The train leaves at 6.` (Поезд отправляется в 6.)\n\n**Формы:**\n\n| Лицо | Утверждение | Отрицание | Вопрос |\n|---|---|---|---|\n| I/You/We/They | work | don't work | Do ... work? |\n| He/She/It | works | doesn't work | Does ... work? |\n\n**Правила для -s в 3-м лице:**\n- Обычно: `work → works`, `play → plays`\n- После `-s, -sh, -ch, -x, -o`: добавляем `-es`: `watch → watches`, `go → goes`, `do → does`\n- Если перед `-y` согласная: меняем на `-ies`: `study → studies`, `try → tries`\n- Если перед `-y` гласная: просто `-s`: `play → plays`\n\n**Типичные слова-подсказки (time markers):**\n- `always` (всегда), `usually` (обычно), `often` (часто), `sometimes` (иногда), `never` (никогда)\n- `every day/week/year` (каждый день/неделю/год)\n- `on Mondays` (по понедельникам), `in the morning` (утром)\n\n**Место наречия частоты:** перед смысловым глаголом, но после `to be`:\n- `She always drinks tea.` (Она всегда пьёт чай.)\n- `She is always late.` (Она всегда опаздывает.)\n\n**Главные ошибки:**\n- Забыть `-s`: ❌ `He go` → ✅ `He goes`\n- Двойной `-s`: ❌ `He doesn't goes` → ✅ `He doesn't go`\n- Неправильный вспомогательный: ❌ `Do she work?` → ✅ `Does she work?`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb(+ -s/-es/-ies)   |   don't / doesn't + base verb   |   Do / Does ... + base verb?",
+        "ru": "подлежащее + глагол(+ -s/-es/-ies)   |   don't / doesn't + базовый глагол   |   Do / Does ... + базовый глагол?"
       },
       "examples": [
         {
@@ -76,7 +108,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She usually goes to bed at 11.",
-          "ru": "Она обычно ложится спать в 11."
+          "ru": "Она обычно ложится спать в 11.",
+          "note": {
+            "en": "frequency adverb",
+            "ru": "наречие частоты"
+          }
         },
         {
           "en": "They don't watch TV in the morning.",
@@ -84,32 +120,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Does he speak English?",
-          "ru": "Он говорит по-английски?"
+          "ru": "Он говорит по-английски?",
+          "note": {
+            "en": "yes/no question",
+            "ru": "общий вопрос"
+          }
         },
         {
           "en": "The sun rises in the east.",
-          "ru": "Солнце встаёт на востоке."
+          "ru": "Солнце встаёт на востоке.",
+          "note": {
+            "en": "general fact",
+            "ru": "общий факт"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После doesn't и does — глагол без -s: he doesn't work, does he work?"
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He go to work by bus.",
+          "right": "He goes to work by bus.",
+          "why": {
+            "en": "Go ends in -o, so the third-person form adds -es: goes.",
+            "ru": "Go оканчивается на -o, поэтому форма 3-го лица — goes (через -es)."
+          }
+        },
+        {
+          "wrong": "Do she speak English?",
+          "right": "Does she speak English?",
+          "why": {
+            "en": "With he/she/it the auxiliary is does, not do.",
+            "ru": "С he/she/it вспомогательный глагол — does, а не do."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2 the key skill is contrasting the Present Simple with the Present Continuous. Use the Present Simple for what happens regularly, always, or usually (I drink coffee every morning), and the Present Continuous for what is happening right now or around now (I'm drinking coffee at the moment). Compare She works in Berlin (her permanent job) with She is working from home today (a temporary situation). Stative verbs describe states, not actions, and normally stay in the Present Simple even when you mean now: know, love, like, understand, believe, want, need, belong. Say I know her, not 'I am knowing her'. The Present Simple is also used for timetabled future events: The film starts at 8 pm; Our flight leaves on Monday. Helpful clues: every day, usually, always point to the Simple; now, at the moment, today usually point to the Continuous.",
         "ru": "На уровне A2 важно уметь **противопоставлять Present Simple и Present Continuous**, потому что русский студент часто путает эти времена.\n\n**Present Simple** — для того, что происходит **регулярно, всегда или обычно**:\n- `I drink coffee every morning.` (Я пью кофе каждое утро.)\n\n**Present Continuous** — для того, что происходит **прямо сейчас** или в этот период:\n- `I'm drinking coffee now.` (Я пью кофе сейчас.)\n\nСравни:\n- `She works in Berlin.` (Она работает в Берлине — постоянная работа.)\n- `She is working from home today.` (Она работает из дома сегодня — временно.)\n\n**Глаголы состояния (stative verbs)** — такие, которые описывают не действие, а состояние. Они почти всегда идут в Present Simple, даже если речь про «сейчас»:\n- `know` (знать), `love` (любить), `like` (нравиться), `understand` (понимать), `believe` (верить), `want` (хотеть), `need` (нуждаться), `belong` (принадлежать)\n\nНельзя: ❌ `I am knowing her.` Правильно: ✅ `I know her.`\n\n**Расписания и программы:** Present Simple используется даже для будущего, если есть чёткое расписание:\n- `The film starts at 8 pm.` (Фильм начинается в 8 вечера.)\n- `Our flight leaves on Monday.` (Наш рейс вылетает в понедельник.)\n\n**Дополнительные time markers для A2:**\n- `once/twice a week` (раз/два раза в неделю)\n- `from time to time` (время от времени)\n- `rarely/seldom` (редко)\n- `hardly ever` (почти никогда)\n\n**Повторяющиеся повседневные действия с наречиями частоты — хороший способ отличить Present Simple от Continuous.** Если в предложении есть `every day`, `usually`, `always` — это почти всегда Simple. Если есть `now`, `at the moment`, `today` — чаще всего Continuous."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Present Simple (routine: every day / usually)  vs  Present Continuous (now: am/is/are + -ing)",
+        "ru": "Present Simple (регулярно: every day / usually)  vs  Present Continuous (сейчас: am/is/are + -ing)"
       },
       "examples": [
         {
           "en": "I usually have lunch at work, but today I'm eating at home.",
-          "ru": "Я обычно обедаю на работе, но сегодня ем дома."
+          "ru": "Я обычно обедаю на работе, но сегодня ем дома.",
+          "note": {
+            "en": "Simple vs Continuous",
+            "ru": "Simple против Continuous"
+          }
         },
         {
           "en": "My sister doesn't like horror films.",
@@ -121,44 +187,86 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I know what you mean.",
-          "ru": "Я понимаю, что ты имеешь в виду."
+          "ru": "Я понимаю, что ты имеешь в виду.",
+          "note": {
+            "en": "stative verb",
+            "ru": "глагол состояния"
+          }
         },
         {
           "en": "How often do you see your parents?",
-          "ru": "Как часто ты видишься с родителями?"
+          "ru": "Как часто ты видишься с родителями?",
+          "note": {
+            "en": "how often",
+            "ru": "как часто"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Глаголы know, love, want, need — всегда в Simple, даже про «сейчас»."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I am knowing the answer.",
+          "right": "I know the answer.",
+          "why": {
+            "en": "Know is a stative verb, so it stays in the Present Simple, not the Continuous.",
+            "ru": "Know — глагол состояния, поэтому он остаётся в Present Simple, а не в Continuous."
+          }
+        },
+        {
+          "wrong": "Every morning I am drinking coffee.",
+          "right": "Every morning I drink coffee.",
+          "why": {
+            "en": "A routine marked by every morning takes the Present Simple, not the Continuous.",
+            "ru": "Привычка со словами every morning требует Present Simple, а не Continuous."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the Present Simple stretches into several special uses. It states fixed schedules and programmes that do not depend on the speaker: The conference starts on June 5th; My train arrives at 10:45 (compare the personal arrangement I'm meeting John tomorrow, which uses the Continuous). It gives instructions and recipes where Russian often uses the imperative: You mix the flour with water, then you add salt; First you click here, then you select the file. It powers live commentary on sport and demonstrations: Ronaldo passes the ball to Messi, who scores! It is the tense of newspaper headlines, even for events already past: President meets foreign ambassadors. Finally, some verbs switch between stative and dynamic meaning: I think you're right (opinion, Simple) vs I'm thinking about it (process, Continuous); I have a car (possession, Simple) vs I'm having breakfast (activity, Continuous). Avoid using the Continuous for permanent situations: say I live in Moscow, not 'I'm living in Moscow' for a long-term home.",
         "ru": "На уровне B1 Present Simple расширяется: появляется использование для **официальных расписаний**, **инструкций**, **газетных заголовков** и **комментариев к действиям**.\n\n**1. Расписания и программы (fixed schedules):**\n- `The conference starts on June 5th.` (Конференция начинается 5 июня.)\n- `My train arrives at 10:45.` (Мой поезд прибывает в 10:45.)\n\nЭто не просто план — это то, что определено расписанием и не зависит от говорящего. Сравни: `I'm meeting John tomorrow` (моя личная договорённость — Present Continuous) vs `The train leaves tomorrow at 6` (расписание — Present Simple).\n\n**2. Инструкции и рецепты:**\n- `You mix the flour with water, then you add salt.` (Смешиваете муку с водой, потом добавляете соль.)\n- `First you click here, then you select the file.` (Сначала нажимаете сюда, потом выбираете файл.)\n\nВ русском часто используется повелительное наклонение, в английском — Present Simple с `you`.\n\n**3. Комментарии к спорту, действиям в реальном времени:**\n- `Ronaldo passes the ball to Messi, who scores!` (Роналду пасует Месси, который забивает!)\n\nЭто звучит живее и ближе, чем `is passing, is scoring`.\n\n**4. Газетные заголовки:**\n- `President meets foreign ambassadors.` (Президент встречается с иностранными послами.)\n- `Bomb explodes in market.` (Бомба взрывается на рынке.)\n\nЗаголовки часто пишутся в Present Simple, даже когда событие уже произошло — это экономия места и эффект актуальности.\n\n**5. Глаголы, которые могут быть и stative, и dynamic:**\n- `think` о мнении — stative: `I think you're right.` (Я считаю, что ты прав.)\n- `think` о процессе — dynamic: `I'm thinking about it.` (Я обдумываю это.)\n- `have` — владение — stative: `I have a car.`\n- `have` — в составе выражений (breakfast, fun, a shower) — dynamic: `I'm having breakfast.`\n\n**6. Ошибки продвинутого уровня:**\n- Использование Continuous для постоянных ситуаций: ❌ `I'm living in Moscow for 5 years` → ✅ `I live in Moscow` или `I have lived in Moscow for 5 years`.\n- Путаница с будущим: для планов — Continuous, для расписаний — Simple."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Present Simple for fixed schedules, instructions, commentary, and headlines (subject + verb)",
+        "ru": "Present Simple для расписаний, инструкций, комментариев и заголовков (подлежащее + глагол)"
       },
       "examples": [
         {
           "en": "The lesson starts at 9:00 sharp.",
-          "ru": "Урок начинается ровно в 9:00."
+          "ru": "Урок начинается ровно в 9:00.",
+          "note": {
+            "en": "fixed schedule",
+            "ru": "расписание"
+          }
         },
         {
           "en": "You press this button to turn it on.",
-          "ru": "Нажимаешь эту кнопку, чтобы включить."
+          "ru": "Нажимаешь эту кнопку, чтобы включить.",
+          "note": {
+            "en": "instruction",
+            "ru": "инструкция"
+          }
         },
         {
           "en": "Actor wins Oscar for best performance.",
-          "ru": "Актёр получает Оскар за лучшую роль."
+          "ru": "Актёр получает Оскар за лучшую роль.",
+          "note": {
+            "en": "headline",
+            "ru": "заголовок"
+          }
         },
         {
           "en": "I think he's the best candidate.",
-          "ru": "Я считаю, что он лучший кандидат."
+          "ru": "Я считаю, что он лучший кандидат.",
+          "note": {
+            "en": "opinion (stative)",
+            "ru": "мнение (состояние)"
+          }
         },
         {
           "en": "She works for a consulting firm in London.",
@@ -168,30 +276,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Для расписаний и программ используй Present Simple, не Future: the train leaves at 6."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The train is leaving at 6 tomorrow.",
+          "right": "The train leaves at 6 tomorrow.",
+          "why": {
+            "en": "A timetabled event uses the Present Simple, not the Continuous.",
+            "ru": "Событие по расписанию выражается Present Simple, а не Continuous."
+          }
+        },
+        {
+          "wrong": "I'm living in Moscow for five years.",
+          "right": "I have lived in Moscow for five years.",
+          "why": {
+            "en": "A situation that started in the past and continues uses the Present Perfect, and a permanent home uses the Present Simple, not the Present Continuous.",
+            "ru": "Ситуация, начавшаяся в прошлом и продолжающаяся, требует Present Perfect, а постоянное место жительства — Present Simple, не Present Continuous."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the Present Simple carries fine shades of register and style. In the narrative present, speakers tell stories in the present to make them vivid: So yesterday I'm at the cafe, and this guy comes up and asks me... In the historic present, used in history and literary criticism, it gives a feeling of timeless analysis: In 1453, Constantinople falls to the Ottomans; Hamlet kills Polonius by mistake. Performative verbs perform the very act of speaking and never take the Continuous: I promise I'll help, I apologise for the delay, I declare the meeting open, I pronounce you husband and wife. The Present Simple also states scientific and mathematical truths: Water freezes at 0 degrees; Two plus two equals four. With sensations both forms exist, but the Continuous feels more temporary: I feel sick vs I'm feeling sick. Crucially, after when, if, as soon as, until, before, and after referring to the future, use the Present Simple, not will: When I see him, I'll tell him; If it rains, we'll stay home.",
         "ru": "На уровне B2 Present Simple приобретает тонкие нюансы регистра и стилистики. Важно различать **narrative/commentary present**, **historic present** и **performative uses**.\n\n**1. Narrative present (живое повествование):**\nНосители часто рассказывают истории в Present Simple, чтобы сделать их более непосредственными:\n- `So yesterday I'm at the café, and this guy comes up and asks me...` (Вчера я в кафе, и этот парень подходит и спрашивает меня...)\n\nХотя формально события в прошлом, говорящий переключается в Present Simple для драматизации. В письменном виде это чаще Present Simple, чем Continuous.\n\n**2. Historic present (исторический):**\nВ академических текстах по истории и литературной критике часто используют Present Simple:\n- `In 1453, Constantinople falls to the Ottomans.` (В 1453 году Константинополь падает перед османами.)\n- `Hamlet kills Polonius by mistake.` (Гамлет по ошибке убивает Полония.)\n\nЭто создаёт эффект вневременности и анализа.\n\n**3. Performative verbs (перформативы):**\nГлаголы, которые сами по себе являются действием в момент речи:\n- `I promise I'll help you.` (Обещаю, я помогу.)\n- `I apologise for the delay.` (Приношу извинения за задержку.)\n- `I declare the meeting open.` (Объявляю собрание открытым.)\n- `I pronounce you husband and wife.` (Объявляю вас мужем и женой.)\n\nЭти глаголы не идут в Continuous — сказать `I am promising` нельзя.\n\n**4. Научные и математические описания:**\n- `Water freezes at 0°C.` (Вода замерзает при 0°C.)\n- `Two plus two equals four.` (Два плюс два равно четыре.)\n- `Gravity pulls objects downward.` (Гравитация тянет предметы вниз.)\n\n**5. Тонкая разница Simple и Continuous для ощущений:**\n- `I feel sick.` / `I'm feeling sick.` — оба возможны, но Continuous подчёркивает временное состояние.\n- `It hurts.` / `It's hurting.` — Simple более нейтрально, Continuous звучит острее.\n\n**6. Present Simple в future time clauses:**\n- `When I see him, I'll tell him.` (Когда я его увижу, я ему скажу.)\n- `If it rains, we'll stay home.` (Если пойдёт дождь, мы останемся дома.)\n\nПосле `when`, `if`, `as soon as`, `until`, `before`, `after` используем Present Simple, а не `will`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "after when / if / as soon as / until + Present Simple (not will) for future time",
+        "ru": "после when / if / as soon as / until + Present Simple (а не will) для будущего"
       },
       "examples": [
         {
           "en": "I promise I won't tell anyone.",
-          "ru": "Обещаю, я никому не скажу."
+          "ru": "Обещаю, я никому не скажу.",
+          "note": {
+            "en": "performative verb",
+            "ru": "перформатив"
+          }
         },
         {
           "en": "In Chapter 3, Raskolnikov confesses to the crime.",
-          "ru": "В 3-й главе Раскольников признаётся в преступлении."
+          "ru": "В 3-й главе Раскольников признаётся в преступлении.",
+          "note": {
+            "en": "historic present",
+            "ru": "исторический present"
+          }
         },
         {
           "en": "I'll call you when I arrive.",
-          "ru": "Я позвоню, когда приеду."
+          "ru": "Я позвоню, когда приеду.",
+          "note": {
+            "en": "future time clause",
+            "ru": "придаточное времени"
+          }
         },
         {
           "en": "Light travels faster than sound.",
@@ -199,28 +337,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "So I'm walking down the street, and suddenly I see him.",
-          "ru": "Иду я по улице, и вдруг вижу его."
+          "ru": "Иду я по улице, и вдруг вижу его.",
+          "note": {
+            "en": "narrative present",
+            "ru": "живое повествование"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В придаточных времени и условия (when, if) — всегда Present Simple, никогда will."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'll call you when I will arrive.",
+          "right": "I'll call you when I arrive.",
+          "why": {
+            "en": "A future time clause after when uses the Present Simple, never will.",
+            "ru": "Придаточное времени после when использует Present Simple, а не will."
+          }
+        },
+        {
+          "wrong": "I am promising I won't tell anyone.",
+          "right": "I promise I won't tell anyone.",
+          "why": {
+            "en": "Performative verbs like promise are not used in the Continuous; the present-simple form is the act itself.",
+            "ru": "Перформативы вроде promise не употребляются в Continuous; форма Present Simple и есть само действие."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the Present Simple becomes a tool of style, chosen by register, genre, and rhetorical intent. In academic writing it makes generalised claims and reports the content of a text even when one experiment is described: The results suggest that temperature affects solubility; This study examines the effects of... Contrast it with the Past Simple, which narrates the concrete steps of the experiment (We tested 50 samples), while the Present states conclusions and general truths. Performative verbs dominate legal and official registers: I hereby appoint you as my representative; The court finds the defendant guilty; We accept your proposal. Stance adverbs often pair with the Present Simple to mark a position: Arguably, this approach yields better results; Interestingly, the data contradict the hypothesis. The Present Simple also frames hypotheses in discussion: Suppose you find a wallet. What do you do? In modern usage some normally stative verbs appear in the Continuous for effect (I'm loving this; I'm seeing what you mean), but formal and academic writing keeps stative verbs in the Simple. Spoken Present Simple sounds authoritative and objective; the Continuous sounds more subjective, so the choice signals your stance.",
         "ru": "На C1 Present Simple становится инструментом стиля. Ты должен уметь выбирать между Simple и другими временами, опираясь на **регистр**, **жанр** и **речевое намерение**.\n\n**1. Scientific и academic present:**\nВ научных статьях Present Simple используется для обобщённых утверждений, даже если описывается один эксперимент:\n- `The results suggest that temperature affects solubility.` (Результаты предполагают, что температура влияет на растворимость.)\n- `This study examines the effects of...` (Это исследование изучает эффекты...)\n\nРазница с Past Simple: Past описывает конкретное действие в эксперименте (`We tested 50 samples`), Present описывает выводы, общие истины и содержание текста.\n\n**2. Reporting present в журналистике:**\nВ сжатом стиле новостей часто видим Present Simple рядом с Past: `Minister announces new policy; yesterday he met with reporters.` Заголовок — Present, корпус — чаще Past, но выводы и актуальные позиции — Present.\n\n**3. Performative verbs в юридических и официальных контекстах:**\n- `I hereby appoint you as my representative.` (Настоящим назначаю вас моим представителем.)\n- `The court finds the defendant guilty.` (Суд признаёт подсудимого виновным.)\n- `We accept your proposal.` (Мы принимаем ваше предложение.)\n\n**4. Stance adverbs с Present Simple:**\nВ академической речи часто встречается комбинация stance adverb + Present Simple для выражения позиции:\n- `Arguably, this approach yields better results.` (Пожалуй, этот подход даёт лучшие результаты.)\n- `Interestingly, the data contradict the hypothesis.` (Интересно, что данные противоречат гипотезе.)\n\n**5. Conditional и hypothetical с Simple:**\n- `Suppose you find a wallet on the street. What do you do?` (Предположим, ты находишь кошелёк на улице. Что ты делаешь?)\n- `Let's say he agrees. What happens next?` (Допустим, он соглашается. Что происходит дальше?)\n\n**6. Continuous для состояний (необычное употребление):**\nНосители всё чаще используют Continuous для stative verbs в определённых контекстах:\n- `I'm loving this coffee.` (Этот кофе — просто супер.) — реклама, разговорная речь.\n- `I'm seeing what you mean.` (Я начинаю понимать, о чём ты.) — процесс осознания.\n\nНо в формальной речи и академическом письме придерживайся традиционных stative verbs в Simple.\n\n**7. Переключение регистра:**\nВ устной речи Present Simple звучит более авторитетно и объективно, Present Continuous — более субъективно. Выбор формы показывает твою позицию."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "academic present for findings/claims; Past Simple for experiment steps; stance adverb + Present Simple",
+        "ru": "academic present для выводов/утверждений; Past Simple для шагов эксперимента; наречие позиции + Present Simple"
       },
       "examples": [
         {
           "en": "The data indicate a significant correlation.",
-          "ru": "Данные указывают на значимую корреляцию."
+          "ru": "Данные указывают на значимую корреляцию.",
+          "note": {
+            "en": "academic present",
+            "ru": "академический present"
+          }
         },
         {
           "en": "This thesis argues that globalisation reshapes identity.",
@@ -228,48 +392,94 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We hereby grant you access to the archive.",
-          "ru": "Настоящим мы предоставляем вам доступ к архиву."
+          "ru": "Настоящим мы предоставляем вам доступ к архиву.",
+          "note": {
+            "en": "performative (formal)",
+            "ru": "перформатив (официальный)"
+          }
         },
         {
           "en": "Suppose he refuses. What do we do then?",
-          "ru": "Предположим, он откажется. Что мы тогда делаем?"
+          "ru": "Предположим, он откажется. Что мы тогда делаем?",
+          "note": {
+            "en": "hypothesis",
+            "ru": "гипотеза"
+          }
         },
         {
           "en": "Significantly, the model predicts the observed pattern.",
-          "ru": "Существенно, что модель предсказывает наблюдаемую закономерность."
+          "ru": "Существенно, что модель предсказывает наблюдаемую закономерность.",
+          "note": {
+            "en": "stance adverb",
+            "ru": "наречие позиции"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В академическом письме выводы и анализ — Present Simple; описание эксперимента — Past Simple."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "This study is examining the effects of temperature.",
+          "right": "This study examines the effects of temperature.",
+          "why": {
+            "en": "Academic statements about what a text or study does take the Present Simple, not the Continuous.",
+            "ru": "Академические утверждения о том, что делает текст или исследование, используют Present Simple, а не Continuous."
+          }
+        },
+        {
+          "wrong": "The data is indicating a strong correlation.",
+          "right": "The data indicate a strong correlation.",
+          "why": {
+            "en": "General findings are reported in the Present Simple; the Continuous wrongly suggests a one-off, in-progress event.",
+            "ru": "Общие выводы передаются Present Simple; Continuous ошибочно намекает на разовое, протекающее сейчас событие."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the Present Simple is a subtle stylistic choice that signals the writer's stance, distance, and willingness to commit to a claim. Choosing the present over the past in narrative is a matter of aesthetic distance: The protagonist enters the room. She sees nothing unusual puts the reader in the moment, while entered/saw keeps classic distance; modern authors switch tenses within a paragraph for rhythm. The gnomic present states proverbs and aphorisms as timeless truths: Still waters run deep; Fortune favours the bold; Every picture tells a story. The choice also marks evidentiality: Experts agree (accepted view) vs Experts have argued (an ongoing debate) vs Experts argued (a closed or historical position). The rhetorical present keeps authors and works alive in criticism: Orwell warns us about totalitarianism; Shakespeare reminds us that... In free indirect style the writer slips into the present inside a character's mind even when the frame is past. And the marked Continuous adds developing energy where the Simple states the bare fact: Prices are rising faster than ever vs Prices rise faster than ever. At this level you do not learn rules; you make calibrated stylistic choices, and the right present-simple use signals competence and literary culture.",
         "ru": "На C2 Present Simple — это тонкий стилистический выбор, который показывает твою позицию автора, степень дистанцирования и готовность брать на себя утверждение.\n\n**1. Vivid narrative vs distanced narrative:**\nВыбор между Present и Past Simple в повествовании — это вопрос эстетической дистанции:\n- Present: `The protagonist enters the room. She sees nothing unusual.` (Героиня входит в комнату. Она не видит ничего необычного.) — читатель в моменте.\n- Past: `The protagonist entered the room. She saw nothing unusual.` — классическое повествование с дистанцией.\n\nСовременные авторы часто переключают времена внутри абзаца для ритма.\n\n**2. Gnomic present (афористический):**\nОбобщённые истины, пословицы, афоризмы — всегда Present Simple:\n- `Still waters run deep.` (В тихом омуте черти водятся.)\n- `Fortune favours the bold.` (Смелым счастье помогает.)\n- `Every picture tells a story.` (Каждая картина рассказывает историю.)\n\nЭтот регистр создаёт авторитетность, но в избытке звучит нравоучительно.\n\n**3. Stance and evidentiality:**\nВ продвинутом академическом письме выбор Simple vs другие времена часто маркирует источник знания:\n- `Experts agree that...` — Present: общепринятая позиция.\n- `Experts have argued that...` — Present Perfect: продолжающаяся дискуссия.\n- `Experts argued that...` — Past: завершённая дискуссия или историческая позиция.\n\n**4. Marked Continuous для живых, развивающихся фактов:**\nВ современной журналистике Continuous заменяет Simple для придания динамичности:\n- `Prices are rising faster than ever.` vs `Prices rise faster than ever.`\n- Continuous подчёркивает процесс, Simple — факт как таковой.\n\n**5. Free indirect style и переключение в Present:**\nВ современной прозе автор переходит в Present Simple внутри сознания персонажа, даже если основное повествование в Past:\n- `He stood at the window. The sky is grey. He hates Mondays.` — переход в мысли персонажа.\n\n**6. Rhetorical Present в эссе и речах:**\n- `Orwell warns us about totalitarianism.` (Оруэлл предупреждает нас о тоталитаризме.) — хотя Оруэлл давно умер, его текст действует «сейчас».\n- `Shakespeare reminds us that...` — литературный тропик.\n\n**7. Тонкие различия stative progressive:**\n- `I see your point.` (Я понимаю твою позицию.) vs `I'm seeing the doctor.` (Я иду к врачу.) — разные лексические значения, не разные аспекты.\n- `She is being difficult.` (Она сейчас капризничает.) — Continuous со stative `be` для временного поведения, очень частое у носителей.\n\nНа C2 ты не учишь правила — ты делаешь стилистический выбор. Правильное употребление Present Simple вместо альтернатив сигнализирует компетентность и читательскую культуру."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "gnomic / rhetorical present for timeless truths and authors; Simple = fact, Continuous = developing process",
+        "ru": "gnomic / rhetorical present для вечных истин и авторов; Simple = факт, Continuous = развивающийся процесс"
       },
       "examples": [
         {
           "en": "Dickens portrays poverty with unmatched empathy.",
-          "ru": "Диккенс изображает бедность с непревзойдённой эмпатией."
+          "ru": "Диккенс изображает бедность с непревзойдённой эмпатией.",
+          "note": {
+            "en": "rhetorical present",
+            "ru": "rhetorical present"
+          }
         },
         {
           "en": "Still, the evidence suggests a deeper structural issue.",
-          "ru": "И всё же доказательства указывают на более глубокую структурную проблему."
+          "ru": "И всё же доказательства указывают на более глубокую структурную проблему.",
+          "note": {
+            "en": "stance + present",
+            "ru": "позиция + present"
+          }
         },
         {
           "en": "She's being unusually quiet today.",
-          "ru": "Она сегодня необычайно молчалива."
+          "ru": "Она сегодня необычайно молчалива.",
+          "note": {
+            "en": "marked Continuous",
+            "ru": "маркированный Continuous"
+          }
         },
         {
           "en": "Every great leader listens before speaking.",
-          "ru": "Каждый великий лидер слушает прежде, чем говорить."
+          "ru": "Каждый великий лидер слушает прежде, чем говорить.",
+          "note": {
+            "en": "gnomic present",
+            "ru": "афористический present"
+          }
         },
         {
           "en": "The novel opens: she walks into the room, and nothing is the same.",
@@ -279,9 +489,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Используй rhetorical present для цитирования авторов и общих истин: Shakespeare reminds us..."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Shakespeare reminded us that power corrupts.",
+          "right": "Shakespeare reminds us that power corrupts.",
+          "why": {
+            "en": "The rhetorical present keeps a writer's enduring message active; the past would suggest the point no longer applies.",
+            "ru": "Rhetorical present сохраняет послание автора актуальным; прошедшее намекало бы, что мысль больше не действует."
+          }
+        },
+        {
+          "wrong": "Still waters are running deep.",
+          "right": "Still waters run deep.",
+          "why": {
+            "en": "Proverbs and gnomic truths take the plain Present Simple, never the Continuous.",
+            "ru": "Пословицы и афористические истины используют простой Present Simple, а не Continuous."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "present-continuous",
+    "stative-verbs",
+    "adverbs-of-frequency",
+    "dynamic-vs-stative"
+  ],
+  "crossTopic": [
+    "wh-questions",
+    "negative-sentences",
+    "zero-conditional",
+    "adverbial-clauses-time"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "always",
+      "usually",
+      "every day"
+    ]
+  }
 };

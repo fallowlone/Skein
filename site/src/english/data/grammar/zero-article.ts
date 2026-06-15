@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "zero-article",
   "title": {
-    "en": "",
+    "en": "The Zero Article",
     "ru": "Zero Article"
   },
   "cefr": "A2",
@@ -16,28 +16,42 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "articles",
+  "egp": [
+    "EGP:A2 no article with plural and uncountable nouns used generally",
+    "EGP:B1 no article in institutional and fixed expressions (go to school, have breakfast, by car)",
+    "EGP:B2 no article in fixed prepositional phrases (in love, on holiday, at night)",
+    "EGP:C1 no article in parallel structures, slogans and abstractions",
+    "EGP:C2 no article in compressed headline, recipe and academic register"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "The **zero article** means you put **nothing** before the noun — no *a*, no *an*, no *the*. It is a deliberate choice, not forgetfulness.\n\nUse the zero article to talk about things **in general**:\n- **Plural nouns, general meaning:** *Cats are independent.* (cats as a whole), *Books are my best friends.*, *Dogs need love.*\n- **Uncountable nouns, general meaning:** *Water is essential for life.*, *Music makes me happy.*, *Time flies.*\n\nAdding **the** changes the meaning to something specific: *The cats are hungry.* (these particular cats), *The water in this bottle is cold.* (this particular water).\n\nCompare three ways to say it:\n- *A dog is a loyal animal.* (any one dog)\n- *The dog is loyal.* (one specific, known dog)\n- *Dogs are loyal.* (dogs in general — zero article)\n\nFor general statements, the third pattern sounds the most natural in English.",
         "ru": "**Нулевой артикль** — это когда перед существительным **ничего не ставится**. Ни `a`, ни `an`, ни `the`.\n\nОсновное правило: нулевой артикль используется при **обобщениях** с неисчисляемыми существительными и с существительными во множественном числе.\n\n**Множественное число, общее значение:**\n- `Cats are independent.` (Кошки независимые.) — кошки в целом.\n- `Books are my best friends.` (Книги — мои лучшие друзья.)\n- `Dogs need love.` (Собакам нужна любовь.)\n\nЕсли поставить `the`, смысл изменится: `The cats are hungry.` — конкретные кошки здесь и сейчас.\n\n**Неисчисляемые, общее значение:**\n- `Water is essential for life.` (Вода необходима для жизни.)\n- `Music makes me happy.` (Музыка делает меня счастливым.)\n- `Time flies.` (Время летит.)\n\nЕсли добавить `the`, значит речь о конкретном: `The water in this bottle is cold.` (вода в этой бутылке).\n\n**Типичная ошибка:** русские часто добавляют `the` перед обобщёнными существительными: `The dogs are loyal.` Это звучит так, будто речь о конкретных собаках. Правильно для обобщения: `Dogs are loyal.`\n\n**Нулевой артикль — это не «нет артикля по забывчивости», а сознательный выбор.** Он показывает, что ты говоришь о вещи как о классе, массе или идее, а не о конкретном экземпляре.\n\n**Сравни три варианта:**\n- `A dog is a loyal animal.` (любая одна собака)\n- `The dog is loyal.` (конкретная знакомая собака)\n- `Dogs are loyal.` (собаки вообще — нулевой артикль)\n\nВ повседневной речи именно третий вариант звучит естественнее всего для обобщений. Когда пишешь эссе про любимое животное, начинай с такой формулы."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "∅ + plural / uncountable noun (general meaning)",
+        "ru": "∅ + существительное во мн. ч. / неисчисляемое (общее значение)"
       },
       "examples": [
         {
           "en": "Apples are healthy.",
-          "ru": "Яблоки полезны."
+          "ru": "Яблоки полезны.",
+          "note": {
+            "en": "plural, general",
+            "ru": "мн. ч., общее"
+          }
         },
         {
           "en": "Honey tastes sweet.",
-          "ru": "Мёд сладкий на вкус."
+          "ru": "Мёд сладкий на вкус.",
+          "note": {
+            "en": "uncountable",
+            "ru": "неисчисляемое"
+          }
         },
         {
           "en": "Children like playing outside.",
@@ -55,30 +69,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Для обобщений — множественное число или неисчисляемое без артикля."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The dogs are loyal.",
+          "right": "Dogs are loyal.",
+          "why": {
+            "en": "For a general statement use no article; the dogs means specific ones.",
+            "ru": "Для обобщения артикль не нужен; the dogs — это конкретные собаки."
+          }
+        },
+        {
+          "wrong": "The water is essential for life.",
+          "right": "Water is essential for life.",
+          "why": {
+            "en": "Uncountable nouns in a general sense take no article.",
+            "ru": "Неисчисляемые в общем смысле идут без артикля."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the zero article appears in **institutional expressions** and many fixed phrases.\n\n- **Places by purpose** (no article = used for its main function): *go to school* (to study) vs *go to the school* (the building); *go to work*, *be in hospital* (BrE, as a patient), *in prison* (serving a sentence), *go to church* (for the service), *go to bed*, *at home*. The rule: bare noun for the activity, **the** for the physical place.\n- **Meals:** *have breakfast*, *eat lunch*, *cook dinner* — no article. But add an adjective and it becomes countable: *We had a nice breakfast.*\n- **Holidays, days, months:** *Christmas*, *Easter*, *Ramadan*; *in January*, *on Friday*, *in 2024*.\n- **Sports and games:** *play football*, *play chess*, *play tennis*.\n- **Languages and school subjects:** *speak English*, *learn Russian*, *study history*. But with **the** a language becomes a specific variety: *the English of Shakespeare*.\n- **Transport with *by*:** *by car*, *by train*, *by plane*, *on foot*. Note *on the bus* / *in the car* take **the** when you mean the vehicle as a physical space.",
         "ru": "На B1 учим **институциональные выражения** и устойчивые фразы без артикля.\n\n**Места «по назначению» (без артикля = «использовать по прямому назначению»):**\n- `go to school` (учиться) vs `go to the school` (в здание школы, по делу).\n- `go to work` (идти на работу) vs `go to the work site`.\n- `be in hospital` (BrE — лежать в больнице как пациент) vs `be at the hospital` (быть там по делу).\n- `in prison` (отбывать наказание) vs `in the prison` (работать/находиться там).\n- `go to church` (на службу) vs `go to the church` (в здание).\n- `go to bed` (ложиться спать), `be in bed`.\n- `at home`, `at work`, `at school`.\n\nПравило: без артикля — главная цель деятельности; с `the` — конкретное физическое место.\n\n**Еда:**\n- `have breakfast`, `eat lunch`, `cook dinner` — без артикля.\n- `I had breakfast at 8.`\n- Но: `We had a nice breakfast.` (с прилагательным — становится исчисл.).\n- `The breakfast he made was excellent.` (конкретный завтрак, определённый).\n\n**Праздники, дни, месяцы:**\n- `Christmas`, `Easter`, `Ramadan` — без артикля.\n- `in January`, `on Friday`, `in 2024`.\n\n**Виды спорта и игры:**\n- `play football`, `play chess`, `play tennis` — без артикля.\n- `He loves football.`\n\n**Языки и школьные предметы:**\n- `speak English`, `learn Russian`, `study history`, `teach mathematics` — без артикля.\n- `I speak English and a little German.`\n\n**Но** с `the` язык становится специфическим вариантом: `the English of Shakespeare` (английский Шекспира), `the French they speak in Quebec` (французский, на котором говорят в Квебеке).\n\n**Транспорт (фраза `by + транспорт`):**\n- `by car`, `by train`, `by plane`, `by bus`, `on foot` — без артикля.\n- Но: `on the bus` (внутри автобуса), `in the car` (внутри машины) — с артиклем, когда речь о конкретном средстве передвижения как пространстве.\n\n**Сводный список типичных случаев без артикля на B1:**\n1. Множественное число для обобщений: `Cats are independent.`\n2. Неисчисляемые для обобщений: `Water is life.`\n3. Учреждения по назначению: `go to school`, `in hospital`, `at home`.\n4. Приёмы пищи: `have breakfast / lunch / dinner`.\n5. Праздники, дни, месяцы: `on Monday`, `in January`, `at Christmas`.\n6. Спорт и игры: `play tennis`, `play chess`.\n7. Языки и предметы: `speak English`, `study biology`.\n8. Транспорт в фразе `by`: `by train`, `by plane`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "go to + ∅ institution / have + ∅ meal / by + ∅ transport / play + ∅ sport",
+        "ru": "go to + ∅ учреждение / have + ∅ приём пищи / by + ∅ транспорт / play + ∅ спорт"
       },
       "examples": [
         {
           "en": "She goes to school by bus.",
-          "ru": "Она ездит в школу на автобусе."
+          "ru": "Она ездит в школу на автобусе.",
+          "note": {
+            "en": "by + transport",
+            "ru": "by + транспорт"
+          }
         },
         {
           "en": "I have breakfast at seven.",
-          "ru": "Я завтракаю в семь."
+          "ru": "Я завтракаю в семь.",
+          "note": {
+            "en": "meal",
+            "ru": "приём пищи"
+          }
         },
         {
           "en": "He plays chess every evening.",
-          "ru": "Он играет в шахматы каждый вечер."
+          "ru": "Он играет в шахматы каждый вечер.",
+          "note": {
+            "en": "game",
+            "ru": "игра"
+          }
         },
         {
           "en": "We celebrate Christmas with family.",
@@ -92,22 +136,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "go to school, have breakfast, by car, speak English — всё без артикля."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I go to the school to study.",
+          "right": "I go to school to study.",
+          "why": {
+            "en": "No article for the activity (studying); the school means the building.",
+            "ru": "Без артикля — про учёбу; the school — это здание."
+          }
+        },
+        {
+          "wrong": "We had a breakfast at seven.",
+          "right": "We had breakfast at seven.",
+          "why": {
+            "en": "Meals take no article unless an adjective makes them countable (a nice breakfast).",
+            "ru": "Приёмы пищи без артикля, если прилагательное не делает их исчисляемыми (a nice breakfast)."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the focus is **regional differences** and **fixed prepositional phrases** that drop the article completely.\n\n- **BrE vs AmE:** *in hospital* (BrE) / *in the hospital* (AmE); *at university* (BrE) / *in college* (AmE); *go to hospital* (BrE) / *go to the hospital* (AmE).\n- **Fixed prepositional blocks (learn them whole):** *at night*, *at noon*, *at dawn*; *at first sight*; *from beginning to end*; *in trouble*, *in danger*, *in debt*, *in love*, *in power*; *on holiday*, *on business*, *on purpose*, *on average*; *by chance*, *by accident*, *by mistake*, *by hand*, *by heart*; *under pressure*, *out of order*, *out of date*.\n- **Time of day — careful:** *at night* (no article) but *in the morning / afternoon / evening* (with **the**).\n- **Paired nouns in set phrases:** *day and night*, *hand in hand*, *face to face*, *side by side*, *from head to toe* — no articles, to stress the abstract relationship.\n\nThe same noun can switch between an institutional sense (no article) and a concrete place (**the**): *She went to bed.* (to sleep) vs *She sat on the bed.* (the object); *He is in prison.* (serving time) vs *He visited his brother in the prison.* (the building).",
         "ru": "На B2 разбираем **региональные различия** и фиксированные предложные выражения.\n\n**BrE vs AmE:**\n- `in hospital` (BrE) / `in the hospital` (AmE) — пациент.\n- `at university` (BrE) / `in college` (AmE) — учиться в вузе.\n- `go to hospital` (BrE) / `go to the hospital` (AmE).\n- `at school` — оба варианта; но AmE чаще `in school`.\n\n**Фиксированные предложные фразы без артикля:**\n- `at night`, `at noon`, `at midnight`, `at sunset`, `at dawn`\n- `at first sight`, `at first glance`\n- `from beginning to end`, `from top to bottom`\n- `in trouble`, `in danger`, `in debt`, `in love`, `in power`\n- `on holiday`, `on business`, `on purpose`, `on average`\n- `by chance`, `by accident`, `by mistake`, `by hand`, `by heart`\n- `under pressure`, `out of order`, `out of date`\n\nЭти блоки учатся целиком, как формулы. Не пытайся переводить дословно.\n\n**Время суток — осторожно:**\n- `at night` (без артикля): `I work at night.`\n- `in the morning / afternoon / evening` (с `the`): `in the morning`.\n- `by day / by night` (литературно): `by night, the city transforms`.\n\n**Парные существительные в устойчивых оборотах:**\n- `day and night`, `hand in hand`, `face to face`, `side by side`\n- `from door to door`, `from head to toe`\n- `man and wife` (архаично), `mother and son`\n\nВ этих парах артикли отсутствуют, чтобы подчеркнуть обобщённое, абстрактное отношение.\n\n**Типичная ошибка:** `in the love`, `on the holiday`. Правильно: `in love`, `on holiday`.\n\n**Сравни разные позиции одного существительного:**\n- `She went to bed.` (легла спать — цель)\n- `She sat on the bed.` (села на кровать — конкретный предмет)\n- `He is in prison.` (отбывает срок — институт)\n- `He visited his brother in the prison.` (зашёл в здание)\n\nОбрати внимание, как одно и то же слово переключается между «смысл как институт» (без артикля) и «конкретное место/предмет» (с `the`). Такие пары надо учить осознанно — ошибка в выборе артикля может изменить смысл целого предложения.\n\n**Ещё ловушки B2:**\n- `at university` (BrE) / `in college` (AmE) — оба без артикля для «учиться в вузе».\n- `at church` — на службе; `at the church on the corner` — в конкретной церкви.\n- `by post` / `by email` / `by phone` — без артикля для способа.\n- `on holiday` / `on business` / `on vacation` — фиксированные формулы без артикля.\n- `in bed with flu` / `in hospital with broken leg` — описание состояния без артикля.\n\nЭти формулы в речи заменяются очень быстро; их стоит выучить в полном виде, не пытаясь каждый раз собирать заново."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "preposition + ∅ noun = fixed phrase (in love, on holiday, at night, by mistake)",
+        "ru": "предлог + ∅ существительное = устойчивая фраза (in love, on holiday, at night, by mistake)"
       },
       "examples": [
         {
           "en": "He's in hospital after the accident.",
-          "ru": "Он в больнице после аварии."
+          "ru": "Он в больнице после аварии.",
+          "note": {
+            "en": "in hospital (BrE)",
+            "ru": "in hospital (BrE)"
+          }
         },
         {
           "en": "I knew it at first sight.",
@@ -119,36 +185,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The machine broke by accident.",
-          "ru": "Машина сломалась случайно."
+          "ru": "Машина сломалась случайно.",
+          "note": {
+            "en": "by + chance",
+            "ru": "by + случайность"
+          }
         },
         {
           "en": "They stood face to face.",
-          "ru": "Они стояли лицом к лицу."
+          "ru": "Они стояли лицом к лицу.",
+          "note": {
+            "en": "paired nouns",
+            "ru": "парные существительные"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "in love, on holiday, at night, by mistake — фиксированные блоки без артикля."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "They are in the love.",
+          "right": "They are in love.",
+          "why": {
+            "en": "in love is a fixed phrase with no article.",
+            "ru": "in love — устойчивая фраза без артикля."
+          }
+        },
+        {
+          "wrong": "We work at the night.",
+          "right": "We work at night.",
+          "why": {
+            "en": "at night takes no article, unlike in the morning.",
+            "ru": "at night — без артикля, в отличие от in the morning."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the zero article works in **parallel structures, lists, slogans and abstractions**, where dropping it carries stylistic weight.\n\n- **Parallel structures (movement / process):** *from father to son*, *from city to city*, *step by step*, *year by year*, *arm in arm*, *side by side*. Repeating a bare noun creates a sense of progression.\n- **Lists in CVs and headings:** *Skills: Python, React, communication, leadership.* — articles omitted.\n- **Slogans and aphorisms:** *Power corrupts.*, *Knowledge is power.*, *Silence is golden.* Abstract nouns with no article sound like universal truths.\n- **Signs and notices:** *Parking prohibited.*, *Staff only.*, *Exit.*\n- **Stylistic register shift:** *Research into climate change is ongoing.* (abstract, scientific) vs *The research into climate change is ongoing.* (a specific programme). Opening a paragraph with a bare abstract noun gives it the force of a thesis: *Silence is the greatest weapon.* reads like an aphorism, while *The silence...* sounds ordinary.\n- **Abstract nouns in general statements:** *freedom*, *love*, *justice*, *wisdom*, *knowledge* go bare — *Love conquers all.*, *Wisdom comes with age.*",
         "ru": "На C1 смотрим, как нулевой артикль работает в **параллельных структурах и перечислениях**, а также в лозунгах и заглавных фразах.\n\n**Параллельные структуры:**\n- `from father to son` — из поколения в поколение.\n- `from city to city`, `from day to day`, `from door to door`\n- `step by step`, `inch by inch`, `year by year`\n- `arm in arm`, `hand in hand`, `side by side`\n- `eye to eye`, `back to back`, `face to face`\n\nПовтор существительного без артикля создаёт эффект движения, процесса, поэтапности.\n\n**Списки в резюме или заголовках:**\n- `Skills: Python, React, communication, leadership.` — артикли опущены.\n- `Tools: hammer, saw, drill, screwdriver.`\n\n**Лозунги и афоризмы:**\n- `Power corrupts.` (Власть развращает.)\n- `Knowledge is power.` (Знание — сила.)\n- `Truth sets you free.` (Истина делает тебя свободным.)\n- `Silence is golden.`\n\nБез артикля абстрактные существительные звучат как общие истины, универсальные принципы.\n\n**Объявления и вывески:**\n- `Parking prohibited.`\n- `Entry forbidden.`\n- `Staff only.`\n- `Exit.`\n\n**После определённых предлогов без артикля:**\n- `except for X`, `including Y`: `All members except the chairman voted yes.`\n- `as`: `She works as teacher` — архаично; современная норма: `as a teacher`. Но формальные: `appointed as chairman`.\n\n**Стилистический выбор:**\n- `Research into climate change is ongoing.` — абстрактно, научно.\n- `The research into climate change is ongoing.` — конкретная научная программа.\n- Различие создаёт регистровый сдвиг: первый вариант общий, второй более детализированный.\n\n**Стилистическое использование нулевого артикля:**\nВ литературной и публицистической речи нулевой артикль создаёт ощущение универсальности и вечности. Начало абзаца с существительного без артикля имеет свойство «тезиса»: `Silence is the greatest weapon.` — звучит как афоризм. `The silence is the greatest weapon.` — звучит буднично.\n\n**В академических абстрактах и заголовках глав** часто полностью опускаются артикли для компрессии: `Results indicate...`, `Conclusion follows from...` Это характерно для научного стиля, где экономия места ценится.\n\n**Названия приёмов пищи и времени суток:**\n- `have breakfast` / `have dinner` — без артикля (рутинная еда).\n- `a good breakfast` / `a nice dinner` — с артиклем, если есть определение.\n- `a business lunch`, `a quick breakfast` — специфические случаи.\n\n**Праздники и сезоны:**\n- `at Christmas`, `on Easter`, `during Ramadan` — без артикля.\n- `in winter`, `in summer`, `in spring`, `in autumn` — обычно без, но `in the winter of 2020` — с `the`, если уточняется.\n\n**Абстрактные существительные без артикля:** `freedom`, `love`, `justice`, `beauty`, `wisdom`, `knowledge` — в общих утверждениях идут без артикля: `Love conquers all.`, `Wisdom comes with age.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "∅ noun + by/to + ∅ noun (parallel) / ∅ abstract noun (general truth)",
+        "ru": "∅ существительное + by/to + ∅ существительное (параллель) / ∅ абстрактное существительное (общая истина)"
       },
       "examples": [
         {
           "en": "Power without responsibility is dangerous.",
-          "ru": "Власть без ответственности опасна."
+          "ru": "Власть без ответственности опасна.",
+          "note": {
+            "en": "abstraction",
+            "ru": "абстракция"
+          }
         },
         {
           "en": "They worked year by year to restore the cathedral.",
-          "ru": "Они работали год за годом, восстанавливая собор."
+          "ru": "Они работали год за годом, восстанавливая собор.",
+          "note": {
+            "en": "year by year",
+            "ru": "год за годом"
+          }
         },
         {
           "en": "Research indicates a clear pattern.",
@@ -156,7 +256,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Staff only — do not enter.",
-          "ru": "Только для персонала — не входить."
+          "ru": "Только для персонала — не входить.",
+          "note": {
+            "en": "sign / notice",
+            "ru": "вывеска"
+          }
         },
         {
           "en": "We travelled from village to village.",
@@ -166,26 +270,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Повторы без артикля (step by step, from A to B) создают эффект процесса или обобщения."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The power corrupts.",
+          "right": "Power corrupts.",
+          "why": {
+            "en": "An abstract noun stated as a general truth takes no article.",
+            "ru": "Абстрактное существительное как общая истина идёт без артикля."
+          }
+        },
+        {
+          "wrong": "They worked the year by year.",
+          "right": "They worked year by year.",
+          "why": {
+            "en": "Parallel structures (year by year, step by step) use bare nouns.",
+            "ru": "В параллельных оборотах (year by year, step by step) существительные без артикля."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the zero article belongs to **compressed registers** — journalistic, academic, technical — where articles are dropped systematically by convention.\n\n- **Headline (telegraph) style:** *Prime minister meets president.*, *Scientists discover cure for rare disease.* The full sentence would restore them: *The prime minister met the president.* This is space-saving compression, not error.\n- **Academic abstracts:** *Paper argues for new model.*, *Experiment reveals discrepancy.* — but the body of the article keeps articles in full.\n- **Instructions and recipes:** *Combine flour, sugar, and butter. Add eggs.*, *Connect cable to port A.* Articles drop for brevity and generality.\n- **Captions:** *Graph shows correlation between income and education.*\n- **Compressed noun stacks:** *Government housing policy review* = a review of the government's policy on housing; *City centre traffic congestion problem* = the problem of traffic congestion in the city centre. At C2 you must unpack and re-pack these.\n- **Literary effect:** *Night came. Silence fell.* — absence of articles gives an epic, mythic tone; *The night came. The silence fell.* is neutral narration.\n\n**The risk:** over-dropping articles in neutral prose reads as illiteracy. Before omitting one, ask: is it a genre convention (headline, recipe, list, abstract)? a deliberate rhetorical device? a fixed idiom (*in love*, *at night*)? If no on all three, keep the article.",
         "ru": "На C2 речь идёт о **компрессированном стиле** — журналистском, академическом, техническом, — где артикли системно опускаются.\n\n**Журналистский telegraph style:**\n- `Prime minister meets president.`\n- `Blast rocks capital; casualties feared.`\n- `Scientists discover cure for rare disease.`\n\nВ статье полностью: `The prime minister met the president. A blast rocked the capital, and casualties are feared.` В заголовке — артикли опущены.\n\n**Академические компрессии:**\n- `Paper argues for new model.` — в аннотации.\n- `Experiment reveals discrepancy.` — в резюме.\n- Полностью: `This paper argues for a new model. The experiment reveals a discrepancy.`\n\n**Технические инструкции и рецепты:**\n- `Combine flour, sugar, and butter. Add eggs. Stir until smooth.`\n- `Connect cable to port A. Press button B.`\n- Артикли опущены для сжатости и универсальности.\n\n**Диаграммы и подписи:**\n- `Graph shows correlation between income and education.` (в описании к графику)\n- `Box contains three items.`\n\n**Заголовки глав и разделов:**\n- `Part I: Origins`\n- `Chapter 2: Conflict`\n- `Section 4: Conclusion`\n- В тексте: `The origins of the conflict are complex.`\n\n**Компрессированные именные группы (noun stacks):**\n- `Government housing policy review` = a review of the government's policy on housing.\n- `University admissions committee chair` = the chair of the admissions committee at the university.\n- `City centre traffic congestion problem` = the problem of traffic congestion in the city centre.\n\nТакие конструкции характерны для бюрократического, юридического, журналистского стиля. На C2 ты должен уметь разворачивать их в полные формы и наоборот — сжимать.\n\n**Тонкая стилистика литературы:**\n- `Night came. Silence fell.` — отсутствие артиклей создаёт эпический, мифологический тон.\n- `The night came. The silence fell.` — нейтральный повествовательный.\n\n**Риск:** избыточное опускание артиклей воспринимается как неграмотная речь. Опускай только там, где жанровая конвенция это предписывает.\n\n**Сводный тест для C2:** перед опусканием артикля задай три вопроса. Первый — это устоявшаяся жанровая конвенция (заголовок, рецепт, список, аннотация)? Второй — это риторический приём (литературное опущение для ритма или обобщения)? Третий — это фиксированная идиома (`in love`, `on holiday`, `at night`)? Если ответ «нет» на все три — ставь артикль. Чрезмерная компрессия в нейтральном тексте выглядит как промах, а не как стилистическое решение.\n\n**Разграничение жанров:** в серьёзной академической статье в основном тексте артикли всегда на месте; в аннотации и заголовках — компрессируются. В художественной прозе опущение артикля — риторический приём с определённым эффектом. В деловой переписке артикли всегда ставятся полностью, чтобы избежать двусмысленности и сохранить профессиональный тон."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "∅ + noun (genre-driven compression: headline / recipe / abstract / noun stack)",
+        "ru": "∅ + существительное (жанровая компрессия: заголовок / рецепт / аннотация / именная группа)"
       },
       "examples": [
         {
           "en": "Government approves new education bill. (headline)",
-          "ru": "Правительство одобрило новый закон об образовании."
+          "ru": "Правительство одобрило новый закон об образовании.",
+          "note": {
+            "en": "headline",
+            "ru": "заголовок"
+          }
         },
         {
           "en": "Combine ingredients in large bowl. (recipe)",
-          "ru": "Смешайте ингредиенты в большой миске."
+          "ru": "Смешайте ингредиенты в большой миске.",
+          "note": {
+            "en": "recipe",
+            "ru": "рецепт"
+          }
         },
         {
           "en": "Graph illustrates decline in employment.",
@@ -197,15 +327,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Dawn broke. Silence returned.",
-          "ru": "Рассвело. Тишина вернулась."
+          "ru": "Рассвело. Тишина вернулась.",
+          "note": {
+            "en": "literary effect",
+            "ru": "литературный приём"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Компрессированный стиль (заголовки, рецепты, аннотации) системно опускает артикли."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Government approves the new education bill. (headline)",
+          "right": "Government approves new education bill. (headline)",
+          "why": {
+            "en": "Headline style drops articles systematically; restore them only in the body text.",
+            "ru": "Заголовочный стиль системно опускает артикли; восстанавливай их только в основном тексте."
+          }
+        },
+        {
+          "wrong": "Connect the cable to the port A.",
+          "right": "Connect cable to port A.",
+          "why": {
+            "en": "Technical instructions compress articles for brevity and generality.",
+            "ru": "Технические инструкции сжимают артикли ради краткости и универсальности."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "definite-article",
+    "indefinite-article",
+    "article-with-proper-nouns",
+    "countable-uncountable-nouns"
+  ],
+  "crossTopic": [
+    "singular-plural-nouns",
+    "abstract-nouns",
+    "prepositions-in-phrases",
+    "noun-phrases"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "a / the (marked)",
+      "∅ (zero article)"
+    ]
+  }
 };

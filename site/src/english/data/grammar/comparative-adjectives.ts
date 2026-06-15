@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "comparative-adjectives",
   "title": {
-    "en": "",
+    "en": "Comparative Adjectives",
     "ru": "Comparative Adjectives"
   },
   "cefr": "A1",
@@ -17,19 +17,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "adjectives",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "comparison",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "Use a comparative to compare two things or people. For short adjectives (one syllable), add -er and follow with than: tall -> taller, fast -> faster, old -> older. Spelling: drop nothing but add -r after final -e (nice -> nicer); change -y to -i (happy -> happier); double a final consonant after a single short vowel (big -> bigger, hot -> hotter). Two common words are irregular: good -> better and bad -> worse — never gooder or badder. After a comparative, than almost always follows.",
         "ru": "Сравнительная форма — это когда мы сравниваем две вещи или двух людей.\n\n**Короткие прилагательные** (1 слог): добавь `-er` и слово `than` (чем).\n- `big` → `bigger`\n- `tall` → `taller`\n- `fast` → `faster`\n- `old` → `older`\n\n**Пример:**\n- `Tom is taller than Anna.` (Том выше, чем Анна.)\n- `My car is faster than your car.` (Моя машина быстрее, чем твоя.)\n\n**Правила написания:**\n- Если слово заканчивается на `-e`, добавь только `-r`: `nice → nicer`, `large → larger`.\n- Если `-y` в конце, меняем на `-i`: `happy → happier`, `easy → easier`.\n- Короткие слова с одной гласной и одной согласной удваивают согласную: `big → bigger`, `hot → hotter`.\n\n**Два специальных слова (irregular):**\n- `good → better` (хорошо → лучше)\n- `bad → worse` (плохо → хуже)\n\nНе говори `gooder` или `badder` — это ошибка.\n\n**Пример:**\n- `This book is better than that one.` (Эта книга лучше, чем та.)\n- `The weather today is worse than yesterday.` (Погода сегодня хуже, чем вчера.)\n\nПомни: после сравнительной формы почти всегда идёт слово `than`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "A + be + adjective-er + than + B",
+        "ru": "A + be + прилагательное-er + than + B"
       },
       "examples": [
         {
@@ -38,7 +40,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "This cake is better than the other one.",
-          "ru": "Этот торт лучше, чем тот."
+          "ru": "Этот торт лучше, чем тот.",
+          "note": {
+            "en": "irregular",
+            "ru": "исключение"
+          }
         },
         {
           "en": "Winter is colder than autumn.",
@@ -50,23 +56,45 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Today is worse than yesterday.",
-          "ru": "Сегодня хуже, чем вчера."
+          "ru": "Сегодня хуже, чем вчера.",
+          "note": {
+            "en": "irregular",
+            "ru": "исключение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Короткое прилагательное + -er + than. Good → better, bad → worse."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Tom is more tall than Anna.",
+          "right": "Tom is taller than Anna.",
+          "why": {
+            "en": "Short one-syllable adjectives take -er, not more.",
+            "ru": "Короткие односложные прилагательные берут -er, а не more."
+          }
+        },
+        {
+          "wrong": "This book is gooder than that one.",
+          "right": "This book is better than that one.",
+          "why": {
+            "en": "Good is irregular: good -> better.",
+            "ru": "Good — исключение: good -> better."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Long adjectives (two or more syllables) do not take -er. Use more + adjective + than: more interesting than, more expensive than. Never combine both — more bigger is a double error; pick one form. Two-syllable adjectives ending in -y still take -er (happy -> happier, busy -> busier); most other two-syllable ones use more (more modern, more famous), and some allow both (quieter / more quiet). For the opposite direction use less + adjective + than (less expensive than). Beyond good/bad, key irregulars are far -> farther/further and little -> less.",
         "ru": "**Длинные прилагательные** (2 слога и больше) не берут `-er`. Используй `more + прилагательное + than`.\n\n- `interesting` → `more interesting than`\n- `expensive` → `more expensive than`\n- `beautiful` → `more beautiful than`\n- `difficult` → `more difficult than`\n\n**Пример:**\n- `This book is more interesting than that one.` (Эта книга интереснее той.)\n- `Moscow is more expensive than Kazan.` (Москва дороже Казани.)\n\n**Нельзя:** `more bigger`, `more taller` — это двойная ошибка. Выбери что-то одно.\n\n**Прилагательные на 2 слога — особый случай:**\nЗаканчивающиеся на `-y` берут `-er`: `happy → happier`, `easy → easier`, `busy → busier`.\nДругие на 2 слога — обычно `more`: `modern → more modern`, `famous → more famous`.\n\nНекоторые принимают оба варианта: `quiet → quieter / more quiet`, `clever → cleverer / more clever`.\n\n**Противоположное — `less`:**\nКогда одно меньше по качеству, чем другое:\n- `This film is less interesting than the book.` (Этот фильм менее интересный, чем книга.)\n- `Tea is less expensive than coffee here.` (Чай здесь дешевле кофе.)\n\n**Полный список irregulars:**\n- `good → better`\n- `bad → worse`\n- `far → farther / further` (о расстоянии / о дополнительной информации)\n- `little → less` (меньше по количеству)\n- `much / many → more`\n\n**Дневные коллокации:**\n- `much better` — гораздо лучше (усилитель).\n- `a bit taller` — немного выше.\n- `a lot more expensive` — гораздо дороже."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "A + be + more + long-adjective + than + B",
+        "ru": "A + be + more + длинное прилагательное + than + B"
       },
       "examples": [
         {
@@ -75,11 +103,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "My new apartment is much bigger than the old one.",
-          "ru": "Моя новая квартира намного больше старой."
+          "ru": "Моя новая квартира намного больше старой.",
+          "note": {
+            "en": "intensifier",
+            "ru": "усилитель"
+          }
         },
         {
           "en": "Coffee is less expensive than juice here.",
-          "ru": "Кофе здесь дешевле сока."
+          "ru": "Кофе здесь дешевле сока.",
+          "note": {
+            "en": "less",
+            "ru": "меньше качества"
+          }
         },
         {
           "en": "She is a bit happier today.",
@@ -93,17 +129,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Длинное прилагательное → more + adjective + than. Never more bigger."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "This phone is more cheaper than that one.",
+          "right": "This phone is cheaper than that one.",
+          "why": {
+            "en": "Do not use more with an -er form; choose one.",
+            "ru": "Нельзя сочетать more с формой -er; выбери одно."
+          }
+        },
+        {
+          "wrong": "This film is more interestinger.",
+          "right": "This film is more interesting.",
+          "why": {
+            "en": "Long adjectives never take -er; use more alone.",
+            "ru": "Длинные прилагательные не берут -er; используй только more."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Add equality and inequality with as ... as and not as ... as. As tall as means the same height; not as tall as means less (often equivalent to shorter than), though it can also mean simply not more, so the two are not identical to a comparative. Use modifiers before a comparative to grade it: much / a lot / far (much better), a bit / slightly (slightly older), any in questions and negatives (Is it any better?), and no (no better than before). The more ... the more pattern links two changes (The more I read, the more I learn), and doubling a comparative shows a trend (more and more expensive, getting better and better). In speech, than me is the normal everyday choice over the formal than I.",
         "ru": "На B1 добавь конструкцию **`as … as`** — равенство, и **`not as … as`** — отрицание равенства.\n\n**Равенство:**\n- `Tom is as tall as Anna.` (Том такой же высокий, как Анна.)\n- `This exercise is as difficult as the last one.` (Это упражнение такое же трудное, как предыдущее.)\n\n**Неравенство (меньше):**\n- `Tom is not as tall as Anna.` = `Tom is shorter than Anna.` (Том не такой высокий, как Анна.)\n- `This book is not as interesting as the film.` (Эта книга не такая интересная, как фильм.)\n\n**Разница между `not as … as` и сравнительной:**\n- `A is not as big as B` — объекты могут быть одинаковыми (`A ≤ B`).\n- `A is smaller than B` — A точно меньше.\n\n**Интенсификаторы перед сравнительной:**\n- `much / a lot / far` + сравнительная = «намного»: `much better`, `far cheaper`.\n- `a bit / a little / slightly` = «немного»: `slightly older`.\n- `any` (в вопросах и отрицаниях): `Is it any better?`, `It isn’t any cheaper.`\n- `no` + сравнительная = «не»: `no better than before`.\n\n**Конструкция `the more … the more`:**\nЧем больше X — тем больше Y.\n- `The more I read, the more I learn.` (Чем больше читаю, тем больше узнаю.)\n- `The older she gets, the wiser she becomes.` (Чем старше она становится, тем мудрее.)\n\n**Повторение сравнительной:**\n- `getting better and better` (становится всё лучше и лучше)\n- `more and more expensive` (всё дороже и дороже)\n\n**Выбор `than me` vs `than I`:**\n- `than I` — формально: `She is taller than I (am).` — грамматически точнее.\n- `than me` — разговорно и очень распространено: `She is taller than me.`\n\nВ современной речи `than me` считается нормой. На B1 используй `than me` — это безопасно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "as + adjective + as | not as + adjective + as | the + comparative ..., the + comparative ...",
+        "ru": "as + прилагательное + as | not as + прилагательное + as | the + сравнительная ..., the + сравнительная ..."
       },
       "examples": [
         {
@@ -116,11 +170,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Life is getting more and more expensive.",
-          "ru": "Жизнь становится всё дороже."
+          "ru": "Жизнь становится всё дороже.",
+          "note": {
+            "en": "trend",
+            "ru": "тенденция"
+          }
         },
         {
           "en": "The more you practise, the better you become.",
-          "ru": "Чем больше практикуешься, тем лучше становишься."
+          "ru": "Чем больше практикуешься, тем лучше становишься.",
+          "note": {
+            "en": "parallel",
+            "ru": "параллель"
+          }
         },
         {
           "en": "She’s a lot taller than me.",
@@ -130,17 +192,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "as tall as = равенство; not as tall as = меньше. More and more — всё больше."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "This room is as big than yours.",
+          "right": "This room is as big as yours.",
+          "why": {
+            "en": "Equality uses as ... as, not as ... than.",
+            "ru": "Равенство строится через as ... as, а не as ... than."
+          }
+        },
+        {
+          "wrong": "More I read, more I learn.",
+          "right": "The more I read, the more I learn.",
+          "why": {
+            "en": "The is required in both halves of the the more ... the more pattern.",
+            "ru": "Артикль the обязателен в обеих частях конструкции the more ... the more."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "Sharpen comparatives with precise modifiers along a scale of strength: marginally / slightly / a bit (small), somewhat / rather (moderate), considerably / significantly (large), much / a lot / far (very large), vastly / infinitely (extreme). Crucially, very does not modify a comparative — say much better, not very better, and avoid quite better. Use the + comparative, the + comparative for parallel change (The harder you work, the more you earn) and rather than to weigh two options or contrast labels (political rather than economic). Keep comparisons parallel: compare like with like — higher than a teacher's, not higher than a teacher. In academic writing, hedge with somewhat more significant or arguably better.",
         "ru": "На B2 усиливай сравнительные более точными модификаторами.\n\n**Сила сравнительной — шкала:**\n- `marginally / slightly / a bit` — чуть-чуть: `marginally better`.\n- `somewhat / rather` — немного: `rather more complex`.\n- `considerably / significantly` — значительно: `considerably cheaper`.\n- `much / a lot / far` — намного: `far more reliable`.\n- `vastly / infinitely` — гораздо, несоизмеримо: `vastly superior`.\n\n**Двойные сравнительные для усиления:**\n- `better and better`, `worse and worse` — всё лучше/хуже.\n- `more and more complicated`.\n\n**`the + сравнительная` для параллельных изменений:**\n- `The harder you work, the more you earn.` (Чем больше работаешь — тем больше зарабатываешь.)\n- `The less he said, the angrier she became.`\n\nФормула: `the + comparative + S + V, the + comparative + S + V`.\n\n**Редкие структуры:**\n- `no less than / no more than` — не менее / не более: `no less than 50 people attended`.\n- `nothing is more X than Y`: `Nothing is more important than health.`\n\n**Сравнение двух вариантов — `rather than`:**\n- `She prefers tea rather than coffee.` (предпочтение)\n- `The issue is political rather than economic.` (противопоставление).\n\n**Parallelism в сравнениях:**\nСравнивай одинаковые структуры. Ошибка:\n- Wrong: `Her salary is higher than a teacher.` (зарплата vs учитель — не параллельно).\n- Right: `Her salary is higher than a teacher’s.` или `higher than that of a teacher`.\n\n**Смещение смысла при выборе модификатора:**\n- `quite better` — почти не используется (используй `much better`).\n- `very better` — ошибка (`very` не идёт с comparative; используй `much`).\n\n**Hedged сравнения в академическом стиле:**\n- `somewhat more significant`, `arguably better`, `marginally superior` — более осторожные утверждения."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "A + be + degree-modifier + comparative + than + B | the + comparative + clause, the + comparative + clause",
+        "ru": "A + be + модификатор степени + сравнительная + than + B | the + сравнительная + клауза, the + сравнительная + клауза"
       },
       "examples": [
         {
@@ -149,7 +229,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Her approach is arguably better than his.",
-          "ru": "Её подход, пожалуй, лучше его."
+          "ru": "Её подход, пожалуй, лучше его.",
+          "note": {
+            "en": "hedge",
+            "ru": "осторожность"
+          }
         },
         {
           "en": "The harder I tried, the worse it got.",
@@ -161,28 +245,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Her salary is higher than a teacher’s.",
-          "ru": "Её зарплата выше, чем у учителя."
+          "ru": "Её зарплата выше, чем у учителя.",
+          "note": {
+            "en": "parallel",
+            "ru": "параллельность"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Never very better — используй much / far / considerably для усиления сравнительной."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The new model is very better than the old one.",
+          "right": "The new model is much better than the old one.",
+          "why": {
+            "en": "Very cannot grade a comparative; use much / far / considerably.",
+            "ru": "Very не усиливает сравнительную; используй much / far / considerably."
+          }
+        },
+        {
+          "wrong": "Her salary is higher than a teacher.",
+          "right": "Her salary is higher than a teacher's.",
+          "why": {
+            "en": "Compare salary with salary, not salary with a person.",
+            "ru": "Сравнивай зарплату с зарплатой, а не зарплату с человеком."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the comparative becomes a tool for fine argument. Modifier collocation is selective: infinitely preferable, vastly superior, markedly better, substantially cheaper are idiomatic, while some pairings (vastly cheaper) sound off — prefer substantially. The -er versus more choice for two-syllable adjectives is stylistic and register-sensitive (more polite usually beats politer; cleverer and more clever are near-equal). Than I (conjunction) is formal, than me (preposition) is conversational, and than I am is a safe middle. Disambiguate amphibolous comparatives: I like her more than him can mean more than I like him or more than he does — spell it out. Elliptical comparatives drop the repeated verb (He works harder now than last year).",
         "ru": "На C1 сравнительные работают как инструмент **тонкой аргументации**.\n\n**Колокационная сила модификаторов:**\nНе любой модификатор сочетается с любым comparative. Идиоматично:\n- `infinitely preferable`, `vastly superior`, `markedly better`, `appreciably worse`, `substantially cheaper`.\n- Но: `vastly better` — ОК, `vastly cheaper` — менее идиоматично (используй `substantially`).\n\n**`-er` vs `more` — стилистический выбор:**\nНекоторые двусложные прилагательные допускают оба варианта. Выбор зависит от ритма и регистра:\n- `politer` / `more polite` — `more polite` чаще в современной речи.\n- `cleverer` / `more clever` — почти равноправно.\n- `commoner` / `more common` — `more common` предпочтительнее.\n\n**Register and `than I` vs `than me`:**\nФормально `than` — союз: `She is taller than I am`. Разговорно `than` — предлог: `She is taller than me`.\n- Полная формальность: `than I`, `than he`, `than we`.\n- Полуформально: `than I am`, `than he is` — безопасный компромисс.\n- Разговорно: `than me`, `than him`.\n\nВ академическом и юридическом английском `than I` — правильно. В повседневной речи `than me` доминирует.\n\n**Amphibolous comparatives (двусмысленные):**\n- `I like her more than him.` — может значить:\n  - `more than I like him` (сравниваю свою симпатию).\n  - `more than he does` (сравниваю с его симпатией).\n\nРасшифровывай: `I like her more than he does` vs `I like her more than I like him`.\n\n**Metaphorical / hedged comparatives:**\n- `less than ideal`, `more or less`, `the lesser of two evils`, `easier said than done` — идиомы.\n\n**Redundancy (двойные сравнительные):**\n- `more easier`, `most funnest` — ошибки, избегай.\n- Но в устной речи и rap-культуре встречается экспрессивно — это не норма.\n\n**Paralleling со сравнением + времени:**\n- `The longer we wait, the harder it will be.` — будущее в обоих клаузах не требуется, первый клауз в present.\n\n**Elliptical comparatives:**\n- `She’s better at maths than at physics.` (эллипсис `she is`).\n- `He works harder now than (he did) last year.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "A + be + collocating-modifier + comparative + than + B(reduced/elliptical)",
+        "ru": "A + be + сочетающийся модификатор + сравнительная + than + B(сокращённое/эллипсис)"
       },
       "examples": [
         {
           "en": "His argument is infinitely more persuasive than hers.",
-          "ru": "Его аргумент несравнимо убедительнее её."
+          "ru": "Его аргумент несравнимо убедительнее её.",
+          "note": {
+            "en": "collocation",
+            "ru": "колокация"
+          }
         },
         {
           "en": "The results are markedly better than last quarter.",
@@ -194,7 +304,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I trust her more than him — more than I trust him, that is.",
-          "ru": "Я доверяю ей больше, чем ему — больше, чем я доверяю ему."
+          "ru": "Я доверяю ей больше, чем ему — больше, чем я доверяю ему.",
+          "note": {
+            "en": "disambiguated",
+            "ru": "снятие двусмысленности"
+          }
         },
         {
           "en": "She is more articulate than I am.",
@@ -204,30 +318,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Выбор than I vs than me — вопрос регистра; в формальном письме остановись на than I."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "His argument is vastly cheaper to defend.",
+          "right": "His argument is substantially cheaper to defend.",
+          "why": {
+            "en": "Vastly collocates with superior/better, not cheaper; use substantially.",
+            "ru": "Vastly сочетается с superior/better, но не с cheaper; используй substantially."
+          }
+        },
+        {
+          "wrong": "She is more politer than him.",
+          "right": "She is more polite than him.",
+          "why": {
+            "en": "Never combine more with an -er form; choose one comparative.",
+            "ru": "Нельзя сочетать more с формой -er; выбери одну сравнительную."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 comparison works as rhetoric, not just grammar. Litotes understates through negation plus a comparative: not unlike (= similar to), no less impressive (= very impressive), not the worst (= reasonably good). Emphatic fronting and elliptical slogans exploit comparatives for effect (Faster. Smarter. Stronger.; The more, the merrier). Distinguish rather than (preference, contrast) from instead of (replacement). Treat absolute adjectives carefully: more perfect and more unique are criticised by purists yet entrenched in politics and marketing — avoid them in strict academic prose. Hedge with arguably the best or one of the most rather than a bald superlative. Above all, in high style trust the bare comparative: better is stronger than a little better, so the less you hedge, the more force you carry.",
         "ru": "На C2 сравнение становится **риторическим приёмом**, а не просто грамматикой.\n\n**Litotes через comparative:**\nПреуменьшение через отрицание + comparative:\n- `not unlike` = `similar to` (смягчённо).\n- `no less impressive` = `very impressive`.\n- `not the worst` = `reasonably good`.\n\n**Emphatic fronting с comparatives:**\n- `Better would be a compromise.` (эмфаза через fronting).\n- `Happier days we have not seen.` (литературное).\n\n**Comparative в заголовках и sloganeering:**\n- `Faster. Smarter. Stronger.` — эллиптические сравнительные для эффекта.\n- `The more, the merrier.` — идиоматический пример структуры.\n\n**Нюансы `rather than` vs `instead of`:**\n- `rather than` — предпочтение, выбор: `She chose law rather than medicine.`\n- `instead of` — замена: `Use honey instead of sugar.`\n\nВ формальном письме `rather than` точнее передаёт аргументацию.\n\n**Comparative + absolute adjectives (проблемный случай):**\nСтрого `perfect`, `unique`, `impossible` — не gradable. Но в живой речи:\n- `more perfect` (*US Constitution*: \"a more perfect Union\") — историческое, закрепилось.\n- `more unique` — критикуется пуристами, но распространено.\n\nВ строгом академическом письме избегай. В politics и marketing — допустимо.\n\n**Hedging через comparative:**\n- `arguably the best`, `perhaps more relevant`, `marginally superior` — академические markers осторожности.\n- `one of the + superlative` безопаснее: `one of the most important` вместо `the most important`.\n\n**Comparative в argumentation:**\nСтруктура `X is more Y than Z is`, где Z — контраст:\n- `His theory is more predictive than empirical.` (теория сильнее в одной области, чем в другой).\n- `The problem is more cultural than economic.` (классификация проблемы).\n\n**Stylistic irregularity:**\nВ литературе встречается:\n- `the better part of valour is discretion` (идиома, Shakespeare).\n- `more sinned against than sinning` (*King Lear*) — постмодификация comparative.\n\n**Корпусные данные:**\nВ письменном английском `-er` лидирует для 1-слога, `more` — для 3+ слогов. Для 2-слога — 50/50 в зависимости от слова и регистра.\n\n**Финальный совет:** в высоком стиле избегай избыточных модификаторов. `Better` сильнее, чем `a little better`. Чем меньше hedging — тем сильнее утверждение."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "negation + comparative (litotes) | comparative + than + clause(contrastive) | fronted comparative",
+        "ru": "отрицание + сравнительная (литота) | сравнительная + than + клауза(контраст) | вынесенная сравнительная"
       },
       "examples": [
         {
           "en": "His prose is no less striking than hers.",
-          "ru": "Его проза не менее яркая, чем её."
+          "ru": "Его проза не менее яркая, чем её.",
+          "note": {
+            "en": "litotes",
+            "ru": "литота"
+          }
         },
         {
           "en": "The solution is more cultural than technical.",
-          "ru": "Решение больше культурное, чем техническое."
+          "ru": "Решение больше культурное, чем техническое.",
+          "note": {
+            "en": "classification",
+            "ru": "классификация"
+          }
         },
         {
           "en": "A more perfect union was the founders’ aspiration.",
-          "ru": "Более совершенный союз был стремлением отцов-основателей."
+          "ru": "Более совершенный союз был стремлением отцов-основателей.",
+          "note": {
+            "en": "absolute adj.",
+            "ru": "абсолютное прил."
+          }
         },
         {
           "en": "Better lose the saddle than the horse.",
@@ -241,9 +385,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Litotes (not unlike, no less than) — сильный инструмент hedging в академическом письме."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Use honey rather than sugar in the cake.",
+          "right": "Use honey instead of sugar in the cake.",
+          "why": {
+            "en": "Plain substitution takes instead of; rather than marks preference or contrast.",
+            "ru": "Простая замена требует instead of; rather than означает предпочтение или контраст."
+          }
+        },
+        {
+          "wrong": "This design is more perfect for the brief.",
+          "right": "This design is better suited to the brief.",
+          "why": {
+            "en": "Perfect is non-gradable in strict prose; rephrase rather than grade it.",
+            "ru": "Perfect не градуируется в строгом письме; перефразируй, а не градуируй."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "superlative-adjectives",
+    "adjective-vs-adverb",
+    "gradable-vs-ungradable-adjectives",
+    "intensifiers"
+  ],
+  "crossTopic": [
+    "adverbs-of-degree",
+    "present-simple",
+    "past-simple"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "A",
+      "more / -er",
+      "than",
+      "B"
+    ]
+  }
 };

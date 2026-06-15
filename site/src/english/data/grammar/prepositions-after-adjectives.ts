@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "prepositions-after-adjectives",
   "title": {
-    "en": "",
+    "en": "Prepositions After Adjectives",
     "ru": "Prepositions After Adjectives"
   },
   "cefr": "B1",
@@ -15,28 +15,41 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "prepositions",
+  "egp": [
+    "EGP:B1 can use a range of adjectives followed by a dependent preposition (good at, interested in, afraid of, married to)",
+    "EGP:B2 can use a wider set of adjective + preposition collocations and distinguish near-synonyms that take different prepositions",
+    "EGP:C1 can handle adjectives that allow more than one preposition with a difference in meaning or register (concerned about/with, compare to/with)",
+    "EGP:C2 can use rare, formal and academic adjective + preposition collocations with appropriate register control"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Many adjectives take a fixed, dependent preposition. The choice is not logical and you cannot translate it from your own language, so learn the adjective and its preposition together as one chunk, like one word. The core B1 set is: afraid of (afraid of spiders), interested in (interested in art), good at and bad at (good at maths, bad at cooking), proud of (proud of you), similar to (similar to that), different from (different from Russian), famous for (famous for the Eiffel Tower), married to (married to a doctor), kind to (kind to animals), and sorry, which splits by meaning: sorry for + a person (I feel sorry for him) but sorry about + an event (sorry about the mistake). Anger has two patterns: angry with + a person (angry with me) and angry at / about + a thing (angry at the situation). Note that the noun after the preposition can be a thing, a person, or an -ing form: 'interested in learning German', 'good at playing the piano'. The four traps Russian speakers hit most are: good AT, never 'good in'; married TO, never 'married with' ('married with two children' means he has two children, not a spouse); different FROM, not 'different to/than' at this level; and afraid OF, not 'afraid from'.",
         "ru": "Многие прилагательные требуют **фиксированный предлог**. Запоминай их как **коллокации** — пара \"прилагательное + предлог\" — одно целое.\n\n**Базовые коллокации B1:**\n\n**`afraid OF` (бояться):**\n- `I’m afraid of spiders.` (Я боюсь пауков.)\n- НЕ `afraid from`.\n\n**`interested IN` (интересоваться):**\n- `She is interested in art.` (Она интересуется искусством.)\n- НЕ `interested to art` / `interested for`.\n\n**`good AT` (хорошо в чём-то):**\n- `He is good at maths.` (Он хорош в математике.)\n- НЕ `good in maths` — частая ошибка русскоязычных.\n\n**`bad AT` (плохо в чём-то):**\n- `I’m bad at cooking.` (Я плохо готовлю.)\n\n**`proud OF` (гордиться):**\n- `I’m proud of you.` (Я горжусь тобой.)\n\n**`similar TO` (похож на):**\n- `This is similar to that.` (Это похоже на то.)\n- НЕ `similar with`.\n\n**`different FROM` (отличается от):**\n- `English is different from Russian.` (Английский отличается от русского.)\n- НЕ `different to Russian` (хотя в BrE встречается) / `different than` (в AmE). На B1 держись `from`.\n\n**`famous FOR` (знаменит чем-то):**\n- `Paris is famous for the Eiffel Tower.` (Париж знаменит Эйфелевой башней.)\n\n**`married TO` (замужем за / женат на):**\n- `She is married to a doctor.` (Она замужем за врачом.)\n- **ЧАСТАЯ ОШИБКА:** `married with` — русское \"женат на\" сбивает.\n- `married with two children` — возможно, но значит \"женат и имеет двух детей\" (with = с детьми, не с женой).\n\n**`angry WITH someone / AT something`:**\n- `She is angry with me.` (Она злится на меня.)\n- `I’m angry at the situation.` (Я зол на ситуацию.)\n- НЕ `angry to me` — русское \"злится на\" сбивает.\n\n**`kind TO` (добр к):**\n- `Be kind to animals.` (Будь добр к животным.)\n\n**`sorry FOR / ABOUT`:**\n- `sorry for` + человек: `I feel sorry for him.` (Мне его жалко.)\n- `sorry about` + событие: `I’m sorry about the mistake.` (Извини за ошибку.)\n\n**Tip для запоминания.** Записывай прилагательное и предлог ВМЕСТЕ: не `interested` отдельно и `in` отдельно, а `interested_in` — одно слово."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + be + adjective + fixed preposition + noun / -ing",
+        "ru": "подлежащее + be + прилагательное + фиксированный предлог + существительное / -ing"
       },
       "examples": [
         {
           "en": "She is good at playing the piano.",
-          "ru": "Она хорошо играет на пианино."
+          "ru": "Она хорошо играет на пианино.",
+          "note": {
+            "en": "good at + -ing",
+            "ru": "good at + -ing"
+          }
         },
         {
           "en": "I’m interested in learning German.",
-          "ru": "Я интересуюсь изучением немецкого."
+          "ru": "Я интересуюсь изучением немецкого.",
+          "note": {
+            "en": "interested in + -ing",
+            "ru": "interested in + -ing"
+          }
         },
         {
           "en": "My dad is proud of me.",
@@ -44,130 +57,287 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "English is different from Russian.",
-          "ru": "Английский отличается от русского."
+          "ru": "Английский отличается от русского.",
+          "note": {
+            "en": "different from",
+            "ru": "different from"
+          }
         },
         {
           "en": "He is married to my sister.",
-          "ru": "Он женат на моей сестре."
+          "ru": "Он женат на моей сестре.",
+          "note": {
+            "en": "married to",
+            "ru": "married to"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "good AT (НЕ in), married TO (НЕ with), different FROM, interested IN. Учи блоками."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He is good in maths.",
+          "right": "He is good at maths.",
+          "why": {
+            "en": "Ability adjectives take 'at' (good at, bad at, brilliant at); 'good in' is one of the most common Russian-speaker errors.",
+            "ru": "Прилагательные способности берут 'at' (good at, bad at); 'good in' — частая ошибка русскоязычных."
+          }
+        },
+        {
+          "wrong": "She is married with a doctor.",
+          "right": "She is married to a doctor.",
+          "why": {
+            "en": "You marry 'to' a person; 'married with two children' only means having children, not a spouse.",
+            "ru": "Замужем/женат — married TO человека; 'married with two children' значит только наличие детей, а не супруга."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you widen the inventory and, crucially, learn to keep apart near-synonyms that take different prepositions. Fear and worry: afraid / scared / frightened all take 'of', but worried / anxious / nervous take 'about'. Reaction adjectives often allow two prepositions: surprised / shocked / amazed at or by; impressed by or with. Feelings toward people use 'with' for the person (angry with, annoyed with, fed up with) but 'at/by' for the thing (annoyed at the noise). Similarity and difference cluster: similar to, identical to, equal to, related to, and the well-known different from (with 'to' in informal British English and 'than' in American English). Responsibility and capacity: responsible for, capable of (+ -ing), suitable for, ready for; contrast capable OF doing with able TO do. Abundance and lack: full of, rich in, short of, lacking in. Dependence and awareness: dependent on, independent of, aware of, conscious of, ignorant of. Involvement: involved in, engaged in, busy with. Attitude: friendly / polite / rude / faithful / loyal — most take 'to' (or 'towards' for 'friendly'). Watch two finer points: jealous of (with a negative edge) versus envious of (more neutral), and keen on + noun/-ing (keen on cycling) versus keen to + verb (keen to help). Because the same adjective root can demand a different preposition than its synonym, store each one as a collocation rather than guessing.",
         "ru": "На B2 расширь запас и учись различать **адъективы-синонимы с разными предлогами**.\n\n**Страх / беспокойство:**\n- `afraid OF`, `scared OF`, `frightened OF` (все с `of`).\n- `worried ABOUT`, `anxious ABOUT` (с `about`).\n- `nervous ABOUT` (о будущем событии) vs `nervous OF` (о человеке/вещи — реже).\n\n**Удивление / впечатление:**\n- `surprised AT / BY` (удивлён): `surprised at the news` / `surprised by the news`.\n- `shocked AT / BY` (шокирован).\n- `amazed AT / BY`.\n- `impressed BY / WITH` (впечатлён).\n\n**Чувства к людям:**\n- `angry WITH someone` / `angry AT someone` (AmE более распространено).\n- `annoyed WITH someone` / `annoyed AT / BY something`.\n- `fed up WITH` (устал от).\n- `furious WITH / AT`.\n\n**Похожесть / различие:**\n- `similar TO` — похож на.\n- `identical TO` — идентичен.\n- `equal TO` — равен.\n- `related TO` — связан с.\n- `different FROM / TO / THAN`:\n  - `from` — традиционное правило.\n  - `to` — BrE разговорно.\n  - `than` — AmE.\n\n**Ответственность / способность:**\n- `responsible FOR` (ответственный за): `responsible for children`.\n- `capable OF` (способный на / к): `capable of learning fast`.\n- `able TO + verb` (способен сделать): `able to swim`.\n- `suitable FOR` (подходящий для).\n- `ready FOR` (готов к).\n\n**Изобилие / недостаток:**\n- `full OF` (полный чего): `full of energy`.\n- `rich IN` (богатый чем): `rich in vitamins`.\n- `short OF` (нехватка): `short of money`.\n- `lacking IN` (не хватает в): `lacking in experience`.\n\n**Зависимость / связь:**\n- `dependent ON` (зависимый от).\n- `independent OF` (независимый от).\n- `aware OF` (в курсе): `aware of the risks`.\n- `conscious OF` (осознающий): `conscious of the danger`.\n- `ignorant OF` (невежественный в): `ignorant of the facts`.\n\n**Involvement:**\n- `involved IN` (вовлечён в): `involved in the project`.\n- `engaged IN` (занят чем): `engaged in research`.\n- `busy WITH` (занят чем): `busy with work`.\n\n**Отношение:**\n- `friendly TO / WITH / TOWARDS` (дружелюбен).\n- `polite TO` (вежлив).\n- `rude TO` (груб).\n- `faithful TO` (верен).\n- `loyal TO` (предан).\n\n**`jealous OF` vs `envious OF`:**\n- `jealous of` — ревнует (негативный оттенок).\n- `envious of` — завидует (нейтрально или негативно).\n\n**`keen ON / TO`:**\n- `keen on` + noun/gerund: `keen on cycling`.\n- `keen to` + verb: `keen to help`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + be + adjective + fixed preposition + noun / -ing  (capable of + -ing  vs  able to + infinitive)",
+        "ru": "подлежащее + be + прилагательное + фиксированный предлог + существительное / -ing  (capable of + -ing  vs  able to + инфинитив)"
       },
       "examples": [
         {
           "en": "She is responsible for the finances.",
-          "ru": "Она отвечает за финансы."
+          "ru": "Она отвечает за финансы.",
+          "note": {
+            "en": "responsible for",
+            "ru": "responsible for"
+          }
         },
         {
           "en": "This area is rich in natural resources.",
-          "ru": "Этот регион богат природными ресурсами."
+          "ru": "Этот регион богат природными ресурсами.",
+          "note": {
+            "en": "rich in",
+            "ru": "rich in"
+          }
         },
         {
           "en": "I’m aware of the problem.",
-          "ru": "Я в курсе проблемы."
+          "ru": "Я в курсе проблемы.",
+          "note": {
+            "en": "aware of",
+            "ru": "aware of"
+          }
         },
         {
           "en": "He’s keen on photography.",
-          "ru": "Он увлекается фотографией."
+          "ru": "Он увлекается фотографией.",
+          "note": {
+            "en": "keen on + noun",
+            "ru": "keen on + существительное"
+          }
         },
         {
           "en": "The children are fed up with the rain.",
-          "ru": "Дети устали от дождя."
+          "ru": "Дети устали от дождя.",
+          "note": {
+            "en": "fed up with",
+            "ru": "fed up with"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "aware OF, capable OF, responsible FOR, rich IN. Блоки прилагательное+предлог."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'm worried of the exam.",
+          "right": "I'm worried about the exam.",
+          "why": {
+            "en": "Worried, anxious and nervous take 'about'; only afraid, scared and frightened take 'of'.",
+            "ru": "Worried, anxious, nervous берут 'about'; только afraid, scared, frightened берут 'of'."
+          }
+        },
+        {
+          "wrong": "She is capable to learn fast.",
+          "right": "She is capable of learning fast.",
+          "why": {
+            "en": "Capable takes 'of' + -ing, while 'able' takes 'to' + infinitive; the two patterns are not interchangeable.",
+            "ru": "Capable берёт 'of' + -ing, а able — 'to' + инфинитив; шаблоны не взаимозаменяемы."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the skill is variation: handling adjectives that allow more than one preposition, where the choice shifts meaning or register. The classic case is concerned: concerned about = worried (concerned about the climate), concerned with = dealing with / on the subject of (this chapter is concerned with WWII), and concerned for = anxious on someone's behalf (concerned for her safety). Compare divides too: compare to draws a metaphor and stresses likeness ('Shall I compare thee to a summer's day?'), while compare with sets details side by side to weigh similarities and differences. The different from / to / than debate is alive here: 'from' is the traditional and safe formal choice, 'to' is informal British, and 'than' is American and convenient before a clause ('different than I expected'); consistency matters more than dogma. Sure and certain split by scope: sure of yourself (self-confidence) versus sure about the details (specific facts). Stance adjectives take 'about' (skeptical / optimistic / pessimistic / doubtful about), and a formal layer pairs adjectives with 'to': averse to change, amenable to suggestions, susceptible to flattery, immune to criticism, partial to (a fondness), adjacent to (formal 'next to'). A descriptive set takes 'of': characteristic of, typical of, indicative of, symptomatic of, reminiscent of. Finally, evaluative 'important' alternates: important to me (it matters to me in general) versus important for me to understand (instrumental, with a goal).",
         "ru": "На C1 работай с **вариативностью** — где несколько предлогов возможны, но каждый меняет оттенок.\n\n**`different FROM / TO / THAN` — дебаты:**\n- `different from` — традиционно \"правильно\" (Fowler). Логически: differ **from** something (как separate from).\n- `different to` — BrE, встречается у Dickens, Austen.\n- `different than` — AmE, особенно перед clauses: `different than I expected`.\n\nВсе три встречаются в литературе. В formal writing BrE — `from`; AmE допускает все три. Consistency важнее правильности.\n\n**`bored WITH / OF / BY`:**\n- `bored with` — традиционно правильное.\n- `bored of` — распространено в разговорной речи, proscribed некоторыми editors.\n- `bored by` — пассивное ощущение: `bored by the film`.\n\n**`compare TO / WITH`:**\n- `compare to` = сравнивать как метафору (подчёркивать сходство): `Shall I compare thee to a summer’s day?`\n- `compare with` = сопоставлять детали (различия и сходства): `Compare the two texts with each other.`\n\nВ академическом письме разница соблюдается. В разговорной — они взаимозаменяемы.\n\n**`part OF / IN`:**\n- `part of` + group/whole: `He is part of the team.`\n- `take part in` — участвовать в: `take part in the competition`.\n\n**Adjective nuances:**\n- `concerned ABOUT` (обеспокоен): `concerned about the climate`.\n- `concerned WITH` (занимается чем, имеет дело с): `This chapter is concerned with WWII.`\n- `concerned FOR` (беспокоится за): `concerned for her safety`.\n\n**Stance adjectives + `about`:**\n- `skeptical about / of` — скептически настроен.\n- `optimistic about`.\n- `pessimistic about`.\n- `doubtful about / of`.\n- `certain / sure OF / ABOUT`:\n  - `sure of yourself` (в себе уверен).\n  - `sure about the details` (уверен в деталях).\n\n**Formal synonyms и предлоги:**\n- `fond OF` (любит, привязан к) — разговорно-нейтрально.\n- `partial TO` (питает слабость к) — формально, разговорно.\n- `averse TO` (не любит, формально): `averse to change`.\n- `amenable TO` (готов принять): `amenable to suggestions`.\n- `susceptible TO` (подвержен): `susceptible to flattery`.\n- `immune TO` (невосприимчив): `immune to criticism`.\n\n**`adjacent TO` (смежный с)** / `next to` (рядом с) — formal vs neutral.\n\n**`sympathetic TO / TOWARDS / WITH`:**\n- `sympathetic to a cause` (сочувствующий идее).\n- `sympathetic towards a person` (сочувствующий человеку).\n- `sympathetic with` — реже, BrE.\n\n**`anxious`:**\n- `anxious about` — беспокоится о.\n- `anxious for` — сильно желает: `anxious for news`.\n- `anxious to + verb` — стремится: `anxious to help`.\n\n**Участие / принадлежность:**\n- `characteristic OF` — характерный для.\n- `typical OF` — типичен для.\n- `indicative OF` — указывает на.\n- `symptomatic OF` — симптоматичен для.\n- `reminiscent OF` — напоминающий.\n\n**Dative alternations с прилагательными:**\n- `It is important TO me.` / `It is important FOR me to understand.`\n  - `important to` — вообще значимо для меня.\n  - `important for` — инструментально, с целью."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + be + adjective + preposition(meaning-bearing) + complement  (concerned about / with / for)",
+        "ru": "подлежащее + be + прилагательное + предлог(несущий смысл) + дополнение  (concerned about / with / for)"
       },
       "examples": [
         {
           "en": "This chapter is concerned with the Cold War.",
-          "ru": "Эта глава посвящена Холодной войне."
+          "ru": "Эта глава посвящена Холодной войне.",
+          "note": {
+            "en": "concerned with",
+            "ru": "concerned with"
+          }
         },
         {
           "en": "She is susceptible to criticism.",
-          "ru": "Она восприимчива к критике."
+          "ru": "Она восприимчива к критике.",
+          "note": {
+            "en": "susceptible to",
+            "ru": "susceptible to"
+          }
         },
         {
           "en": "His behavior is characteristic of a leader.",
-          "ru": "Его поведение характерно для лидера."
+          "ru": "Его поведение характерно для лидера.",
+          "note": {
+            "en": "characteristic of",
+            "ru": "characteristic of"
+          }
         },
         {
           "en": "I’m sympathetic to their cause.",
-          "ru": "Я сочувствую их делу."
+          "ru": "Я сочувствую их делу.",
+          "note": {
+            "en": "sympathetic to",
+            "ru": "sympathetic to"
+          }
         },
         {
           "en": "He seems averse to any change.",
-          "ru": "Он, похоже, не любит перемен."
+          "ru": "Он, похоже, не любит перемен.",
+          "note": {
+            "en": "averse to",
+            "ru": "averse to"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "concerned ABOUT (волнуется) vs concerned WITH (занимается). Compare TO (метафора) vs WITH (детали)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "This chapter is concerned about the Cold War.",
+          "right": "This chapter is concerned with the Cold War.",
+          "why": {
+            "en": "'Concerned about' means worried; to mean 'deals with / is about a subject', use 'concerned with'.",
+            "ru": "'Concerned about' = обеспокоен; в значении 'посвящён теме / имеет дело с' нужен 'concerned with'."
+          }
+        },
+        {
+          "wrong": "Compare these two texts to each other.",
+          "right": "Compare these two texts with each other.",
+          "why": {
+            "en": "Use 'compare with' to examine details and differences; reserve 'compare to' for likening one thing to another.",
+            "ru": "'Compare with' — сопоставить детали и различия; 'compare to' — уподобить одно другому."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 you command rare, formal and academic adjective + preposition collocations and police their register. High-register pairs with 'to' include impervious to (impervious to criticism), conducive to (conducive to learning), inimical to (hostile, formal), tantamount to (equivalent to: tantamount to fraud), privy to (let in on: privy to the details), and contingent on / upon (contingent upon approval); with 'with' you get commensurate with (commensurate with experience), consistent / inconsistent with, compatible with, compliant with, and conversant with; with 'of' you get cognizant of and oblivious to / of. A key structural point: when an adjective fixes 'to' as a preposition — accustomed to, committed to, opposed to, resigned to, addicted to, dedicated to, averse to — the following verb must be a gerund, not an infinitive, because here 'to' is a preposition, not part of the infinitive: 'I look forward to meeting you', never 'to meet'. Adjective + of + -ing expresses cause or charge: guilty of committing, accused of stealing, suspected of involvement, convinced of his innocence. Mind fine contrasts: ignorant of (often reproachful) versus unaware of (neutral); and the intensity ladder tired of < sick of < weary of < sick and tired of. The legal-formal tier adds beholden to, germane to (relevant to the discussion) and extraneous to. Above all, do not mix registers inside one phrase: a formal adjective demands formal company, so 'She is cognizant of the deal being a bit dodgy' clashes; either 'She's aware the deal is a bit dodgy' or 'She is cognizant of the questionable nature of the deal'.",
         "ru": "На C2 владей **stance adjectives и редкими коллокациями** из академического корпуса.\n\n**Prepositional variation по регистру:**\n- `different from` — formal, BrE mainstream, AmE formal.\n- `different than` — AmE informal, особенно перед clause.\n- `different to` — BrE informal, маркирует британскую разговорную норму.\n\nПеред существительным — любой. Перед clause → `than` более экономно: `It’s different than I thought` (вместо `different from what I thought`).\n\n**Stance / evaluative adjectives:**\n- `impervious TO` (непроницаемый для): `impervious to criticism`.\n- `conducive TO` (способствующий): `conducive to learning`.\n- `inimical TO` (враждебный, формально): `inimical to progress`.\n- `tantamount TO` (равносильный): `tantamount to admission of guilt`.\n- `privy TO` (посвящённый в): `privy to the details`.\n- `commensurate WITH` (соизмеримый с): `commensurate with experience`.\n- `contingent ON / UPON` (зависящий от): `contingent upon approval`.\n\n**Adjective + preposition + gerund:**\n- `averse to doing X` (не склонен делать).\n- `accustomed to doing X` (привыкший делать).\n- `committed to doing X` (предан делу).\n- `opposed to doing X` (против того, чтобы делать).\n- `resigned to doing X` (смирился с тем, что делать).\n- `addicted to doing X`.\n- `dedicated to doing X`.\n\nВ этих конструкциях `to` — предлог, не частица инфинитива. После него — gerund, не infinitive:\n- ✓ `I look forward to meeting you.`\n- ✗ `I look forward to meet you.`\n\n**Синонимичные ряды с разными предлогами:**\n- `worried about` / `anxious about` / `apprehensive about` / `concerned about`.\n- `delighted with / by / at`.\n- `indignant at / about / with / over`.\n- `remorseful for / about / over`.\n\n**Hedged academic phrases:**\n- `analogous TO` (аналогичный).\n- `comparable TO / WITH` (сопоставим).\n- `consistent WITH` (согласующийся с).\n- `inconsistent WITH` (противоречащий).\n- `compatible WITH` (совместим с).\n- `compliant WITH` (соответствующий).\n- `conversant WITH` (знакомый с, формально).\n- `cognizant OF` (осознающий, формально).\n- `oblivious TO / OF` (не замечающий).\n\n**Диатеза / конверсия с adj + prep:**\n- `sick of` (устал от, в раздражении): `sick of waiting`.\n- `tired of` (устал от).\n- `weary of` (изнурён, литературно).\n\nГрадация: `tired of < sick of < weary of < sick and tired of`.\n\n**Adj + of + gerund — причины:**\n- `guilty of committing the crime`.\n- `accused of stealing`.\n- `suspected of involvement`.\n- `convinced of his innocence`.\n\n**Nuance `ignorant of` vs `unaware of`:**\n- `ignorant of` — подразумевает отсутствие знания, часто с упрёком: `ignorant of the law`.\n- `unaware of` — нейтрально: `unaware of the situation`.\n\n**Высокий регистр / legal:**\n- `beholden TO` (обязанный, в долгу перед): `beholden to no one`.\n- `amenable TO` (готов принять).\n- `germane TO` (имеющий отношение к): `germane to the discussion`.\n- `extraneous TO` (посторонний для, не относящийся к).\n\n**Final register note.** Смешение высокого и низкого регистра в пределах одного термина — ошибка:\n- ✗ `She’s cognizant of the deal being a bit dodgy.` (cognizant formal, a bit dodgy colloquial).\n- ✓ `She’s aware that the deal is a bit dodgy.` ИЛИ ✓ `She is cognizant of the questionable nature of the deal.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + be + (formal) adjective + fixed 'to' + gerund  /  adjective + of + gerund (cause)",
+        "ru": "подлежащее + be + (формальное) прилагательное + фиксированный 'to' + -ing  /  прилагательное + of + -ing (причина)"
       },
       "examples": [
         {
           "en": "Her salary is commensurate with her experience.",
-          "ru": "Её зарплата соответствует её опыту."
+          "ru": "Её зарплата соответствует её опыту.",
+          "note": {
+            "en": "commensurate with",
+            "ru": "commensurate with"
+          }
         },
         {
           "en": "This behaviour is tantamount to fraud.",
-          "ru": "Такое поведение равносильно мошенничеству."
+          "ru": "Такое поведение равносильно мошенничеству.",
+          "note": {
+            "en": "tantamount to",
+            "ru": "tantamount to"
+          }
         },
         {
           "en": "The policy is conducive to innovation.",
-          "ru": "Политика способствует инновациям."
+          "ru": "Политика способствует инновациям.",
+          "note": {
+            "en": "conducive to",
+            "ru": "conducive to"
+          }
         },
         {
           "en": "I am accustomed to working under pressure.",
-          "ru": "Я привык работать под давлением."
+          "ru": "Я привык работать под давлением.",
+          "note": {
+            "en": "accustomed to + -ing",
+            "ru": "accustomed to + -ing"
+          }
         },
         {
           "en": "The results are consistent with earlier findings.",
-          "ru": "Результаты согласуются с более ранними данными."
+          "ru": "Результаты согласуются с более ранними данными.",
+          "note": {
+            "en": "consistent with",
+            "ru": "consistent with"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "After accustomed/committed/opposed/dedicated TO — gerund, не infinitive. Не путай."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I am accustomed to work under pressure.",
+          "right": "I am accustomed to working under pressure.",
+          "why": {
+            "en": "After accustomed / committed / opposed / dedicated / averse the 'to' is a preposition, so it takes a gerund, not an infinitive.",
+            "ru": "После accustomed / committed / opposed / dedicated / averse 'to' — предлог, поэтому идёт -ing, а не инфинитив."
+          }
+        },
+        {
+          "wrong": "She's cognizant of the deal being a bit dodgy.",
+          "right": "She is cognizant of the questionable nature of the deal.",
+          "why": {
+            "en": "A formal adjective like 'cognizant' must keep formal company; mixing it with colloquial 'a bit dodgy' is a register clash.",
+            "ru": "Формальное прилагательное 'cognizant' требует формального окружения; смешение с разговорным 'a bit dodgy' — ошибка регистра."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "prepositions-after-verbs",
+    "prepositions-in-phrases",
+    "adjective-plus-infinitive",
+    "participle-adjectives"
+  ],
+  "crossTopic": [
+    "verb-plus-gerund",
+    "gerund-as-noun",
+    "comparative-adjectives",
+    "verb-infinitive-or-gerund-same-meaning"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "adjective",
+      "fixed preposition",
+      "object / -ing"
+    ]
+  }
 };

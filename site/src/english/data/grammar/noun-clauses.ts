@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "noun-clauses",
   "title": {
-    "en": "",
+    "en": "Noun Clauses",
     "ru": "Noun Clauses"
   },
   "cefr": "B2",
@@ -14,36 +14,54 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "relative-clauses",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "A noun clause is a whole clause that does the job of a noun: it can be the subject, the object, or the complement of a sentence. There are three main types.\n\n1. **That-clauses** — `that + subject + verb`. As object, `that` is often dropped in speech: `I think (that) she's right.` As subject it usually keeps `that`: `That he left early surprised us.` As complement: `The problem is that we're late.`\n\n2. **Wh-clauses** — built on `what, where, when, why, how, who, which`: `I don't know where he went.` `What you said was true.`\n\n3. **If / whether-clauses** — embedded yes/no questions: `I don't know if she's coming.` `He asked whether we were ready.`\n\nThe critical point is word order. An embedded question is **not** a direct question: use normal statement order (subject + verb) with no `do/does/did` and no inversion: say `Tell me where he went`, not `Tell me where did he go`. This is the single most common error to watch for.\n\nCommon trigger verbs for that-clauses: thinking (think, believe, know, realize), saying (say, tell, explain, mention), and feeling (hope, fear, suspect, worry).",
         "ru": "**Именное придаточное** — это целое предложение, которое работает как существительное: подлежащее, дополнение, комплемент.\n\n**Три главных типа:**\n\n**1. That-clauses:** `that + subject + verb + ...`\n- Subject: `That he left early surprised us.` (То, что он рано ушёл, удивило нас.)\n- Object: `I believe (that) she is right.`\n- Complement: `The problem is that we're late.`\n\nВ неформальной речи `that` после verb часто опускают: `I think she's right.`\n\n**2. Wh-clauses:** `what, where, when, why, how, who, which + ...`\n- `I don't know where he went.` (Я не знаю, куда он пошёл.)\n- `Tell me what you want.`\n- `She asked why I was late.`\n- `What you said was true.` (subject clause.)\n\n**3. If/whether-clauses:** (yes/no questions embedded):\n- `I don't know if she's coming.`\n- `He asked whether we were ready.`\n\n**Порядок слов в embedded questions.** Это НЕ прямой вопрос — слова в обычном порядке (subject + verb), без do/does/did:\n- ✗ `Tell me where did he go.`\n- ✓ `Tell me where he went.`\n- ✗ `I don't know what does she want.`\n- ✓ `I don't know what she wants.`\n\nЭто одна из самых частых ошибок русскоговорящих.\n\n**Функции в предложении:**\n- Подлежащее: `What he said shocked me.`\n- Прямое дополнение: `I saw what happened.`\n- После preposition: `I'm worried about what might happen.`\n- Комплемент: `The truth is that no one knows.`\n\n**Trigger verbs for that-clauses:**\n- Thinking: think, believe, know, realize, understand.\n- Saying: say, tell, explain, mention, argue.\n- Feeling: hope, fear, feel, worry, suspect."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "trigger verb + (that) + subject + verb  |  wh-/if/whether + subject + verb",
+        "ru": "глагол + (that) + подлежащее + сказуемое  |  wh-/if/whether + подлежащее + сказуемое"
       },
       "examples": [
         {
           "en": "I don't know where she lives.",
-          "ru": "Я не знаю, где она живёт."
+          "ru": "Я не знаю, где она живёт.",
+          "note": {
+            "en": "wh-clause, object",
+            "ru": "wh-придаточное, дополнение"
+          }
         },
         {
           "en": "What he said was very rude.",
-          "ru": "То, что он сказал, было очень грубо."
+          "ru": "То, что он сказал, было очень грубо.",
+          "note": {
+            "en": "wh-clause, subject",
+            "ru": "wh-придаточное, подлежащее"
+          }
         },
         {
           "en": "The fact is that we can't afford it.",
-          "ru": "Дело в том, что мы не можем себе этого позволить."
+          "ru": "Дело в том, что мы не можем себе этого позволить.",
+          "note": {
+            "en": "that-clause, complement",
+            "ru": "that-придаточное, комплемент"
+          }
         },
         {
           "en": "She asked whether the meeting was cancelled.",
-          "ru": "Она спросила, отменено ли совещание."
+          "ru": "Она спросила, отменено ли совещание.",
+          "note": {
+            "en": "whether, reported",
+            "ru": "whether, косвенный вопрос"
+          }
         },
         {
           "en": "I'm not sure if he'll come.",
@@ -53,30 +71,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В embedded questions нет инверсии: I don't know WHERE HE WENT, не WHERE DID HE GO."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Tell me where did he go.",
+          "right": "Tell me where he went.",
+          "why": {
+            "en": "An embedded question keeps statement word order — no auxiliary, no inversion.",
+            "ru": "В embedded question нет инверсии: I don't know WHERE HE WENT, не WHERE DID HE GO."
+          }
+        },
+        {
+          "wrong": "I don't know what does she want.",
+          "right": "I don't know what she wants.",
+          "why": {
+            "en": "Drop the do-auxiliary inside a noun clause and move the verb after the subject.",
+            "ru": "Внутри придаточного убираем вспомогательный do/does и ставим глагол после подлежащего."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you refine how the pieces of a noun clause work together.\n\n**If vs whether.** Both introduce embedded yes/no questions, but only `whether` works after a preposition (`It depends on whether you agree`), before `or` (`whether to stay or leave`), before a to-infinitive (`I don't know whether to accept`), and in subject position (`Whether she knew is unclear`). `Whether` is the formal choice; `if` is more colloquial.\n\n**Subjunctive in that-clauses.** After verbs and adjectives of demand, suggestion, and importance, use the bare base form: `I suggest (that) he be on time`, `It is essential that she arrive early`. Triggers include suggest, recommend, insist, demand, propose, require, advise — and adjectives like important, essential, necessary, crucial, vital. This is formal American usage; British English often prefers `should + base form` (`I suggest that he should be on time`).\n\n**Extraposition with `it`.** To avoid a heavy clause in subject position, push it to the end with anticipatory `it`: not `That he didn't show up is strange` but `It is strange that he didn't show up`.\n\n**After a preposition** use a wh-word, never `that`: `I'm interested in what you said`, `She talked about how she felt`.\n\n**`-ever` clauses** (`whatever, whoever, wherever`) mean 'anything/anyone at all' when nominal: `Take whatever you need.`",
         "ru": "На C1 углубляй понимание именных придаточных.\n\n**If vs Whether:**\n- Оба для yes/no questions.\n- После prepositions — только `whether`: `It depends on whether you agree.`\n- Перед or — `whether`: `I don't know whether to stay or leave.`\n- Перед to-infinitive — только `whether`: `I don't know whether to accept the offer.`\n- В subject position — обычно `whether`: `Whether she knew is unclear.`\n- Формально — `whether`; разговорно — `if`.\n\n**Subjunctive mood в noun clauses:**\nПосле глаголов / прилагательных требования, предложения, важности используется base form:\n- `I suggest (that) he be on time.` (не is, не was.)\n- `It is important that she arrive early.` (не arrives.)\n- `They demanded (that) the documents be released.`\n\nТриггеры: suggest, recommend, insist, demand, propose, require, order, advise, request. Прилагательные: important, essential, necessary, crucial, vital, urgent.\n\nЭто formal AmE. В BrE часто заменяют на `should + inf`: `I suggest that he should be on time.`\n\n**Extraposition with 'it':**\nЧтобы избежать тяжёлого subject clause в начале, используют `it` + подлежащее переносится в конец:\n- Heavy: `That he didn't show up is strange.`\n- Better: `It is strange that he didn't show up.`\n\n**Noun clause + preposition:**\nПосле preposition используется wh-word, не that:\n- `I'm interested in what you said.` (не in that.)\n- `She talked about how she felt.`\n\n**Common C1 error:** двойная инверсия в reported questions.\n- ✗ `He asked me where was the bank.`\n- ✓ `He asked me where the bank was.`\n\n**Nominal wh-clauses with -ever:**\n- `whatever, whoever, wherever, whenever, however, whichever` — «всё что / кто угодно».\n- `Take whatever you need.` (Бери что угодно...)\n- `Whoever called, don't answer.`\n- Разница с concessive: `whatever he says` = anything he says (noun); `whatever he says` = no matter what (concessive, adverbial)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "it + be + adjective + that-clause  |  suggest/insist + that + subject + base verb",
+        "ru": "it + be + прилагательное + that-придаточное  |  suggest/insist + that + подлежащее + базовая форма глагола"
       },
       "examples": [
         {
           "en": "I can't decide whether to accept the job or stay here.",
-          "ru": "Я не могу решить, принять ли работу или остаться здесь."
+          "ru": "Я не могу решить, принять ли работу или остаться здесь.",
+          "note": {
+            "en": "whether before to-inf",
+            "ru": "whether перед to-инфинитивом"
+          }
         },
         {
           "en": "The committee recommended that he be promoted.",
-          "ru": "Комитет рекомендовал, чтобы он был повышен."
+          "ru": "Комитет рекомендовал, чтобы он был повышен.",
+          "note": {
+            "en": "subjunctive base form",
+            "ru": "сослагательное наклонение, базовая форма"
+          }
         },
         {
           "en": "It's essential that all members attend the meeting.",
-          "ru": "Крайне важно, чтобы все члены присутствовали на встрече."
+          "ru": "Крайне важно, чтобы все члены присутствовали на встрече.",
+          "note": {
+            "en": "extraposed with it",
+            "ru": "вынос с it"
+          }
         },
         {
           "en": "It turned out that the rumours were false.",
@@ -90,34 +138,68 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "После suggest, recommend, insist, demand — subjunctive (base form): I suggest he BE there, not he IS there."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He asked me where was the bank.",
+          "right": "He asked me where the bank was.",
+          "why": {
+            "en": "Reported questions take statement order; don't keep the inverted verb of the original question.",
+            "ru": "В косвенном вопросе обычный порядок слов; не сохраняй инверсию исходного вопроса."
+          }
+        },
+        {
+          "wrong": "It is important that she arrives early.",
+          "right": "It is important that she arrive early.",
+          "why": {
+            "en": "After importance/demand triggers the subjunctive uses the bare base form, not the -s form.",
+            "ru": "После триггеров важности/требования используется базовая форма глагола, а не форма с -s."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 noun clauses become a flexible compositional tool for shaping information and register.\n\n**`The fact that`** turns a clause into something a preposition can govern: `He was surprised at the fact that she refused.` Without the wrapper, `surprised at that she refused` is ungrammatical — the noun `fact` provides the head the preposition needs.\n\n**Cleft sentences** front a noun clause for emphasis: `What I want is peace`, `What surprised me was that he agreed`. The wh-clause is the subject and carries the focus.\n\n**Nominalization vs clause.** Academic prose often compresses a clause into a noun phrase for density: `The fact that prices rose indicates inflation` becomes `The rise in prices indicates inflation`.\n\n**Negative raising.** With think, believe, suppose, expect, the standard idiom raises the negation to the main verb: `I don't think he's right` is preferred over `I think he's not right`.\n\n**Complex clauses as subject** are fully natural: `Whether the experiment succeeds depends on funding`, `How we handle this defines our future`.\n\n**Appositive `that` vs relative `that`.** Distinguish `the idea that he left` (noun/appositive clause naming the idea) from `the idea that he proposed` (relative clause modifying it). Emphatic frames like `The thing is (that)…` and `What it comes down to is (that)…` exploit the same machinery.",
         "ru": "На C2 именные придаточные становятся инструментом гибкой композиции.\n\n**Fact-clauses с 'the fact that':**\n- `The fact that she left early worries me.` (то, что она ушла рано...)\n- `I'm aware of the fact that time is short.`\n\nИспользуй `the fact that` когда нужно превратить clause в объект предлога: `He was surprised at the fact that she refused.` — без `the fact` нельзя: `surprised at that she refused` неграмматично.\n\n**Cleft sentences с noun clauses:**\n- `What I want is peace.` (Что мне нужно — это мир.)\n- `What surprised me was that he agreed.`\n- `It was John who broke the vase.` (частично noun clause subject.)\n\n**Nominalization (academic style):**\n- Clause: `The fact that prices rose indicates inflation.`\n- Nominalized: `The rise in prices indicates inflation.`\n- Академический стиль предпочитает nominalization для плотности.\n\n**Zero-that in formal writing:**\nВ очень формальном академическом стиле `that` сохраняется; в разговорной речи часто отпадает. Выбор зависит от регистра.\n\n**Complex noun clauses as subject:**\n- `Whether the experiment succeeds depends on funding.`\n- `How we handle this crisis will define our future.`\n- `What she intends to do remains unclear.`\n\n**Double wh-clauses:**\n- `I don't know what who said.` — двусмысленно, избегай.\n- Лучше: `I don't know what was said by whom.`\n\n**Negative noun clauses:**\n- `I don't think (that) he's right.` (стандарт — negation поднимается на matrix verb.)\n- `I think (that) he's not right.` — менее идиоматично, подчёркивает отрицание внутри clause.\n- `neg-raising` — характерно для think, believe, suppose, expect.\n\n**Indirect commands через noun clauses:**\n- `He ordered that the prisoner be released.` (subjunctive.)\n- `The judge ruled that the defendant was guilty.` (indicative — reporting judgment.)\n\n**Stylistic choice — that vs which для appositive clauses:**\n- `The idea that he would leave shocked us.` (appositive that — noun clause objective.)\n- `The idea, which he proposed yesterday, ...` (relative clause, different function.)\n\nНе путай: `the idea that he left` = noun clause; `the idea that he proposed` = relative clause.\n\n**Emphatic structures:**\n- `The fact of the matter is that...`\n- `What it comes down to is (that)...`\n- `All I'm saying is that...`\n- `The thing is (that)...`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "the fact + that-clause  |  what + clause + be + focus (cleft)",
+        "ru": "the fact + that-придаточное  |  what + придаточное + be + фокус (расщеплённое предложение)"
       },
       "examples": [
         {
           "en": "The fact that she chose to resign rather than compromise speaks volumes.",
-          "ru": "Тот факт, что она выбрала уволиться, а не пойти на компромисс, говорит о многом."
+          "ru": "Тот факт, что она выбрала уволиться, а не пойти на компромисс, говорит о многом.",
+          "note": {
+            "en": "the fact that",
+            "ru": "the fact that"
+          }
         },
         {
           "en": "What determines success is persistence, not talent alone.",
-          "ru": "То, что определяет успех — это настойчивость, а не только талант."
+          "ru": "То, что определяет успех — это настойчивость, а не только талант.",
+          "note": {
+            "en": "wh-cleft",
+            "ru": "расщеплённое (cleft)"
+          }
         },
         {
           "en": "Whether the policy succeeds depends on implementation.",
-          "ru": "Будет ли политика успешной — зависит от реализации."
+          "ru": "Будет ли политика успешной — зависит от реализации.",
+          "note": {
+            "en": "clause as subject",
+            "ru": "придаточное как подлежащее"
+          }
         },
         {
           "en": "He ordered that the report be revised by Monday.",
-          "ru": "Он распорядился, чтобы отчёт был переработан к понедельнику."
+          "ru": "Он распорядился, чтобы отчёт был переработан к понедельнику.",
+          "note": {
+            "en": "subjunctive command",
+            "ru": "сослагательное, приказ"
+          }
         },
         {
           "en": "The thing about this argument is that it ignores counter-evidence.",
@@ -127,9 +209,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "The fact that + clause — обязательная обёртка, когда noun clause становится объектом предлога: surprised AT the fact that, not surprised at that."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He was surprised at that she refused.",
+          "right": "He was surprised at the fact that she refused.",
+          "why": {
+            "en": "A preposition cannot govern a bare that-clause; wrap it with 'the fact that'.",
+            "ru": "Предлог не управляет голым that-придаточным; нужна обёртка the fact that."
+          }
+        },
+        {
+          "wrong": "I think he's not right.",
+          "right": "I don't think he's right.",
+          "why": {
+            "en": "Idiomatic English raises the negation onto think/believe/suppose rather than leaving it inside the clause.",
+            "ru": "Идиоматичнее перенести отрицание на think/believe/suppose, а не оставлять внутри придаточного."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "reported-statements",
+    "reported-questions",
+    "indirect-questions",
+    "wh-questions"
+  ],
+  "crossTopic": [
+    "it-as-subject",
+    "cleft-sentences",
+    "subject-vs-object-questions"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "subject",
+      "object",
+      "complement",
+      "after preposition"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "separable-phrasal-verbs",
   "title": {
-    "en": "",
+    "en": "Separable Phrasal Verbs",
     "ru": "Separable Phrasal Verbs"
   },
   "cefr": "B1",
@@ -15,28 +15,38 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "phrasal-verbs",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "A phrasal verb is a verb plus a particle (up, down, in, out, on, off, away, back, over...) whose combined meaning is new: turn on means switch on, not rotate. A separable phrasal verb lets you place the object between the two parts.\n\nWith a noun object you have two equally correct options: Turn on the light or Turn the light on. Both mean the same thing.\n\nWith a pronoun object (it, them, him, her, me, us, you) only the split form is allowed: Turn it on is correct; Turn on it is not English. This is a fixed rule — the pronoun always sits between the verb and the particle.\n\nCommon B1 separable phrasal verbs: turn on/off, pick up, put on, take off, put away, throw away, fill in/out, find out, give up, look up, try on, write down. Learn each one as a chunk with an example sentence; never translate the parts literally.",
         "ru": "**Phrasal verbs** — это сочетания глагола с частицей (up, down, in, out, on, off, away, back, over и др.), которые вместе имеют новое значение. Например: `turn on` = включить (не «повернуть на»).\n\n**Separable** phrasal verbs — это те, между которыми можно вставить object (существительное или местоимение).\n\n**Правила разделения:**\n\n**1. С существительным-объектом — два варианта:**\n- `Turn on the light.` (не разделено.)\n- `Turn the light on.` (разделено.)\n\nОба варианта грамматичны и означают одно и то же.\n\n**2. С местоимением-объектом (it, them, him, her, me, us, you) — только разделено:**\n- ✓ `Turn it on.`\n- ✗ `Turn on it.` (не говорят.)\n\nЭто жёсткое правило. С местоимениями объект ВСЕГДА между глаголом и частицей.\n\n**Частые separable phrasal verbs на B1:**\n- `turn on / off` — включить / выключить: `Turn off the TV. / Turn the TV off. / Turn it off.`\n- `pick up` — поднять, забрать: `Pick up your bag. / Pick it up.`\n- `put on / take off` — надеть / снять: `Put on your coat. / Take it off.`\n- `put away` — убрать: `Put away the toys. / Put them away.`\n- `throw away` — выбросить: `Throw away the trash.`\n- `fill in / out` — заполнить: `Fill in the form. / Fill it in.`\n- `find out` — узнать: `Find out the answer.`\n- `give up` — бросить: `Give up smoking.`\n- `look up` — посмотреть (в справочнике): `Look up the word.`\n- `try on` — примерить: `Try on the shirt. / Try it on.`\n- `write down` — записать: `Write down the number. / Write it down.`\n\n**Частая ошибка русскоговорящего:** ставить местоимение после particle.\n- ✗ `Turn on it.`\n- ✓ `Turn it on.`\n\nВ русском «включи его / выключи его» — глагол остаётся в начале. В английском при phrasal verb местоимение встраивается внутрь.\n\n**Запоминание.** Заучивай phrasal verbs в коротких фразах с примером. Не переводь по частям: `turn on` ≠ «повернуть на». Это одно значение — «включить»."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + the + noun + particle  OR  verb + particle + the + noun  /  verb + pronoun + particle (split only)",
+        "ru": "глагол + the + существительное + частица  ИЛИ  глагол + частица + the + существительное  /  глагол + местоимение + частица (только раздельно)"
       },
       "examples": [
         {
           "en": "Please turn off the lights.",
-          "ru": "Пожалуйста, выключи свет."
+          "ru": "Пожалуйста, выключи свет.",
+          "note": {
+            "en": "noun object",
+            "ru": "объект-существительное"
+          }
         },
         {
           "en": "I'll pick you up at 8.",
-          "ru": "Я заеду за тобой в 8."
+          "ru": "Я заеду за тобой в 8.",
+          "note": {
+            "en": "pronoun split",
+            "ru": "местоимение разделяет"
+          }
         },
         {
           "en": "She put on her coat and left.",
@@ -48,28 +58,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I need to look it up in the dictionary.",
-          "ru": "Мне нужно посмотреть это в словаре."
+          "ru": "Мне нужно посмотреть это в словаре.",
+          "note": {
+            "en": "pronoun split",
+            "ru": "местоимение разделяет"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "С местоимением (it, them, him) — ВСЕГДА между глаголом и частицей: pick IT up, not pick up it."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Turn on it.",
+          "right": "Turn it on.",
+          "why": {
+            "en": "A pronoun object must go between the verb and the particle, never after it.",
+            "ru": "Местоимение-объект ставится между глаголом и частицей, а не после неё."
+          }
+        },
+        {
+          "wrong": "Pick up me at 8.",
+          "right": "Pick me up at 8.",
+          "why": {
+            "en": "With pronouns only the split form works: verb + pronoun + particle.",
+            "ru": "С местоимениями работает только разделённая форма: глагол + местоимение + частица."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you widen your stock of separable phrasal verbs and start sensing their nuances. Add high-frequency items like bring up, call off, carry out, cheer up, clean up, cut off, figure out, give back, hand in, keep up, let down, make up, pay back, point out, put off, set up, sort out, take off, turn down, work out. Many carry several meanings (make up = invent or reconcile; take off = remove, depart, or become popular), so anchor each in context.\n\nStyle point: when the object is short, splitting is natural (Pick your jacket up). When the object is long, keep the verb and particle together (Pick up the blue jacket with the white buttons), because a particle stranded far from its verb is hard to track.\n\nThe big B2 trap is confusing separable with inseparable verbs. Separable: turn on the light / turn it on. Inseparable: look after the kids / look after them — never look them after. There is no audible rule; you learn the [sep]/[insep] label from a good dictionary.",
         "ru": "На B2 расширяй словарь separable phrasal verbs и осознавай nuances.\n\n**Новые separable phrasal verbs:**\n- `bring up` — поднять (тему) / воспитать: `Don't bring up politics.` / `She brought up three children.`\n- `call off` — отменить: `They called off the wedding.`\n- `carry out` — осуществить: `Carry out the plan.`\n- `cheer up` — подбодрить: `Cheer her up.`\n- `clean up` — убраться: `Clean up your room.`\n- `cut off` — отрезать: `Cut off the power.`\n- `figure out` — понять, разобраться: `I can't figure it out.`\n- `give back` — вернуть: `Give me back my pen. / Give my pen back. / Give it back.`\n- `hand in` — сдать: `Hand in your assignment.`\n- `keep up` — поддерживать: `Keep up the good work.`\n- `let down` — подвести: `Don't let me down.`\n- `make up` — выдумать / помириться: `He made up the story. / They made up after the fight.`\n- `pay back` — вернуть деньги / отомстить: `Pay me back tomorrow.`\n- `point out` — указать, отметить: `She pointed out the error.`\n- `put off` — отложить: `Don't put off your work.`\n- `set up` — установить, открыть: `Set up the camera. / She set up a company.`\n- `sort out` — разобрать, решить: `Sort out this mess.`\n- `take off` — 1) снять, 2) стартовать (plane), 3) стать популярным: depends on context.\n- `turn down` — отказать / убавить громкость: `Turn down the offer. / Turn down the volume.`\n- `work out` — 1) тренироваться, 2) разобраться: `Work out at the gym. / Work out the solution.`\n\n**Nuance: separable vs context:**\nКогда object длинный, обычно не разделяют (стилистически):\n- `Pick up your jacket.` (OK — short object.)\n- `Pick up the blue jacket with the white buttons.` (OK, but preferred; separated form feels awkward with long objects.)\n- `Pick the blue jacket with the white buttons up.` — грамматично, но стилистически плохо.\n\nЛогика: particle в конце, далеко от verb — тяжело следить.\n\n**Частая ошибка B2:** путать separable и inseparable.\n- Separable: `turn on the light / turn it on`.\n- Inseparable: `look after the kids / look after them` (nie `look them after`.)\n\nКак отличить? Только запоминанием. Есть словари с пометкой `[sep]` или `[insep]`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + short noun/pronoun + particle (split)  |  verb + particle + long noun phrase (keep together)",
+        "ru": "глагол + короткое существительное/местоимение + частица (раздельно)  |  глагол + частица + длинная именная группа (вместе)"
       },
       "examples": [
         {
           "en": "Could you turn the music down, please?",
-          "ru": "Не мог бы ты сделать музыку потише?"
+          "ru": "Не мог бы ты сделать музыку потише?",
+          "note": {
+            "en": "split, polite request",
+            "ru": "раздельно, вежливая просьба"
+          }
         },
         {
           "en": "She made up a funny story.",
@@ -81,7 +117,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I finally figured it out.",
-          "ru": "Я наконец-то в этом разобрался."
+          "ru": "Я наконец-то в этом разобрался.",
+          "note": {
+            "en": "pronoun split",
+            "ru": "местоимение разделяет"
+          }
         },
         {
           "en": "He let us down when we needed him most.",
@@ -91,17 +131,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Для длинных объектов не разделяй: pick up the heavy blue jacket (не pick the heavy blue jacket up)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Look the kids after.",
+          "right": "Look after the kids.",
+          "why": {
+            "en": "Look after is inseparable — the object can never come between the verb and the particle.",
+            "ru": "Look after — неразделяемый: объект никогда не ставится между глаголом и частицей."
+          }
+        },
+        {
+          "wrong": "Pick the blue jacket with the white buttons up.",
+          "right": "Pick up the blue jacket with the white buttons.",
+          "why": {
+            "en": "Keep the particle next to the verb when the object is long; splitting strands it awkwardly.",
+            "ru": "При длинном объекте держите частицу рядом с глаголом; разделение звучит неуклюже."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you choose to split or not for style and emphasis. Putting the object before the particle gives it slight end-weight relief and mild focus: She turned the offer down feels a touch more pointed than the neutral She turned down the offer.\n\nMany separable verbs are richly polysemous — bring up (raise a child / raise a topic / vomit), take off (remove / depart / become popular / mimic), set up (establish / frame someone). Learn each sense from context rather than from the bare verb.\n\nRegister matters: phrasal verbs read as neutral or informal, so in formal writing you often swap in a Latinate verb — put off → postpone, call off → cancel, bring up → raise, figure out → determine, find out → discover, give up → abandon, set up → establish, work out → resolve.\n\nFinally, distinguish a true particle from a directional preposition. She looked up the word (separable; up is a particle) versus She looked up at the sky (here up is direction, not part of a phrasal verb). Test it with a pronoun: look it up works, so it is separable; look up at it shows up is just a preposition.",
         "ru": "На C1 выбирай separation по стилю и emphasis.\n\n**Ends-focus in separated phrasal verbs:**\nПоставив object перед particle, ты слегка выделяешь object:\n- `She turned the offer down.` (focus on offer.)\n- `She turned down the offer.` (neutral.)\n\nРазделение даёт легкое акцентирование object.\n\n**Double separable — rare complexity:**\nНекоторые phrasal verbs с двумя particles:\n- `put up with + object` — мириться с (inseparable, не separable.)\n- Three-word phrasal verbs обычно inseparable. Отдельная тема.\n\n**Idiomatic uses with figurative meaning:**\n- `bring up` — 1) воспитать, 2) поднять (тему), 3) вырвать (съеденное): `He brought up his dinner.`\n- `take off` — 1) снять, 2) взлёт, 3) become popular, 4) mimic (BrE informal): `She takes off the teacher perfectly.`\n- `set up` — 1) учредить, 2) подставить (scam): `He set me up!`\n- `shoot down` — 1) сбить самолёт, 2) отвергнуть (идею): `She shot down my proposal.`\n\nОдин phrasal verb может иметь 3-5 значений. Запоминай в контексте.\n\n**Phrasal verbs with personal subject/object:**\n- `show off` — рисоваться: `He shows off his car.` (себя представляет через машину.)\n- `put off` — 1) отложить, 2) отбить желание: `This smell puts me off.`\n- `turn on / off` — 1) switch on/off, 2) возбудить / убить интерес: `His humour turns me off.`\n\n**Register considerations:**\nPhrasal verbs — informal / neutral. Для formal writing часто заменяй latinate verb:\n- `put off` → postpone.\n- `call off` → cancel.\n- `bring up` → raise / mention / introduce.\n- `figure out` → determine / ascertain.\n- `find out` → discover / learn.\n- `give up` → relinquish / abandon.\n- `set up` → establish.\n- `work out` → resolve / calculate.\n\nВ academic и business communication — latinate forms лучше.\n\n**Idiomatic rigidity:**\nНекоторые separable phrasal verbs с fixed meaning теряют смысл при separation:\n- `make up a story` = выдумать.\n- `make a story up` — тоже correct.\n- Но `make up one's mind` — fixed idiom: `Make up your mind.` (обычно not separated).\n\n**B1/B2 revisit — object vs adverbial:**\n- `She looked up the word.` (separable; up is particle, looked up = lookup.)\n- `She looked up at the sky.` (inseparable; up here is direction, not part of phrasal verb.)\n\nОпределить можно проверкой: заменить на местоимение. Если `look up it` невозможно, а `look it up` — да, это separable phrasal. Если `look up at it` — normal preposition."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + object + particle  =  focus on object  |  verb + particle + object  =  neutral",
+        "ru": "глагол + объект + частица  =  акцент на объекте  |  глагол + частица + объект  =  нейтрально"
       },
       "examples": [
         {
@@ -110,7 +168,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "His rudeness really puts me off.",
-          "ru": "Его грубость действительно отбивает у меня желание общаться."
+          "ru": "Его грубость действительно отбивает у меня желание общаться.",
+          "note": {
+            "en": "figurative: discourage",
+            "ru": "переносно: отбивать желание"
+          }
         },
         {
           "en": "The entrepreneur set up three companies.",
@@ -122,32 +184,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The reform was brought in to address inequality.",
-          "ru": "Реформу ввели, чтобы решить проблему неравенства."
+          "ru": "Реформу ввели, чтобы решить проблему неравенства.",
+          "note": {
+            "en": "passive, formal",
+            "ru": "пассив, формально"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В formal писании заменяй phrasal verbs на latinate: put off → postpone, find out → discover, bring up → raise."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "In the report we found out three irregularities.",
+          "right": "In the report we identified three irregularities.",
+          "why": {
+            "en": "In formal writing, prefer a Latinate verb over a casual phrasal verb to fit the register.",
+            "ru": "В формальном письме предпочтительнее латинский глагол вместо разговорного phrasal verb."
+          }
+        },
+        {
+          "wrong": "She looked the sky up.",
+          "right": "She looked up at the sky.",
+          "why": {
+            "en": "Here up is a direction, not a separable particle, so the object cannot move in front of it.",
+            "ru": "Здесь up — направление, а не разделяемая частица, поэтому объект нельзя вынести вперёд."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 phrasal verbs become a deliberate register tool. You code-switch knowingly: I figured out what was going on (warm, conversational) versus I ascertained the situation (formal, distant), choosing the layer the moment demands.\n\nSenses drift across domains — take on can mean assume a duty, accept a challenge, hire, or confront — and only collocation disambiguates. Store whole collocations, not verb + particle: set up a company / a system / a trap; call off a strike / an engagement / a search.\n\nIndefinite or quantified objects gravitate to the non-split order: pick up some milk reads better than pick some milk up. Be alert to ambiguity between a separable verb and a preposition + noun: He ran the robber down (hit with a car — separable) versus He ran down the street (moved along it). Some forms are intransitive and take no object at all (the noise died down).\n\nFinally, treat frozen idiomatic phrasal verbs as unmodifiable chunks — turn one's nose up at, put one's foot down, pick up the slack — and avoid overusing phrasal verbs in academic prose, where they flag a register mismatch.",
         "ru": "На C2 phrasal verbs используются сознательно для register effects.\n\n**Stylistic layering:**\n- Native phrasal verb: warm, immediate, conversational.\n- Latinate equivalent: formal, distant, academic.\n- Code-switching demonstrates command of both registers.\n\nExample:\n- Casual: `I figured out what was going on.`\n- Formal: `I ascertained the situation.`\n- Hybrid: `Investigators sought to figure out...`\n\n**Semantic drift across domains:**\n- `take on` — 1) взять на себя (обязанность), 2) принять (вызов), 3) нанять, 4) противостоять.\n- Context and collocation disambiguate.\n\n**Phrasal verbs with implicit objects:**\n- `The meeting started up again.` (start up — intransitive, не needs object.)\n- `The noise died down.` (die down — intransitive.)\n- Разные paradigm — sometimes separable, sometimes intransitive.\n\n**Nuanced separability with indefinite objects:**\n- `Please pick up something on your way home.` (natural, indefinite.)\n- `Please pick something up.` (grammatical, slight awkward with something.)\n- Indefinite quantifiers often prefer non-separated: `pick up some milk` > `pick some milk up`.\n\n**Collocational gravitation:**\n- `set up a company / an organization / a system / a meeting / an appointment / a trap`.\n- `call off a meeting / an event / a strike / an engagement / a search`.\n\nЗапоминай не verb + particle, а whole collocation.\n\n**Metaphorical extension:**\n- `run down` — 1) сбить (машиной), 2) износить (батарею), 3) критиковать (person): `Don't run me down.`\n- `turn over` — 1) перевернуть, 2) обдумать, 3) передать полномочия.\n- Native speakers intuitively extend.\n\n**Literary / archaic:**\n- `cast off` — отбросить / отправиться в путь.\n- `do away with` — уничтожить / отменить.\n- `make away with` — украсть / сбежать с.\n- Less common; recognition important.\n\n**Aspect and stativity:**\n- `put up with` — stative meaning of tolerance.\n- `set about` — inchoative, begin doing: `She set about cleaning.`\n- `take to (doing)` — привыкнуть.\n\n**Avoid at C2:**\n- Overusing phrasal verbs in academic writing — marks register mismatch.\n- Separating excessively long objects — create awkward rhythm.\n- Ambiguity between phrasal verb and preposition + noun: `He ran down the street.` (moved down street) vs `He ran the robber down.` (hit with car — separable.)\n\n**Idioms as frozen phrasal verbs:**\n- `turn one's nose up at` — отвернуться от.\n- `put one's foot down` — настоять.\n- `pick up the slack` — взять на себя недостаток.\n- Cannot be separated or modified; learn as chunks."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb (+ object) + particle, with sense fixed by collocation; some uses intransitive (no object)",
+        "ru": "глагол (+ объект) + частица, значение задаётся коллокацией; некоторые употребления непереходны (без объекта)"
       },
       "examples": [
         {
           "en": "She took on the responsibility despite her reservations.",
-          "ru": "Она взяла на себя ответственность, несмотря на сомнения."
+          "ru": "Она взяла на себя ответственность, несмотря на сомнения.",
+          "note": {
+            "en": "take on = assume",
+            "ru": "take on = взять на себя"
+          }
         },
         {
           "en": "The scandal blew over within weeks.",
-          "ru": "Скандал утих за несколько недель."
+          "ru": "Скандал утих за несколько недель.",
+          "note": {
+            "en": "intransitive",
+            "ru": "непереходный"
+          }
         },
         {
           "en": "He was brought in to turn the company around.",
@@ -165,9 +257,45 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Phrasal verbs — native / informal register. В academic writing используй latinate equivalents для stylistic fit."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The study sought to figure out the protein's structure.",
+          "right": "The study sought to determine the protein's structure.",
+          "why": {
+            "en": "In academic register a phrasal verb jars; a Latinate verb keeps the tone consistent.",
+            "ru": "В академическом регистре phrasal verb режет слух; латинский глагол сохраняет тон."
+          }
+        },
+        {
+          "wrong": "She put down her foot about the deadline.",
+          "right": "She put her foot down about the deadline.",
+          "why": {
+            "en": "Frozen idioms keep their fixed shape and cannot be rearranged like ordinary separable verbs.",
+            "ru": "Застывшие идиомы сохраняют фиксированную форму и не перестраиваются, как обычные разделяемые глаголы."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "inseparable-phrasal-verbs",
+    "three-word-phrasal-verbs",
+    "phrasal-verbs-with-up-down",
+    "common-phrasal-verb-groups-by-topic"
+  ],
+  "crossTopic": [
+    "personal-pronouns",
+    "phrasal-verbs-formal-informal",
+    "prepositions-after-verbs",
+    "noun-phrases"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "verb",
+      "object?",
+      "particle",
+      "object?"
+    ]
+  }
 };

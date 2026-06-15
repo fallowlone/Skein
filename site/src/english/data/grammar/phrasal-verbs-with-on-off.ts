@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "phrasal-verbs-with-on-off",
   "title": {
-    "en": "",
+    "en": "Phrasal Verbs with On / Off",
     "ru": "Phrasal Verbs With On Off"
   },
   "cefr": "B1",
@@ -15,159 +15,329 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "phrasal-verbs",
+  "egp": [
+    "EGP:phrasal-verbs:on-off:B1-C2"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "The particles on and off form one of the clearest contrast pairs in English. As a rough rule, on means switch it on, keep going, or attach; off means switch it off, stop, separate, or leave.\n\nThe ON side: switching on (turn on, switch on), putting clothes on (put on), continuing (go on, carry on, keep on), and staying in contact or waiting (hold on, hang on).\n\nThe OFF side: switching off (turn off, switch off), removing (take off), departing (set off, run off), cancelling (call off), and detaching (cut off, break off).\n\nMany of these come in tidy opposite pairs: turn on / turn off (a device), put on / take off (clothes), get on / get off (a bus, train, or plane). They are not always perfect antonyms, but the on-continue / off-stop logic gets you a long way.\n\nWatch the two that look alike but mean very different things: go on (continue, or happen — What's going on?) versus go off (an alarm rings, food spoils, or someone leaves). Same verb, opposite particle, completely different meaning.",
         "ru": "Частицы `on` и `off` — частые, с ясным логическим противопоставлением: `on` = включение, продолжение, присоединение; `off` = выключение, разделение, уход.\n\n**ON — основные значения:**\n- Включение: `turn on`, `switch on`.\n- Надеть: `put on`.\n- Продолжение: `go on`, `carry on`, `keep on`.\n- Контакт / прикосновение: `hold on`, `hang on`.\n- Время спустя: `later on`, `from now on`.\n\n**OFF — основные значения:**\n- Выключение: `turn off`, `switch off`.\n- Снятие: `take off`.\n- Отъезд / уход: `set off`, `head off`, `run off`.\n- Отмена: `call off`.\n- Отделение: `cut off`, `break off`.\n\n**ON — частые phrasal verbs:**\n- `turn on / switch on` — включить: `Turn on the TV.`\n- `put on` — надеть / прибавить: `Put on your jacket.`\n- `go on` — продолжаться / происходить: `The party went on until midnight. / What's going on?`\n- `carry on` — продолжать: `Carry on working.`\n- `keep on` — продолжать делать: `Keep on trying.`\n- `hold on / hang on` — подожди: `Hold on a second.`\n- `come on` — 1) давай, 2) включиться (light): `Come on! / The lights came on.`\n- `get on` — ладить (with): `I get on well with her.`\n- `try on` — примерить: `Try on the shoes.`\n- `move on` — двигаться дальше.\n\n**OFF — частые phrasal verbs:**\n- `turn off / switch off` — выключить: `Turn off the lights.`\n- `take off` — 1) снять, 2) взлёт: `Take off your shoes. / The plane took off.`\n- `get off` — сойти (транспорт): `Get off at the next stop.`\n- `call off` — отменить: `They called off the meeting.`\n- `set off` — отправиться: `We set off at dawn.`\n- `go off` — 1) взорваться / звонить (alarm), 2) испортиться (food): `The alarm went off. / The milk went off.`\n- `put off` — отложить: `Don't put off your homework.`\n- `show off` — рисоваться: `Stop showing off.`\n- `run off` — убежать: `The thief ran off.`\n- `cut off` — отрезать: `Cut off the power.`\n- `drop off` — 1) доставить, 2) заснуть: `Drop me off at the station. / I dropped off on the sofa.`\n- `fall off` — упасть с: `Fall off a bike.`\n\n**On / off as polar opposites:**\n- `turn on / turn off` — switch state.\n- `put on / take off` — clothes.\n- `get on / get off` — board / disembark (bus, train, plane).\n\nНе всегда прямые антонимы, но часто.\n\n**Частая ошибка:** путать значения `go on / go off`.\n- `go on` = continue or happen: `What's going on?`\n- `go off` = alarm ringing / food spoiling / leave: `The alarm went off.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb + on / off (+ object)",
+        "ru": "подлежащее + глагол + on / off (+ дополнение)"
       },
       "examples": [
         {
           "en": "Please turn off the lights when you leave.",
-          "ru": "Пожалуйста, выключи свет, когда будешь уходить."
+          "ru": "Пожалуйста, выключи свет, когда будешь уходить.",
+          "note": {
+            "en": "off = switch off",
+            "ru": "off = выключить"
+          }
         },
         {
           "en": "Try on these shoes.",
-          "ru": "Примерь эти туфли."
+          "ru": "Примерь эти туфли.",
+          "note": {
+            "en": "on = try / attach",
+            "ru": "on = примерить"
+          }
         },
         {
           "en": "They called off the meeting at the last minute.",
-          "ru": "Они отменили встречу в последнюю минуту."
+          "ru": "Они отменили встречу в последнюю минуту.",
+          "note": {
+            "en": "off = cancel",
+            "ru": "off = отменить"
+          }
         },
         {
           "en": "We set off for the mountains at dawn.",
-          "ru": "Мы отправились в горы на рассвете."
+          "ru": "Мы отправились в горы на рассвете.",
+          "note": {
+            "en": "off = depart",
+            "ru": "off = отправиться"
+          }
         },
         {
           "en": "Keep on walking — we're almost there.",
-          "ru": "Продолжай идти — мы почти там."
+          "ru": "Продолжай идти — мы почти там.",
+          "note": {
+            "en": "on = continue",
+            "ru": "on = продолжать"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "On часто = continuation / start, off часто = cessation / departure. Turn on/off, carry on, set off — базовые."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The alarm went on at 6 a.m.",
+          "right": "The alarm went off at 6 a.m.",
+          "why": {
+            "en": "An alarm sounding is go off; go on means continue or happen, not ring.",
+            "ru": "Сигнал будильника — это go off; go on значит продолжаться или происходить, а не звонить."
+          }
+        },
+        {
+          "wrong": "Please turn the lights when you leave.",
+          "right": "Please turn off the lights when you leave.",
+          "why": {
+            "en": "The particle off carries the switch-off meaning; the bare verb turn is incomplete here.",
+            "ru": "Именно частица off несёт значение выключения; голый глагол turn здесь не передаёт смысл."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the on / off pair stretches well beyond switches and clothes into abstract, figurative uses, and many of these verbs become polysemous.\n\nABSTRACT ON: act on (advice), bring on (trigger — stress brought on a headache), catch on (become popular, or understand), count on / depend on (rely), draw on (use resources), focus on, get on with (proceed / get along), go on to do something (move to a next stage), take on (accept work, or hire), and live on (survive on an income, or persist — her music lives on).\n\nABSTRACT OFF: back off (retreat), brush off (dismiss), come off (succeed), drop off (decline, or fall asleep), fight off (resist an illness), lay off (make redundant), log off, pay off (settle a debt, or be worth it), pull off (achieve something difficult), put off (postpone, or deter), rip off (overcharge), set off (depart, or trigger an alarm/reaction), tell off (scold), tip off (warn secretly), and wear off (an effect fades).\n\nThe deep pattern: on signals continuation or persistence (keep on doing, sleep on it), while off signals severance or cutting away (cut off from, write off a debt). The classic B2 error is still go on (continue) versus go off (explode / spoil / leave) — and watch put on, which means wear clothes, gain weight, or even fake an accent.",
         "ru": "На B2 расширяй abstract uses.\n\n**ON — advanced:**\n- `act on` — действовать по: `We acted on his advice.`\n- `bring on` — спровоцировать: `The stress brought on a headache.`\n- `carry on with` — продолжать что-то.\n- `catch on` — стать популярным / сообразить: `The trend caught on quickly.`\n- `come on` — 1) encouragement, 2) starting (symptoms): `I feel a cold coming on.`\n- `count on` — рассчитывать на.\n- `depend on / upon` — зависеть от.\n- `draw on` — использовать (resources, experience).\n- `focus on` — сосредоточиться.\n- `get on with` — продолжать / ладить: `Get on with your work.`\n- `go on to + inf` — перейти к: `She went on to become CEO.`\n- `hold on to` — держаться за.\n- `insist on` — настаивать.\n- `live on` — жить на (доход) / продолжать жить (memory): `He lives on $500 a month. / Her music lives on.`\n- `look on (as)` — считать: `I look on him as a friend.`\n- `move on (from)` — двигаться дальше.\n- `pass on` — 1) передать, 2) умереть (euphemism): `Pass on the message.`\n- `take on` — взять на себя / нанять.\n- `turn on` — 1) включить, 2) зависеть от: `Everything turns on this decision.`\n\n**OFF — advanced:**\n- `back off` — отступить: `Back off!`\n- `brush off` — отмахнуться: `She brushed off my concerns.`\n- `come off` — 1) получиться, 2) upstanding: `The plan came off well.`\n- `doze off` — задремать.\n- `drop off` — 1) доставить, 2) заснуть, 3) decrease: `Sales have dropped off.`\n- `fall off` — уменьшиться / упасть с: `Attendance has fallen off.`\n- `fight off` — отбить: `fight off an illness / attackers`.\n- `get off on the right / wrong foot` — начать хорошо / плохо.\n- `go off` — 1) alarm, 2) detonate, 3) spoil, 4) занервничать: `She went off at me.`\n- `hit it off` — сразу поладить: `They hit it off immediately.`\n- `lay off` — уволить (по сокращению): `The company laid off 100 workers.`\n- `log off` — выйти из системы.\n- `pay off` — 1) погасить долг, 2) окупиться: `The effort paid off.`\n- `pull off` — успешно сделать: `She pulled off the deal.`\n- `put off` — отложить / отбить желание.\n- `rip off` — 1) содрать (price), 2) скопировать: `You got ripped off!`\n- `set off` — 1) отправиться, 2) запустить (alarm / reaction): `He set off the alarm.`\n- `show off` — хвастаться.\n- `tip off` — сообщить (secretly): `She tipped off the police.`\n- `tell off` — отругать: `He told me off.`\n- `trade off` — обменять (compromise): `We trade off privacy for convenience.`\n- `wear off` — выветриться (effect): `The anaesthetic wore off.`\n- `wrap up / wrap off` — ...\n\n**ON as continuation aspect:**\n- `keep on doing` — упорно продолжать.\n- `sleep on it` — переспать с проблемой.\n- `think on your feet` — быстро соображать.\n\n**OFF as severance aspect:**\n- `cut off from` — отрезан от.\n- `broken off (engagement)` — разорвать.\n- `write off` — списать (debt, person).\n\n**Common B2 errors:**\n- `go on` vs `go off`: «continue» vs «explode/leave/spoil». Different domains.\n- `put on` (clothes / weight / accent) — polysemy: `She put on an English accent.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb + on / off (often + that-clause / gerund / preposition)",
+        "ru": "подлежащее + глагол + on / off (часто + придаточное / герундий / предлог)"
       },
       "examples": [
         {
           "en": "The trend really caught on with teenagers.",
-          "ru": "Этот тренд действительно прижился у подростков."
+          "ru": "Этот тренд действительно прижился у подростков.",
+          "note": {
+            "en": "on = become popular",
+            "ru": "on = прижиться"
+          }
         },
         {
           "en": "She brushed off his criticism without a word.",
-          "ru": "Она отмахнулась от его критики без единого слова."
+          "ru": "Она отмахнулась от его критики без единого слова.",
+          "note": {
+            "en": "off = dismiss",
+            "ru": "off = отмахнуться"
+          }
         },
         {
           "en": "The painkillers wore off after a few hours.",
-          "ru": "Обезболивающее перестало действовать через несколько часов."
+          "ru": "Обезболивающее перестало действовать через несколько часов.",
+          "note": {
+            "en": "off = fade",
+            "ru": "off = перестать действовать"
+          }
         },
         {
           "en": "His hard work paid off in the end.",
-          "ru": "Его упорный труд в итоге окупился."
+          "ru": "Его упорный труд в итоге окупился.",
+          "note": {
+            "en": "off = be worth it",
+            "ru": "off = окупиться"
+          }
         },
         {
           "en": "They hit it off from the first meeting.",
-          "ru": "Они сразу же поладили с первой встречи."
+          "ru": "Они сразу же поладили с первой встречи.",
+          "note": {
+            "en": "off = get along well",
+            "ru": "off = сразу поладить"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Wear off / wear out / wear down — all about erosion. Wear off = постепенно пропадает (effect), wear out = износиться, wear down = измотать."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The company laid down 100 workers.",
+          "right": "The company laid off 100 workers.",
+          "why": {
+            "en": "Making staff redundant is lay off; lay down means put down or establish (lay down rules).",
+            "ru": "Увольнение по сокращению — это lay off; lay down значит положить или установить (lay down rules)."
+          }
+        },
+        {
+          "wrong": "After two hours the painkillers wore out.",
+          "right": "After two hours the painkillers wore off.",
+          "why": {
+            "en": "An effect that gradually fades wears off; wear out means become worn through use.",
+            "ru": "Эффект, который постепенно исчезает, — это wear off; wear out значит износиться от использования."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the focus shifts to idiomatic precision and register — knowing not just what a phrasal verb means, but where it belongs.\n\nIdiomatic ON: catch on to / cotton on to (realise a trick), dwell on (brood over), embark on (begin a venture), encroach on (intrude), frown on / upon (disapprove), harp on about (nag), hinge on (depend entirely on), impose on (burden someone), prey on (exploit the vulnerable), reflect on (consider), and take it out on (vent at the wrong person).\n\nIdiomatic OFF: blow off (skip an obligation, or release steam), come off as (give an impression — he comes off as arrogant), cordon off, fob off (palm someone off), go off the rails, head off (prevent), kick off (begin an event), knock off (finish work, or steal), level off (plateau), pass off as (fake), polish off (finish quickly), rub off on (a trait transfers — her enthusiasm rubbed off on me), shake off (rid yourself of), sign off on (approve), and throw off (disorient).\n\nThe key C1 skill is the register map. Casual: blow off, goof off, knock off, mouth off. Neutral: back off, brush off, call off, set off, take off. More formal: frown upon, embark on, hinge on, prey on. In academic writing reflect on and dwell on read well, while everyday speech leans on the casual cluster.",
         "ru": "На C1 различай idiomatic и register-sensitive usage.\n\n**ON — idiomatic / abstract:**\n- `bring on` — спровоцировать (illness / attack).\n- `catch on to` — сообразить, раскусить: `He finally caught on to the scam.`\n- `cotton on to` — догадаться (informal, BrE).\n- `dwell on` — зацикливаться: `Don't dwell on the past.`\n- `embark on` — начать (journey, project).\n- `encroach on` — посягать на.\n- `feed on` — питаться (figuratively): `Fear feeds on ignorance.`\n- `frown on / upon` — неодобрять.\n- `harp on (about)` — зудеть (complaining).\n- `hinge on` — зависеть от: `Everything hinges on this.`\n- `impose on` — навязать: `Don't impose on her.`\n- `prey on` — охотиться на / эксплуатировать: `prey on the vulnerable`.\n- `reflect on` — обдумать.\n- `seize on` — ухватиться за.\n- `spur on` — побудить.\n- `take it out on` — выместить: `Don't take it out on me.`\n- `trample on` — попирать (rights).\n- `urge on` — побуждать.\n\n**OFF — idiomatic / abstract:**\n- `blow off` — 1) проигнорировать (appointment), 2) срывать (steam).\n- `cast off` — отбросить.\n- `come off (as)` — произвести впечатление: `He comes off as arrogant.`\n- `cordon off` — оцепить.\n- `doze off` — задремать.\n- `fob off` — отделаться: `Don't fob me off.`\n- `go off the rails` — сойти с пути (moral).\n- `head off` — предотвратить: `head off a crisis`.\n- `kick off` — начать: `The meeting kicks off at 10.`\n- `knock off` — 1) закончить работу, 2) украсть (informal): `Let's knock off at 5.`\n- `level off` — выровняться: `Prices levelled off.`\n- `mouth off` — болтать дерзко.\n- `pass off (as)` — выдавать за: `He passed himself off as a doctor.`\n- `polish off` — быстро закончить (food / task): `She polished off the cake.`\n- `put someone off + noun/gerund` — отбить желание: `The smell put me off my food.`\n- `round off` — завершить (with): `round off the evening with dessert`.\n- `rub off on` — передаться (personality trait): `Her enthusiasm rubbed off on me.`\n- `shake off` — стряхнуть (illness, feeling): `shake off a cold`.\n- `shoot off (one's mouth)` — болтать без разбора.\n- `sign off (on)` — утвердить (formally).\n- `square off` — приготовиться (к конфликту).\n- `throw off` — сбить с толку: `The loud noise threw me off.`\n- `wear off` — улетучиться.\n- `write off (as)` — списать (человека).\n\n**Subtle pairs:**\n- `put on` (clothes / weight / accent / show) vs `put off` (delay / deter).\n- `take on` (accept) vs `take off` (remove / fly / imitate).\n- `turn on` (switch / attack / depend on) vs `turn off` (disinterest / switch off).\n\n**Register mapping:**\n- Casual: `blow off, goof off, knock off, mouth off`.\n- Neutral: `back off, brush off, call off, set off, take off`.\n- Formal-ish: `frown upon, embark on, hinge on, prey on`.\n\n**Academic vs everyday:**\n- `reflect on` — academic-ish, OK in writing.\n- `dwell on` — literary / academic.\n- `depend on` — universal.\n- `rely on / upon` — slightly more formal than depend."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb + on / off + (object) (+ on / as / from for the idiom)",
+        "ru": "подлежащее + глагол + on / off + (дополнение) (+ on / as / from в идиоме)"
       },
       "examples": [
         {
           "en": "Everything hinges on the outcome of tomorrow's vote.",
-          "ru": "Всё зависит от исхода завтрашнего голосования."
+          "ru": "Всё зависит от исхода завтрашнего голосования.",
+          "note": {
+            "en": "on = depend entirely",
+            "ru": "on = всё зависит"
+          }
         },
         {
           "en": "She couldn't shake off the feeling that she was being watched.",
-          "ru": "Она не могла избавиться от ощущения, что за ней наблюдают."
+          "ru": "Она не могла избавиться от ощущения, что за ней наблюдают.",
+          "note": {
+            "en": "off = rid oneself of",
+            "ru": "off = избавиться"
+          }
         },
         {
           "en": "The meeting kicks off at 10 sharp.",
-          "ru": "Совещание начинается ровно в 10."
+          "ru": "Совещание начинается ровно в 10.",
+          "note": {
+            "en": "off = begin an event",
+            "ru": "off = начинается"
+          }
         },
         {
           "en": "His enthusiasm rubbed off on the whole team.",
-          "ru": "Его энтузиазм передался всей команде."
+          "ru": "Его энтузиазм передался всей команде.",
+          "note": {
+            "en": "off + on = transfer",
+            "ru": "off + on = передаться"
+          }
         },
         {
           "en": "Don't take your frustration out on your family.",
-          "ru": "Не вымещай своё раздражение на семье."
+          "ru": "Не вымещай своё раздражение на семье.",
+          "note": {
+            "en": "take ... out on = vent",
+            "ru": "take ... out on = выместить"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Rub off on = передаваться (черты): Her calm rubbed off on everyone. Kick off = начать formal-ish event."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He comes off arrogant in interviews.",
+          "right": "He comes off as arrogant in interviews.",
+          "why": {
+            "en": "The impression idiom is come off AS + adjective/noun; the as is obligatory.",
+            "ru": "Идиома впечатления — это come off AS + прилагательное/существительное; as обязателен."
+          }
+        },
+        {
+          "wrong": "Don't take your bad day on your family.",
+          "right": "Don't take your bad day out on your family.",
+          "why": {
+            "en": "The fixed idiom is take it OUT ON someone; dropping out breaks the phrase.",
+            "ru": "Устойчивая идиома — take it OUT ON someone; без out фраза разрушается."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the goal is full command of subtle, literary, and densely polysemous usage.\n\nRare or literary ON: smile on (favour — fortune smiled on her), dote on (adore), press on (persist despite obstacles), rely upon and reflect upon (formal variants), and weigh on (oppress mentally). Rare or literary OFF: cast off (discard, or spin off an entity), fend off (repel an attack or question), peel off (break away from a group), slough off (shed like a skin, figuratively old habits), sound off (voice opinions loudly), swear off (renounce — I've sworn off sugar), and top off (round out — top off the meal).\n\nThe real mastery test is the polysemy clusters. Take set + particle: set about, set aside, set back, set forth, set in, set off, set out, set up — each distinct. Or put + particle: put across, put away, put down, put off, put out, put through, put up with. And the same root across particles: take on (assume) vs take off (remove / become popular) vs take over vs take to vs take after; get on vs get off vs get over vs get through vs get at.\n\nTwo semantic fields anchor the pair: OFF signals rupture (break off, call off, cut off, sever), ON signals not stopping (carry on, get on with, go on, keep on, press on, push on). Finally, treat the fixed chunks as units: on and off, from now on, off the top of my head, on the ball, off-the-cuff.",
         "ru": "На C2 владей тонкостями idiomatic usage.\n\n**Rare / literary ON:**\n- `smile on` — благоволить (fate): `Fortune smiled on her.`\n- `dote on` — обожать: `She dotes on her grandson.`\n- `press on` — продолжать упорно: `Despite the rain, we pressed on.`\n- `rely upon` — полагаться (formal).\n- `reflect upon` — размышлять (formal).\n- `weigh on` — тяготить: `The responsibility weighs on her.`\n\n**Rare / literary OFF:**\n- `cast off` — отбросить / spin off (new entity).\n- `fend off` — отбить (attack, question).\n- `fob off (on)` — сплавить.\n- `lash off / tear off (words)` — выкрикнуть грубо.\n- `peel off` — отделиться (from group).\n- `scrape off` — соскрести.\n- `shake off (sleep, doubts)` — избавиться.\n- `slough off` — сбросить (like snake skin; figuratively: old habits).\n- `sound off` — высказать мнение (громко).\n- `swear off` — зарекаться: `I've sworn off sugar.`\n- `top off` — дополнить до конца / завершить: `Top off the tank. / Top off your day with a glass of wine.`\n\n**Polysemy paragons:**\n`set + particle`:\n- set about (begin task).\n- set aside (put to side, for later).\n- set back (delay, cost).\n- set down (write / put).\n- set forth (formal: begin / present arguments).\n- set in (weather, illness begins).\n- set off (depart / trigger).\n- set on (attack, as dogs).\n- set out (depart / begin / present formally).\n- set to (begin vigorously).\n- set up (establish / arrange / frame someone).\n\n`put + particle`:\n- put across (communicate).\n- put aside (save).\n- put away (store / consume / incarcerate).\n- put back (return / delay).\n- put down (write / humiliate / euthanize / pay deposit).\n- put forth (propose, formal).\n- put forward (propose).\n- put in (install / devote time / contribute).\n- put off (delay / deter).\n- put on (wear / pretend / produce show).\n- put out (extinguish / publish / inconvenience).\n- put through (connect / subject to ordeal).\n- put up (accommodate / tolerate (put up with) / display).\n- put up to (incite).\n\n**Specific collocation stronghold:**\n- `hit it off with` — идиома; cannot modify preposition.\n- `show off one's skills` — не `on`.\n- `pull off a miracle / coup` — не `in / on`.\n\n**Semantic field: severance (OFF):**\n- `break off (engagement, talks)`.\n- `call off (event, bet, wedding)`.\n- `cut off (power, supply, relationship, person's attempt to speak)`.\n- `sever / disconnect`: latinate formal.\n- OFF cluster signals rupture.\n\n**Semantic field: commencement / continuation (ON):**\n- `carry on, get on with, go on, keep on, move on, press on, push on`.\n- All signal not stopping.\n\n**Nuance at C2 — same root, different particle:**\n- `take on` (assume responsibility) vs `take off` (remove / become popular) vs `take over` (seize control) vs `take to` (enjoy) vs `take after` (resemble).\n- `get on` (board / age / cope) vs `get off` (disembark / escape consequences) vs `get over` (recover) vs `get through` (endure) vs `get at` (reach / imply).\n- Mastery = clear map of these polysemies.\n\n**Rhythmic and cadence:**\nWriters balance single-syllable phrasal verbs (`hit it off`, `kick it off`, `wrap it up`) with latinate verbs. Alternation creates rhythm.\n\n**Idioms with ON / OFF — learn as chunks:**\n- `on and off` — периодически.\n- `off and on` — same.\n- `from now on` — с этого момента.\n- `off the top of my head` — навскидку.\n- `on the ball` — сообразительный.\n- `off-the-cuff` — спонтанно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb + on / off (in fixed collocations and idiom chunks)",
+        "ru": "подлежащее + глагол + on / off (в устойчивых сочетаниях и идиоматических чанках)"
       },
       "examples": [
         {
           "en": "The burden of expectation weighs heavily on young athletes.",
-          "ru": "Бремя ожиданий тяжело давит на молодых спортсменов."
+          "ru": "Бремя ожиданий тяжело давит на молодых спортсменов.",
+          "note": {
+            "en": "on = oppress mentally",
+            "ru": "on = тяготить"
+          }
         },
         {
           "en": "The company plans to hive off its loss-making divisions.",
-          "ru": "Компания планирует отделить убыточные подразделения."
+          "ru": "Компания планирует отделить убыточные подразделения.",
+          "note": {
+            "en": "off = detach an entity",
+            "ru": "off = отделить"
+          }
         },
         {
           "en": "She's sworn off coffee for the month.",
-          "ru": "Она зареклась не пить кофе в этом месяце."
+          "ru": "Она зареклась не пить кофе в этом месяце.",
+          "note": {
+            "en": "off = renounce",
+            "ru": "off = зарекаться"
+          }
         },
         {
           "en": "The president pressed on with the unpopular reforms.",
-          "ru": "Президент упорно продолжил непопулярные реформы."
+          "ru": "Президент упорно продолжил непопулярные реформы.",
+          "note": {
+            "en": "on = persist",
+            "ru": "on = упорно продолжать"
+          }
         },
         {
           "en": "Let's top off the meal with some coffee.",
-          "ru": "Давайте завершим ужин кофе."
+          "ru": "Давайте завершим ужин кофе.",
+          "note": {
+            "en": "off = round out",
+            "ru": "off = завершить"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Press on / press ahead / carry on — formal-ish для «продолжать несмотря ни на что». Choose по context register."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She showed on her skills to the panel.",
+          "right": "She showed off her skills to the panel.",
+          "why": {
+            "en": "Displaying ability for admiration is show off; the particle is fixed as off, never on.",
+            "ru": "Демонстрировать способности напоказ — это show off; частица закреплена как off, никогда on."
+          }
+        },
+        {
+          "wrong": "The team pulled in a remarkable comeback.",
+          "right": "The team pulled off a remarkable comeback.",
+          "why": {
+            "en": "Achieving something difficult is pull off; pull in / pull on do not carry that sense.",
+            "ru": "Успешно совершить что-то трудное — это pull off; pull in / pull on не передают этот смысл."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "phrasal-verbs-with-up-down",
+    "phrasal-verbs-with-in-out",
+    "separable-phrasal-verbs",
+    "common-phrasal-verb-groups-by-topic"
+  ],
+  "crossTopic": [
+    "prepositions-after-verbs",
+    "three-word-phrasal-verbs",
+    "phrasal-verbs-formal-informal",
+    "inseparable-phrasal-verbs"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "on = power up / continue / attach",
+      "off = power down / separate / depart"
+    ]
+  }
 };

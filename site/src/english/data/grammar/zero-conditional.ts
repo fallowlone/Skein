@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "zero-conditional",
   "title": {
-    "en": "",
+    "en": "Zero Conditional",
     "ru": "Zero Conditional"
   },
   "cefr": "A2",
@@ -16,32 +16,46 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "conditionals",
+  "egp": [
+    "EGP:can-express-general-truths-with-if-present-simple-present-simple"
+  ],
+  "archetype": "branch",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "The zero conditional describes things that are always true: scientific facts, laws of nature, habits, and instructions. The relationship is fixed — the same cause always produces the same result.\n\nBoth clauses use the present simple. There is no 'will' anywhere. Say 'If you heat water, it boils' — never 'If you will heat water'. This is the single most common mistake: after 'if' in a zero conditional, use the present simple, not 'will'.\n\nBecause the result is always the same, you can often swap 'if' for 'when' with almost no change in meaning: 'If you press this button, the door opens' = 'When you press this button, the door opens'.\n\nThe order of the two clauses is free. Start with the 'if' clause and use a comma — 'If you heat ice, it melts' — or start with the result and drop the comma — 'Ice melts if you heat it'.",
         "ru": "**Zero conditional** (нулевое условное) — это предложение про **общие истины** и **законы природы**. То, что всегда происходит одинаково.\n\n**Формула:** `If + Present Simple, Present Simple`\n\n- `If you heat water, it boils.` (Если нагреть воду, она кипит.)\n- `If it rains, the ground gets wet.` (Если идёт дождь, земля становится мокрой.)\n\nЗдесь нет слова `will`. Это **главная ошибка** русских студентов. Не говори `If you will heat water` — это неправильно. После `if` в таких предложениях — **Present Simple**, никакого `will`.\n\n**Что описывает Zero conditional:**\n\n1. **Законы природы и науки:** `Water freezes at 0°C.` / `If water reaches 0°C, it freezes.` (Вода замерзает при 0°C.)\n2. **Привычки и правила:** `If I'm tired, I go to bed early.` (Если я устал, я ложусь рано.)\n3. **Инструкции:** `If the light is red, you stop.` (Если горит красный, ты останавливаешься.)\n\n**When или if?** В Zero conditional часто можно заменить `if` на `when` — смысл почти не меняется:\n- `If you press this button, the door opens.`\n- `When you press this button, the door opens.`\n\nОба варианта правильные, потому что речь о том, что **всегда** так работает.\n\n**Порядок частей** не важен: можно начать с `if` или с результата. Если начинаешь с `if` — ставь запятую:\n- `If you heat ice, it melts.`\n- `Ice melts if you heat it.` (без запятой)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "If + subject + present simple, subject + present simple",
+        "ru": "If + подлежащее + Present Simple, подлежащее + Present Simple"
       },
       "examples": [
         {
           "en": "If you mix red and blue, you get purple.",
-          "ru": "Если смешать красный и синий, получится фиолетовый."
+          "ru": "Если смешать красный и синий, получится фиолетовый.",
+          "note": {
+            "en": "general fact",
+            "ru": "общий факт"
+          }
         },
         {
           "en": "Plants die if they don't get water.",
-          "ru": "Растения погибают, если не получают воду."
+          "ru": "Растения погибают, если не получают воду.",
+          "note": {
+            "en": "result clause first",
+            "ru": "результат впереди"
+          }
         },
         {
           "en": "If I drink coffee late, I don't sleep well.",
-          "ru": "Если я пью кофе поздно, я плохо сплю."
+          "ru": "Если я пью кофе поздно, я плохо сплю.",
+          "note": {
+            "en": "personal habit",
+            "ru": "личная привычка"
+          }
         },
         {
           "en": "Water boils at 100 degrees if it's at sea level.",
@@ -55,22 +69,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В zero conditional никогда не ставь will после if — оба глагола в Present Simple."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If you will heat water, it boils.",
+          "right": "If you heat water, it boils.",
+          "why": {
+            "en": "No 'will' after 'if' in the zero conditional — both verbs are present simple.",
+            "ru": "После if в zero conditional нет will — оба глагола в Present Simple."
+          }
+        },
+        {
+          "wrong": "If you press this button the TV turns on.",
+          "right": "If you press this button, the TV turns on.",
+          "why": {
+            "en": "When the 'if' clause comes first, separate it with a comma.",
+            "ru": "Когда клауза с if идёт первой, отделяй её запятой."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the zero conditional grows beyond plain 'if' through alternative conjunctions and a wider range of result clauses.\n\n'Unless' means 'if not'. Use a positive verb after it — never a second negative: 'Unless you water plants, they die' = 'If you don't water plants, they die'. Saying 'unless you don't water' is a double negative and wrong.\n\nOther conditional links work the same way: 'provided (that)' and 'providing (that)' mean 'on the condition that', 'as long as' means 'so long as / on the condition that', and 'whenever' means 'every time that' — all introduce general rules.\n\nIn instructions and warnings the result clause is often an imperative: 'If you see smoke, call the fire department'. This is typical of manuals, rules, and safety notices.\n\nDon't confuse zero and first conditional. Zero is for what is always true — 'If I eat nuts, I feel sick'. First is for one specific future event — 'If I eat nuts tomorrow, I will feel sick'. If you mean a habit or pattern, use zero; if you mean a single future case, use first.",
         "ru": "На B1 Zero conditional расширяется за счёт альтернатив `if` и более разнообразных форм результата.\n\n**Unless = if not:**\nСлово `unless` означает «если не». Это очень полезный союз для общих правил:\n- `Unless you water plants, they die.` = `If you don't water plants, they die.` (Если не поливать растения, они гибнут.)\n- `Unless it rains, we play outside.` (Если не идёт дождь, мы играем на улице.)\n\nПосле `unless` — **утвердительная форма**, не отрицание. Не говори `unless you don't water` — это двойное отрицание.\n\n**Provided (that) / Providing (that) = при условии, что:**\n- `Provided you follow the rules, nothing bad happens.` (При условии, что ты соблюдаешь правила, ничего плохого не происходит.)\n\n**As long as = пока, при условии:**\n- `As long as I exercise, I feel good.` (Пока я занимаюсь спортом, я чувствую себя хорошо.)\n\n**Whenever = каждый раз, когда:**\n- `Whenever I see her, she smiles.` (Каждый раз, когда я её вижу, она улыбается.)\n\n**Result clause с императивом (повелительное наклонение):**\nВ инструкциях результат часто стоит в императиве:\n- `If you see smoke, call the fire department.` (Если ты видишь дым, вызови пожарных.)\n- `If the machine stops, press the red button.` (Если машина останавливается, нажми красную кнопку.)\n\nЭто типично для руководств, предупреждений и правил.\n\n**Zero conditional vs First conditional:**\nВ чём разница?\n- Zero — **всегда** правда, общее правило: `If I eat nuts, I feel sick.` (всегда так.)\n- First — **конкретный случай в будущем**: `If I eat nuts tomorrow, I will feel sick.` (про один конкретный раз.)\n\nЕсли говоришь про **привычку** или **закономерность** — Zero. Если про **одно конкретное будущее событие** — First."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "unless / provided (that) / as long as / whenever + present simple, present simple (or imperative)",
+        "ru": "unless / provided (that) / as long as / whenever + Present Simple, Present Simple (или повелит. наклонение)"
       },
       "examples": [
         {
           "en": "Unless you save your work, you lose it.",
-          "ru": "Если не сохраняешь работу, ты её теряешь."
+          "ru": "Если не сохраняешь работу, ты её теряешь.",
+          "note": {
+            "en": "unless = if not",
+            "ru": "unless = if not"
+          }
         },
         {
           "en": "Provided the weather is good, we have lunch outside.",
@@ -82,27 +118,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "If the alarm rings, leave the building immediately.",
-          "ru": "Если звучит сигнал, немедленно покиньте здание."
+          "ru": "Если звучит сигнал, немедленно покиньте здание.",
+          "note": {
+            "en": "imperative result",
+            "ru": "результат-императив"
+          }
         },
         {
           "en": "Whenever I travel, I take too much stuff.",
-          "ru": "Каждый раз, когда я путешествую, я беру слишком много вещей."
+          "ru": "Каждый раз, когда я путешествую, я беру слишком много вещей.",
+          "note": {
+            "en": "whenever = every time",
+            "ru": "whenever = каждый раз"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Unless заменяет if…not — после unless используй утвердительный глагол, не отрицание."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Unless you don't save your work, you lose it.",
+          "right": "Unless you save your work, you lose it.",
+          "why": {
+            "en": "'Unless' already means 'if not', so use a positive verb — no second negative.",
+            "ru": "Unless уже значит «если не», поэтому глагол утвердительный — без второго отрицания."
+          }
+        },
+        {
+          "wrong": "If I eat nuts, I will feel sick.",
+          "right": "If I eat nuts, I feel sick.",
+          "why": {
+            "en": "For a permanent fact about yourself, use zero conditional (present, present), not 'will'.",
+            "ru": "Для постоянного факта о себе используй zero conditional (present, present), а не will."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the zero conditional takes modal verbs in the result clause and offers finer stylistic variants.\n\nModals like 'can', 'must', 'should', and 'may' can appear in the result without breaking the always-true sense; they just add a shade of meaning. 'If you heat metal, it can expand' (possibility); 'If the light is red, you must stop' (obligation); 'If students work hard, they should succeed' (expectation).\n\nThe present continuous can fill the 'if' clause when the focus is a situation happening right now: 'If it's raining, we don't go out'. It is still a general rule, just anchored to the current moment.\n\nMore formal alternatives to 'if' include 'on condition that' and 'in the event that', common in instructions, manuals, and legal text: 'In the event that the machine malfunctions, the operator resets it'.\n\nA condition can also be packed into an imperative joined by 'and' or 'or': 'Heat water, and it boils' = 'If you heat water, it boils'; 'Water the plants daily, or they die'. This is a compact register for instructions and sayings.\n\nThe classic B2 error is confusing zero and first when no time marker is present. Words like 'usually', 'always', and 'every time' signal zero; a single future occurrence signals first.",
         "ru": "На B2 Zero conditional обогащается модальными глаголами в главной части и более тонкими стилистическими вариантами.\n\n**Модальные глаголы в результате:**\nВ Zero conditional допускаются `can`, `must`, `should`, `may` — они не меняют «всегда-характер» правила, но добавляют оттенок:\n- `If you heat metal, it can expand.` (Если нагреть металл, он может расширяться.) — возможность.\n- `If the light is red, you must stop.` (Если горит красный, ты обязан остановиться.) — обязанность.\n- `If students work hard, they should succeed.` (Если студенты усердно учатся, они должны преуспевать.) — ожидание.\n\n**Present Continuous в if-клаузе для текущей ситуации:**\n- `If it's raining, we don't go out.` (Если идёт дождь, мы не выходим.)\n- `If you're feeling ill, you stay home.` (Если ты плохо себя чувствуешь, оставайся дома.)\n\nЭто Zero conditional, но с акцентом на «в этот момент».\n\n**On condition that / in the event that:**\nЭто более формальные альтернативы `if`:\n- `On condition that all parties agree, the contract takes effect.` (При условии, что все стороны согласны, договор вступает в силу.)\n- `In the event that the machine malfunctions, the operator resets it.` (В случае сбоя машины оператор её перезагружает.)\n\nТипично для инструкций, юридических текстов, руководств.\n\n**Should в if-клаузе (условный should):**\n- `If you should see him, tell him to call me.` (Если вдруг увидишь его, скажи, чтобы позвонил мне.)\n\nЭто лёгкое смещение в сторону First conditional — `should` добавляет оттенок «если вдруг, маловероятно».\n\n**Imperative в условной функции:**\nИногда условие выражается без `if` — через императив + and/or:\n- `Heat water, and it boils.` = `If you heat water, it boils.` (Нагрей воду — она закипит.)\n- `Don't water the plants, and they die.` = `If you don't water them, they die.`\n\nЭто компактный стиль для инструкций и афоризмов.\n\n**Частая ошибка:** путаница Zero и First, когда нет маркера времени. Если событие произойдёт **один раз в будущем** — First conditional. Если это **общее правило** — Zero. Маркеры типа `usually`, `always`, `every time` — сигнал Zero."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "If + present (simple/continuous), subject + can/must/should/may + verb",
+        "ru": "If + present (simple/continuous), подлежащее + can/must/should/may + глагол"
       },
       "examples": [
         {
@@ -111,11 +173,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "On condition that the temperature stays below zero, ice forms.",
-          "ru": "При условии, что температура остаётся ниже нуля, образуется лёд."
+          "ru": "При условии, что температура остаётся ниже нуля, образуется лёд.",
+          "note": {
+            "en": "formal 'on condition that'",
+            "ru": "формальное on condition that"
+          }
         },
         {
           "en": "Water the plants daily, or they die.",
-          "ru": "Поливай растения ежедневно, иначе они погибнут."
+          "ru": "Поливай растения ежедневно, иначе они погибнут.",
+          "note": {
+            "en": "imperative + or",
+            "ru": "императив + or"
+          }
         },
         {
           "en": "If students are struggling, teachers should intervene.",
@@ -123,36 +193,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "If the system is running slowly, you can restart it.",
-          "ru": "Если система работает медленно, можно её перезагрузить."
+          "ru": "Если система работает медленно, можно её перезагрузить.",
+          "note": {
+            "en": "modal 'can' result",
+            "ru": "результат с модалом can"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В Zero conditional допускаются модалы can/must/should — они уточняют характер общего правила."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If the system is running slowly, you will can restart it.",
+          "right": "If the system is running slowly, you can restart it.",
+          "why": {
+            "en": "Modals don't stack — use a single modal ('can'), never 'will can'.",
+            "ru": "Модальные глаголы не комбинируются — один модал (can), а не will can."
+          }
+        },
+        {
+          "wrong": "If you will heat iron to 1538 degrees, it melts.",
+          "right": "If you heat iron to 1538 degrees, it melts.",
+          "why": {
+            "en": "Even with precise numbers, a scientific fact stays in the present simple after 'if'.",
+            "ru": "Даже с точными числами научный факт остаётся в Present Simple после if."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the zero conditional becomes a register tool for scientific writing, instructions, and aphoristic statements.\n\nIn academic and technical prose it is the standard way to state a regularity, and 'when' is often preferred over 'if' because it stresses regularity rather than hypothesis: 'When temperature rises, molecular motion intensifies'. The result clause frequently goes into the passive — 'If the test fails, the procedure is repeated' — the norm for technical documentation and scientific protocols.\n\nRegister shapes the subject too: informal English uses generic 'you' ('If you mix these chemicals, you get a reaction'), while academic English prefers 'one' or the passive ('When these chemicals are mixed, a reaction occurs').\n\nFormal conditions can be expressed by inversion with 'should', dropping 'if' entirely: 'Should the client request a refund, the procedure is as follows'. This appears in contracts and manuals and replaces 'If the client requests a refund'.\n\nThere is a politeness gradient too: 'If you need help, ask' (neutral) → 'If you require assistance, please ask' (formal) → 'Should you require assistance, do not hesitate to ask' (very formal).\n\nFinally, watch the past version: 'If it rained, he stayed in' is habitual past (a repeated past pattern), not the second conditional — context decides the reading.",
         "ru": "На C1 Zero conditional становится стилистическим инструментом для научного письма, инструкций и афористических утверждений.\n\n**1. Научный и технический регистр:**\nВ академических и технических текстах Zero conditional — стандартный способ выразить закономерность:\n- `When temperature rises, molecular motion intensifies.` (Когда температура повышается, молекулярное движение усиливается.)\n- `If the subject fails to respond, the stimulus is repeated.` (Если субъект не реагирует, стимул повторяется.)\n\nОбрати внимание: в формальных текстах `when` часто предпочтительнее `if`, потому что подчёркивает регулярность, а не гипотетичность.\n\n**2. Passive voice в result clause:**\n- `If the test fails, the procedure is repeated.` (Если тест не проходит, процедуру повторяют.)\n- `When an error is detected, a warning is displayed.` (Когда обнаруживается ошибка, выводится предупреждение.)\n\nЭто стандарт для технической документации и научных протоколов.\n\n**3. Generic you vs one:**\nВ неформальном регистре — `you`, в академическом — `one` или пассив:\n- Разговорный: `If you mix these chemicals, you get a reaction.`\n- Академический: `If one mixes these chemicals, a reaction occurs.` или `When these chemicals are mixed, a reaction occurs.`\n\n**4. Inversion с should (formal):**\n- `Should the client request a refund, the procedure is as follows.` (В случае если клиент запросит возврат, процедура следующая.)\n\nЭта инверсия формальна, встречается в договорах, инструкциях, руководствах. Заменяет `If the client should request a refund` или просто `If the client requests a refund`.\n\n**5. Should/must/will в условной логике:**\nТонкое различие регистров:\n- `If you need help, ask.` — нейтрально.\n- `If you require assistance, please ask.` — формально.\n- `Should you require assistance, do not hesitate to ask.` — очень формально.\n\nC1 требует чувствовать эту градацию.\n\n**6. Zero conditional в политическом и медийном дискурсе:**\n- `If the economy slows, unemployment rises.` (Когда экономика замедляется, безработица растёт.)\n- `When markets fall, investors panic.`\n\nЭто компактный способ выразить причинно-следственную модель. В академическом анализе часто сопровождается оговорками: `all else equal`, `ceteris paribus`.\n\n**7. Contrast с general truth и habitual past:**\n- Present: `If it rains, he stays in.` (всегда.)\n- Past: `If it rained, he stayed in.` (в прошлом как привычка.)\n\nЭто **habitual past**, а не Second conditional. Контекст определяет интерпретацию."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Should + subject + verb, present simple / passive (when X occurs, Y is observed)",
+        "ru": "Should + подлежащее + глагол, Present Simple / пассив (when X occurs, Y is observed)"
       },
       "examples": [
         {
           "en": "When pressure increases, volume decreases.",
-          "ru": "Когда давление увеличивается, объём уменьшается."
+          "ru": "Когда давление увеличивается, объём уменьшается.",
+          "note": {
+            "en": "scientific 'when'",
+            "ru": "научное when"
+          }
         },
         {
           "en": "If the system detects an anomaly, the process is halted.",
-          "ru": "Если система обнаруживает аномалию, процесс останавливается."
+          "ru": "Если система обнаруживает аномалию, процесс останавливается.",
+          "note": {
+            "en": "passive result",
+            "ru": "пассивный результат"
+          }
         },
         {
           "en": "Should the applicant fail to respond, the offer is withdrawn.",
-          "ru": "В случае отсутствия ответа от заявителя предложение отзывается."
+          "ru": "В случае отсутствия ответа от заявителя предложение отзывается.",
+          "note": {
+            "en": "inverted 'should'",
+            "ru": "инверсия с should"
+          }
         },
         {
           "en": "If markets contract, consumer confidence falls.",
@@ -166,17 +270,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В академическом регистре предпочитай when и пассив: when X occurs, Y is observed."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Should the applicant fails to respond, the offer is withdrawn.",
+          "right": "Should the applicant fail to respond, the offer is withdrawn.",
+          "why": {
+            "en": "After inverted 'should', use the bare infinitive ('fail'), not a tensed verb.",
+            "ru": "После инверсии should — голый инфинитив (fail), а не глагол в личной форме."
+          }
+        },
+        {
+          "wrong": "If one mix these chemicals, a reaction occurs.",
+          "right": "If one mixes these chemicals, a reaction occurs.",
+          "why": {
+            "en": "Generic 'one' is third-person singular and takes the -s ending.",
+            "ru": "Обобщающее one — 3-е лицо ед. ч. и требует окончания -s."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the zero conditional is a precise register choice. You are not merely stating a rule — you are positioning it as a law, an observation, an aphorism, or a rhetorical move.\n\nIt is the natural form for proverbs and gnomic statements: 'If you pay peanuts, you get monkeys'; 'If at first you don't succeed, try again'. Overused, this register slides into cliché.\n\nThe 'if' versus 'when' choice carries fine modal nuance: '*If the sun rises, shadows form' sounds odd because sunrise is inevitable, whereas 'When the sun rises, shadows form' is natural. 'If' implies contingency; 'when' implies inevitability or regularity.\n\nRhetorically, the zero conditional generalises in speeches and essays — 'If a society values truth, its institutions thrive' — often packaging a half-truth as a universal law. Rigorous scientific writing therefore hedges away from a bare 'If X, then Y', preferring 'X tends to produce Y' or 'X is associated with Y'; knowing how to soften the form is a mark of academic maturity.\n\nCompression is another register signal: 'No pain, no gain' = 'If there is no pain, there is no gain'; 'No ticket, no entry'. And formal inverted variants — 'Should circumstances permit, the event proceeds', or the conditional-mood blend 'Were it to rain, the event moves indoors' — let the C2 user switch deliberately between proverb, contract, scientific hypothesis, and political manifesto.",
         "ru": "На C2 Zero conditional — тонкий регистровый выбор. Ты не просто описываешь правило — ты позиционируешь его как закон, как наблюдение, как афоризм или как риторический приём.\n\n**1. Gnomic и proverbial использование:**\nZero conditional — форма афоризма:\n- `If you pay peanuts, you get monkeys.` (Платишь арахисом — получаешь обезьян.)\n- `If at first you don't succeed, try again.` (Если с первого раза не получилось, попробуй снова.)\n\nЭтот регистр создаёт ощущение народной мудрости, универсальной истины. В избытке — клише.\n\n**2. Стилистический выбор between when и if:**\nНа C2 уровне ты чувствуешь нюансы:\n- `If the sun rises, shadows form.` — звучит странно, потому что sunrise неизбежен.\n- `When the sun rises, shadows form.` — естественно.\n\n`If` предполагает условность; `when` — неизбежность. Носитель выберет то, что соответствует модальной нюансировке.\n\n**3. Rhetorical Zero conditional:**\nВ речах и эссе — как приём обобщения:\n- `If a society values truth, its institutions thrive.` (Если общество ценит правду, его институты процветают.)\n- `When power corrupts, democracy erodes.` (Когда власть развращает, демократия разрушается.)\n\nЭто зачастую полу-истина, риторически усиленная формой Zero.\n\n**4. Scientific hedging:**\nВ строгих научных текстах прямой Zero conditional избегается, чтобы не утверждать категорично. Вместо `If X, then Y` используют `X tends to produce Y`, `X is associated with Y`, `when X is observed, Y often follows`. Умение ослабить Zero conditional — признак академической зрелости.\n\n**5. Literary use — historic present:**\nВ литературной критике:\n- `If Hamlet delays, the plot thickens.` (Если Гамлет медлит, интрига усиливается.)\n- `When the protagonist confronts her past, the narrative shifts.`\n\nЭто обобщённое описание закономерностей текста, не истории в мире.\n\n**6. Ellipsis и compression:**\nВ журналистике и слоганах Zero conditional часто сокращён:\n- `No pain, no gain.` = `If there is no pain, there is no gain.`\n- `No ticket, no entry.` = `If you don't have a ticket, you don't enter.`\n\nСжатая форма — знак регистра (реклама, наставление, граффити).\n\n**7. Inverted и formal alternatives:**\n- `Should circumstances permit, the event proceeds.` — договорная формулировка.\n- `Were it to rain, the event moves indoors.` — смесь Zero и Second: описание процедуры с оттенком возможности.\n\nC2-пользователь переключается между регистрами осознанно: от пословицы до договора, от научной гипотезы до политического манифеста."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "No + noun, no + noun (compressed) | Should + subject + bare verb, present",
+        "ru": "No + сущ., no + сущ. (сжатая форма) | Should + подлежащее + инфинитив, present"
       },
       "examples": [
         {
@@ -185,15 +307,27 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "When institutions weaken, populism rises.",
-          "ru": "Когда институты слабеют, популизм растёт."
+          "ru": "Когда институты слабеют, популизм растёт.",
+          "note": {
+            "en": "rhetorical 'when'",
+            "ru": "риторическое when"
+          }
         },
         {
           "en": "Should the need arise, protocols are activated.",
-          "ru": "В случае необходимости активируются протоколы."
+          "ru": "В случае необходимости активируются протоколы.",
+          "note": {
+            "en": "formal inversion",
+            "ru": "формальная инверсия"
+          }
         },
         {
           "en": "No pain, no gain.",
-          "ru": "Без труда не вытащишь и рыбку из пруда."
+          "ru": "Без труда не вытащишь и рыбку из пруда.",
+          "note": {
+            "en": "compressed proverb",
+            "ru": "сжатая пословица"
+          }
         },
         {
           "en": "If tradition fades, innovation flourishes in its place.",
@@ -203,9 +337,42 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "На C2 выбирай между if и when осознанно: if — условность, when — неизбежность или регулярность."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If the sun rises, shadows form.",
+          "right": "When the sun rises, shadows form.",
+          "why": {
+            "en": "For an inevitable event, 'when' (regularity) fits; 'if' wrongly implies the event might not happen.",
+            "ru": "Для неизбежного события подходит when (регулярность); if ошибочно намекает, что событие может не произойти."
+          }
+        },
+        {
+          "wrong": "If no pain, no gain.",
+          "right": "No pain, no gain.",
+          "why": {
+            "en": "The proverbial compressed form drops 'if' and the verb entirely.",
+            "ru": "В пословичной сжатой форме опускаются и if, и глагол."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "first-conditional",
+    "second-conditional",
+    "adverbial-clauses-condition"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "subordinating-conjunctions",
+    "passive-present-simple"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "If + condition",
+      "result",
+      "always true"
+    ]
+  }
 };

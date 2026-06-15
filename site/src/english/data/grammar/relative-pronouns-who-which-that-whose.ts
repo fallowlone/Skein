@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "relative-pronouns-who-which-that-whose",
   "title": {
-    "en": "",
+    "en": "Relative Pronouns: Who, Which, That, Whose",
     "ru": "Relative Pronouns Who Which That Whose"
   },
   "cefr": "B1",
@@ -15,32 +15,46 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "relative-clauses",
+  "egp": [
+    "EGP:relative-pronouns-who-which-that-whose"
+  ],
+  "archetype": "branch",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Relative pronouns link a relative clause to the noun it describes. English splits the job across several words depending on what the noun is.\n\nUse who for people (as subject or object): The man who called is my uncle. The woman who you met is Anna.\n\nUse which for things and animals: The book which is on the table is mine.\n\nUse that for people or things, but only in defining clauses (the clause that tells you which one): The man that called is my uncle. (= who). The book that I read was great. (= which). That sounds more conversational; who is a touch more formal for people.\n\nUse whose to show possession (people, things, or animals): The man whose car was stolen is angry. The company whose products we use is based in Japan.\n\nQuick rule: people take who/that, things take which/that, possession takes whose.\n\nDropping the pronoun: when the relative pronoun is the object of its clause, you can leave it out: The book (that/which) I read was great. But when it is the subject, you must keep it: The man who called (never \"The man called\" as a relative clause).\n\nThe classic mistake for Russian speakers is using which for people, because Russian has one word (который) for everything.",
         "ru": "**Relative pronouns** соединяют придаточное определительное с существительным, которое оно определяет. В русском всему соответствует одно слово «который». В английском — несколько разных.\n\n**Основные relative pronouns:**\n\n**1. Who — для людей (subject или object):**\n- `The man who called is my uncle.` (Мужчина, который звонил — мой дядя.)\n- `The woman who you met is Anna.` (Женщина, которую ты встретил — Анна.)\n\n**2. Which — для вещей и животных:**\n- `The book which is on the table is mine.` (Книга, которая на столе — моя.)\n- `The cat which lives next door is very friendly.`\n\n**3. That — для людей и вещей (только в defining clauses):**\n- `The man that called is my uncle.` (= who.)\n- `The book that I read was great.` (= which.)\n\n`That` чаще в разговорной речи, особенно когда заменяет `which`. Для людей разница между `who` и `that` — стилистическая: `who` более формальный, `that` более разговорный.\n\n**4. Whose — принадлежность (people, things, animals):**\n- `The man whose car was stolen is angry.` (Мужчина, чью машину украли, зол.)\n- `I have a friend whose brother is a doctor.`\n- `The company whose products we use is based in Japan.`\n\n**Кого использовать? Правила:**\n- Люди → `who` (formal/neutral) или `that` (informal).\n- Вещи → `which` (formal) или `that` (neutral).\n- Животные — обычно `which` / `that`. С любимыми питомцами иногда `who`.\n- Possession → `whose`.\n\n**Omission (dropping) relative pronoun:**\nЕсли relative pronoun = object придаточного, его можно опустить:\n- `The book (that/which) I read was great.` (I read — subject; book — object.)\n- `The woman (who/that) you met is Anna.` (you met — object.)\n\nНо если pronoun = subject, пропустить нельзя:\n- ✓ `The man who called` (нельзя: `The man called`.)\n\n**Частая ошибка русскоговорящего:** использовать `which` для людей.\n- ✗ `The man which called.`\n- ✓ `The man who called.` / `The man that called.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "noun + who / which / that / whose + clause",
+        "ru": "существительное + who / which / that / whose + придаточное"
       },
       "examples": [
         {
           "en": "The teacher who helped me is kind.",
-          "ru": "Учитель, который мне помог, добрый."
+          "ru": "Учитель, который мне помог, добрый.",
+          "note": {
+            "en": "who = subject",
+            "ru": "who = подлежащее"
+          }
         },
         {
           "en": "This is the book that I bought yesterday.",
-          "ru": "Это книга, которую я купил вчера."
+          "ru": "Это книга, которую я купил вчера.",
+          "note": {
+            "en": "that = object, droppable",
+            "ru": "that = дополнение, можно опустить"
+          }
         },
         {
           "en": "That's the girl whose father is famous.",
-          "ru": "Это девушка, чей отец знаменит."
+          "ru": "Это девушка, чей отец знаменит.",
+          "note": {
+            "en": "whose = possession",
+            "ru": "whose = принадлежность"
+          }
         },
         {
           "en": "The phone which I lost was expensive.",
@@ -54,30 +68,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Who = люди, which = вещи, that = и то и другое (только в defining), whose = принадлежность."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The man which called is my uncle.",
+          "right": "The man who called is my uncle.",
+          "why": {
+            "en": "Use who or that for people, never which.",
+            "ru": "Для людей используется who или that, никогда which."
+          }
+        },
+        {
+          "wrong": "The man who called. (said as: The man called is my uncle.)",
+          "right": "The man who called is my uncle.",
+          "why": {
+            "en": "When the pronoun is the subject of the clause, you cannot drop it.",
+            "ru": "Когда местоимение — подлежащее придаточного, опускать его нельзя."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, choose the pronoun by clause type as well as by noun.\n\nDefining clauses (no commas) accept who for people, which for things, that for both (informal), and whose for possession. If the pronoun is the object, you may drop it: The book (that) I read.\n\nNon-defining clauses (with commas) use who, which, and whose, but never that, and you can never drop the pronoun: My boss, who started last year, is great.\n\nWhom is the object form of who and belongs to formal style: The person whom I saw yesterday. After a fronted preposition you must use whom (or move the preposition to the end): The person to whom I spoke / The person (who/that) I spoke to. Never drop whom after a fronted preposition.\n\nWhose for things is fully correct, even though learners often think it is only for people: The book whose cover is torn. The wordier alternative is the cover of which.\n\nThree errors to kill at B2: never use what as a relative pronoun (use who/which/that); never use whose as a plain subject (it is always possessive); and never stack two pronouns together.",
         "ru": "На B2 углубляй выбор по типу clause (defining vs non-defining) и nuances.\n\n**Defining vs Non-defining — правила для pronouns:**\n\nDefining (без запятых):\n- `who` — люди (stylistic preferred in writing).\n- `which` — вещи.\n- `that` — всё (informal friendly).\n- `whose` — принадлежность.\n- Object pronoun can be dropped: `The book (that) I read.`\n\nNon-defining (с запятыми):\n- `who` — люди.\n- `which` — вещи.\n- `whose` — принадлежность.\n- `that` НЕ ИСПОЛЬЗУЕТСЯ.\n- Ни один pronoun нельзя опустить.\n\n**Whom — object form of who (formal):**\n- `The person whom I saw yesterday...` (formal; `who I saw yesterday` — informal OK.)\n- После preposition ВСЕГДА whom (formal) или end-position: `The person to whom I spoke.` / `The person (who/that) I spoke to.`\n\n**Preposition placement:**\n- End-position (informal, common): `The people (that) I work with are friendly.`\n- Front-position (formal): `The people with whom I work are friendly.`\n\nНикогда не опускай whom после front-position preposition.\n\n**Whose for things (valid!):**\n- `The book whose cover is torn is old.` (Книга, обложка которой порвана...)\n- Хотя `whose` часто относят к людям, для вещей тоже OK.\n- Альтернатива: `The book the cover of which is torn...` — громоздко.\n- Или: `The book with the torn cover is old.` — переформулировка.\n\n**Subject vs object wh-:**\n- Subject: `The man who called` (who = subject of called.)\n- Object: `The man (whom) I called` (I = subject of called; whom = object.)\n\n**When / where / why — adverbial relatives (подробнее в другой теме):**\n- `The day when we met.`\n- `The place where I grew up.`\n- `The reason why she left.`\n\nОни не strictly pronouns, но используются как relative markers.\n\n**Common B2 errors:**\n- `The man what called` — NEVER use `what` as relative pronoun. (`What` — noun clause: `What he said was true.`)\n- Using `whose` as subject: `whose` is always genitive (принадлежность), never subject alone.\n- Double pronoun: `The book which that I read` — never."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "noun (,) + who / whom / which / that / whose (+ preposition) + clause (,)",
+        "ru": "существительное (,) + who / whom / which / that / whose (+ предлог) + придаточное (,)"
       },
       "examples": [
         {
           "en": "The woman whom I met yesterday is a famous author.",
-          "ru": "Женщина, которую я встретил вчера — знаменитая писательница."
+          "ru": "Женщина, которую я встретил вчера — знаменитая писательница.",
+          "note": {
+            "en": "whom = object, formal",
+            "ru": "whom = дополнение, формально"
+          }
         },
         {
           "en": "The colleagues with whom I work are from different countries.",
-          "ru": "Коллеги, с которыми я работаю, из разных стран."
+          "ru": "Коллеги, с которыми я работаю, из разных стран.",
+          "note": {
+            "en": "preposition + whom",
+            "ru": "предлог + whom"
+          }
         },
         {
           "en": "I need a dictionary whose translations are accurate.",
-          "ru": "Мне нужен словарь, переводы которого точные."
+          "ru": "Мне нужен словарь, переводы которого точные.",
+          "note": {
+            "en": "whose for a thing",
+            "ru": "whose для вещи"
+          }
         },
         {
           "en": "That's the hotel where we stayed last summer.",
@@ -91,22 +135,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В non-defining clauses НИКОГДА не используй that — только who/which/whose."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The man what called is my uncle.",
+          "right": "The man who called is my uncle.",
+          "why": {
+            "en": "What is never a relative pronoun; it introduces a noun clause instead.",
+            "ru": "What никогда не относительное местоимение; оно вводит именное придаточное."
+          }
+        },
+        {
+          "wrong": "My boss, that started last year, is great.",
+          "right": "My boss, who started last year, is great.",
+          "why": {
+            "en": "That cannot appear in a non-defining clause (the one set off by commas).",
+            "ru": "That не используется в non-defining clause (выделенном запятыми)."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, the choice of relative pronoun turns on register and discourse role.\n\nWhom: formal written English keeps whom after every preposition and as an object (To whom it may concern; the man whom I met). In speech, whom is rare and is replaced by who or simply dropped (the man I met). In conversation, who is always acceptable in object position.\n\nGenitive alternatives with of which / of whom replace whose in formal prose: the book, the author of which is famous; the students, most of whom passed. These are the dressed-up cousins of whose.\n\nThat vs which is a stylebook battleground: American academic style (Chicago, Strunk and White) reserves that for defining clauses and which for non-defining; British style allows which in defining clauses too (the book which I read is fine).\n\nPreposition + which builds formal adverbial relatives: the house in which I grew up, the conditions under which we work, the period during which, the day on which she arrived, the reason for which she left.\n\nReduced relatives drop pronoun + be when the pronoun is the subject: the book written by Hemingway (= which was written), students taking the course (= who are taking).\n\nWatch the ambiguity trap in non-defining which: He dropped the glass, which startled the dog can mean the glass or the dropping startled the dog. Disambiguate with an act which or by restructuring.",
         "ru": "На C1 выбирай pronouns по регистру и дискурсивной роли.\n\n**Whom — полная картина:**\n- Formal written: всегда whom after preposition и как object.\n  - `To whom it may concern.`\n  - `The man whom I met yesterday.`\n- Informal spoken: whom редко; who или pronoun dropped.\n  - `The man I met yesterday.`\n- `Who vs whom` — в conversation who всегда OK в object position.\n\n**Of which / of whom — genitive alternatives:**\n- `The book, the author of which is famous, won a prize.`\n- `The students, most of whom passed, celebrated.`\n- `A proposal, the implications of which are serious...`\n\nТакие структуры — формальный аналог `whose`.\n\n**That vs which — stylebook wars:**\nАмериканская школа (Chicago, Strunk & White): `that` — defining; `which` — non-defining. Строгое разделение.\n\nБританская школа: `which` можно и в defining: `The book which I read.` / `The book that I read.` — оба OK.\n\nВ академическом письме AmE часто требует строгого разделения. В fiction, journalism — свободнее.\n\n**Where / in which:**\n- `The house where I grew up.` (standard.)\n- `The house in which I grew up.` (formal.)\n- `The conditions under which we work...` (complex preposition.)\n- `A period during which...` / `during which period...`\n\n**When / at which / on which / during which:**\n- `1945, when the war ended...`\n- `1945, at which time the war ended...` (formal.)\n- `The day on which she arrived was Monday.`\n\n**Why / for which:**\n- `The reason why she left.`\n- `The reason for which she left.` (formal.)\n- `The reason (that) she left.`\n\n**Reduced: dropping who / which + be:**\n- `The book written by Hemingway is a classic.` (= which was written.)\n- `Students taking the course must register.` (= who are taking.)\n\nПрименимо только когда pronoun = subject + be + participle/adj.\n\n**Generic relative 'whichever' / 'whoever':**\n- `Take whichever book you want.` (любую книгу.)\n- `Whoever calls, tell them I'm busy.` (кто бы ни звонил.)\n- Похоже на relative, но universal.\n\n**Free relative clauses:**\n- `What you said was true.` (= the thing that you said.)\n- Functions as noun clause — not traditional relative.\n\n**Trap at C1:** `which` в non-defining ambiguity.\n- `He dropped the glass, which was full.` (what was full — glass or something else? clear here = glass.)\n- `He dropped the glass, which startled the dog.` (which = the dropping? or the glass?)\n- Disambiguate by adding `, an act which...` or restructure."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "preposition + which / whom (formal) | noun + which / whom + clause + preposition (neutral)",
+        "ru": "предлог + which / whom (формально) | существительное + which / whom + придаточное + предлог (нейтрально)"
       },
       "examples": [
         {
           "en": "The professor with whom I studied is now retired.",
-          "ru": "Профессор, у которого я учился, теперь на пенсии."
+          "ru": "Профессор, у которого я учился, теперь на пенсии.",
+          "note": {
+            "en": "preposition + whom",
+            "ru": "предлог + whom"
+          }
         },
         {
           "en": "She lived in a house whose roof was leaking.",
@@ -114,7 +180,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "This is the period during which the reforms were introduced.",
-          "ru": "Это период, в течение которого были введены реформы."
+          "ru": "Это период, в течение которого были введены реформы.",
+          "note": {
+            "en": "during which",
+            "ru": "during which"
+          }
         },
         {
           "en": "Whoever finishes first will win the prize.",
@@ -122,32 +192,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The situation, the gravity of which cannot be overstated, demands action.",
-          "ru": "Ситуация, серьёзность которой нельзя переоценить, требует действий."
+          "ru": "Ситуация, серьёзность которой нельзя переоценить, требует действий.",
+          "note": {
+            "en": "of which genitive",
+            "ru": "родительный of which"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Preposition + whom всегда формально: with whom, to whom, of whom. Preposition в конце — разговорно: who ... with, who ... to."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The man to who I spoke.",
+          "right": "The man to whom I spoke.",
+          "why": {
+            "en": "After a fronted preposition the object form whom is required, not who.",
+            "ru": "После вынесенного вперёд предлога нужна объектная форма whom, не who."
+          }
+        },
+        {
+          "wrong": "The book what was written by Hemingway is a classic.",
+          "right": "The book written by Hemingway is a classic.",
+          "why": {
+            "en": "Reduce to a participle (drop which + be); never use what.",
+            "ru": "Сокращайте до причастия (опустив which + be); никогда не используйте what."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, the relative pronoun is a tool of fine stylistic precision.\n\nPied-piping vs stranding: pied-piping fronts the preposition (the topic on which she spoke); stranding leaves it at the end (the topic she spoke on). Choose pied-piping for formal letters, legal and academic writing, elevated prose, and when stranding would create ambiguity. Choose stranding for conversation, fiction, journalism, and whenever a fronted preposition makes the rhythm awkward.\n\nWhich as a sentence-level anaphor refers back to a whole proposition: She refused to sign, which struck everyone as odd. Starting a new sentence with Which (She refused to sign. Which, in hindsight, was wise.) is colloquial and should be used deliberately.\n\nThe whom-who spectrum runs from legal (whom for every object) through prestige journalism (whom after prepositions, who elsewhere), to standard modern (who generally, whom only after fronted prepositions), to casual (always who). Pitch it to your readership.\n\nThe of which + noun construction (a study, the results of which are striking) is the formal sibling of whose, which some grammarians still resist for inanimate objects.\n\nComplex nominalizations lean heavily on preposition + which: the extent to which, the manner in which, the degree to which, the conditions under which.\n\nA recurring C2 slip is doubling markers: the reason that why he left, or the book which that I read. Use exactly one relative marker.",
         "ru": "На C2 выбор relative pronoun — вопрос тонкой стилистической точности.\n\n**Pied-piping vs preposition stranding:**\n- Pied-piping (formal): `The topic on which she spoke.`\n- Stranding (common): `The topic she spoke on.`\n\nВыбирай pied-piping для:\n- Formal letters, legal writing, academic essays.\n- Elevated prose.\n- Когда stranding создаёт неоднозначность.\n\nStranding — для:\n- Conversation, fiction, journalistic prose.\n- Когда preposition + relative создаёт awkward rhythm.\n\n**Which as sentence-level anaphor:**\n- `She refused to sign, which struck everyone as odd.`\n- С запятой и reference к propositional content.\n- В начале нового предложения Only with strong caveat: `She refused to sign. Which, in hindsight, was wise.` (colloquial/stylistic.)\n\n**Whom vs who — style spectrum:**\n- Very formal / legal: whom everywhere as object.\n- Academic / prestige journalism: whom after prepositions, who elsewhere.\n- Standard modern: who generally; whom after fronted prepositions.\n- Casual: who always; no whom.\n\nChoose по target readership.\n\n**The of which + noun sequence:**\n- `A study, the results of which are striking, was published.`\n- Reverse order: `A study, the results of which were striking...` — complex noun phrase.\n- Simpler alternative: `A study whose results were striking.` — но некоторые грамматисты не одобряют `whose` для объектов.\n\n**Restrictive 'that' stylebook:**\nВ AmE strict academic style — `that` для defining + comma-less; `which` для non-defining + commas. В BrE and modern AmE — more flexible.\n\n**Free relatives extended:**\n- `Whoever did this will be punished.`\n- `Whatever he says, don't believe him.`\n- `However hard you try, ...`\n\nCombine с concessive — meaning shifts.\n\n**Non-restrictive without comma (headline style):**\n- `Smith who resigned yesterday denies wrongdoing.` — journalistic, no commas in headline.\n- Formal writing требует запятых.\n\n**Poetic / literary dropping:**\n- `A man I knew once said...` (= whom I knew.)\n- Dropping works for object relatives in defining.\n- Extended drop in fiction; formal writing retains.\n\n**Relative pronouns in complex nominalizations:**\n- `The extent to which X affects Y...` (standard noun construction.)\n- `The manner in which...`\n- `The degree to which...`\n- `The conditions under which...`\n\nFormal academic constructions heavily use `preposition + which`.\n\n**Common C2 pitfall:** redundant `that` or `which`.\n- ✗ `The reason that why he left is unclear.`\n- ✓ `The reason (why / that) he left is unclear.`\n- Use one, not both."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "preposition + which / whom (pied-piping) | noun + relative + clause + preposition (stranding) | the [noun] of which + clause",
+        "ru": "предлог + which / whom (pied-piping) | существительное + относит. + придаточное + предлог (stranding) | the [noun] of which + придаточное"
       },
       "examples": [
         {
           "en": "The principles on which the constitution is founded remain relevant.",
-          "ru": "Принципы, на которых основана конституция, остаются актуальными."
+          "ru": "Принципы, на которых основана конституция, остаются актуальными.",
+          "note": {
+            "en": "pied-piping",
+            "ru": "pied-piping"
+          }
         },
         {
           "en": "A matter the importance of which cannot be overstated.",
-          "ru": "Вопрос, важность которого невозможно переоценить."
+          "ru": "Вопрос, важность которого невозможно переоценить.",
+          "note": {
+            "en": "the ... of which",
+            "ru": "the ... of which"
+          }
         },
         {
           "en": "To whom much is given, from him much will be required.",
@@ -155,7 +255,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The degree to which public trust has eroded is alarming.",
-          "ru": "Степень, в которой общественное доверие подорвано, вызывает тревогу."
+          "ru": "Степень, в которой общественное доверие подорвано, вызывает тревогу.",
+          "note": {
+            "en": "the degree to which",
+            "ru": "the degree to which"
+          }
         },
         {
           "en": "The witness, who (incidentally) refused to testify, was later indicted.",
@@ -165,9 +269,45 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "The extent to which / the degree to which / the manner in which — академические шаблоны для complex description."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The reason that why he left is unclear.",
+          "right": "The reason why he left is unclear.",
+          "why": {
+            "en": "Use one relative marker, not two stacked together.",
+            "ru": "Используйте один относительный маркер, а не два подряд."
+          }
+        },
+        {
+          "wrong": "The book which that I read was excellent.",
+          "right": "The book that I read was excellent.",
+          "why": {
+            "en": "Which and that cannot both introduce the same clause; pick one.",
+            "ru": "Which и that не могут вместе вводить одно придаточное; выберите одно."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "relative-pronouns",
+    "defining-relative-clauses",
+    "non-defining-relative-clauses",
+    "reduced-relative-clauses"
+  ],
+  "crossTopic": [
+    "prepositions-in-relative-clauses",
+    "possessive-nouns",
+    "interrogative-pronouns",
+    "noun-phrases"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "who (people)",
+      "which (things)",
+      "that (both)",
+      "whose (possession)"
+    ]
+  }
 };

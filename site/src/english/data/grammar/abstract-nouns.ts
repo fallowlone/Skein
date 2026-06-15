@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "abstract-nouns",
   "title": {
-    "en": "",
+    "en": "Abstract Nouns",
     "ru": "Abstract Nouns"
   },
   "cefr": "A2",
@@ -16,24 +16,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "nouns",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "Abstract nouns name ideas, feelings, qualities, and states — things you cannot touch or see: love, happiness, fear, freedom, truth, beauty, courage, health, time, life. Most abstract nouns are uncountable, so in their general meaning they take no plural -s and no a/an: say Happiness is important, not A happiness is important or Happinesses are important. They also usually appear with no article when you mean the idea in general: Love is important, not The love is important. The article the only comes back when the noun is made specific: the happiness I felt that day. Learn common collocations as whole chunks — find happiness, have courage, need help, lose hope, feel pain, show respect — and notice that abstract nouns are often built from other words with suffixes: happy → happiness (-ness), educate → education (-tion), develop → development (-ment), possible → possibility (-ity), exist → existence (-ence).",
         "ru": "**Абстрактные существительные** — это слова для идей, чувств, качеств. Их нельзя потрогать или увидеть. Это не предметы, а понятия.\n\n**Примеры:**\n- Чувства: `love` (любовь), `happiness` (счастье), `fear` (страх), `anger` (злость), `joy` (радость).\n- Идеи: `freedom` (свобода), `truth` (правда), `peace` (мир), `justice` (справедливость).\n- Качества: `beauty` (красота), `courage` (смелость), `patience` (терпение).\n- Состояния: `health` (здоровье), `sleep` (сон), `life` (жизнь), `death` (смерть).\n- Действия/процессы: `education` (образование), `work` (работа в смысле деятельности).\n\n**Важно: большинство абстрактных существительных — неисчисляемые.**\n- Правильно: `Happiness is important.`\n- Неправильно: `A happiness is important.` или `Happinesses are important.`\n\nНельзя добавлять `-s` или ставить `a / an` перед абстрактными в обычном употреблении.\n\n**Частые сочетания (collocations):**\n- `find happiness` (найти счастье)\n- `have courage` (иметь смелость)\n- `need help` (нужна помощь)\n- `lose hope` (потерять надежду)\n- `feel pain` (чувствовать боль)\n- `show respect` (проявить уважение)\n\nУчи эти комбинации целиком.\n\n**Как делать абстрактное из других слов:**\n- прилагательное + `-ness`: `happy → happiness`, `kind → kindness`, `dark → darkness`.\n- глагол + `-tion`: `educate → education`, `relate → relation`.\n- глагол + `-ment`: `develop → development`, `agree → agreement`.\n- прилагательное + `-ity`: `possible → possibility`, `similar → similarity`, `real → reality`.\n- глагол + `-ance / -ence`: `perform → performance`, `exist → existence`, `differ → difference`.\n\n**Частые абстрактные в повседневной речи:**\n- `time` (время), `life` (жизнь), `work` (работа), `love` (любовь), `luck` (удача).\n- `I don't have much time.` (У меня мало времени.)\n- `Life is beautiful.` (Жизнь прекрасна.)\n- `Good luck!` (Удачи!)\n\nЗапомни: ставить артикль `the` перед абстрактным в общем смысле обычно ошибка. `The love is important.` — неестественно; правильно `Love is important.`\n\n**Когда `the` всё-таки появляется:**\n- Когда абстрактное конкретизировано: `the happiness I felt that day` (то счастье, которое я почувствовала в тот день) — речь о конкретном переживании.\n- Без уточнения: `Happiness is important.` — без артикля.\n\n**Часто встречающиеся сочетания:**\n- `make friends` (подружиться), `make progress` (делать успехи), `take time` (занимать время), `have fun` (весело проводить время), `pay attention` (обращать внимание).\n- Эти идиомы с абстрактными идут без артикля, учи их сразу целиком."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "(no article) + uncountable abstract noun + singular verb",
+        "ru": "(без артикля) + неисчисляемое абстрактное существительное + глагол в ед. ч."
       },
       "examples": [
         {
           "en": "Love is a beautiful feeling.",
-          "ru": "Любовь — прекрасное чувство."
+          "ru": "Любовь — прекрасное чувство.",
+          "note": {
+            "en": "general idea, no article",
+            "ru": "общая идея, без артикля"
+          }
         },
         {
           "en": "She has a lot of patience with children.",
@@ -49,69 +55,137 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Health is more important than money.",
-          "ru": "Здоровье важнее денег."
+          "ru": "Здоровье важнее денег.",
+          "note": {
+            "en": "uncountable noun",
+            "ru": "неисчисляемое существительное"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Абстрактные существительные обычно неисчисляемые: love, happiness, freedom — без -s и без a."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "A happiness is important.",
+          "right": "Happiness is important.",
+          "why": {
+            "en": "Abstract nouns are usually uncountable, so they take no a/an in their general meaning.",
+            "ru": "Абстрактные существительные обычно неисчисляемые — без a/an в общем значении."
+          }
+        },
+        {
+          "wrong": "The love is important.",
+          "right": "Love is important.",
+          "why": {
+            "en": "Use no article for an abstract noun in its general sense; the marks a specific instance.",
+            "ru": "В общем смысле абстрактное существительное идёт без артикля; the указывает на конкретный случай."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, abstract nouns are learned together with the preposition they require — the wrong preposition sounds foreign, so memorise the pair. Common fixed combinations: interest in, reason for, fear of, solution to, answer to, belief in, pride in, respect for, hope for/of, attitude towards, awareness of, lack of. Many abstract nouns come from verbs and keep the verb's preposition: depend on → dependence on, rely on → reliance on, believe in → belief in, agree with → agreement with, react to → reaction to. Do not translate prepositions word-for-word from your own language — they often differ. The same chunk-learning applies to light verbs that pair with abstract nouns as units: make a decision/mistake/choice, take a risk/chance, have a conversation/break, give a speech/advice. There is also/There is a need for/There is a chance that... gives you a ready frame to open a sentence.",
         "ru": "На B1 добавляем **предложные модели** после абстрактных существительных.\n\nАбстрактные часто требуют конкретный предлог. Неправильный предлог = нестандартная речь. Учи пары.\n\n**Частые пары существительное + предлог:**\n- `interest in` (интерес к): `an interest in music`.\n- `reason for` (причина для): `the reason for his absence`.\n- `fear of` (страх перед/чего): `fear of heights`.\n- `solution to` (решение чего): `a solution to the problem`.\n- `answer to` (ответ на): `the answer to the question`.\n- `belief in` (вера во что): `belief in God`.\n- `pride in` (гордость за): `pride in his work`.\n- `respect for` (уважение к): `respect for elders`.\n- `hope for/of` (надежда на): `hope for peace`, `hope of success`.\n- `attitude towards` (отношение к): `attitude towards life`.\n- `awareness of` (осознание чего): `awareness of the problem`.\n- `lack of` (нехватка чего): `lack of time`.\n\n**Номинализация от глаголов:**\nМногие абстрактные — это «существительные от глаголов». Предлог часто сохраняется.\n- `depend on` → `dependence on`\n- `rely on` → `reliance on`\n- `believe in` → `belief in`\n- `agree with` → `agreement with`\n- `react to` → `reaction to`\n- `succeed in` → `success in`\n- `fail in` → `failure in`\n\n**Типичные ошибки:**\n- `interest to music` (❌) → `interest in music` (✓).\n- `reason of` (❌) → `reason for` (✓).\n- `solution of the problem` (❌ в совр.) → `solution to the problem` (✓).\n\n**Совет:** когда учишь новое абстрактное слово, сразу запоминай его с предлогом и примером.\n\n**Ещё важные пары:**\n- `difficulty with / in` (трудность с / в): `difficulty with English`, `difficulty in understanding`.\n- `opinion on / about` (мнение о): `my opinion on the issue`.\n- `influence on` (влияние на): `a strong influence on my career`.\n- `advantage of / over` (преимущество чего / над чем): `the advantage of being young`, `advantage over competitors`.\n- `satisfaction with` (удовлетворение чем): `satisfaction with the result`.\n\nЭти пары встречаются почти в каждом тексте. Не используй дословный перевод с русского — часто предлог не совпадает.\n\n**Абстрактные с общим глаголом:**\nВ английском много «лёгких» глаголов, которые сочетаются с абстрактными существительными и работают как единое целое:\n- `have a conversation / a meeting / a shower / a break`\n- `make a decision / a mistake / a difference / a choice`\n- `take a risk / a chance / a photo / a walk`\n- `give a speech / a chance / a hand (помочь) / advice`\n\nВыучи эти сочетания как готовые блоки — их десятки, но они очень частотные.\n\n**Полезная модель с абстрактным подлежащим:**\n- `There is no doubt that...` (нет сомнения, что...)\n- `There is a need for...` (нужно / есть необходимость в...)\n- `There is a reason for...` (есть причина для...)\n- `There is a chance / risk / possibility that...` (есть шанс / риск / возможность, что...).\n\nЭти фразы часто открывают предложение в эссе и дают тебе гибкую структуру для выражения мнения или факта."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "abstract noun + fixed preposition + (object): interest IN, reason FOR, solution TO",
+        "ru": "абстрактное существительное + закреплённый предлог + (объект): interest IN, reason FOR, solution TO"
       },
       "examples": [
         {
           "en": "He has a strong interest in history.",
-          "ru": "У него сильный интерес к истории."
+          "ru": "У него сильный интерес к истории.",
+          "note": {
+            "en": "interest in",
+            "ru": "interest in"
+          }
         },
         {
           "en": "There's no solution to this problem.",
-          "ru": "У этой проблемы нет решения."
+          "ru": "У этой проблемы нет решения.",
+          "note": {
+            "en": "solution to",
+            "ru": "solution to"
+          }
         },
         {
           "en": "She has great respect for her teacher.",
-          "ru": "Она очень уважает своего учителя."
+          "ru": "Она очень уважает своего учителя.",
+          "note": {
+            "en": "respect for",
+            "ru": "respect for"
+          }
         },
         {
           "en": "The reason for the delay is unclear.",
-          "ru": "Причина задержки неясна."
+          "ru": "Причина задержки неясна.",
+          "note": {
+            "en": "reason for",
+            "ru": "reason for"
+          }
         },
         {
           "en": "His belief in hard work paid off.",
-          "ru": "Его вера в упорный труд оправдалась."
+          "ru": "Его вера в упорный труд оправдалась.",
+          "note": {
+            "en": "belief in",
+            "ru": "belief in"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Учи абстрактные с предлогом: interest IN, reason FOR, solution TO, fear OF."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He has an interest to music.",
+          "right": "He has an interest in music.",
+          "why": {
+            "en": "The fixed pair is interest in, not interest to.",
+            "ru": "Закреплённая пара — interest in, а не interest to."
+          }
+        },
+        {
+          "wrong": "There's no solution of this problem.",
+          "right": "There's no solution to this problem.",
+          "why": {
+            "en": "Modern usage takes solution to, not solution of.",
+            "ru": "В современном языке — solution to, а не solution of."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you balance abstract and concrete nouns in argumentative writing. Abstract nouns (knowledge, growth, education) generalise and carry a thesis; concrete nouns (a book, a teacher) illustrate and give examples. Too many abstract nouns make prose heavy and hard to read; too many concrete ones make it shallow — good argumentation switches between the two. Nominalisation turns a verb or adjective into a noun (he decided → his decision, she is anxious → her anxiety), which lets you package an idea compactly, but overusing it weighs the text down. Watch the article: a general abstract noun takes none (Love is important), a specific instance takes the (The love between them was clear), and a classifying use takes a (a love of music). A classic B2 error is treating uncountable abstract nouns as countable — not many advices or some informations, but a lot of advice and pieces of information. Build synonym sets (effect/impact/influence; advantage/benefit/drawback; problem/issue/challenge) so you avoid repeating the same word.",
         "ru": "На B2 сравниваем **абстрактные и конкретные** существительные в аргументативном письме.\n\n**Абстрактное vs конкретное:**\n- Конкретное: `a book`, `a tree`, `a teacher`.\n- Абстрактное: `knowledge`, `growth`, `education`.\n\nАбстрактные делают речь более обобщённой, подходят для эссе и аргументов. Конкретные — для иллюстрации, примеров, описаний.\n\n**Баланс в письме:**\n- Слишком много абстрактных = сухой, тяжёлый стиль: `The implementation of the strategy requires consideration of the implications for the workforce.` — трудно читается.\n- Слишком много конкретных = поверхностный стиль: `John came. He saw Mary. They talked.` — простовато.\n- Хороший аргументативный стиль переключается: `The strategy requires careful thought about its effects on workers. For example, Maria's team will lose three positions.`\n\n**Номинализация (превращение глагола/прилагательного в существительное):**\n- `The government decided → The decision of the government` (формальнее).\n- `He is anxious → his anxiety`.\n- `She succeeded → her success`.\n\nНоминализация удобна, когда нужно скомпоновать идею, но чрезмерное её использование утяжеляет текст. Хорошие академические стили рекомендуют баланс.\n\n**Абстрактные в заголовках и темах эссе:**\n- «The Importance of Education» (важность образования).\n- «The Impact of Technology on Society» (влияние технологии на общество).\n- «The Pursuit of Happiness» (стремление к счастью).\n\n**Частая ошибка B2:** использовать абстрактные слова как исчисляемые: `many advices`, `some informations`. Это неправильно. Используй `a lot of advice`, `pieces of information`.\n\n**Нюанс с артиклями:**\n- Общее абстрактное — без артикля: `Love is important.`\n- Конкретное проявление — с артиклем: `The love between them was clear.`\n- Классификация — с `a`: `a love of music` (любовь к музыке как черта).\n\n**Частые абстрактные для эссе B2:**\n- `effect / impact / influence` (эффект / влияние)\n- `reason / cause / purpose` (причина / цель)\n- `advantage / disadvantage / benefit / drawback` (плюсы и минусы)\n- `opinion / view / perspective` (мнение / взгляд)\n- `problem / issue / challenge / difficulty` (проблема)\n- `solution / approach / method` (решение / метод)\n\nВыучи эти синонимические ряды, чтобы в письменных работах не повторять одно и то же слово. Разнообразие лексики — один из критериев оценки на экзаменах уровня B2 и выше."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "abstract noun (thesis) ↔ concrete noun (example); article: ∅ / a / the by meaning",
+        "ru": "абстрактное (тезис) ↔ конкретное (пример); артикль: ∅ / a / the по смыслу"
       },
       "examples": [
         {
           "en": "The importance of honesty cannot be overstated.",
-          "ru": "Важность честности нельзя переоценить."
+          "ru": "Важность честности нельзя переоценить.",
+          "note": {
+            "en": "the + nominalisation",
+            "ru": "the + номинализация"
+          }
         },
         {
           "en": "His anxiety about the exam was obvious.",
-          "ru": "Его тревога по поводу экзамена была очевидна."
+          "ru": "Его тревога по поводу экзамена была очевидна.",
+          "note": {
+            "en": "nominalised adjective",
+            "ru": "номинализованное прилагательное"
+          }
         },
         {
           "en": "Success requires dedication and patience.",
@@ -119,7 +193,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The love between mother and child is unique.",
-          "ru": "Любовь между матерью и ребёнком уникальна."
+          "ru": "Любовь между матерью и ребёнком уникальна.",
+          "note": {
+            "en": "specific instance: the",
+            "ru": "конкретный случай: the"
+          }
         },
         {
           "en": "Education transforms lives.",
@@ -129,22 +207,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В эссе чередуй абстрактные и конкретные — абстрактные для тезиса, конкретные для примеров."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The teacher gave us many useful advices.",
+          "right": "The teacher gave us a lot of useful advice.",
+          "why": {
+            "en": "Advice is uncountable: no plural -s, use a lot of / pieces of.",
+            "ru": "Advice неисчисляемо: без -s, используйте a lot of / pieces of."
+          }
+        },
+        {
+          "wrong": "I need some informations about the course.",
+          "right": "I need some information about the course.",
+          "why": {
+            "en": "Information is uncountable and has no plural form.",
+            "ru": "Information неисчисляемо и не имеет формы множественного числа."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you build dense noun phrases around abstract nouns for academic and analytical prose. Heavy nominalisation compresses a clause into a phrase: When companies develop products, they must consider customer need becomes Product development must consider customer need. Recurring templates pack the meaning: the X of Y (the implementation of the strategy), the X between Y and Z (the relationship between education and income), the role of X in Y, the effect of X on Y. Shell nouns — abstract summary nouns like this decision, this development, this phenomenon, this approach, this argument — let you refer back to a whole idea instead of repeating it, and they bind paragraphs together. The argumentation toolkit is itself abstract: evidence, reasoning, assumption, claim, implication, conclusion. A common advanced fault is vague reference — This is interesting (what is this?); fix it with a shell noun: This phenomenon is interesting. Finally, choose by connotation and register: persistence (neutral-positive) vs stubbornness (negative) vs determination (positive); exhaustion vs fatigue vs tiredness all rank a state differently.",
         "ru": "На C1 строим **плотные именные группы** с абстрактными, используемые в академической, журналистской и аналитической прозе.\n\n**Плотная номинализация:**\nСравни две формулировки одной идеи:\n- Глагольная: `When companies develop products, they must consider whether customers need them.`\n- Номинализованная: `Product development must consider customer need.`\n\nВторой вариант короче, более «академичен». Он концентрирует смысл в существительных.\n\n**Как собрать плотную именную группу:**\n- `the implementation of the new strategy`\n- `the impact of climate change on agriculture`\n- `the relationship between education and income`\n- `the distinction between correlation and causation`\n\nЧасто встречаются модели:\n- `the X of Y` (импакт чего)\n- `the X between Y and Z` (отношение между)\n- `the role of X in Y` (роль в)\n- `the effect of X on Y` (влияние на)\n\n**Этот/эта + абстрактное существительное для ссылки:**\n- Вместо повтора целой идеи используй абстрактное с `this` / `that`:\n  - `The company fired three managers. This decision surprised everyone.`\n  - `Many people opposed the reform. Their resistance was strong.`\n- Это называется **shell nouns** (abstract summary nouns): `this issue`, `this development`, `this phenomenon`, `this argument`, `this approach`.\n- Используй их, чтобы связать абзацы.\n\n**Абстрактные в аргументации:**\n- `evidence`, `reasoning`, `argument`, `assumption`, `claim`, `implication`, `conclusion`\n- `The argument rests on three assumptions.`\n- `The implications of this finding are significant.`\n\n**Типичная ошибка продвинутых:** vague reference. `This is interesting.` — что `this`? Предыдущий факт? Тема? Весь абзац? Используй shell noun для ясности: `This phenomenon is interesting.`\n\n**Коннотации абстрактных слов:**\n- `stubbornness` (негативное) vs `persistence` (нейтрально-позитивное) vs `determination` (позитивное) — все три описывают схожее качество, но разно окрашены.\n- `cheap` (негативно-дешёвый) vs `inexpensive` (нейтрально) vs `affordable` (позитивно).\n\nНа C1 важен правильный выбор по регистру и оценке.\n\n**Ещё примеры разных регистров:**\n- `tiredness` (нейтрально) vs `exhaustion` (сильнее) vs `fatigue` (клинический/формальный оттенок).\n- `sadness` vs `grief` (глубокая скорбь) vs `melancholy` (литературное, меланхолия) vs `depression` (клиническая депрессия).\n- `anger` vs `fury` vs `rage` vs `indignation` — по возрастающей, с разными оттенками.\n\nЗнание таких рядов позволяет точно передать степень чувства. Это ключевой навык C1 и одно из отличий между письменной речью продвинутого учащегося и носителя языка."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "the + abstract noun + of/between/in/on + noun phrase; this + shell noun (back-reference)",
+        "ru": "the + абстрактное + of/between/in/on + именная группа; this + shell noun (отсылка назад)"
       },
       "examples": [
         {
           "en": "The implementation of the reform faces resistance.",
-          "ru": "Реализация реформы сталкивается с сопротивлением."
+          "ru": "Реализация реформы сталкивается с сопротивлением.",
+          "note": {
+            "en": "the X of Y",
+            "ru": "the X of Y"
+          }
         },
         {
           "en": "His persistence eventually led to success.",
@@ -152,11 +252,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The committee rejected the proposal; this decision angered many.",
-          "ru": "Комитет отклонил предложение; это решение многих возмутило."
+          "ru": "Комитет отклонил предложение; это решение многих возмутило.",
+          "note": {
+            "en": "shell noun back-reference",
+            "ru": "shell noun, отсылка назад"
+          }
         },
         {
           "en": "The relationship between income and health is well-documented.",
-          "ru": "Связь между доходом и здоровьем хорошо изучена."
+          "ru": "Связь между доходом и здоровьем хорошо изучена.",
+          "note": {
+            "en": "the X between Y and Z",
+            "ru": "the X between Y and Z"
+          }
         },
         {
           "en": "These assumptions underlie the entire argument.",
@@ -166,26 +274,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Shell nouns (this decision, this approach) связывают абзацы лучше, чем просто this."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The committee rejected it. This is a problem.",
+          "right": "The committee rejected it. This decision is a problem.",
+          "why": {
+            "en": "Bare this is vague; a shell noun (this decision) makes the reference precise.",
+            "ru": "Голое this размыто; shell noun (this decision) делает отсылку точной."
+          }
+        },
+        {
+          "wrong": "I admire his stubbornness in finishing the project.",
+          "right": "I admire his persistence in finishing the project.",
+          "why": {
+            "en": "For praise choose the positive connotation (persistence); stubbornness is negative.",
+            "ru": "Для похвалы выбирайте позитивную коннотацию (persistence); stubbornness негативно."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 you exploit connotative shifts — pairs that translate the same yet carry different shades. Liberty vs freedom: both render 'свобода', but liberty belongs to philosophical, historical, and political contexts (civil liberties, liberty from tyranny) while freedom is broader, more personal and emotional. Envy vs jealousy: envy wants what another has; jealousy fears losing what one holds. Happiness (a lasting state) vs joy (an intense moment) vs contentment (calm satisfaction). Anger < indignation (morally justified) < fury < rage rank intensity and moral colour. Register also divides Latinate from Anglo-Saxon roots: demise/death/passing, commencement/beginning/start, assistance/help, inquire/ask — academic prose leans Latinate, neutral speech Anglo-Saxon. The humanities supply a specialist abstract vocabulary — agency, contingency, hegemony, subjectivity — whose apt use signals command of academic register. But beware over-Latinisation: The cessation of hostilities was facilitated by diplomatic intervention is pompous next to Diplomatic efforts helped end the fighting. Following Orwell, prefer the short word unless the long one is genuinely more precise; at C2 the choice of an abstract noun is simultaneously a choice of register, evaluation, and precision.",
         "ru": "На C2 работаем с **коннотативными сдвигами** — когда два слова, переводящиеся одинаково, несут разные оттенки.\n\n**Классические оппозиции:**\n- `liberty` vs `freedom`: оба = «свобода», но `liberty` — в философском, историческом, политическом контексте (liberty from tyranny, civil liberties). `Freedom` — шире, личнее, эмоциональнее (freedom of speech, personal freedom).\n- `envy` vs `jealousy`: оба = «зависть/ревность», но `envy` — когда хочешь то, что есть у другого; `jealousy` — когда боишься потерять то, что имеешь.\n- `happiness` vs `joy` vs `contentment`: все про хорошее чувство, но `happiness` — длительное состояние, `joy` — интенсивный момент, `contentment` — спокойное удовлетворение.\n- `anger` vs `rage` vs `fury` vs `indignation`: по возрастающей. `Indignation` — справедливое негодование (морально окрашено).\n- `wisdom` vs `knowledge` vs `intelligence`: знание фактов vs умение их применять vs способность к мышлению.\n\n**Регистровые различия:**\n- `demise` (кончина, формально/эвфемизм) vs `death` (смерть, нейтрально) vs `passing` (уход, мягко).\n- `commencement` (начало, официально) vs `beginning` (нейтрально) vs `start` (разгов.).\n- `assistance` (формально) vs `help` (нейтрально).\n- `inquire` (формально) vs `ask` (нейтрально).\n\nВ академической прозе чаще предпочитают латинские корни (`assistance`, `commencement`, `demise`); в нейтральной речи — англосаксонские (`help`, `start`, `death`).\n\n**Академически-абстрактные:**\n- `agency` (субъектность) — способность действовать.\n- `alterity` (инаковость) — философское понятие инакости.\n- `contingency` (случайность/зависимость).\n- `hegemony` (гегемония) — идеологическое доминирование.\n- `subjectivity` (субъективность).\n\nЭти слова — профессиональный инструментарий гуманитарных наук. Их уместное использование сигнализирует о владении академической речью.\n\n**Стилистические опасности:**\n- Чрезмерная латинизация = снобизм.\n- `The cessation of hostilities was facilitated by diplomatic intervention.` звучит напыщенно. Лучше: `Diplomatic efforts helped end the fighting.` — понятнее и сильнее.\n\n**Рекомендация стилиста Джорджа Оруэлла:** если есть короткое слово, используй его; длинное — только когда оно точнее.\n\nНа C2 выбор абстрактного слова — это выбор регистра, оценки и точности одновременно. Хороший автор не переводит с русского, а выбирает то, которое точно отражает желаемый оттенок."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "near-synonym choice = register + connotation + precision (e.g. liberty / freedom)",
+        "ru": "выбор близкого синонима = регистр + коннотация + точность (напр. liberty / freedom)"
       },
       "examples": [
         {
           "en": "She fought for her liberty, not just her freedom.",
-          "ru": "Она боролась за свободу [от тирании], а не просто за право выбора."
+          "ru": "Она боролась за свободу [от тирании], а не просто за право выбора.",
+          "note": {
+            "en": "liberty (political)",
+            "ru": "liberty (политическое)"
+          }
         },
         {
           "en": "His indignation at the injustice was palpable.",
-          "ru": "Его негодование по поводу несправедливости было ощутимо."
+          "ru": "Его негодование по поводу несправедливости было ощутимо.",
+          "note": {
+            "en": "indignation (moral)",
+            "ru": "indignation (морально окрашено)"
+          }
         },
         {
           "en": "Contingency plans must account for rare events.",
@@ -193,19 +327,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The commencement of the ceremony was delayed.",
-          "ru": "Начало церемонии было отложено."
+          "ru": "Начало церемонии было отложено.",
+          "note": {
+            "en": "commencement (formal)",
+            "ru": "commencement (формально)"
+          }
         },
         {
           "en": "Her wisdom, not just her knowledge, guided the team.",
-          "ru": "Её мудрость, а не просто знания, направляла команду."
+          "ru": "Её мудрость, а не просто знания, направляла команду.",
+          "note": {
+            "en": "wisdom vs knowledge",
+            "ru": "wisdom vs knowledge"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Liberty vs freedom, envy vs jealousy — синонимы с разной коннотацией; выбор = регистр."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I envy losing my position to a rival.",
+          "right": "I am jealous of losing my position to a rival.",
+          "why": {
+            "en": "Envy is wanting what another has; fearing to lose what you hold is jealousy.",
+            "ru": "Envy — желать чужого; страх потерять своё — это jealousy."
+          }
+        },
+        {
+          "wrong": "The cessation of hostilities was facilitated by diplomatic intervention.",
+          "right": "Diplomatic efforts helped end the fighting.",
+          "why": {
+            "en": "Over-Latinised abstraction sounds pompous; prefer the shorter, clearer word.",
+            "ru": "Чрезмерная латинизация звучит напыщенно; предпочитайте более короткое, ясное слово."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "countable-uncountable-nouns",
+    "compound-nouns",
+    "noun-phrases",
+    "gerund-as-noun"
+  ],
+  "crossTopic": [
+    "zero-article",
+    "definite-article",
+    "prepositions-after-verbs",
+    "noun-phrases"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "adjective / verb",
+      "+ suffix",
+      "abstract noun"
+    ]
+  }
 };

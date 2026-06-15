@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "ellipsis",
   "title": {
-    "en": "",
+    "en": "Ellipsis",
     "ru": "Ellipsis"
   },
   "cefr": "B2",
@@ -14,24 +14,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "discourse",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "fill-gap",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "Ellipsis is leaving out words that the listener can recover from the context, so you avoid repeating yourself and sound natural rather than mechanical. The most useful pattern in English is auxiliary ellipsis: keep the auxiliary or modal, drop the main verb. 'Are you going? — Yes, I am.' (= am going); 'Have you eaten? — Yes, I have.' (= have eaten); 'Can she swim? — Yes, she can.' (= can swim). With agreement responses, use 'so + auxiliary + subject' for positives and 'neither/nor + auxiliary + subject' for negatives: 'She plays tennis and so do I'; 'I haven't been to Paris. — Neither have I.' After 'want', 'try', 'have', and similar verbs you keep 'to' but drop the rest of the infinitive: 'You can go if you want to.' (= want to go). In comparatives, the repeated verb disappears: 'She runs faster than he does' or just '... than he.' In casual speech, notes and texts you can even drop the subject or auxiliary at the start: '(I) Don't know', '(Have you) Seen my keys?' — natural in conversation, but avoid it in formal writing. The key habit for learners: do not repeat the whole verb; leave just the auxiliary, modal, or 'to' and let context fill the gap.",
         "ru": "**Ellipsis** — это пропуск слов, которые можно восстановить из контекста. Помогает избежать повторов и делает речь лаконичной.\n\n**Типы эллипсиса:**\n\n**1. Subject ellipsis (в диалогах, записках):**\n- `(I) Don't know.`\n- `(I'll) See you tomorrow.`\n- `(Do you) Want coffee?`\n- `(Have you) Seen my keys?`\n\nНе используй в formal writing, но типично в разговорной речи, SMS, emails.\n\n**2. Verbal ellipsis (пропуск повторяющегося глагола):**\n- `She can swim and I can [swim] too.`\n- `He's tired, and so am I [tired].`\n- `They arrived late, and we did [arrive late] too.`\n- `You may go if you want to [go].` (to — marker of infinitive, verb dropped.)\n\n**3. Clausal ellipsis (пропуск части предложения):**\n- `I went to the shop and [I went] to the bank.`\n- `She studies French, but [she doesn't study] German.`\n\n**4. Post-verbal ellipsis (после verb):**\n- `I can, but I don't want to.` (don't want to do it.)\n- `I haven't finished, but I will [finish] soon.`\n\n**Ellipsis after auxiliary verbs:**\nВ English characteristic structure: auxiliary or modal retained, main verb dropped.\n- `Are you going? — Yes, I am.` (am going.)\n- `Have you eaten? — Yes, I have.` (have eaten.)\n- `Can she swim? — Yes, she can.` (can swim.)\n- `Do you like coffee? — Yes, I do.` (do like coffee.)\n\n**Ellipsis with 'so' / 'not':**\n- `Will it rain? — I think so.` (so = it will rain.)\n- `Is she coming? — I'm afraid not.` (not = she's not coming.)\n- `Do you need help? — I hope so.`\n\n**Comparative ellipsis:**\n- `She runs faster than he [runs].`\n- `He's taller than I [am].` (formal: I; informal: me.)\n- `She sings better than her sister [sings].`\n\n**Частая ошибка русскоговорящего:** повторять весь глагол.\n- Awkward: `She can swim and I can swim too.`\n- Natural: `She can swim and I can too.`\n\nВ русском повтор нормальный: «Она умеет плавать, и я умею плавать». В английском нативы почти всегда опускают — `and I can too` / `and so can I`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Yes, subject + auxiliary/modal.   |   so/neither + auxiliary + subject   |   ... want/try + to (+ Ø)   |   ... than + subject (+ auxiliary)",
+        "ru": "Yes, подлежащее + вспомогательный/модальный.   |   so/neither + вспомогательный + подлежащее   |   ... want/try + to (+ Ø)   |   ... than + подлежащее (+ вспомогательный)"
       },
       "examples": [
         {
           "en": "She plays tennis and so do I.",
-          "ru": "Она играет в теннис, и я тоже."
+          "ru": "Она играет в теннис, и я тоже.",
+          "note": {
+            "en": "so + aux + subject",
+            "ru": "so + всп. + подлежащее"
+          }
         },
         {
           "en": "Would you like coffee? — Yes, I would.",
@@ -43,36 +49,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I haven't been to Paris. — Neither have I.",
-          "ru": "Я не был в Париже. — Я тоже."
+          "ru": "Я не был в Париже. — Я тоже.",
+          "note": {
+            "en": "neither + aux + subject",
+            "ru": "neither + всп. + подлежащее"
+          }
         },
         {
           "en": "You can go if you want to.",
-          "ru": "Можешь идти, если хочешь."
+          "ru": "Можешь идти, если хочешь.",
+          "note": {
+            "en": "to stays, verb dropped",
+            "ru": "to остаётся, глагол опущен"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "После auxiliary / modal main verb часто опускается: I can (swim), she has (eaten), they do (like it)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She can swim and I can swim too.",
+          "right": "She can swim and I can too.",
+          "why": {
+            "en": "After a modal, drop the repeated main verb; keep only the modal.",
+            "ru": "После модального глагола повторяющийся смысловой глагол опускается; остаётся только модальный."
+          }
+        },
+        {
+          "wrong": "I'd love to come but I can't to.",
+          "right": "I'd love to come but I can't.",
+          "why": {
+            "en": "Keep 'to' only after verbs like want/try/like; after a modal such as can, no 'to' remains.",
+            "ru": "'to' остаётся только после глаголов вроде want/try/like; после модального can никакого 'to' нет."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you control the named varieties of ellipsis and use them deliberately for compactness. Gapping drops a repeated verb in parallel clauses: 'John ordered steak, and his wife salmon' (= his wife ordered salmon). Sluicing reduces an indirect question to just the wh-word: 'Someone called, but I don't know who' (= who called); 'He said something, but I can't remember what.' VP-ellipsis leaves the auxiliary or modal and removes the whole verb phrase: 'She might come, but I don't think she will'; 'He said he would, but he hasn't.' Stripping keeps only the contrasting element: 'John ordered steak. Not Mary' (= Mary didn't). Pseudo-gapping is conversational — it keeps an auxiliary plus a new object: 'She doesn't eat meat, but she does fish.' Reduced adverbial clauses delete the subject and 'be' when the subject matches the main clause: 'While (I was) in Paris, I visited the Louvre'; 'If (it is) possible, reply today.' Watch three things. Keep tenses consistent across the gap ('She called, and I will too' is muddled; say 'and I will call too'). Avoid stacking two close auxiliaries — prefer 'I am happy and hungry' over 'I am happy and am hungry.' And make sure the gap is unambiguous: 'John wants a car, and Mary does too' can mislead, so expand it when the reference is unclear.",
         "ru": "На C1 осваивай complex типы эллипсиса.\n\n**Gapping — пропуск глагола в параллельных предложениях:**\n- `John ordered steak, and Mary [ordered] fish.`\n- `I want coffee; he [wants] tea.`\n- `She visits Paris in spring, Rome in summer.` (verb dropped in second clause.)\n\n**Stripping — пропуск всего кроме контрастной части:**\n- `John ordered steak. Not Mary.` (= Mary didn't order steak.)\n- `She called. Not me.` (= I didn't call.)\n- `He did it. Just barely.` (= he barely succeeded.)\n\n**Sluicing (wh-question ellipsis):**\n- `Someone called, but I don't know who [called].`\n- `He said something, but I can't remember what [he said].`\n- `She's leaving, but I'm not sure when [she's leaving].`\n- `Someone did it, but we don't know who [did it].`\n\n**VP-ellipsis (verb phrase ellipsis):**\n- `You can do this if you want to [do this].`\n- `She might come, but I don't think she will [come].`\n- `He said he would [call], but he hasn't [called].`\n\n**Comparative ellipsis (elaborated):**\n- `She's taller than she was [tall] last year.`\n- `He works harder than his brother does [work].`\n- `I know her better than he [knows her].`\n\n**Pseudo-gapping:**\n- `She doesn't eat meat, but she does fish.` (does = eats.)\n- `I don't speak Chinese, but I do read it.` (do read.)\nInformal conversational style.\n\n**Reduced adverbial clauses (ellipsis of subject + be):**\n- `While (I was) in Paris, I visited the Louvre.`\n- `If (it is) possible, reply today.`\n- `When (you are) in doubt, ask.`\n- `Though (he was) tired, he continued.`\n\n**Ellipsis with do:**\n- `do so / do it / do that` — substitute for verb phrase.\n- `She refused to sign, so we asked her to, but she wouldn't.` (ellipsis after wouldn't.)\n- `He was asked to apologize, and he did.` (did = apologize.)\n\n**Conjoined ellipsis:**\n- `I went to the market and [I went to] the bank.`\n- `She eats fruit and [she eats] vegetables daily.`\n\n**Common C1 pitfalls:**\n\n**1. Ambiguous ellipsis:**\n- `John wants to buy a car, and Mary does too.` (Does Mary want to buy the same car? Или её own?) — often context resolves.\n\n**2. Dangling auxiliary:**\n- ✗ `I am happy and am hungry.` (awkward — two `am` close together.)\n- ✓ `I am happy and hungry.` (ellipsis of second 'am'.)\n\n**3. Tense consistency:**\n- ✗ `She called, and I will too.` (tense mismatch?)\n- Better: `She called, and I will call too.` (clear.)\n\n**4. Too much ellipsis:**\n- `John eats fish; Mary too.` (Does Mary eat fish?) — OK, but in writing often expanded: `Mary does too.`\n\n**Ellipsis in questions:**\n- `Why not?` (Why not + [do something]?)\n- `How come?` (How come + [clause]?)\n- `What for?` (What for + [purpose]?)\n- Functions as complete question.\n\n**Echo ellipsis:**\n- `I saw her. — You did?`\n- `He left. — He did?`\n- `It's over. — It is?`\nEchoes surprise / confirmation.\n\n**Formal register:**\nEllipsis generally maintained in formal writing, но avoid over-reduction. Clarity > brevity."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Gapping: subject1 + verb + X, subject2 + Ø + Y   |   Sluicing: ... but I don't know + wh-word   |   VP-ellipsis: ... but I don't think she will Ø   |   Reduced clause: While/If/When (+ subject + be) + complement",
+        "ru": "Gapping: подлежащее1 + глагол + X, подлежащее2 + Ø + Y   |   Sluicing: ... but I don't know + wh-слово   |   VP-эллипсис: ... but I don't think she will Ø   |   Сокр. придаточное: While/If/When (+ подлежащее + be) + дополнение"
       },
       "examples": [
         {
           "en": "John ordered steak, and his wife salmon.",
-          "ru": "Джон заказал стейк, а его жена — лосось."
+          "ru": "Джон заказал стейк, а его жена — лосось.",
+          "note": {
+            "en": "gapping (verb dropped)",
+            "ru": "gapping (глагол опущен)"
+          }
         },
         {
           "en": "Someone left a message, but I can't tell who.",
-          "ru": "Кто-то оставил сообщение, но я не могу сказать кто."
+          "ru": "Кто-то оставил сообщение, но я не могу сказать кто.",
+          "note": {
+            "en": "sluicing (wh-word only)",
+            "ru": "sluicing (только wh-слово)"
+          }
         },
         {
           "en": "She could help if she wanted to.",
@@ -80,7 +120,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "While in London, he visited several museums.",
-          "ru": "Находясь в Лондоне, он посетил несколько музеев."
+          "ru": "Находясь в Лондоне, он посетил несколько музеев.",
+          "note": {
+            "en": "reduced adverbial clause",
+            "ru": "сокращённое обстоятельств. придаточное"
+          }
         },
         {
           "en": "He intends to call, and probably will.",
@@ -90,26 +134,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Sluicing = сжатое «но не знаю кто/что/когда»: Someone called, but I don't know WHO (called). Очень природный разговорный приём."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I am tired and am hungry.",
+          "right": "I am tired and hungry.",
+          "why": {
+            "en": "Don't repeat a close auxiliary; drop the second 'am' so two complements share one verb.",
+            "ru": "Не повторяй близкий вспомогательный глагол; опусти второе 'am', чтобы два дополнения делили один глагол."
+          }
+        },
+        {
+          "wrong": "Someone called, but I don't know who called.",
+          "right": "Someone called, but I don't know who.",
+          "why": {
+            "en": "In sluicing, the recoverable clause after the wh-word is deleted, leaving only 'who'.",
+            "ru": "В sluicing восстановимое придаточное после wh-слова опускается, остаётся только 'who'."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 ellipsis becomes a tool for information density and style — you drop everything that shared knowledge can recover, and keep only what carries weight. Sophisticated gapping in parallel structures gives balanced, almost epigrammatic prose: 'He believed in freedom, she in duty'; 'Some pursue fame, others fortune.' Antithetical ellipsis sharpens contrast: 'Strong in word; weak in action.' Headlines and signs strip articles, auxiliaries and subjects: 'Man Arrested for Theft', 'Talks Collapse', 'Do Not Disturb', 'Add salt to taste.' Realistic dialogue compresses heavily: 'Coming?' (Are you coming?), 'Thought so', 'Couldn't agree more', 'Been there, done that.' Idiomatic phrasal ellipsis is fixed: 'Will do', 'Can do', 'Got it', 'Take care.' Academic and literary writing exploit it for compactness ('The first experiment yielded X; the second, Y') and rhythm ('She came; she saw; she conquered'). Nominal ellipsis drops the head noun after a determiner or adjective: 'I prefer the blue (one)', 'Some books are good, others bad.' The craft at this level is register-matching and ambiguity control: maximum ellipsis in texts, headlines and notes; moderate in emails and fiction; minimal in legal and academic prose, which is often deliberately anti-elliptical for precision. Learners typically under-use English ellipsis and sound over-explicit; the mastery move is knowing exactly when dropping a word adds elegance and when it costs clarity.",
         "ru": "На C2 используй эллипсис сознательно для плотности и стиля.\n\n**Sophisticated gapping:**\n- `He believed in freedom, she in duty.` (he + believed in freedom; she + [believed] in duty.)\n- `Some pursue fame, others fortune.`\n- `To the rich, prestige; to the poor, survival.`\n- Parallel structures with verbal ellipsis.\n\n**Antithetical ellipsis (contrastive):**\n- `Learned in books; untaught in life.`\n- `Strong in word; weak in action.`\n- `Rich in money; poor in spirit.`\n- Rhetorical parallelism.\n\n**Headline ellipsis (journalistic):**\n- `Man Arrested for Theft` — (A) Man (was) arrested...\n- `Talks Collapse` — The talks collapse(d).\n- `Cabinet Sworn In` — The cabinet (was) sworn in.\nNews headlines heavily elliptical.\n\n**Instructions / recipes / signs (imperative-style ellipsis):**\n- `Mix the ingredients.` (You mix — subject dropped.)\n- `Do Not Disturb.` (Do not disturb [this person].)\n- `Add salt to taste.`\n- `Apply liberally.`\n\n**Dialogue ellipsis (realistic speech):**\n- `Coming?` (Are you coming?)\n- `Ready!` (I'm ready!)\n- `Glad to hear it.` (I'm glad...)\n- `Been there, done that.` (I've been there, I've done that.)\n- `Thought so.` (I thought so.)\n- `Couldn't agree more.` (I couldn't...)\n\n**Formal academic ellipsis:**\n- `The first experiment yielded X; the second, Y.` (yielded elided.)\n- `Some argue for A, others against.` (argue elided in second.)\n- Academic writing uses ellipsis for compactness.\n\n**Ellipsis in nominal structures:**\n- `The red one is mine.` (red one = red noun.)\n- `I prefer the blue.` (blue = blue one.)\n- `Some books are good, others [books] bad.`\n\n**Phrasal ellipsis:**\n- `Let's go.` (Let us go.)\n- `Got it.` (I've got it.)\n- `Take care.` (Take care of yourself.)\n- `Will do.` (I will do it.)\n- `Can do.` (I can do it.)\n- Idiomatic compressions.\n\n**Literary / poetic:**\n- `A garden; a grave; a dream.`\n- `Came. Saw. Conquered.` (Veni, vidi, vici — Caesar.)\n- `Lost, lonely, afraid.`\nRhetorical triple / minimalist prose.\n\n**Ambiguity management:**\n- ✗ `John saw Bill, and Sarah too.` (Saw Sarah too? Or Sarah saw Bill too?)\n- ✓ Expand for clarity: `John saw Bill, and Sarah did too.`\n\n**Ellipsis and discourse:**\n- Lexical cohesion via substitute words (`one, do so, so/not`).\n- Grammatical cohesion via ellipsis.\n- Cohesive devices overlap.\n\n**Register distribution:**\n- Maximum ellipsis: texts, dialogues, headlines, notes.\n- Moderate ellipsis: emails, casual writing, fiction dialogue.\n- Minimal ellipsis: formal reports, legal documents, academic prose.\n- Legal writing — often anti-elliptical (everything spelled out for precision).\n\n**Cultural difference:**\n- English: ellipsis common, expected in conversation.\n- Russian: full sentences more common in formal speech; colloquial Russian also elliptical.\n- Learners often under-use English ellipsis (over-explicit).\n\n**Common C2 elegance moves:**\n- Replace `do` ellipsis with `so` substitution in formal: `He said he would help, and so he did.` — better than `and he did.`\n- Stack ellipses: `She came, saw, conquered.`\n- Coordinate reductions: `Tired but determined, he pressed on.`\n\n**Final principle:**\nEllipsis maximises information density while relying on shared knowledge (between writer/speaker and audience). Use only when recovery is unambiguous. In formal writing, prefer slightly more explicit; in fiction / dialogue, embrace natural ellipsis. Mastery = knowing exactly when to drop and when to keep."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Gapping/antithesis: A + verb + X; B + Ø + Y   |   Headline: (article/aux dropped) Noun + past participle   |   Nominal: determiner/adjective + Ø (head noun dropped)   |   Phrasal: fixed idiom (Will do / Got it)",
+        "ru": "Gapping/антитеза: A + глагол + X; B + Ø + Y   |   Заголовок: (артикль/всп. опущен) сущ. + причастие   |   Именной: определитель/прилаг. + Ø (вершинное сущ. опущено)   |   Фразовый: устойчивая идиома (Will do / Got it)"
       },
       "examples": [
         {
           "en": "Some seek power, others, peace.",
-          "ru": "Одни ищут власть, другие — мира."
+          "ru": "Одни ищут власть, другие — мира.",
+          "note": {
+            "en": "gapping in parallel",
+            "ru": "gapping в параллели"
+          }
         },
         {
           "en": "She came; she saw; she conquered.",
-          "ru": "Она пришла, она увидела, она победила."
+          "ru": "Она пришла, она увидела, она победила.",
+          "note": {
+            "en": "literary triple",
+            "ru": "литературная триада"
+          }
         },
         {
           "en": "Tired but unbowed, the veteran continued.",
@@ -117,19 +187,61 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The first lecture was engaging; the second, dull.",
-          "ru": "Первая лекция была увлекательной; вторая — скучной."
+          "ru": "Первая лекция была увлекательной; вторая — скучной.",
+          "note": {
+            "en": "academic gapping",
+            "ru": "академический gapping"
+          }
         },
         {
           "en": "Been there, done that, got the t-shirt.",
-          "ru": "Всё это уже было."
+          "ru": "Всё это уже было.",
+          "note": {
+            "en": "fixed dialogue ellipsis",
+            "ru": "устойчивый диалоговый эллипсис"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Gapping — элегантный приём для parallel structures: He ordered steak; she, fish. Плотная литературная ритмика."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "John saw Bill, and Sarah too.",
+          "right": "John saw Bill, and Sarah did too.",
+          "why": {
+            "en": "Bare stripping here is ambiguous (did Sarah see Bill, or did John also see Sarah?); add the auxiliary to fix the reading.",
+            "ru": "Голое усечение здесь двусмысленно (Сара увидела Билла или Джон увидел и Сару?); добавь вспомогательный глагол, чтобы снять неоднозначность."
+          }
+        },
+        {
+          "wrong": "The party hereby waives, and the other party, all claims.",
+          "right": "Each party hereby waives all claims it may have against the other.",
+          "why": {
+            "en": "Legal and other high-precision registers avoid gapping; spell the clause out to remove any recoverable gap.",
+            "ru": "Юридический и другие точные регистры избегают gapping; разверни предложение полностью, чтобы не осталось восстановимых пропусков."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "ellipsis-and-substitution",
+    "cleft-sentences",
+    "fronting",
+    "reduced-relative-clauses"
+  ],
+  "crossTopic": [
+    "coordinating-conjunctions",
+    "comparative-adjectives",
+    "wh-questions",
+    "adverbial-clauses-time"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "full clause",
+      "recoverable gap"
+    ]
+  }
 };

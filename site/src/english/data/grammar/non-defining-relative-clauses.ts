@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "non-defining-relative-clauses",
   "title": {
-    "en": "",
+    "en": "Non-defining Relative Clauses",
     "ru": "Non Defining Relative Clauses"
   },
   "cefr": "B2",
@@ -14,28 +14,38 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "relative-clauses",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "A non-defining relative clause adds extra information about a noun whose identity is already clear. Remove the clause and the sentence still makes complete sense: \"My boss, who is from Canada, called me\" still tells you your boss called. Three rules separate it from the defining type. First, it is always fenced off with commas — one comma before, one after (or a single comma if the clause ends the sentence). Second, you can use who, which, whose, where, when and whom, but never that. Third, you can never drop the relative pronoun, even when it is the object: \"The novel, which I read last week, was brilliant\" — which must stay. Use this pattern with unique things and proper names (Paris, the Nile, my father, Shakespeare), where there is only one possible referent and the extra fact is a side note. The big trap for Russian speakers is the comma: Russian puts a comma before \"который\" regardless, but in English the presence or absence of commas changes the meaning. \"My brother who lives in Rome\" implies you have several brothers; \"My brother, who lives in Rome,\" implies you have just one.",
         "ru": "**Non-defining relative clauses** дают дополнительную информацию о существительном. Эта информация НЕ необходима для идентификации — её можно убрать, и предложение останется осмысленным.\n\n**Главное отличие от defining:** запятые.\n- Defining (без запятых): `The man who called is my boss.` (какой man — тот, кто звонил.)\n- Non-defining (с запятыми): `My boss, who is from Canada, called me.` (уже известно, какой boss — non-defining просто добавляет факт.)\n\n**Правила:**\n\n**1. Используй только who / which / whose / where / when / whom.** Никогда `that`.\n- ✓ `My sister, who lives in Paris, is a teacher.`\n- ✗ `My sister, that lives in Paris, is a teacher.` (неправильно!)\n\n**2. Никогда не опускай relative pronoun.**\n- Defining допускает пропуск object-relative: `The book I read was good.`\n- Non-defining — никогда: `The novel, which I read last week, was brilliant.` (нельзя убрать which.)\n\n**3. Ставь запятые перед и после clause.**\n- `Paris, which is the capital of France, has many museums.`\n- В конце предложения — одна запятая: `I met Tom, who is my brother-in-law.`\n\n**Когда используется:**\n- С уникальными существительными: `Paris, the Amazon, my father, our school`.\n- С именами собственными: `Shakespeare, who wrote Hamlet, lived in the 16th century.`\n- Когда информация побочная, не определяющая.\n\n**Частая ошибка русскоговорящего:** забывать запятые. В русском «который» часто без запятой не меняет значение; в английском ОТСУТСТВИЕ запятой = другое значение.\n\nСравни:\n- `My brother who lives in Rome is a doctor.` (без запятых = у меня несколько братьев; тот, который в Риме — врач.)\n- `My brother, who lives in Rome, is a doctor.` (с запятыми = у меня один брат, и он живёт в Риме, кстати.)\n\n**В речи:** intonation падает перед запятой, голос делает короткую паузу."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "noun , + who / which / whose / where / when + clause , (commas required, never that)",
+        "ru": "существительное , + who / which / whose / where / when + придаточное , (запятые обязательны, никогда that)"
       },
       "examples": [
         {
           "en": "Tokyo, which is the capital of Japan, has 37 million people.",
-          "ru": "Токио, который является столицей Японии, имеет 37 миллионов жителей."
+          "ru": "Токио, который является столицей Японии, имеет 37 миллионов жителей.",
+          "note": {
+            "en": "which = thing",
+            "ru": "which = предмет"
+          }
         },
         {
           "en": "My teacher, who used to live in New York, speaks perfect English.",
-          "ru": "Мой учитель, который жил в Нью-Йорке, говорит на идеальном английском."
+          "ru": "Мой учитель, который жил в Нью-Йорке, говорит на идеальном английском.",
+          "note": {
+            "en": "who = person",
+            "ru": "who = человек"
+          }
         },
         {
           "en": "The Nile, which flows through Egypt, is one of the longest rivers.",
@@ -43,81 +53,161 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I met Sarah, whose brother you know.",
-          "ru": "Я встретил Сару, брата которой ты знаешь."
+          "ru": "Я встретил Сару, брата которой ты знаешь.",
+          "note": {
+            "en": "whose = possession",
+            "ru": "whose = принадлежность"
+          }
         },
         {
           "en": "She moved to Berlin, where she had studied as a student.",
-          "ru": "Она переехала в Берлин, где училась студенткой."
+          "ru": "Она переехала в Берлин, где училась студенткой.",
+          "note": {
+            "en": "where = place",
+            "ru": "where = место"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Non-defining = запятые + никогда that. Defining = без запятых + можно that."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "My sister, that lives in Paris, is a teacher.",
+          "right": "My sister, who lives in Paris, is a teacher.",
+          "why": {
+            "en": "Non-defining clauses never use that; use who for people and which for things.",
+            "ru": "Non-defining clauses никогда не используют that; для людей who, для предметов which."
+          }
+        },
+        {
+          "wrong": "The novel, I read last week, was brilliant.",
+          "right": "The novel, which I read last week, was brilliant.",
+          "why": {
+            "en": "You can never omit the relative pronoun in a non-defining clause, even when it is the object.",
+            "ru": "В non-defining clause относительное местоимение нельзя опускать, даже если оно объект."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the structure stretches in several directions. Sentential which lets the clause comment on the WHOLE preceding idea, not a single noun: \"He arrived late, which annoyed everyone\" (which = the fact that he arrived late). Quantifier + of whom / of which builds elegant, formal sentences: \"I have three sisters, two of whom live abroad\", \"There are 50 books, many of which I've read\". A preposition can sit in front of the pronoun for a formal tone: \"My aunt, to whom I owe so much, is ill\", \"The theory, on which the experiment is based, is controversial\". The clause can be reduced to a participle when the relative is subject + be: \"The book, written by Hemingway, is a classic\" (= which was written), \"Mary, studying in the library, didn't answer\" (= who was studying) — this tightens written style. You can also swap the whole clause for an appositive noun phrase: \"My neighbour, who is a doctor, helped me\" = \"My neighbour, a doctor, helped me\". The persistent C1 errors are the same three: using that, dropping the commas, and confusing defining with non-defining and so changing the meaning.",
         "ru": "На C1 осваивай тонкие structures non-defining clauses.\n\n**Which referring to the whole clause (sentential relative):**\n`which` может относиться ко всему предыдущему предложению, не к одному существительному:\n- `He arrived late, which annoyed everyone.` (which = что он опоздал.)\n- `She refused the offer, which surprised us.`\n- `They cancelled the trip, which was understandable.`\n\nЭто очень типичный английский паттерн. В русском соответствует «что».\n\n**Quantifier + of whom / of which:**\n- `I have three sisters, two of whom live abroad.`\n- `The students, most of whom are from Asia, study hard.`\n- `There are 50 books, many of which I've read.`\n- `She has several paintings, the largest of which is hanging here.`\n\nФормальный стиль. В разговоре часто: `I have three sisters; two of them live abroad.` (отдельные предложения.)\n\n**Which + noun (noun phrase relative):**\n- `She gave me a book, which book I read in one evening.` (archaic, rare.)\n- `They proposed a plan, which plan was rejected.` (legal/formal.)\n\n**Preposition + whom / which:**\n- `The author, whose book I love, is coming to town.`\n- `My aunt, to whom I owe so much, is ill.`\n- `The theory, on which the experiment is based, is controversial.`\n\n**Adverbial relatives (when / where):**\n- `2020, when the pandemic began, was a turning point.`\n- `Berlin, where the Wall once stood, is now reunified.`\n\n**Reduced non-defining clauses (participle):**\n- `The book, written by Hemingway, is a classic.` (= which was written by...)\n- `Mary, studying in the library, didn't answer her phone.` (= who was studying...)\n- `The factory, employing 500 workers, is the largest.`\n\nЭтот приём делает письменный стиль плотнее.\n\n**Appositive noun phrase as alternative:**\nИногда non-defining clause заменяется appositive:\n- `My neighbour, who is a doctor, helped me.` = `My neighbour, a doctor, helped me.`\n\n**Common C1 error:**\n- Использование `that` в non-defining.\n- Отсутствие запятых.\n- Путать defining и non-defining — меняется смысл!"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "clause , which + comment  |  quantifier + of whom / of which  |  (prep) + whom / which",
+        "ru": "придаточное , which + комментарий  |  quantifier + of whom / of which  |  (предлог) + whom / which"
       },
       "examples": [
         {
           "en": "The meeting was postponed, which disappointed everyone.",
-          "ru": "Встречу отложили, что всех разочаровало."
+          "ru": "Встречу отложили, что всех разочаровало.",
+          "note": {
+            "en": "sentential which",
+            "ru": "which о всём предложении"
+          }
         },
         {
           "en": "My colleagues, most of whom have families, work flexible hours.",
-          "ru": "Мои коллеги, большинство из которых имеют семьи, работают по гибкому графику."
+          "ru": "Мои коллеги, большинство из которых имеют семьи, работают по гибкому графику.",
+          "note": {
+            "en": "most of whom",
+            "ru": "most of whom"
+          }
         },
         {
           "en": "The novel, written in 1925, is still influential.",
-          "ru": "Роман, написанный в 1925 году, до сих пор влиятелен."
+          "ru": "Роман, написанный в 1925 году, до сих пор влиятелен.",
+          "note": {
+            "en": "reduced (participle)",
+            "ru": "reduced (причастие)"
+          }
         },
         {
           "en": "Einstein, whose theory changed physics, was also a musician.",
-          "ru": "Эйнштейн, чья теория изменила физику, был также музыкантом."
+          "ru": "Эйнштейн, чья теория изменила физику, был также музыкантом.",
+          "note": {
+            "en": "whose = possession",
+            "ru": "whose = принадлежность"
+          }
         },
         {
           "en": "She's working on a project, the success of which is uncertain.",
-          "ru": "Она работает над проектом, успех которого неопределён."
+          "ru": "Она работает над проектом, успех которого неопределён.",
+          "note": {
+            "en": "the X of which",
+            "ru": "the X of which"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Which can refer to whole clause: She lied, which shocked me. В разговоре часто ставится , which + comment."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He arrived late. Which annoyed everyone.",
+          "right": "He arrived late, which annoyed everyone.",
+          "why": {
+            "en": "Sentential which joins clauses with a comma; don't start a new written sentence with Which.",
+            "ru": "Sentential which соединяет clauses запятой; в письме не начинай новое предложение с Which."
+          }
+        },
+        {
+          "wrong": "I have three sisters, two of them live abroad.",
+          "right": "I have three sisters, two of whom live abroad.",
+          "why": {
+            "en": "Inside one sentence use of whom / of which; of them needs a separate clause or semicolon.",
+            "ru": "Внутри одного предложения of whom / of which; of them требует отдельного предложения или точки с запятой."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 non-defining clauses are an instrument of prose style, register and rhythm. Sentential which carries discursive commentary that is characteristic of academic and journalistic writing: \"The vote was unanimous, which was unprecedented\", \"He refused to apologize, which I found revealing\". The punctuation you choose tunes the emphasis: commas give a neutral side note, parentheses an understated aside, and em-dashes — which — grab attention and add drama. Formal nominalised constructions package complexity: \"The contract, the terms of which were unfavourable, was rejected\". Apposition often replaces the full clause for compression: \"Her father, a veteran of two wars, rarely spoke\". Skilled writers layer several non-defining clauses to build texture — \"Her father, a man of considerable ambition, who had started with nothing, was now dying quietly\" — but the balance rule is firm: more than two in a row reads heavy, so split the sentence, switch to apposition, or restructure. Two precision hazards: avoid a dangling Which starting a written sentence, and resolve ambiguous which (\"the book on the table, which was open\" — book or table?) by recasting so the antecedent is unmistakable.",
         "ru": "На C2 non-defining clauses становятся элементом prose style.\n\n**Sentential which for commentary:**\n- `He refused to apologize, which I found revealing.`\n- `The vote was unanimous, which was unprecedented.`\n- Это дискурсивный комментарий — характерно для academic и журналистского стиля.\n\n**Dangling which — избегай:**\n- ✗ `He missed the train. Which annoyed him.` (dangling — в письме не начинай sentence с Which.)\n- ✓ `He missed the train, which annoyed him.` (comma connects clauses.)\n\nВ речи можно, в формальной письменности — нет.\n\n**Stylistic insertion for layered prose:**\n- `She, who had never flown before, was nervous.` (чёткое embedding.)\n- `The CEO — who, let's be honest, had long lost control — finally resigned.` (em-dashes для сильной паузы.)\n\n**Tonal variation via dashes vs commas:**\n- Commas: neutral side-note: `The book, which I read yesterday, was great.`\n- Parentheses: aside: `The book (which I read yesterday) was great.`\n- Em-dashes: emphatic, attention-grabbing: `The book — which I read yesterday — was great.`\n- Choice affects rhythm and emphasis.\n\n**Non-defining with noun + 'a' anaphor:**\n- `The novel, a masterpiece of its kind, is taught at universities.` (apposition вместо clause.)\n\n**Rare formal constructions:**\n- `X, the Y of which is Z.` (complex nominalization): `The contract, the terms of which were unfavourable, was rejected.`\n- `X, whereby Y.` (formal, legal): `A system whereby each citizen has a vote.` (часто defining; в non-defining с запятой.)\n\n**Ambiguity pitfalls:**\n- `All of us, who were tired, went home.` (все мы, все уставшие — non-defining.)\n- `All of us who were tired went home.` (те из нас, кто устал — defining, subset.)\n- Запятые кардинально меняют смысл.\n\n**Literary extended non-defining:**\n- Writers embed multiple non-defining clauses: `Her father, a man of considerable ambition, who had started with nothing and built an empire, was now dying quietly in a rented room.` — три nested non-defining clauses создают biographical texture.\n\n**Balance rule:** больше двух non-defining clauses подряд — heavy. Разрежай: разделяй предложения, используй appositive, реструктурируй.\n\n**Discursive which vs ambiguous which:**\n- `He saw the book on the table, which was open.` (which = book? или table?)\n- Лучше: `He saw the open book on the table.`\n- Clarify при потенциальной двусмысленности."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "noun [ , / ( ) / — ] + non-defining clause  →  punctuation sets emphasis; apposition compresses",
+        "ru": "существительное [ , / ( ) / — ] + non-defining clause  →  пунктуация задаёт эмфазу; apposition сжимает"
       },
       "examples": [
         {
           "en": "The proposal was rejected, which was hardly surprising.",
-          "ru": "Предложение было отклонено, что неудивительно."
+          "ru": "Предложение было отклонено, что неудивительно.",
+          "note": {
+            "en": "discursive which",
+            "ru": "дискурсивное which"
+          }
         },
         {
           "en": "Her memoir, widely regarded as a masterpiece, has been translated into 30 languages.",
-          "ru": "Её мемуары, которые широко считаются шедевром, переведены на 30 языков."
+          "ru": "Её мемуары, которые широко считаются шедевром, переведены на 30 языков.",
+          "note": {
+            "en": "reduced (participle)",
+            "ru": "reduced (причастие)"
+          }
         },
         {
           "en": "The treaty, the signing of which took years of negotiation, will reshape global trade.",
-          "ru": "Договор, подписание которого потребовало годы переговоров, изменит мировую торговлю."
+          "ru": "Договор, подписание которого потребовало годы переговоров, изменит мировую торговлю.",
+          "note": {
+            "en": "the X of which",
+            "ru": "the X of which"
+          }
         },
         {
           "en": "Her father, a veteran of two wars, rarely spoke of his experiences.",
-          "ru": "Её отец, ветеран двух войн, редко говорил о своём опыте."
+          "ru": "Её отец, ветеран двух войн, редко говорил о своём опыте.",
+          "note": {
+            "en": "apposition",
+            "ru": "apposition"
+          }
         },
         {
           "en": "The reform was passed unanimously, which, given the divisions in parliament, amounted to a minor miracle.",
@@ -127,9 +217,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Em-dashes (— which —) дают non-defining clause больший drama чем запятые. Выбирай по нужной эмфазе."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He saw the book on the table, which was open.",
+          "right": "He saw the open book on the table.",
+          "why": {
+            "en": "When which could attach to two nouns, recast so the reference is unambiguous.",
+            "ru": "Когда which может относиться к двум существительным, переформулируй для однозначности."
+          }
+        },
+        {
+          "wrong": "Her father, a man of ambition, who started with nothing, who built an empire, who lived alone, was dying.",
+          "right": "Her father, a man of ambition who had built an empire, was dying.",
+          "why": {
+            "en": "Stacking more than two non-defining clauses reads heavy; split or compress with apposition.",
+            "ru": "Больше двух non-defining clauses подряд читаются тяжело; разделяй или сжимай через apposition."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "defining-relative-clauses",
+    "relative-pronouns-who-which-that-whose",
+    "reduced-relative-clauses",
+    "prepositions-in-relative-clauses"
+  ],
+  "crossTopic": [
+    "past-simple",
+    "passive-past-simple",
+    "noun-phrases",
+    "coordinating-conjunctions"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "noun (already identified)",
+      ", who / which / whose ... ,",
+      "extra, removable information"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "at-in-on-time",
   "title": {
-    "en": "",
+    "en": "At, In, On (Time)",
     "ru": "At In On Time"
   },
   "cefr": "A1",
@@ -17,36 +17,54 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "prepositions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "scale",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "English uses three prepositions to say when something happens, and each one fits a different size of time. Use **at** for an exact clock time: at 7 o'clock, at 7:30, at noon, at midnight. Use **on** for a single day or date: on Monday, on Friday, on 5 May, on my birthday. Use **in** for a longer period — a month, a year, a season, or a part of the day: in May, in 2024, in summer, in the morning, in the afternoon, in the evening. There is one key exception to learn now: it is **at night**, never \"in night\". A simple mental picture: a point on the clock takes at, a day takes on, and a big stretch of time takes in. Learn them in fixed pairs (at 7, on Monday, in May, at night) rather than translating one by one.",
         "ru": "Три предлога времени — `at`, `on`, `in`. У каждого своя задача.\n\n**`at` + точное время (часы и минуты):**\n- `at 5 o’clock` (в 5 часов)\n- `at 7:30` (в 7:30)\n- `at noon` (в полдень)\n- `at midnight` (в полночь)\n\nПример: `I get up at 7 o’clock.` (Я встаю в 7 часов.)\n\n**`on` + день недели или дата:**\n- `on Monday` (в понедельник)\n- `on Friday` (в пятницу)\n- `on 5 May` (5 мая)\n- `on my birthday` (в мой день рождения)\n- `on Christmas Day` (в день Рождества)\n\nПример: `My class is on Tuesday.` (Мой урок во вторник.)\n\n**`in` + месяц, год, время суток:**\n- `in May` (в мае)\n- `in 2024` (в 2024 году)\n- `in summer` (летом)\n- `in the morning` (утром)\n- `in the afternoon` (днём)\n- `in the evening` (вечером)\n\nПример: `I was born in May.` (Я родился в мае.)\n\n**Важное исключение: `at night`** — НЕ `in night`!\n- `I read at night.` (Я читаю ночью.)\n- `at night` — единственное ночное исключение.\n\n**Лёгкая схема для запоминания:**\n- Точка (часы) → `at`.\n- День → `on`.\n- Большой период (месяц, год, часть дня) → `in`.\n- Ночь → `at` (запомни как исключение).\n\n**Частые ошибки русскоязычных:**\n1. `in Monday` — НЕПРАВИЛЬНО. День = `on`.\n2. `at June` — НЕПРАВИЛЬНО. Месяц = `in`.\n3. `on 7 o’clock` — НЕПРАВИЛЬНО. Часы = `at`.\n4. `in night` — НЕПРАВИЛЬНО. Ночь = `at`.\n\nУчи короткими парами: `at 7`, `on Monday`, `in May`, `at night`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "at + clock time | on + day/date | in + month/year/season/part of day",
+        "ru": "at + точное время | on + день/дата | in + месяц/год/сезон/часть дня"
       },
       "examples": [
         {
           "en": "I wake up at 7 o’clock.",
-          "ru": "Я просыпаюсь в 7 часов."
+          "ru": "Я просыпаюсь в 7 часов.",
+          "note": {
+            "en": "clock time",
+            "ru": "время по часам"
+          }
         },
         {
           "en": "We have English on Monday.",
-          "ru": "У нас английский в понедельник."
+          "ru": "У нас английский в понедельник.",
+          "note": {
+            "en": "day",
+            "ru": "день"
+          }
         },
         {
           "en": "My birthday is in June.",
-          "ru": "Мой день рождения в июне."
+          "ru": "Мой день рождения в июне.",
+          "note": {
+            "en": "month",
+            "ru": "месяц"
+          }
         },
         {
           "en": "I sleep at night.",
-          "ru": "Я сплю ночью."
+          "ru": "Я сплю ночью.",
+          "note": {
+            "en": "exception",
+            "ru": "исключение"
+          }
         },
         {
           "en": "The film starts at 8 pm.",
@@ -56,22 +74,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "at 7 (часы), on Monday (день), in May (месяц). Исключение: at night."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "We have English in Monday.",
+          "right": "We have English on Monday.",
+          "why": {
+            "en": "A day of the week takes on, not in.",
+            "ru": "День недели требует on, а не in."
+          }
+        },
+        {
+          "wrong": "My birthday is at June.",
+          "right": "My birthday is in June.",
+          "why": {
+            "en": "A month takes in, not at.",
+            "ru": "Месяц требует in, а не at."
+          }
+        },
+        {
+          "wrong": "The film starts on 8 pm.",
+          "right": "The film starts at 8 pm.",
+          "why": {
+            "en": "A clock time takes at, not on.",
+            "ru": "Время по часам требует at, а не on."
+          }
+        },
+        {
+          "wrong": "I sleep in night.",
+          "right": "I sleep at night.",
+          "why": {
+            "en": "Night is the fixed exception: at night.",
+            "ru": "Night — фиксированное исключение: at night."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2, refine the rule with parts of the day and a few useful exceptions. Parts of the day take **in** (in the morning, in the afternoon, in the evening) — but **night** keeps the exception, **at night**, and exact points stay with at (at noon, at midnight). Seasons take **in**, with the article optional: in summer or in the summer are both fine. Holidays depend on whether you mean the period or the single day: at Christmas, at Easter, at New Year for the holiday period, but on Christmas Day, on New Year's Day for the specific date. The weekend differs by region: at the weekend in British English, on the weekend in American English — both are correct, just stay consistent. Crucially, drop the preposition entirely before last, next, this, every, yesterday, today, tomorrow, and all: say \"last week\", not \"on last week\". When a part of the day is tied to a specific day, switch to on: on Monday morning, on the morning of 5 May.",
         "ru": "На A2 добавь **части дня** и исключения.\n\n**Части дня — почему разные предлоги:**\n- `in the morning` (утром)\n- `in the afternoon` (днём)\n- `in the evening` (вечером)\n- **НО** `at night` (ночью) — исключение.\n- `at noon` (в полдень) — точка.\n- `at midnight` (в полночь) — точка.\n\nПочему `in the morning` но `at night`? Это просто фиксированная норма языка. Утро, день, вечер — долгие периоды (`in`). Ночь по какой-то причине исторически stuck с `at`. Не ищи логику — запоминай.\n\n**Сезоны — `in` (с артиклем или без):**\n- `in summer` / `in the summer` (летом)\n- `in winter` / `in the winter` (зимой)\n- Оба варианта правильны.\n\n**Праздники — смотри формат:**\n- `at Christmas` (в период Рождества — каникулы).\n- `at Easter` (на Пасху).\n- `at New Year` (на Новый год).\n- **НО** `on Christmas Day` (в день Рождества — конкретная дата).\n- `on Easter Sunday`.\n- `on New Year’s Day`.\n\n**Weekend — BrE vs AmE:**\n- `at the weekend` (BrE): `What did you do at the weekend?`\n- `on the weekend` (AmE): `What did you do on the weekend?`\n\nОба правильны. Выбирай стиль последовательно.\n\n**Когда НЕТ предлога:**\nПеред `last`, `next`, `this`, `every`, `yesterday`, `today`, `tomorrow`, `all` — **без предлога**:\n- `I saw her last week.` (НЕ `on last week`.)\n- `See you next Monday.` (НЕ `on next Monday`.)\n- `I go to gym every day.` (НЕ `on every day`.)\n- `He called me yesterday.` (НЕ `on yesterday`.)\n\n**Утро конкретного дня:**\nЕсли утро связано с конкретным днём → `on`:\n- `on Monday morning` (в понедельник утром).\n- `on the morning of 5 May`.\nНО без дня → `in the morning` (утром вообще).\n\n**Ошибка русскоязычных.** Русский сбивает с толку: по-русски \"в понедельник\", \"в мае\", \"в 2020\" — везде один предлог \"в\". В английском — разные. Не переводи \"в\" буквально."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "in + part of day (but at night) | in (the) + season | at/on + holiday | no preposition + last/next/this/every",
+        "ru": "in + часть дня (но at night) | in (the) + сезон | at/on + праздник | без предлога + last/next/this/every"
       },
       "examples": [
         {
           "en": "I drink coffee in the morning.",
-          "ru": "Я пью кофе утром."
+          "ru": "Я пью кофе утром.",
+          "note": {
+            "en": "part of day",
+            "ru": "часть дня"
+          }
         },
         {
           "en": "We travelled in the summer.",
@@ -79,118 +135,252 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "What did you do at the weekend?",
-          "ru": "Что ты делал на выходных?"
+          "ru": "Что ты делал на выходных?",
+          "note": {
+            "en": "BrE weekend",
+            "ru": "выходные (BrE)"
+          }
         },
         {
           "en": "I saw her last week.",
-          "ru": "Я видел её на прошлой неделе."
+          "ru": "Я видел её на прошлой неделе.",
+          "note": {
+            "en": "no preposition",
+            "ru": "без предлога"
+          }
         },
         {
           "en": "The meeting is on Monday morning.",
-          "ru": "Встреча в понедельник утром."
+          "ru": "Встреча в понедельник утром.",
+          "note": {
+            "en": "day + morning",
+            "ru": "день + утро"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "in the morning/afternoon/evening, но at night. Last/next/every — без предлога."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I saw her on last week.",
+          "right": "I saw her last week.",
+          "why": {
+            "en": "Drop the preposition before last/next/this/every.",
+            "ru": "Опускай предлог перед last/next/this/every."
+          }
+        },
+        {
+          "wrong": "We travelled in the night.",
+          "right": "We travelled at night.",
+          "why": {
+            "en": "Night is the exception even with parts of the day; use at night.",
+            "ru": "Night — исключение даже среди частей дня; используй at night."
+          }
+        },
+        {
+          "wrong": "The meeting is in Monday morning.",
+          "right": "The meeting is on Monday morning.",
+          "why": {
+            "en": "A part of the day tied to a specific day takes on.",
+            "ru": "Часть дня, привязанная к конкретному дню, требует on."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, master the confusable pairs. **On time** means punctual, exactly to schedule (the train arrived on time); **in time** means with a margin to spare, before a deadline (we got there in time for the film). **At the end** points to the close of something specific (at the end of the month, at the end of the book), while **in the end** is a discourse marker meaning finally or eventually (in the end, we agreed). For deadlines, **by** marks the latest moment something must be done (finish it by Friday), whereas **until/till** marks an action continuing up to that moment (I'll work until Friday). For duration, use **for** + a length of time (for two hours, for three years) and **during** + an event or named period (during the meeting, during the war). With dates, on takes the full day (on 5 May 2024), in takes month-plus-year or year alone (in May 2024, in 2024). And remember that this/that combine with time words without any preposition: this morning, that evening, this week.",
         "ru": "На B1 разбирайся с тонкими парами.\n\n**`on time` vs `in time`:**\n- `on time` = вовремя, точно по расписанию.\n  - `The train arrived on time.` (Поезд пришёл вовремя.)\n  - `Is the flight on time?` (Рейс по расписанию?)\n- `in time` = с запасом, до крайнего срока (for X).\n  - `We got there in time for the film.` (Успели к фильму.)\n  - `I finished just in time.` (Закончил еле успел.)\n\nРазница: `on time` — точно, минута в минуту. `in time` — с запасом, до крайнего срока.\n\n**`at the end` vs `in the end`:**\n- `at the end of X` = в конце X (физически/временно).\n  - `at the end of the month` (в конце месяца)\n  - `at the end of the book` (в конце книги)\n- `in the end` = в итоге, наконец.\n  - `In the end, we agreed.` (В итоге мы согласились.)\n\n**`by` vs `until`:**\n- `by` + точка времени = к моменту, не позднее.\n  - `Finish the report by Friday.` (К пятнице — к моменту.)\n- `until` / `till` + точка времени = вплоть до (процесс до момента).\n  - `I’ll work until Friday.` (Буду работать до пятницы — всё время.)\n\n**`during` vs `for`:**\n- `for` + длительность: `for two hours`, `for three years`.\n- `during` + событие/период: `during the meeting`, `during the war`.\n\n- `I slept for two hours.` (два часа — длительность)\n- `I slept during the meeting.` (во время собрания — событие)\n\n**Дата с preposition:**\n- `on 5 May 2024` / `on May 5, 2024` — с днём.\n- `in May 2024` — только месяц+год, без дня.\n- `in 2024` — только год.\n\n**`this`/`that` без предлога:**\n- `this morning` (сегодня утром)\n- `that evening` (в тот вечер)\n- `this week` (на этой неделе)\n\n**`at the time` vs `at that time`:**\n- `at the time` — тогда, в тот момент (обычно понятный из контекста).\n- `at that time` — в то время (более конкретное).\n\n**`at present` / `currently` / `at the moment`:**\n- `at present` — сейчас, формально.\n- `at the moment` — сейчас, разговорно.\n- Оба = \"в данный момент\".\n\n**Ошибка с `on time` / `in time`.** Русский \"вовремя\" покрывает оба. Запомни: `on time` = точно; `in time` = успеть. Пример контраста:\n- `The train always arrives on time.` (поезд пунктуален)\n- `We need to arrive at the station in time for the train.` (нам надо успеть к поезду)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "on time (punctual) vs in time (with a margin) | by (deadline) vs until (up to) | for + duration vs during + event",
+        "ru": "on time (точно) vs in time (с запасом) | by (к сроку) vs until (вплоть до) | for + длительность vs during + событие"
       },
       "examples": [
         {
           "en": "Please arrive on time — the meeting starts at 9.",
-          "ru": "Пожалуйста, приходи вовремя — встреча в 9."
+          "ru": "Пожалуйста, приходи вовремя — встреча в 9.",
+          "note": {
+            "en": "on time",
+            "ru": "вовремя"
+          }
         },
         {
           "en": "We got to the cinema just in time.",
-          "ru": "Мы успели в кино в последний момент."
+          "ru": "Мы успели в кино в последний момент.",
+          "note": {
+            "en": "in time",
+            "ru": "с запасом"
+          }
         },
         {
           "en": "Finish the task by Wednesday.",
-          "ru": "Закончи задачу к среде."
+          "ru": "Закончи задачу к среде.",
+          "note": {
+            "en": "by = deadline",
+            "ru": "by = к сроку"
+          }
         },
         {
           "en": "I’ll stay here until Friday.",
-          "ru": "Я останусь здесь до пятницы."
+          "ru": "Я останусь здесь до пятницы.",
+          "note": {
+            "en": "until = up to",
+            "ru": "until = вплоть до"
+          }
         },
         {
           "en": "In the end, we stayed home.",
-          "ru": "В итоге мы остались дома."
+          "ru": "В итоге мы остались дома.",
+          "note": {
+            "en": "in the end",
+            "ru": "в итоге"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "on time = пунктуально; in time = с запасом. By = к моменту; until = до момента (весь период)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Please arrive in time — the meeting starts at 9.",
+          "right": "Please arrive on time — the meeting starts at 9.",
+          "why": {
+            "en": "On time means punctual; in time means with a margin to spare.",
+            "ru": "On time — пунктуально; in time — с запасом."
+          }
+        },
+        {
+          "wrong": "I'll work by Friday, then stop.",
+          "right": "I'll work until Friday, then stop.",
+          "why": {
+            "en": "Until marks an action lasting up to a point; by marks a deadline.",
+            "ru": "Until — действие вплоть до момента; by — крайний срок."
+          }
+        },
+        {
+          "wrong": "I slept during two hours.",
+          "right": "I slept for two hours.",
+          "why": {
+            "en": "Use for with a length of time; during goes with an event.",
+            "ru": "For — с длительностью; during — с событием."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, handle complex time noun phrases. Built-up expressions combine prepositions with framing nouns: on the night of 5 May, on the morning of his birthday, at the beginning of the week, at the end of the year, in the middle of the month. Distinguish **in** + period (after that period elapses: I'll be there in an hour) from **within** + period (no later than, inside that span: I'll finish within an hour). Use **between** with two points (between 5 and 7 pm), **throughout** for a whole stretch (throughout the year), and **over** for a period viewed as a whole (over the weekend, over Christmas, over the years). Range expressions take from … to/till/until (from Monday to Friday, from 9 till 5) and from now on. **Since** + a point introduces the present perfect (since 2020, since Monday), and a since-clause uses the past simple: I've lived here since I moved in 2020. Note approximation with around/about (around 5 o'clock, at about 6) and idioms like around the clock and on and off.",
         "ru": "На B2 разбирайся с **complex time noun phrases**.\n\n**Составные выражения времени:**\n- `on the night of 5 May` (в ночь с 5 мая).\n- `on the evening of the meeting` (вечером в день встречи).\n- `on the morning of his birthday` (утром в его день рождения).\n- `at the beginning of the week` (в начале недели).\n- `at the end of the year` (в конце года).\n- `in the middle of the month` (в середине месяца).\n\n**`in` vs `within`:**\n- `in an hour` = через час (начиная от сейчас, в момент через час).\n- `within an hour` = в пределах часа (не позже, в течение).\n- `I’ll be there in an hour.` (Буду через час.)\n- `I’ll finish within an hour.` (Закончу в течение часа.)\n\n**`around` / `about` (приблизительно):**\n- `around 5 o’clock` (около 5).\n- `at about 5` (около 5).\n- `Let’s meet around 6.`\n\n**`between` с датами:**\n- `between 5 and 7 pm` (между 5 и 7 вечера).\n- `between Monday and Friday`.\n\n**`throughout`:**\n- `throughout the year` (весь год).\n- `throughout the meeting`.\n\n**`over` с периодами:**\n- `over the weekend` (на выходных — весь период).\n- `over Christmas` (на Рождество).\n- `over the years` (с годами).\n\n**`from … till/to/until`:**\n- `from Monday to Friday` (с понедельника по пятницу).\n- `from 9 till 5`.\n- `from now on` (с этого момента).\n\n**`since` + точка + Present Perfect:**\n- `since Monday` — с понедельника.\n- `since 2020`.\n- `since I was a child`.\n\nTime clauses with `since` use Past Simple:\n- `I’ve lived here since I moved in 2020.` (главный Present Perfect, придаточный Past Simple).\n\n**Complex adverbials:**\n- `first thing in the morning` (прямо с утра).\n- `last thing at night` (перед сном).\n- `in the dead of night` (глубокой ночью, литературно).\n- `at the crack of dawn` (на рассвете).\n- `in broad daylight` (средь бела дня).\n- `in the small hours` (рано утром, после полуночи).\n\n**`around the clock` = круглосуточно:**\n- `The hotline operates around the clock.`\n\n**`off and on` / `on and off` = с перерывами:**\n- `It rained on and off all day.` (Дождь шёл с перерывами весь день.)\n\n**Frequency + preposition:**\n- `once in a while` (время от времени).\n- `from time to time` (иногда).\n- `every now and then` (время от времени).\n- `on occasion` (по случаю, формально).\n\n**Формальные синонимы:**\n- `at the present time` (в настоящее время) — формально.\n- `at this juncture` (в данный момент) — формально.\n- `in due course` (в своё время) — формально.\n- `in the foreseeable future` (в обозримом будущем)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "preposition + framing noun + of + period | in vs within | over/throughout/between + period | from … to/until | since + point + present perfect",
+        "ru": "предлог + рамочное существительное + of + период | in vs within | over/throughout/between + период | from … to/until | since + точка + Present Perfect"
       },
       "examples": [
         {
           "en": "I’ll be back within an hour.",
-          "ru": "Вернусь в течение часа."
+          "ru": "Вернусь в течение часа.",
+          "note": {
+            "en": "within = inside",
+            "ru": "within = в пределах"
+          }
         },
         {
           "en": "We met at the beginning of the year.",
-          "ru": "Мы встретились в начале года."
+          "ru": "Мы встретились в начале года.",
+          "note": {
+            "en": "framing noun",
+            "ru": "рамочное сущ."
+          }
         },
         {
           "en": "The shop is open around the clock.",
-          "ru": "Магазин работает круглосуточно."
+          "ru": "Магазин работает круглосуточно.",
+          "note": {
+            "en": "around the clock",
+            "ru": "круглосуточно"
+          }
         },
         {
           "en": "Over the weekend, we visited friends.",
-          "ru": "На выходных мы навестили друзей."
+          "ru": "На выходных мы навестили друзей.",
+          "note": {
+            "en": "over = whole period",
+            "ru": "over = весь период"
+          }
         },
         {
           "en": "From now on, I’ll be more careful.",
-          "ru": "С этого момента я буду осторожнее."
+          "ru": "С этого момента я буду осторожнее.",
+          "note": {
+            "en": "from now on",
+            "ru": "с этого момента"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "in an hour (через час) vs within an hour (в течение часа). Over the weekend = весь период."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'll finish in an hour at the latest.",
+          "right": "I'll finish within an hour at the latest.",
+          "why": {
+            "en": "In an hour means after an hour passes; within an hour means no later than an hour from now.",
+            "ru": "In an hour — через час; within an hour — не позднее чем через час."
+          }
+        },
+        {
+          "wrong": "I've lived here since I have moved in 2020.",
+          "right": "I've lived here since I moved in 2020.",
+          "why": {
+            "en": "The main clause uses present perfect, but the since-clause uses past simple.",
+            "ru": "В главном предложении Present Perfect, но в придаточном с since — Past Simple."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, resolve borderline cases where the preposition choice demands attention. General **in the morning** describes mornings in the abstract (I always drink coffee in the morning), but the moment a morning attaches to a specific day it becomes **on Monday morning** (I'll call you on Monday morning). Keep regional consistency: at the weekend (BrE) versus on the weekend (AmE), and round the clock (BrE) versus around the clock (AmE). Control aspect with precision: present perfect + for/since signals an unfinished span (I have worked here for five years), past simple + for signals a closed one (I worked there for five years), and **ago** is locked to the past simple — never the present perfect (I met her three years ago, not \"I have met her three years ago\"). Layer in punctuality idioms — at 5 on the dot, at 5 sharp, bang on time — and the idiomatic at the end of the day (ultimately), distinct from the literal at the end of the day. Watch temporal ambiguity, too: next Monday and this Friday shift their reference point depending on the current day.",
         "ru": "На C1 работай с **borderline cases**, где выбор предлога требует внимания.\n\n**`in the morning` vs `on Monday morning`:**\n- `in the morning` — общее утро, не привязанное к дате.\n  - `I always drink coffee in the morning.`\n- `on Monday morning` — утро конкретного дня.\n  - `I’ll call you on Monday morning.`\n\nКогда утро совмещено с днём → `on`.\n\n**`at the weekend` (BrE) vs `on the weekend` (AmE):**\nЭто различие между британским и американским вариантами. Британцы говорят `at the weekend`, американцы — `on the weekend`. В академическом письме придерживайся одного стиля (BrE или AmE) по всему документу.\n\n**`in class` vs `in the class`:**\n- `in class` — на уроке (в процессе).\n- `in the class` — в помещении класса / в учебной группе.\n\n**Present Perfect + `since` + clause:**\n- `I have known her since we were children.`\n- Главный — Present Perfect, `since`-clause — Past Simple.\n- `It’s been years since I last saw her.`\n\n**`for` + длительность + Present Perfect (незавершённая):**\n- `I have worked here for five years.` (работаю).\nvs Past Simple:\n- `I worked there for five years.` (работал — закончилось).\n\n**`in` + период + Present Perfect / Past Simple:**\n- `I haven’t seen him in years.` (AmE) / `for years` (BrE).\n- `It’s been a long time since…`\n\n**`ago` — только с Past Simple:**\n- ✓ `I met her three years ago.`\n- ✗ `I have met her three years ago.` — ошибка смешения.\n\n**`for ages` / `for donkey’s years` — разговорные:**\n- `I haven’t seen you for ages.` (Давно тебя не видел.)\n\n**`on the dot` = точно в (время):**\n- `at 5 o’clock on the dot` (ровно в 5).\n\n**`sharp`:**\n- `at 5 sharp` (ровно в 5).\n\n**`bang on time`:**\n- `He arrived bang on time.` (Он пришёл ровно вовремя.)\n\n**`at the end of the day` — идиома:**\n- Буквально: в конце дня.\n- Идиоматически: в конечном счёте, в итоге.\n- `At the end of the day, what matters is family.` (В конце концов, важна семья.)\n\n**`round the clock` / `around the clock`:**\nBrE часто `round`, AmE всегда `around`.\n\n**`at all hours` = в любое время (обычно с неудовольствием):**\n- `He calls me at all hours.` (Он звонит мне в любое время.)\n\n**`at a loss` — не про время, но часто путают:**\n- `at a loss for words` (не нахожу слов).\n\n**Temporal ambiguity:**\n- `Next Monday` — через эту субботу/воскресенье? Обычно ближайший будущий понедельник.\n- `This Friday` — в эту пятницу (могут быть оговорки в зависимости от дня недели сейчас).\n- `On Monday` — ближайший (прошлый или будущий, из контекста)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "in the morning (general) vs on Monday morning (specific day) | present perfect + for/since (unfinished) vs past simple + ago (finished)",
+        "ru": "in the morning (вообще) vs on Monday morning (конкретный день) | Present Perfect + for/since (незавершённое) vs Past Simple + ago (завершённое)"
       },
       "examples": [
         {
           "en": "I’ll call you on Monday morning at 9 sharp.",
-          "ru": "Позвоню в понедельник утром ровно в 9."
+          "ru": "Позвоню в понедельник утром ровно в 9.",
+          "note": {
+            "en": "specific day + sharp",
+            "ru": "конкретный день + sharp"
+          }
         },
         {
           "en": "I haven’t seen him in years.",
-          "ru": "Я не видел его много лет."
+          "ru": "Я не видел его много лет.",
+          "note": {
+            "en": "in years (AmE)",
+            "ru": "in years (AmE)"
+          }
         },
         {
           "en": "She arrived on the dot of 3 pm.",
-          "ru": "Она пришла ровно в 3."
+          "ru": "Она пришла ровно в 3.",
+          "note": {
+            "en": "on the dot",
+            "ru": "ровно"
+          }
         },
         {
           "en": "It’s been ten years since we last met.",
@@ -198,40 +388,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "At the end of the day, effort matters most.",
-          "ru": "В конечном счёте важнее всего усилие."
+          "ru": "В конечном счёте важнее всего усилие.",
+          "note": {
+            "en": "idiom",
+            "ru": "идиома"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "in the morning (вообще) vs on Monday morning (конкретный день). Ago только с Past."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I have met her three years ago.",
+          "right": "I met her three years ago.",
+          "why": {
+            "en": "Ago pins the event to a finished past, so it requires the past simple, not the present perfect.",
+            "ru": "Ago привязывает событие к завершённому прошлому, поэтому требует Past Simple, а не Present Perfect."
+          }
+        },
+        {
+          "wrong": "I always drink coffee on the morning.",
+          "right": "I always drink coffee in the morning.",
+          "why": {
+            "en": "A general, non-specific morning takes in; only a morning tied to a day takes on.",
+            "ru": "Утро вообще требует in; on — только когда утро привязано к конкретному дню."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, command the register and dialect nuances. Hold British and American conventions apart and apply one consistently: at the weekend (BrE) versus on the weekend (AmE); Tuesday to Friday (BrE) versus Tuesday through Friday (AmE, inclusive); five past two (BrE) versus five after two (AmE); 5 May 2024 versus May 5, 2024. Formal calendaring opens with as of, effective from, with effect from (BrE), commencing on, and concluding on. Legal and contractual English narrows further: on or before, on or about, no later than, by close of business, at the expiration of, upon commencement of. **Upon** serves as the formal counterpart of on (upon arrival, upon completion, upon further reflection). High-register temporal idioms include at the eleventh hour, in the fullness of time, in living memory, and of late, alongside journalistic frames such as in the wake of, on the heels of, at the height of, and in the aftermath of. The discipline at this level is restraint: deploy these forms accurately and sparingly, never mixing a formal preposition with a colloquial verb in the same clause.",
         "ru": "На C2 владей **BrE/AmE различиями** и регистровыми нюансами.\n\n**BrE / AmE основные различия во времени:**\n- `at the weekend` (BrE) / `on the weekend` (AmE).\n- `in ages` (AmE разговорно: `I haven’t seen you in ages`) / `for ages` (BrE и AmE).\n- `Tuesday through Friday` (AmE, вкл.) / `Tuesday to Friday` (BrE).\n- `five past two` (BrE) / `five after two` (AmE) — о времени.\n- `a quarter to five` (BrE) / `a quarter of five` (AmE) — разговорно.\n\n**Spelling / locale:**\n- Даты: `5 May 2024` (BrE) / `May 5, 2024` (AmE).\n- Time: `14:30` (BrE, 24-часовой чаще) / `2:30 pm` (AmE стандарт).\n\n**Formal calendaring:**\n- `as of` (начиная с, формально): `As of Monday, new policies apply.`\n- `effective from` (вступает в силу с): `Effective from 1 January.`\n- `with effect from` (BrE formal).\n- `commencing on` (начиная с): `commencing on 5 May`.\n- `concluding on` / `ending on`.\n\n**Legal / contract language:**\n- `on or before` (не позднее).\n- `on or about` (приблизительно): `on or about 5 May`.\n- `no later than` (не позднее).\n- `by close of business` (до конца рабочего дня).\n- `at the expiration of` (по истечении).\n- `upon commencement of` (по началу).\n\n**Archaic / literary:**\n- `of a Sunday` (BrE archaic) = `on Sundays`.\n- `of an evening` (по вечерам — архаично).\n- `betimes` (рано, литературно).\n- `anon` (вскоре, архаично).\n- `ere long` (вскоре, архаично).\n\n**Journalistic / formal:**\n- `in the wake of` — в результате, после (часто негативное): `in the wake of the scandal`.\n- `on the heels of` — вслед за: `on the heels of the announcement`.\n- `at the height of` — на пике: `at the height of his career`.\n- `in the aftermath of` — в последствиях: `in the aftermath of the war`.\n\n**Temporal hedging в академическом стиле:**\n- `arguably, at an earlier point` вместо `earlier`.\n- `historically` вместо `in the past`.\n- `contemporaneously with` (одновременно с) — формально.\n- `in recent decades` / `in recent years` vs `recently` — формально шире.\n\n**`upon` как formal `on`:**\n- `upon arrival` = по прибытии.\n- `upon completion` = по завершении.\n- `upon further reflection` = поразмыслив дальше.\nВ разговорной речи — `on arrival`, в formal — `upon arrival`. Consistency по всему документу.\n\n**Temporal idioms высокого регистра:**\n- `at the eleventh hour` (в самый последний момент).\n- `in the fullness of time` (со временем, в своё время — литературно).\n- `in days of yore` (в давние времена — архаично-литературно).\n- `in living memory` (на памяти ныне живущих).\n- `of late` (в последнее время — формально-литературно).\n- `by the by` / `by the way` (кстати) — `by the by` более BrE/archaic.\n- `anon, anon` (шекспировское).\n\n**Register crossover — опасности:**\n- ✗ `Upon the weekend, we grabbed a pizza.` (upon слишком formal, grabbed слишком colloquial.)\n- ✓ `On the weekend, we grabbed a pizza.` ИЛИ ✓ `Upon the arrival of the weekend, we enjoyed a leisurely pizza.`\n\n**Future reference:**\n- `in the near future` / `in the foreseeable future` / `down the line` / `down the road` (AmE) — градация формальности.\n- `at some point` — когда-нибудь.\n- `in due course` — в своё время (формально).\n- `in time` = в итоге (разговорно): `In time, you’ll understand.`\n\n**Corpus note:** В высоком стиле предлоги времени применяются точно и скупо. Избыточные модификаторы времени (`a very long period of time ago` вместо `long ago`) — признак слабого стиля."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "BrE vs AmE forms (at/on the weekend, to/through) | as of / effective from / upon + noun (formal) | high-register temporal idioms",
+        "ru": "формы BrE vs AmE (at/on the weekend, to/through) | as of / effective from / upon + сущ. (формально) | идиомы времени высокого регистра"
       },
       "examples": [
         {
           "en": "As of 1 January, new tax rules will apply.",
-          "ru": "С 1 января вступят в силу новые налоговые правила."
+          "ru": "С 1 января вступят в силу новые налоговые правила.",
+          "note": {
+            "en": "as of (formal)",
+            "ru": "as of (формально)"
+          }
         },
         {
           "en": "In the wake of the scandal, he resigned.",
-          "ru": "После скандала он подал в отставку."
+          "ru": "После скандала он подал в отставку.",
+          "note": {
+            "en": "journalistic frame",
+            "ru": "журналистский оборот"
+          }
         },
         {
           "en": "Upon completion of the programme, a certificate is issued.",
-          "ru": "По завершении программы выдаётся сертификат."
+          "ru": "По завершении программы выдаётся сертификат.",
+          "note": {
+            "en": "upon = formal on",
+            "ru": "upon = формальный on"
+          }
         },
         {
           "en": "At the eleventh hour, the deal was saved.",
-          "ru": "В самый последний момент сделку спасли."
+          "ru": "В самый последний момент сделку спасли.",
+          "note": {
+            "en": "high-register idiom",
+            "ru": "идиома высокого регистра"
+          }
         },
         {
           "en": "Of late, we have seen a noticeable shift.",
@@ -241,9 +469,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "BrE: at the weekend; AmE: on the weekend. Upon/as of/in the wake of — formal. Не смешивай регистры."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Upon the weekend, we grabbed a pizza.",
+          "right": "On the weekend, we grabbed a pizza.",
+          "why": {
+            "en": "Upon is too formal to sit beside a colloquial verb like grabbed; keep the register consistent.",
+            "ru": "Upon слишком формально рядом с разговорным grabbed; держи регистр единым."
+          }
+        },
+        {
+          "wrong": "The policy is effective on 1 January (in a formal notice).",
+          "right": "The policy is effective from 1 January.",
+          "why": {
+            "en": "Formal calendaring uses effective from / as of for a start date, not a bare on.",
+            "ru": "Формальное обозначение даты начала использует effective from / as of, а не просто on."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "prepositions-of-time",
+    "at-in-on-place",
+    "prepositions-in-phrases",
+    "prepositions-of-movement"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "past-simple",
+    "present-perfect-simple",
+    "adverbs-of-frequency"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "at = a point (clock time)",
+      "on = a day or date",
+      "in = a longer period (month, year, part of day)"
+    ]
+  }
 };

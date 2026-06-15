@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "subject-vs-object-questions",
   "title": {
-    "en": "",
+    "en": "Subject vs Object Questions",
     "ru": "Subject Vs Object Questions"
   },
   "cefr": "B1",
@@ -15,24 +15,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "questions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "English has a special kind of wh-question where the question word IS the subject. When that happens, you do NOT use the auxiliary do/does/did.\n\nCompare two questions:\n- 'Who saw John?' asks about the subject (the one who did the seeing).\n- 'Who did John see?' asks about the object (the person John saw).\n\nIn the first, 'who' is the subject, so the word order is exactly like a statement and there is no 'did'. In the second, 'who' is the object, so you get the normal inverted question with 'did'.\n\nHow to tell them apart:\n- Subject question: statement word order, no do/does/did. Pattern: Who/What + verb + ...?\n- Object question: standard inverted question. Pattern: Who/What + do/does/did + subject + verb + ...?\n\nSubject questions take a normal verb that agrees and carries tense itself: 'Who broke the window?' (past), 'What happens next?' (present, 3rd-person -s). The verb already shows the tense, so an extra 'did' is wrong.\n\nThe classic learner error is adding 'did' to a subject question: 'Who did break the window?' should be 'Who broke the window?'. If the wh-word is the subject, drop the auxiliary.",
         "ru": "В английском есть особый случай wh-вопросов, когда **вопросительное слово само является подлежащим**. Тогда вспомогательный глагол `do/does/did` **не нужен**.\n\n**Сравни два вопроса:**\n- `Who saw John?` — Кто видел Джона? (спрашиваем о подлежащем)\n- `Who did John see?` — Кого видел Джон? (спрашиваем о дополнении)\n\nВ первом случае `who` — подлежащее (тот, кто видел). Во втором — дополнение (того, кого видел Джон).\n\n**Как отличить:**\n- **Subject question** (вопрос к подлежащему): порядок слов как в утверждении, без `do/does/did`. `Who + verb + …?`\n- **Object question** (вопрос к дополнению): стандартный вопрос с инверсией. `Who + did/does + subject + verb + …?`\n\n**Примеры subject questions:**\n- `Who broke the window?` (Кто разбил окно?)\n- `What happened yesterday?` (Что вчера случилось?)\n- `Which team won the match?` (Какая команда выиграла матч?)\n- `How many people came?` (Сколько людей пришло?)\n\nОбрати внимание: в этих вопросах глагол согласуется как обычно. `Who broke` (past), `What happens` (present singular).\n\n**Примеры object questions:**\n- `Who did you see?` (Кого ты видел?)\n- `What did he say?` (Что он сказал?)\n- `Which team does he support?` (За какую команду он болеет?)\n\n**Русское соответствие:**\nВ русском разница видна через падежи:\n- «Кто» (именительный) — subject: `Who saw John?` = «Кто видел Джона?»\n- «Кого» (винительный) — object: `Who did John see?` = «Кого видел Джон?»\n- «Что» (именительный) — subject: `What happened?` = «Что случилось?»\n- «Что» (винительный) — object: `What did you buy?` = «Что ты купил?»\n\nВ русском форма местоимения меняется, в английском — порядок слов.\n\n**Типичные ошибки B1:**\n- Неправильно: `Who did break the window?` (не нужен `did`).\n- Правильно: `Who broke the window?`\n\n- Неправильно: `What did happen?`\n- Правильно: `What happened?`\n\nДобавлять `did/does` в subject question — одна из самых частых ошибок для русскоговорящих."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Subject: Wh-subject + verb(+tense) + ...?  |  Object: Wh-object + do/does/did + subject + verb?",
+        "ru": "Подлежащее: Wh-подлежащее + глагол(+время) + ...?  |  Дополнение: Wh-дополнение + do/does/did + подлежащее + глагол?"
       },
       "examples": [
         {
           "en": "Who called you last night?",
-          "ru": "Кто тебе звонил вчера вечером?"
+          "ru": "Кто тебе звонил вчера вечером?",
+          "note": {
+            "en": "subject question",
+            "ru": "вопрос к подлежащему"
+          }
         },
         {
           "en": "What caused the accident?",
@@ -40,7 +46,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Who did you invite to the party?",
-          "ru": "Кого ты пригласил на вечеринку?"
+          "ru": "Кого ты пригласил на вечеринку?",
+          "note": {
+            "en": "object question",
+            "ru": "вопрос к дополнению"
+          }
         },
         {
           "en": "Which book costs less?",
@@ -54,22 +64,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Если who/what = подлежащее, не добавляй did/does: Who called? (не Who did call?)"
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Who did break the window?",
+          "right": "Who broke the window?",
+          "why": {
+            "en": "'Who' is the subject, so no 'did' — the main verb carries the past tense.",
+            "ru": "'Who' — подлежащее, поэтому 'did' не нужен; время несёт сам глагол."
+          }
+        },
+        {
+          "wrong": "What did happen?",
+          "right": "What happened?",
+          "why": {
+            "en": "'What' is the subject here; use the plain past form 'happened', not 'did happen'.",
+            "ru": "Здесь 'what' — подлежащее; нужна форма 'happened', а не 'did happen'."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the focus shifts to which wh-words can actually be subjects, and to harder cases.\n\nWords that CAN be the subject: who (people), what (things/situations), which (+ noun) for a choice, how many / how much (+ noun) for quantity, and whose (+ noun) for possession. All of these allow the no-auxiliary subject pattern: 'Which team plays better?', 'Whose car is blocking the exit?'.\n\nWords that CANNOT be the subject: where, when, why, and how (as adverbials). These always need do/does/did — 'Where did you go?', 'Why did she leave?'. One colloquial exception is 'How come...?', which is followed by statement order with no auxiliary: 'How come you didn't call?'.\n\nEmphasising words like 'on earth', 'exactly', or 'else' do not change the structure: 'Who on earth did this?', 'What exactly happened?' still take no 'did'.\n\nComplex subjects keep the same rule, even when long: 'Who among you speaks French?', 'Which of the students finished first?'. When the subject question uses a tense with its own auxiliary — Present Perfect, Past Perfect, Present Continuous — that auxiliary stays, but it marks the tense, not the question: 'Who has seen this film?', 'Who is coming tonight?'. The shape is still Wh-subject + (aux) + verb, with no extra 'do'.\n\nA reliable test: answer the question silently. 'Who saw John?' is answered 'Tom saw John' — Tom is the subject, so 'who' is a subject question (no 'did'). 'Who did John see?' is answered 'John saw Tom' — John is the subject, so 'who' is the object (keep 'did').",
         "ru": "На B2 расширяем **какие именно wh-слова** могут быть подлежащими, и обрабатываем сложные случаи.\n\n**Wh-слова, которые могут быть subject:**\n- `who` — о людях: `Who knows the answer?` (Кто знает ответ?)\n- `what` — о предметах/ситуациях: `What happened?` (Что случилось?)\n- `which (+ noun)` — выбор: `Which team plays better?` (Какая команда играет лучше?)\n- `how many (+ noun)` — количество: `How many students passed?` (Сколько студентов сдали?)\n- `how much (+ noun)` — неисчисл.: `How much rice is left?` (Сколько риса осталось?)\n- `whose (+ noun)` — принадлежность: `Whose car is blocking the exit?` (Чья машина блокирует выход?)\n\n**Где vs когда vs почему — не подлежащие:**\n- `Where`, `when`, `why`, `how` — это обстоятельства, не могут быть подлежащими.\n- Вопросы с ними всегда требуют `do/does/did`:\n  - `Where did you go?`\n  - `When does the film start?`\n  - `Why did she leave?`\n  - `How do they travel?`\n\nИсключение: `How come…?` (разговорное) — после него прямой порядок: `How come you didn't call?` (А почему ты не позвонил?) — без `did`.\n\n**Emphatic subject questions:**\n- `Who on earth did this?` (Кто же это сделал?)\n- `What exactly happened?` (Что именно случилось?)\n- `Who else saw it?` (Кто ещё это видел?)\n\nДобавочные слова (`on earth`, `exactly`, `else`) не меняют структуру — по-прежнему нет `did`.\n\n**Complex subjects:**\n- `Who among you speaks French?` (Кто из вас говорит по-французски?)\n- `Which of the students finished first?` (Который из студентов закончил первым?)\n- `What kind of music makes you happy?` (Какая музыка делает тебя счастливым?)\n\nДаже при длинном подлежащем правило одно: без `do/does/did`.\n\n**Past tenses в subject questions:**\n- `Who had already left when you arrived?` (Кто уже ушёл, когда ты пришёл?) — Past Perfect.\n- `Who has seen this film?` (Кто видел этот фильм?) — Present Perfect.\n- `Who is coming tonight?` (Кто придёт сегодня вечером?) — Present Continuous.\n\nВ этих формах `had`, `has`, `is` — вспомогательные для времени, но они не для образования вопроса. Структура: `Wh-subject + [aux] + verb`.\n\n**Typical mistakes:**\n- `Who did see him?` — дополнительный `did` лишний. Правильно: `Who saw him?`\n- `What did happen?` — аналогично. Правильно: `What happened?`\n- Но: `Who did he see?` — здесь `he` подлежащее, `who` дополнение, поэтому `did` нужен.\n\n**Trick: ответь мысленно**\nЕсли ответ на вопрос может быть в форме `X + verb + …` (X сделал что-то), то это subject question.\n- `Who saw John?` → `Tom saw John.` — Tom — subject, значит `who` — subject question.\n- `Who did John see?` → `John saw Tom.` — John — subject, значит `who` — object question.\n\n**Subject questions with `which`:**\n- `Which door opens?` (Какая дверь открывается?)\n- `Which button stops the machine?` (Какая кнопка останавливает машину?)\n\nВ технических инструкциях subject questions с `which` — стандарт."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Subject (who/what/which/whose/how many): Wh + (aux) + verb?  |  Adverbial (where/when/why/how): Wh + do/does/did + subject + verb?",
+        "ru": "Подлежащее (who/what/which/whose/how many): Wh + (aux) + глагол?  |  Обстоятельство (where/when/why/how): Wh + do/does/did + подлежащее + глагол?"
       },
       "examples": [
         {
           "en": "Who made this cake? It's delicious.",
-          "ru": "Кто сделал этот торт? Он восхитителен."
+          "ru": "Кто сделал этот торт? Он восхитителен.",
+          "note": {
+            "en": "who = subject",
+            "ru": "who = подлежащее"
+          }
         },
         {
           "en": "What's making that noise?",
@@ -85,23 +117,45 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Whose idea was it to go there?",
-          "ru": "Чья идея была туда пойти?"
+          "ru": "Чья идея была туда пойти?",
+          "note": {
+            "en": "whose + noun",
+            "ru": "whose + сущ."
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Who/what/which + noun могут быть подлежащим — тогда без do/does/did. Where/when/why/how — всегда с do."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Who did see him?",
+          "right": "Who saw him?",
+          "why": {
+            "en": "'Who' is the subject — no extra 'did'. Contrast 'Who did he see?', where 'he' is the subject and 'did' is correct.",
+            "ru": "'Who' — подлежащее, лишний 'did' не нужен. Сравни 'Who did he see?', где 'he' — подлежащее."
+          }
+        },
+        {
+          "wrong": "Where you went?",
+          "right": "Where did you go?",
+          "why": {
+            "en": "'Where' is an adverbial, never the subject, so it always needs do/does/did.",
+            "ru": "'Where' — обстоятельство, не подлежащее, поэтому всегда нужен do/does/did."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the rule itself is settled; the work is in style, pragmatics, and edge cases.\n\nEmphatic 'do' is the one place 'did' appears in a subject question — but for stress, not for question-formation: 'Who DID say that?' (insisting on a straight answer) or an echo 'Sorry, WHO called?'. The auxiliary is carrying intonational emphasis; it is not the inverted object pattern.\n\nModals stay in place in subject questions, with no inversion and no 'do': 'Who might know the answer?', 'Who should call first?', 'Who would volunteer for this?'. The modal already fills the auxiliary slot.\n\nPassive subject questions follow the same logic: the wh-word is the subject and the passive auxiliary 'be' supplies the form: 'What was found at the scene?', 'Which companies were fined?'. There is no separate question 'do'.\n\nAdding a noun after 'which' does not change anything: 'Which employees received the bonus?' (subject, no 'did') versus 'Which employees did the company promote?' (object). Subject questions are natural and compact in headlines — 'Who leaked the documents?', 'What caused the crash?' — but rarer in academic prose, which often prefers a statement with a relative clause ('The identity of the author remains unclear') instead of a direct wh-question.\n\nThe minute-long check that eliminates the most common error: ask whether the wh-word is the subject or the object. Subject — no 'do'. Object — do/does/did.",
         "ru": "На C1 работаем с **стилистикой, прагматикой и тонкими случаями**.\n\n**Emphatic `do` в subject questions:**\nОбычно в subject questions нет `do`. Но есть редкий эмфатический случай:\n- `Who DID say that?` — когда отвечающий уклоняется, а ты настаиваешь на прямом ответе.\n- `Who DID break the window, then?` — с интонационным ударением.\n\nЭто не та же структура, что у object question. Здесь `did` — эмфатический маркер, ударение интонационное. Редко встречается, в основном в разговорной речи.\n\n**Complex subjects:**\n- `Whoever wrote this is brilliant.` (Тот, кто это написал, — гений.) — не вопрос, а утверждение с `whoever`.\n- `Whoever did it will be punished.`\n\n**Echo questions:**\n- `John called.` — `Who called?` (обычное уточнение).\n- `John called.` — `Sorry, WHO called?` (эхо-переспрос).\n\nЭхо-переспрос — это subject question с эмфатическим ударением.\n\n**Headline style:**\nВ заголовках новостей subject questions без `do` — естественны и компрессированны:\n- `Who leaked the documents?`\n- `What caused the market crash?`\n- `Which policies saved jobs?`\n\n**Subject questions with modal verbs:**\n- `Who might know the answer?` (Кто мог бы знать ответ?)\n- `Who should call first?` (Кто должен позвонить первым?)\n- `Who would volunteer for this?` (Кто бы вызвался на это?)\n\nМодальный глагол остаётся на своём месте, не переносится. Это не инверсия — это прямой порядок.\n\n**Passive в subject questions:**\n- `What was found at the scene?` (Что было найдено на месте?)\n- `Who was arrested?` (Кого арестовали?)\n- `Which companies were fined?` (Какие компании оштрафовали?)\n\nВ пассиве `who/what` = подлежащее, инверсии с `be` не требуется (хотя формально она есть в виде `was found`, потому что это пассивный вспомогательный).\n\n**Существительные-подлежащие, вопрос о них:**\n- `Which employees received the bonus?` — вопрос о подлежащем (employees).\n- `Which employees did the company promote?` — вопрос о дополнении.\n\nДобавление существительного после `which` не меняет правила: если `which + noun` — это подлежащее, то без `did`.\n\n**Disambiguating pragmatically:**\nИногда прямой вопрос неоднозначен:\n- `Who hit who?` — неясно, кто инициатор.\n\nВ такой ситуации носитель или переформулирует, или уточняет контекстом. В формальном тексте лучше перефразировать: `Who struck whom?` или `Which party initiated the contact?`\n\n**Stylistic preference:**\nВ академическом тексте subject questions редки — предпочитают утверждения с относительными предложениями.\n- Вместо: `Who wrote this?` → `The identity of the author remains unclear.`\n- Вместо: `What caused the shift?` → `The factors responsible for the shift are discussed below.`\n\nЭто не правило, а стилистический выбор: academic prose избегает прямых wh-вопросов кроме как в риторических целях.\n\n**Пособник для C1:**\nПеред вопросом спроси: подлежащее или дополнение? Если подлежащее — нет `do`. Если дополнение — нужен `do/does/did`. Это минутная проверка, которая исключает самую частую ошибку."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Modal subject Q: Wh-subject + modal + verb?  |  Passive subject Q: Wh-subject + be + past participle?",
+        "ru": "Подлежащее с модальным: Wh-подлежащее + модальный + глагол?  |  Пассив: Wh-подлежащее + be + причастие?"
       },
       "examples": [
         {
@@ -118,32 +172,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Who should have been notified first?",
-          "ru": "Кого следовало уведомить первым?"
+          "ru": "Кого следовало уведомить первым?",
+          "note": {
+            "en": "modal, no do",
+            "ru": "модальный, без do"
+          }
         },
         {
           "en": "What was ultimately decided at the meeting?",
-          "ru": "Что в итоге было решено на встрече?"
+          "ru": "Что в итоге было решено на встрече?",
+          "note": {
+            "en": "passive subject Q",
+            "ru": "пассив, вопрос к подлежащему"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "При сомнении: мысленно ответь на вопрос. Если ответ в форме 'X сделал…' — X это подлежащее, значит subject question."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Who does should call first?",
+          "right": "Who should call first?",
+          "why": {
+            "en": "The modal 'should' already fills the auxiliary slot; never add 'do' on top of a modal.",
+            "ru": "Модальный 'should' уже занимает позицию вспомогательного; 'do' добавлять нельзя."
+          }
+        },
+        {
+          "wrong": "What did be found at the scene?",
+          "right": "What was found at the scene?",
+          "why": {
+            "en": "In a passive subject question, the 'be' auxiliary forms the question — no separate 'did'.",
+            "ru": "В пассивном вопросе к подлежащему вопрос образует 'be'; отдельный 'did' не нужен."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the subject/object distinction operates on the syntactic, rhetorical, and genre level.\n\nHeavily modified noun-phrase subjects stay subjects, however many parentheticals you embed, so no 'do' appears: 'Who, among those present at the meeting, objected to the proposal?', 'Which of the many reforms introduced last year has actually delivered results?'.\n\nEnglish fronts only one wh-element; any others stay in situ: 'Who said what?', 'Who told whom about this?'. This differs from Slavic languages, where multiple wh-words can move to the front.\n\nIn rhetoric, subject questions with 'could/would/should' make a claim while posing a question — the implied answer does the arguing: 'Who could have foreseen this outcome?' (answer: no one), 'Which of us is without fault?'. Legal and forensic registers favour them for precision: 'Who had access to the account?', 'Which officers attended the scene?'. Passive subject questions span the register scale, from formal pied-piping ('By whom was the order signed?') through stranding ('Who was the order signed by?') to the plain active ('Who signed the order?').\n\nThe subtlest case is long-distance wh-extraction. In 'Who do you think will win?', the inserted 'do you think' is the matrix clause, but 'who' is the subject of the embedded 'will win', not the object of 'think' — so there is no 'do' immediately before 'will win'. The visible 'do' belongs only to 'you think'. Recognising when the auxiliary is required and when it is not is one of the clearest markers of full control over English question syntax.",
         "ru": "На C2 subject/object questions работают на **синтаксическом, риторическом и жанровом уровне**.\n\n**Complex NP subjects:**\n- `Who, among those present at the meeting, objected to the proposal?` — подлежащее расширено вводным оборотом.\n- `What, if anything, has changed since then?` — риторически осторожная форма.\n- `Which of the many reforms introduced last year has actually delivered results?`\n\nСложное подлежащее с вложенными оборотами остаётся подлежащим — `do/does/did` не нужен.\n\n**Multiple wh:**\n- `Who said what?` (Кто что сказал?) — один wh во фронте, второй in situ.\n- `Who told whom about this?` — очень формально, с `whom`.\n\nАнглийский допускает только один wh-элемент во фронте. Остальные остаются на своих позициях. Это отличие от славянских языков, где все wh часто мигрируют вперёд.\n\n**Subject questions в риторике:**\n- `Who could have foreseen this outcome?` (Кто мог бы это предвидеть?) — риторический вопрос, ответ подразумевается «никто».\n- `What greater honour is there?` (Какая большая честь есть?) — скрытое утверждение.\n- `Which of us is without fault?` (Кто из нас без греха?)\n\nВ проповедях, политических речах, философских эссе subject questions с модальным `could/would/should` — классический инструмент.\n\n**Legal/forensic register:**\n- `Who had access to the account?` — запрос в расследовании.\n- `What evidence supports this claim?` — аудиторский, юридический стиль.\n- `Which officers attended the scene?` — полицейский отчёт.\n\n**Literary usage:**\n- «Who is it that loves me most?» — архаичная субъектная форма с `it` и `that`.\n- В современной прозе эта форма встречается в стилизованных диалогах.\n\n**Subject questions с пассивом:**\n- `By whom was the order signed?` (Кем был подписан приказ?) — очень формально, pied-piping.\n- `Who was the order signed by?` — нейтрально, stranding.\n- `Who signed the order?` — простой subject question, активный залог.\n\nВыбор между формами — регистр и контекст.\n\n**Эллипсис в subject questions:**\n- `Who, me?` (Кто, я?) — контекстный эллипсис.\n- `What, now?` (Что, сейчас?) — разговорное.\n- `Which, this one?` (Который, этот?)\n\n**Contrast structures:**\n- `Not who did it, but why they did it, is the question.` (Не кто это сделал, а почему — вот вопрос.) — риторическое противопоставление.\n- `What matters is not what she said but who heard it.`\n\n**Pragmatic vs. grammatical subject:**\nТонкий случай: кажущийся subject question может быть object question с тематизированным местом.\n- `Who do you think will win?` — здесь `you think` вставлено, но `who` — подлежащее `will win`, не дополнение `think`.\n- Поэтому нет `do` перед `will win`.\n\nЭтот тип вопроса называется **long-distance wh-extraction** — субъект извлекается из вложенного предложения.\n\n**Формулы высокого регистра:**\n- `To whom it may concern` (К тому, кого это может касаться) — шаблон открытой адресации.\n- `Let him who is without sin cast the first stone.` (Пусть тот, кто без греха, первым бросит камень.) — библейская формула.\n- `Whosoever believeth in him…` (Всякий, кто верит в него…) — архаичный, библейский.\n\n**Финал:** различие subject/object questions грамматически простое, но на C2 становится элементом стилистического и риторического выбора. Умение чувствовать, когда нужен `do`, а когда нет, — один из самых чётких маркеров контроля над английским синтаксисом."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Long-distance: Wh-subject + [matrix: do you think/believe] + verb?  |  Multiple wh: Wh-front + verb + wh-in-situ?",
+        "ru": "Дальнее извлечение: Wh-подлежащее + [матрица: do you think] + глагол?  |  Несколько wh: Wh во фронте + глагол + wh на месте?"
       },
       "examples": [
         {
           "en": "Who, if not us, will take responsibility?",
-          "ru": "Кто, если не мы, возьмёт на себя ответственность?"
+          "ru": "Кто, если не мы, возьмёт на себя ответственность?",
+          "note": {
+            "en": "complex NP subject",
+            "ru": "сложное подлежащее"
+          }
         },
         {
           "en": "Which of the many factors contributing to the crisis has been addressed?",
@@ -151,7 +235,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Who said what at the hearing became a matter of public record.",
-          "ru": "Кто что сказал на слушании стало делом общественной записи."
+          "ru": "Кто что сказал на слушании стало делом общественной записи.",
+          "note": {
+            "en": "multiple wh",
+            "ru": "несколько wh"
+          }
         },
         {
           "en": "What survives of his manuscript is now in the archive.",
@@ -165,9 +253,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "В subject questions с модальными (Who should/could/would…?) do не нужен — модальный уже занимает его позицию."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Who do you think does will win?",
+          "right": "Who do you think will win?",
+          "why": {
+            "en": "'Who' is the subject of the embedded 'will win'; the only auxiliary belongs to the matrix 'you think'.",
+            "ru": "'Who' — подлежащее вложенного 'will win'; единственный вспомогательный относится к матрице 'you think'."
+          }
+        },
+        {
+          "wrong": "Who did say what?",
+          "right": "Who said what?",
+          "why": {
+            "en": "Only one wh-word fronts; 'who' is the subject, so the verb stays plain and 'what' remains in situ.",
+            "ru": "Во фронт выходит лишь одно wh-слово; 'who' — подлежащее, глагол без 'did', а 'what' остаётся на месте."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "wh-questions",
+    "yes-no-questions",
+    "question-words",
+    "interrogative-pronouns",
+    "indirect-questions"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "past-simple",
+    "passive-present-simple",
+    "defining-relative-clauses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Subject question (no do/does/did)",
+      "Object question (with do/does/did)"
+    ]
+  }
 };
