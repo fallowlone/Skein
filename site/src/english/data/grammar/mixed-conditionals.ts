@@ -16,7 +16,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "conditionals",
   "egp": [
-    "EGP:best-effort"
+    "egp.b2.conditionals.mixed-conditionals",
+    "egp.c1.conditionals.mixed-conditionals",
+    "egp.c2.conditionals.mixed-time-conditionals",
+    "egp.c1.conditionals.inverted-conditionals-no-if",
+    "egp.c2.conditionals.inverted-conditionals-formal"
   ],
   "archetype": "branch",
   "lessons": {

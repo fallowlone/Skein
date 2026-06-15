@@ -17,7 +17,7 @@ export const topic: GrammarTopic = {
   ],
   "family": "verb-patterns",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.verbs.gerund-vs-infinitive-after-verbs"
   ],
   "archetype": "swap",
   "lessons": {

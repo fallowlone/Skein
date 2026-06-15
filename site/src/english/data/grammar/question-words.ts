@@ -19,10 +19,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "questions",
   "egp": [
-    "EGP:wh-questions-what-who-where-when-why-how",
-    "EGP:how-much-how-many",
-    "EGP:which-vs-what",
-    "EGP:question-word-plus-infinitive"
+    "egp.a1.questions-negation.wh-questions-basic",
+    "egp.a1.questions-negation.how-many-how-much",
+    "egp.a2.questions-negation.how-questions-quantity-degree",
+    "egp.b1.questions-negation.indirect-questions"
   ],
   "archetype": "slot-fill",
   "lessons": {

@@ -17,10 +17,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "pronouns",
   "egp": [
-    "EGP:can-use-it-as-a-dummy-subject-for-weather-time-and-distance",
-    "EGP:can-use-it-as-a-preparatory-subject-with-be-plus-adjective-plus-to-infinitive-or-that-clause",
-    "EGP:can-use-it-as-a-preparatory-object-after-verbs-like-find-make-think",
-    "EGP:can-use-it-with-passive-reporting-verbs-and-cleft-structures-for-emphasis-and-distancing"
+    "egp.a1.pronouns.it-as-empty-subject",
+    "egp.c1.word-order.end-weight-and-extraposition",
+    "egp.b2.word-order.cleft-sentences-it-was",
+    "egp.b2.passive.reporting-passive-it-is-said",
+    "egp.c2.word-order.end-weight-and-extraposition"
   ],
   "archetype": "slot-fill",
   "lessons": {

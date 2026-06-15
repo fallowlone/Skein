@@ -17,7 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "reported-speech",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.verbs.verb-plus-object-plus-infinitive",
+    "egp.b2.clauses.reporting-verbs-with-patterns",
+    "egp.b2.verbs.verb-object-infinitive-patterns",
+    "egp.c2.clauses.subjunctive-and-mandative-clauses"
   ],
   "archetype": "transformation",
   "lessons": {

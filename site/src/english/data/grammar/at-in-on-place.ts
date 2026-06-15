@@ -19,7 +19,7 @@ export const topic: GrammarTopic = {
   ],
   "family": "prepositions",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.prepositions.place-in-on-at"
   ],
   "archetype": "scale",
   "lessons": {

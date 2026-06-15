@@ -18,7 +18,14 @@ export const topic: GrammarTopic = {
   ],
   "family": "nouns",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.nouns-determiners.countable-uncountable-quantifiers",
+    "egp.b1.nouns-determiners.articles-general-vs-specific",
+    "egp.b2.nouns-determiners.articles-abstract-generic",
+    "egp.b2.nouns-determiners.uncountable-nouns-partitives",
+    "egp.c1.nouns-determiners.abstract-nominalisation",
+    "egp.c1.nouns-determiners.article-use-with-abstract-and-generic-nouns",
+    "egp.c2.nouns-determiners.abstract-nominalisation-density",
+    "egp.c2.nouns-determiners.article-use-with-abstractions"
   ],
   "archetype": "transformation",
   "lessons": {

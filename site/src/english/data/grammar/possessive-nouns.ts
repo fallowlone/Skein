@@ -19,7 +19,8 @@ export const topic: GrammarTopic = {
   ],
   "family": "nouns",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.pronouns.possessive-s",
+    "egp.a2.nouns-determiners.possessive-s-and-of"
   ],
   "archetype": "slot-fill",
   "lessons": {

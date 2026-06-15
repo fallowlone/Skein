@@ -17,8 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "modals",
   "egp": [
-    "EGP:be able to / have to / be allowed to across tenses",
-    "EGP:semi-modal register and nuance"
+    "egp.b1.modality.could-able-to-past-ability",
+    "egp.b2.modality.semi-modals-be-able-to-bound-to",
+    "egp.c1.modality.semi-modals-and-marginal-modals",
+    "egp.c2.modality.semi-modals-and-marginal-modals"
   ],
   "archetype": "swap",
   "lessons": {

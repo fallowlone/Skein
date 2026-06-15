@@ -20,7 +20,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "nouns",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.nouns-determiners.regular-plural-nouns",
+    "egp.a1.nouns-determiners.common-irregular-plurals",
+    "egp.b2.nouns-determiners.uncountable-nouns-partitives"
   ],
   "archetype": "transformation",
   "lessons": {

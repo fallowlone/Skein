@@ -16,10 +16,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "verb-patterns",
   "egp": [
-    "EGP:B2 can use 'have + object + past participle' to talk about arranging a service",
-    "EGP:B2 can use 'get + object + past participle' informally for the same meaning",
-    "EGP:C1 can use 'have someone + bare infinitive' and 'get someone + to-infinitive' for delegated and persuaded actions",
-    "EGP:C2 can choose 'have' versus 'get' to signal neutrality, responsibility or moral colouring"
+    "egp.b2.passive.causative-have-get-something-done",
+    "egp.c1.passive.passive-with-get-and-have-causative",
+    "egp.c2.verbs.lexical-causatives-fine-shades"
   ],
   "archetype": "transformation",
   "lessons": {

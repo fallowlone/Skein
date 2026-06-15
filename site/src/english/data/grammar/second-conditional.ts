@@ -17,10 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "conditionals",
   "egp": [
-    "EGP:Can use 'if' + past simple with 'would' + base verb to talk about imaginary or unlikely present and future situations.",
-    "EGP:Can use 'were' for all persons with 'be' in unreal conditions, including the fixed advice phrase 'If I were you, I would ...'.",
-    "EGP:Can replace 'would' with 'could' or 'might' in the result clause to express ability or possibility.",
-    "EGP:Can use formal inversion 'Were I ...' / 'Were it not for ...' and 'were to + infinitive' for hypothetical future."
+    "egp.b1.conditionals.second-conditional-hypothetical",
+    "egp.b1.conditionals.i-wish-present-regret",
+    "egp.c1.conditionals.inverted-conditionals-no-if",
+    "egp.c2.conditionals.inverted-conditionals-formal"
   ],
   "archetype": "branch",
   "lessons": {

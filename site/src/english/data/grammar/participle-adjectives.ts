@@ -17,7 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "adjectives",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.adjectives-adverbs.ed-vs-ing-adjectives",
+    "egp.b2.clauses.participle-clauses-reduced",
+    "egp.c1.adjectives-adverbs.participle-adjectives-and-compound-adjectives",
+    "egp.c1.clauses.participle-clauses-for-economy"
   ],
   "archetype": "contrast-pair",
   "lessons": {

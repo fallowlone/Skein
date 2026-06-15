@@ -18,7 +18,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "tenses",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.tenses-aspect.used-to-past-habits",
+    "egp.b1.tenses-aspect.used-to-past-habits",
+    "egp.b2.tenses-aspect.used-to-vs-would-past-habits",
+    "egp.c1.modality.would-for-past-habit-and-criticism"
   ],
   "archetype": "timeline",
   "lessons": {

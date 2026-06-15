@@ -16,7 +16,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "relative-clauses",
   "egp": [
-    "EGP:best-effort"
+    "egp.b2.clauses.non-defining-relative-clauses",
+    "egp.b2.clauses.participle-clauses-reduced",
+    "egp.b2.pronouns.relative-pronoun-whose-which-clause",
+    "egp.c1.clauses.non-defining-relative-clauses-with-quantifiers",
+    "egp.c1.clauses.participle-clauses-for-economy"
   ],
   "archetype": "contrast-pair",
   "lessons": {

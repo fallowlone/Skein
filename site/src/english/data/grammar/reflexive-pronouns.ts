@@ -18,10 +18,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "pronouns",
   "egp": [
-    "EGP:A2:can-use-reflexive-pronouns-myself-yourself-etc",
-    "EGP:B1:can-use-reflexive-pronouns-for-emphasis",
-    "EGP:B2:can-use-by-myself-and-reflexive-idioms",
-    "EGP:C1:can-distinguish-reflexive-from-emphatic-and-avoid-hypercorrection"
+    "egp.a2.pronouns.reflexive-pronouns",
+    "egp.b1.pronouns.reflexive-pronouns",
+    "egp.b2.pronouns.reflexive-emphatic-pronouns"
   ],
   "archetype": "cycle",
   "lessons": {

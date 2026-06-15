@@ -19,7 +19,14 @@ export const topic: GrammarTopic = {
   ],
   "family": "adverbs",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.adjectives-adverbs.frequency-adverbs",
+    "egp.a1.word-order.adverb-of-frequency-position",
+    "egp.a2.word-order.adverb-frequency-position",
+    "egp.a2.tenses-aspect.present-simple-frequency",
+    "egp.b1.word-order.adverb-position-frequency-manner",
+    "egp.b2.word-order.inversion-after-negative-adverbials",
+    "egp.c1.word-order.inversion-after-negative-adverbials",
+    "egp.c2.word-order.inversion-after-negative-adverbials"
   ],
   "archetype": "scale",
   "lessons": {

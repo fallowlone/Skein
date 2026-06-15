@@ -17,7 +17,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "tenses",
   "egp": [
-    "EGP:can use present continuous (am/is/are + -ing) to talk about future arrangements with a time reference"
+    "egp.b1.tenses-aspect.present-continuous-future-arrangements",
+    "egp.b1.verbs.going-to-plans-predictions",
+    "egp.b1.verbs.will-spontaneous-decisions",
+    "egp.b1.verbs.stative-vs-dynamic-verbs",
+    "egp.b2.clauses.reported-speech-backshift",
+    "egp.c1.modality.hedging-and-tentativeness"
   ],
   "archetype": "timeline",
   "lessons": {

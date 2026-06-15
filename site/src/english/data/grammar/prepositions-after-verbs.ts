@@ -18,7 +18,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "prepositions",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.prepositions.prepositions-after-adjectives-verbs",
+    "egp.b1.prepositions.dependent-prepositions",
+    "egp.b1.prepositions.preposition-plus-gerund",
+    "egp.b2.prepositions.dependent-prepositions-after-verbs",
+    "egp.c1.prepositions.dependent-prepositions-precision",
+    "egp.c2.prepositions.dependent-prepositions-precision"
   ],
   "archetype": "slot-fill",
   "lessons": {

@@ -17,10 +17,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "prepositions",
   "egp": [
-    "EGP:B1 can use a range of adjectives followed by a dependent preposition (good at, interested in, afraid of, married to)",
-    "EGP:B2 can use a wider set of adjective + preposition collocations and distinguish near-synonyms that take different prepositions",
-    "EGP:C1 can handle adjectives that allow more than one preposition with a difference in meaning or register (concerned about/with, compare to/with)",
-    "EGP:C2 can use rare, formal and academic adjective + preposition collocations with appropriate register control"
+    "egp.a2.prepositions.prepositions-after-adjectives-verbs",
+    "egp.b1.prepositions.dependent-prepositions",
+    "egp.b2.adjectives-adverbs.adjectives-with-prepositions",
+    "egp.c1.prepositions.dependent-prepositions-precision",
+    "egp.c2.prepositions.dependent-prepositions-precision"
   ],
   "archetype": "slot-fill",
   "lessons": {
