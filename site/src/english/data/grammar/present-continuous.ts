@@ -20,7 +20,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "aspect",
   "egp": [
-    "EGP:can-use-the-present-continuous-to-talk-about-actions-happening-now"
+    "egp.a1.tenses-aspect.present-continuous-now",
+    "egp.a2.tenses-aspect.present-continuous-now-and-arrangements",
+    "egp.b1.tenses-aspect.present-continuous-future-arrangements",
+    "egp.b2.verbs.state-verbs-in-continuous",
+    "egp.c2.tenses-aspect.stative-verbs-marked-continuous"
   ],
   "archetype": "timeline",
   "lessons": {

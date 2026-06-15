@@ -18,11 +18,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "verb-patterns",
   "egp": [
-    "EGP:A2 verb + -ing (enjoy, like, stop)",
-    "EGP:B1 wider verb + -ing list and fixed phrases",
-    "EGP:B2 verb + object + -ing and preposition patterns",
-    "EGP:C1 passive and perfect gerunds",
-    "EGP:C2 gerund nominalization and rhetorical fronting"
+    "egp.a2.verbs.verb-plus-gerund-or-infinitive",
+    "egp.b1.verbs.gerund-vs-infinitive-after-verbs",
+    "egp.b1.prepositions.preposition-plus-gerund",
+    "egp.c1.prepositions.preposition-plus-gerund-clauses"
   ],
   "archetype": "slot-fill",
   "lessons": {

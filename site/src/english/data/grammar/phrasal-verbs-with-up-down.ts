@@ -17,7 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "phrasal-verbs",
   "egp": [
-    "EGP:phrasal-verbs-particle-up-down"
+    "egp.a2.verbs.phrasal-verbs-everyday",
+    "egp.b1.verbs.phrasal-verbs-common",
+    "egp.b2.verbs.phrasal-verbs-separable-transitive",
+    "egp.c2.verbs.phrasal-verb-register-control"
   ],
   "archetype": "scale",
   "lessons": {

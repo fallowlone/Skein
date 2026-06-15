@@ -16,7 +16,8 @@ export const topic: GrammarTopic = {
   ],
   "family": "tenses",
   "egp": [
-    "EGP:can-talk-about-completion-before-a-future-time-using-will-have-past-participle"
+    "egp.b2.tenses-aspect.future-perfect",
+    "egp.c1.tenses-aspect.future-perfect-and-continuous"
   ],
   "archetype": "timeline",
   "lessons": {

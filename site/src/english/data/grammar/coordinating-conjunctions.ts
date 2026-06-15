@@ -18,7 +18,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "conjunctions",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.discourse-cohesion.contrast-but-however",
+    "egp.a2.clauses.reason-clauses-because",
+    "egp.c1.word-order.inversion-after-negative-adverbials",
+    "egp.c1.discourse-cohesion.ellipsis-and-substitution",
+    "egp.c2.discourse-cohesion.wide-range-cohesive-devices"
   ],
   "archetype": "slot-fill",
   "lessons": {

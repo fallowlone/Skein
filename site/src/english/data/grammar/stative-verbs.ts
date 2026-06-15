@@ -17,9 +17,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "aspect",
   "egp": [
-    "EGP:B1:stative-verbs-non-progressive",
-    "EGP:B2:stative-dynamic-meaning-shift",
-    "EGP:C1:progressive-statives-for-temporariness"
+    "egp.b1.verbs.stative-vs-dynamic-verbs",
+    "egp.b2.verbs.state-verbs-in-continuous",
+    "egp.c2.tenses-aspect.stative-verbs-marked-continuous"
   ],
   "archetype": "contrast-pair",
   "lessons": {

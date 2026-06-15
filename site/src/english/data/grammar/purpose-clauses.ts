@@ -17,7 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "conjunctions",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.verbs.infinitive-of-purpose",
+    "egp.b1.verbs.infinitive-of-purpose",
+    "egp.b1.discourse-cohesion.purpose-linkers-so-that",
+    "egp.b2.clauses.purpose-result-clauses"
   ],
   "archetype": "branch",
   "lessons": {

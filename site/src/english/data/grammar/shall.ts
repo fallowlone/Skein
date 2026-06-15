@@ -17,9 +17,8 @@ export const topic: GrammarTopic = {
   ],
   "family": "modals",
   "egp": [
-    "EGP:Can ask SHALL I/WE to make offers and suggestions.",
-    "EGP:Can use SHALL with first person to talk about formal or determined future intentions.",
-    "EGP:Can recognise SHALL as obligation in legal, regulatory and contractual texts."
+    "egp.b1.verbs.will-spontaneous-decisions",
+    "egp.a2.modality.must-mustnt-rules"
   ],
   "archetype": "scale",
   "lessons": {

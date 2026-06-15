@@ -18,11 +18,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "articles",
   "egp": [
-    "EGP:A2 no article with plural and uncountable nouns used generally",
-    "EGP:B1 no article in institutional and fixed expressions (go to school, have breakfast, by car)",
-    "EGP:B2 no article in fixed prepositional phrases (in love, on holiday, at night)",
-    "EGP:C1 no article in parallel structures, slogans and abstractions",
-    "EGP:C2 no article in compressed headline, recipe and academic register"
+    "egp.b1.nouns-determiners.articles-general-vs-specific",
+    "egp.b2.nouns-determiners.articles-abstract-generic",
+    "egp.c1.nouns-determiners.article-use-with-abstract-and-generic-nouns",
+    "egp.c2.nouns-determiners.article-use-with-abstractions"
   ],
   "archetype": "contrast-pair",
   "lessons": {

@@ -17,7 +17,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "prepositions",
   "egp": [
-    "EGP:best-effort"
+    "egp.b2.prepositions.prepositional-phrases-cohesion",
+    "egp.c1.prepositions.complex-and-multiword-prepositions",
+    "egp.c2.prepositions.complex-and-formal-prepositions"
   ],
   "archetype": "slot-fill",
   "lessons": {

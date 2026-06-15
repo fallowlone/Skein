@@ -19,7 +19,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "adjectives",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.adjectives-adverbs.superlative-adjectives",
+    "egp.b1.adjectives-adverbs.comparatives-and-superlatives",
+    "egp.c2.adjectives-adverbs.marked-comparative-structures"
   ],
   "archetype": "scale",
   "lessons": {

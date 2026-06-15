@@ -16,7 +16,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "aspect",
   "egp": [
-    "EGP:best-effort"
+    "egp.b2.verbs.state-verbs-in-continuous",
+    "egp.c2.tenses-aspect.stative-verbs-marked-continuous",
+    "egp.c2.tenses-aspect.aspect-for-stance-and-distance"
   ],
   "archetype": "contrast-pair",
   "lessons": {

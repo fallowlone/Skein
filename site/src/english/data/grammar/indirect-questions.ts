@@ -17,8 +17,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "questions",
   "egp": [
-    "EGP:indirect-questions-word-order",
-    "EGP:indirect-yes-no-if-whether"
+    "egp.b1.questions-negation.indirect-questions",
+    "egp.b2.questions-negation.indirect-questions-embedded",
+    "egp.b1.clauses.reported-questions"
   ],
   "archetype": "transformation",
   "lessons": {

@@ -16,9 +16,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "passive",
   "egp": [
-    "EGP:passive-future-will-be-done",
-    "EGP:passive-be-going-to-be-done",
-    "EGP:passive-be-to-be-done"
+    "egp.b2.passive.passive-across-tenses",
+    "egp.b2.passive.passive-with-modals",
+    "egp.c1.passive.passive-for-focus-and-cohesion",
+    "egp.c2.passive.passive-with-causative-and-modal"
   ],
   "archetype": "transformation",
   "lessons": {

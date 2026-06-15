@@ -18,7 +18,8 @@ export const topic: GrammarTopic = {
   ],
   "family": "prepositions",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.prepositions.movement-to-from",
+    "egp.a2.prepositions.place-and-movement-prepositions"
   ],
   "archetype": "map",
   "lessons": {

@@ -17,8 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "aspect",
   "egp": [
-    "EGP:B1.PRESENT.PERFECT.CONTINUOUS.DURATION",
-    "EGP:B2.PRESENT.PERFECT.SIMPLE.VS.CONTINUOUS"
+    "egp.b1.tenses-aspect.present-perfect-continuous-duration",
+    "egp.b1.tenses-aspect.present-perfect-for-since",
+    "egp.b1.verbs.stative-vs-dynamic-verbs",
+    "egp.b2.tenses-aspect.present-perfect-vs-past-contrast"
   ],
   "archetype": "timeline",
   "lessons": {
