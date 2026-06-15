@@ -1,4 +1,5 @@
-export { generate, generateFromSpec, type GenerateOpts } from "./generate";
-export { composite } from "./cross-topic";
-export { validateExercise } from "./validate";
+export { generate, generateFromSpec, generateSetFromSpec, type GenerateOpts, type CompositeSupplier } from "./generate";
+export { composite, generateTopicSet } from "./cross-topic";
+export { validateExercise, validateProposed, type ProposedItem } from "./validate";
+export { proposeLiveExercises, type LiveProposer } from "./live";
 export type { GeneratedExercise } from "./types";
