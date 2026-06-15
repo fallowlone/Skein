@@ -619,7 +619,7 @@ export const topic: GrammarTopic = {
       },
       {
         "stem": "We can't afford ___ a new car this year. (hint: buy)",
-        "answer": "to afford to buy",
+        "answer": "to buy",
         "alts": [
           "to buy"
         ],
