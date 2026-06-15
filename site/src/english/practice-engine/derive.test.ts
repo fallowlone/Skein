@@ -31,3 +31,21 @@ describe("deriveKey registry", () => {
     expect(() => getStrategy("nope")).toThrow();
   });
 });
+
+describe("DERIVE — new strategies", () => {
+  it("noun-plural-form", () => {
+    expect(getStrategy("noun-plural-form")({ slots: { noun: "city" }, raw: { noun: "city" }, level: "A1" }).primary).toBe("cities");
+  });
+  it("negative-present by subject", () => {
+    expect(getStrategy("negative-present")({ slots: { subj: "She", verb: "work" }, raw: { subj: "She", verb: "work" }, level: "A2" }).primary).toBe("doesn't work");
+  });
+  it("question-aux-past", () => {
+    expect(getStrategy("question-aux-past")({ slots: { subj: "They", verb: "go" }, raw: { subj: "They", verb: "go" }, level: "A2" }).primary).toBe("Did");
+  });
+  it("possessive-s", () => {
+    expect(getStrategy("possessive-s")({ slots: { noun: "dog" }, raw: { noun: "dog" }, level: "A1" }).primary).toBe("dog's");
+  });
+  it("context strategy is a no-op placeholder (engine overrides via fillContext)", () => {
+    expect(getStrategy("context")({ slots: {}, raw: {}, level: "A1" }).primary).toBe("");
+  });
+});
