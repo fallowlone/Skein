@@ -2,8 +2,17 @@ import { useEffect, useRef } from "preact/hooks";
 import type { AnimationItem } from "lottie-web";
 import type { LottieDoc } from "~/english/animations/lottie-types";
 
+/**
+ * Props for the grammar animation island.
+ * NOTE: `doc` must be a STABLE reference — the effect re-inits lottie (destroy +
+ * reload) whenever `doc` identity changes. Callers building it per render should
+ * memoize: `const doc = useMemo(() => resolveAnimation(topic)!.doc(), [topic.id])`.
+ * In the typical Astro mount the doc is built once and passed as a stable prop.
+ */
 type Props = { doc: LottieDoc; reducedMotion?: boolean; label?: string };
 
+// Read once at mount. A live OS reduced-motion toggle won't re-render the island —
+// acceptable for a static-content island (no re-subscribe needed for our use).
 function prefersReduced(forced?: boolean): boolean {
   if (forced) return true;
   if (typeof window === "undefined" || !window.matchMedia) return false;
