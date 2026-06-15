@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "verb-infinitive-or-gerund-different-meaning",
   "title": {
-    "en": "",
+    "en": "Verb + Infinitive or Gerund (Different Meaning)",
     "ru": "Verb Infinitive Or Gerund Different Meaning"
   },
   "cefr": "B1",
@@ -15,159 +15,329 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "verb-patterns",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "A small group of verbs takes both a to-infinitive and an -ing form, but the meaning changes completely depending on which one you choose. This is one of the most useful patterns at B1, so learn the pairs as fixed contrasts.\n\n**remember / forget** — the to-infinitive points forward to a task; the -ing form looks back at a memory. *Remember to lock the door* (do it now/later) vs *I remember locking the door* (I have a memory of doing it).\n\n**stop** — *stop to do* means you pause in order to do something else (purpose); *stop doing* means you quit the activity itself. *He stopped to smoke* = he paused so he could smoke. *He stopped smoking* = he gave it up.\n\n**try** — *try to do* is to make an effort that may fail; *try doing* is to experiment with a method to see what happens. *I tried to open the jar* (and struggled) vs *Try adding more salt* (test it as a solution).\n\n**regret** — *regret to do* is a formal way to deliver bad news now (*I regret to inform you...*); *regret doing* means you are sorry about a past action (*I regret saying that*).\n\n**need** — *I need to wash the car* (I will do it) vs *The car needs washing* (the -ing form is passive in meaning: it needs to be washed).\n\nThe key test is time and viewpoint: is the action ahead of you (to-infinitive) or behind you / passive (-ing)?",
         "ru": "Некоторые глаголы меняют смысл в зависимости от того, идёт после них инфинитив или герундий. Это один из самых важных тем для B1.\n\n**Remember:**\n- `remember to do` — не забыть сделать (будущее действие): `Remember to lock the door.` (Не забудь закрыть дверь.)\n- `remember doing` — помнить, что делал (воспоминание о прошлом): `I remember meeting her in 2019.` (Я помню, как встречал её в 2019.)\n\n**Forget:**\n- `forget to do` — забыть сделать (задача): `Don't forget to call me.` (Не забудь позвонить мне.)\n- `forget doing` — забыть о том, что делал: `I'll never forget seeing the Eiffel Tower.`\n\n**Regret:**\n- `regret to do` — с сожалением сообщать (formal, usually to say/tell/inform/announce): `I regret to inform you...` (К сожалению, должен сообщить...)\n- `regret doing` — жалеть о том, что сделал: `I regret saying that to her.` (Я жалею, что сказал ей это.)\n\n**Stop:**\n- `stop to do` — остановиться, чтобы сделать (цель): `He stopped to smoke.` (Он остановился, чтобы покурить.)\n- `stop doing` — перестать делать (прекращение): `He stopped smoking.` (Он бросил курить.)\n\n**Try:**\n- `try to do` — попытаться (с усилием, может не получиться): `I tried to open the jar.` (Я попытался открыть банку.)\n- `try doing` — попробовать в качестве эксперимента: `Try adding more salt.` (Попробуй добавить больше соли.)\n\n**Need:**\n- `need to do` — мне нужно сделать (я делаю): `I need to wash the car.`\n- `need doing` — нуждается в (passive smysle): `The car needs washing.`\n\n**Частая ошибка:** смешивать regret to say (делаю сейчас) и regret saying (жалею о прошлом). Проверяй время действия."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + to-infinitive (forward / effort)  |  verb + -ing (memory / activity / passive)",
+        "ru": "глагол + to-инфинитив (вперёд / усилие)  |  глагол + -ing (воспоминание / процесс / пассив)"
       },
       "examples": [
         {
           "en": "Remember to take your umbrella.",
-          "ru": "Не забудь взять зонт."
+          "ru": "Не забудь взять зонт.",
+          "note": {
+            "en": "task ahead",
+            "ru": "будущая задача"
+          }
         },
         {
           "en": "I remember visiting Rome as a child.",
-          "ru": "Я помню, как был в Риме в детстве."
+          "ru": "Я помню, как был в Риме в детстве.",
+          "note": {
+            "en": "past memory",
+            "ru": "воспоминание"
+          }
         },
         {
           "en": "He stopped to rest.",
-          "ru": "Он остановился отдохнуть."
+          "ru": "Он остановился отдохнуть.",
+          "note": {
+            "en": "purpose",
+            "ru": "цель"
+          }
         },
         {
           "en": "She stopped smoking last year.",
-          "ru": "Она бросила курить в прошлом году."
+          "ru": "Она бросила курить в прошлом году.",
+          "note": {
+            "en": "quit",
+            "ru": "прекращение"
+          }
         },
         {
           "en": "I regret telling him the truth.",
-          "ru": "Я жалею, что сказал ему правду."
+          "ru": "Я жалею, что сказал ему правду.",
+          "note": {
+            "en": "sorry about past",
+            "ru": "сожаление о прошлом"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Remember TO do = будущая задача; Remember DOING = воспоминание. Аналогично forget, regret."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He stopped to smoke ten years ago.",
+          "right": "He stopped smoking ten years ago.",
+          "why": {
+            "en": "To quit an activity, use stop + -ing. Stop + to-infinitive means pause in order to do it.",
+            "ru": "Чтобы сказать «бросил», нужен stop + -ing. Stop + инфинитив значит «остановился, чтобы покурить»."
+          }
+        },
+        {
+          "wrong": "Don't forget calling me tomorrow.",
+          "right": "Don't forget to call me tomorrow.",
+          "why": {
+            "en": "A future task uses forget + to-infinitive; forget + -ing is a past memory.",
+            "ru": "Будущая задача — forget + инфинитив; forget + -ing — воспоминание о прошлом."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the contrast widens to verbs of intention, sequence and perception, where the form quietly reroutes the meaning.\n\n**mean** — *mean to do* = intend (*I meant to call you*); *mean doing* = involve / result in (*Taking this job means moving city*).\n\n**go on** — *go on to do* = move to a different next action (*She went on to become a doctor*); *go on doing* = keep doing the same thing (*He went on talking for hours*).\n\n**come** — *come to do* describes reaching a mental state gradually (*I came to realize my mistake*). There is no everyday *come doing* with this meaning.\n\n**like / love / hate / prefer** — with a to-infinitive these often mean habit, choice or willingness, especially after *would*; with -ing they mean general enjoyment. *I'd love to go* (a specific offer/plan) vs *I love going* (in general). The like-to-do vs like-doing split is subtle and is almost erased in American English.\n\n**propose** — *propose to do* = personally intend (*I propose to start at nine*); *propose doing* = suggest as an idea for the group (*I propose starting at nine*).\n\nAlso note the *verb + object + to-infinitive* pattern with these emotion verbs: *I'd like her to come*, *I'd hate you to go* — here you want someone else to act. The classic B2 error is ignoring the time difference: *I regret telling him* (already said, sorry) vs *I regret to tell you* (saying it now, with regret).",
         "ru": "На B2 углубляй понимание verbs where form changes meaning.\n\n**Mean:**\n- `mean to do` — намереваться: `I meant to call you.` (Я собирался тебе позвонить.)\n- `mean doing` — означать (следствие): `Missing the bus means waiting an hour.` (Пропустить автобус означает ждать час.)\n\n**Go on:**\n- `go on to do` — перейти к другому действию: `She went on to become a doctor.` (Она потом стала врачом.)\n- `go on doing` — продолжать то же самое: `He went on talking for hours.` (Он продолжал говорить часами.)\n\n**Come to:**\n- `come to do` — прийти к осознанию (mental): `I came to realize my mistake.` (Я пришёл к осознанию своей ошибки.)\n- `come doing` — существует редко, другое значение.\n\n**Like (nuance):**\n- `like to do` — habit / preference: `I like to read before bed.` (Люблю читать перед сном — привычка.)\n- `like doing` — enjoyment: `I like reading.` (Мне нравится чтение.)\n\nРазница тонкая; в AmE почти стёрта.\n\n**Prefer (sometimes different):**\n- `prefer to do rather than do` — предпочитать (с сравнением): `I prefer to walk rather than drive.`\n- `prefer doing to doing` — с gerund сравнение: `I prefer walking to driving.`\n\n**Propose:**\n- `propose to do` — намерен сделать: `I propose to start at 9.`\n- `propose doing` — предложить (as a suggestion): `I propose starting at 9.`\n\n**Love / hate / like вариации в BrE:**\n- `I'd love to go.` (offer / future plan — to-inf only with would.)\n- `I love going.` (general enjoyment.)\n\n**Advanced: 'hate/love/prefer/like + object + to-inf':**\n- `I'd hate you to go.` (хочу, чтобы ты не уходил.)\n- `I'd like her to come.` (хочу, чтобы она пришла.)\n- С `-ing`: `I hate her being late.` (мне не нравится, что она опаздывает.)\n\n**Ошибка:** забыть временную разницу. `I regret telling him` — я уже сказал и жалею; `I regret to tell you` — я сейчас говорю и мне жаль."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + to-infinitive (intention / next step / willingness)  |  verb + -ing (result / same activity / enjoyment)",
+        "ru": "глагол + to-инфинитив (намерение / следующий шаг / готовность)  |  глагол + -ing (следствие / то же действие / удовольствие)"
       },
       "examples": [
         {
           "en": "I meant to send the email, but I forgot.",
-          "ru": "Я собирался отправить email, но забыл."
+          "ru": "Я собирался отправить email, но забыл.",
+          "note": {
+            "en": "intention",
+            "ru": "намерение"
+          }
         },
         {
           "en": "Taking this job means moving to another city.",
-          "ru": "Взять эту работу означает переехать в другой город."
+          "ru": "Взять эту работу означает переехать в другой город.",
+          "note": {
+            "en": "result / involves",
+            "ru": "следствие"
+          }
         },
         {
           "en": "She went on to win the championship.",
-          "ru": "Она потом выиграла чемпионат."
+          "ru": "Она потом выиграла чемпионат.",
+          "note": {
+            "en": "next step",
+            "ru": "следующий шаг"
+          }
         },
         {
           "en": "He went on complaining for an hour.",
-          "ru": "Он продолжал жаловаться целый час."
+          "ru": "Он продолжал жаловаться целый час.",
+          "note": {
+            "en": "same activity",
+            "ru": "то же действие"
+          }
         },
         {
           "en": "I came to understand her perspective.",
-          "ru": "Я пришёл к пониманию её точки зрения."
+          "ru": "Я пришёл к пониманию её точки зрения.",
+          "note": {
+            "en": "mental state",
+            "ru": "осознание"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Mean to do = намерен; Mean doing = означает (следствие). Контекст — was intent or was consequence."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Missing the bus means to wait an hour.",
+          "right": "Missing the bus means waiting an hour.",
+          "why": {
+            "en": "When mean = involve/result, use the -ing form. Mean + to-infinitive is only for intention.",
+            "ru": "Когда mean = «означает/влечёт», нужен -ing. Mean + инфинитив — только для намерения."
+          }
+        },
+        {
+          "wrong": "After school she went on becoming a doctor.",
+          "right": "After school she went on to become a doctor.",
+          "why": {
+            "en": "Go on + to-infinitive marks the next, different stage. Go on + -ing means continuing the same action.",
+            "ru": "Go on + инфинитив — переход к новому этапу. Go on + -ing — продолжение того же действия."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the focus shifts to fine nuance, perfect forms and adjective complements.\n\n**Layered remember/forget** — beyond the basic pair you can use a that-clause for full propositional content (*I forgot that I had seen her*), an -ing form for the event-memory (*I forgot seeing her*), and a to-infinitive for the unfulfilled task (*I forgot to see her*). Add *having + V3* to mark anteriority: *I remember having told her* stresses that it happened earlier.\n\n**Formal regret** — *We regret to inform you that your application has been unsuccessful* is the standard rejection formula; the perfect gerund works in the negative: *She regrets not having studied harder*.\n\n**try as a gradient** — *try to* is goal-directed effort that may fail; *try -ing* is testing a method as advice (*Try opening it with hot water*).\n\n**Perception verbs** — *see/hear/watch + object + bare infinitive* views the action as complete (*I saw him cross the street*), while *+ -ing* views it as ongoing or partial (*I saw him crossing the street*). This is an aspectual difference, not a meaning swap.\n\n**Adjective + complement pairs** carry the same logic. *afraid to do* = not daring to act (*She was afraid to ask*); *afraid of doing* = fearing a possible outcome (*afraid of falling*). *interested to hear* follows new information; *interested in -ing* is a lasting interest. *sorry to do* is regret about something you are doing now (*sorry to disturb you*); *sorry for/about -ing* apologizes for a past action.",
         "ru": "На C1 углубляй тонкие оттенки и ловушки.\n\n**Remember / forget — extended nuances:**\n- `I forgot that I had seen her.` (that-clause для полной propositional information.)\n- `I forgot seeing her.` (gerund — memory of the event.)\n- `I forgot to see her.` (я не увидел — задача не выполнена.)\n\nДобавь `having + V3` для предшествования:\n- `I remember having told her.` (подчёркивает that this happened before.)\n\n**Regret — formal usage:**\n- `We regret to inform you that your application has been unsuccessful.` — стандарт для отказов.\n- `She regrets not having studied harder.` (negative perfect gerund.)\n\n**Try — semantic gradient:**\n- `try to + inf` — make an effort, goal-oriented; may fail.\n- `try + -ing` — experiment, test a method.\n- `He tried to open the jar (but failed).` vs `Try opening it with hot water.` (как совет).\n\n**Stop vs leave off:**\n- `stop + -ing` = quit.\n- `leave off + -ing` (informal, BrE) = quit: `Where did we leave off talking?`\n\n**Come to / go on — aspect of development:**\n- `come to + inf` — to reach mental state: `He came to accept it.`\n- `go on + to-inf` — next step in a narrative or life: `He went on to write three more novels.`\n- `go on + -ing` — continuation of same activity.\n\n**Hear / see / watch + obj + to-inf vs -ing:**\n- `I saw him cross the street.` (bare inf — видел от начала до конца.)\n- `I saw him crossing the street.` (-ing — видел в процессе, может быть неполностью.)\n- Aspectual difference: completed (bare inf) vs ongoing (-ing).\n\n**Advise / allow / permit / recommend:**\n- Без объекта — обычно gerund: `I recommend studying hard.`\n- С объектом — to-inf: `I recommend you to study hard.` (реже, AmE) / `I recommend that you study hard.` (common, subjunctive.)\n\n**Subtle C1 distinction:**\n- `afraid to do` — не осмеливаться (страх перед actions): `She was afraid to ask.`\n- `afraid of doing` — боится того, что может случиться: `She was afraid of falling.`\n\n**Interested:**\n- `interested to know / hear` — after receiving information: `I'd be interested to hear your opinion.`\n- `interested in + -ing` — long-term interest: `She's interested in collecting stamps.`\n\n**Sorry:**\n- `sorry to do` — сожалею, что сейчас делаю: `I'm sorry to disturb you.`\n- `sorry for / about + -ing` — извинение за действие: `I'm sorry for being late.`\n- `sorry + that-clause` — full proposition: `I'm sorry that happened.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb/adjective + to-infinitive (task / daring / new info)  |  + -ing or having+V3 (event-memory / lasting interest / anteriority)",
+        "ru": "глагол/прилагательное + to-инфинитив (задача / решимость / новая информация)  |  + -ing или having+V3 (память о событии / устойчивый интерес / предшествование)"
       },
       "examples": [
         {
           "en": "I remember having met him before.",
-          "ru": "Я помню, что встречал его раньше."
+          "ru": "Я помню, что встречал его раньше.",
+          "note": {
+            "en": "anterior memory",
+            "ru": "предшествующее"
+          }
         },
         {
           "en": "She's afraid to speak in public.",
-          "ru": "Она боится выступать публично."
+          "ru": "Она боится выступать публично.",
+          "note": {
+            "en": "not daring",
+            "ru": "не осмеливается"
+          }
         },
         {
           "en": "He's afraid of making mistakes.",
-          "ru": "Он боится совершать ошибки."
+          "ru": "Он боится совершать ошибки.",
+          "note": {
+            "en": "fears outcome",
+            "ru": "боится последствий"
+          }
         },
         {
           "en": "I'd be interested to hear what she said.",
-          "ru": "Мне было бы интересно услышать, что она сказала."
+          "ru": "Мне было бы интересно услышать, что она сказала.",
+          "note": {
+            "en": "after new info",
+            "ru": "после информации"
+          }
         },
         {
           "en": "Try adding a pinch of salt to see if it improves.",
-          "ru": "Попробуй добавить щепотку соли, чтобы проверить, улучшится ли."
+          "ru": "Попробуй добавить щепотку соли, чтобы проверить, улучшится ли.",
+          "note": {
+            "en": "test a method",
+            "ru": "проверить способ"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Afraid TO DO = не осмеливается; Afraid OF DOING = боится последствий. She's afraid to fly vs She's afraid of falling."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She was afraid of asking, so she said nothing.",
+          "right": "She was afraid to ask, so she said nothing.",
+          "why": {
+            "en": "Afraid to + infinitive = not daring to act. Afraid of + -ing = fearing a consequence.",
+            "ru": "Afraid to + инфинитив — не осмеливается. Afraid of + -ing — боится последствий."
+          }
+        },
+        {
+          "wrong": "I'd be interested in hearing what she said about today's meeting.",
+          "right": "I'd be interested to hear what she said about today's meeting.",
+          "why": {
+            "en": "Reacting to specific new information takes interested + to-infinitive; interested in + -ing is a general, lasting interest.",
+            "ru": "Реакция на конкретную новую информацию — interested + инфинитив; interested in + -ing — общий устойчивый интерес."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the work is in the finest distinctions, fixed idioms and register.\n\n**Past reference with perfect forms** — *I remember having seen it* is formal; *I remember seeing it* is the neutral standard; *I remember to have seen it* is archaic and best avoided.\n\n**Fixed cognitive idioms** — *come to think of it*, *come to believe*, *come to pass* (archaic) are set phrases; do not swap the form.\n\n**Rhetorical to-infinitive frames** — *Needless to say*, *To cut a long story short*, *To be fair*, *Not to beat about the bush* are fossilized; they always take the to-infinitive.\n\n**Negative asymmetry** — note how the meaning splits under negation: *I didn't remember to call* (the task went undone) vs *I didn't remember calling* (no memory of having called); *I can't remember calling* is the natural recollection form, while *I don't remember to call* sounds odd and is usually rephrased.\n\n**Strict to-infinitive verbs** — *attempt*, *endeavour*, *venture* take only the to-infinitive (*She attempted to solve it*; *He ventured to speak*); with a preposition the picture changes (*He ventured into public speaking*).\n\n**Literary and modal layering** — *He lived to see his dream come true* (the to-infinitive marks an outcome reached); *He lived seeing...* is ungrammatical. With modal perfects, form encodes speculation: *He must have meant to say...* (intention) vs the grammatical-but-ambiguous *meant saying...*.\n\nThe real C2 skill is not picking the form but sensing when the form matters at all: if the meaning shifts, choose precisely; if it does not, let rhythm and register decide.",
         "ru": "На C2 работай с самыми тонкими дифференциациями.\n\n**Perfect gerund vs infinitive for past reference:**\n- `I remember to have seen it.` — архаично-formal, rare.\n- `I remember having seen it.` — formal.\n- `I remember seeing it.` — неутральный стандарт.\n\n**Subtle shifts with cognitive verbs:**\n- `come to think of it` — fixed idiom: «если подумать».\n- `come to believe` — прийти к вере.\n- `come to pass` — archaic: случиться.\n\n**Rhetorical uses:**\n- `Not to beat about the bush, ...` — fixed idiom (не ходить вокруг да около).\n- `Needless to say, ...` — излишне говорить, что.\n- `To cut a long story short, ...` — короче говоря.\n- `To be fair, ...` — справедливости ради.\n\n**Register-specific collocations:**\n- Formal: `I regret to inform / announce / advise / communicate.`\n- Formal academic: `This suggests / implies / indicates + gerund/clause.`\n\n**Semantic asymmetry в negative forms:**\n- `I didn't remember to call.` (я забыл позвонить — задача не выполнена.)\n- `I didn't remember calling.` (я не помнил, что звонил — события не было в памяти.)\n- `I don't remember to call.` — странно; usually reformulated.\n- `I can't remember calling.` — стандартная negative past recollection.\n\n**Attempt / endeavour — to-inf strict:**\n- `She attempted to solve the puzzle.` (to-inf only.)\n- `She endeavoured to understand.` (formal.)\n\n**Venture — to-inf obvious:**\n- `He ventured to speak.` (осмелился сказать.)\n- `He ventured into speaking publicly.` (with preposition.)\n\n**Literary patterns:**\n- `He lived to see his dream come true.` (to-inf = дожил до того, что увидел.)\n- `He lived seeing his dream come true.` — неграмматично; не говори так.\n\n**Aspectual / modal layering:**\n- `He must have meant to say...` (modal perfect + to-inf — speculation about past intention.)\n- `He must have meant saying...` — grammatical but ambiguous.\n\n**Final C2 nuance:** \nКогда уверенно владеешь этими парами, choice становится автоматическим. Ошибка на C2 — не выбор формы, а неспособность распознать, когда форма важна. Проверяй: меняется ли смысл? Если да — выбирай точно. Если нет — ритм и регистр."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "fixed frame / strict verb + to-infinitive  |  -ing or having+V3 where meaning genuinely shifts",
+        "ru": "устойчивая конструкция / строгий глагол + to-инфинитив  |  -ing или having+V3, где смысл действительно меняется"
       },
       "examples": [
         {
           "en": "I don't remember locking the door, but I must have.",
-          "ru": "Я не помню, чтобы запирал дверь, но, должно быть, запер."
+          "ru": "Я не помню, чтобы запирал дверь, но, должно быть, запер.",
+          "note": {
+            "en": "no memory",
+            "ru": "нет воспоминания"
+          }
         },
         {
           "en": "She regrets not having pursued her dreams.",
-          "ru": "Она жалеет, что не стремилась к своим мечтам."
+          "ru": "Она жалеет, что не стремилась к своим мечтам.",
+          "note": {
+            "en": "negative perfect",
+            "ru": "отрицательный перфект"
+          }
         },
         {
           "en": "He lived to witness the fall of the regime.",
-          "ru": "Он дожил до того, чтобы увидеть падение режима."
+          "ru": "Он дожил до того, чтобы увидеть падение режима.",
+          "note": {
+            "en": "outcome reached",
+            "ru": "дожил до"
+          }
         },
         {
           "en": "Needless to say, the decision was controversial.",
-          "ru": "Излишне говорить, что решение было спорным."
+          "ru": "Излишне говорить, что решение было спорным.",
+          "note": {
+            "en": "fixed idiom",
+            "ru": "устойчивая фраза"
+          }
         },
         {
           "en": "We regret to announce the cancellation of the event.",
-          "ru": "С сожалением сообщаем об отмене мероприятия."
+          "ru": "С сожалением сообщаем об отмене мероприятия.",
+          "note": {
+            "en": "formal notice",
+            "ru": "формальное сообщение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Needless to say / regret to inform / come to think of it — это idioms, не переставляй форму: these are FIXED."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He lived seeing the fall of the regime.",
+          "right": "He lived to see the fall of the regime.",
+          "why": {
+            "en": "Live + to-infinitive expresses surviving long enough to reach an outcome; the -ing form is ungrammatical here.",
+            "ru": "Live + инфинитив — «дожил до»; форма с -ing здесь неграмматична."
+          }
+        },
+        {
+          "wrong": "Needless saying, the decision was controversial.",
+          "right": "Needless to say, the decision was controversial.",
+          "why": {
+            "en": "Needless to say is a fixed to-infinitive idiom and cannot be reshaped into an -ing form.",
+            "ru": "Needless to say — устойчивая идиома с инфинитивом, её нельзя переделать в -ing."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "verb-infinitive-or-gerund-same-meaning",
+    "verb-plus-gerund",
+    "verb-plus-infinitive",
+    "adjective-plus-infinitive"
+  ],
+  "crossTopic": [
+    "prepositions-after-adjectives",
+    "modal-perfect",
+    "reported-statements",
+    "purpose-clauses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "verb + to-infinitive",
+      "verb + -ing"
+    ]
+  }
 };

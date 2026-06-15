@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "prepositions-of-place",
   "title": {
-    "en": "",
+    "en": "Prepositions of Place",
     "ru": "Prepositions Of Place"
   },
   "cefr": "A1",
@@ -17,233 +17,484 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "prepositions",
+  "egp": [
+    "EGP:A1.PREP.location-in-on-under",
+    "EGP:A2.PREP.behind-in-front-of-above-below",
+    "EGP:B1.PREP.at-vs-in-vs-on-contrast"
+  ],
+  "archetype": "map",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "Prepositions of place tell you WHERE something is. At A1, master three core words plus two easy extras.\n\n**in = inside** something with walls or sides: in the box, in the room, in the bag. *The cat is in the box.*\n\n**on = touching a surface** from above or against it: on the table, on the wall, on the floor. *The book is on the table. The picture is on the wall.*\n\n**under = below and covered by** something: under the bed, under the chair. *The dog is under the bed.*\n\n**next to = at the side of**, very close: *The lamp is next to the sofa.*\n\n**between = in the middle of two things**: *The bank is between the shop and the cafe.*\n\nThe normal pattern is be + preposition + the + noun: *It is on the table.* Use the article (the, a) before the noun unless it is a name.",
         "ru": "Предлоги места показывают, **где находится** предмет или человек. На A1 выучи три главных: `in`, `on`, `under`.\n\n**`in` = внутри** (в коробке, в комнате, в сумке).\n- `The cat is in the box.` (Кот в коробке.)\n- `My keys are in my bag.` (Мои ключи в сумке.)\n\n**`on` = на поверхности** (на столе, на стене, на полу).\n- `The book is on the table.` (Книга на столе.)\n- `The picture is on the wall.` (Картина на стене.)\n\n**`under` = под** (под кроватью, под стулом).\n- `The dog is under the bed.` (Собака под кроватью.)\n- `My shoes are under the chair.` (Мои ботинки под стулом.)\n\n**Два других простых предлога:**\n- `next to` = рядом: `The lamp is next to the sofa.` (Лампа рядом с диваном.)\n- `between` = между (двух вещей): `The bank is between the shop and the cafe.` (Банк между магазином и кафе.)\n\n**Частая ошибка.** Русский \"в коробке\" = английский `in the box` (внутри). Но \"на автобусе\" — НЕ `on`, а смотри: для транспорта правила отдельные. Пока просто запоминай три предлога для физических предметов."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + be + preposition + noun phrase",
+        "ru": "подлежащее + be + предлог + именная группа"
       },
       "examples": [
         {
           "en": "The ball is in the box.",
-          "ru": "Мяч в коробке."
+          "ru": "Мяч в коробке.",
+          "note": {
+            "en": "in = inside",
+            "ru": "in = внутри"
+          }
         },
         {
           "en": "The cup is on the table.",
-          "ru": "Чашка на столе."
+          "ru": "Чашка на столе.",
+          "note": {
+            "en": "on = surface",
+            "ru": "on = поверхность"
+          }
         },
         {
           "en": "The cat is under the chair.",
-          "ru": "Кот под стулом."
+          "ru": "Кот под стулом.",
+          "note": {
+            "en": "under = below",
+            "ru": "under = под"
+          }
         },
         {
           "en": "The lamp is next to the bed.",
-          "ru": "Лампа рядом с кроватью."
+          "ru": "Лампа рядом с кроватью.",
+          "note": {
+            "en": "next to = beside",
+            "ru": "next to = рядом"
+          }
         },
         {
           "en": "The park is between the school and the library.",
-          "ru": "Парк между школой и библиотекой."
+          "ru": "Парк между школой и библиотекой.",
+          "note": {
+            "en": "between = two things",
+            "ru": "between = между двумя"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "in = внутри, on = на поверхности, under = под. Запоминай с картинками."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The cup is in the table.",
+          "right": "The cup is on the table.",
+          "why": {
+            "en": "Use on for a flat surface; in means enclosed inside.",
+            "ru": "On — для плоской поверхности; in значит внутри."
+          }
+        },
+        {
+          "wrong": "The cat is under chair.",
+          "right": "The cat is under the chair.",
+          "why": {
+            "en": "An article is needed before a singular countable noun.",
+            "ru": "Перед исчисляемым существительным в единственном числе нужен артикль."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2 you add more position words and start choosing between near-synonyms.\n\n**behind** = at the back of: *The garden is behind the house.* **in front of** = at the front of: *There is a car in front of the shop.*\n\n**above / over** = higher than: *The lamp is above the table.* Use over when something moves across or covers: *A plane flew over the city.* **below / under** = lower than: *The sun is below the horizon.*\n\n**between vs among**: use between for two reference points, among for three or more. *She sat between Tom and Anna* (two). *He stood among the trees* (many).\n\n**at = a point or specific spot**: at the door, at the bus stop, at the corner. *Wait for me at the entrance.*\n\n**at vs in for places**: at school / at home points at the place as a function; in the school / in the house points at being physically inside the building.\n\n**Transport collocations**: say on the bus, on the plane, on the train (public transport you walk around in), but in the car and in a taxi (small private vehicles).",
         "ru": "На A2 добавь больше предлогов места.\n\n**`behind` = позади, за:**\n- `The garden is behind the house.` (Сад за домом.)\n\n**`in front of` = перед:**\n- `There is a car in front of the shop.` (Машина перед магазином.)\n\n**`above` / `over` = выше, над:**\n- `The lamp is above the table.` (Лампа над столом.)\n- `A plane flew over the city.` (Самолёт пролетел над городом.)\n\n**`below` / `under` = ниже, под:**\n- `The sun is below the horizon.` (Солнце ниже горизонта.)\n\n**`among` = среди (многих):**\nИспользуй `between` для двух вещей, `among` — для трёх и больше.\n- `She sat between Tom and Anna.` (Она сидела между Томом и Анной — двое.)\n- `He stood among the trees.` (Он стоял среди деревьев — много.)\n\n**`at` = в точке, у:**\n- `at the door` (у двери), `at the bus stop` (на остановке), `at the corner` (на углу).\n- `Wait for me at the entrance.` (Жди меня у входа.)\n\n**Важно: `at` vs `in` для места:**\n- `at school` (в школе как учреждении), `in the school` (внутри здания школы).\n- `at home` (дома — у себя), `in the house` (внутри дома как помещения).\n\n**Ошибка русскоязычных.** Мы говорим \"в автобусе\" — по-английски `on the bus` (на транспорте), не `in the bus`. Для общественного транспорта — `on` (on the bus, on the plane, on the train). Для машины — `in the car`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + be + preposition (+ of) + noun phrase",
+        "ru": "подлежащее + be + предлог (+ of) + именная группа"
       },
       "examples": [
         {
           "en": "The cat is behind the sofa.",
-          "ru": "Кот за диваном."
+          "ru": "Кот за диваном.",
+          "note": {
+            "en": "behind",
+            "ru": "behind"
+          }
         },
         {
           "en": "There is a tree in front of the window.",
-          "ru": "Перед окном дерево."
+          "ru": "Перед окном дерево.",
+          "note": {
+            "en": "in front of",
+            "ru": "in front of"
+          }
         },
         {
           "en": "A bird is flying above the roof.",
-          "ru": "Птица летит над крышей."
+          "ru": "Птица летит над крышей.",
+          "note": {
+            "en": "above + motion",
+            "ru": "above + движение"
+          }
         },
         {
           "en": "She is waiting at the bus stop.",
-          "ru": "Она ждёт на остановке."
+          "ru": "Она ждёт на остановке.",
+          "note": {
+            "en": "at = point",
+            "ru": "at = точка"
+          }
         },
         {
           "en": "I sat between my mum and my sister.",
-          "ru": "Я сидел между мамой и сестрой."
+          "ru": "Я сидел между мамой и сестрой.",
+          "note": {
+            "en": "between = two",
+            "ru": "between = двое"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "between — двое; among — трое и больше. On the bus, НЕ in the bus."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I was in the bus.",
+          "right": "I was on the bus.",
+          "why": {
+            "en": "Public transport takes on, not in.",
+            "ru": "С общественным транспортом — on, не in."
+          }
+        },
+        {
+          "wrong": "She sat among Tom and Anna.",
+          "right": "She sat between Tom and Anna.",
+          "why": {
+            "en": "Between is for two; among is for three or more.",
+            "ru": "Between — для двоих; among — для троих и больше."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the focus is the fine line between similar prepositions.\n\n**in vs at for places**: in frames a place as a volume you are inside (in the room, in the kitchen); at frames a place as a point or an event (at the meeting, at the party, at the conference). *I met her at the conference* (the event) but *I was in the hall* (the space).\n\n**on vs at for addresses**: on Oxford Street (the street in general) but at 25 Oxford Street (a specific number).\n\n**in vs into**: in is static position; into is movement to an inside. *The cat is in the box* vs *The cat jumped into the box.*\n\n**Cities and countries always take in**: *I live in Moscow. She works in Germany.* At + city only appears in the narrow transit sense (*We stopped at Moscow for two hours*).\n\n**arrive at / arrive in**: arrive at a small place (arrive at the station, arrive at the hotel), arrive in a city or country (arrive in London, arrive in France). Never arrive to.\n\n**beside vs besides**: beside = next to (*Sit beside me*); besides = in addition (*Besides, it's too late*). **opposite** = facing, across from: *The pharmacy is opposite the bank.*",
         "ru": "На B1 фокус — тонкая разница между похожими предлогами.\n\n**`in` vs `at` для мест:**\n- `in` подчёркивает помещение как объём: `in the room`, `in the kitchen`.\n- `at` подчёркивает место как точку или мероприятие: `at the meeting`, `at the party`, `at the conference`.\n\nПример: `I met her at the conference` (на конференции как событии), `I was in the hall` (в зале как помещении).\n\n**`on` vs `at` для улиц и адресов:**\n- `on Oxford Street` (на улице — общее).\n- `at 25 Oxford Street` (с конкретным номером).\n\n**`in` vs `into`:**\n- `in` = статично, где находится: `The cat is in the box.`\n- `into` = движение внутрь: `The cat jumped into the box.`\n\n**`at` vs `in` для городов/стран:**\nГорода и страны — всегда `in`:\n- `I live in Moscow.` (Живу в Москве.)\n- `She works in Germany.` (Работает в Германии.)\n\nНикогда `at Moscow` — это ошибка. `at` для города возможно в очень узком смысле — точка на карте при путешествии: `We stopped at Moscow for two hours` (в контексте транзита).\n\n**Предлог `with` vs `at` с глаголом `arrive`:**\n- `arrive at` для маленьких мест: `arrive at the station`, `arrive at the hotel`.\n- `arrive in` для городов/стран: `arrive in London`, `arrive in France`.\n- НИКОГДА `arrive to` — это частая ошибка русскоязычных (мы говорим \"прибыть в\" и переводим буквально).\n\n**`beside` vs `besides`:**\n- `beside` = рядом: `Sit beside me.` (Сядь рядом.)\n- `besides` = кроме того (не место, а добавление): `Besides, it’s too late.` (Кроме того, уже поздно.)\n\n**`opposite` = напротив:**\n- `The pharmacy is opposite the bank.` (Аптека напротив банка.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + at / in / on + place (static) vs verb + into + place (movement)",
+        "ru": "глагол + at / in / on + место (статично) против глагол + into + место (движение)"
       },
       "examples": [
         {
           "en": "She lives in a small village in France.",
-          "ru": "Она живёт в маленькой деревне во Франции."
+          "ru": "Она живёт в маленькой деревне во Франции.",
+          "note": {
+            "en": "in = country",
+            "ru": "in = страна"
+          }
         },
         {
           "en": "We arrived at the airport at six.",
-          "ru": "Мы прибыли в аэропорт в шесть."
+          "ru": "Мы прибыли в аэропорт в шесть.",
+          "note": {
+            "en": "arrive at",
+            "ru": "arrive at"
+          }
         },
         {
           "en": "The shop is opposite the bank.",
-          "ru": "Магазин напротив банка."
+          "ru": "Магазин напротив банка.",
+          "note": {
+            "en": "opposite = facing",
+            "ru": "opposite = напротив"
+          }
         },
         {
           "en": "He jumped into the pool.",
-          "ru": "Он прыгнул в бассейн."
+          "ru": "Он прыгнул в бассейн.",
+          "note": {
+            "en": "into = movement",
+            "ru": "into = движение"
+          }
         },
         {
           "en": "I saw her at the party last night.",
-          "ru": "Я видел её вчера на вечеринке."
+          "ru": "Я видел её вчера на вечеринке.",
+          "note": {
+            "en": "at = event",
+            "ru": "at = событие"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "arrive at (маленькое место) / arrive in (город). Никогда arrive to."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "We arrived to the airport.",
+          "right": "We arrived at the airport.",
+          "why": {
+            "en": "Arrive never takes to; use at for a place or in for a city.",
+            "ru": "С arrive не используется to; нужен at для места или in для города."
+          }
+        },
+        {
+          "wrong": "She lives at Moscow.",
+          "right": "She lives in Moscow.",
+          "why": {
+            "en": "Cities and countries take in, not at.",
+            "ru": "Города и страны требуют in, а не at."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you handle the metaphorical and abstract senses of place prepositions, which work as fixed collocations.\n\n**Metaphorical in**: in trouble, in love, in danger, in a hurry, in a good mood. *She is in trouble with the police.*\n\n**Metaphorical on**: on duty, on a diet, on holiday, on strike, on fire. *He is on a strict diet.*\n\n**Metaphorical at**: at war, at peace, at risk, at a loss. *The two countries are at war.*\n\n**beside vs besides again**: beside oneself = overwhelmed by emotion (*She was beside herself with joy*), distinct from besides (in addition).\n\n**among vs amongst**: both mean among; amongst is more literary and British, while among dominates modern usage.\n\n**on vs on top of**: on is a general surface; on top of stresses being placed above, often resting on the highest point: *Put the box on top of the shelf.*\n\n**in vs inside**: in is more general; inside stresses the contrast with outside (*Stay inside, it's cold*).\n\n**outside vs out of**: outside = a position not within (*Wait outside the door*); out of = movement from within to without (*He came out of the room*).\n\nLearn these as whole blocks, because the choice of preposition is fixed by the noun, not by logic.",
         "ru": "На B2 работай с метафорическими и абстрактными значениями предлогов места.\n\n**Метафорический `in`:**\n- `in trouble` (в беде), `in love` (влюблён), `in danger` (в опасности), `in a hurry` (в спешке), `in a good mood` (в хорошем настроении).\n- `She is in trouble with the police.` (У неё проблемы с полицией.)\n\n**Метафорический `on`:**\n- `on duty` (на дежурстве), `on a diet` (на диете), `on holiday` (в отпуске), `on strike` (на забастовке), `on fire` (в огне).\n- `He is on a strict diet.` (Он на строгой диете.)\n\n**Метафорический `at`:**\n- `at war` (в состоянии войны), `at peace` (в мире), `at risk` (под риском), `at a loss` (в растерянности).\n- `The two countries are at war.` (Две страны в состоянии войны.)\n\n**Осторожно с `beside` / `besides`:**\n- `beside myself` (вне себя — от эмоции): `She was beside herself with joy.` (Она была вне себя от радости.)\n- Не путай с `besides` (кроме того).\n\n**`among` vs `amongst`:**\nОба значат \"среди\". `amongst` — более литературный, британский. В современной речи `among` доминирует.\n\n**`on top of` vs `on`:**\n- `on` — общая поверхность.\n- `on top of` — именно сверху, часто с подтекстом \"поверх\": `Put the box on top of the shelf.`\n\n**`inside` vs `in`:**\n- `in` — более общее.\n- `inside` подчёркивает \"внутри, не снаружи\": `Stay inside — it’s cold.` (Оставайся внутри — холодно.)\n\n**`outside` vs `out of`:**\n- `outside` = снаружи (место): `Wait outside the door.` (Жди за дверью.)\n- `out of` = движение изнутри наружу: `He came out of the room.` (Он вышел из комнаты.)\n\n**Частая ошибка русскоязычных.** \"В Украине\" — по-русски мы долго спорили о \"в\" или \"на\", но в английском всегда `in Ukraine`. То же для всех стран — только `in`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "preposition + abstract noun (fixed collocation): in / on / at + state",
+        "ru": "предлог + абстрактное существительное (устойчивая коллокация): in / on / at + состояние"
       },
       "examples": [
         {
           "en": "She was beside herself with worry.",
-          "ru": "Она была вне себя от беспокойства."
+          "ru": "Она была вне себя от беспокойства.",
+          "note": {
+            "en": "beside oneself",
+            "ru": "beside oneself"
+          }
         },
         {
           "en": "The team is on strike this week.",
-          "ru": "Команда на забастовке на этой неделе."
+          "ru": "Команда на забастовке на этой неделе.",
+          "note": {
+            "en": "on strike",
+            "ru": "on strike"
+          }
         },
         {
           "en": "The country has been at war for years.",
-          "ru": "Страна много лет в состоянии войны."
+          "ru": "Страна много лет в состоянии войны.",
+          "note": {
+            "en": "at war",
+            "ru": "at war"
+          }
         },
         {
           "en": "Put the vase on top of the cupboard.",
-          "ru": "Поставь вазу на шкаф."
+          "ru": "Поставь вазу на шкаф.",
+          "note": {
+            "en": "on top of",
+            "ru": "on top of"
+          }
         },
         {
           "en": "He ran out of the building.",
-          "ru": "Он выбежал из здания."
+          "ru": "Он выбежал из здания.",
+          "note": {
+            "en": "out of = movement",
+            "ru": "out of = движение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "in trouble, on holiday, at war — выучи метафорические коллокации как блоки."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He is in holiday this week.",
+          "right": "He is on holiday this week.",
+          "why": {
+            "en": "The fixed collocation is on holiday, not in holiday.",
+            "ru": "Устойчивая коллокация — on holiday, а не in holiday."
+          }
+        },
+        {
+          "wrong": "She went outside of the room.",
+          "right": "She went out of the room.",
+          "why": {
+            "en": "Movement from inside takes out of; outside is a static position.",
+            "ru": "Движение изнутри — out of; outside значит статичное положение снаружи."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 place prepositions appear in complex idioms and abstract contexts, and small contrasts carry meaning.\n\n**over vs above (aspect)**: above is simply higher (*The lamp is above the desk*); over adds movement or covering (*A cloud passed over the city*; *She put a blanket over the child*). Compare the set phrases all over the world (spread, movement) and above average (static, abstract).\n\n**at in institutions**: at university / at school describes the role of student or pupil; in the university / in the building points at the physical structure; in school in AmE can mean of school age.\n\n**throughout** = all across an area or whole period: *The news spread throughout the country. Rain is expected throughout the region.*\n\n**Abstract idioms**: under pressure, under investigation, under discussion; over the moon, in the dark, on the edge.\n\n**Fronting for effect**: literary inversion places the prepositional phrase first: *Among the survivors was a child. In the corner stood an old clock.*\n\n**Ellipsis**: speakers often drop at before home (*I'm home*), though *Is John at home?* is equally correct.\n\n**off as place preposition**: just off the coast, off the main road (set apart from it).\n\n**among vs amid**: among is for countable like items; amid / amidst is for a surrounding situation, usually abstract (amid concerns, amid protests).",
         "ru": "На C1 предлоги места работают в **сложных идиомах и абстрактных контекстах**.\n\n**Аспектная разница `over` / `above`:**\n- `above` — просто выше: `The lamp is above the desk.`\n- `over` — выше и с движением / покрытием: `A cloud passed over the city.` (Облако прошло над городом — движение.) `She put a blanket over the child.` (Покрыла одеялом.)\n\nВ устойчивых оборотах:\n- `all over the world` (по всему миру — движение/распространение).\n- `above average` (выше среднего — статично, абстрактно).\n\n**Тонкости `at` в учреждениях:**\n- `at university` (в университете как студент), `at the university` (в здании университета), `in university` (AmE редко).\n- `at school` (учится), `in school` (внутри здания / AmE в школьном возрасте).\n\n**`throughout` = по всей территории / во всём:**\n- `The news spread throughout the country.` (Новость распространилась по всей стране.)\n- `Rain is expected throughout the region.` (Дождь ожидается по всему региону.)\n\n**Метафоры с предлогами места:**\n- `under pressure` (под давлением), `under investigation` (под следствием), `under discussion` (обсуждается).\n- `over the moon` (очень рад), `in the dark` (не в курсе), `on the edge` (на грани).\n\n**Фронтирование предлога с места:**\n- `Among the survivors was a child.` (Среди выживших был ребёнок.) — литературное, инверсия для эффекта.\n- `In the corner stood an old clock.` (В углу стояли старые часы.)\n\n**Эллипсис:**\nВ разговорной речи часто опускают `at` перед `home`:\n- `I’m home.` (Я дома.) — без `at`.\n- `Is John home?` — но `Is John at home?` тоже корректно.\n\n**`off` как предлог места:**\n- `just off the coast` (недалеко от побережья).\n- `off the main road` (в стороне от главной дороги).\n\n**Различие `among` / `amid`:**\n- `among` — среди однородных объектов.\n- `amid` / `amidst` — посреди ситуации, чаще абстрактно: `amid concerns`, `amid protests` (посреди протестов)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "fronted prepositional phrase + verb + subject (literary inversion)",
+        "ru": "вынесенная предложная группа + глагол + подлежащее (литературная инверсия)"
       },
       "examples": [
         {
           "en": "The story has been discussed throughout the country.",
-          "ru": "Эту историю обсуждают по всей стране."
+          "ru": "Эту историю обсуждают по всей стране.",
+          "note": {
+            "en": "throughout",
+            "ru": "throughout"
+          }
         },
         {
           "en": "The project is still under discussion.",
-          "ru": "Проект ещё обсуждается."
+          "ru": "Проект ещё обсуждается.",
+          "note": {
+            "en": "under + abstract",
+            "ru": "under + абстрактное"
+          }
         },
         {
           "en": "Among the guests was a famous writer.",
-          "ru": "Среди гостей был знаменитый писатель."
+          "ru": "Среди гостей был знаменитый писатель.",
+          "note": {
+            "en": "fronted + inversion",
+            "ru": "вынос + инверсия"
+          }
         },
         {
           "en": "She lives just off the main square.",
-          "ru": "Она живёт недалеко от главной площади."
+          "ru": "Она живёт недалеко от главной площади.",
+          "note": {
+            "en": "off = set apart",
+            "ru": "off = в стороне"
+          }
         },
         {
           "en": "The government is under pressure to act.",
-          "ru": "Правительство под давлением действовать."
+          "ru": "Правительство под давлением действовать.",
+          "note": {
+            "en": "under pressure",
+            "ru": "under pressure"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "over = движение/покрытие; above = просто выше. Under pressure, under investigation."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "A cloud passed above the city.",
+          "right": "A cloud passed over the city.",
+          "why": {
+            "en": "Movement across uses over; above is static and only means higher than.",
+            "ru": "Движение поперёк требует over; above статично и значит лишь выше."
+          }
+        },
+        {
+          "wrong": "The project is on investigation.",
+          "right": "The project is under investigation.",
+          "why": {
+            "en": "The fixed idiom is under investigation, not on investigation.",
+            "ru": "Устойчивая идиома — under investigation, а не on investigation."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 place prepositions become a tool of register and style.\n\n**Literary inversion**: a fronted place phrase with subject-verb inversion is a marked, emphatic structure: *Beyond the mountains lay a hidden valley. Across the fields wandered a lonely figure.* Use it sparingly in academic prose, for emphasis only.\n\n**Register gradation of near-synonyms**: near / nearby / in the vicinity of / in proximity to runs from colloquial to formal; about / around / in the environs of likewise; among (neutral) / amongst (literary British) / amidst (poetic).\n\n**Collocational restrictions**: under review (not on review), in question (not on question), at stake (not on stake). Note that in demand (sought after) and on demand (when requested) are both correct but distinct.\n\n**Legal and bureaucratic uses**: herein, therein, hereunder are archaic but live in legal English (*Pursuant to the terms set forth herein...*).\n\n**Academic hedging through place prepositions**: within the scope of, outside the scope of, at the intersection of.\n\n**Frozen idioms**: in the teeth of (in defiance of), at the mercy of, on the verge of, in the thick of, beyond the pale. Command of these signals near-native fluency.\n\n**BrE vs AmE**: at the weekend (BrE) / on the weekend (AmE); in the street (BrE neutral) / on the street (AmE standard); in hospital (BrE, as a patient) / in the hospital (AmE standard). Do not mix registers within one text.\n\n**Frozen abstract metaphors**: in principle, in practice, on paper, in essence, at heart.",
         "ru": "На C2 предлоги места — инструмент **регистра и стилистики**.\n\n**Литературная инверсия с предлогом места:**\n- `Beyond the mountains lay a hidden valley.` (За горами лежала скрытая долина.)\n- `Across the fields wandered a lonely figure.` (Через поля брела одинокая фигура.)\n\nЭто marked structure — в академическом письме используй осторожно, для эмфазы.\n\n**Регистровая градация близких предлогов:**\n- `near` / `nearby` / `in the vicinity of` / `in proximity to` — от разговорного к формальному.\n- `about` / `around` / `in the environs of` — то же.\n- `among` / `amongst` / `amidst` — `among` нейтрально, `amongst` литературное британское, `amidst` поэтическое.\n\n**Collocational restrictions:**\n- `under review` ✓, `on review` ✗.\n- `in question` ✓, `on question` ✗.\n- `at stake` ✓, `on stake` ✗.\n- `in demand` ✓, `on demand` — разные значения (`on demand` = по запросу; `in demand` = пользуется спросом).\n\n**Legal / bureaucratic uses:**\n- `herein` (здесь, в этом документе), `therein` (в том), `hereunder` (ниже, в последующем) — архаичные, но активные в юридическом английском.\n- `Pursuant to the terms set forth herein...` — юридический стиль.\n\n**Hedging через предлоги места:**\n- `within the scope of` (в рамках), `outside the scope of` (за рамками), `at the intersection of` (на пересечении) — академический hedging.\n\n**Idioms с полностью замороженной структурой:**\n- `in the teeth of` (вопреки): `in the teeth of fierce opposition`.\n- `at the mercy of` (во власти): `at the mercy of the weather`.\n- `on the verge of` (на грани): `on the verge of tears`.\n- `in the thick of` (в гуще): `in the thick of the battle`.\n- `beyond the pale` (за рамками приличий).\n\n**BrE vs AmE различия:**\n- `at the weekend` (BrE) / `on the weekend` (AmE).\n- `in the street` (BrE нейтрально) / `on the street` (AmE стандарт).\n- `in hospital` (BrE — как пациент) / `in the hospital` (AmE стандарт).\n\n**Фиксированные абстрактные метафоры:**\n- `in principle` (в принципе), `in practice` (на практике), `on paper` (на бумаге, теоретически), `in essence` (по сути), `at heart` (в душе).\n\nВладение этими идиомами — признак near-native.\n\n**Stylistic minimalism:**\nВ высоком стиле избегай лишних предлогов. `Meet me tomorrow` сильнее, чем `Meet me at the cafe at six tomorrow` в драме. В эссе — наоборот, точность предлогов усиливает аргумент."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "fixed idiom: preposition + (the) + abstract noun (collocationally frozen)",
+        "ru": "застывшая идиома: предлог + (the) + абстрактное существительное (коллокационно зафиксировано)"
       },
       "examples": [
         {
           "en": "The matter is still under review by the committee.",
-          "ru": "Вопрос всё ещё рассматривается комиссией."
+          "ru": "Вопрос всё ещё рассматривается комиссией.",
+          "note": {
+            "en": "under review",
+            "ru": "under review"
+          }
         },
         {
           "en": "Beyond the hills stretched an endless plain.",
-          "ru": "За холмами простиралась бесконечная равнина."
+          "ru": "За холмами простиралась бесконечная равнина.",
+          "note": {
+            "en": "inversion",
+            "ru": "инверсия"
+          }
         },
         {
           "en": "The project succeeded in the teeth of fierce opposition.",
-          "ru": "Проект удался вопреки яростному сопротивлению."
+          "ru": "Проект удался вопреки яростному сопротивлению.",
+          "note": {
+            "en": "in the teeth of",
+            "ru": "in the teeth of"
+          }
         },
         {
           "en": "His proposal is beyond the pale of acceptable practice.",
-          "ru": "Его предложение за рамками приемлемого."
+          "ru": "Его предложение за рамками приемлемого.",
+          "note": {
+            "en": "beyond the pale",
+            "ru": "beyond the pale"
+          }
         },
         {
           "en": "She remained calm at the heart of the crisis.",
-          "ru": "Она сохраняла спокойствие в центре кризиса."
+          "ru": "Она сохраняла спокойствие в центре кризиса.",
+          "note": {
+            "en": "at the heart of",
+            "ru": "at the heart of"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "BrE: in hospital / at the weekend; AmE: in the hospital / on the weekend. Не смешивай регистры."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The report is on review by the committee.",
+          "right": "The report is under review by the committee.",
+          "why": {
+            "en": "The frozen collocation is under review; on review is not used.",
+            "ru": "Застывшая коллокация — under review; on review не употребляется."
+          }
+        },
+        {
+          "wrong": "She was in hospital and on the weekend she recovered.",
+          "right": "She was in hospital and at the weekend she recovered.",
+          "why": {
+            "en": "Do not mix BrE in hospital with AmE on the weekend in one text.",
+            "ru": "Не смешивайте британское in hospital с американским on the weekend в одном тексте."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "prepositions-of-movement",
+    "prepositions-of-time",
+    "at-in-on-place",
+    "prepositions-in-phrases"
+  ],
+  "crossTopic": [
+    "there-is-there-are",
+    "present-simple",
+    "definite-article",
+    "noun-phrases"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "in",
+      "on",
+      "under",
+      "next to",
+      "between"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "passive-future",
   "title": {
-    "en": "",
+    "en": "The Future Passive",
     "ru": "Passive Future"
   },
   "cefr": "B2",
@@ -14,19 +14,23 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "passive",
+  "egp": [
+    "EGP:passive-future-will-be-done",
+    "EGP:passive-be-going-to-be-done",
+    "EGP:passive-be-to-be-done"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "The future passive moves the focus to the thing acted on, not the doer. Build it two ways. With `will`: `will be + past participle (V3)` — `The meeting will be held tomorrow.` With `be going to`: `is/are going to be + V3` — `The road is going to be closed for repairs.` Choose `will be done` for announcements, predictions, and on-the-spot decisions; choose `going to be done` when something is already planned or signs point to it. Use the future passive when the agent is obvious, unknown, or irrelevant — official announcements (`The conference will be opened by the minister.`), schedules (`Decisions will be made at the next meeting.`), instructions (`Applications will be reviewed in order of submission.`), and forecasts (`More jobs will be created in IT.`). Negatives and questions follow the auxiliary: `The form won't be processed without a signature.` / `Will the results be announced today?` Only transitive verbs go passive — intransitive verbs like `happen, arrive, come, go, die, exist` cannot, so it is `The event will happen`, never `The event will be happened`.",
         "ru": "**Passive Voice (future)** — страдательный залог в будущем. Две основные формы: `will be + V3` и `is/are going to be + V3`.\n\n**1. Will + be + V3:**\n- `The meeting will be held tomorrow.` (Встреча состоится завтра.)\n- `The project will be completed next month.` (Проект будет завершён в следующем месяце.)\n- `You will be informed by email.` (Вас проинформируют по электронной почте.)\n\n**2. Be going to + be + V3:**\n- `The road is going to be closed for repairs.` (Дорогу собираются закрыть на ремонт.)\n- `A new law is going to be passed.` (Будет принят новый закон.)\n\n**Разница:**\n- `will be + V3` — общее будущее, решение в момент речи, предсказание, объявление.\n- `going to be + V3` — уже запланировано, ожидается, видны признаки.\n\n**Когда использовать пассив будущего:**\n\n1. **Официальные объявления:** `The conference will be opened by the minister.` (Конференцию откроет министр.)\n2. **Планы и расписания:** `Decisions will be made at the next meeting.`\n3. **Инструкции и процедуры:** `Applications will be reviewed in order of submission.`\n4. **Прогнозы:** `More jobs will be created in the IT sector.`\n\n**Типичные ошибки русских учеников:**\n- ❌ `The meeting will been held.` → ✅ `The meeting will be held.` (после will — инфинитив `be`, не `been`.)\n- ❌ `It will be happen tomorrow.` → ✅ `It will happen tomorrow.` (happen — непереходный, пассив невозможен.)\n- ❌ `The report is going to passed.` → ✅ `The report is going to be passed.` (нужно be!)\n- ❌ `It will being done.` → ✅ `It will be done.`\n\n**Отрицание и вопрос:**\n- `The form won't be processed without a signature.` (Форма не будет обработана без подписи.)\n- `Will the results be announced today?` (Результаты объявят сегодня?)\n\n**Непереходные глаголы пассива не имеют:** `happen`, `arrive`, `come`, `go`, `die`, `fall`, `exist`. Нельзя `The event will be happened.` — только `The event will happen.`\n\n**Важно:** не путай future passive с future perfect passive (`will have been done` — к моменту в будущем)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "will be + V3   /   is/are going to be + V3",
+        "ru": "will be + V3 (третья форма) / is/are going to be + V3"
       },
       "examples": [
         {
@@ -39,7 +43,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "New safety measures are going to be introduced.",
-          "ru": "Будут введены новые меры безопасности."
+          "ru": "Будут введены новые меры безопасности.",
+          "note": {
+            "en": "be going to",
+            "ru": "форма be going to"
+          }
         },
         {
           "en": "The announcement will be made tomorrow morning.",
@@ -47,32 +55,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Will the tickets be sold online?",
-          "ru": "Билеты будут продаваться онлайн?"
+          "ru": "Билеты будут продаваться онлайн?",
+          "note": {
+            "en": "yes/no question",
+            "ru": "общий вопрос"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Will be + V3 — будущий пассив. Не забудь be после will: will be done, не will been done."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The meeting will been held tomorrow.",
+          "right": "The meeting will be held tomorrow.",
+          "why": {
+            "en": "After `will` you need the bare infinitive `be`, never `been`. `been` only follows `have`.",
+            "ru": "После will идёт инфинитив be, а не been."
+          }
+        },
+        {
+          "wrong": "The report is going to passed next week.",
+          "right": "The report is going to be passed next week.",
+          "why": {
+            "en": "The passive needs `be` before the past participle: `going to be passed`, not `going to passed`.",
+            "ru": "В пассиве перед причастием нужен be: going to be passed."
+          }
+        },
+        {
+          "wrong": "The event will be happened tomorrow.",
+          "right": "The event will happen tomorrow.",
+          "why": {
+            "en": "`happen` is intransitive and has no passive; use the active form.",
+            "ru": "happen — непереходный глагол, пассива не имеет."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the future passive becomes a register tool for professional and official writing. Beyond `will be done` and `going to be done`, command three further patterns. Modal passives carry future force with extra meaning: `must be submitted` (obligation), `should be signed` (recommendation), `can be made` (possibility), `may not be accepted` (caution). The `be to be + V3` pattern marks scheduled, official plans and sounds news-like: `The treaty is to be signed next week.` The future perfect passive frames an action as finished before a future point: `By the time we arrive, the room will have been prepared.` The future continuous passive (`will be being renovated`) is grammatical but clumsy — paraphrase it (`Renovations will be going on...`) in formal writing. Match the form to the channel: a memo uses `Employees will be reimbursed by month-end.`; a press release uses `The new wing is to be opened by the mayor.`; a paper uses `The samples will be analysed using standard protocols.` Common C1 slips: confusing `will be done` (passive) with `will have done` (active perfect), wrong base form after a modal (`must being done` for `must be done`), and over-using the passive in email where the active is clearer (`I'll send you the file` beats `The file will be sent to you`).",
         "ru": "На C1 будущий пассив становится **инструментом профессиональной и официальной коммуникации**. Важно различать оттенки разных будущих форм пассива и использовать их уместно.\n\n**1. Future passive в деловых меморандумах и планах:**\nВ корпоративной переписке пассив придаёт тон нейтральности и коллективной ответственности:\n- `The proposal will be reviewed by the board on Friday.`\n- `Budgets will be finalised by end of quarter.`\n- `Staff will be notified of any changes.`\n- `Training sessions are to be held monthly.`\n\nТакой регистр избегает прямых обвинений и делает акцент на процессах.\n\n**2. Модальные будущие пассивы:**\n- `The form must be submitted by Monday.` (обязательство)\n- `The document should be signed in blue ink.` (рекомендация)\n- `Payment can be made online.` (возможность)\n- `Late submissions may not be accepted.` (предупреждение)\n\nОни пересекаются с темой `passive_with_modals`, но несут чёткую будущую ориентацию.\n\n**3. Be to + be + V3 — официальные планы:**\n- `The treaty is to be signed next week.` (Договор должен быть подписан на следующей неделе.)\n- `New regulations are to be introduced in January.`\n- `The award is to be presented by the President.`\n\nЭта форма звучит новостно и официально. Часто встречается в заголовках и пресс-релизах.\n\n**4. Future perfect passive — к моменту в будущем:**\n- `By the time we arrive, the room will have been prepared.` (К моменту нашего приезда комната будет подготовлена.)\n- `By next year, the project will have been completed.` (К следующему году проект будет завершён.)\n\nЭта форма подчёркивает завершённость до определённой будущей точки.\n\n**5. Future continuous passive — редко, но встречается:**\n- `The building will be being renovated for the next three months.` — технически возможно, но носители часто перефразируют: `Renovations will be going on for the next three months.`\n\nИзбегай `will be being` в формальном письме — это звучит неуклюже.\n\n**6. Register and planning:**\n- Formal memo: `Employees will be reimbursed by the end of the month.`\n- News release: `The new wing is to be opened by the mayor.`\n- Email to colleague: `The files are going to be moved to the new server tomorrow.`\n- Scientific paper: `The samples will be analysed using standard protocols.`\n\nКаждый контекст требует своей формы.\n\n**7. Common C1 errors:**\n- Путаница между `will be done` (пассив) и `will have done` (future perfect active): разные смыслы.\n- Неверная форма после модалов: ❌ `It must being done` → ✅ `It must be done`.\n- Избыточный пассив в e-mail: часто актив лучше (`I'll send you the file` vs `The file will be sent to you`).\n\n**8. Contrastive Russian-English note:**\nРусский выражает будущий пассив через форму \"будет\" + прилагательное/причастие (\"будет сделано\") или возвратный глагол (\"сделается\"). Английский требует чёткого `will be + V3`. Ошибка русскоязычных — пропустить `be`: `It will done tomorrow` — грубая ошибка. Всегда `will be done`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "modal + be + V3   /   be to be + V3   /   will have been + V3",
+        "ru": "модальный глагол + be + V3 / be to be + V3 / will have been + V3"
       },
       "examples": [
         {
           "en": "By the time the report is published, the data will have been verified.",
-          "ru": "К моменту публикации отчёта данные будут проверены."
+          "ru": "К моменту публикации отчёта данные будут проверены.",
+          "note": {
+            "en": "future perfect passive",
+            "ru": "future perfect пассив"
+          }
         },
         {
           "en": "New regulations are to be introduced at the start of the year.",
-          "ru": "Новые правила будут введены в начале года."
+          "ru": "Новые правила будут введены в начале года.",
+          "note": {
+            "en": "be to be + V3",
+            "ru": "форма be to be"
+          }
         },
         {
           "en": "All applications will be reviewed within two weeks.",
@@ -90,22 +136,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Be to + be + V3 (the treaty is to be signed) — формальный план в новостях и официальных текстах."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The document must being signed in blue ink.",
+          "right": "The document must be signed in blue ink.",
+          "why": {
+            "en": "A modal is always followed by the bare infinitive `be`, never `being`.",
+            "ru": "После модального глагола нужен инфинитив be, а не being."
+          }
+        },
+        {
+          "wrong": "By next year, the project will been completed.",
+          "right": "By next year, the project will have been completed.",
+          "why": {
+            "en": "The future perfect passive is `will have been + V3`; you cannot drop `have`.",
+            "ru": "Future perfect пассив — will have been + V3, have обязателен."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the future passive is a precision instrument in specifications, legal drafting, and strategy. Technical specs lean on it heavily and let you tune formality: `The system will be tested under extreme conditions.` / `All components are to be manufactured to ISO 9001 standards.` / `The product shall be delivered in sealed packaging.` — keep one register per document. In legal English, `shall` is not future tense but a binding obligation: `The parties shall be bound by the terms hereof.`; plain-legal English increasingly swaps it for `will` or `must`. Strategy documents use the form for collective commitment without a named agent: `Emissions will be cut by 40% by 2030.` Academic writing uses a compressed passive (`Data is to be collected at 10-minute intervals.`), though journals now favour active `we`. Hedged passives soften certainty: `The impact is expected to be significant.` / `The decision is likely to be challenged in court.` Mastery is the deliberate choice: you reach for `will be done` over `we will do it` to create distance, objectivity, or institutional weight — and you avoid calques like `will be took place` (use `will take place` or `will be held`). Note set phrases such as `Much is yet to be learned` and `The question remains to be answered`.",
         "ru": "На C2 будущий пассив — **инструмент концентрации и точности** в технических и официальных спецификациях, законах, стратегиях.\n\n**1. Passive in specifications and technical documents:**\nТехническая документация и спецификации плотно используют будущий пассив:\n- `The system will be tested under extreme conditions.`\n- `All components are to be manufactured to ISO 9001 standards.`\n- `The product shall be delivered in sealed packaging.` (`shall` — очень формально, юридически обязывающе.)\n\nStylistic rule: в одном документе придерживайся одного уровня формальности (will / is to be / shall).\n\n**2. Legal drafting and the future passive:**\nВ юридических текстах будущий пассив формализует обязательства:\n- `The parties shall be bound by the terms hereof.` (Стороны будут связаны условиями настоящего документа.)\n- `Notices shall be delivered in writing.`\n- `No amendment shall be made without written consent.`\n\n`Shall` здесь — не будущее в обычном смысле, а выражение обязательства. В современном plain legal English его часто заменяют на `will` или `must`.\n\n**3. Strategy and policy documents:**\n- `Emissions will be cut by 40% by 2030.`\n- `New funding mechanisms are to be established.`\n- `Accountability will be strengthened at all levels.`\n\nБудущий пассив придаёт стратегическим документам тон коллективного обязательства без указания на конкретных исполнителей.\n\n**4. Compressed scientific and technical passive:**\n- `The reaction will be monitored spectroscopically.`\n- `Data is to be collected at 10-minute intervals.`\n- `Results will be reported in Section 4.`\n\nЭта форма — стандартный academic voice. Обрати внимание: современные журналы всё чаще предпочитают активный голос с `we`, но пассив остаётся допустимым и традиционным.\n\n**5. Rhetorical future passive:**\n- `Let it be said that...` (Пусть будет сказано, что...)\n- `It will be remembered that...` (Будет помниться, что...) — архаично, но встречается в speeches.\n- `Much will be demanded of future generations.` (Многое будет потребовано от будущих поколений.)\n\nРиторически-торжественный регистр.\n\n**6. Future passive and hedging:**\n- `The impact is expected to be significant.`\n- `Results are anticipated to be published by year-end.`\n- `The decision is likely to be challenged in court.`\n\nЭти конструкции — пассивы с предсказательной функцией, избегающие категоричности.\n\n**7. Refinement of passive vs active choice:**\nЗрелый автор спрашивает:\n- Кто делает действие, и важно ли это? → Если важно → актив.\n- Каков фокус высказывания? → Если на объекте → пассив.\n- Каков регистр документа? → Формальный → пассив; разговорный → актив.\n- Есть ли ответственность? → Если да → называй агента активом; если нет → пассив уместен.\n\n**8. Edge cases и устаревшие формы:**\n- `It is to be hoped that...` (Остаётся надеяться, что...) — формально-архаично.\n- `Much is to be done.` (Многое предстоит сделать.) — компактно и официально.\n- `The question remains to be answered.` (Вопрос ещё предстоит решить.) — итоговый риторический приём.\n\n**9. Russian-English stylistic mismatches:**\nРусский часто использует форму «будет + инфинитив» или безличные обороты (`будет принято решение`, `предстоит рассмотреть`). Английский эквивалент — либо `will be decided`, либо `is to be considered`. Избегай буквального перевода: `will be took place` — это ошибка; нужно либо актив (`will take place`), либо переосмысление (`will be held`).\n\n**10. Mastery:**\nНа C2 ты не просто грамматически правильно строишь будущий пассив — ты выбираешь его для создания нужного эффекта: дистанции, обязательства, объективности, коллективности. Каждое `will be done` — сознательный выбор над `we will do it` или `someone will do it`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "shall/will/is to be + V3   /   is expected/likely to be + V3",
+        "ru": "shall/will/is to be + V3 / is expected/likely to be + V3"
       },
       "examples": [
         {
           "en": "The treaty shall be interpreted according to the laws of the host country.",
-          "ru": "Договор толкуется согласно законам принимающей страны."
+          "ru": "Договор толкуется согласно законам принимающей страны.",
+          "note": {
+            "en": "legal shall",
+            "ru": "юридическое shall"
+          }
         },
         {
           "en": "Emissions are to be reduced by 40% by 2030.",
@@ -113,11 +181,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Much is yet to be learned about the long-term effects.",
-          "ru": "О долгосрочных последствиях ещё многое предстоит узнать."
+          "ru": "О долгосрочных последствиях ещё многое предстоит узнать.",
+          "note": {
+            "en": "set phrase",
+            "ru": "устойчивая фраза"
+          }
         },
         {
           "en": "The impact is expected to be significant across the region.",
-          "ru": "Ожидается, что влияние будет значительным по всему региону."
+          "ru": "Ожидается, что влияние будет значительным по всему региону.",
+          "note": {
+            "en": "hedged passive",
+            "ru": "смягчённый пассив"
+          }
         },
         {
           "en": "All findings will be reviewed by an independent panel before publication.",
@@ -127,9 +203,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Shall в юридическом английском — не будущее, а обязательство: the parties shall be bound."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The ceremony will be took place at noon.",
+          "right": "The ceremony will take place at noon.",
+          "why": {
+            "en": "`take place` is intransitive — keep it active; or rephrase with a transitive verb (`will be held`).",
+            "ru": "take place — непереходный, пассива нет; используйте will take place или will be held."
+          }
+        },
+        {
+          "wrong": "The parties shall to be bound by the terms.",
+          "right": "The parties shall be bound by the terms.",
+          "why": {
+            "en": "`shall` takes the bare infinitive directly — no `to` before `be`.",
+            "ru": "После shall идёт инфинитив без to: shall be bound."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "passive-present-simple",
+    "passive-past-simple",
+    "passive-perfect-tenses",
+    "passive-with-modals"
+  ],
+  "crossTopic": [
+    "future-simple-will",
+    "future-with-going-to",
+    "future-perfect",
+    "modal-perfect"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Active: They will hold the meeting.",
+      "Passive: The meeting will be held."
+    ]
+  }
 };

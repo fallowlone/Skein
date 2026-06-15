@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "stative-verbs",
   "title": {
-    "en": "",
+    "en": "Stative Verbs",
     "ru": "Stative Verbs"
   },
   "cefr": "B1",
@@ -15,159 +15,339 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "aspect",
+  "egp": [
+    "EGP:B1:stative-verbs-non-progressive",
+    "EGP:B2:stative-dynamic-meaning-shift",
+    "EGP:C1:progressive-statives-for-temporariness"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Stative verbs describe a state, not an action: knowing, liking, owning, perceiving. Because there is no ongoing process to picture, they normally stay in the simple form and avoid the continuous (-ing). The main families are: thinking/opinion (know, believe, understand, remember, mean, suppose, doubt); feelings/preferences (love, like, hate, prefer, want, need, wish); senses (see, hear, smell, taste, feel); possession/relation (have, own, belong, contain, include, consist of); and measurement/being (cost, weigh, seem, appear, look, be, exist). Use the simple form even when you mean right now: say I understand what you mean, not I am understanding. Write She loves chocolate, not She is loving chocolate; This bag belongs to me, not is belonging. A few verbs have a second, active meaning that does allow the continuous: think (have an opinion) is stative, but I'm thinking about it (consider) is dynamic; have (own) is stative, but I'm having lunch is dynamic; see (perceive) is stative, but I'm seeing Anna tonight (meeting) is dynamic.",
         "ru": "**Stative verbs** (глаголы состояния) — это глаголы, которые обозначают **не действие, а состояние**. Они редко используются в Continuous (то есть с `-ing`).\n\n**Основные группы stative verbs:**\n\n1. **Чувства и мнения:**\n   - `know` (знать), `believe` (верить), `think` (считать — мнение), `understand` (понимать), `remember` (помнить), `forget` (забывать), `mean` (означать), `realise` (осознавать), `suppose` (полагать), `doubt` (сомневаться)\n\n2. **Эмоции и предпочтения:**\n   - `love` (любить), `like` (нравиться), `hate` (ненавидеть), `prefer` (предпочитать), `want` (хотеть), `need` (нуждаться), `wish` (желать), `care` (заботиться)\n\n3. **Восприятие:**\n   - `see` (видеть), `hear` (слышать), `smell` (пахнуть), `taste` (быть на вкус), `feel` (чувствовать), `notice` (замечать)\n\n4. **Владение и отношение:**\n   - `have` (иметь), `own` (владеть), `belong` (принадлежать), `possess` (обладать), `contain` (содержать), `include` (включать), `consist of` (состоять из)\n\n5. **Измерение и состояние:**\n   - `cost` (стоить), `weigh` (весить), `seem` (казаться), `appear` (казаться), `look` (выглядеть), `be` (быть), `exist` (существовать)\n\n**Правило:** Stative verbs обычно **не используются в Continuous**. Они описывают состояние, а не процесс.\n\n- ✅ `I know him.` (Я его знаю.)\n- ❌ `I am knowing him.`\n- ✅ `She loves chocolate.` (Она любит шоколад.)\n- ❌ `She is loving chocolate.`\n- ✅ `This bag belongs to me.` (Эта сумка принадлежит мне.)\n- ❌ `This bag is belonging to me.`\n\n**Даже про «сейчас» — Simple:**\n- `Right now, I understand what you mean.` (Не `I am understanding`.)\n- `I think you're right.` (Сейчас так считаю — Simple.)\n\n**Исключения — когда можно Continuous:**\n\nНекоторые глаголы имеют **второе значение**, которое позволяет Continuous:\n\n- `think` — мнение (stative): `I think he's nice.` (Я считаю, что он хороший.)\n- `think` — обдумывать (dynamic): `I'm thinking about it.` (Я думаю над этим.)\n- `have` — владение (stative): `I have a car.`\n- `have` — в выражениях (dynamic): `I'm having lunch / a shower / fun.`\n- `see` — видеть (stative): `I see what you mean.`\n- `see` — встречаться с (dynamic): `I'm seeing Anna tonight.`\n\n**Типичные ошибки:**\n- ❌ `I'm loving this song.` (формально неправильно; реклама допускает.)\n- ❌ `I'm wanting a coffee.` → ✅ `I want a coffee.`\n- ❌ `She is knowing the answer.` → ✅ `She knows the answer.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + stative verb (simple) + object  —  not subject + be + verb-ing",
+        "ru": "подлежащее + глагол состояния (Simple) + дополнение  —  не подлежащее + be + глагол-ing"
       },
       "examples": [
         {
           "en": "I know what you mean.",
-          "ru": "Я понимаю, что ты имеешь в виду."
+          "ru": "Я понимаю, что ты имеешь в виду.",
+          "note": {
+            "en": "understanding",
+            "ru": "понимание"
+          }
         },
         {
           "en": "This book belongs to my brother.",
-          "ru": "Эта книга принадлежит моему брату."
+          "ru": "Эта книга принадлежит моему брату.",
+          "note": {
+            "en": "possession",
+            "ru": "владение"
+          }
         },
         {
           "en": "She loves her new job.",
-          "ru": "Она любит свою новую работу."
+          "ru": "Она любит свою новую работу.",
+          "note": {
+            "en": "emotion",
+            "ru": "эмоция"
+          }
         },
         {
           "en": "The soup tastes delicious.",
-          "ru": "Суп очень вкусный."
+          "ru": "Суп очень вкусный.",
+          "note": {
+            "en": "quality (sense)",
+            "ru": "качество (восприятие)"
+          }
         },
         {
           "en": "We need more time.",
-          "ru": "Нам нужно больше времени."
+          "ru": "Нам нужно больше времени.",
+          "note": {
+            "en": "need",
+            "ru": "потребность"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Stative verbs (know, love, want, need) — всегда Simple, не Continuous."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I am knowing him.",
+          "right": "I know him.",
+          "why": {
+            "en": "know is a pure stative verb and is not used in the continuous, even for the present moment.",
+            "ru": "know — чистый глагол состояния и не используется в Continuous, даже про настоящий момент."
+          }
+        },
+        {
+          "wrong": "I'm wanting a coffee.",
+          "right": "I want a coffee.",
+          "why": {
+            "en": "want describes a state of desire, so it stays in the simple form.",
+            "ru": "want обозначает состояние желания, поэтому используется в Simple."
+          }
+        },
+        {
+          "wrong": "This bag is belonging to me.",
+          "right": "This bag belongs to me.",
+          "why": {
+            "en": "belong shows a fixed relationship, not a process, so no -ing.",
+            "ru": "belong показывает устойчивое отношение, а не процесс, поэтому без -ing."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the goal is to tell apart the stative and dynamic meanings of the same verb and to know when the continuous is in fact correct. Many common verbs switch sense: think is stative as opinion (I think you're right) but dynamic as a mental process (I'm thinking about my options); have is stative for ownership (They have two cats) but dynamic in idioms (We're having dinner / a party / trouble); see is stative for perception (I see the difference) but dynamic for meeting (I'm seeing the doctor tomorrow); taste/smell are stative as a quality (The soup tastes good) but dynamic as a deliberate act (The chef is tasting the soup); look is stative as appearance (You look great) but dynamic as the act of looking (I'm looking at the picture). A key B2 contrast is be + being + adjective, which marks behaviour rather than character: He is rude (his nature) versus He is being rude (acting that way now). The deliberate progressive of a stative also signals a temporary state: I'm feeling better today. Conversational and advertising forms such as I'm loving it exist but should be avoided in formal writing.",
         "ru": "На B2 важно различать stative и dynamic значения одного и того же глагола и понимать, когда Continuous возможен.\n\n**Глаголы с двойным значением:**\n\n1. **`think`:**\n   - Stative (мнение): `I think you're right.` (Считаю.)\n   - Dynamic (процесс): `I'm thinking about my options.` (Обдумываю.)\n\n2. **`have`:**\n   - Stative (владение): `They have two cats.`\n   - Dynamic (идиоматически): `We're having dinner / a party / a shower / fun / trouble.`\n\n3. **`see`:**\n   - Stative (восприятие): `I see the difference.`\n   - Dynamic (встречаться): `I'm seeing the doctor tomorrow.`\n   - Dynamic (начать понимать): `I'm starting to see what you mean.`\n\n4. **`taste`, `smell`:**\n   - Stative (обладать качеством): `The soup tastes good.`, `The flowers smell wonderful.`\n   - Dynamic (активно пробовать, нюхать): `The chef is tasting the soup.`, `She is smelling the flowers.`\n\n5. **`feel`:**\n   - Stative (ощущать состояние): `I feel tired.` / `I'm feeling tired.` — оба допустимы, Continuous подчёркивает временность.\n   - Dynamic (трогать): `The doctor is feeling my pulse.`\n\n6. **`look`:**\n   - Stative (выглядеть): `You look great.`\n   - Dynamic (смотреть): `I'm looking at the picture.`\n\n7. **`appear`:**\n   - Stative (казаться): `It appears to be true.`\n   - Dynamic (появляться, выступать): `She's appearing at the theatre tonight.`\n\n**Deliberate progressive — преднамеренная длительность:**\nНекоторые stative verbs в Continuous подчёркивают **временное** состояние или деятельность:\n- `I'm feeling better today.` (Временно — сегодня лучше.)\n- `You're being rude.` (Ведёшь себя грубо — временно.)\n- `She's being difficult.` (Капризничает — не обычно.)\n\n`Be` + `being` + adjective показывает **поведение**, а не характер:\n- `He is rude.` (Грубый по характеру.)\n- `He is being rude.` (Сейчас ведёт себя грубо.)\n\n**Modern exceptions — в рекламе и разговоре:**\n- `I'm loving it.` (McDonald's — нестандартно, но широко распространено.)\n- `I'm liking this.` (Разговорный, означает «мне сейчас это нравится».)\n- `I'm hating every minute of this.` (Разговорное усиление.)\n\nВ формальном письме этих форм избегай.\n\n**Perception verbs — особые случаи:**\n- `hear` — обычно stative: `I hear music.`\n- Но: `I'm hearing strange rumours.` (Слышу = узнаю, в значении процесса.)\n- `see` — stative восприятия: `I see a bird.`\n- `I'm seeing double.` (Двоится в глазах — состояние процесса.)\n\n**Common B2 errors:**\n- Continuous с чистыми stative: `I'm knowing` — всё ещё ошибка.\n- Неиспользование Continuous там, где он возможен и добавляет смысл: `He is rude` vs `He is being rude` — нужна разница.\n- Путаница `have` в владении и идиомах.\n- Автоматический перевод русского «я сейчас это понимаю» через Continuous: в английском — Simple."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "stative sense: subject + verb (simple)  /  dynamic sense: subject + be + verb-ing",
+        "ru": "значение состояния: подлежащее + глагол (Simple)  /  динамическое значение: подлежащее + be + глагол-ing"
       },
       "examples": [
         {
           "en": "I'm thinking about changing jobs.",
-          "ru": "Я думаю о смене работы."
+          "ru": "Я думаю о смене работы.",
+          "note": {
+            "en": "process: considering",
+            "ru": "процесс: обдумывание"
+          }
         },
         {
           "en": "We're having dinner with my parents tonight.",
-          "ru": "Мы ужинаем с моими родителями сегодня вечером."
+          "ru": "Мы ужинаем с моими родителями сегодня вечером.",
+          "note": {
+            "en": "idiom: eating",
+            "ru": "идиома: приём пищи"
+          }
         },
         {
           "en": "The chef is tasting the sauce.",
-          "ru": "Шеф пробует соус."
+          "ru": "Шеф пробует соус.",
+          "note": {
+            "en": "deliberate act",
+            "ru": "намеренное действие"
+          }
         },
         {
           "en": "You're being unreasonable.",
-          "ru": "Ты сейчас ведёшь себя неразумно."
+          "ru": "Ты сейчас ведёшь себя неразумно.",
+          "note": {
+            "en": "temporary behaviour",
+            "ru": "временное поведение"
+          }
         },
         {
           "en": "I'm seeing a therapist twice a week.",
-          "ru": "Я хожу к психотерапевту дважды в неделю."
+          "ru": "Я хожу к психотерапевту дважды в неделю.",
+          "note": {
+            "en": "routine: meeting",
+            "ru": "регулярность: посещение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "think о мнении — Simple; think об обдумывании — Continuous. Разные значения — разные формы."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He is rude to the waiter right now.",
+          "right": "He is being rude to the waiter right now.",
+          "why": {
+            "en": "be + being + adjective is needed to say someone is behaving that way now, not that it is their character.",
+            "ru": "be + being + прилагательное нужно, чтобы сказать о поведении сейчас, а не о черте характера."
+          }
+        },
+        {
+          "wrong": "I'm knowing the answer.",
+          "right": "I know the answer.",
+          "why": {
+            "en": "know has no dynamic sense, so the continuous is still wrong at B2.",
+            "ru": "у know нет динамического значения, поэтому Continuous всё ещё ошибка на B2."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, treat the stative rule as a tendency, not an absolute, and let meaning drive the choice. In real (especially spoken) English the continuous appears with statives far more often than textbooks allow, as a marker of temporariness, emphasis, or a process of becoming: I'm loving this weather; She's been meaning to call; We're thinking of selling the house. These are not errors. Three uses are worth mastering. First, the progressive of a stative frames a temporary window: I'm feeling great today / She's being really helpful lately contrasts with a simple general truth. Second, the deliberately progressive verb of cognition is a politeness and hedging tool that creates diplomatic distance: I'm wondering if you'd help, I was thinking we could meet up, I'm hoping to hear back soon. Third, be + being + adjective evaluates behaviour: You are kind (a trait) versus You are being kind (acting kindly now), and it carries pragmatic colour (They're being difficult implies the behaviour is temporary and perhaps unwelcome). Perception verbs split too: I can see / I'm seeing, I can hear / I'm hearing rumours. In academic and formal writing, keep statives simple unless temporariness or process is exactly what you mean: The author believes, not is believing.",
         "ru": "На C1 stative verbs рассматриваются через corpora и реальное использование. Многие границы размыты, и продвинутый говорящий чувствует, где Continuous уместен.\n\n**1. Corpus-based reality:**\nВ реальной речи (особенно разговорной) Continuous со stative verbs встречается чаще, чем предписывает учебник:\n- `I'm loving this weather.`\n- `We're wanting to try something new.`\n- `She's been meaning to call.`\n- `I'm really hoping you can come.`\n- `We're thinking of selling the house.`\n\nЭто не ошибки, а маркеры **временности**, **эмфатичности** или **процесса осознания**.\n\n**2. Progressive of stative verbs for temporary states:**\n- `I'm feeling great today.` (Временно чувствую себя отлично.)\n- `She's being really helpful lately.` (Сейчас особенно помогает.)\n- `We're enjoying every minute of this trip.` (Наслаждаемся процессом.)\n\nContinuous создаёт временное окно, Simple — общую характеристику.\n\n**3. Deliberately progressive verbs of cognition:**\n- `I've been wondering if you'd help.` (Нарастающее желание спросить.)\n- `I was thinking we could meet up.` (Мягкое предложение.)\n- `I'm hoping to hear back soon.` (Надеюсь — с оттенком ожидания.)\n\nЭто дипломатический инструмент, создаёт вежливую дистанцию.\n\n**4. Shifting uses — современная эволюция:**\n- `Love`: `I'm loving this` — стандартно в разговорной рекламе, реже в письме.\n- `Like`: `I'm liking what I see` — на собеседованиях, в ревью.\n- `Want`: `I'm wanting` — редко; обычно `I want`.\n- `Hate`: `I'm hating this` — эмфатическое разговорное.\n- `Need`: `We're needing` — редко; обычно `we need`.\n- `Understand`: обычно Simple; `I'm starting to understand` — о процессе.\n- `Remember`: `I'm remembering something` — редко, в контексте воспоминания как процесса.\n\n**5. Pragmatic implicature:**\n- `She's being modest.` (Она скромничает — сейчас, сознательно.)\n- `They're being difficult.` (Они капризничают сейчас.)\n- `You're being too hard on yourself.` (Ты сейчас слишком строг к себе.)\n\nКонтинуус здесь сигнализирует, что поведение временное и, возможно, неуместное.\n\n**6. `Be + being + adjective` для оценки поведения:**\n- `You are kind.` (Ты добрый — черта характера.)\n- `You are being kind.` (Ты сейчас поступаешь по-доброму.)\n\nЭто ключевое различение на C1.\n\n**7. Progressive of perception verbs:**\n- `I can see...` / `I'm seeing...` — первое о текущем восприятии, второе о процессе встречи или распознавания.\n- `I can hear...` / `I'm hearing rumours...` — первое о текущем слухе, второе о поступлении информации.\n- `I can feel...` — обычно без Continuous; Continuous подчёркивает процесс осязания.\n\n**8. Аcademic convention:**\nВ академическом и формальном письме избегай Continuous со stative verbs, если не требуется выразить именно временность или процесс. Традиционная норма: `The author believes`, не `The author is believing`.\n\n**9. Stylistic sensitivity:**\n- `I'm loving this book.` — разговорно, эмоционально.\n- `I love this book.` — нейтрально, выразительно.\n- `This book is a joy to read.` — академично.\n\nНа C1 ты выбираешь уровень выразительности под регистр.\n\n**10. Common C1 errors:**\n- Автоматическое использование Continuous со stative verbs без смыслового основания.\n- Избегание Continuous там, где он передаёт важный нюанс (temporary state, polite hedging).\n- Путаница meaning shifts: `see` в восприятии vs встрече.\n- Неправильная прагматика: `you are being rude` в формальной переписке может звучать агрессивно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + be + stative verb-ing  →  temporariness / process / politeness; otherwise simple",
+        "ru": "подлежащее + be + глагол состояния-ing  →  временность / процесс / вежливость; иначе Simple"
       },
       "examples": [
         {
           "en": "I'm wondering whether you'd be available next week.",
-          "ru": "Я хотел узнать, не будете ли вы свободны на следующей неделе."
+          "ru": "Я хотел узнать, не будете ли вы свободны на следующей неделе.",
+          "note": {
+            "en": "polite hedge",
+            "ru": "вежливое смягчение"
+          }
         },
         {
           "en": "She's being unusually quiet today.",
-          "ru": "Она сегодня необычно молчалива."
+          "ru": "Она сегодня необычно молчалива.",
+          "note": {
+            "en": "temporary behaviour",
+            "ru": "временное поведение"
+          }
         },
         {
           "en": "We're considering several options before we commit.",
-          "ru": "Мы рассматриваем несколько вариантов, прежде чем принять решение."
+          "ru": "Мы рассматриваем несколько вариантов, прежде чем принять решение.",
+          "note": {
+            "en": "process: deliberating",
+            "ru": "процесс: рассмотрение"
+          }
         },
         {
           "en": "I'm starting to see your point.",
-          "ru": "Я начинаю понимать твою позицию."
+          "ru": "Я начинаю понимать твою позицию.",
+          "note": {
+            "en": "process of realising",
+            "ru": "процесс осознания"
+          }
         },
         {
           "en": "He's been meaning to apologise for weeks.",
-          "ru": "Он уже несколько недель собирается извиниться."
+          "ru": "Он уже несколько недель собирается извиниться.",
+          "note": {
+            "en": "long-running intention",
+            "ru": "давнее намерение"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "I'm wondering, I'm hoping, I've been meaning to — вежливые, мягкие формы в Continuous."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "You are being rude. (in a formal complaint email)",
+          "right": "Your message came across as rude.",
+          "why": {
+            "en": "be + being + adjective sounds confrontational in formal correspondence; reframe the behaviour instead.",
+            "ru": "be + being + прилагательное звучит агрессивно в формальной переписке; лучше переформулировать."
+          }
+        },
+        {
+          "wrong": "The author is believing that progress is inevitable.",
+          "right": "The author believes that progress is inevitable.",
+          "why": {
+            "en": "in academic prose, report a held position with the simple form, not the continuous.",
+            "ru": "в академическом тексте позицию автора передают Simple, а не Continuous."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, stative verbs are decided by idiom, register, and pragmatics. To express a process where the verb resists the continuous, prefer phasal phrasing: get to know, come to understand, begin to realise (She's getting to know what she wants, not She's knowing). Idioms reclassify verbs: I have a headache is stative, but I'm having second thoughts / doubts is dynamic, because the have-idiom names an unfolding situation. Possession verbs (own, belong, possess, and have meaning own) almost never take the continuous, whereas have-idioms (having lunch, having trouble) freely do. The progressive of cognition is the engine of high politeness: I was hoping you might help, We're wondering if you'd be interested, I've been thinking about what you said. Register is decisive: academic and legal English use only the simple (The theory holds that, Research suggests); journalism uses the continuous for live news (Experts are warning that); literary prose exploits the progressive stative for psychological depth (He was believing every word she said; She was understanding, finally, what had happened). Watch the near-native traps: do not over-apply the stative ban (enjoy, wait, stay are dynamic — I'm enjoying this is correct), and live can be either (I live in Moscow permanently / I'm living in Moscow temporarily). Mastery is using the progressive stative only with a clear motive — temporariness, process, emphasis, or politeness — and reading it in others as a stylistic signal, not a mistake.",
         "ru": "На C2 stative verbs требуют тонкого понимания — идиоматика, регистр, прагматика решают всё.\n\n**1. Subtle implicature in progressive statives:**\n- `She's knowing what she wants.` (Неправильно.)\n- `She's getting to know what she wants.` (Узнаёт — процесс.)\n- `She knows what she wants.` (Состояние, знает.)\n\n`Get to know`, `come to understand`, `begin to realise` — способы передать процесс с stative verbs.\n\n**2. Lexical differences change stative/dynamic status:**\n- `I have a headache.` (Stative — владение состоянием.)\n- `I'm having a headache.` — обычно неверно.\n- `I'm having second thoughts.` (Идиома — dynamic.)\n- `I'm having doubts.` (Идиома — dynamic, процесс сомнений.)\n\nИдиоматические выражения с `have` часто позволяют Continuous.\n\n**3. Advanced appearance verbs:**\n- `It seems simple.` (Stative.)\n- `It's seeming more complex than I thought.` — редкое, но возможное, подчёркивает развитие понимания.\n- `It appears that...` (Stative.)\n- `Things are appearing more clear now.` — тоже редко.\n\nВ литературной прозе такие формы допустимы для эффекта постепенного осознания.\n\n**4. Corpus frequencies — what natives actually say:**\nИсследования корпусов показывают:\n- `I'm loving it` — преобладает в рекламе и соцсетях.\n- `I'm liking that` — на собеседованиях, в отзывах.\n- `We're wanting something different` — редко, но встречается в разговоре.\n- `They're hating every minute` — эмфатически разговорное.\n\nВ академическом и журналистском регистре эти формы сведены к минимуму.\n\n**5. Verbs of possession:**\n- `own`, `belong`, `possess` — почти никогда в Continuous.\n- `have` в значении «владеть» — тоже.\n- `have` в идиомах (having lunch, having trouble) — свободно в Continuous.\n\n**6. Pragmatic politeness machinery:**\n- `I was hoping you might help.` (Past Continuous — дистанция и вежливость.)\n- `We're wondering if you'd be interested.` (Present Continuous — мягкое предложение.)\n- `I've been thinking about what you said.` (Perfect Continuous — процесс обдумывания.)\n\nЭти конструкции — стандарт высокой вежливости.\n\n**7. Literary и stylistic effects:**\n- `He was believing every word she said.` (Past Continuous со stative — передаёт постепенное погружение в веру, часто с ироничным оттенком.)\n- `I was remembering something he had said.` (Процесс всплытия памяти.)\n- `She was understanding, finally, what had happened.` (Момент осознания как развёрнутый процесс.)\n\nВ умелом использовании такие формы создают психологическую глубину.\n\n**8. Register sensitivity:**\n- Academic: `The theory holds that...`, `Research suggests...` — только Simple.\n- Journalism: `Experts are warning that...` — Continuous для live news.\n- Advertising: `You're going to love it.` / `You'll love it.`\n- Literary: свободное использование Continuous для psychological depth.\n- Legal: только Simple, никаких Continuous со stative.\n\n**9. Common near-native errors:**\n- Overgeneralising stative rule: избегать Continuous со всеми stative verbs без различения контекстов.\n- Misclassifying verbs: считать `enjoy` stative (оно dynamic — `I'm enjoying this` верно).\n- Using Continuous for stative meanings: `I'm knowing her for years` — ошибка.\n- Ignoring idiomatic progressives: `having fun`, `having trouble` — всегда в Continuous, если речь о ситуации.\n\n**10. Dynamic verbs часто ошибочно считаются stative:**\n- `enjoy` — dynamic: `I'm enjoying the show.`\n- `wait` — dynamic: `I'm waiting for the bus.`\n- `stay` — dynamic: `I'm staying at a hotel.`\n- `live` — может быть обеими: `I live in Moscow` (постоянно) / `I'm living in Moscow` (временно).\n\n**11. Mastery test:**\nНа C2 ты:\n- Используешь Continuous со stative verbs только при явном смысловом основании (временность, процесс, эмфаза, вежливость).\n- Избегаешь Continuous в формальных текстах.\n- Чувствуешь, какой регистр ожидает какой выбор.\n- Читаешь Continuous stative как стилистический маркер, а не ошибку."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "phasal: get to / come to / begin to + stative  |  idiom: be + having + noun  |  register selects simple vs continuous",
+        "ru": "фазовое: get to / come to / begin to + глагол состояния  |  идиома: be + having + сущ.  |  регистр выбирает Simple или Continuous"
       },
       "examples": [
         {
           "en": "He was understanding, slowly, that everything had changed.",
-          "ru": "Он постепенно понимал, что всё изменилось."
+          "ru": "Он постепенно понимал, что всё изменилось.",
+          "note": {
+            "en": "literary: gradual process",
+            "ru": "литературно: постепенный процесс"
+          }
         },
         {
           "en": "I've been meaning to ask you something for a while now.",
-          "ru": "Я уже некоторое время собирался у тебя кое-что спросить."
+          "ru": "Я уже некоторое время собирался у тебя кое-что спросить.",
+          "note": {
+            "en": "perfect continuous: intention",
+            "ru": "Perfect Continuous: намерение"
+          }
         },
         {
           "en": "She's being unreasonable, and we all know it.",
-          "ru": "Она сейчас ведёт себя неразумно, и мы все это знаем."
+          "ru": "Она сейчас ведёт себя неразумно, и мы все это знаем.",
+          "note": {
+            "en": "temporary behaviour",
+            "ru": "временное поведение"
+          }
         },
         {
           "en": "The author maintains that progress is inevitable — a view I am increasingly doubting.",
-          "ru": "Автор утверждает, что прогресс неизбежен — позиция, в которой я всё больше сомневаюсь."
+          "ru": "Автор утверждает, что прогресс неизбежен — позиция, в которой я всё больше сомневаюсь.",
+          "note": {
+            "en": "process of doubting",
+            "ru": "процесс сомнения"
+          }
         },
         {
           "en": "We're having second thoughts about the whole arrangement.",
-          "ru": "У нас возникли сомнения относительно всей этой договорённости."
+          "ru": "У нас возникли сомнения относительно всей этой договорённости.",
+          "note": {
+            "en": "have-idiom: dynamic",
+            "ru": "идиома с have: динамическое"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Continuous со stative verbs — тонкий маркер временности или процесса, не автоматическая ошибка."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'm knowing her for years.",
+          "right": "I've known her for years.",
+          "why": {
+            "en": "duration with a stative perception/cognition verb takes the present perfect simple, not a progressive.",
+            "ru": "длительность с глаголом состояния передаётся Present Perfect Simple, а не прогрессивом."
+          }
+        },
+        {
+          "wrong": "I enjoy the show right now, it's hilarious.",
+          "right": "I'm enjoying the show right now, it's hilarious.",
+          "why": {
+            "en": "enjoy is dynamic, so an in-progress experience correctly uses the continuous — the stative ban does not apply.",
+            "ru": "enjoy — динамический глагол, поэтому процесс в моменте требует Continuous; запрет на состояния не действует."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "dynamic-vs-stative",
+    "present-continuous",
+    "present-simple",
+    "present-perfect-continuous"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "present-continuous",
+    "verb-plus-gerund",
+    "adjective-vs-adverb"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "State (Simple)",
+      "Action (Continuous)"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "ellipsis-and-substitution",
   "title": {
-    "en": "",
+    "en": "Ellipsis and Substitution",
     "ru": "Ellipsis And Substitution"
   },
   "cefr": "C1",
@@ -13,69 +13,121 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "discourse",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "swap",
   "lessons": {
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "Ellipsis and substitution are two ways to avoid repeating words your reader or listener can already recover. Ellipsis leaves a word out entirely; substitution swaps it for a short pro-form. Both make speech and writing leaner and more cohesive. There are three common types of ellipsis. Subject ellipsis drops the opening subject (and often the auxiliary) in casual speech, notes, and messages: '(I) Don't know', '(I'll) See you later', '(Do you) Want coffee?'. Verbal ellipsis omits a verb that matches an earlier one, leaving only the auxiliary or modal: 'She can swim and I can too', 'He's read the book and I have too'. Clausal ellipsis cuts the repeated part after a conjunction or subordinator: 'I went to the cinema, and (I went) to the theatre', 'When (he was) asked, he refused'. Substitution replaces, rather than deletes. Use 'one/ones' for a countable noun: 'I prefer the blue one' (one = shirt). Use 'do/does/did' for a verb phrase: 'He works more than I do' (do = work). Use 'so' or 'not' for a whole clause after verbs of thinking or hoping: 'Will it rain? — I think so' (= I think it will rain), 'Is he coming? — I'm afraid not'. A reliable signal: 'one/ones' stands in for a noun, 'do/does/did' for a verb, and 'so/not' for an entire clause.",
         "ru": "**Ellipsis** (эллипсис) — пропуск слов, которые можно восстановить из контекста. **Substitution** (субституция) — замена повторяющихся слов короткими формами (one, do, so). Оба приёма делают речь сжатой и элегантной.\n\n**Типы эллипсиса:**\n\n**1. Subject ellipsis в диалоге:**\n- `(I) Don't know.` (Не знаю.)\n- `(I'll) See you later.`\n- `(Do you) Want coffee?`\n\nТипично для разговорного стиля, email, SMS.\n\n**2. Verbal ellipsis** — пропуск глагола, когда он совпадает с предыдущим:\n- `She can swim and I can [swim] too.`\n- `He's read the book and I have [read it] too.`\n- `They arrived late and so did we [arrive late].`\n\n**3. Clause ellipsis** — после союзов пропускаем повтор:\n- `I went to the cinema, and (I went) to the theatre.`\n- `She's tall and (she's) beautiful.`\n- `When (he was) asked, he refused.`\n\n**Substitution с 'one / ones':**\nЗаменяет countable noun:\n- `I don't like this shirt. I prefer the blue one.` (one = shirt.)\n- `These apples are fresh; those ones are old.` (BrE) / `those are old.` (AmE).\n- `Do you have any pens? I need a big one.`\n\n**Substitution с 'do / does / did':**\nЗаменяет глагол:\n- `He works more than I do.` (do = work.)\n- `She's as smart as you are.` (auxiliary.)\n- `Who took my pen? — I did.`\n\n**Substitution с 'so / not':**\n- `Will it rain? — I think so.` (= I think it will rain.)\n- `Is he coming? — I'm afraid not.` (= I'm afraid he's not coming.)\n- `Do you need help? — I hope so.`\n\nТипичные глаголы для so: think, hope, believe, expect, suppose, imagine, guess, say.\n\n**Частая ошибка:** `I don't think so` vs `I think not`.\n- `I don't think so.` — нейтральный, естественный.\n- `I think not.` — грамматично, но формальнее и реже."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "ellipsis: ... can / have / will ___ (verb omitted)   |   substitution: noun -> one/ones, verb -> do/does/did, clause -> so/not",
+        "ru": "эллипсис: ... can / have / will ___ (глагол опущен)   |   субституция: сущ. -> one/ones, глагол -> do/does/did, clause -> so/not"
       },
       "examples": [
         {
           "en": "This book is better than that one.",
-          "ru": "Эта книга лучше той."
+          "ru": "Эта книга лучше той.",
+          "note": {
+            "en": "one = noun",
+            "ru": "one = существительное"
+          }
         },
         {
           "en": "She can speak French, and I can too.",
-          "ru": "Она может говорить по-французски, и я тоже."
+          "ru": "Она может говорить по-французски, и я тоже.",
+          "note": {
+            "en": "verbal ellipsis",
+            "ru": "глагольный эллипсис"
+          }
         },
         {
           "en": "Do you think he'll win? — I hope so.",
-          "ru": "Ты думаешь, он выиграет? — Надеюсь."
+          "ru": "Ты думаешь, он выиграет? — Надеюсь.",
+          "note": {
+            "en": "so = clause",
+            "ru": "so = clause"
+          }
         },
         {
           "en": "He eats more than I do.",
-          "ru": "Он ест больше, чем я."
+          "ru": "Он ест больше, чем я.",
+          "note": {
+            "en": "do = verb",
+            "ru": "do = глагол"
+          }
         },
         {
           "en": "When asked about it, she refused to comment.",
-          "ru": "Когда её спросили об этом, она отказалась комментировать."
+          "ru": "Когда её спросили об этом, она отказалась комментировать.",
+          "note": {
+            "en": "reduced clause",
+            "ru": "редуцированный clause"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "One/ones заменяет существительное, do/does/did заменяет глагол, so/not заменяет целое clause после think/hope/believe."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I prefer the blue.",
+          "right": "I prefer the blue one.",
+          "why": {
+            "en": "After an adjective, a countable noun is replaced by 'one', not simply dropped.",
+            "ru": "После прилагательного исчисляемое существительное заменяется на 'one', а не просто опускается."
+          }
+        },
+        {
+          "wrong": "Will it rain? — I think it.",
+          "right": "Will it rain? — I think so.",
+          "why": {
+            "en": "To stand in for a whole clause after 'think/hope/believe', use 'so', not the pronoun 'it'.",
+            "ru": "Чтобы заменить целое придаточное после 'think/hope/believe', используется 'so', а не местоимение 'it'."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, ellipsis and substitution become tools of style and cohesion that you control deliberately. Gapping deletes a repeated verb in parallel structures: 'John ordered steak, and Mary [ordered] fish'; 'She prefers tea; he [prefers] coffee'. Stripping keeps only the contrastive remnant: 'John ordered steak. Not Mary.' Sluicing reduces an embedded wh-question to its question word: 'Someone called, but I don't know who'; 'She's coming, but I don't know when'. VP-ellipsis leaves the auxiliary and elides everything after it: 'He has left, and so have I'; 'If you don't go, I won't either'. Comparative ellipsis trims the second clause after 'than' or 'as': 'She runs faster than he', 'She's taller than (she was) last year'. Pseudo-gapping keeps an auxiliary plus a new object: 'She doesn't eat meat, but she does fish' (does = eats). For verb substitution, register matters: 'do so' is formal, 'do it' is the neutral default, and 'do that' often carries surprise or complaint. The demonstratives 'this/that' can substitute for a whole preceding idea: 'He refused. This surprised me.' Formal reduced clauses drop subject + 'be' after subordinators: 'If (it is) possible, send an email'; 'Though (he was) young, he succeeded'. Two cautions govern advanced use. First, ambiguity: 'John wants to buy a car, and Mary does too' may mean the same car or any car, so expand when precision matters. Second, register: heavy ellipsis is conversational, so use it sparingly in academic prose, where it can read as clipped.",
         "ru": "На C2 эллипсис и субституция становятся маркерами стиля и когезии.\n\n**Gapping** (пропуск глагола в параллельных структурах):\n- `John ordered steak, and Mary [ordered] fish.`\n- `She prefers tea; he [prefers] coffee.`\n\nТипично для литературного стиля, заметок, юмора.\n\n**Stripping** (пропуск всего кроме контрастной части):\n- `John ordered steak. Not Mary.` (= Mary did not order steak.)\n- `She called. Not me.`\n\n**Sluicing** (эллипсис wh-question):\n- `Someone called, but I don't know who [called].`\n- `She's coming, but I don't know when [she's coming].`\n- `He said something, but I forget what [he said].`\n\n**VP-ellipsis:**\n- `She can swim, and I can [swim] too.`\n- `He has left, and so have I [left].`\n- `They will come if we will [come].`\n- `If you don't go, I won't [go] either.`\n\n**Comparative ellipsis:**\n- `She runs faster than he [runs].`\n- `She's taller than (she was) last year.`\n- `I know her better than he [does].` (или `than him` — disputed.)\n\n**Pseudo-gapping:**\n- `She doesn't eat meat, but she does fish.` (does = eats.)\n- Разговорный стиль.\n\n**Substitution с 'do so / do it / do that':**\n- `do so` — формальный: `She was asked to submit the form, and she did so yesterday.`\n- `do it` — стандарт: `He left the door open again! — He always does it.`\n- `do that` — с оттенком жалобы/удивления: `You ate all the cake? Why did you do that?`\n\n**Discourse 'this / that' as clausal substitute:**\n- `He refused. This surprised me.` (this = его отказ.)\n- `She won first prize. That's amazing.`\n\n**Formal ellipsis in writing:**\n- `If (it is) possible, send an email.`\n- `When (you are) in doubt, ask.`\n- `Once (it is) completed, submit the form.`\n- `Though (he was) young, he succeeded.`\n\nРедуцированные clauses с participles/adjectives.\n\n**Echo questions / ellipsis:**\n- `I need a break. — You do?`\n- `She's leaving. — She is?`\n\n**Common C2 pitfalls:**\n- Ambiguous ellipsis: `John wants to buy a car, and Mary does too.` (Mary wants to buy a car? or the same car?) Неоднозначность — иногда нужно развернуть.\n- Overuse в academic writing: эллипсис разговорный, в формальном письме используй экономно.\n\n**Rhetorical effect:**\n- Эллипсис создаёт ритм, плотность, экспрессию.\n- `Came. Saw. Conquered.` (Пришёл, увидел, победил — максимально сжатая цепь.)\n\n**Sub-groups of ellipsis по stylistic function:**\n- Colloquial compression: `(I'm) going home.`\n- Literary parataxis: `She laughed. He did not.`\n- Newspaper headline: `Man arrested for theft.` (не полный clause.)\n- Academic reduction: `When tested, the hypothesis held.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "gapping: A V X, B [V] Y   |   sluicing: ..., but I don't know who/when/what   |   VP-ellipsis: ... and so have I / I won't either   |   do so (formal) / do it (neutral) / do that (marked)",
+        "ru": "gapping: A V X, B [V] Y   |   sluicing: ..., but I don't know who/when/what   |   VP-эллипсис: ... and so have I / I won't either   |   do so (формально) / do it (нейтрально) / do that (маркировано)"
       },
       "examples": [
         {
           "en": "Someone phoned while I was out, but I don't know who.",
-          "ru": "Кто-то звонил, пока меня не было, но я не знаю кто."
+          "ru": "Кто-то звонил, пока меня не было, но я не знаю кто.",
+          "note": {
+            "en": "sluicing",
+            "ru": "sluicing"
+          }
         },
         {
           "en": "John loves classical music, Mary jazz.",
-          "ru": "Джон любит классическую музыку, Мэри — джаз."
+          "ru": "Джон любит классическую музыку, Мэри — джаз.",
+          "note": {
+            "en": "gapping",
+            "ru": "gapping"
+          }
         },
         {
           "en": "She said she would call, and she did so yesterday.",
-          "ru": "Она сказала, что позвонит, и она это сделала вчера."
+          "ru": "Она сказала, что позвонит, и она это сделала вчера.",
+          "note": {
+            "en": "do so = formal",
+            "ru": "do so = формально"
+          }
         },
         {
           "en": "He succeeded where others had failed.",
@@ -83,15 +135,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "If possible, submit your application by Friday.",
-          "ru": "Если возможно, подайте заявку к пятнице."
+          "ru": "Если возможно, подайте заявку к пятнице.",
+          "note": {
+            "en": "reduced if-clause",
+            "ru": "редуцированное if-clause"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Sluicing — сжатое «но не знаю кто/когда/где»: I know someone called, but I don't know who. Очень частый приём в разговоре."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She doesn't eat meat, but she does eats fish.",
+          "right": "She doesn't eat meat, but she does fish.",
+          "why": {
+            "en": "In pseudo-gapping the auxiliary 'does' already carries the verb, so the lexical verb is deleted, not repeated.",
+            "ru": "В pseudo-gapping вспомогательный 'does' уже несёт глагол, поэтому смысловой глагол удаляется, а не повторяется."
+          }
+        },
+        {
+          "wrong": "Someone called, but I don't know who called.",
+          "right": "Someone called, but I don't know who.",
+          "why": {
+            "en": "Sluicing leaves only the wh-word; repeating the recoverable clause undoes the ellipsis.",
+            "ru": "При sluicing остаётся только вопросительное слово; повтор восстановимого придаточного отменяет эллипсис."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "ellipsis",
+    "cleft-sentences",
+    "fronting",
+    "reduced-relative-clauses"
+  ],
+  "crossTopic": [
+    "coordinating-conjunctions",
+    "comparative-adjectives",
+    "tag-questions",
+    "demonstrative-pronouns"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "full form",
+      "ellipsis / substitute"
+    ]
+  }
 };

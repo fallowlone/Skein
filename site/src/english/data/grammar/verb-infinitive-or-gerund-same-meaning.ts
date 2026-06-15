@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "verb-infinitive-or-gerund-same-meaning",
   "title": {
-    "en": "",
+    "en": "Verbs with Infinitive or Gerund — Same Meaning",
     "ru": "Verb Infinitive Or Gerund Same Meaning"
   },
   "cefr": "B1",
@@ -15,159 +15,331 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "verb-patterns",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "swap",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Some verbs accept **both** the to-infinitive and the **-ing** form with no real change in meaning. The choice is stylistic, not grammatical — both are correct.\n\n**Verbs that take either form (same meaning):** `start, begin` (`I started to learn / learning French`); `continue` (`She continued to speak / speaking`); `like, love, hate, prefer` (`I like to read / reading`); `can't stand` (`I can't stand to lose / losing`); `intend, propose, bother` (`Don't bother to call / calling`).\n\n**Tiny shades when they exist.** With `like / love / hate / prefer`, the -ing form leans toward general enjoyment (`I like swimming` = I enjoy it), while `to + V` can suggest a habit or routine (`I like to swim every morning`). The gap is small: British English often uses `to + V` for habit, American English treats both as nearly equal.\n\n**Watch the continuous.** When `start / begin` is itself in the continuous, English prefers the to-infinitive: `It's starting to rain` (not *starting raining*), `I'm beginning to understand` (not *beginning understanding*).\n\n**Key rule — `would` always takes the to-infinitive:** `I'd like to go`, `I'd love to meet you`, `I'd prefer to stay`, `I'd hate to lose` — never *I'd like going*.",
         "ru": "Некоторые глаголы допускают и инфинитив, и герундий без значительной разницы в смысле. Выбор — часто стилистический или регистровый.\n\n**Глаголы с обеими формами (одинаковый смысл):**\n- `start / begin` — начать: `I started to learn / learning French.`\n- `continue` — продолжать: `She continued to speak / speaking.`\n- `prefer` — предпочитать: `I prefer to walk / walking.`\n- `like` — любить: `I like to read / reading.`\n- `love` — любить: `She loves to travel / travelling.`\n- `hate` — ненавидеть: `He hates to wait / waiting.`\n- `can't stand` — не выносить: `I can't stand to lose / losing.`\n- `intend` — намереваться: `They intend to move / moving.`\n- `propose` — предлагать (план): `We propose to meet / meeting next week.`\n- `bother` — утруждать: `Don't bother to call / calling.`\n\n**Тонкие различия, когда они есть:**\n\n**1. Like / love / hate / prefer:**\n- `I like swimming.` — мне нравится плавать (general enjoyment).\n- `I like to swim every morning.` — я предпочитаю плавать каждое утро (habit/routine).\n\nРазница маленькая. В BrE `to + inf` часто означает habit/preference; в AmE оба почти одинаковы.\n\n**2. Would like / would love / would hate / would prefer — ТОЛЬКО to-inf:**\n- ✓ `I'd like to go.`\n- ✗ `I'd like going.` — нечасто, меняет смысл.\n\nЗапомни: с `would` всегда to-inf.\n\n**3. Begin / start:**\n- Оба работают одинаково.\n- Исключение: когда `begin/start` в continuous, предпочтительнее to-inf:\n  - `It's starting to rain.` (not starting raining.)\n  - `I'm beginning to understand.` (not beginning understanding.)\n\n**4. Continue:**\n- `She continued to talk / talking.` — одинаково.\n- В формальной речи `to-inf` чаще.\n\n**Ошибка русскоговорящего:** думать, что всегда один вариант правильный. Для этих глаголов выбор стилистический, не грамматический."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb + to-V  =  subject + verb + verb-ing",
+        "ru": "подлежащее + глагол + to-V  =  подлежащее + глагол + глагол-ing"
       },
       "examples": [
         {
           "en": "I like to watch / watching movies on weekends.",
-          "ru": "Я люблю смотреть фильмы по выходным."
+          "ru": "Я люблю смотреть фильмы по выходным.",
+          "note": {
+            "en": "like + both",
+            "ru": "like + обе формы"
+          }
         },
         {
           "en": "It started to snow / snowing in the evening.",
-          "ru": "Вечером пошёл снег."
+          "ru": "Вечером пошёл снег.",
+          "note": {
+            "en": "start + both",
+            "ru": "start + обе формы"
+          }
         },
         {
           "en": "She prefers to work / working alone.",
-          "ru": "Она предпочитает работать одна."
+          "ru": "Она предпочитает работать одна.",
+          "note": {
+            "en": "prefer + both",
+            "ru": "prefer + обе формы"
+          }
         },
         {
           "en": "We intend to visit / visiting Paris next month.",
-          "ru": "Мы намереваемся посетить Париж в следующем месяце."
+          "ru": "Мы намереваемся посетить Париж в следующем месяце.",
+          "note": {
+            "en": "intend + both",
+            "ru": "intend + обе формы"
+          }
         },
         {
           "en": "I'd love to meet your family.",
-          "ru": "Я бы очень хотел познакомиться с твоей семьёй."
+          "ru": "Я бы очень хотел познакомиться с твоей семьёй.",
+          "note": {
+            "en": "would love → only to-V",
+            "ru": "would love → только to-V"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Would like/love/hate/prefer — всегда to-inf, никогда -ing: I'd like TO GO, не I'd like going."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'd like going to the cinema tonight.",
+          "right": "I'd like to go to the cinema tonight.",
+          "why": {
+            "en": "After would (I'd like / love / hate / prefer), always use the to-infinitive, never -ing.",
+            "ru": "После would (I'd like / love / hate / prefer) всегда ставится to-инфинитив, никогда -ing."
+          }
+        },
+        {
+          "wrong": "It's starting raining.",
+          "right": "It's starting to rain.",
+          "why": {
+            "en": "When start or begin is in the continuous, English prefers the to-infinitive after it.",
+            "ru": "Когда start или begin стоит в continuous, после него предпочитается to-инфинитив."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you sort out the finer shades and the register that decides which form sounds better.\n\n**Verbs with a barely-there meaning shift.** `attempt` (`I attempted to open / opening the door` — almost identical); `deserve` (`She deserves to win` is standard; `She deserves winning` is rarer but tolerable); `afford` (almost always `to + V`: `I can't afford to buy it`).\n\n**The `need + -ing` passive pattern.** With `need, want` (and old-fashioned `require`), the -ing form carries a **passive** meaning: `The car needs washing` = needs to be washed; `My hair needs cutting`. Don't confuse it with ordinary `need + to V`, which is active: `I need to wash the car` (I must) vs `The car needs washing` (it must be done to the car). Older British usage extends this to `want`: `The wall wants painting`.\n\n**Formal collocation preferences.** `cease` (formal) leans to the to-infinitive: `He ceased to work`; `commence` (formal) leans to -ing: `They commenced working`.\n\n**Aspect with start / begin.** `He started writing at age 10` frames a long-term activity; `He started to write` marks the precise moment of beginning. Both are grammatical; the difference is very subtle.\n\nIn reported speech the chosen form usually survives: `She said she preferred to walk / walking`. The B2 trap is insisting on a single \"correct\" form — when both work and the meaning is the same, there is no error.",
         "ru": "На B2 осваивай тонкие оттенки и register.\n\n**Verbs с очень лёгким meaning shift:**\n\n**1. Attempt / try (when = make an effort):**\n- `I attempted to open the door.` / `I attempted opening the door.` — почти одинаково.\n- `Try` в значении «экспериментировать» имеет разные смыслы с inf и -ing (это тема other topic).\n\n**2. Omit / fail + to-inf (typically):**\n- `He omitted to mention it.` (обычно to-inf.)\n- Gerund реже.\n\n**3. Deserve — оба:**\n- `She deserves to win.` (standard, more common.)\n- `She deserves winning.` (tolerable, rarer.)\n\n**4. Afford — обычно to-inf:**\n- `I can't afford to buy it.` (стандарт.)\n- Gerund редко.\n\n**5. Need + -ing (passive meaning):**\n- `The car needs washing.` (= needs to be washed.)\n- `My hair needs cutting.`\n\nЭто специфический образец — gerund активно звучит, но с пассивным смыслом.\n\nНе путай с обычным `need + to-inf`:\n- `I need to wash the car.` (я должен.)\n- `The car needs washing.` (машина нуждается в мытье — passive.)\n\n**6. Want + -ing (same passive pattern — rarer):**\n- `The wall wants painting.` (BrE, older usage = needs painting.)\n\n**Subtle aspect distinctions with start/begin:**\n- `He started writing at age 10.` — начал в процессе (long-term, hobby.)\n- `He started to write.` — конкретный момент начала.\n\nОчень тонкое различие; oба грамматичны.\n\n**Collocation preferences:**\n- `cease` (formal) + to-inf предпочтительнее: `He ceased to work.`\n- `commence` (formal) + -ing чаще: `They commenced working.`\n\n**В reported speech:**\n- Inf / gerund выбор часто сохраняется при пересказе.\n- `She said she preferred to walk.` / `She said she preferred walking.`\n\n**Ошибка B2:** фиксация только на одном варианте. Если оба работают и смысл тот же — нет ошибки."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "need / want + verb-ing  =  need / want + to be + V3 (passive sense)",
+        "ru": "need / want + глагол-ing  =  need / want + to be + V3 (пассивный смысл)"
       },
       "examples": [
         {
           "en": "The car needs cleaning.",
-          "ru": "Машину надо помыть."
+          "ru": "Машину надо помыть.",
+          "note": {
+            "en": "need + -ing = passive",
+            "ru": "need + -ing = пассив"
+          }
         },
         {
           "en": "He deserves to be promoted.",
-          "ru": "Он заслуживает повышения."
+          "ru": "Он заслуживает повышения.",
+          "note": {
+            "en": "deserve + to-V",
+            "ru": "deserve + to-V"
+          }
         },
         {
           "en": "I can't afford to travel this year.",
-          "ru": "Я не могу себе позволить путешествовать в этом году."
+          "ru": "Я не могу себе позволить путешествовать в этом году.",
+          "note": {
+            "en": "afford → to-V",
+            "ru": "afford → to-V"
+          }
         },
         {
           "en": "She ceased to respond to my messages.",
-          "ru": "Она перестала отвечать на мои сообщения."
+          "ru": "Она перестала отвечать на мои сообщения.",
+          "note": {
+            "en": "cease (formal) → to-V",
+            "ru": "cease (formal) → to-V"
+          }
         },
         {
           "en": "They commenced construction in March.",
-          "ru": "Они начали строительство в марте."
+          "ru": "Они начали строительство в марте.",
+          "note": {
+            "en": "commence (formal)",
+            "ru": "commence (formal)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Need / want + -ing имеют passive meaning: The car needs washing = needs to be washed."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The car needs to wash.",
+          "right": "The car needs washing.",
+          "why": {
+            "en": "With need + -ing the meaning is passive (needs to be washed); a car cannot actively wash, so need to wash is wrong here.",
+            "ru": "С need + -ing смысл пассивный (needs to be washed); машина не может мыть сама, поэтому need to wash здесь неверно."
+          }
+        },
+        {
+          "wrong": "I can't afford buying a new car.",
+          "right": "I can't afford to buy a new car.",
+          "why": {
+            "en": "Afford normally takes the to-infinitive; the gerund is very rare and sounds wrong.",
+            "ru": "Afford обычно берёт to-инфинитив; герундий очень редок и звучит неверно."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you read the register, frequency, and collocation that tip the balance between two equally grammatical forms.\n\n**Corpus-based preferences (BNC / COCA).** `begin` favours the to-infinitive in formal or written English, -ing in speech; `start` favours -ing in informal use; `continue` favours the to-infinitive in academic writing; `prefer` favours the to-infinitive, especially with a comparison (`I prefer to walk rather than drive`); `love / hate` are roughly even.\n\n**Aspectual sensitivity.** A stative verb in the continuous forces the to-infinitive: `I'm beginning to understand` (not *understanding*); a dynamic verb takes either: `I started running / to run`.\n\n**Parallel structure — keep one form.** In a list, do not mix: ✓ `I like reading, writing, and travelling`; ✗ `I like reading, to write, and travelling`.\n\n**`would rather` vs `would prefer`.** Same meaning, different syntax: `I'd rather go` (bare infinitive, no `to`) vs `I'd prefer to go` (to-infinitive).\n\n**Register spread for preference verbs:** informal `I love hanging out`; neutral `I love to spend time`; formal `I am fond of spending time`.\n\n**Disambiguation.** `I like to walk` can read as enjoyment or habit; `I like walking` reads as enjoyment of the activity. In tricky contexts, pick the less ambiguous form, or add `usually / always / generally` with `to + V` to mark a habit. The classic C1 error is importing Russian habits — in Russian «начал делать» is universal, but English chooses by aspect, register, and flow.",
         "ru": "На C1 различай нюансы register, frequency, collocation patterns.\n\n**Corpus-based preferences:**\nДля некоторых глаголов оба варианта грамматичны, но один значительно частотнее по данным BNC / COCA:\n- `begin` — to-inf чаще в formal / written; -ing — в speech.\n- `start` — -ing чаще в informal.\n- `continue` — to-inf чаще в academic writing.\n- `like` — в BrE to-inf часто = habit; -ing = enjoyment.\n- `love / hate` — примерно равно.\n- `prefer` — to-inf чаще, особенно с сравнением: `I prefer to walk rather than drive.`\n\n**Aspectual sensitivity:**\n- Stative verb в continuous требует to-inf: `I'm beginning to understand.` (not understanding.)\n- Dynamic verb — часто -ing: `I started running.` / `I started to run.` — оба.\n\n**Modal + prefer / would rather:**\n- `I'd rather go.` (bare infinitive — без to.)\n- `I'd prefer to go.` (to-inf.)\n- Оба одинаковый смысл, разный синтаксис.\n\n**Stylistic echo:**\n- В параллельных структурах выбирай одну форму:\n  - ✓ `I like reading, writing, and travelling.`\n  - ✗ `I like reading, to write, and travelling.`\n\n**Register spread для verbs of preference:**\n- Informal: `I love hanging out with friends.`\n- Neutral: `I love to spend time with friends.`\n- Formal: `I am fond of spending time with friends.`\n\n**Semantic ambiguity avoidance:**\n- `I like to walk.` (мне нравится ходить / это моя привычка.)\n- `I like walking.` (мне нравится ходьба.)\n\nВ сложных контекстах выбирай форму, которая меньше двусмысленна.\n\n**Academic writing convention:**\n- `continue to demonstrate / continue demonstrating` — оба корректны.\n- `commence to assess / commence assessing` — `assessing` чаще в академическом.\n- `cease to function / cease functioning` — `to function` чаще в formal prose.\n\n**Common C1 issue:** перенос русских habits в английский. В русском «начал делать» универсально. В английском выбирай по aspect, register, flow."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "would rather + bare V  =  would prefer + to-V (same meaning, different syntax)",
+        "ru": "would rather + V без to  =  would prefer + to-V (тот же смысл, другой синтаксис)"
       },
       "examples": [
         {
           "en": "She continued to argue her point despite the opposition.",
-          "ru": "Она продолжала отстаивать свою точку зрения, несмотря на противодействие."
+          "ru": "Она продолжала отстаивать свою точку зрения, несмотря на противодействие.",
+          "note": {
+            "en": "continue + to-V (formal)",
+            "ru": "continue + to-V (формально)"
+          }
         },
         {
           "en": "I prefer working from home rather than commuting.",
-          "ru": "Я предпочитаю работать из дома, а не ездить на работу."
+          "ru": "Я предпочитаю работать из дома, а не ездить на работу.",
+          "note": {
+            "en": "prefer + -ing + rather than",
+            "ru": "prefer + -ing + rather than"
+          }
         },
         {
           "en": "The system ceased to function after the update.",
-          "ru": "Система перестала работать после обновления."
+          "ru": "Система перестала работать после обновления.",
+          "note": {
+            "en": "cease + to-V (formal)",
+            "ru": "cease + to-V (формально)"
+          }
         },
         {
           "en": "I'd rather stay home tonight.",
-          "ru": "Я бы предпочёл остаться дома сегодня вечером."
+          "ru": "Я бы предпочёл остаться дома сегодня вечером.",
+          "note": {
+            "en": "would rather + bare V",
+            "ru": "would rather + V без to"
+          }
         },
         {
           "en": "He began developing the theory in the 1980s.",
-          "ru": "Он начал разрабатывать теорию в 1980-х."
+          "ru": "Он начал разрабатывать теорию в 1980-х.",
+          "note": {
+            "en": "begin + -ing (narrative)",
+            "ru": "begin + -ing (повествование)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В параллельных структурах держи ОДНУ форму: I enjoy reading, writing, and listening to music — не смешивай с to-inf."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I'd rather to stay home tonight.",
+          "right": "I'd rather stay home tonight.",
+          "why": {
+            "en": "Would rather is followed by the bare infinitive (no to); would prefer takes the to-infinitive.",
+            "ru": "После would rather идёт инфинитив без to; would prefer берёт to-инфинитив."
+          }
+        },
+        {
+          "wrong": "I enjoy reading, to write, and travelling.",
+          "right": "I enjoy reading, writing, and travelling.",
+          "why": {
+            "en": "In a parallel list keep a single form throughout; do not switch from -ing to the to-infinitive.",
+            "ru": "В параллельном списке держите одну форму; не переключайтесь с -ing на to-инфинитив."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the infinitive/gerund choice in this verb class is purely **stylistic** — you tune rhythm and register, not grammar.\n\n**Literary nuance.** The gerund tends to feel more immediate and sensuous (`She loves dancing in the rain`); the infinitive feels more abstract and deliberative (`She loves to dance in the rain whenever she can`).\n\n**Parallel constructions for rhetorical effect.** A triple to-infinitive gives a measured cadence (`He came to learn, to grow, and to understand`); a gerund list reads as noun-like (`Reading, writing, composing — these were her life`).\n\n**Legal / scientific formulae.** `commence to + V` is archaic legal; `commence + -ing` is modern; `cease and desist from + -ing` is a fixed legal phrase; `propose to + V` plans officially while `propose + -ing` suggests informally.\n\n**Rhythm-driven choice.** In polished prose, writers pick the form that scans better: `He continued to speak, to gesture, to pace` vs `He kept speaking, gesturing, pacing` — `keep + -ing` falls naturally into the second.\n\n**Register stratification.** Poetic / literary: often -ing for immediacy, to-V for stately abstraction. Academic: to-V slightly preferred for `continue, cease, commence`. Journalistic: mix by readability. Legal: fixed collocations.\n\n**Ambiguity control.** `She likes to swim in cold water` could be habit or preference; adverbs (`usually, always`) and frequency cues resolve it. **Archaic variants** like the perfect infinitive `He loved to have done it` survive only in literary registers, and mixing forms within one structure (`She began singing and to dance`) is inconsistent — avoid it. The shade of meaning in `continue to try` (persistence) vs `continue trying` (neutral process) is about 20% sense, 80% rhythm and register. At C2 the question is not \"which is correct?\" but \"which lands best in this rhythm, discourse, and register?\"",
         "ru": "На C2 различия между inf/gerund в этом классе — чисто стилистические, работаешь с ритмом и регистровой точностью.\n\n**Subtle literary distinctions:**\n- Gerund часто звучит more immediate, sensuous: `She loves dancing in the rain.`\n- Infinitive — more abstract, deliberative: `She loves to dance in the rain whenever she can.`\n\n**Academic / legal preferences:**\n- `propose to + inf` — plan officially.\n- `propose + -ing` — suggest informally.\n- Различие намёком на intent vs suggestion.\n\n**Parallel constructions for rhetorical effect:**\n- `He came to learn, to grow, and to understand.` (triple to-inf — measured cadence.)\n- `Reading, writing, composing — these were her life.` (gerund list — noun-like.)\n\n**Legal / scientific formulae:**\n- `commence to + inf` — старомодный legal.\n- `commence + gerund` — modern.\n- `cease and desist from + -ing` — legal fixed phrase.\n\n**Rhythm-driven choice:**\nВ стилистически отточенной прозе выбирают форму, которая лучше ложится в ритм:\n- `He continued to speak, to gesture, to pace.` (trochaic reinforcement.)\n- `He kept speaking, gesturing, pacing.` (trochaic — keep + -ing natural.)\n\n**Register stratification summary:**\n- Poetic / literary: often -ing for immediacy, to-inf for stately abstraction.\n- Academic: to-inf slightly preferred for `continue`, `cease`, `commence`.\n- Journalistic: mix based on readability.\n- Legal: fixed collocations (commence to/on, cease from, continue in/with).\n\n**Syntactic ambiguity traps at C2:**\n- `She likes to swim in cold water.` — could be habit or preference.\n- Context and sentence-level cues (adverbs, frequency) resolve.\n- Writers avoid such ambiguity by adding `usually, always, generally` с to-inf для habit.\n\n**Obsolete / archaic variants:**\n- `He loved to have done it.` (perfect inf — он любил, что это сделал.) — редкое, literary.\n- `She began singing and to dance.` — stylistic variation, but inconsistent — avoid.\n\n**Cognitive / semantic overlay:**\n- `continue to try` — persistence despite obstacles.\n- `continue trying` — ongoing process neutrally.\n- Difference is 20% shade of meaning, 80% rhythm/register.\n\n**C2-level awareness:**\nВы не спрашиваете «какой правильно?»; вы спрашиваете «какой ложится лучше в данный ритм / дискурс / регистр?». Это не грамматика — это стиль."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "verb + to-V (abstract / measured)  ~  verb + verb-ing (immediate / noun-like)",
+        "ru": "глагол + to-V (абстрактно / размеренно)  ~  глагол + глагол-ing (непосредственно / как существительное)"
       },
       "examples": [
         {
           "en": "The narrator continued to describe, to reflect, and to reveal.",
-          "ru": "Рассказчик продолжал описывать, размышлять и раскрывать."
+          "ru": "Рассказчик продолжал описывать, размышлять и раскрывать.",
+          "note": {
+            "en": "triple to-V cadence",
+            "ru": "тройной to-V — каденция"
+          }
         },
         {
           "en": "Reading, learning, teaching — these defined her life.",
-          "ru": "Чтение, учёба, преподавание — вот что определило её жизнь."
+          "ru": "Чтение, учёба, преподавание — вот что определило её жизнь.",
+          "note": {
+            "en": "gerund list (noun-like)",
+            "ru": "список герундиев (как сущ.)"
+          }
         },
         {
           "en": "The firm ceased and desisted from the activity.",
-          "ru": "Фирма прекратила и воздержалась от этой деятельности."
+          "ru": "Фирма прекратила и воздержалась от этой деятельности.",
+          "note": {
+            "en": "fixed legal phrase",
+            "ru": "устойчивая юр. фраза"
+          }
         },
         {
           "en": "He loved to have lived through such remarkable times.",
-          "ru": "Он радовался тому, что прожил в такие замечательные времена."
+          "ru": "Он радовался тому, что прожил в такие замечательные времена.",
+          "note": {
+            "en": "perfect infinitive (literary)",
+            "ru": "перфектный инфинитив (литер.)"
+          }
         },
         {
           "en": "We propose to adjourn the meeting.",
-          "ru": "Мы предлагаем прервать совещание."
+          "ru": "Мы предлагаем прервать совещание.",
+          "note": {
+            "en": "propose to + V (official)",
+            "ru": "propose to + V (официально)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "На C2 выбор между inf/gerund для same-meaning глаголов — не грамматика, а вопрос ритма и регистра."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She began singing and to dance at the party.",
+          "right": "She began singing and dancing at the party.",
+          "why": {
+            "en": "Keep the same form within one coordinated structure; mixing -ing with the to-infinitive is stylistically inconsistent.",
+            "ru": "В одной сочинённой структуре держите одну форму; смешивать -ing с to-инфинитивом стилистически непоследовательно."
+          }
+        },
+        {
+          "wrong": "The firm ceased and desisted to advertise the product.",
+          "right": "The firm ceased and desisted from advertising the product.",
+          "why": {
+            "en": "Cease and desist is a fixed legal phrase that takes from + -ing, not the to-infinitive.",
+            "ru": "Cease and desist — устойчивая юридическая фраза, которая берёт from + -ing, а не to-инфинитив."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "verb-infinitive-or-gerund-different-meaning",
+    "verb-plus-gerund",
+    "verb-plus-infinitive",
+    "gerund-as-noun"
+  ],
+  "crossTopic": [
+    "present-continuous",
+    "stative-verbs",
+    "passive-present-simple",
+    "reported-statements"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "verb",
+      "to-V",
+      "verb-ing",
+      "= same meaning"
+    ]
+  }
 };

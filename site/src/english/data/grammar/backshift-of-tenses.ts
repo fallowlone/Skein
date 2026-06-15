@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "backshift-of-tenses",
   "title": {
-    "en": "",
+    "en": "Backshift of Tenses",
     "ru": "Backshift Of Tenses"
   },
   "cefr": "B2",
@@ -14,19 +14,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "reported-speech",
+  "egp": [
+    "EGP:reported-speech-backshift"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "Backshift is the tense change that happens inside reported speech. The rule: when the reporting verb is in the past (said, told, asked, explained), the verb in the reported clause moves one step further into the past.\n\nThe core shifts are: present simple -> past simple (work -> worked), present continuous -> past continuous (am working -> was working), present perfect -> past perfect (have worked -> had worked), past simple -> past perfect (worked -> had worked), and will -> would (will work -> would work). Modals shift too: can -> could, may -> might, and must (obligation) -> had to. Some modals never change: should, could, might, would, and ought to already feel past or are fixed.\n\nThree things stay put. Past perfect cannot shift any further back, so it stays. Universal truths can keep the present tense, because they are still true: 'The scientist said that water boils at 100 degrees.' And a fact that is still true now may keep the present to stress its relevance: 'He said he lives in Berlin' (and still does). With backshift it sounds neutral; without it you highlight that it is current.\n\nTime and place words shift with the tense: now -> then, today -> that day, tomorrow -> the next day, yesterday -> the day before, here -> there, this -> that. So 'I saw him here yesterday' becomes 'She said she had seen him there the day before.'",
         "ru": "**Backshift of tenses** — согласование времён в косвенной речи. Главное правило: если **reporting verb в прошедшем времени** (said, told, asked, explained), то время глагола в придаточной части **сдвигается на один шаг в прошлое**.\n\n**Полная таблица backshift:**\n\n| Direct (прямая речь) | Reported (косвенная речь) |\n|---|---|\n| Present Simple (work) | Past Simple (worked) |\n| Present Continuous (am working) | Past Continuous (was working) |\n| Present Perfect (have worked) | Past Perfect (had worked) |\n| Present Perfect Continuous (have been working) | Past Perfect Continuous (had been working) |\n| Past Simple (worked) | Past Perfect (had worked) |\n| Past Continuous (was working) | Past Perfect Continuous (had been working) |\n| Past Perfect (had worked) | Past Perfect (остаётся) |\n| Future Simple (will work) | Conditional (would work) |\n| Future Continuous (will be working) | Conditional Continuous (would be working) |\n| Future Perfect (will have worked) | Conditional Perfect (would have worked) |\n\n**Модальные глаголы:**\n\n| Direct | Reported |\n|---|---|\n| can | could |\n| will | would |\n| may | might |\n| must (обязанность) | had to |\n| shall | should / would |\n| should | should (не меняется) |\n| could | could (не меняется) |\n| might | might (не меняется) |\n| ought to | ought to (не меняется) |\n| would | would (не меняется) |\n\n**Примеры backshift:**\n- `\"I live in Moscow.\"` → `He said he lived in Moscow.`\n- `\"I am working.\"` → `She said she was working.`\n- `\"I have finished.\"` → `He said he had finished.`\n- `\"I saw him yesterday.\"` → `She said she had seen him the day before.`\n- `\"I will call you.\"` → `He said he would call me.`\n- `\"I can swim.\"` → `She said she could swim.`\n- `\"You must leave.\"` → `He told me I had to leave.`\n\n**КОГДА backshift НЕ применяется:**\n\n**1. Вечные истины (universal / general truths):**\n- `The teacher said that water boils at 100 degrees.` (это всё ещё правда — backshift опционален.)\n- `He said that the Earth is round.` (было правдой, есть и будет.)\n- `She explained that the sun rises in the east.`\n\nМожно сказать и `boiled / was`, но Present звучит естественнее для вечных фактов.\n\n**2. Факт, который всё ещё верен в момент пересказа:**\n- `She said she is a teacher.` (она и сейчас учитель.)\n- `He said he lives in Berlin.` (он и сейчас там живёт.)\n\nС backshift (`was a teacher / lived in Berlin`) — нейтрально, не утверждает, верно ли сейчас. Без backshift — подчёркиваем актуальность.\n\n**3. Reporting verb в Present:**\nЕсли reporting verb сам в Present, backshift НЕ нужен:\n- `He says he works hard.` (не works → worked.)\n- `She tells me she is coming.`\n- `The news reports that the deal has failed.`\n\n**4. Past Perfect уже не сдвигается:**\n- Direct: `\"I had already left.\"` → Reported: `He said he had already left.` (остаётся Past Perfect — сдвигать некуда.)\n\n**5. Modal verbs should, could, might, ought to, would — не меняются:**\n- `\"You should rest.\"` → `She told me I should rest.`\n- `\"I might come.\"` → `He said he might come.`\n\n**Типичные ошибки:**\n- ❌ `He said he is tired.` (нужен backshift для нейтрального пересказа) → ✅ `He said he was tired.`\n- ❌ `She said water boiled at 100°C.` (для вечной истины лучше без backshift) → предпочтительно: `She said water boils at 100°C.`\n- ❌ `He said he will come.` → ✅ `He said he would come.`\n- ❌ `She said she must leave.` (must ≠ must в backshift) → ✅ `She said she had to leave.`\n- ❌ Двойной Past Perfect: `He said he had had seen her.` → ✅ `He said he had seen her.`\n\n**Сдвиг обстоятельств времени и места (deictic shift):**\n\n| Direct | Reported |\n|---|---|\n| now | then |\n| today | that day |\n| tonight | that night |\n| tomorrow | the next day / the following day |\n| yesterday | the day before / the previous day |\n| next week | the following week |\n| last week | the previous week |\n| ago | before / earlier |\n| here | there |\n| this | that |\n| these | those |\n\n**Пример полной трансформации:**\n- Direct: `She said, \"I saw him here yesterday.\"`\n- Reported: `She said she had seen him there the day before.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "(direct) present/will -> (reported) past/would; reporting verb in past tense",
+        "ru": "(прямая речь) present/will -> (косвенная речь) past/would; глагол ввода речи в прошедшем"
       },
       "examples": [
         {
@@ -35,11 +37,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He told me he had finished the report the day before.",
-          "ru": "Он сказал мне, что закончил отчёт накануне."
+          "ru": "Он сказал мне, что закончил отчёт накануне.",
+          "note": {
+            "en": "time word shifts",
+            "ru": "сдвиг обстоятельства времени"
+          }
         },
         {
           "en": "The guide explained that the tour would start at nine.",
-          "ru": "Гид объяснил, что тур начнётся в девять."
+          "ru": "Гид объяснил, что тур начнётся в девять.",
+          "note": {
+            "en": "will -> would",
+            "ru": "will -> would"
+          }
         },
         {
           "en": "My mother said she couldn't find her keys anywhere.",
@@ -47,23 +57,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The scientist said that water boils at 100 degrees Celsius.",
-          "ru": "Учёный сказал, что вода кипит при 100 градусах Цельсия — вечная истина, backshift опционален."
+          "ru": "Учёный сказал, что вода кипит при 100 градусах Цельсия — вечная истина, backshift опционален.",
+          "note": {
+            "en": "universal truth: no shift",
+            "ru": "вечная истина: без сдвига"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Backshift = шаг в прошлое: Present → Past, Past → Past Perfect, will → would. Для вечных истин backshift необязателен."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He said he is tired.",
+          "right": "He said he was tired.",
+          "why": {
+            "en": "After a past reporting verb, neutral reported speech needs backshift.",
+            "ru": "После глагола ввода в прошедшем нейтральный пересказ требует сдвига."
+          }
+        },
+        {
+          "wrong": "She said she will come.",
+          "right": "She said she would come.",
+          "why": {
+            "en": "Will becomes would after a past reporting verb.",
+            "ru": "Will превращается в would после прошедшего глагола ввода речи."
+          }
+        },
+        {
+          "wrong": "He said he must leave early.",
+          "right": "He said he had to leave early.",
+          "why": {
+            "en": "Obligation 'must' backshifts to 'had to' in reported speech.",
+            "ru": "Долженствование must в косвенной речи переходит в had to."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, backshift becomes a precise tool for signalling how current the information is and for keeping a consistent time perspective across longer passages.\n\nWith timeless truths the backshift is optional, and the choice carries meaning. 'Galileo said the Earth orbits the sun' shows the writer agrees the fact still holds; 'orbited' is neutral, formal sequence; but 'The ancients believed the Earth was flat' uses backshift precisely because the claim is false. So 'is' versus 'was' can encode the writer's stance.\n\nSeveral refinements appear here. Future forms all have past counterparts: will -> would, going to -> was going to, about to -> was about to, will have done -> would have done. Modals split by meaning: 'must' as obligation -> 'had to', but 'must' as deduction usually stays ('She said he must be at home'). Past simple in direct speech can become past perfect, but the full backshift is often dropped when a clear time marker already shows the order ('He said he finished the report on Monday'). Conditionals already cast in the past do not change: second and third conditionals are reported unchanged.\n\nMixed backshift is correct and stylistically sharp: 'He said he had lived in Paris for ten years and still misses it' - 'had lived' is backshifted past, 'misses' stays present because it is current. Across a long reported passage, all tenses should stay in harmony. For Russian-speaking learners the trap is that Russian has no formal backshift at all, so when in doubt, backshift - it is the safer choice.",
         "ru": "На C1 backshift становится **точным инструментом** выражения отношения автора к актуальности информации и **сохранения временной перспективы** в длинных текстах.\n\n**1. Timeless truths — optional backshift:**\nДля фактов, которые всё ещё верны, backshift **опционален**. Выбор несёт смысл:\n\n- `Galileo said that the Earth orbits the sun.` — автор соглашается, факт остаётся верным.\n- `Galileo said that the Earth orbited the sun.` — нейтрально, формальный sequence.\n- `The ancients believed that the Earth was flat.` — с backshift, потому что автор НЕ соглашается (факт не верен).\n\nТо есть выбор между `is` и `was` может отражать степень согласия автора.\n\n**2. Reporting recent vs distant past:**\n- Recent: `She just said she is leaving.` (только что, backshift не нужен.)\n- Distant: `She said (last week) that she was leaving.` (время прошло, backshift уместен.)\n\n**3. Deictic shifts — advanced:**\nКроме простых шифтов (today → that day) есть тонкости:\n\n| Direct | Reported (backshifted) |\n|---|---|\n| this morning | that morning / earlier |\n| last night | the previous night |\n| a week ago | a week before / earlier |\n| in two days | two days later |\n| next month | the following month / a month later |\n| come here | go there |\n| bring this | take that |\n\nОбрати внимание: `come` → `go`, `bring` → `take` при смене точки зрения говорящего.\n\nПример: Direct: `\"Come here tomorrow and bring this book.\"` → Reported: `She told me to go there the next day and take that book.`\n\n**4. Past Perfect в reported clause:**\nЕсли в direct речи было Past Simple, в reported — Past Perfect. НО **необязательно**, если уже ясно, что раньше:\n- Direct: `\"I finished the report on Monday.\"`\n- Full backshift: `He said he had finished the report on Monday.`\n- Simplified (often acceptable): `He said he finished the report on Monday.` (особенно с явным указанием времени.)\n\nВ разговорной речи second option встречается часто.\n\n**5. Future-in-the-past — все формы:**\n- `will` → `would`: `\"I will help.\"` → `He said he would help.`\n- `going to` → `was going to`: `\"I'm going to call.\"` → `She said she was going to call.`\n- `about to` → `was about to`: `\"I'm about to leave.\"` → `He said he was about to leave.`\n- `will have done` → `would have done`: `\"I will have finished by then.\"` → `She said she would have finished by then.`\n- `shall` → `should` / `would`: редко, формально.\n\n**6. Modals — advanced backshift:**\n\n| Direct | Reported | Примечание |\n|---|---|---|\n| must (obligation) | had to | He said I had to go. |\n| must (deduction) | must / had to | She said it must be true / it had to be true. |\n| must not (prohibition) | mustn't / wasn't to | He said I mustn't touch it / wasn't to touch it. |\n| needn't | didn't need to / didn't have to | He said I didn't need to come. |\n| ought to | ought to (no shift) | She said I ought to apply. |\n| had better | had better (no shift) | He said I had better leave. |\n\n**Must (deduction)** — логический вывод — обычно не сдвигается:\n- `\"He must be at home.\"` → `She said he must be at home.` (вывод остаётся.)\n\n**7. Sequence harmony — длинные пассажи:**\nВ длинном reported passage все времена должны быть согласованы:\n- `He explained that he had been working on the project for months, that the team was finally ready to present, and that they would hold the launch the following week.`\n\nТри глагола в прошедших формах (had been working, was, would hold) — вся последовательность в согласованной backshifted-перспективе.\n\n**8. Mixed backshift — когда часть backshifted, часть нет:**\n- `He said he had lived in Paris for ten years and still misses it.`\n- `had lived` — прошлое, backshifted.\n- `misses` — present, потому что актуально сейчас.\n\nЭтот mix грамматически корректен и стилистически точен.\n\n**9. Reporting conditional and subjunctive:**\n- Direct: `\"If I had time, I would help.\"`\n- Reported: `He said that if he had time, he would help.` (second conditional не меняется при backshift — уже прошедшее по форме.)\n\n- Direct: `\"If I had known, I would have helped.\"`\n- Reported: `He said that if he had known, he would have helped.` (third conditional — тоже не меняется.)\n\n**10. Russian contrastive:**\nРусская косвенная речь **не требует backshift вообще**. «Он сказал, что устал» = `He said he is tired / was tired` — для русского одно, для английского выбор. Это источник самой частой ошибки у русскоязычных учеников всех уровней.\n\nСовет для С1: при сомнениях **всегда делай backshift**. Это грамматически безопаснее. Без backshift — только когда факт явно вечен или явно актуален сейчас.\n\n**11. Common C1 refinements:**\n- Выбор между backshift и non-backshift по смыслу, а не автоматически.\n- Поддержание sequence harmony через длинный пассаж.\n- Различение must (obligation) vs must (deduction) при backshift.\n- Избегание double past perfect и других грубых ошибок.\n- Управление conditional и subjunctive в reported speech."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "optional shift = meaning choice; future -> would-forms; long passages stay in sequence harmony",
+        "ru": "опциональный сдвиг = смысловой выбор; будущее -> формы would; длинные пассажи в согласованной перспективе"
       },
       "examples": [
         {
@@ -72,11 +112,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The professor noted that while Newton proposed that gravity was a force, Einstein later showed that it is better understood as curvature of spacetime.",
-          "ru": "Профессор отметил, что, хотя Ньютон предположил, что гравитация — это сила, Эйнштейн позже показал, что её лучше понимать как искривление пространства-времени."
+          "ru": "Профессор отметил, что, хотя Ньютон предположил, что гравитация — это сила, Эйнштейн позже показал, что её лучше понимать как искривление пространства-времени.",
+          "note": {
+            "en": "agreement vs distance",
+            "ru": "согласие или дистанция"
+          }
         },
         {
           "en": "He mentioned that if he had known the deadline, he would have submitted earlier.",
-          "ru": "Он упомянул, что если бы знал о сроке, то сдал бы раньше."
+          "ru": "Он упомянул, что если бы знал о сроке, то сдал бы раньше.",
+          "note": {
+            "en": "third conditional unchanged",
+            "ru": "третий conditional не меняется"
+          }
         },
         {
           "en": "The witness claimed that he had been at the café at the time in question and that the defendant must have left before him.",
@@ -84,28 +132,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She said she was going to apply for the position but had not yet decided when.",
-          "ru": "Она сказала, что собирается подать заявку на эту должность, но ещё не решила, когда."
+          "ru": "Она сказала, что собирается подать заявку на эту должность, но ещё не решила, когда.",
+          "note": {
+            "en": "was going to",
+            "ru": "was going to"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Backshift vs non-backshift — выбор по смыслу. Для вечных истин оставляй present. Для фактов сомнительной актуальности — делай backshift."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She said water boiled at 100 degrees.",
+          "right": "She said water boils at 100 degrees.",
+          "why": {
+            "en": "For a timeless truth the present is preferred to mark it as still true.",
+            "ru": "Для вечной истины предпочтителен present, чтобы показать её актуальность."
+          }
+        },
+        {
+          "wrong": "He said that if he had known, he would have come earlier later.",
+          "right": "He said that if he had known, he would have come earlier.",
+          "why": {
+            "en": "A third conditional is already past in form, so it is reported unchanged.",
+            "ru": "Третий conditional уже прошедший по форме и пересказывается без изменений."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 backshift is a fine instrument of temporal perspective and imagined distance between writer, speaker, and the world.\n\nSequence harmony must be flawless across long literary or academic passages: every embedded clause keeps a coherent past viewpoint, with past perfect for events before the recall point and 'would + base' for futures projected from it. The choice between shifted and unshifted forms becomes an epistemic stance: 'He said the treaty is flawed' signals agreement and current relevance; 'was flawed' is neutral distance; 'had been flawed' marks the judgement as completed or no longer current. In journalism this choice can swing an article from polemical to descriptive.\n\nFree indirect discourse, the hallmark of Austen, Woolf, and Joyce, applies backshift to a character's thought rendered in the third person and past tense while keeping their wording and modality: 'Why had she said that? Now he would never forgive her.' Writers also break backshift deliberately for immediacy, slipping into the narrative present inside a past narrative.\n\nConditionals already past in form (second, third, mixed) stay unchanged; only the first conditional shifts. The subjunctive is preserved ('She said she wished she were taller'; 'It was essential that he be present'). Modal-perfect constructions (must have done, might have done) do not shift further. Advanced temporal adverbials follow subtle moves: 'the day before yesterday' -> 'two days before/earlier', 'ago' -> 'before/earlier'. For Russian-speaking writers, Russian lacks formal backshift entirely, so English carries with backshift what Russian conveys lexically (with words like 'yakoby', 'deskat'). Mastery means treating backshift not as mechanical agreement but as a semantic choice about temporal viewpoint and epistemic attitude.",
         "ru": "На C2 backshift — **тонкий инструмент temporal perspective** и **воображаемой дистанции** между автором, говорящим и миром.\n\n**1. Sequence harmony across long passages — mastery:**\nВ литературных и академических текстах длинные пассажи reported speech требуют **безупречного согласования**:\n\n`She recalled that she had first met him in Vienna in the summer of 1912, that they had walked together along the Ringstrasse, and that he had told her, in that earnest way of his, that they would one day travel to Italy together — a promise he had never been able to keep.`\n\nВсе глаголы в согласованной перспективе прошлого: `had first met, had walked, had told, would travel, had never been able to keep`. Точка зрения — момент припоминания (past), с вложенным моментом их встречи (past perfect) и вложенным обещанием о будущем от той точки (would + base / would have been able).\n\n**2. Voice, distance, and epistemic backshift:**\nВыбор между backshift и non-backshift становится выражением **эпистемической позиции**:\n\n- `He said that the treaty is flawed.` — автор соглашается, актуальная оценка.\n- `He said that the treaty was flawed.` — нейтральный backshift, возможно, с дистанцией.\n- `He said that the treaty had been flawed.` — явная перспектива: договор больше не актуален, или автор хочет подчеркнуть завершённость.\n\nВ журналистике выбор `is/was` может изменить тон статьи с полемического на описательный.\n\n**3. Backshift in free indirect discourse:**\nFree indirect discourse (FID) — литературный приём, когда мысль героя подаётся грамматически от третьего лица в прошедшем времени, но с лексикой и модальностью героя:\n\n- Direct: `\"Why did I say that? Now he would never forgive me.\"`\n- Indirect: `She wondered why she had said that; now he would never forgive her.`\n- Free indirect: `Why had she said that? Now he would never forgive her.`\n\nВ FID backshift применяется ко всем временам, даже в вопросах и восклицаниях. Это одна из главных грамматических особенностей стиля Остин, Вулф, Джойса.\n\n**4. Non-backshift as narrative present:**\nМастера прозы иногда **ломают backshift намеренно** для эффекта immediacy:\n- `He said the old man is dying. Is dying, not was dying — she heard the distinction clearly.`\n\nНарратив переключается в present tense внутри прошедшего нарратива — читатель чувствует живость момента.\n\n**5. Conditional sentences in reported speech:**\n\nFirst conditional backshift:\n- `\"If I see him, I'll tell him.\"` → `She said that if she saw him, she would tell him.`\n\nSecond conditional — не меняется:\n- `\"If I had time, I would come.\"` → `He said that if he had time, he would come.`\n\nThird conditional — не меняется:\n- `\"If I had known, I would have come.\"` → `She said that if she had known, she would have come.`\n\nMixed conditional — не меняется:\n- `\"If I had studied harder, I would be a doctor now.\"` → `He said that if he had studied harder, he would be a doctor now.`\n\n**6. Subjunctive preservation in reported speech:**\n- `\"I wish I were taller.\"` → `She said she wished she were taller.` (were сохраняется.)\n- `\"It is essential that he be present.\"` → `She said that it was essential that he be present.` (mandative subjunctive сохраняется, хотя главный глагол сдвигается.)\n\n**7. Modal perfect backshift — precise forms:**\n\n| Direct | Reported |\n|---|---|\n| must have done | must have done (no shift) |\n| might have done | might have done (no shift) |\n| should have done | should have done (no shift) |\n| could have done | could have done (no shift) |\n| would have done | would have done (no shift) |\n| may have done | might have done / may have done |\n| can have done (rare) | could have done |\n\nMostly modal perfect constructions не меняются — они уже содержат perfect, дальше сдвигать некуда.\n\n**8. Temporal adverbials — advanced shifts:**\n\nТонкие случаи:\n- `the day before yesterday` → `two days before / two days earlier`\n- `the day after tomorrow` → `in two days' time / two days later`\n- `in a fortnight` → `a fortnight later`\n- `last Christmas` → `the Christmas before / the previous Christmas`\n- `a long time ago` → `a long time before / earlier / previously`\n\nПри сдвиге `ago → before` важно помнить: `before` работает как relative, требуя референтной точки. `Earlier` более универсально.\n\n**9. Reporting in academic discourse:**\nАкадемический английский активно использует reporting с тонкими различиями backshift:\n\n- `Smith (2020) argues that climate change is accelerating.` — present, результат всё ещё валиден.\n- `Smith (2020) argued that climate change was accelerating.` — past, сухое изложение.\n- `Smith (2020) has argued that climate change is accelerating.` — present perfect reporting verb + present reported, указывает на длительную релевантность.\n- `It had long been thought that X was the case, until Smith showed that it is in fact Y.` — сложная иерархия backshift.\n\n**10. Journalistic sequence of tenses:**\nНовости работают в present tense (headlines, leads), но reported speech внутри может быть в backshifted past:\n- `Government denies cover-up. The spokesperson said yesterday that no documents had been destroyed and that all inquiries were being handled transparently.`\n\nDisparity между headline (present) и body (past/past perfect) — норма журналистского жанра.\n\n**11. Russian contrastive — C2 subtleties:**\n\nРусский полностью лишён формального backshift. «Он сказал, что придёт» = английское `He said he would come` (backshift) или `He said he will come` (non-backshift). Русский не различает грамматически:\n- его уверенность в факте на момент пересказа;\n- отстранённость от сказанного;\n- актуальность обещания.\n\nАнглийский на C2 уровне использует backshift для выражения всех этих оттенков. Русский компенсирует лексикой (частицы «якобы», «дескать», «мол», «будто бы») и синтаксисом (порядок слов, интонация).\n\nПример сложного перевода:\n- RU: «Он сказал, что якобы видел её вчера».\n- EN (nuanced): `He claimed to have seen her the day before.` или `He said he had supposedly seen her the previous day.`\n\nПеревод с русского на английский на C2 требует выбора: каким глаголом reporting передать «якобы»? Какой backshift отражает авторское отношение?\n\n**12. Mastery markers:**\nНа C2 ты:\n- Поддерживаешь sequence harmony в пассажах произвольной длины.\n- Используешь backshift для выражения эпистемической позиции (согласие/дистанция).\n- Владеешь free indirect discourse для литературных целей.\n- Различаешь must (obligation/deduction) при backshift.\n- Знаешь, какие conditionals не меняются при reporting.\n- Сохраняешь subjunctive и mandative формы через reported clause.\n- Тонко выбираешь между `ago → before/earlier` и другими нюансами deictic shift.\n- Осознаёшь, что backshift — это не механическое правило, а **семантический выбор**, отражающий временную точку зрения и эпистемическое отношение автора к чужим словам."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "epistemic choice (is/was/had been) + flawless sequence harmony; FID, subjunctive and past-form conditionals preserved",
+        "ru": "эпистемический выбор (is/was/had been) + безупречная согласованность; FID, subjunctive и прошедшие conditionals сохраняются"
       },
       "examples": [
         {
           "en": "Historians long maintained that Rome fell in 476, though recent scholarship suggests that the transition is better understood as gradual transformation.",
-          "ru": "Историки долгое время утверждали, что Рим пал в 476 году, хотя недавние исследования предполагают, что этот переход лучше понимать как постепенную трансформацию."
+          "ru": "Историки долгое время утверждали, что Рим пал в 476 году, хотя недавние исследования предполагают, что этот переход лучше понимать как постепенную трансформацию.",
+          "note": {
+            "en": "academic reporting",
+            "ru": "академический пересказ"
+          }
         },
         {
           "en": "She could still hear her mother's voice telling her that no matter what happened, she would always have a home to return to — a promise that had sustained her through the darkest years.",
@@ -113,11 +187,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The defendant claimed to have been elsewhere at the time, yet the prosecution demonstrated that he must have been present when the fire broke out.",
-          "ru": "Подсудимый утверждал, что в то время находился в другом месте, однако обвинение показало, что он, должно быть, присутствовал, когда возник пожар."
+          "ru": "Подсудимый утверждал, что в то время находился в другом месте, однако обвинение показало, что он, должно быть, присутствовал, когда возник пожар.",
+          "note": {
+            "en": "must (deduction) kept",
+            "ru": "must (вывод) сохраняется"
+          }
         },
         {
           "en": "Why had she never told him? The question, which she had long buried, now pressed upon her with unbearable urgency — free indirect discourse at work.",
-          "ru": "Почему она никогда ему не говорила? Этот вопрос, который она давно похоронила, теперь давил на неё с невыносимой настойчивостью — пример несобственно-прямой речи."
+          "ru": "Почему она никогда ему не говорила? Этот вопрос, который она давно похоронила, теперь давил на неё с невыносимой настойчивостью — пример несобственно-прямой речи.",
+          "note": {
+            "en": "free indirect discourse",
+            "ru": "несобственно-прямая речь"
+          }
         },
         {
           "en": "It had for centuries been supposed that the manuscript was a forgery, until carbon dating confirmed that it dates, in fact, to the ninth century.",
@@ -127,9 +209,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Backshift на C2 — не механика, а семантический выбор: согласие с фактом → present, нейтральное изложение → past, подчёркивание неактуальности → past perfect."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She said she wished she was taller.",
+          "right": "She said she wished she were taller.",
+          "why": {
+            "en": "The wish-subjunctive 'were' is preserved through reported speech.",
+            "ru": "Сослагательное were в конструкции wish сохраняется в косвенной речи."
+          }
+        },
+        {
+          "wrong": "He said the defendant had to have left before him.",
+          "right": "He said the defendant must have left before him.",
+          "why": {
+            "en": "'Must' of deduction (modal perfect) stays unchanged in reported speech.",
+            "ru": "Must со значением вывода (modal perfect) не меняется в косвенной речи."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "reported-statements",
+    "reported-questions",
+    "reported-commands",
+    "past-perfect-simple"
+  ],
+  "crossTopic": [
+    "past-simple",
+    "past-perfect-simple",
+    "will-would",
+    "must-have-to"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Direct speech",
+      "Reporting verb (past)",
+      "Reported speech (shifted back)"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "reported-commands",
   "title": {
-    "en": "",
+    "en": "Reported Commands",
     "ru": "Reported Commands"
   },
   "cefr": "B1",
@@ -15,19 +15,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "reported-speech",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "transformation",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "A reported command is how we relay an order, request, or piece of advice instead of quoting the exact words. The core pattern is **tell / ask + object + to + infinitive**.\n\nUse **tell** for orders or firm instructions, and **ask** for polite requests:\n- Direct: \"Sit down!\" → He **told** me **to** sit down.\n- Direct: \"Please help me.\" → She **asked** me **to** help her.\n\nThree rules carry almost all the work:\n1. Both verbs need an object — the person being addressed: *He told **me** to leave.* You cannot say *He told to leave.*\n2. After the object you must use **to + infinitive** — not the bare verb, not *that*, not *-ing*: *He told me **to go** home.*\n3. For a negative command, put **not** directly before **to**: \"Don't touch it!\" → He told me **not to** touch it.\n\nFinally, **say** does not work for commands: write *He told me to sit down*, never *He said me to sit down*.",
         "ru": "**Reported commands** — косвенные команды и просьбы. Это когда мы **пересказываем приказ, просьбу или совет**.\n\n**Формула:** `tell / ask + object + to + infinitive`.\n\n**Direct vs reported:**\n- Direct: `\"Sit down!\"` (command)\n- Reported: `He told me to sit down.`\n\n- Direct: `\"Please help me.\"` (request)\n- Reported: `She asked me to help her.`\n\n**Ключевые правила:**\n\n**1. Tell для приказов, ask для просьб:**\n- `Tell` — более твёрдо, как приказ или указание: `The teacher told the students to be quiet.`\n- `Ask` — мягче, просьба: `She asked me to pass the salt.`\n\n**2. Оба глагола требуют объекта (кому):**\n- ✅ `He told me to leave.` / `She asked him to wait.`\n- ❌ `He told to leave.` (нет объекта — ошибка!)\n- ❌ `She asked to wait.` (двусмысленно — может означать «она попросила разрешения подождать».)\n\n**3. После объекта — обязательно `to + инфинитив`:**\n- ✅ `He told me to go home.`\n- ❌ `He told me go home.` (без `to`.)\n- ❌ `He told me that go home.` (с `that` — неверно.)\n- ❌ `He told me going home.` (с -ing — неверно.)\n\n**4. Отрицательные команды — `not to + инфинитив`:**\n- Direct: `\"Don't touch it!\"`\n- Reported: `He told me not to touch it.`\n\n- Direct: `\"Please don't be late.\"`\n- Reported: `She asked me not to be late.`\n\n**Порядок:** `not` ставится **перед `to`**: `told me not to do`. \n- ❌ `told me to not do` — грамматически возможно, но менее стандартно.\n- ❌ `told me don't do` — неверно.\n\n**5. Say не используется для команд:**\n- ❌ `He said me to sit down.` (двойная ошибка: said me + to.)\n- ❌ `He said to sit down.` (грамматически странно.)\n- ✅ `He told me to sit down.`\n\nЗапомни: для команд — **только tell/ask + объект + to + инфинитив**.\n\n**Примеры полной трансформации:**\n- `\"Open the door.\"` → `He told me to open the door.`\n- `\"Please don't smoke here.\"` → `She asked me not to smoke there.`\n- `\"Be careful!\"` → `She told him to be careful.`\n- `\"Don't worry.\"` → `He told her not to worry.`\n- `\"Come in, please.\"` → `She asked me to come in.`\n\n**Типичные ошибки русских учеников:**\n- ❌ `He said me to go.` → ✅ `He told me to go.`\n- ❌ `She told to wait.` → ✅ `She told me to wait.`\n- ❌ `He asked me that I wait.` → ✅ `He asked me to wait.`\n- ❌ `She told me to not be late.` (возможно, но устаревающе) → ✅ `She told me not to be late.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "tell / ask + object + (not) to + infinitive",
+        "ru": "tell / ask + объект + (not) to + инфинитив"
       },
       "examples": [
         {
@@ -40,7 +42,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "My mother told me not to be late for dinner.",
-          "ru": "Мама сказала мне не опаздывать на ужин."
+          "ru": "Мама сказала мне не опаздывать на ужин.",
+          "note": {
+            "en": "negative",
+            "ru": "отрицание"
+          }
         },
         {
           "en": "He asked her to wait for him.",
@@ -54,17 +60,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Формула: tell/ask + кого + to + инфинитив. Для отрицания: tell/ask + кого + not to + инфинитив."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He said me to go.",
+          "right": "He told me to go.",
+          "why": {
+            "en": "Commands use tell/ask, not say; say never takes a person + to-infinitive.",
+            "ru": "Команды передаются через tell/ask, а не say."
+          }
+        },
+        {
+          "wrong": "She told to wait.",
+          "right": "She told me to wait.",
+          "why": {
+            "en": "Tell and ask both need an object (the person addressed).",
+            "ru": "Tell и ask требуют объекта (кому)."
+          }
+        },
+        {
+          "wrong": "He told me go home.",
+          "right": "He told me to go home.",
+          "why": {
+            "en": "The infinitive after the object must keep to.",
+            "ru": "После объекта обязательно to + инфинитив."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the pattern opens up to a whole family of reporting verbs, each adding a shade of meaning: **order** (firm), **command** (authoritative), **instruct** (procedural), **advise** (counsel), **warn** (caution), **remind** (jog the memory), **beg** / **urge** (pressure), **invite** / **encourage** (positive), **forbid** (prohibit), **allow** / **permit** (license), **persuade** / **convince** (talk into). Almost all of them keep the same shape: **verb + object + to + infinitive**.\n\nA few high-value exceptions trip learners up:\n- **suggest** and **recommend** never take *object + to-infinitive*. Use *suggest that I (should) go* or *suggest going*; *recommend that he apply* or *recommend trying*.\n- **let** takes the bare infinitive (no *to*): *He let me stay*, not *He let me to stay*.\n- **forbid** allows two frames: *forbid someone to do* (formal) or *forbid someone from doing* (informal).\n\nCommands are often reported in the **passive** when the doer matters more than the speaker: *The passengers were told to fasten their seatbelts.* This is the default register for rules and official notices.",
         "ru": "На B2 reported commands расширяется до **множества reporting verbs**, каждый со своей структурой и оттенком.\n\n**1. Расширенный список reporting verbs для команд:**\n\n| Глагол | Оттенок | Пример |\n|---|---|---|\n| tell | нейтральный приказ | He told me to wait. |\n| ask | просьба | She asked me to help. |\n| order | твёрдый приказ | The officer ordered us to stop. |\n| command | военный/властный приказ | The general commanded them to retreat. |\n| instruct | инструкция, указание | She instructed us to submit by Friday. |\n| advise | совет | The doctor advised him to rest. |\n| warn | предупреждение | I warned him not to open it. |\n| remind | напоминание | She reminded me to call Mom. |\n| beg | мольба | He begged her not to leave. |\n| urge | настойчиво просить | They urged us to reconsider. |\n| invite | приглашение | She invited us to join the meeting. |\n| encourage | поощрение | He encouraged her to apply. |\n| forbid | запрет | The rules forbid us to smoke here. |\n| allow / permit | разрешение | He allowed me to stay. |\n| persuade | убедить | She persuaded him to come. |\n| convince | убедить | He convinced me to try. |\n\nВсе эти глаголы используют ту же структуру: **verb + object + to + infinitive**.\n\n**2. Warn — особенность:**\nWarn часто употребляется с отрицанием (предостережение):\n- `She warned me not to trust him.` (Она предупредила меня не доверять ему.)\n- `The guide warned us not to swim there.`\n\nНо может быть и с позитивом: `He warned me to be careful.`\n\n**3. Remind — специфическая структура:**\n- `Remind someone to do sth`: `She reminded me to lock the door.`\n- `Remind someone of sth`: `She reminded me of the meeting.` (другая конструкция.)\n- `Remind someone that...`: `She reminded me that I had promised.` (уже не команда, а утверждение.)\n\n**4. Forbid — два варианта:**\n- `Forbid someone to do sth` (более формально): `The law forbids us to park here.`\n- `Forbid someone from doing sth` (разговорно): `He forbade me from going.`\n\n**5. Suggest — ВАЖНО: НЕ используется с to-inf:**\n- ❌ `He suggested me to go.` — НЕПРАВИЛЬНО.\n- ✅ `He suggested that I (should) go.`\n- ✅ `He suggested going.` (gerund.)\n\nRussian learners часто ошибаются с suggest. Запомни: **suggest + -ing** или **suggest + that-clause**.\n\n**6. Recommend — аналогично:**\n- ❌ `She recommended me to try it.` (в BrE иногда принимается, но осторожно.)\n- ✅ `She recommended that I try it.`\n- ✅ `She recommended trying it.`\n\n**7. Passive command reporting:**\nЕсли важен исполнитель, а не тот, кто приказал:\n- Active: `The manager told the employees to stay late.`\n- Passive: `The employees were told to stay late.`\n\nОчень частая конструкция в инструкциях и официальных документах.\n\n**8. Negative commands — варианты:**\n- `not to do`: `He told me not to call.`\n- `to avoid doing`: `He advised me to avoid calling.`\n- `not to do + because`: `She warned me not to call because he was busy.`\n\n**9. Allow / permit / let:**\n- `Allow / permit + object + to-inf`: `He allowed me to stay. / She permitted them to enter.`\n- `Let + object + base form (БЕЗ to!)`: `He let me stay.` / `She let them enter.`\n\n❌ `He let me to stay.` — НЕПРАВИЛЬНО.\n\n**10. Типичные B2 ошибки:**\n- ❌ `He suggested me to wait.` → ✅ `He suggested that I wait.` / `He suggested waiting.`\n- ❌ `She advised to me to go.` → ✅ `She advised me to go.`\n- ❌ `He warned me that not touch it.` → ✅ `He warned me not to touch it.`\n- ❌ `They let me to drive.` → ✅ `They let me drive.`\n- ❌ `She reminded me about to call her.` → ✅ `She reminded me to call her.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "reporting verb (order/advise/warn/remind…) + object + (not) to + infinitive",
+        "ru": "глагол сообщения (order/advise/warn/remind…) + объект + (not) to + инфинитив"
       },
       "examples": [
         {
@@ -73,7 +105,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He warned me not to leave my bag unattended.",
-          "ru": "Он предупредил меня не оставлять сумку без присмотра."
+          "ru": "Он предупредил меня не оставлять сумку без присмотра.",
+          "note": {
+            "en": "warn + negative",
+            "ru": "warn + отрицание"
+          }
         },
         {
           "en": "My manager instructed us to submit the report by Monday.",
@@ -85,28 +121,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The passengers were told to fasten their seatbelts.",
-          "ru": "Пассажирам было сказано пристегнуть ремни."
+          "ru": "Пассажирам было сказано пристегнуть ремни.",
+          "note": {
+            "en": "passive report",
+            "ru": "пассивная форма"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Suggest и recommend НЕ работают со структурой 'verb + object + to-inf'. Используй suggest/recommend + that-clause или + -ing."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He suggested me to wait.",
+          "right": "He suggested that I wait. / He suggested waiting.",
+          "why": {
+            "en": "Suggest never takes object + to-infinitive; use a that-clause or a gerund.",
+            "ru": "Suggest не работает с object + to-inf; нужен that-clause или герундий."
+          }
+        },
+        {
+          "wrong": "They let me to drive.",
+          "right": "They let me drive.",
+          "why": {
+            "en": "Let is followed by the bare infinitive, without to.",
+            "ru": "После let — инфинитив без to."
+          }
+        },
+        {
+          "wrong": "She advised to me to go.",
+          "right": "She advised me to go.",
+          "why": {
+            "en": "The object follows the verb directly, with no preposition.",
+            "ru": "Объект идёт сразу после глагола, без предлога."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you control how directly a command is framed and you match each reporting verb to its correct syntax. A class of verbs reports an order through the **subjunctive**: *verb + that + subject + (should) + base form* — **suggest, recommend, propose, demand, insist, require, request, urge, order**: *The board proposed that the bonus **be** linked to performance.* American English usually drops *should* (*He suggested that she leave*); British English keeps it or uses the indicative.\n\nDirectness becomes a deliberate choice — from explicit (*He told me to go*) through soft (*He suggested that I go*) to veiled (*He made it clear that my staying was unwelcome*). Likewise, adverbs encode the speaker's attitude: *She **sternly** told the children to behave*; *He **flatly** refused*; *She **warmly** invited us*.\n\nHold the right frame for each verb. The **tell-family** (tell, ask, advise, warn, remind, instruct) takes *object + to-infinitive*. The **suggest-family** (suggest, recommend, propose, demand, insist) takes a *that-clause*. Note that *insist* and *demand* shift meaning by clause type: *He insisted that she **was** there* (a claim) versus *He insisted that she **be** there* (a command). Formal negatives drift away from *not to*: academic English prefers *cautioned **against** proceeding*; legal English uses *enjoined **from** contacting*.",
         "ru": "На C1 reported commands включает **soft imperatives** (мягкие директивы через subjunctive) и **нюансы позиции говорящего** через reporting verbs.\n\n**1. Soft imperatives через subjunctive:**\nРяд глаголов передают команду через конструкцию `verb + that + subject + (should) + base form`:\n\n| Глагол | Пример |\n|---|---|\n| suggest | He suggested that she (should) leave. |\n| recommend | She recommended that we (should) apply early. |\n| propose | The chair proposed that the motion (should) be tabled. |\n| demand | He demanded that the evidence (should) be presented. |\n| insist | She insisted that he (should) attend. |\n| require | The law requires that applicants (should) provide ID. |\n| request | They requested that all guests (should) arrive by seven. |\n| urge | He urged that action (should) be taken. |\n| advise | The committee advises that the project (should) be reviewed. |\n| order | The judge ordered that the witness (should) return. |\n\n**AmE часто опускает `should`:**\n- AmE: `He suggested that she leave.`\n- BrE: `He suggested that she should leave.` или `He suggested that she left.` (последнее — indicative.)\n\n**2. Implicit vs explicit commands:**\n- Explicit: `He told me to go.` — прямая команда.\n- Soft: `He suggested that I go.` — предложение, но с императивным оттенком.\n- Implicit: `He hinted that I should go.` — намёк.\n- Veiled: `He made it clear that my staying was unwelcome.` — завуалированно.\n\nНа C1 ты выбираешь степень прямоты осознанно.\n\n**3. Reporting verbs with different structures:**\n\n| Глагол | Структура | Пример |\n|---|---|---|\n| tell | V + obj + to-inf | He told her to leave. |\n| ask | V + obj + to-inf | She asked him to wait. |\n| suggest | V + that-clause / V + gerund | He suggested that she go / going. |\n| recommend | V + that-clause / V + gerund | She recommended that he apply / applying. |\n| demand | V + that-clause / V + to-inf | He demanded to see the manager / that she apologise. |\n| insist | V + on + gerund / V + that-clause | He insisted on paying / that he pay. |\n| threaten | V + to-inf / V + that-clause | He threatened to sue / that he would sue. |\n| refuse | V + to-inf | She refused to comment. |\n| offer | V + to-inf | He offered to help. |\n| promise | V + to-inf / V + that-clause | She promised to call / that she would call. |\n| agree | V + to-inf | They agreed to meet. |\n\nНа C1 ты **помнишь правильную структуру** для каждого глагола.\n\n**4. Passive reporting of commands:**\nВ формальных текстах, инструкциях, новостях:\n- `Employees are instructed to log all communications.`\n- `Citizens were ordered to remain indoors.`\n- `The suspect was told not to leave town.`\n- `Passengers are requested to refrain from smoking.`\n\n**5. Long/complex command structures:**\n- С конечной целью: `She instructed us to submit reports in order that we might be evaluated.`\n- С условием: `He told me to call if anything changed.`\n- С модификацией: `She asked him politely but firmly to lower his voice.`\n- Цепочка: `He told me to go home, take a shower, and get some rest.` (один to, три действия.)\n\n**6. Adverbial modification of reporting verbs:**\n- `He reluctantly agreed to cooperate.`\n- `She sternly told the children to behave.`\n- `He flatly refused to discuss the matter.`\n- `She warmly invited us to stay for dinner.`\n\nНаречие передаёт отношение говорящего к команде.\n\n**7. Negative commands — stylistic variation:**\n- Standard: `He told me not to go.`\n- Formal: `He instructed me not to go.`\n- Academic: `Participants were cautioned against proceeding without protective equipment.` (against + gerund вместо not + to-inf.)\n- Legal: `The defendant was enjoined from contacting the plaintiff.` (enjoined from + gerund.)\n\n**8. Russian contrastive:**\nРусский передаёт косвенные команды проще: «Он сказал мне идти домой» или «Он сказал, чтобы я шёл домой». Английский требует **выбора конструкции** (to-inf vs that-clause vs gerund) в зависимости от глагола. Это создаёт частые ошибки: русский ученик хочет сказать «он предложил мне пойти» и берёт кальку `he suggested me to go` — и это ошибка.\n\nСовет: **запомни reporting verbs по группам**:\n- Group A (tell-family): tell, ask, advise, warn, remind, order, instruct + obj + to-inf.\n- Group B (suggest-family): suggest, recommend, propose, insist, demand + that-clause (+ should).\n- Group C (promise-family): promise, refuse, offer, agree, threaten + to-inf (без объекта).\n\n**9. Common C1 refinements:**\n- Выбор между active и passive reporting в зависимости от фокуса.\n- Управление многошаговыми командами в одной конструкции.\n- Использование subjunctive для формальной или юридической речи.\n- Осознание, что некоторые глаголы (insist, demand) могут принимать два разных типа clause с разным смыслом: `He insisted that she was there` (факт) vs `He insisted that she be there` (команда)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subjunctive: suggest/demand/insist + that + subject + (should) + base form",
+        "ru": "сослагательное: suggest/demand/insist + that + подлежащее + (should) + базовая форма"
       },
       "examples": [
         {
           "en": "The board proposed that the CEO's bonus be linked to performance metrics.",
-          "ru": "Совет предложил, чтобы бонус генерального директора был привязан к показателям эффективности."
+          "ru": "Совет предложил, чтобы бонус генерального директора был привязан к показателям эффективности.",
+          "note": {
+            "en": "subjunctive",
+            "ru": "сослагательное"
+          }
         },
         {
           "en": "He insisted, despite all protests, that every guest should receive a personal apology.",
@@ -114,7 +184,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Employees are instructed to report any irregularities immediately.",
-          "ru": "Сотрудникам предписано немедленно сообщать о любых нарушениях."
+          "ru": "Сотрудникам предписано немедленно сообщать о любых нарушениях.",
+          "note": {
+            "en": "passive, formal",
+            "ru": "пассив, формально"
+          }
         },
         {
           "en": "She politely but firmly requested that we lower our voices in the library.",
@@ -128,30 +202,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Suggest, recommend, propose, demand, insist — требуют that-clause (часто с should). Tell, ask, advise — требуют object + to-inf. Не смешивай."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The board proposed that the bonus is linked to performance.",
+          "right": "The board proposed that the bonus be linked to performance.",
+          "why": {
+            "en": "After propose/demand/suggest the that-clause uses the subjunctive base form.",
+            "ru": "После propose/demand/suggest — сослагательное (базовая форма)."
+          }
+        },
+        {
+          "wrong": "She instructed us to not proceed without equipment.",
+          "right": "She cautioned us against proceeding without equipment.",
+          "why": {
+            "en": "Formal registers favour against + gerund over a split not-to negative.",
+            "ru": "В формальном регистре предпочтительно against + герундий."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 reported commands become a precision tool for legal, administrative, and literary register, where every reporting verb carries formal and moral weight. Legal texts demand unambiguous reporting and their own verb set — **order, direct, enjoin, stipulate, mandate, require, prohibit, authorise**: *The court ordered that the respondent **be restrained** from disposing of the assets*; *Counsel was instructed not to communicate with the jury*. Note the modal hierarchy: contractual *shall* (obligation) versus *must* (plain-language obligation) versus *should* (recommendation only).\n\nBureaucratic prose hides the commander behind the **passive + modal**, manufacturing an impersonal, objective tone: *Applicants are advised to submit forms no later than 30 June*; *Passengers are respectfully reminded to remain seated*. Choose among near-synonyms for exact social and emotional colour: *request* (formal), *demand* (combative), *implore* / *beseech* / *entreat* (pleading, literary), *exhort* (rousing), *enjoin* (legal), *prevail upon* (talked round).\n\nIn fiction a command may surface as a **free indirect** report, grammatically the narrator's but coloured by the character: *He mustn't touch it, she told him silently. On no account was he to touch it.* And across a long sentence, parallel structure keeps multiple orders under one reporting verb: *She had told him, first, to call when he arrived; second, to keep her informed; and finally, to return by the weekend.*",
         "ru": "На C2 reported commands становится **точным инструментом юридической, административной и литературной речи**, где каждый reporting verb несёт формальный и моральный вес.\n\n**1. Legal instruction reporting — максимальная точность:**\n\nПравовые тексты требуют однозначного reporting:\n- `The court ordered that the defendant surrender his passport.` (судебный приказ.)\n- `The tribunal directed the respondent to provide full disclosure.` (указание.)\n- `The statute requires that all parties be notified in writing.` (требование закона.)\n- `The defendant was enjoined from approaching the plaintiff's residence.` (судебный запрет.)\n- `Counsel was instructed not to communicate with the jury.` (инструкция.)\n- `The contract stipulates that payment shall be made within thirty days.` (договорное требование.)\n\nЮридические reporting verbs: `order, direct, enjoin, stipulate, mandate, require, prohibit, authorise, grant leave`.\n\n**2. Shall vs should vs must в reported legal commands:**\n- `The party shall provide notice.` — договорное обязательство.\n- `The party must provide notice.` — менее формально.\n- `The party should provide notice.` — рекомендация, не обязательство.\n- `The party is required to provide notice.` — формальный императив.\n\nShall в контрактах = обязательство. В современном plain language drafting часто заменяется на must для ясности.\n\n**3. Administrative and bureaucratic reporting:**\n- `Applicants are advised to submit forms no later than 30 June.`\n- `Visitors will be asked to present identification upon entry.`\n- `Participants are kindly requested to refrain from photography.`\n- `All passengers are reminded that smoking is not permitted.`\n\nПассивные конструкции с modal маскируют авторство команды, что создаёт эффект объективности и безличности.\n\n**4. Military and hierarchical commands:**\n- `The general ordered the regiment to advance at dawn.`\n- `The captain commanded all personnel to report for muster.`\n- `The sergeant bellowed at us to keep moving.` (reporting verb + adverb = живописность.)\n- `The admiral's orders were that no vessel should leave port.` (indirect через noun phrase.)\n\n**5. Reporting verbs as precision instruments:**\n\nРазница между близкими глаголами:\n\n| Глагол | Оттенок |\n|---|---|\n| ask | просьба, нейтрально |\n| request | формальная просьба |\n| demand | твёрдое требование, часто с конфликтом |\n| insist | настаивать против возражения |\n| implore | умолять, эмоционально |\n| beseech | умолять, высокая или литературная речь |\n| entreat | просить, формально и мягко |\n| petition | формальная просьба властям |\n| exhort | настойчиво призывать |\n| enjoin | приказывать или запрещать (формально, юридически) |\n| charge | поручать с ответственностью |\n\nНа C2 ты выбираешь эти глаголы для **точной передачи социального и эмоционального контекста**.\n\n**6. Free indirect commands в литературе:**\nВ прозе команда может передаваться без явного reporting verb:\n- Прямо: `\"Don't touch it,\" she said.`\n- Косвенно: `She told him not to touch it.`\n- Free indirect: `He mustn't touch it, she told him silently. On no account was he to touch it.`\n\nПоследняя форма — мысль героя, грамматически — от автора. Типично для literary fiction высокой сложности.\n\n**7. Performative reports:**\nГлаголы, сами по себе являющиеся действиями при произнесении:\n- `I hereby declare the meeting open.` (performative.)\n- Косвенно: `The chair hereby declared the meeting open.` (нарративное перформативное.)\n- `The minister announced that the borders would be closed.`\n- `The jury found the defendant guilty.`\n\nЭти глаголы не просто сообщают о действии — они его совершают.\n\n**8. Nuance between similar structures — high-level:**\n- `He told me to go.` — команда.\n- `He told me that I should go.` — совет в форме сообщения.\n- `He said (to me) that I should go.` — более нейтрально.\n- `He suggested (that) I go.` — мягко, как идея.\n- `He urged me to go.` — настойчиво.\n- `He pressed me to go.` — с давлением.\n- `He prevailed upon me to go.` — формально, уговорил.\n\n**9. Reporting commands across long narratives:**\nВ длинных пассажах необходимо поддерживать **sequence** и **согласование**:\n- `She had told him, first, to call when he arrived; second, to keep her informed of any changes; and finally, to return by the weekend at the latest.`\n\nВсе три команды — под одним told, с параллельной структурой to-inf.\n\n**10. Russian contrastive — fine nuances:**\nРусский передаёт императивные оттенки через **интонацию и модальные частицы**: «Сказал, чтоб не опаздывал!» — с восклицанием, передающим раздражение. Английский встраивает тот же смысл в **выбор глагола и наречия**: `He sternly insisted that I not be late.`\n\nРусское «велел» vs «попросил» vs «приказал» vs «посоветовал» — все имеют английские эквиваленты, но с разным синтаксисом. `Велел` ≈ `told firmly` или `ordered`; `попросил` = `asked`; `приказал` = `ordered / commanded`; `посоветовал` = `advised`.\n\n**11. Mastery markers:**\nНа C2 ты:\n- Выбираешь точный reporting verb в соответствии с социальным статусом, эмоцией и регистром.\n- Управляешь subjunctive и modal после глаголов требования.\n- Используешь passive reporting для бюрократического или юридического тона.\n- Различаешь performative vs descriptive reports.\n- Вплетаешь free indirect commands в нарратив для литературной глубины.\n- Применяешь стандартные legal phrasings (`enjoined from, required to, directed that`).\n- Осознаёшь, что команда в косвенной речи — не просто передача слов, а **моделирование властных и моральных отношений** между говорящим и слушающим."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "passive + modal / legal: be required to + infinitive · ordered that + subject + base form",
+        "ru": "пассив + модал / юр.: be required to + инфинитив · ordered that + подлежащее + базовая форма"
       },
       "examples": [
         {
           "en": "The court ordered that the respondent be restrained from disposing of the disputed assets.",
-          "ru": "Суд постановил, чтобы ответчику было запрещено распоряжаться спорными активами."
+          "ru": "Суд постановил, чтобы ответчику было запрещено распоряжаться спорными активами.",
+          "note": {
+            "en": "legal subjunctive",
+            "ru": "юр. сослагательное"
+          }
         },
         {
           "en": "She entreated him, with tears in her eyes, not to undertake so reckless a journey.",
-          "ru": "Она умоляла его, со слезами на глазах, не предпринимать столь безрассудного путешествия."
+          "ru": "Она умоляла его, со слезами на глазах, не предпринимать столь безрассудного путешествия.",
+          "note": {
+            "en": "literary register",
+            "ru": "высокий регистр"
+          }
         },
         {
           "en": "Passengers are respectfully reminded to remain seated until the aircraft has come to a complete stop.",
-          "ru": "Пассажирам почтительно напоминается оставаться на своих местах до полной остановки самолёта."
+          "ru": "Пассажирам почтительно напоминается оставаться на своих местах до полной остановки самолёта.",
+          "note": {
+            "en": "passive + modal",
+            "ru": "пассив + модал"
+          }
         },
         {
           "en": "The chairman enjoined the committee to consider all implications before rendering a decision.",
@@ -165,9 +269,42 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Enjoin, stipulate, direct, mandate — юридические reporting verbs с точными контекстами. Entreat, beseech, implore — высокий регистр для эмоциональных просьб."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "The court ordered that the respondent is restrained from disposing of the assets.",
+          "right": "The court ordered that the respondent be restrained from disposing of the assets.",
+          "why": {
+            "en": "Legal reporting after order/direct/require keeps the subjunctive base form.",
+            "ru": "В юр. речи после order/direct/require — сослагательное (базовая форма)."
+          }
+        },
+        {
+          "wrong": "Passengers are reminded remaining seated.",
+          "right": "Passengers are respectfully reminded to remain seated.",
+          "why": {
+            "en": "Remind keeps to + infinitive even in the passive; it does not take a gerund here.",
+            "ru": "Remind сохраняет to + инфинитив и в пассиве, не герундий."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "reported-statements",
+    "reported-questions",
+    "verb-plus-infinitive",
+    "backshift-of-tenses"
+  ],
+  "crossTopic": [
+    "verb-plus-infinitive",
+    "negative-sentences",
+    "passive-present-simple"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "Direct command",
+      "Reported command"
+    ]
+  }
 };

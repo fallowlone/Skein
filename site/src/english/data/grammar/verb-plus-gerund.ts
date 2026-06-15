@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "verb-plus-gerund",
   "title": {
-    "en": "",
+    "en": "Verb + Gerund",
     "ru": "Verb Plus Gerund"
   },
   "cefr": "A2",
@@ -16,19 +16,25 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "verb-patterns",
+  "egp": [
+    "EGP:A2 verb + -ing (enjoy, like, stop)",
+    "EGP:B1 wider verb + -ing list and fixed phrases",
+    "EGP:B2 verb + object + -ing and preposition patterns",
+    "EGP:C1 passive and perfect gerunds",
+    "EGP:C2 gerund nominalization and rhetorical fronting"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "A gerund is the -ing form of a verb used as a noun: swimming, reading, playing. After certain verbs English requires the gerund, not the infinitive — there is no rule, so learn the verbs as a list. The core A2 set is: enjoy, like, love, hate, prefer, finish, start/begin, stop, keep, and go (for hobbies: go shopping, go swimming). Form the gerund with verb + -ing; drop a final -e (make -> making), double the consonant after one short vowel (run -> running), and change -ie to -y (lie -> lying). Always use -ing after a preposition too (before eating, without saying, good at cooking). Make it negative with not + -ing: I enjoy not working on Sundays.",
         "ru": "**Герундий** — это форма глагола с окончанием -ing, которая работает как существительное: `swimming, reading, playing`.\n\nПосле некоторых английских глаголов нужно использовать герундий, а не инфинитив. Запомни эти глаголы списком — правила нет.\n\n**Основные глаголы + герундий (A2):**\n- `enjoy` — наслаждаться: `I enjoy swimming.`\n- `like` — любить: `She likes cooking.` (A1-A2; на B1+ like может идти с to-inf тоже.)\n- `love` — очень любить: `We love dancing.`\n- `hate` — ненавидеть: `He hates waiting.`\n- `prefer` — предпочитать: `I prefer reading to watching TV.`\n- `finish` — закончить: `I finished eating.`\n- `start / begin` — начать: `She started running.`\n- `stop` — перестать / остановиться: `Please stop talking.`\n- `keep` — продолжать: `Keep trying!`\n- `go` (для хобби/активностей): `go shopping, go swimming, go fishing`.\n\n**Как образовать герундий:**\n- verb + -ing: `play → playing, read → reading`.\n- Если слово кончается на -e → убираем -e + -ing: `make → making, write → writing`.\n- Короткие слова с одним гласным + согласная → удваиваем согласную: `run → running, sit → sitting, swim → swimming`.\n- Если слово кончается на -ie → заменяем на -y + -ing: `lie → lying, die → dying`.\n\n**Частая ошибка русскоговорящего:** использовать инфинитив после `enjoy`.\n- ✗ `I enjoy to swim.`\n- ✓ `I enjoy swimming.`\n\nВ русском «наслаждаться» + инфинитив естественно. В английском — только герундий.\n\n**Герундий после предлогов.** После любого предлога (of, in, on, at, before, after, without, by) используй -ing:\n- `before eating`, `without saying`, `after finishing`, `good at cooking`.\n\n**Отрицательный герундий:** `not + -ing`: `I enjoy not working on Sundays.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb (enjoy / finish / stop / keep) + verb-ing",
+        "ru": "подлежащее + глагол (enjoy / finish / stop / keep) + глагол-ing"
       },
       "examples": [
         {
@@ -37,7 +43,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She finished writing the letter.",
-          "ru": "Она закончила писать письмо."
+          "ru": "Она закончила писать письмо.",
+          "note": {
+            "en": "finish",
+            "ru": "finish"
+          }
         },
         {
           "en": "They love swimming in the sea.",
@@ -49,23 +59,45 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We go shopping every Saturday.",
-          "ru": "Мы ходим по магазинам каждую субботу."
+          "ru": "Мы ходим по магазинам каждую субботу.",
+          "note": {
+            "en": "go + activity",
+            "ru": "go + активность"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Enjoy, finish, keep, stop — всегда с герундием (-ing), никогда с to-inf: enjoy swimming, not enjoy to swim."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I enjoy to swim.",
+          "right": "I enjoy swimming.",
+          "why": {
+            "en": "Enjoy is always followed by the gerund, never the infinitive.",
+            "ru": "После enjoy всегда герундий, никогда инфинитив."
+          }
+        },
+        {
+          "wrong": "Please stop to talk.",
+          "right": "Please stop talking.",
+          "why": {
+            "en": "To stop doing something uses the gerund; stop + to-infinitive means a different thing (stop in order to).",
+            "ru": "Stop + герундий = прекратить занятие; stop + to-inf означает другое (остановиться, чтобы)."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the verb + gerund list grows wide. Add avoid, consider, suggest, admit, deny, mind, miss, practise, delay/postpone, imagine, recommend, fancy, risk, can't help, can't stand/bear, give up, put off, and carry on/keep on. Several fixed phrases also take -ing: it's no use/no good + -ing, there's no point (in) + -ing, it's worth + -ing, and be busy + -ing. The trap is the preposition to. In look forward to, be/get used to, and object to, the word to is a preposition, not part of an infinitive, so it is followed by -ing: I'm looking forward to seeing you, not to see. Test it: if you can replace to with a noun (looking forward to it), it is a preposition and needs -ing.",
         "ru": "На B1 расширяй список verbs + gerund.\n\n**Новые глаголы:**\n- `avoid` — избегать: `She avoids talking about it.`\n- `consider` — обдумывать, рассматривать: `I'm considering moving to Berlin.`\n- `suggest` — предлагать: `She suggested going to the park.`\n- `admit` — признавать: `He admitted stealing the money.`\n- `deny` — отрицать: `She denied cheating.`\n- `mind` — быть против: `Do you mind waiting?`\n- `miss` — скучать по: `I miss seeing my friends.`\n- `practice / practise` — практиковаться: `She practises speaking English.`\n- `delay / postpone` — откладывать: `They delayed announcing the decision.`\n- `imagine` — представлять: `Imagine living on Mars!`\n- `recommend` — рекомендовать: `I recommend trying this restaurant.`\n- `fancy` (BrE) — хотеть: `Do you fancy going out tonight?`\n- `risk` — рисковать: `Don't risk losing your job.`\n- `can't help` — не могу удержаться: `I can't help laughing.`\n- `can't stand / can't bear` — не выношу: `She can't stand waiting.`\n- `give up` — бросить: `He gave up smoking.`\n- `put off` — отложить: `Don't put off studying.`\n- `carry on / keep on` — продолжать: `Carry on working.`\n\n**Trigger phrases (после них тоже герундий):**\n- `It's no use / no good + -ing`: `It's no use crying.`\n- `There's no point (in) + -ing`: `There's no point in arguing.`\n- `It's worth + -ing`: `It's worth visiting.`\n- `be busy + -ing`: `She's busy working.`\n- `can't help + -ing`: `I can't help thinking about it.`\n- `look forward to + -ing`: `I'm looking forward to seeing you.` (to здесь — предлог, не инфинитив!)\n- `be used to + -ing`: `I'm used to waking up early.`\n- `be / get accustomed to + -ing`.\n\n**Опасные предлоги:** `to` может быть инфинитивом (to do) ИЛИ предлогом (look forward to). Если это предлог — после него -ing:\n- `I look forward to meeting you.` (not to meet.)\n- `I'm used to driving at night.` (not to drive.)\n- `She objects to working late.` (not to work.)\n\nТест: можно ли заменить `to` на «этому»? Да → предлог, нужен -ing. Нет → инфинитив."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb (avoid / suggest / consider) + verb-ing  |  ... + preposition to + verb-ing",
+        "ru": "подлежащее + глагол (avoid / suggest / consider) + глагол-ing  |  ... + предлог to + глагол-ing"
       },
       "examples": [
         {
@@ -82,27 +114,53 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I'm looking forward to meeting your family.",
-          "ru": "Я с нетерпением жду встречи с твоей семьёй."
+          "ru": "Я с нетерпением жду встречи с твоей семьёй.",
+          "note": {
+            "en": "to = preposition",
+            "ru": "to = предлог"
+          }
         },
         {
           "en": "It's no use arguing with him.",
-          "ru": "Бесполезно с ним спорить."
+          "ru": "Бесполезно с ним спорить.",
+          "note": {
+            "en": "fixed phrase",
+            "ru": "устойчивая фраза"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Look forward TO meeting — здесь to предлог, а не инфинитив. Значит после него -ing форма."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I look forward to meet you.",
+          "right": "I look forward to meeting you.",
+          "why": {
+            "en": "Here to is a preposition, so it must be followed by the -ing form.",
+            "ru": "Здесь to — предлог, поэтому за ним идёт форма -ing."
+          }
+        },
+        {
+          "wrong": "She suggested me to go.",
+          "right": "She suggested going. / She suggested (that) I go.",
+          "why": {
+            "en": "Suggest does not take object + to-infinitive; use a gerund or a that-clause.",
+            "ru": "Suggest не берёт object + to-inf; используйте герундий или that-clause."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 handle subtler patterns. Perception and similar verbs take verb + object + -ing to show an action in progress: I saw her crossing the street, I heard him singing, they caught the thief stealing. In formal style a possessive comes before the gerund (I appreciate your helping me, she objected to his staying late); in everyday speech the object form is used instead (you helping, him staying). Many verbs combine with a fixed preposition + gerund: accuse ... of, apologize for, blame ... for, congratulate ... on, insist on, dream of, succeed in. Note the collocations have trouble/difficulty (in) -ing, spend/waste time -ing. Finally, an adverb cannot rescue the wrong pattern: he stopped smoking (quit) differs from he stopped to smoke (paused in order to smoke).",
         "ru": "На B2 различай subtle triggers и verb+object+gerund patterns.\n\n**Verb + object + gerund / -ing:**\n- Глаголы восприятия: see, hear, watch, feel, notice + obj + -ing (процесс):\n  - `I saw her crossing the street.` (continuous action, я видел процесс.)\n  - `I heard him singing.`\n\n**Verb + object + gerund (прямое действие):**\n- `I can't imagine him leaving.` (не могу представить, что он уйдёт.)\n- `They caught the thief stealing.`\n- `She noticed me standing there.`\n\n**Possessive before gerund (formal):**\n- `I appreciate your helping me.` (not you helping.)\n- `She objected to his staying late.` (not him staying.)\n\nВ формальном стиле — possessive (my, your, his, her, their, Tom's) перед gerund. В разговорной речи используют object form (me, you, him, her, them, Tom).\n\n**Verb phrases with prepositions + gerund:**\n- `accuse ... of + -ing`: `They accused him of cheating.`\n- `apologize for + -ing`: `He apologized for being late.`\n- `blame ... for + -ing`: `She blamed me for forgetting.`\n- `congratulate ... on + -ing`.\n- `suspect ... of + -ing`.\n- `thank ... for + -ing`.\n- `approve of + -ing`.\n- `complain about + -ing`.\n- `insist on + -ing`: `He insisted on paying.`\n- `dream of + -ing`.\n- `succeed in + -ing`: `She succeeded in winning.`\n\n**Collocations with fixed prepositions:**\n- `have trouble / difficulty + (in) -ing`: `I have trouble sleeping.`\n- `have a hard time + -ing`: `She had a hard time finding work.`\n- `spend time / money + -ing`: `We spent hours waiting.`\n- `waste time + -ing`: `Don't waste time arguing.`\n\n**Distinguishing meanings with adverbs:**\n- `He eventually stopped smoking.` (gerund = прекратил курить.)\n- `He stopped to smoke.` (to-inf = остановился, чтобы покурить.)\n\n**Common B2 errors:**\n- `suggest + me + to + inf` — НЕПРАВИЛЬНО. `Suggest` не берёт objecn + to-inf.\n  - ✗ `He suggested me to go.`\n  - ✓ `He suggested (that) I go.`\n  - ✓ `He suggested going.`\n- `look forward to + inf` — НЕПРАВИЛЬНО.\n  - ✗ `I look forward to meet you.`\n  - ✓ `I look forward to meeting you.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + verb + object + verb-ing  |  verb + preposition + verb-ing  |  possessive + gerund",
+        "ru": "подлежащее + глагол + дополнение + глагол-ing  |  глагол + предлог + глагол-ing  |  притяжательное + герундий"
       },
       "examples": [
         {
@@ -111,7 +169,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I appreciate your helping me yesterday.",
-          "ru": "Я ценю твою помощь вчера."
+          "ru": "Я ценю твою помощь вчера.",
+          "note": {
+            "en": "possessive form",
+            "ru": "притяжательная форма"
+          }
         },
         {
           "en": "He admitted to taking the money.",
@@ -119,7 +181,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We spent hours searching for the keys.",
-          "ru": "Мы часами искали ключи."
+          "ru": "Мы часами искали ключи.",
+          "note": {
+            "en": "spend time + -ing",
+            "ru": "spend time + -ing"
+          }
         },
         {
           "en": "She insisted on paying for dinner.",
@@ -129,26 +195,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Possessive + gerund (your helping, his being late) — формально и корректно; object + gerund (you helping, him being late) — разговорно."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He suggested me to go.",
+          "right": "He suggested going.",
+          "why": {
+            "en": "Suggest never takes object + to-infinitive; use the gerund or a that-clause.",
+            "ru": "Suggest никогда не берёт object + to-inf; используйте герундий или that-clause."
+          }
+        },
+        {
+          "wrong": "She apologized for be late.",
+          "right": "She apologized for being late.",
+          "why": {
+            "en": "After a preposition like for the verb must be the -ing form.",
+            "ru": "После предлога вроде for глагол должен быть в форме -ing."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 use gerunds for fine semantic and register distinctions. The passive gerund being + V3 frames the subject as the receiver (I don't like being interrupted), and having been + V3 makes it both passive and prior. The perfect gerund having + V3 stresses an earlier, completed action (she admitted having lied), though casual speech often replaces it with a simple gerund. Gerunds work well in subject position (Swimming is good exercise; Having a goal keeps you motivated) and after prepositions (instead of going, despite being, for + -ing). Negate with not + -ing (I regret not telling you sooner). Add the more academic triggers resent, tolerate, resist, contemplate, involve, entail, justify, warrant, and preclude (his injury precluded his participating). Stylistically, a gerund packs prose tight where a full clause expands it.",
         "ru": "На C1 работай с тонкими semantic / register различиями.\n\n**Passive gerunds:**\n- `being + V3`: `I don't like being interrupted.` (not being interrupted = не нравится, когда меня перебивают.)\n- `having been + V3`: `He remembers having been scolded as a child.`\n\n**Perfect gerunds — focus on completed action:**\n- `having + V3`: `She admitted having lied.` (признала, что солгала — раньше.)\n- `I appreciate having been invited.`\n\nPerfect gerund подчёркивает предшествование. В разговорной речи часто заменяется simple gerund.\n\n**Gerund в subject position:**\n- `Swimming is good exercise.`\n- `Having a goal keeps you motivated.`\n- `Being a parent is challenging.`\n\nГерундий как подлежащее — очень продуктивно в академическом письме.\n\n**Negative gerund:**\n- `not + gerund`: `I regret not telling you sooner.`\n- `She was punished for not finishing the work.`\n\n**Gerund as complement:**\n- After be: `My hobby is reading.`\n- After prepositions: `instead of going, by saying, despite being, for + -ing`.\n\n**Subtle triggers at C1:**\n- `resent + -ing`: возмущаться: `She resented being ignored.`\n- `tolerate + -ing`: терпеть: `He can't tolerate being criticized.`\n- `resist + -ing`: сопротивляться: `I couldn't resist buying the dress.`\n- `contemplate + -ing`: обдумывать: `They're contemplating selling the house.`\n- `forbid + -ing` (formal): `Smoking is forbidden.`\n- `involve + -ing`: `The job involves travelling.`\n- `entail + -ing`: `The plan entails reorganizing the team.`\n\n**Academic vocabulary + gerund:**\n- `justify + -ing`: обосновать.\n- `warrant + -ing`: оправдать.\n- `preclude + -ing`: исключать: `His injury precluded his participating.`\n- `postpone + -ing`.\n- `undertake + -ing`.\n\n**Stylistic choice — gerund vs clause:**\n- Compact: `She enjoyed working with him.`\n- Expanded: `She enjoyed it when she worked with him.`\n\nГерундий делает прозу плотной, clause — развёрнутой.\n\n**Register-dependent subjunctive / gerund alternations:**\n- `I suggest (that) he go.` (formal AmE subjunctive.)\n- `I suggest going.` (neutral, more common.)\n- `I suggest he should go.` (BrE, more common in speech.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "being / having been + V3 (passive)  |  having + V3 (perfect)  |  not + verb-ing (negative)  |  verb-ing as subject",
+        "ru": "being / having been + V3 (пассив)  |  having + V3 (перфект)  |  not + глагол-ing (отрицание)  |  глагол-ing как подлежащее"
       },
       "examples": [
         {
           "en": "She regrets not having studied harder.",
-          "ru": "Она жалеет, что не училась усерднее."
+          "ru": "Она жалеет, что не училась усерднее.",
+          "note": {
+            "en": "negative perfect",
+            "ru": "отрицательный перфект"
+          }
         },
         {
           "en": "Being underestimated can be an advantage.",
-          "ru": "Быть недооценённым может быть преимуществом."
+          "ru": "Быть недооценённым может быть преимуществом.",
+          "note": {
+            "en": "passive gerund subject",
+            "ru": "пассивный герундий-подлежащее"
+          }
         },
         {
           "en": "The contract precludes us from disclosing details.",
@@ -166,22 +258,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Having + V3 (perfect gerund) — для предшествования: I regret having said it (сказал раньше)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I regret to not telling you sooner.",
+          "right": "I regret not telling you sooner.",
+          "why": {
+            "en": "Negate a gerund with not directly before the -ing form, with no to.",
+            "ru": "Герундий отрицается через not прямо перед формой -ing, без to."
+          }
+        },
+        {
+          "wrong": "She admitted to have lied.",
+          "right": "She admitted having lied. / She admitted lying.",
+          "why": {
+            "en": "The perfect gerund is having + V3, not to have + V3.",
+            "ru": "Перфектный герундий — having + V3, а не to have + V3."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the gerund is a precision tool for dense academic and literary style. Nominalized gerunds with the and of replace clauses (the implementing of the policy, the signing of the treaty) and can take a specifier and modifiers (the repeated questioning of the witness, the systematic dismantling of regulations). Complex gerund phrases lead the subject (Refusing to compromise cost him the deal; Having lived abroad gives her perspective). Idioms run on gerunds: what's the use of -ing, I wouldn't dream of -ing, there's no denying -ing, and discourse markers like generally/strictly speaking. Distinguish the gerund (noun: Smoking is harmful) from the identical-looking participle (adjective: the smoking chimney) — only context decides. In academic prose a gerund often replaces a that-clause for density (his resigning was surprising vs. the fact that he resigned), but over-nominalization makes prose heavy, so good style alternates gerund, infinitive, and clause.",
         "ru": "На C2 герундиальные структуры — тонкий инструмент плотного академического и литературного стиля.\n\n**Nominalized gerund structures:**\n- `The implementing of the policy` (formal/legal).\n- `The presenting of the case took two days.`\n- Такие конструкции заменяют clauses и делают прозу academic.\n\n**Gerund with specifier (like noun phrase):**\n- `The repeated questioning of the witness...`\n- `His constant complaining was exhausting.`\n- `Her insistence on doing everything herself...`\n\n**Complex gerund phrases in subject position:**\n- `Refusing to compromise cost him the deal.`\n- `Having lived abroad gives her unique perspective.`\n- `Being the eldest, she felt responsible.`\n\n**Abstract gerund nominalization:**\n- `The doing` / `the being` / `the having` — уровни абстракции для философского / академического дискурса.\n\n**Subtle rhetorical uses:**\n- Topicalization: `What I dislike is being told what to do.`\n- Emphasis: `It's the waiting that kills me.`\n\n**Syntactic flexibility:**\n- Gerund + of + noun: `The signing of the treaty...`\n- Gerund with modifiers: `The systematic dismantling of regulations...`\n- Passive gerund: `The repeated being ignored...` — редкий и литературный.\n\n**Idiomatic gerund structures:**\n- `What's the use of + -ing?`\n- `It's no good + -ing`.\n- `I wouldn't dream of + -ing`.\n- `There's no denying + -ing`.\n- `Come to think of it...`\n- `Generally speaking / strictly speaking / roughly speaking` — gerund as discourse marker.\n\n**Participial vs gerund distinction:**\n- Gerund: `Smoking is harmful.` (noun function.)\n- Participle: `The smoking chimney...` (adjective function.)\n- Identical form, different grammar. Контекст решает.\n\n**Academic register preference:**\nВ академическом письме gerund often replaces that-clauses для плотности:\n- Clause: `The fact that he resigned was surprising.`\n- Gerund: `His resigning was surprising.`\n- Gerund nominal: `His resignation was surprising.`\n\nВсе три работают; выбор зависит от желаемой плотности.\n\n**Gerund in fronting for emphasis:**\n- `Telling her the truth — that I couldn't do.` (inverted for effect.)\n- `Reading books is one thing; understanding them is another.`\n\n**Trap at C2:** избыточная nominalization делает прозу heavy. Балансируй gerund, infinitive и clause. Хороший стиль чередует их."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "the + verb-ing + of + noun (nominalized)  |  verb-ing phrase as subject  |  there's no denying / no use of + verb-ing",
+        "ru": "the + глагол-ing + of + существительное (номинализация)  |  глагол-ing-оборот как подлежащее  |  there's no denying / no use of + глагол-ing"
       },
       "examples": [
         {
           "en": "His insisting on perfection delayed the project by months.",
-          "ru": "Его настаивание на совершенстве задержало проект на месяцы."
+          "ru": "Его настаивание на совершенстве задержало проект на месяцы.",
+          "note": {
+            "en": "possessive + gerund subject",
+            "ru": "притяжательное + герундий-подлежащее"
+          }
         },
         {
           "en": "There is no denying that the evidence is compelling.",
@@ -193,7 +307,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The systematic ignoring of safety protocols led to the accident.",
-          "ru": "Систематическое игнорирование правил безопасности привело к аварии."
+          "ru": "Систематическое игнорирование правил безопасности привело к аварии.",
+          "note": {
+            "en": "nominalized with the/of",
+            "ru": "номинализация с the/of"
+          }
         },
         {
           "en": "What I resent most is being treated as a subordinate.",
@@ -203,9 +321,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Gerund в subject position — элегантный academic стиль: Implementing reforms requires patience (не It is necessary to implement reforms...)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "There is no denying of that the evidence is compelling.",
+          "right": "There is no denying that the evidence is compelling.",
+          "why": {
+            "en": "There's no denying takes a that-clause directly; do not insert of before the clause.",
+            "ru": "There's no denying берёт that-clause напрямую; не вставляйте of перед придаточным."
+          }
+        },
+        {
+          "wrong": "Having travelled extensively shaped her worldview, but it made him to relax.",
+          "right": "Having travelled extensively shaped her worldview.",
+          "why": {
+            "en": "Keep the perfect gerund phrase as a single nominal subject; do not graft an infinitive onto it.",
+            "ru": "Перфектный герундий-оборот остаётся цельным подлежащим; не присоединяйте к нему инфинитив."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "verb-plus-infinitive",
+    "verb-infinitive-or-gerund-same-meaning",
+    "verb-infinitive-or-gerund-different-meaning",
+    "gerund-as-noun"
+  ],
+  "crossTopic": [
+    "prepositions-after-verbs",
+    "passive-present-simple",
+    "reported-statements",
+    "purpose-clauses"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "verb",
+      "+ -ing form"
+    ]
+  }
 };

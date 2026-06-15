@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "present-perfect-continuous",
   "title": {
-    "en": "",
+    "en": "Present Perfect Continuous",
     "ru": "Present Perfect Continuous"
   },
   "cefr": "B1",
@@ -15,32 +15,47 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "aspect",
+  "egp": [
+    "EGP:B1.PRESENT.PERFECT.CONTINUOUS.DURATION",
+    "EGP:B2.PRESENT.PERFECT.SIMPLE.VS.CONTINUOUS"
+  ],
+  "archetype": "timeline",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Use the **present perfect continuous** for an action that **started in the past** and either **is still going on now** or has **just stopped**, when you want to stress the **duration** or the **ongoing process** rather than the result.\n\n**Form:** `have/has` + `been` + the **-ing** form of the verb.\n- `I have been working` (usually `I've been working`)\n- `She has been working` (usually `She's been working`)\n\n**Three core uses:**\n\n1. **Duration of an action that is still happening** — answers *how long?*\n   - `I've been studying English for five years.` (and I still study it)\n   - `She's been waiting since 2 p.m.`\n\n2. **An action that has just stopped, with a visible result now:**\n   - `You look tired. Have you been running?`\n   - `My hands are dirty because I've been gardening.`\n\n3. **A temporary, repeated recent activity:**\n   - `I've been going to the gym a lot lately.`\n\n**Time markers:** `for` + a period (*for three hours*), `since` + a point in time (*since Monday*), `all day / morning / week`, `recently`, `lately`, and the question word `how long`.\n\n**Versus present perfect simple:** the simple form reports a **result or quantity** (`I've read ten books`); the continuous reports a **process or duration** (`I've been reading for two hours`).\n\n**Watch out:** stative verbs (`know`, `love`, `like`, `understand`) do not take the continuous — say `I have known her for years`, not `I have been knowing her`.\n\n**Negatives and questions:** `I haven't been sleeping well.` / `Have you been crying?` / `How long have you been waiting?`",
         "ru": "**Present Perfect Continuous** — время для действия, которое **началось в прошлом, продолжается сейчас** или **только что закончилось**, и мы подчёркиваем **длительность** или **процесс**.\n\n**Форма:** `have/has` + `been` + глагол-`ing`\n\n- `I have been working` (часто `I've been working`)\n- `She has been working` (часто `She's been working`)\n\n**Когда использовать:**\n\n1. **Длительность действия, которое ещё идёт:**\n   - `I've been studying English for 5 years.` (Я учу английский 5 лет — и сейчас продолжаю.)\n   - `She's been waiting since 2 pm.` (Она ждёт с 2 часов.)\n\n2. **Действие только что закончилось, но результат виден:**\n   - `You look tired. Have you been running?` (Ты выглядишь уставшим. Ты бегал?)\n   - `My hands are dirty because I've been gardening.` (У меня грязные руки, потому что я работал в саду.)\n\n3. **Временное повторяющееся действие:**\n   - `I've been going to the gym a lot lately.` (Я в последнее время много хожу в зал.)\n\n**Ключевые слова:**\n- `for` + период (for 3 hours)\n- `since` + точка во времени (since Monday)\n- `all day/morning/week`\n- `recently`, `lately`\n- `how long` (как долго)\n\n**Сравнение с Present Perfect Simple:**\n\n- `I've read 10 books.` (Simple — результат, количество.)\n- `I've been reading for two hours.` (Continuous — процесс, длительность.)\n- `She's written three emails.` (Simple — сколько сделано.)\n- `She's been writing all morning.` (Continuous — как долго.)\n\n**Главная ошибка:** использовать с stative verbs.\n❌ `I have been knowing her for years.` → ✅ `I have known her for years.`\n\nStative verbs (know, love, like, understand) — только Simple.\n\n**Отрицание и вопрос:**\n- `I haven't been sleeping well.` (Я плохо сплю в последнее время.)\n- `Have you been crying?` (Ты плакал?)\n- `How long have you been waiting?` (Как долго ты ждёшь?)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "subject + have/has + been + verb-ing",
+        "ru": "подлежащее + have/has + been + глагол с -ing"
       },
       "examples": [
         {
           "en": "I've been learning Spanish for six months.",
-          "ru": "Я учу испанский полгода."
+          "ru": "Я учу испанский полгода.",
+          "note": {
+            "en": "for + period",
+            "ru": "for + период"
+          }
         },
         {
           "en": "She's been working here since January.",
-          "ru": "Она работает здесь с января."
+          "ru": "Она работает здесь с января.",
+          "note": {
+            "en": "since + point",
+            "ru": "since + момент"
+          }
         },
         {
           "en": "You look exhausted — have you been running?",
-          "ru": "Ты выглядишь измотанным — бегал?"
+          "ru": "Ты выглядишь измотанным — бегал?",
+          "note": {
+            "en": "visible result",
+            "ru": "видимый результат"
+          }
         },
         {
           "en": "It's been raining all day.",
@@ -54,17 +69,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Continuous — длительность; know, love, want — всегда Perfect Simple, не Continuous."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I am working here since January.",
+          "right": "I have been working here since January.",
+          "why": {
+            "en": "For duration up to now use the present perfect continuous, not the present continuous.",
+            "ru": "Для длительности до настоящего момента нужен present perfect continuous, а не present continuous."
+          }
+        },
+        {
+          "wrong": "I have been knowing her for years.",
+          "right": "I have known her for years.",
+          "why": {
+            "en": "Stative verbs like know take the simple, not the continuous.",
+            "ru": "Глаголы состояния, такие как know, берут simple, а не continuous."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the line between **present perfect simple** and **present perfect continuous** carries real meaning, and native speakers choose between them by sense, not by rule of thumb.\n\n**Simple = result, completion, quantity:**\n- `I've painted the room.` (it's finished)\n- `She's read three books this week.` (a count)\n\n**Continuous = process, duration, possible incompleteness:**\n- `I've been painting the room.` (maybe not finished)\n- `She's been reading all morning.` (the activity, not a count)\n\n**Decision points:** visible *result* → simple (`Someone has broken the window`); visible *process* → continuous (`Someone has been smoking in here — I can smell it`); a *number of results* → simple (`I've written five emails`); *duration without a count* → continuous (`I've been writing emails all morning`); stative verbs → always simple (`I've known her for years`).\n\n**Visible-evidence reading:** the continuous often explains a present state by pointing to the action that produced it — `You're red, you've been running` / `Her eyes are red, she's been crying` / `The floor is wet, it's been raining`.\n\n**Implication of not-finished:** `I've read the book` means you finished it; `I've been reading the book` leaves room for the activity to be ongoing or only just stopped.\n\n**Temporary situations:** the continuous frames a situation as temporary — `She has been staying with us this week` / `He's been working from home because of the repairs`.\n\n**A subtle pair:** with `live` and `work`, both forms are often interchangeable for duration (`I've lived here for ten years` ≈ `I've been living here for ten years`), but the simple sounds more permanent and the continuous more temporary.",
         "ru": "На B2 тонкая граница между **Present Perfect Simple** и **Present Perfect Continuous** становится важнее. Носитель выбирает между ними по смыслу.\n\n**Simple — результат, завершённость, количество:**\n- `I've painted the room.` (Я покрасил комнату — готово.)\n- `She's read three books this week.` (Она прочитала три книги — количество.)\n\n**Continuous — процесс, длительность, возможная незавершённость:**\n- `I've been painting the room.` (Я красил — не факт, что закончил.)\n- `She's been reading all morning.` (Она читает всё утро — процесс.)\n\n**Правила выбора:**\n\n1. **Результат виден → Simple:** `Someone has broken the window.`\n2. **Процесс виден → Continuous:** `Someone has been smoking in here — I can smell it.`\n3. **Количество результатов → Simple:** `I've written five emails today.`\n4. **Длительность без количества → Continuous:** `I've been writing emails all morning.`\n5. **Stative verbs → всегда Simple:** `I've known her for years.`\n6. **Недавняя деятельность без явного результата → Continuous:** `What have you been up to lately?`\n\n**Visible evidence reading (видимое доказательство):**\nContinuous часто показывает, что мы **видим следствия** только что закончившегося действия:\n- `You're red — you've been running.`\n- `Her eyes are red — she's been crying.`\n- `The floor is wet — it's been raining.`\n\nЭто не просто длительность, а объяснение текущего состояния.\n\n**Implication of not finished:**\n- `I've read the book.` = прочитал полностью.\n- `I've been reading the book.` = читаю, но ещё не закончил (или может быть закончил только что).\n\nContinuous оставляет место для незавершённости. Сравни:\n- `I've painted the ceiling.` (Закончил.)\n- `I've been painting the ceiling.` (Красил — возможно, ещё не закончил.)\n\n**Temporary situations:**\n- `She has been staying with us this week.` (Временно живёт у нас.)\n- `He's been working from home because of the repairs.` (Работает из дома из-за ремонта.)\n\n**Typical B2 errors:**\n- Continuous с stative: ❌ `I've been knowing him` → ✅ `I've known him`.\n- Continuous для количества: ❌ `I've been writing five emails` → ✅ `I've written five emails`.\n- Simple для видимого процесса: вместо `you look tired — have you run?` лучше `have you been running?`\n\n**Tonкое:** глагол `wait` и `live` часто допускают обе формы без разницы в смысле:\n- `I've lived here for 10 years.` ≈ `I've been living here for 10 years.`\n- `We've waited for an hour.` ≈ `We've been waiting for an hour.`\n\nНо `live` и `work` в Simple звучат более постоянно, в Continuous — более временно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "result/count → have/has + past participle  |  process/duration → have/has + been + verb-ing",
+        "ru": "результат/количество → have/has + 3-я форма  |  процесс/длительность → have/has + been + глагол с -ing"
       },
       "examples": [
         {
@@ -73,11 +106,19 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Look at the garden! Someone has been digging here.",
-          "ru": "Посмотри на сад! Кто-то тут копал."
+          "ru": "Посмотри на сад! Кто-то тут копал.",
+          "note": {
+            "en": "visible process",
+            "ru": "видимый процесс"
+          }
         },
         {
           "en": "She has written three chapters of her novel.",
-          "ru": "Она написала три главы своего романа."
+          "ru": "Она написала три главы своего романа.",
+          "note": {
+            "en": "result, count → simple",
+            "ru": "результат, количество → simple"
+          }
         },
         {
           "en": "The kids have been playing outside for hours.",
@@ -91,22 +132,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Результат с количеством — Simple; процесс, длительность, видимые следы — Continuous."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I've been writing five emails today.",
+          "right": "I've written five emails today.",
+          "why": {
+            "en": "A countable number of completed results takes the simple, not the continuous.",
+            "ru": "Исчисляемое количество завершённых результатов берёт simple, а не continuous."
+          }
+        },
+        {
+          "wrong": "You look tired — have you run?",
+          "right": "You look tired — have you been running?",
+          "why": {
+            "en": "To explain a present state by a just-finished activity, use the continuous.",
+            "ru": "Чтобы объяснить текущее состояние только что закончившимся действием, нужен continuous."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 the present perfect continuous frequently carries **implicature** — meaning the speaker adds on top of the literal words.\n\n**1. Complaint or criticism.** With repeated, unwanted actions the continuous signals irritation: `You've been leaving dirty dishes in the sink again.` / `He's been telling everyone about my promotion.`\n\n**2. Recent effort.** It foregrounds the work invested, often inviting a response: `I've been working on this report for days.` / `We've been trying to reach you.`\n\n**3. Diplomatic hedging.** It distances and softens a proposal: `I've been thinking — maybe we should reconsider.` / `We've been wondering whether you'd be interested.`\n\n**4. Explaining a current state.** `I'm exhausted — I've been running errands all day.` / `The project is delayed because we've been having technical issues.`\n\n**5. Precise contrast with the simple.** `I've finished the book` (read) vs `I've been reading the book` (not yet done); `They've built a house` (done) vs `They've been building a house` (in progress).\n\n**6. Stative verbs that admit the continuous.** Some normally stative verbs appear in the continuous with a process or build-up reading: `I've been thinking about our conversation`, `I've been wanting to tell you something`, `We've been meaning to call`. But `know`, `understand`, `believe`, `own`, and `belong` stay simple.\n\n**7. Corpus patterns.** `What have you been doing lately?` (small talk); `I've been meaning to + infinitive` (a delayed intention); `She's been seeing someone` (in a relationship — a euphemism); `We've been meeting regularly`.\n\n**8. Style choices.** In essays and business writing the continuous stresses ongoing activity and relevance — `Our team has been developing a new framework` (work underway) — while the simple presents the finished result — `Our team has developed a new framework`.",
         "ru": "На C1 Present Perfect Continuous часто несёт **implicature** — подтекст, который говорящий добавляет к буквальному смыслу.\n\n**1. Implicature of complaint or criticism:**\n- `You've been leaving dirty dishes in the sink again.` (Ты опять оставляешь грязную посуду в раковине.) — упрёк.\n- `He's been telling everyone about my promotion.` (Он рассказывает всем о моём повышении.) — негативная окраска.\n\nContinuous с повторяющимися нежелательными действиями несёт оттенок раздражения.\n\n**2. Implicature of recent effort:**\n- `I've been working on this report for days.` = «потратил много сил» + возможно «прошу понимания».\n- `We've been trying to reach you.` = «прилагали усилия» + ожидание реакции.\n\nContinuous подчёркивает процесс и вложенный труд.\n\n**3. Diplomatic hedging:**\n- `I've been thinking — maybe we should reconsider.` = мягкое предложение.\n- `We've been wondering whether you'd be interested.` = осторожное предложение.\n\nContinuous дистанцирует высказывание, делает его менее категоричным.\n\n**4. Explanation of current state:**\n- `I'm exhausted — I've been running errands all day.` (Объяснение текущей усталости.)\n- `The project is delayed because we've been having technical issues.` (Объяснение задержки.)\n\n**5. Contrast with Simple — precise meaning:**\n\n| Simple | Continuous |\n|---|---|\n| `I've finished the book` (прочитал) | `I've been reading the book` (ещё не закончил) |\n| `She's written her thesis` (защитила) | `She's been writing her thesis` (процесс) |\n| `They've built a house` (построили) | `They've been building a house` (строят) |\n\n**6. Stative verbs в Continuous — допустимые исключения:**\nНекоторые обычно stative verbs появляются в Continuous в значении процесса:\n- `I've been thinking about our conversation.` (Обдумывал — умственный процесс.)\n- `I've been wanting to tell you something.` (Хочется давно — нарастающее желание.)\n- `We've been meaning to call.` (Собирались позвонить.)\n\nНо `know`, `understand`, `believe`, `own`, `belong` — только Simple.\n\n**7. Corpus patterns — типичные конструкции:**\n- `What have you been doing lately?` — стандартный small talk.\n- `I've been meaning to + infinitive` — оттенок отложенного намерения.\n- `She's been seeing someone` — в отношениях (эвфемизм).\n- `We've been meeting regularly` — продолжающиеся встречи.\n\n**8. C1 style choices:**\nВ эссе и деловом письме Continuous помогает подчеркнуть процесс, усилие и актуальность:\n- `Our team has been developing a new framework.` (Работа идёт — активность.)\n- `Our team has developed a new framework.` (Готово — представление результата.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "have/has + been + verb-ing  (+ pragmatic colouring: complaint / effort / hedge / explanation)",
+        "ru": "have/has + been + глагол с -ing (+ прагматический оттенок: упрёк / усилие / смягчение / объяснение)"
       },
       "examples": [
         {
           "en": "I've been meaning to call you for weeks.",
-          "ru": "Я уже несколько недель собираюсь тебе позвонить."
+          "ru": "Я уже несколько недель собираюсь тебе позвонить.",
+          "note": {
+            "en": "delayed intention",
+            "ru": "отложенное намерение"
+          }
         },
         {
           "en": "We've been getting complaints about the service.",
@@ -122,23 +185,37 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "You've been complaining about this for months.",
-          "ru": "Ты жалуешься на это уже несколько месяцев."
+          "ru": "Ты жалуешься на это уже несколько месяцев.",
+          "note": {
+            "en": "complaint",
+            "ru": "упрёк"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "I've been meaning to... — типичная фраза про отложенное намерение: «давно хотел»."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I've been understanding this for years.",
+          "right": "I've understood this for years.",
+          "why": {
+            "en": "Core stative verbs like understand, know, own and belong reject the continuous even at C1.",
+            "ru": "Базовые глаголы состояния (understand, know, own, belong) не берут continuous даже на C1."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the present perfect continuous is an instrument of stylistic nuance; the choice between simple and continuous is driven by rhetoric as much as grammar.\n\n**1. Stylistic choice in narrative and reporting.** In biography and journalism the continuous projects a continuing, unbroken process while the simple sums up a record: `She has been campaigning for women's rights for four decades` (still going) vs `She has campaigned for women's rights since the 1980s` (the cumulative fact). Both are correct; the continuous foregrounds activity and personal involvement.\n\n**2. Layered implicature.** `You've been asking the wrong question` does more than report — it implies a misguided approach worth rethinking. `We've been looking at this the wrong way` is self-criticism inviting a change of method; the continuous plus a negative judgment lends a tone of belated realisation.\n\n**3. Contrasting duration with accomplishment.** Speakers instinctively use the continuous for the overall activity and the simple to quantify achievements: `He's been writing novels for decades and has written twelve.` / `She's been practising law since 2005 and has won over 100 cases.`\n\n**4. Ongoing process vs closed result.** In academic prose `Scholars have been debating this for centuries` keeps the question live, whereas `Scholars have debated this extensively` treats it as settled coverage.\n\n**5. The `been` / `gone` distinction.** `He's been to Paris` (went and came back — experience); `He's been going to Paris a lot recently` (repeated, ongoing trips); `He's gone to Paris` (he is there now).\n\n**6. Complaint discourse.** `I've been telling you this for years!` is emphatic grievance, not mere information; `They've been promising reform since 2010` carries scepticism about unkept promises.\n\n**7. Literary and reflective register.** `I have been living, without knowing it, the life of a stranger.` — the continuous for contemplative, retrospective self-understanding; `The country has been searching for its identity.`\n\n**8. Errors native speakers still avoid.** Don't pair the continuous with a completed count (`I've been writing ten articles` → `I've written ten articles`); don't overload narrative with the continuous, which then sounds artificial; and `I've been knowing` remains wrong however informal the register.\n\n**9. Prescriptive vs descriptive.** You know that casual speech increasingly stretches the continuous over some stative verbs (`I've been loving this`, `I've been wanting to try it`), but in formal writing keep to the simple.",
         "ru": "На C2 Present Perfect Continuous — инструмент стилистической тонкости. Выбор между Simple и Continuous часто определяется не грамматикой, а риторикой.\n\n**1. Stylistic choice in narrative and reporting:**\nВ биографических и журналистских текстах Continuous показывает продолжающийся, непрерывный процесс, Simple — завершённый результат:\n- `She has been campaigning for women's rights for four decades.` (Процесс, продолжающийся до сих пор.)\n- `She has campaigned for women's rights since the 1980s.` (Совокупный опыт.)\n\nОба верны, но Continuous подчёркивает активность и личную вовлечённость, Simple — биографический факт.\n\n**2. Layered implicature:**\n- `You've been asking the wrong question.` — не просто «ты спрашиваешь», а «ты неправильно подходишь к проблеме и пора пересмотреть».\n- `We've been looking at this the wrong way.` — самокритика с приглашением изменить подход.\n\nContinuous в сочетании с негативной оценкой создаёт оттенок запоздалого осознания.\n\n**3. Contrasting duration and accomplishment:**\n- `He's been writing novels for decades and has written twelve.` (Процесс + количество — Continuous для длительности, Simple для числа.)\n- `She's been practising law since 2005 and has won over 100 cases.` (Профессиональная длительность + результат.)\n\nНоситель интуитивно выбирает Continuous для общего описания деятельности и Simple для квантификации достижений.\n\n**4. Emphasis on ongoing process vs closed result:**\n- `Scholars have been debating this for centuries.` — дебаты продолжаются.\n- `Scholars have debated this extensively.` — дебаты можно обобщить как состоявшиеся.\n\nВ академическом письме Continuous показывает актуальность проблемы, Simple — её исследованность.\n\n**5. Subtle difference с `been` и `going`:**\n- `He's been to Paris.` (Был и вернулся — опыт.)\n- `He's been going to Paris a lot recently.` (Постоянно ездит в последнее время — повторяющееся путешествие.)\n- `He's gone to Paris.` (Уехал — сейчас там.)\n\nВсе три формы различаются тонкими смысловыми оттенками.\n\n**6. Continuous in complaint discourse:**\n- `I've been telling you this for years!` — эмфатическая жалоба, не просто информирование.\n- `They've been promising reform since 2010.` — скептицизм о нереализованных обещаниях.\n\nContinuous в этих контекстах часто несёт оттенок разочарования или обвинения.\n\n**7. Literary and reflective register:**\n- `I have been living, without knowing it, the life of a stranger.` — Continuous для созерцательного, ретроспективного самопонимания.\n- `The country has been searching for its identity.` — поэтически-политический регистр.\n\n**8. C2 errors that native speakers avoid:**\n- Continuous с завершённым результатом + число: ❌ `I've been writing ten articles` → ✅ `I've written ten articles`.\n- Неоправданный Continuous в нарративе: избыток Continuous звучит искусственно.\n- Continuous со stative verbs без осознанного изменения значения: `I've been knowing` остаётся ошибкой.\n\n**9. Prescriptive vs descriptive:**\nНа C2 уровне ты знаешь, что разговорный английский всё свободнее использует Continuous с некоторыми stative verbs (`I've been loving this`, `I've been wanting to try`), но в формальном письме придерживайся Simple."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "have/has + been + verb-ing — chosen for rhetorical emphasis on continuing activity vs simple for the closed record",
+        "ru": "have/has + been + глагол с -ing — выбирается ради риторического акцента на длящейся активности; simple — для итогового факта"
       },
       "examples": [
         {
@@ -147,7 +224,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We've been looking at the problem through the wrong lens.",
-          "ru": "Мы смотрели на проблему не с той стороны."
+          "ru": "Мы смотрели на проблему не с той стороны.",
+          "note": {
+            "en": "self-critical implicature",
+            "ru": "самокритичный подтекст"
+          }
         },
         {
           "en": "The government has been promising transparency since 2010.",
@@ -159,15 +240,46 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "He's been playing in the national team for fifteen years and has scored over forty goals.",
-          "ru": "Он играет в национальной сборной пятнадцать лет и забил более сорока голов."
+          "ru": "Он играет в национальной сборной пятнадцать лет и забил более сорока голов.",
+          "note": {
+            "en": "skeptical complaint",
+            "ru": "скептическая жалоба"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "I've been telling you for years — эмфатическая жалоба, не просто факт."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I've been writing ten articles this year.",
+          "right": "I've written ten articles this year.",
+          "why": {
+            "en": "A fixed count of completed outputs requires the simple; the continuous quantifies process, not products.",
+            "ru": "Фиксированное количество завершённых результатов требует simple; continuous измеряет процесс, а не продукты."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "present-perfect-simple",
+    "present-continuous",
+    "past-perfect-continuous",
+    "stative-verbs"
+  ],
+  "crossTopic": [
+    "dynamic-vs-stative",
+    "prepositions-of-time",
+    "wh-questions"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "past start",
+      "duration / process",
+      "now",
+      "visible result"
+    ]
+  }
 };

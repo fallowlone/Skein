@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "interrogative-pronouns",
   "title": {
-    "en": "",
+    "en": "Interrogative Pronouns",
     "ru": "Interrogative Pronouns"
   },
   "cefr": "A1",
@@ -17,19 +17,21 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "questions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "Interrogative pronouns are the question words you put at the front of a sentence to ask for information: 'who' (which person), 'what' (which thing or action), 'which' (which one from a known set), and 'whose' (who it belongs to). The four core pronouns 'who / what / which / whose' stand in for the very thing you don't know yet. Build a simple question two ways. With the verb 'be', just put the wh-word first and swap the subject and 'be': 'Who is he?', 'What is this?', 'Whose is that bag?' With other verbs you need a helper 'do / does / can': 'What do you like?', 'Where does he live?', 'Who can help me?' The golden rule is word order: a question is never the same order as a statement — you must invert the subject and the auxiliary. 'He is a student' becomes 'Is he a student?' and 'What is he?'; 'You like coffee' becomes 'Do you like coffee?' and 'What do you like?' One important exception: when 'who' or 'what' is itself the subject, drop 'do/does' — 'Who called you?', 'What happened?' Compare 'Who did you call?', where 'who' is the object and 'did' comes back.",
         "ru": "Вопросительные местоимения — это слова, которыми мы **задаём вопросы**. Они помогают узнать информацию. Самые важные для начала:\n\n- `who` — кто (про человека)\n- `what` — что (про предмет или действие)\n- `which` — какой, который (из известного выбора)\n- `whose` — чей (принадлежность)\n- `where` — где, куда\n- `when` — когда\n- `why` — почему\n- `how` — как\n\nВ этой теме главное внимание на **who, what, which, whose** — они заменяют само подлежащее или объект.\n\n**Как строятся простые вопросы:**\n\n**С глаголом `to be` (am, is, are):**\n- `Who is he?` (Кто он?)\n- `What is this?` (Что это?)\n- `Whose is that bag?` (Чья это сумка?)\n- `Where is my book?` (Где моя книга?)\n\nФормула: **вопросительное слово + is/are + подлежащее.**\n\n**С другими глаголами (через `do/does/can`):**\n- `What do you like?` (Что тебе нравится?)\n- `Where does he live?` (Где он живёт?)\n- `Who can help me?` (Кто может мне помочь?)\n\nФормула: **вопросительное слово + do/does/can + подлежащее + глагол.**\n\n**Очень важное правило порядка слов в вопросе:**\n\nВ английском вопросе нельзя поставить слова в том же порядке, что в утверждении. Нужно поменять местами подлежащее и вспомогательный глагол.\n\n- Утверждение: `He is a student.`\n- Вопрос: `Is he a student?`\n- Вопрос с `what`: `What is he?`\n\n- Утверждение: `You like coffee.`\n- Вопрос: `Do you like coffee?`\n- Вопрос с `what`: `What do you like?`\n\n**Типичные ошибки:**\n- `Who is he is?` ❌ → `Who is he?` ✅ — не дублируй глагол.\n- `What you like?` ❌ → `What do you like?` ✅ — нужен `do`.\n- `Where he lives?` ❌ → `Where does he live?` ✅ — нужен `does`, и глагол без `-s`.\n\n**Исключение — вопрос о подлежащем:**\n\nЕсли `who` или `what` — сами подлежащее, то `do/does` не нужен:\n- `Who called you?` (Кто тебе звонил?) — `who` здесь подлежащее.\n- `What happened?` (Что случилось?) — `what` подлежащее.\n\nСравни: `Who did you call?` (Кому ты звонил?) — здесь `who` объект, и нужен `did`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "wh-word + be + subject?   |   wh-word + do/does/can + subject + verb?",
+        "ru": "вопросительное слово + be + подлежащее?   |   вопросительное слово + do/does/can + подлежащее + глагол?"
       },
       "examples": [
         {
@@ -42,40 +44,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Whose pen is this?",
-          "ru": "Чья это ручка?"
+          "ru": "Чья это ручка?",
+          "note": {
+            "en": "whose = belonging",
+            "ru": "whose = принадлежность"
+          }
         },
         {
           "en": "Which one do you want?",
-          "ru": "Какой ты хочешь?"
+          "ru": "Какой ты хочешь?",
+          "note": {
+            "en": "which one = from a set",
+            "ru": "which one = из набора"
+          }
         },
         {
           "en": "What happened yesterday?",
-          "ru": "Что случилось вчера?"
+          "ru": "Что случилось вчера?",
+          "note": {
+            "en": "what = subject, no 'did'",
+            "ru": "what = подлежащее, без 'did'"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Если вопросительное слово — само подлежащее (Who called?), do/does не нужен."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "What you like?",
+          "right": "What do you like?",
+          "why": {
+            "en": "With ordinary verbs an object-question needs the auxiliary 'do/does'.",
+            "ru": "С обычными глаголами в вопросе об объекте нужен вспомогательный 'do/does'."
+          }
+        },
+        {
+          "wrong": "Who is he is?",
+          "right": "Who is he?",
+          "why": {
+            "en": "Use the verb 'be' once — do not double it.",
+            "ru": "Глагол 'be' ставится один раз — не дублируй его."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2 you sharpen two contrasts: 'what' vs 'which', and 'who' vs 'whose'. Use 'what' for an open, unlimited choice — 'What is your favourite colour?', 'What do you want to eat?' — and 'which' when the choice is limited to a known set or named alternatives — 'Which colour do you like, red or blue?', 'Which book is yours?' The quick test: if the context restricts the options ('which one', 'which of these', 'between the two'), choose 'which'; otherwise 'what'. 'Which one / which ones' is a very common spoken shortcut when you point at things. For people, 'who' asks about the person as subject or object, while 'whose' asks about possession: 'Who is she?' versus 'Whose daughter is she?' You can also stack 'what + noun' to ask about a type: 'What colour is your car?', 'What time is it?', 'What kind of music do you like?' After 'which of' you always need a definite group: 'Which of the students came?', 'Which of these is yours?' Keep practising subject vs object questions: 'Who saw John?' (subject, no 'did') against 'Who did John see?' (object, with 'did') — the word order is different in each.",
         "ru": "На уровне A2 мы уточняем разницу между `what` и `which`, и знакомимся с конструкциями `what kind of`, `which of`.\n\n**`What` vs `which` — в чём разница?**\n\n- `What` — когда выбор **не ограничен**, много возможностей:\n  - `What is your favourite colour?` (Какой твой любимый цвет?) — цветов очень много.\n  - `What do you want to eat?` (Что ты хочешь есть?) — любая еда.\n\n- `Which` — когда выбор **ограничен** (конкретная группа, несколько предметов):\n  - `Which colour do you like, red or blue?` (Какой цвет тебе нравится, красный или синий?)\n  - `Which book is yours?` (Какая книга твоя?) — мы видим несколько книг, и нужно выбрать.\n\n**Простое правило:** если в контексте есть ограничение (`which of these`, `which one`, «из этих» или «между двумя»), используй `which`. В остальных случаях — `what`.\n\n**`Which one / which ones`:** очень частая разговорная конструкция.\n- `Which one do you want?` (Какой ты хочешь?) — указывая на несколько предметов.\n- `Which ones are yours?` (Какие твои?) — несколько предметов.\n\n**`Who` vs `whose`:**\n- `Who` — про человека как субъекта или объекта.\n- `Whose` — про принадлежность («чей»).\n\n- `Who is she?` (Кто она?)\n- `Whose daughter is she?` (Чья она дочь?)\n- `Who has my book?` (У кого моя книга?)\n- `Whose book is this?` (Чья это книга?)\n\n**`What + существительное`:** можно задать вопрос о типе или виде:\n- `What colour is your car?` (Какого цвета твоя машина?)\n- `What time is it?` (Который час?)\n- `What day is it today?` (Какой сегодня день?)\n- `What kind of music do you like?` (Какую музыку ты любишь?)\n\n**`Which of` + группа:**\n- `Which of the students came?` (Кто из студентов пришёл?)\n- `Which of these is yours?` (Какой из этих твой?)\n\nПосле `which of` всегда идёт определённая группа: `the students, these books, my friends`.\n\n**Вопросы о подлежащем — повторение:**\n- `Who saw John?` (Кто видел Джона?) — `who` = подлежащее, без `did`.\n- `Who did John see?` (Кого Джон видел?) — `who` = объект, с `did`.\n\nПорядок слов разный! В первом случае нет инверсии, потому что `who` на своём «нормальном» месте подлежащего. Во втором — обычная инверсия вопроса.\n\n**Типичные ошибки:**\n- `What colour is?` ❌ → `What colour is it?` или `What is the colour?` ✅\n- `Which of student came?` ❌ → `Which of the students came?` ✅ (множественное число после `of`).\n- `What is your favourite?` — нормально, но в официальной ситуации уточни: `What is your favourite colour/food/book?`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "what + (noun) for open choice   |   which (of the ...) for a limited set   |   whose + noun for possession",
+        "ru": "what + (существительное) для открытого выбора   |   which (of the ...) для ограниченного набора   |   whose + существительное для принадлежности"
       },
       "examples": [
         {
           "en": "What kind of book are you reading?",
-          "ru": "Какую книгу ты читаешь?"
+          "ru": "Какую книгу ты читаешь?",
+          "note": {
+            "en": "what kind of = type",
+            "ru": "what kind of = тип"
+          }
         },
         {
           "en": "Which of these shirts do you prefer?",
-          "ru": "Какую из этих рубашек ты предпочитаешь?"
+          "ru": "Какую из этих рубашек ты предпочитаешь?",
+          "note": {
+            "en": "which of these = from a set",
+            "ru": "which of these = из набора"
+          }
         },
         {
           "en": "Whose keys are on the table?",
@@ -87,36 +127,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "What time does the shop open?",
-          "ru": "Во сколько открывается магазин?"
+          "ru": "Во сколько открывается магазин?",
+          "note": {
+            "en": "what time = clock",
+            "ru": "what time = время"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Which — когда выбор из ограниченного набора; what — когда выбор неограничен."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Which of student came?",
+          "right": "Which of the students came?",
+          "why": {
+            "en": "After 'which of' use a definite plural (or 'these/those') group.",
+            "ru": "После 'which of' нужна определённая группа во множественном числе (или 'these/those')."
+          }
+        },
+        {
+          "wrong": "What colour is?",
+          "right": "What colour is it?",
+          "why": {
+            "en": "The clause still needs a subject after the verb 'be'.",
+            "ru": "После глагола 'be' предложению всё равно нужно подлежащее."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 the big move is the embedded (indirect) question — a question wrapped inside another sentence. Inside it the word order returns to statement order: no inversion, no 'do/does/did'. 'Where does he live?' becomes 'I don't know where he lives'; 'What is her name?' becomes 'Could you tell me what her name is?'; 'When did she arrive?' becomes 'He asked me when she arrived.' Polite frames like 'Could you tell me...?', 'Do you know...?' and 'I was wondering...' introduce these embedded questions and soften the request. You also meet 'whom', the object form of 'who', used as the object of a verb or after a preposition: 'Whom did you see?', 'To whom did you speak?' — formal; in everyday speech most people say 'Who did you see?' and 'Who did you speak to?' Expand your toolkit with 'how + adjective/adverb': 'How old is she?', 'How long have you lived here?', 'How often do you exercise?', 'How much does it cost?', 'How many people came?' Note the suggestion pair 'What about...?' / 'How about...?' for proposing ideas, and remember the subject-question rule survives every level: 'Who came?', not 'Who did come?'",
         "ru": "На уровне B1 мы изучаем **встроенные (embedded) вопросы**, работаем с `whom` и замечаем тонкие различия в вопросительных конструкциях.\n\n**Embedded (встроенные) вопросы:** вопрос внутри другого предложения. Здесь важно, что **порядок слов меняется** — нет инверсии, как в обычном вопросе.\n\n- Прямой вопрос: `Where does he live?`\n- Встроенный: `I don't know where he lives.` (Я не знаю, где он живёт.) — нет `does`, глагол со стандартным `-s`.\n\n- Прямой: `What is her name?`\n- Встроенный: `Could you tell me what her name is?` (Ты не мог бы сказать мне, как её зовут?) — `is` в конце, без инверсии.\n\n- Прямой: `When did she arrive?`\n- Встроенный: `He asked me when she arrived.` (Он спросил меня, когда она приехала.) — без `did`, глагол в прошедшем.\n\n**Вежливые формулы:**\n- `Could you tell me...?` / `Do you know...?` / `I wonder...` — вводят встроенный вопрос.\n- `I was wondering who called.` (Интересно, кто звонил.)\n- `Do you know what this is?` (Ты знаешь, что это?)\n\n**`Whom` в формальном английском:**\n- `Whom` — объектная форма `who`, после предлога или как объект глагола.\n- `Whom did you see?` (Кого ты видел?) — формально; в речи: `Who did you see?`\n- `To whom did you speak?` (С кем ты говорил?) — формально; в речи: `Who did you speak to?`\n\nВ экзаменах `whom` принимается, но разговорное `who` более распространено.\n\n**`What ... for?` vs `Why?`:**\n- `Why did you do that?` — нейтральный вопрос.\n- `What did you do that for?` — неформальный, часто с оттенком удивления или упрёка.\n\n**`How + прилагательное / наречие`:**\n- `How old is she?` (Сколько ей лет?)\n- `How long have you lived here?` (Как долго ты здесь живёшь?)\n- `How often do you exercise?` (Как часто ты занимаешься спортом?)\n- `How much does it cost?` (Сколько это стоит?)\n- `How many people came?` (Сколько людей пришло?)\n\n**`What about ...?` vs `How about ...?`:** оба предлагают идею.\n- `What about going to the cinema?` (А как насчёт кино?)\n- `How about tomorrow?` (А как насчёт завтра?)\n\n**Тонкая разница между `Who are you?` и `Who is it?` по телефону / у двери:**\n- `Who is it?` — стандартный вопрос у двери.\n- `Who's calling?` — по телефону.\n- `Who is this?` — агрессивно, может прозвучать грубо.\n\n**Типичные ошибки:**\n- `Can you tell me where does he live?` ❌ → `Can you tell me where he lives?` ✅ — во встроенном вопросе нет инверсии.\n- `I don't know what is this.` ❌ → `I don't know what this is.` ✅\n- `Who did came?` ❌ → `Who came?` ✅ — `who` подлежащее, `did` не нужен."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "polite frame + wh-word + subject + verb (no inversion)   |   how + adjective/adverb + auxiliary + subject?",
+        "ru": "вежливая рамка + вопросительное слово + подлежащее + глагол (без инверсии)   |   how + прилагательное/наречие + вспомогательный + подлежащее?"
       },
       "examples": [
         {
           "en": "I don't know where he lives now.",
-          "ru": "Я не знаю, где он сейчас живёт."
+          "ru": "Я не знаю, где он сейчас живёт.",
+          "note": {
+            "en": "embedded: no 'does'",
+            "ru": "встроенный: без 'does'"
+          }
         },
         {
           "en": "Could you tell me what time the meeting starts?",
-          "ru": "Ты не скажешь, во сколько начнётся встреча?"
+          "ru": "Ты не скажешь, во сколько начнётся встреча?",
+          "note": {
+            "en": "polite frame",
+            "ru": "вежливая рамка"
+          }
         },
         {
           "en": "To whom should I send the letter?",
-          "ru": "Кому мне отправить письмо?"
+          "ru": "Кому мне отправить письмо?",
+          "note": {
+            "en": "whom = formal object",
+            "ru": "whom = формальный объект"
+          }
         },
         {
           "en": "How long have you been studying English?",
@@ -130,30 +204,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Во встроенном вопросе порядок слов — как в утверждении, без do/does/did."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Can you tell me where does he live?",
+          "right": "Can you tell me where he lives?",
+          "why": {
+            "en": "An embedded question keeps statement order — no auxiliary 'do/does' and no inversion.",
+            "ru": "Во встроенном вопросе порядок как в утверждении — без 'do/does' и без инверсии."
+          }
+        },
+        {
+          "wrong": "I don't know what is this.",
+          "right": "I don't know what this is.",
+          "why": {
+            "en": "After the wh-word the subject comes before the verb inside an embedded clause.",
+            "ru": "После вопросительного слова во встроенном предложении подлежащее идёт перед глаголом."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you handle the finer 'who vs whom' and 'which vs what' distinctions and add expressive question structures. To choose 'who' or 'whom', answer the question with a pronoun: if the answer is 'he/she' (subject) use 'who' — 'Who called? — He called'; if it is 'him/her' (object) or it follows a preposition, 'whom' is correct — 'Whom did you call? — I called him', 'With whom did you go?' In speech 'whom' has all but vanished, replaced by 'who'; in formal writing it survives after prepositions ('to whom', 'for whom', 'by whom'). Beware hypercorrection: 'Who shall I say is calling?' (not 'whom' — it is the subject of 'is calling') and 'whoever wins' (not 'whomever'). For 'what vs which', 'what' stays open ('What language do you speak?') while 'which' implies a closed set ('Which language do you speak, French or German?'). Learn 'how come' — a colloquial 'why' that takes statement order, not inversion: 'How come you didn't call?' (never 'How come did you not call?'). Note the emphatic split 'ever' for surprise — 'What ever did you do?', 'Who ever told you that?' — kept separate from one-word 'whatever/whoever'. Finally, the same wh-word can be interrogative ('Who is he?') or relative ('the man who called'); context, not form, tells them apart. Choose pied-piping ('To whom did you speak?') or preposition stranding ('Who did you speak to?') to match your register.",
         "ru": "На уровне B2 мы разбираем тонкости **`who vs whom`, `which vs what`**, и работаем с более сложными вопросительными структурами.\n\n**`Who` vs `whom` — современное употребление:**\n\nПроще всего различить, заменив вопросительное на личное местоимение в ответе:\n- `Who called?` → ответ `He called.` (`he` — подлежащее → `who`).\n- `Whom did you call?` → ответ `I called him.` (`him` — объект → `whom`).\n- `With whom did you go?` → ответ `I went with him.` (после предлога — `whom`).\n\nВ разговорной речи `whom` почти не используется; его место занимает `who`. В формальном письме `whom` сохраняется после предлогов: `to whom, for whom, by whom`.\n\n**Гиперкоррекция:**\n- `Whom shall I say is calling?` ❌ — ошибка. Здесь `who` (подлежащее придаточного `is calling`).\n- `The prize goes to whomever wins.` ❌ → `whoever` (подлежащее `wins`).\n\n**Contrast `what` vs `which` — углублённо:**\n\nКогда перед тобой одна и та же ситуация, но говорящий выбирает разное:\n- `What is your name?` (стандартно, открыто).\n- `Which is your name?` — если перед тобой список имён, и нужно указать. Иначе звучит странно.\n\n- `What language do you speak?` — любой язык мира.\n- `Which language do you speak, French or German?` — выбор между двумя.\n\nВ академической и формальной речи можно встретить `which` там, где в разговорной было бы `what`, если контекст подразумевает ограничение: `Which country has the highest GDP?` (среди всех стран мира — но понимается как ограниченное множество).\n\n**Interrogative vs relative — одни и те же слова, разные роли:**\n\n- `Who is he?` (вопрос) — interrogative.\n- `The man who called me...` (относительное) — relative.\n\nРазные функции, одна форма. Контекст различает.\n\n**Вопросы с `how come`:**\n- `How come you didn't call?` (Почему ты не позвонил?)\n\n`How come` — разговорный эквивалент `why`. Отличается порядком слов: после `how come` нет инверсии, подлежащее + глагол как в утверждении.\n- `Why didn't you call?` ✅ (стандарт)\n- `How come you didn't call?` ✅ (разговорно)\n- `How come did you not call?` ❌ — инверсия с `how come` не нужна.\n\n**Риторические и неполные вопросы:**\n- `So what?` (И что?) — скептически.\n- `Who knows?` (Кто знает?) — риторически.\n- `Why not?` (А почему нет?) — согласие.\n- `What if ...?` (А что, если...?) — гипотетическое: `What if it rains?`\n\n**Вопросы с `ever` для эмфазы (эмоциональной окраски):**\n- `What ever did you do?` (Что же ты такое натворил?)\n- `Who ever told you that?` (Кто же тебе это сказал?)\n\nЗдесь `ever` усиливает удивление. Пишется раздельно. Не путать с `whatever, whoever` (обобщающее значение).\n\n**Pied-piping vs stranding:**\n- Формально: `To whom did you speak?` (pied-piping — предлог впереди).\n- Нейтрально: `Who did you speak to?` (stranding — предлог в конце).\n\nОба правильны; выбирай по регистру.\n\n**Типичные ошибки:**\n- `Which is the capital of France?` — звучит нестандартно. Лучше `What is the capital of France?` (открытый вопрос, хотя логически ответ один).\n- `Whom is calling?` ❌ → `Who is calling?` ✅ — подлежащее."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "who = subject (he/she)   |   whom = object / after preposition (him/her)   |   how come + subject + verb (no inversion)",
+        "ru": "who = подлежащее (he/she)   |   whom = объект / после предлога (him/her)   |   how come + подлежащее + глагол (без инверсии)"
       },
       "examples": [
         {
           "en": "To whom did you address the letter?",
-          "ru": "Кому ты адресовал письмо?"
+          "ru": "Кому ты адресовал письмо?",
+          "note": {
+            "en": "pied-piping (formal)",
+            "ru": "pied-piping (формально)"
+          }
         },
         {
           "en": "How come you never told me?",
-          "ru": "Почему ты мне никогда не говорил?"
+          "ru": "Почему ты мне никогда не говорил?",
+          "note": {
+            "en": "how come = colloquial why",
+            "ru": "how come = разговорное why"
+          }
         },
         {
           "en": "What ever were they thinking?",
-          "ru": "О чём же они только думали?"
+          "ru": "О чём же они только думали?",
+          "note": {
+            "en": "emphatic 'ever'",
+            "ru": "усилительное 'ever'"
+          }
         },
         {
           "en": "Which of these proposals did the committee approve?",
@@ -161,40 +265,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Who shall I say is calling?",
-          "ru": "Кого мне представить?"
+          "ru": "Кого мне представить?",
+          "note": {
+            "en": "who = subject, not whom",
+            "ru": "who = подлежащее, не whom"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Whom — после предлога (to whom) или как объект (whom did you see) в формальной речи."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Whom is calling?",
+          "right": "Who is calling?",
+          "why": {
+            "en": "The wh-word is the subject of 'is calling', so use 'who', not 'whom'.",
+            "ru": "Вопросительное слово — подлежащее при 'is calling', поэтому нужен 'who', а не 'whom'."
+          }
+        },
+        {
+          "wrong": "How come did you not call?",
+          "right": "How come you didn't call?",
+          "why": {
+            "en": "'How come' is followed by statement order — no inversion or auxiliary fronting.",
+            "ru": "После 'how come' идёт порядок как в утверждении — без инверсии и выноса вспомогательного."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 interrogative pronouns become tools of register, presupposition and rhetoric. 'Which' presupposes a finite, already-identified set of possibilities, while 'what' stays open: 'Which candidate will win?' implies known contenders, whereas 'What will happen?' assumes nothing — a difference journalists exploit to frame expectations. Master formal preposition-fronted frames: 'By what means did you arrive at this conclusion?', 'In what respect does this differ?', 'On what basis do you claim this?', 'For what purpose was this designed?' Use rhetorical questions that assert rather than ask — 'Who could have predicted this?', 'What more can be said?', 'How many times must I repeat myself?' Deploy emphatic 'whatever/whoever' for dramatic surprise or criticism: 'Whatever made you think that?', 'Whoever could have done this?' Wrap questions in the formal frame 'as to + embedded question' ('Questions remain as to who is responsible') and prefer indirect questions in narrative and academic prose for a neutral tone ('He wondered why she had left', 'The question arose as to how to proceed'). The wh-cleft (pseudo-cleft) shifts focus and adds weight: 'What I need is more time', 'What we saw was unprecedented.' In interviews 'whom' often sounds stilted, so 'Who did you meet with?' beats 'With whom did you meet?' Stay alert to pragmatics: 'Who asked you?' and 'What's it to you?' can read as rude — form carries tone.",
         "ru": "На C1 вопросительные местоимения — инструмент **регистра, риторики и точности**. Здесь мы учимся использовать их для создания нюансов.\n\n**Presupposition (предположение) в `which`:**\n\nВопрос с `which` предполагает, что говорящий уже знает некоторый конечный набор возможностей. `What` более нейтрально.\n\n- `Which candidate will win?` — предполагает, что есть определённые кандидаты на примете.\n- `What will happen?` — открыто, без предположений.\n\nВ журналистике и публицистике выбор между `which` и `what` создаёт разную ожидательную рамку.\n\n**Формальные вопросительные конструкции:**\n- `By what means did you arrive at this conclusion?` — формально.\n- `In what respect does this differ?` — академически.\n- `On what basis do you claim this?` — формально.\n- `For what purpose was this designed?` — формально.\n\n**Рhetorical questions:**\n- `Who could have predicted this?` — никто не мог.\n- `What more can be said?` — больше нечего сказать.\n- `How many times must I repeat myself?` — выражает раздражение.\n\nРиторические вопросы не ждут ответа; они утверждают или выражают эмоцию.\n\n**`Whatever, whoever` как риторическое усиление:**\n- `Whatever made you think that?` (Что же заставило тебя так подумать?) — выражение удивления, часто критическое.\n- `Whoever could have done this?` (Кто же мог это сделать?) — драматическое удивление.\n\n**Конструкция `as to + embedded question`:** формально-деловая.\n- `There is uncertainty as to whether the project will continue.`\n- `Questions remain as to who is responsible.`\n\n**Indirect questions в нарративе:**\n- `He wondered why she had left.` (Он задумался, почему она ушла.)\n- `She asked whether he was coming.` (Она спросила, придёт ли он.)\n- `The question arose as to how to proceed.` (Возник вопрос, как действовать.)\n\nВ академическом стиле косвенные вопросы предпочтительны для нейтрального тона.\n\n**Wh-cleft (псевдо-расщепление):**\n- `What I need is more time.` (Что мне нужно, так это больше времени.)\n- `Who really matters is the student.` (Кто реально важен — это студент.)\n- `What we saw was unprecedented.` (То, что мы увидели, было беспрецедентным.)\n\nЭти конструкции смещают фокус, создают риторическое ударение.\n\n**Интервью и журналистский стиль:**\n- `And you are...?` — вежливое «Кто вы?»\n- `And that would be...?` — то же.\n- `May I ask who...?` — очень вежливо.\n\n**Избегание `whom`:** в современных интервью и речи `whom` часто звучит натянуто. Стилистически уместнее:\n- `Who did you meet with?` (не `With whom did you meet?`) — в неформальном интервью.\n- `For whom are you working?` → `Who are you working for?` (естественнее).\n\n**Вопросительные в формальной документации:**\n- `Whereby does the party obtain relief?` — архаично-юридически.\n- `Under what provisions does this fall?` — бюрократически.\n\n**Редкие обороты:**\n- `Wherein lies the problem?` (В чём проблема?) — архаически-риторически.\n- `Whence came this doctrine?` (Откуда пришла эта доктрина?) — архаично, только стилизация.\n\nТакие формы избегай в современной прозе, если не стилизуешь намеренно.\n\n**Pragmatic caveats:**\n- `Who asked you?` — может звучать грубо, как «тебя не спрашивали».\n- `What's it to you?` — тоже грубо, «какое тебе дело».\n- Контролируй тон; форма вопроса в английском несёт много прагматических оттенков."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "preposition + what + noun + auxiliary + subject (formal)   |   as to + wh-clause   |   What + clause + be + focus (wh-cleft)",
+        "ru": "предлог + what + существительное + вспомогательный + подлежащее (формально)   |   as to + wh-придаточное   |   What + придаточное + be + фокус (wh-cleft)"
       },
       "examples": [
         {
           "en": "By what criteria are the applicants evaluated?",
-          "ru": "По каким критериям оцениваются кандидаты?"
+          "ru": "По каким критериям оцениваются кандидаты?",
+          "note": {
+            "en": "formal: by what criteria",
+            "ru": "формально: by what criteria"
+          }
         },
         {
           "en": "What really matters is integrity.",
-          "ru": "Что действительно важно, так это честность."
+          "ru": "Что действительно важно, так это честность.",
+          "note": {
+            "en": "wh-cleft focus",
+            "ru": "фокус wh-cleft"
+          }
         },
         {
           "en": "Questions remain as to who authorised the expense.",
-          "ru": "Остаются вопросы о том, кто санкционировал расходы."
+          "ru": "Остаются вопросы о том, кто санкционировал расходы.",
+          "note": {
+            "en": "as to + embedded",
+            "ru": "as to + встроенный"
+          }
         },
         {
           "en": "Whatever possessed him to say that?",
-          "ru": "Что же его заставило такое сказать?"
+          "ru": "Что же его заставило такое сказать?",
+          "note": {
+            "en": "emphatic whatever",
+            "ru": "усилительное whatever"
+          }
         },
         {
           "en": "Who could have anticipated such an outcome?",
@@ -204,30 +346,60 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Wh-cleft (what I need is…) смещает фокус и создаёт риторическое ударение."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Can you tell me on what basis are you claiming this?",
+          "right": "Can you tell me on what basis you are claiming this?",
+          "why": {
+            "en": "Even a formal preposition-fronted wh-phrase keeps statement order when embedded.",
+            "ru": "Даже формальная wh-фраза с вынесенным предлогом во встроенном вопросе сохраняет порядок утверждения."
+          }
+        },
+        {
+          "wrong": "The prize goes to whomever wins.",
+          "right": "The prize goes to whoever wins.",
+          "why": {
+            "en": "The pronoun is the subject of 'wins', so use 'whoever', not 'whomever'.",
+            "ru": "Местоимение — подлежащее при 'wins', поэтому нужен 'whoever', а не 'whomever'."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 the interrogative pronoun is a precision instrument for rhetoric, register and pragmatics, including rare and literary forms. Archaic interrogatives survive only as deliberate stylization: 'whither' (to where), 'whence' (from where), 'wherefore' (why — 'Wherefore art thou Romeo?' asks why, not where), 'wherein' (in what) and 'whereof' (of what). Reserve them for poetry, liturgy, theatre or ironic effect. The formal preposition-plus-interrogative set is the standard register of academic and legal English: 'Of what is this made?', 'On what grounds?', 'To what extent?', 'In what respect?', 'By what means?' Scholarly writing frames argument with such questions ('To what extent does X influence Y?', 'How might we account for the observed pattern?'). Use rhetorical inversion for force — 'Who but a madman would attempt this?', 'What else could one say?', 'How else are we to interpret this?' Diplomacy prizes prevarication: 'Who can say?', 'What is to be done?', 'Whither the future?' Handle multiple wh-questions, which mark several simultaneous unknowns: 'Who did what to whom?', 'Who said what?' Exploit emphatic 'whatever for?', 'whoever next?', and the escalating 'what on earth / what the heck / what the hell'. Above all, weigh pragmatics: 'So what?', 'Why bother?', 'Now what?', 'Who cares?' each set a distinct stance, while polite openers 'May I enquire who...?' and 'Might I ask what...?' signal deference. At this level every choice of interrogative and frame is a conscious decision about register, presupposition, emotional tone and effect on the listener.",
         "ru": "На C2 вопросительные местоимения — это тонкий инструмент **риторики, стиля и прагматики**. Здесь мы разбираем редкие формы, регистровые нюансы и литературные приёмы.\n\n**Архаические и литературные формы:**\n- `whither` — куда (устар.): `Whither are you going?`\n- `whence` — откуда: `Whence came he?`\n- `wherefore` — почему, зачем: `Wherefore art thou Romeo?` (Почему ты Ромео?) — у Шекспира это не «где», а «почему».\n- `wherein` — в чём: `Wherein lies the truth?`\n- `whereof` — о чём, из чего: `That whereof we speak...`\n\nВ современном английском эти формы — только стилизация. Они встречаются в поэзии, молитвах, театре или ироническом архаизме.\n\n**Formal interrogative + preposition:**\n- `Of what is this made?` (Из чего это сделано?) — формально.\n- `On what grounds?` (На каком основании?) — юридически.\n- `To what extent?` (В какой мере?) — академически.\n- `In what respect?` (В каком отношении?) — академически.\n- `By what means?` (Каким способом?) — формально.\n\nЭти фразы — стандартный регистр академического и юридического английского.\n\n**Вопросы в академическом дискурсе:**\n\nНаучные работы часто задают вопросы-рамки:\n- `The central question is: what drives this phenomenon?`\n- `To what extent does X influence Y?` — типичное название гипотезы.\n- `How might we account for the observed pattern?`\n\nТакие вопросы структурируют аргументацию.\n\n**Rhetorical inversion:**\n- `Who but a madman would attempt this?` (Кто, кроме сумасшедшего, попытался бы?)\n- `What else could one say?` (Что ещё можно сказать?)\n- `How else are we to interpret this?` (Как ещё мы можем это истолковать?)\n\n**Prevarication в дипломатии:**\n- `Who can say?` (Кто знает?) — уход от прямого ответа.\n- `What is to be done?` (Что делать?) — риторическое размышление, часто цитата (Чернышевский, Ленин).\n- `Whither the future?` (Куда ведёт будущее?) — высокий стиль.\n\n**Tag questions с вопросительной силой:**\n- `You're coming, aren't you?` (Ты ведь придёшь?) — не interrogative pronoun, но близко по функции.\n- `I left it here, didn't I?` (Я же оставил это здесь?)\n\nТag-вопросы выражают нюансы: уверенность, сомнение, вежливость. Тонкость в интонации.\n\n**Литературные вопросы без подлежащего:**\n- `What to do?` (Что делать?) — нарочитая лаконичность.\n- `Where to go?` (Куда идти?)\n- `Why bother?` (Зачем вообще?)\n\nТакие эллиптические вопросы встречаются во внутренних монологах, эссе.\n\n**`Whatever` в эмфатических:**\n- `Whatever for?` (Зачем вообще?) — удивление, часто в британской прозе.\n- `Whoever next?` (Кто ещё?) — ирония.\n- `What on earth / what the heck / what the hell` — разные степени эмоциональности, от лёгкого до вульгарного.\n\n**Multiple wh-questions:**\n- `Who did what to whom?` (Кто, что и кому сделал?) — классический юридический/философский вопрос.\n- `Who said what?` (Кто что сказал?) — в споре.\n\nЭти конструкции законны и важны; они показывают, что в предложении сразу несколько неизвестных.\n\n**Прагматические тонкости:**\n- `So what?` — провокационно.\n- `Why bother?` — смирение или равнодушие.\n- `Now what?` — усталость или удивление.\n- `Why not?` — согласие.\n- `Who cares?` — пренебрежение.\n\nЭти короткие вопросы — основа разговорной прагматики.\n\n**Формальные вводные:**\n- `May I enquire who...?` — очень вежливо, старомодно.\n- `Might I ask what...?` — вежливо.\n- `Would you mind telling me where...?` — вежливо.\n\n**Стилистический совет:** на C2 выбор вопросительного слова и конструкции — всегда осознанное решение. Учитывай:\n- Регистр (формально/разговорно).\n- Предположения (presupposition) — что ты уже подразумеваешь.\n- Эмоциональный тон (нейтральный, ироничный, риторический).\n- Прагматику — как вопрос прозвучит для собеседника."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "preposition + what + noun (formal frame)   |   wh-word + but + X + would + verb (rhetorical inversion)   |   wh ... wh (multiple wh-question)",
+        "ru": "предлог + what + существительное (формальная рамка)   |   wh-слово + but + X + would + глагол (риторическая инверсия)   |   wh ... wh (множественный wh-вопрос)"
       },
       "examples": [
         {
           "en": "Wherefore should we doubt the evidence?",
-          "ru": "Почему же нам сомневаться в доказательствах?"
+          "ru": "Почему же нам сомневаться в доказательствах?",
+          "note": {
+            "en": "archaic 'wherefore' = why",
+            "ru": "архаичное 'wherefore' = почему"
+          }
         },
         {
           "en": "To what extent can we trust this source?",
-          "ru": "В какой мере мы можем доверять этому источнику?"
+          "ru": "В какой мере мы можем доверять этому источнику?",
+          "note": {
+            "en": "academic 'to what extent'",
+            "ru": "академическое 'to what extent'"
+          }
         },
         {
           "en": "Who but a fool would argue otherwise?",
-          "ru": "Кто, кроме глупца, стал бы спорить?"
+          "ru": "Кто, кроме глупца, стал бы спорить?",
+          "note": {
+            "en": "rhetorical inversion",
+            "ru": "риторическая инверсия"
+          }
         },
         {
           "en": "The central question is: who benefits?",
@@ -235,15 +407,55 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Who said what, and when, remains unclear.",
-          "ru": "Кто что сказал и когда, остаётся неясным."
+          "ru": "Кто что сказал и когда, остаётся неясным.",
+          "note": {
+            "en": "multiple wh-question",
+            "ru": "множественный wh-вопрос"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "On what grounds, to what extent, in what respect — стандартные академические обороты."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Wherefore is the library? (meaning 'where')",
+          "right": "Where is the library?",
+          "why": {
+            "en": "'Wherefore' is archaic for 'why', not 'where'; use it only as deliberate stylization.",
+            "ru": "'Wherefore' — устаревшее 'почему', а не 'где'; использовать только как намеренную стилизацию."
+          }
+        },
+        {
+          "wrong": "Whom did what to whom?",
+          "right": "Who did what to whom?",
+          "why": {
+            "en": "In a multiple wh-question the clause subject is still 'who'; only the object slot takes 'whom'.",
+            "ru": "В множественном wh-вопросе подлежащее остаётся 'who'; форму 'whom' берёт только объектная позиция."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "wh-questions",
+    "question-words",
+    "subject-vs-object-questions",
+    "relative-pronouns"
+  ],
+  "crossTopic": [
+    "yes-no-questions",
+    "indirect-questions",
+    "reported-questions",
+    "present-simple"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "wh-word",
+      "auxiliary",
+      "subject",
+      "verb"
+    ]
+  }
 };

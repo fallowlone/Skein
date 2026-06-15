@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "there-is-there-are",
   "title": {
-    "en": "",
+    "en": "There Is and There Are",
     "ru": "There Is There Are"
   },
   "cefr": "A1",
@@ -17,184 +17,370 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "word-order",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "A1": {
       "cefr": "A1",
       "explain": {
-        "en": "",
+        "en": "When you want to say that something *exists* or is *present* somewhere, English uses a fixed opening: `there is` or `there are`. The word `there` here is not a place — it is just the doorway that lets you announce *something exists*.\n\n**The choice is about number:**\n- `There is` + one thing (singular or uncountable): `There is a book on the table.`\n- `There are` + more than one (plural): `There are three chairs in the room.`\n\n**Short form:** `there is` shrinks to `there's` in speech and casual writing — `There's a problem.` We do not usually shorten `there are`.\n\n**Negative:** add `not`. `There isn't a bank here.`, `There aren't any chairs.`\n\n**Question:** put `is` or `are` first. `Is there a shop nearby?`, `Are there any questions?` Answer with `Yes, there is.` / `No, there isn't.`\n\n**Some / any:** use `some` in positives (`There are some apples.`) and `any` in questions and negatives (`Are there any eggs?`, `There aren't any eggs.`).\n\n**The one rule never to break:** never drop `there`. The thing you are talking about comes *after* the verb, not before it.",
         "ru": "`There is` и `there are` — это специальная конструкция, которой в английском сообщают о существовании или наличии чего-то. В русском это часто «есть», «находится» или вообще без глагола.\n\n**Правило:**\n- `There is` + singular noun — один предмет.\n- `There are` + plural noun — много предметов.\n\n**Примеры:**\n- `There is a book on the table.` (На столе есть книга / Книга на столе.)\n- `There is a cat in the garden.` (В саду кошка.)\n- `There are three chairs in the room.` (В комнате три стула.)\n- `There are many people here.` (Здесь много людей.)\n\n**Сокращения:**\n- `There is → there's`: `There's a problem.`\n- `There are` обычно НЕ сокращается (`there're` встречается редко).\n\n**Отрицание:**\n- `There is not / isn't`: `There isn't a bank here.`\n- `There are not / aren't`: `There aren't any chairs.`\n- С uncountable: `There isn't any milk.`\n\n**Вопрос:**\n- `Is there ...?`: `Is there a shop nearby?`\n- `Are there ...?`: `Are there any questions?`\n- Короткие ответы: `Yes, there is. / No, there isn't.`\n\n**С some / any:**\n- Positive: some. `There are some apples.`\n- Negative / question: any. `Are there any eggs?` / `There aren't any eggs.`\n\n**Частая ошибка русскоговорящего:** забывать there, переводить буквально.\n- ✗ `Is a book on the table?`\n- ✓ `Is there a book on the table?`\n- ✗ `In the room are three chairs.`\n- ✓ `There are three chairs in the room.`\n\nВ русском «есть» или порядок слов делает работу; в английском — обязательно there is / there are.\n\n**Не путать с has / have:**\n- `There is a book on the table.` (книга существует.)\n- `I have a book.` (обладание.)\n\n**Не путать с here / there:**\n- `Here is your coffee.` (вот тебе кофе — physical giving.)\n- `There is coffee in the kitchen.` (в кухне есть кофе — existence.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "There + is + singular/uncountable noun; There + are + plural noun",
+        "ru": "There + is + существительное в единственном числе / неисчисляемое; There + are + существительное во множественном числе"
       },
       "examples": [
         {
           "en": "There is a big dog in the garden.",
-          "ru": "В саду большая собака."
+          "ru": "В саду большая собака.",
+          "note": {
+            "en": "singular",
+            "ru": "единственное число"
+          }
         },
         {
           "en": "There are five students in the classroom.",
-          "ru": "В классе пять учеников."
+          "ru": "В классе пять учеников.",
+          "note": {
+            "en": "plural",
+            "ru": "множественное число"
+          }
         },
         {
           "en": "Is there a bathroom here?",
-          "ru": "Здесь есть ванная?"
+          "ru": "Здесь есть ванная?",
+          "note": {
+            "en": "question",
+            "ru": "вопрос"
+          }
         },
         {
           "en": "There aren't any cookies left.",
-          "ru": "Печенек не осталось."
+          "ru": "Печенек не осталось.",
+          "note": {
+            "en": "negative + any",
+            "ru": "отрицание + any"
+          }
         },
         {
           "en": "There's a nice café near the station.",
-          "ru": "Рядом со станцией есть хорошее кафе."
+          "ru": "Рядом со станцией есть хорошее кафе.",
+          "note": {
+            "en": "there's = there is",
+            "ru": "there's = there is"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "There is + singular / uncountable. There are + plural. Никогда не опускай there — это обязательное слово."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "In the room are three chairs.",
+          "right": "There are three chairs in the room.",
+          "why": {
+            "en": "English needs `there` to announce existence; you cannot start with the place and drop it.",
+            "ru": "Английскому нужно there, чтобы сообщить о существовании; нельзя начать с места и опустить его."
+          }
+        },
+        {
+          "wrong": "There is three chairs.",
+          "right": "There are three chairs.",
+          "why": {
+            "en": "Use `are` for a plural noun; `is` is only for one thing.",
+            "ru": "Для множественного числа нужно are; is только для одного предмета."
+          }
+        },
+        {
+          "wrong": "Is a book on the table?",
+          "right": "Is there a book on the table?",
+          "why": {
+            "en": "The question still needs `there` after the verb.",
+            "ru": "В вопросе there тоже обязательно после глагола."
+          }
+        }
+      ]
     },
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "At A2, `there is / there are` follows the **tense**, but the word `there` stays put — only the verb `be` changes.\n\n**Across time:**\n- Past: `There was a storm last night.` / `There were many guests.`\n- Future: `There will be a meeting tomorrow.` and `There's going to be rain.`\n- Present perfect: `There has been a change.` / `There have been some changes.`\n\n**With modals**, slot the modal in and keep `be`: `There must be a reason.`, `There might be a problem.`, `There should be a solution.`\n\n**Agreement with a list:** the verb usually matches the **nearest** noun. `There is a cat and two dogs.` (nearest = a cat); `There are two dogs and a cat.` (nearest = two dogs).\n\n**Uncountable nouns always take `is/was`:** `There is some water.`, `There is a lot of noise.`, `There is little time.`\n\n**Quantifiers:** `There are many / a few / several people.`; `There is much / little / a lot of traffic.`\n\n**Negation — two flavours:** `There aren't any eggs.` (neutral) and `There are no eggs.` (more emphatic). Both are correct.\n\n**Existence vs a known thing.** Use `there is` to introduce something *new*: `There is coffee in the kitchen.` Once the thing is known, switch to subject + be: `The coffee is in the kitchen.`",
         "ru": "На A2 углубляй использование there is / there are.\n\n**С разными временами:**\n- Present: `There is / There are.`\n- Past: `There was / There were.`: `There was a party last night. / There were many guests.`\n- Future: `There will be.`: `There will be a meeting tomorrow.`\n- Present perfect: `There has been / There have been.`: `There have been some changes.`\n- Going to: `There's going to be / There are going to be.`: `There's going to be rain.`\n\n**С modal verbs:**\n- `There must be a reason.`\n- `There might be a problem.`\n- `There should be a solution.`\n- `There can be difficulties.`\n\n**Согласование глагола — по ближайшему существительному:**\n- `There is a cat and two dogs.` (ближе — cat, singular.)\n- `There are two dogs and a cat.` (ближе — two dogs, plural.)\n\nФормально рекомендуется по общему числу; в разговоре — по ближайшему.\n\n**С uncountable nouns:**\n- Always `there is`.\n- `There is some water.`\n- `There is a lot of noise.`\n- `There is little time.`\n\n**With quantifiers:**\n- `There are many / few / several / a few people.`\n- `There is much / little / a lot of traffic.`\n- `There are some / any / no apples.`\n\n**Negatives with no vs not any:**\n- `There aren't any eggs.` (neutral.)\n- `There are no eggs.` (more emphatic.)\n- Both grammatical; choose by emphasis.\n\n**Questions с particular количественными:**\n- `How many people are there?`\n- `How much time is there?`\n- `Is there anything wrong?`\n- `Are there any questions?`\n\n**Distinction: existence vs specific location:**\n- Existence: `There is coffee in the kitchen.` (существует кофе там.)\n- Specific / known: `The coffee is in the kitchen.` (известный кофе находится там.)\n\nПри новой информации / первом упоминании — `there is`. При уже известной / конкретной — subject + be.\n\n**Частая ошибка:** путать `there is` (new info) с `it is` (identification):\n- `What's that? — It's a book.` (identification.)\n- `What do you have? — There is a book on the table.` (existence.)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "There + was/were / will be / has been / have been (+ noun); the verb carries tense, there stays fixed",
+        "ru": "There + was/were / will be / has been / have been (+ существительное); время несёт глагол, there остаётся неизменным"
       },
       "examples": [
         {
           "en": "There was a storm last night.",
-          "ru": "Прошлой ночью была буря."
+          "ru": "Прошлой ночью была буря.",
+          "note": {
+            "en": "past singular",
+            "ru": "прошедшее, ед. ч."
+          }
         },
         {
           "en": "There will be a test tomorrow.",
-          "ru": "Завтра будет тест."
+          "ru": "Завтра будет тест.",
+          "note": {
+            "en": "future",
+            "ru": "будущее"
+          }
         },
         {
           "en": "There must be a mistake.",
-          "ru": "Должно быть, это ошибка."
+          "ru": "Должно быть, это ошибка.",
+          "note": {
+            "en": "modal",
+            "ru": "модальный глагол"
+          }
         },
         {
           "en": "How many people are there in your family?",
-          "ru": "Сколько человек в твоей семье?"
+          "ru": "Сколько человек в твоей семье?",
+          "note": {
+            "en": "how many...?",
+            "ru": "сколько...?"
+          }
         },
         {
           "en": "There is little hope left.",
-          "ru": "Осталось мало надежды."
+          "ru": "Осталось мало надежды.",
+          "note": {
+            "en": "uncountable",
+            "ru": "неисчисляемое"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Время меняется у be: there was/were (past), there will be (future), there has/have been (perfect). Форма there остаётся."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "There were a storm last night.",
+          "right": "There was a storm last night.",
+          "why": {
+            "en": "A single past thing takes `was`; `were` is for plural.",
+            "ru": "Один предмет в прошлом требует was; were — для множественного числа."
+          }
+        },
+        {
+          "wrong": "There are a lot of informations.",
+          "right": "There is a lot of information.",
+          "why": {
+            "en": "Uncountable nouns stay singular and take `is`.",
+            "ru": "Неисчисляемые существительные единственны и берут is."
+          }
+        },
+        {
+          "wrong": "There will is a meeting tomorrow.",
+          "right": "There will be a meeting tomorrow.",
+          "why": {
+            "en": "After a modal like `will`, use the base form `be`, not `is`.",
+            "ru": "После модального will нужна начальная форма be, а не is."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1, `there is / there are` stretches into richer structures while keeping its job: introducing what exists.\n\n**There + be + noun + -ing clause** (something is in the middle of doing): `There is a man standing at the door.`, `There are children playing in the street.`\n\n**There + be + noun + to-infinitive** (something remains to be done / is available): `There is a lot to do.`, `There are many factors to consider.`, `There is nothing to worry about.`\n\n**There + be + no + -ing** marks prohibition or impossibility: `There is no smoking here.`, `There is no telling what will happen.`, `There is no denying it.`\n\n**There + seem / appear / happen + to be** adds a shade of *it seems / it turns out*: `There seems to be a problem.`, `There appears to be some confusion.` These are not the plain `there is` — they soften the claim.\n\n**In complex tenses and conditionals:** `There has been a problem.`, `There had been a storm before we arrived.`, `If there were a solution, we'd find it.`\n\n**In reported speech, `there` backshifts with the verb:** `She said there was a problem.` (from *there is*), `He said there would be a meeting.` (from *there will be*).\n\n**The classic B1 trap:** using `it is` instead of `there is` for existence. `There is a book on the table.` announces existence; `It is a book.` identifies *what something is*.",
         "ru": "На B1 расширяй use cases для there is / there are.\n\n**Complex structures:**\n\n**There + be + adjective + noun:**\n- `There is a beautiful garden in the park.`\n- `There are several interesting options.`\n\n**There + be + noun + participle clause:**\n- `There is a man standing at the door.`\n- `There are children playing in the street.`\n- `There is a letter waiting for you.`\n\n**There + be + noun + to-inf (purpose / requirement):**\n- `There is a lot to do.`\n- `There is much to discuss.`\n- `There are many factors to consider.`\n- `There is nothing to worry about.`\n\n**There + be + no + gerund (prohibition / impossibility):**\n- `There is no smoking here.`\n- `There is no parking on this street.`\n- `There is no telling what will happen.` (невозможно сказать.)\n- `There is no denying it.` (нельзя отрицать.)\n\n**There + seem / appear / happen + to be:**\n- `There seems to be a problem.`\n- `There appears to be some confusion.`\n- `There happens to be a shop nearby.`\n\nНе путай с simple `there is` — эти добавляют модальное значение (кажется / оказывается).\n\n**There + be + complement + subject (focus reversed):**\n- `There are three reasons why I'm here.`\n- `There is one thing I must tell you.`\n\nПозволяет представить подлежащее позже, с описанием впереди.\n\n**There in complex tenses:**\n- `There has been a problem.`\n- `There has been much debate.`\n- `There have been many changes.`\n- `There had been a storm before we arrived.`\n- `There would be no going back.`\n\n**Conditional:**\n- `If there were a solution, we'd find it.`\n- `There would be no problem if you called.`\n\n**Reported speech:**\n- `She said (that) there was a problem.`\n- `He said there would be a meeting.`\n- Backshift: there is → there was, there are → there were.\n\n**Common B1 error:** использовать it is вместо there is для existence.\n- ✗ `It is a book on the table.` (неграмматично для existence.)\n- ✓ `There is a book on the table.` (existence.)\n- `It is a book.` (identification — what is it?)"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "There + be + noun + -ing / to-infinitive / no + gerund; there + seem/appear + to be = hedged existence",
+        "ru": "There + be + существительное + -ing / инфинитив с to / no + герундий; there + seem/appear + to be = смягчённое существование"
       },
       "examples": [
         {
           "en": "There seems to be a misunderstanding.",
-          "ru": "Похоже, есть недопонимание."
+          "ru": "Похоже, есть недопонимание.",
+          "note": {
+            "en": "seem to be",
+            "ru": "seem to be"
+          }
         },
         {
           "en": "There is a lot of work to do before the deadline.",
-          "ru": "Много работы нужно сделать до дедлайна."
+          "ru": "Много работы нужно сделать до дедлайна.",
+          "note": {
+            "en": "+ to-infinitive",
+            "ru": "+ инфинитив с to"
+          }
         },
         {
           "en": "There have been several accidents on this road.",
-          "ru": "На этой дороге было несколько аварий."
+          "ru": "На этой дороге было несколько аварий.",
+          "note": {
+            "en": "present perfect plural",
+            "ru": "present perfect, мн. ч."
+          }
         },
         {
           "en": "There's no point in arguing.",
-          "ru": "Нет смысла спорить."
+          "ru": "Нет смысла спорить.",
+          "note": {
+            "en": "no + gerund",
+            "ru": "no + герундий"
+          }
         },
         {
           "en": "If there were more time, we could finish.",
-          "ru": "Если бы было больше времени, мы могли бы закончить."
+          "ru": "Если бы было больше времени, мы могли бы закончить.",
+          "note": {
+            "en": "conditional",
+            "ru": "условное"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "There is / are + gerund = запрет или невозможность: There is no smoking / no parking / no denying it."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is a misunderstanding between us.",
+          "right": "There is a misunderstanding between us.",
+          "why": {
+            "en": "To announce that something exists, use `there is`; `it is` identifies, not introduces.",
+            "ru": "Чтобы сообщить о существовании, используй there is; it is опознаёт, а не вводит."
+          }
+        },
+        {
+          "wrong": "There seems be a problem.",
+          "right": "There seems to be a problem.",
+          "why": {
+            "en": "With `seem / appear / happen`, keep the `to` before `be`.",
+            "ru": "С seem / appear / happen сохраняй to перед be."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 the focus shifts to **register** and **stylistic variation**. `There is / there are` is grammatically safe but, overused, makes writing flat — so you learn when to swap it out.\n\n**Formal existential verbs** replace plain `there is` in academic and literary prose: `Problems exist.`, `Several issues arose.`, `New evidence emerged.`, `A question remains.` These carry more energy than `There are problems.`\n\n**Literary / set phrases** keep the inverted shape: `There stood a lonely tree.`, `There came a knock at the door.`, `There remains much to be done.`\n\n**Formal and legal templates:** `Let there be peace.`, `There shall be no exceptions.`, `There exists no precedent.`\n\n**Academic frames** are worth memorising whole: `There is evidence to suggest that...`, `There has been considerable debate over...`, `There remains a question of...`\n\n**Negative gerund pattern** (it is impossible to): `There is no knowing what she'll do.`, `There is no denying the truth.`\n\n**Combining with relative clauses:** `There is someone who wants to see you.`, `There is a reason why I'm here.`\n\n**Two subtle errors to watch:**\n- Agreement with a mixed list: formal writing prefers matching the whole (`There are a book and three pencils.`), though speech often matches the nearest noun.\n- Do not use `there` for a known, specific thing: `The book is on the table.` (known), not `There is the book on the table.`\n\n**Style advice:** vary `There are many factors.` with `Many factors play a role.`; let active verbs carry the weight where you can.",
         "ru": "На B2 осваивай register nuances и stylistic variations.\n\n**Formal alternatives к there is / there are:**\n\n- Existential verbs in formal / literary contexts:\n  - `exist`: `Problems exist.`\n  - `arise`: `Several issues arose.`\n  - `occur`: `A new opportunity occurred.`\n  - `emerge`: `New evidence emerged.`\n  - `appear (to be)`: `A problem appeared.`\n\n**Literary / old-fashioned:**\n- `There stood a lonely tree.` (locative inversion.)\n- `There came a knock at the door.`\n- `There remains much to be done.`\n\nЭти используются вместо simple `there is`, добавляя литературный оттенок.\n\n**Formal / legal:**\n- `Let there be peace.`\n- `There shall be no exceptions.`\n- `There exists no precedent.`\n\n**Academic:**\n- `There is evidence to suggest that...`\n- `There has been considerable debate over...`\n- `There remains a question of...`\n- `There exists a wealth of literature on...`\n\nЭти — стандартные фразы academic papers.\n\n**There are no (X)-ing + clause:**\n- `There is no knowing what she'll do.`\n- `There is no telling how long it will take.`\n- `There is no denying the truth.`\n- Negative gerund — «невозможно + verb».\n\n**There + modal + be + noun:**\n- `There must be an explanation.`\n- `There could be opposition.`\n- `There might be delays.`\n- `There should be no issues.`\n\n**Combining there is with relative clause:**\n- `There is someone who wants to see you.`\n- `There are things we don't know.`\n- `There is a reason why I'm here.`\n\n**Avoiding ambiguity with pronouns:**\n- ✗ `There he is.` (= Look! He's here!) vs `There is he.` — wrong for existence.\n- Use there is for existence; there + pronoun inverted for pointing.\n\n**Существование vs поставление:**\n- `There is a book on the table.` (уже находится.)\n- `I put a book on the table.` (действие помещения.)\n\n**There + to be (copula) + predicate complement:**\n- `There is nothing more to say.`\n- `There is something odd about him.`\n- `There were few alternatives.`\n\n**Stylistic advice:**\n- Overusing there is / there are makes writing bland.\n- Vary with active constructions: `Several problems exist.` → `Several problems persist.` / `Many problems plague the system.`\n- `There are many factors.` → `Many factors play a role.`\n\n**Common B2 subtle errors:**\n- Agreement with complex subjects: `There is a book and three pencils.` (formally: `There are a book and three pencils.` Но informal: `There is... (ближайшее число).`)\n- Don't use there for known / specific: `The book is on the table.` (known), not `There is the book on the table.`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "Formal swaps for there is: exist / arise / occur / emerge / remain; there exists / there shall be (formal-legal); there is no + gerund = impossible to",
+        "ru": "Формальные замены there is: exist / arise / occur / emerge / remain; there exists / there shall be (формально-юридическое); there is no + герундий = невозможно"
       },
       "examples": [
         {
           "en": "There exists no simple solution to this problem.",
-          "ru": "Не существует простого решения этой проблемы."
+          "ru": "Не существует простого решения этой проблемы.",
+          "note": {
+            "en": "exists (formal)",
+            "ru": "exists (формально)"
+          }
         },
         {
           "en": "There has been considerable debate about the policy.",
-          "ru": "Ведётся значительная дискуссия об этой политике."
+          "ru": "Ведётся значительная дискуссия об этой политике.",
+          "note": {
+            "en": "academic frame",
+            "ru": "академический оборот"
+          }
         },
         {
           "en": "Let there be light.",
-          "ru": "Да будет свет."
+          "ru": "Да будет свет.",
+          "note": {
+            "en": "set phrase",
+            "ru": "устойчивая фраза"
+          }
         },
         {
           "en": "There is no telling how long the negotiations will last.",
-          "ru": "Невозможно сказать, как долго продлятся переговоры."
+          "ru": "Невозможно сказать, как долго продлятся переговоры.",
+          "note": {
+            "en": "no + gerund",
+            "ru": "no + герундий"
+          }
         },
         {
           "en": "There remain several questions to be answered.",
-          "ru": "Остаётся ответить на несколько вопросов."
+          "ru": "Остаётся ответить на несколько вопросов.",
+          "note": {
+            "en": "remain (formal)",
+            "ru": "remain (формально)"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В формальном письме вместо there is используй exist, arise, occur, emerge, remain — active verbs дают energy."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "There is exist no precedent.",
+          "right": "There exists no precedent.",
+          "why": {
+            "en": "`Exist` replaces `be` here; do not stack `is` and `exist`.",
+            "ru": "Exist здесь заменяет be; нельзя ставить is и exist вместе."
+          }
+        },
+        {
+          "wrong": "There is the book on the table.",
+          "right": "The book is on the table.",
+          "why": {
+            "en": "A known, specific noun takes subject + be, not the introducing `there is`.",
+            "ru": "Известное конкретное существительное берёт подлежащее + be, а не вводящий there is."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, `there is / there are` becomes a controlled rhetorical and academic instrument — you wield it for stance and structure, not by default.\n\n**Existential vs locative `there`.** Existential `there` is unstressed and abstract (`There is a solution.`); locative `there` points to a place and is literary (`There stood the castle.`). Keep them apart.\n\n**Fixed noun + infinitive frames:** `There is reason to believe (that)...`, `There is room for improvement.`, `There is scope for further research.`, `There is no cause for concern.`\n\n**Inversion after a fronted negative:** `In no case is there an exception.`, `Under no circumstances should there be compromise.`\n\n**Conditional without `if`:** `Were there any evidence, we would consider it.`, `Should there be any issues...`, `Had there been more time...`\n\n**Wh-questions:** `What is there to say?`, `What is there about him that's so charming?`\n\n**Academic hedging formulae** — memorise as units: `There is evidence to suggest that...`, `There is reason to believe that...`, `There is a growing body of research indicating...`, `There remains a need for...`, `There can be no doubt that...`\n\n**Replacement strategies for polish.** Instead of `There are many people who think X` → `Many people think X.` Instead of `There is a problem with Y` → `Y presents a problem.` / `Y is problematic.` Instead of `There was a change in policy` → `Policy changed.`\n\n**Register note:** British academic prose leans on `there is / there are` for cautious assertion; American writing prefers the active voice; legal prose uses `there exists / there shall be` heavily.",
         "ru": "На C1 используй there is / there are осознанно и умело.\n\n**Variation to avoid repetition:**\n- `There is / are` часто — but too many in a row sound weak.\n- Rotate with: `We find (that)...`, `One observes...`, `The data show...`, `It is evident that...`.\n\n**Existential there vs locative there:**\n- Existential: `There is a solution.` (abstract existence.)\n- Locative (rare, literary): `There stood the castle.` (pointing to location.)\n\n**There + be + noun + infinitive construction:**\n- `There is reason to believe (that)...`\n- `There is room for improvement.`\n- `There is scope for further research.`\n- `There is no cause for concern.`\n- `There is every reason to...`\n\n**Inversion with 'there':**\nAfter front negative:\n- `In no case is there an exception.`\n- `Under no circumstances should there be compromise.`\n\n**Conditional without explicit 'if':**\n- `Were there any evidence, we would consider it.`\n- `Had there been more time...`\n- `Should there be any issues...`\n\n**Wh-questions with 'what':**\n- `What is there to say?`\n- `What was there to do?`\n- `What is there about him that's so charming?`\n\n**Negative polarity:**\n- `There isn't much to go on.` (little information.)\n- `There wasn't a soul in sight.` (emphatic: nobody.)\n- `There isn't / wasn't + negative noun` — strong emphasis.\n\n**Hedging with there is + noun + to suggest:**\n- `There is evidence to suggest that...`\n- `There is reason to believe that...`\n- `There is a tendency to...`\n- `There is a growing body of research indicating...`\nAcademic hedging formulae.\n\n**Stylistic replacement strategies:**\n\nInstead of `There are many people who think X`:\n- `Many people think X.`\n- `A significant portion of the population believes X.`\n- `Many hold the view that X.`\n\nInstead of `There is a problem with Y`:\n- `Y presents a problem.`\n- `Y is problematic.`\n- `Y has flaws.`\n\nInstead of `There was a change in policy`:\n- `Policy changed.`\n- `The policy shifted.`\n- `Policymakers altered the approach.`\n\n**Formal academic `there' constructions:**\n- `There seems to be a consensus...`\n- `There is no question that...`\n- `There remains a need for...`\n- `There is every indication that...`\n- `There can be no doubt about...`\n\nThese are standard templates of academic hedging and assertion.\n\n**Subtle C1 traps:**\n- Dangling there: `There being no opposition, the motion passed.` (absolute construction — elegant in formal writing.)\n- Passive voice combination: `There was said to be a decline...` (very formal / literary.)\n\n**Cultural style variation:**\n- British academic writing: lots of `there is / there are` for cautious assertion.\n- American writing: prefer active voice; less `there is / there are`.\n- Legal writing: extensive use of `there exists, there shall be`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "There + be + noun + to-infinitive (reason / room / scope / cause); Were/Should/Had + there + ... = inverted conditional; fronted negative + inversion of there + be",
+        "ru": "There + be + существительное + инфинитив с to (reason / room / scope / cause); Were/Should/Had + there + ... = инвертированное условное; вынесенное отрицание + инверсия there + be"
       },
       "examples": [
         {
           "en": "There seems to be no escaping the conclusion.",
-          "ru": "Похоже, от этого вывода не уйти."
+          "ru": "Похоже, от этого вывода не уйти.",
+          "note": {
+            "en": "seem + no + gerund",
+            "ru": "seem + no + герундий"
+          }
         },
         {
           "en": "There remains a fundamental question to be addressed.",
-          "ru": "Остаётся фундаментальный вопрос, который нужно решить."
+          "ru": "Остаётся фундаментальный вопрос, который нужно решить.",
+          "note": {
+            "en": "remain (formal)",
+            "ru": "remain (формально)"
+          }
         },
         {
           "en": "Should there be any issues, please contact us.",
-          "ru": "Если возникнут какие-либо проблемы, свяжитесь с нами."
+          "ru": "Если возникнут какие-либо проблемы, свяжитесь с нами.",
+          "note": {
+            "en": "if-less conditional",
+            "ru": "условное без if"
+          }
         },
         {
           "en": "There is every reason to suspect foul play.",
-          "ru": "Есть все основания подозревать нечестную игру."
+          "ru": "Есть все основания подозревать нечестную игру.",
+          "note": {
+            "en": "noun + to-infinitive",
+            "ru": "существительное + инфинитив"
+          }
         },
         {
           "en": "There can be no compromise on fundamental principles.",
@@ -204,34 +390,68 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "There is no + gerund = невозможность / запрет: there is no telling / no denying / no stopping / no escaping."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "If there would be any evidence, we would consider it.",
+          "right": "Were there any evidence, we would consider it.",
+          "why": {
+            "en": "In the inverted conditional, use `Were there...`, never `would be` in the if-part.",
+            "ru": "В инвертированном условном используй Were there..., а не would be в условной части."
+          }
+        },
+        {
+          "wrong": "Under no circumstances there should be compromise.",
+          "right": "Under no circumstances should there be compromise.",
+          "why": {
+            "en": "A fronted negative forces inversion: the operator comes before `there`.",
+            "ru": "Вынесенное отрицание требует инверсии: вспомогательный глагол стоит перед there."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, `there is / there are` is a dynamic stylistic device — you read its register, genre, and pragmatic charge instantly and deploy it for effect.\n\n**Rhetorical and proverbial:** `There is no such thing as a free lunch.`, `There is nothing new under the sun.`, `There but for the grace of God go I.`\n\n**Literary locative inversion** sets a scene with weight: `There stood, in the fading light, the figure of an old man.`, `There came a moment when everything changed.`\n\n**Layered hedging:** `There would seem to be no alternative but to proceed.`, `There is reason to suppose, though conclusive proof remains elusive, that...`, `There can be little doubt that...`\n\n**Evasive but sophisticated stances:** `There are those who argue that...`, `There is a sense in which...`, `There are grounds for believing...`\n\n**Formal legal / contractual:** `There shall exist...`, `There is hereby established...`, `There shall be no liability for...`\n\n**Absolute constructions** for minutes and legal settings: `There being no further business, the meeting adjourned.`, `There having been no objection, the motion carried.`\n\n**Passive + there** stacks hedges: `There was said to have been a dispute.`, `There is believed to be widespread support.`\n\n**Discourse and coda phrases:** `There you have it.` (summary), `There it is.` (acceptance), `There you go.` (offering).\n\n**The master principle:** `there is / there are` is foundational yet subtle — use it to introduce information, mark stance, create literary tone, and structure arguments, but vary it with active verbs and nominal existence verbs (`exist, emerge, arise`). Where it adds nothing, cut it: `Some say money can't buy happiness.` beats `There are some who say that money can't buy happiness.`",
         "ru": "На C2 there is / there are — dynamic stylistic device.\n\n**Rhetorical / philosophical constructions:**\n- `There is no such thing as a free lunch.` (idiomatic wisdom.)\n- `There is a tide in the affairs of men.` (Shakespeare.)\n- `There is nothing new under the sun.` (Biblical.)\n- `There but for the grace of God go I.` (idiom.)\n\n**Existential-philosophical:**\n- `There is being, and there is becoming.`\n- `There exists no perfect knowledge.`\n- `There can be no certainty in such matters.`\n\n**Literary locative inversion:**\n- `There stood, in the fading light, the figure of an old man.`\n- `There came a moment when everything changed.`\n- `There appeared, as if from nowhere, a great ship.`\n\n**Complex hedging:**\n- `There is reason to suppose, though conclusive proof remains elusive, that...`\n- `There would seem to be no alternative but to proceed.`\n- `There can be little doubt that...`\n\n**Politically loaded constructions:**\n- `There has been much talk of...`\n- `There are those who argue that...`\n- `There is a sense in which...`\n- `There are grounds for believing...`\n- Evasive but sophisticated.\n\n**Formal legal / contractual:**\n- `There shall exist...`\n- `There is hereby established...`\n- `There shall be no liability for...`\n- `There remains outstanding the matter of...`\n\n**Discursive organization:**\n- `There are three key considerations. First, ... Second, ... Third, ...`\n- `There is a way to think about this problem that helps: ...`\n- Used to signal structure.\n\n**Absolute constructions (formal):**\n- `There being no further business, the meeting adjourned.`\n- `There having been no objection, the motion carried.`\n- Very formal, appropriate for minutes of meetings and legal settings.\n\n**Passive + there:**\n- `There was said to have been a dispute.`\n- `There was reported to be a shortage.`\n- `There is believed to be widespread support.`\n\nMultiple layers of hedging.\n\n**Semantic / pragmatic uses:**\n- Introducing new referents (standard).\n- Emphasizing presence (`There is room for you.`).\n- Polite offer (`There's some cake if you'd like.`).\n- Emphatic existence (`There are still good people.`).\n\n**Stylistic restraint:**\nOverusing `there is / there are`: marks tentative or repetitive writing. Skilled prose alternates.\n\n**Compression and economy:**\nCompare:\n- `There are some who say that money can't buy happiness.`\n- `Some say money can't buy happiness.`\n- Latter more compact.\n\nWhen there is / there are adds nothing, remove.\n\n**Coda / framing phrases:**\n- `There you have it.` (summary marker.)\n- `There it is.` (acceptance.)\n- `There you go.` (offering / correction.)\n- `There's that.` (yielding point.)\n- Idiomatic discourse functions.\n\n**Final C2 observation:**\n`There is / there are` is foundational yet subtle. Masters use it for:\n- Introducing information.\n- Marking rhetorical stance (hedging / asserting).\n- Creating formal / literary tones (locative inversion).\n- Structuring arguments (enumeration).\nBut vary with active constructions, nominal existence verbs (`exist, emerge, arise`), and discourse markers. Balance, don't repeat."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "There + being / having been + ... = formal absolute construction; There + be + said/believed/reported + to be = passive hedge; locative inversion: There + verb of position + subject",
+        "ru": "There + being / having been + ... = формальная абсолютная конструкция; There + be + said/believed/reported + to be = пассивное смягчение; локативная инверсия: There + глагол положения + подлежащее"
       },
       "examples": [
         {
           "en": "There being no further objections, the resolution was adopted.",
-          "ru": "Поскольку больше возражений не было, резолюция была принята."
+          "ru": "Поскольку больше возражений не было, резолюция была принята.",
+          "note": {
+            "en": "absolute construction",
+            "ru": "абсолютная конструкция"
+          }
         },
         {
           "en": "There is said to have been a secret meeting.",
-          "ru": "Говорят, что было тайное совещание."
+          "ru": "Говорят, что было тайное совещание.",
+          "note": {
+            "en": "passive hedge",
+            "ru": "пассивное смягчение"
+          }
         },
         {
           "en": "There, amid the ruins, stood the only surviving statue.",
-          "ru": "Там, среди руин, стояла единственная уцелевшая статуя."
+          "ru": "Там, среди руин, стояла единственная уцелевшая статуя.",
+          "note": {
+            "en": "locative inversion",
+            "ru": "локативная инверсия"
+          }
         },
         {
           "en": "There would seem to be no viable alternative.",
-          "ru": "Похоже, что жизнеспособной альтернативы нет."
+          "ru": "Похоже, что жизнеспособной альтернативы нет.",
+          "note": {
+            "en": "layered hedging",
+            "ru": "многослойное смягчение"
+          }
         },
         {
           "en": "There comes a point when silence is no longer an option.",
@@ -241,9 +461,43 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "There being + noun / participle — formal absolute construction для minutes, legal writing: There being no opposition, the motion carried."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "There was being no further business, the meeting adjourned.",
+          "right": "There being no further business, the meeting adjourned.",
+          "why": {
+            "en": "The absolute construction uses bare `there being`, with no separate `was`.",
+            "ru": "Абсолютная конструкция использует чистое there being, без отдельного was."
+          }
+        },
+        {
+          "wrong": "There are those who say money can't buy happiness — but it really isn't needed here.",
+          "right": "Some say money can't buy happiness.",
+          "why": {
+            "en": "When `there are` adds nothing, a direct subject is tighter and stronger.",
+            "ru": "Когда there are ничего не добавляет, прямое подлежащее короче и сильнее."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "it-as-subject",
+    "demonstrative-pronouns",
+    "countable-uncountable-nouns",
+    "yes-no-questions"
+  ],
+  "crossTopic": [
+    "present-simple",
+    "past-simple",
+    "indefinite-article",
+    "prepositions-of-place"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "There + is + singular / uncountable noun",
+      "There + are + plural noun"
+    ]
+  }
 };

@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "prepositions-in-phrases",
   "title": {
-    "en": "",
+    "en": "Prepositions in Fixed Phrases",
     "ru": "Prepositions In Phrases"
   },
   "cefr": "B1",
@@ -15,24 +15,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "prepositions",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "English has many fixed prepositional phrases that work as single, frozen units. The preposition inside them is not chosen by logic, so you cannot pick it by translating word for word — you memorise the whole phrase.\n\nCore set to learn as blocks:\n- **on purpose** = deliberately (opposite: **by accident**). Not 'in purpose'.\n- **by chance** / **by accident** = without planning it.\n- **at once** = immediately.\n- **in advance** = before the time something happens. Not 'at advance'.\n- **on time** = exactly at the scheduled moment; **in time** = early enough, before a deadline. 'The train left on time' vs 'We got there in time to catch it.'\n- **by heart** = from memory.\n- **at last** = finally, after a long wait; **at first** = in the beginning.\n- **in general** = on the whole; **for example** = as an instance.\n- **on foot** = walking; **in a hurry** = rushing.\n\nThe key habit at B1: treat each phrase as one chunk, first word to last. The preposition is part of the word, not a separate piece you can swap.",
         "ru": "В английском есть много **устойчивых фраз с предлогами** — их нужно выучивать как **замороженные блоки**, не переводя предлог отдельно.\n\n**Базовые фиксированные фразы:**\n\n**`on purpose` = нарочно, специально:**\n- `He did it on purpose.` (Он сделал это нарочно.)\n- Противоположность: `by accident` (случайно).\n- **ЧАСТАЯ ОШИБКА:** `in purpose` — НЕПРАВИЛЬНО.\n\n**`by chance` = случайно:**\n- `We met by chance.` (Мы встретились случайно.)\n\n**`by accident` = случайно, не нарочно:**\n- `I broke it by accident.` (Я сломал это случайно.)\n\n**`at once` = сразу, немедленно:**\n- `Come here at once!` (Иди сюда немедленно!)\n\n**`in advance` = заранее:**\n- `Please pay in advance.` (Пожалуйста, заплатите заранее.)\n- **ЧАСТАЯ ОШИБКА:** `at advance` — НЕПРАВИЛЬНО.\n\n**`in time` vs `on time`:**\n- `on time` = точно по расписанию: `The train arrived on time.`\n- `in time` = с запасом, до крайнего срока: `We got there in time for the film.`\n\n**`by heart` = наизусть:**\n- `I know the poem by heart.` (Я знаю стихотворение наизусть.)\n\n**`at last` = наконец:**\n- `At last, the rain stopped.` (Наконец дождь прекратился.)\n\n**`at first` = сначала:**\n- `At first, I didn’t like it.` (Сначала мне не нравилось.)\n\n**`in general` = в общем:**\n- `In general, I like films.` (В общем, я люблю фильмы.)\n\n**`for example` = например:**\n- `I like fruit, for example apples.` (Я люблю фрукты, например яблоки.)\n\n**`on foot` = пешком:**\n- `I go to school on foot.` (Я хожу в школу пешком.)\n\n**`in a hurry` = в спешке:**\n- `Sorry, I’m in a hurry.` (Извини, я спешу.)\n\n**Как запоминать.** Эти фразы — не логические конструкции, а идиомы. Русский язык их калькирует по-разному (`in purpose` по-русски звучало бы как \"в цели\", что и сбивает). Учи **фраза целиком** — от первого до последнего слова."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "preposition + (article) + noun  — memorised as one unit",
+        "ru": "предлог + (артикль) + существительное — запоминается как единый блок"
       },
       "examples": [
         {
           "en": "He did it on purpose, not by accident.",
-          "ru": "Он сделал это нарочно, а не случайно."
+          "ru": "Он сделал это нарочно, а не случайно.",
+          "note": {
+            "en": "purpose vs accident",
+            "ru": "нарочно и случайно"
+          }
         },
         {
           "en": "Please book your ticket in advance.",
@@ -40,7 +46,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "We got to the station just in time.",
-          "ru": "Мы пришли на вокзал как раз вовремя."
+          "ru": "Мы пришли на вокзал как раз вовремя.",
+          "note": {
+            "en": "in time",
+            "ru": "вовремя, с запасом"
+          }
         },
         {
           "en": "She learned the poem by heart.",
@@ -48,36 +58,70 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "I go to the shop on foot.",
-          "ru": "Я хожу в магазин пешком."
+          "ru": "Я хожу в магазин пешком.",
+          "note": {
+            "en": "on foot",
+            "ru": "пешком"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Фиксированные фразы учи целиком: on purpose, in advance, by heart, at last."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "He did it in purpose.",
+          "right": "He did it on purpose.",
+          "why": {
+            "en": "The fixed phrase is 'on purpose'; 'in purpose' does not exist in English.",
+            "ru": "Устойчивая фраза — 'on purpose'; 'in purpose' в английском не существует."
+          }
+        },
+        {
+          "wrong": "The train arrived in time, exactly at 9:00.",
+          "right": "The train arrived on time, exactly at 9:00.",
+          "why": {
+            "en": "'On time' = punctual, on schedule. 'In time' means early enough before a deadline, which is a different idea.",
+            "ru": "'On time' = точно по расписанию. 'In time' = успеть до крайнего срока — это другое значение."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 you widen the set to business, discourse, and everyday connectors that still behave as frozen blocks.\n\nResponsibility and viewpoint:\n- **in charge of** = responsible for; **on behalf of** = representing; **in favour of** = supporting; **in terms of** = with respect to a measure.\n\nDiscourse linkers:\n- **on the whole**, **in the long run**, **in the short term**, **by the way**, **on the other hand**, **at the same time**.\n- **in the end** = finally, after everything; **at the end of** + noun = the final part of something ('at the end of the month'). These two are constantly confused.\n\nFormal / written connectors:\n- **in response to**, **in accordance with**, **with regard to**, **with respect to**, **in connection with**, **on the basis of**, **as a result of**, **for the sake of**, **in place of**, **in case of**.\n\nRegister and variety pairs:\n- 'about' (neutral) vs 'regarding' / 'concerning' (formal).\n- 'because of' vs 'due to' / 'owing to' (more formal).\n- British vs American: 'at the weekend' (BrE) vs 'on the weekend' (AmE); 'by accident' (standard) vs 'on accident' (AmE colloquial).\n\nTreat each as a single formula and notice which preposition the phrase locks in.",
         "ru": "На B2 расширяй набор фраз, в том числе **бизнес и повседневные**.\n\n**`in charge of` = отвечает за, во главе:**\n- `She is in charge of the project.` (Она отвечает за проект.)\n\n**`on behalf of` = от имени:**\n- `On behalf of the team, I thank you.` (От имени команды благодарю вас.)\n\n**`in favour of` = в пользу:**\n- `I’m in favour of the plan.` (Я за этот план.)\n\n**`in terms of` = с точки зрения:**\n- `In terms of price, it’s cheap.` (С точки зрения цены — дёшево.)\n\n**`on the whole` = в целом:**\n- `On the whole, I agree.` (В целом я согласен.)\n\n**`in the long run` = в долгосрочной перспективе:**\n- `In the long run, it will pay off.` (В долгосрочной перспективе это окупится.)\n\n**`in the short term`:**\n- `In the short term, we need to cut costs.` (В краткосрочной перспективе нужно сократить расходы.)\n\n**`by the way` = кстати:**\n- `By the way, did you see the news?` (Кстати, ты видел новости?)\n\n**`on the other hand` = с другой стороны:**\n- `On the other hand, it’s expensive.` (С другой стороны, это дорого.)\n\n**`at the same time` = одновременно / в то же время:**\n- `At the same time, we have to consider costs.` (В то же время надо учесть расходы.)\n\n**`in the end` vs `at the end`:**\n- `in the end` = в итоге: `In the end, we agreed.`\n- `at the end of X` = в конце X: `at the end of the month`.\n\n**BrE vs AmE в этих фразах:**\n- `on accident` (AmE разговорно, особенно у детей) vs `by accident` (стандарт). В formal writing — `by accident` везде.\n- `on the weekend` (AmE) vs `at the weekend` (BrE).\n- `write to me` (BrE) vs `write me` (AmE).\n\n**Бизнес-фразы:**\n- `in response to` (в ответ на).\n- `in accordance with` (в соответствии с).\n- `with regard to` (касательно).\n- `with respect to` (относительно).\n- `in connection with` (в связи с).\n- `on the basis of` (на основании).\n- `as a result of` (в результате).\n- `for the sake of` (ради).\n- `in place of` (вместо).\n- `in case of` (в случае).\n\n**`get on with`** (ладить с / продолжать) — типичный пример phrasal verb в фиксированной фразе.\n- `I get on with my sister.` (Я лажу с сестрой.)\n- `Let’s get on with the work.` (Давайте продолжим работу.)\n\n**Formal / informal pair examples:**\n- `about` (informal) / `regarding` / `concerning` (formal).\n- `for` (informal purpose) / `for the purpose of` (formal).\n- `because of` / `due to` / `owing to`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "(prep) + the + noun  /  in/on + noun + of  — fixed connector unit",
+        "ru": "(предлог) + the + существительное / in/on + существительное + of — фиксированный связующий блок"
       },
       "examples": [
         {
           "en": "On behalf of the team, thank you very much.",
-          "ru": "От имени команды большое спасибо."
+          "ru": "От имени команды большое спасибо.",
+          "note": {
+            "en": "on behalf of",
+            "ru": "от имени"
+          }
         },
         {
           "en": "In the long run, exercise will help you.",
-          "ru": "В долгосрочной перспективе спорт вам поможет."
+          "ru": "В долгосрочной перспективе спорт вам поможет.",
+          "note": {
+            "en": "in the long run",
+            "ru": "в долгосрочной перспективе"
+          }
         },
         {
           "en": "We need to act in accordance with the rules.",
-          "ru": "Мы должны действовать в соответствии с правилами."
+          "ru": "Мы должны действовать в соответствии с правилами.",
+          "note": {
+            "en": "in accordance with",
+            "ru": "в соответствии с"
+          }
         },
         {
           "en": "With regard to your request, we will reply soon.",
@@ -91,26 +135,52 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "in charge OF, on behalf OF, in terms OF. Учи как единые формулы."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "In the end of the month we close the books.",
+          "right": "At the end of the month we close the books.",
+          "why": {
+            "en": "'At the end of' + noun marks the final part of something concrete. 'In the end' (no 'of') means 'finally, after all'.",
+            "ru": "'At the end of' + существительное обозначает конец чего-то конкретного. 'In the end' (без 'of') означает 'в итоге'."
+          }
+        },
+        {
+          "wrong": "She is in charge for marketing.",
+          "right": "She is in charge of marketing.",
+          "why": {
+            "en": "The fixed collocation is 'in charge of'; the preposition is locked to 'of', not 'for'.",
+            "ru": "Устойчивое сочетание — 'in charge of'; предлог жёстко 'of', а не 'for'."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you handle light-verb + preposition + noun patterns and academic formulae, where a delexical verb (take, bring, put, come, go, make) carries little meaning and the prepositional phrase does the work.\n\nLight-verb patterns:\n- **take into account / consideration**, **bring into play / focus / question**, **put into practice / words / perspective**, **put at risk**, **put under pressure**.\n- **come into effect / play**, **come under attack / fire**, **come to terms with**, **come to light**.\n- **go into detail**, **go out of fashion**, **go on record**, **go by the book**.\n- **make sense of**, **make do with**, **make way for**, **make up for**.\n\nAcademic hedges and discourse markers:\n- **to a certain extent**, **to some degree**, **for the most part**, **by and large**, **in principle**, **in practice**.\n- **with reference to**, **in view of**, **in light of**, **on account of**, **by virtue of**.\n\nNoun + preposition collocations: **a matter of time**, **out of the question**, **beside the point**, **to the point**, plus temporal sets like **in the meantime**, **for the time being**, **from time to time**, **in due course**.\n\nCollocational traps: the preposition is fixed and not transferable by analogy — 'in question', 'at stake', 'under review' are correct; 'on question', 'on stake', 'in review' carry a different or wrong meaning. Learn each chunk with its exact preposition.",
         "ru": "На C1 работай с **light verb + preposition + noun** конструкциями и академическими формулами.\n\n**`take + noun + into account` (учитывать):**\n- `We must take costs into account.` (Мы должны учесть расходы.)\n- Альтернатива: `take into consideration`.\n\n**`bring + noun + into + noun`:**\n- `bring X into play` (задействовать X).\n- `bring X into focus` (сфокусировать).\n- `bring X into question` (поставить под сомнение).\n\n**`put + noun + in/into + noun`:**\n- `put it in perspective` (посмотреть в перспективе).\n- `put into practice` (применить на практике).\n- `put into words` (выразить словами).\n- `put at risk` (подвергнуть риску).\n- `put under pressure`.\n\n**`come + preposition + noun`:**\n- `come under attack` (подвергнуться атаке).\n- `come under fire` (стать мишенью критики).\n- `come into effect` (вступить в силу).\n- `come to terms with` (смириться с).\n- `come to grips with` (разобраться с).\n- `come to light` (стать известным).\n- `come into play` (вступить в игру, проявиться).\n\n**`go + preposition + noun`:**\n- `go into detail` (вдаваться в детали).\n- `go out of fashion` (выйти из моды).\n- `go on record` (официально заявить).\n- `go by the book` (действовать по правилам).\n\n**`make + preposition`:**\n- `make up for lost time` (наверстать упущенное).\n- `make do with` (обходиться).\n- `make way for` (уступить дорогу).\n- `make sense of` (понять смысл).\n\n**Academic hedging formulas:**\n- `to a certain extent` (в определённой мере).\n- `to some degree` (в некоторой степени).\n- `in large part` (в значительной мере).\n- `for the most part` (в большинстве случаев).\n- `in many respects` (во многих отношениях).\n- `by and large` (в общем и целом).\n- `in principle` (в принципе).\n- `in practice` (на практике).\n\n**Formal discourse markers:**\n- `with reference to` (со ссылкой на).\n- `in view of` (ввиду).\n- `in light of` (в свете).\n- `on account of` (по причине).\n- `for the sake of argument` (для аргументации).\n- `by virtue of` (в силу).\n\n**Фиксированные прилагательные + noun + preposition:**\n- `a matter of time` (вопрос времени).\n- `a matter of course` (само собой разумеющееся).\n- `a sense of humour`.\n- `a sense of direction`.\n- `out of the question` (исключено).\n- `beside the point` (не по теме).\n- `to the point` (по делу).\n\n**Temporal fixed phrases:**\n- `in the meantime` (тем временем).\n- `for the time being` (на данный момент).\n- `from time to time` (время от времени).\n- `in due course` (в своё время).\n- `at the outset` (с самого начала).\n- `at the conclusion of` (по завершении).\n\n**Collocational traps:**\nНельзя заменить предлог по аналогии:\n- ✓ `in question` (рассматриваемый).\n- ✗ `on question`.\n- ✓ `at stake` (на кону).\n- ✗ `on stake`.\n- ✓ `under review` (на рассмотрении).\n- ✗ `in review` (= in a review = в обзоре, другое значение)."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "light verb + noun + preposition + noun  (e.g. take + N + into account)",
+        "ru": "светлый (десемантизированный) глагол + сущ. + предлог + сущ. (напр. take + N + into account)"
       },
       "examples": [
         {
           "en": "We need to take all factors into account.",
-          "ru": "Мы должны учесть все факторы."
+          "ru": "Мы должны учесть все факторы.",
+          "note": {
+            "en": "take into account",
+            "ru": "учитывать"
+          }
         },
         {
           "en": "The new law came into effect last week.",
-          "ru": "Новый закон вступил в силу на прошлой неделе."
+          "ru": "Новый закон вступил в силу на прошлой неделе.",
+          "note": {
+            "en": "come into effect",
+            "ru": "вступить в силу"
+          }
         },
         {
           "en": "By and large, the results are positive.",
@@ -122,32 +192,62 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The issue is out of the question.",
-          "ru": "Этот вопрос исключён."
+          "ru": "Этот вопрос исключён.",
+          "note": {
+            "en": "out of the question",
+            "ru": "исключено"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "take into account, come into effect, put into practice — выучивай как единицы."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "We must take into account of all the costs.",
+          "right": "We must take all the costs into account.",
+          "why": {
+            "en": "The noun goes between 'take' and 'into account'; there is no extra 'of' after 'account'.",
+            "ru": "Существительное стоит между 'take' и 'into account'; лишнего 'of' после 'account' нет."
+          }
+        },
+        {
+          "wrong": "The proposal is on question.",
+          "right": "The proposal is in question.",
+          "why": {
+            "en": "'In question' = under discussion / doubt. 'On question' is not an English collocation.",
+            "ru": "'In question' = рассматриваемый / под сомнением. 'On question' не является английским сочетанием."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 you separate fully frozen idioms from literal collocations and control register precisely.\n\nFully frozen idioms — change nothing, not a word, not a preposition: **in the nick of time**, **by the skin of one's teeth**, **at the drop of a hat**, **out of the blue**, **under the weather**, **in a nutshell**, **at the end of the day**, **on cloud nine**, **through thick and thin**, **by the book**.\n\nLegal / formal set phrases: **in perpetuity**, **in arrears**, **under oath**, **under the auspices of**, **with all due respect**, **without prejudice to**, **in lieu of**.\n\nBusiness / financial: **in the black** vs **in the red**, **on the books**, **off the record**, **on record**, **under the radar**.\n\nRhetorical emphasis, often triggering inversion: **by no means**, **by all means**, **in no way**, **under no circumstances** ('Under no circumstances should you open the door'), **at all costs**.\n\nElliptical fixed replies: 'On the contrary.', 'In that case.', 'By all means.', 'Not at all.', 'In any event.'\n\nCraftsmanship note: a wide, accurately controlled stock of these phrases is a marker of near-native fluency, but in formal writing idioms must stay sparse — one or two per paragraph at most, or the prose reads like a phrasebook. Prefer the most compact connector: 'due to' over 'on account of' or 'owing to the fact that', while still varying for rhythm.",
         "ru": "На C2 различай **идиомы от буквальных коллокаций** и владей регистром.\n\n**Полностью замороженные идиомы:**\nИзменять в них ни слово, ни предлог нельзя.\n- `in the nick of time` (в самый последний момент).\n- `by the skin of one’s teeth` (чудом, едва).\n- `in the thick of it` (в гуще событий).\n- `at the drop of a hat` (по малейшему поводу).\n- `at the crack of dawn` (на рассвете).\n- `in the long haul` (в длительной перспективе).\n- `through thick and thin` (в горе и радости).\n- `over the moon` (на седьмом небе).\n- `on cloud nine` (на седьмом небе).\n- `under the weather` (нездоров).\n- `out of the blue` (как гром среди ясного неба).\n- `in the pink` (в прекрасной форме).\n- `in a nutshell` (в двух словах).\n- `at the end of the day` (в конечном счёте).\n- `by the book` (по правилам).\n\n**Legal / formal set phrases:**\n- `in perpetuity` (навечно).\n- `in arrears` (задолженность).\n- `in default` (в дефолте).\n- `on trial` (под судом).\n- `under oath` (под присягой).\n- `under the auspices of` (под эгидой).\n- `with all due respect` (при всём уважении).\n- `without prejudice to` (без ущерба для).\n- `in lieu of` (вместо — формально).\n- `in accordance with the terms set out herein`.\n\n**Financial / business set phrases:**\n- `in the black` (в прибыли) / `in the red` (в убытке).\n- `on the books` (в штате, официально).\n- `off the record` (неофициально).\n- `on record` (официально зафиксировано).\n- `under the radar` (незаметно).\n\n**Academic hedges vs polyfilla:**\n- Мастерство — выбрать минимум слов. ❌ `To some extent, in many respects, arguably, it could be said that…` — перегруженный hedging сигнал неуверенности.\n- ✓ `Arguably, X…` — достаточно.\n\n**Подводные камни перевода идиом:**\n- Русское \"на всякий случай\" ≠ `on every case`. Правильно: `just in case`.\n- \"По привычке\" ≠ `by habit` (встречается, но чаще `out of habit`).\n- \"В любом случае\" = `in any case` ✓ / `at any rate` ✓.\n- \"На самом деле\" = `in fact` / `as a matter of fact` / `actually`.\n- \"По крайней мере\" = `at least`, не `at the least` (`at the very least` сильнее).\n\n**Rhetorical emphasis через фиксированные фразы:**\n- `by no means` (никоим образом).\n- `by all means` (конечно).\n- `in no way` (никак).\n- `under no circumstances` (ни при каких обстоятельствах) — с инверсией: `Under no circumstances should you open the door.`\n- `at any cost` (любой ценой).\n- `at all costs` (любой ценой).\n\n**Elliptical fixed phrases (в ответах):**\n- `On the contrary.` (Напротив.)\n- `In that case.` (В таком случае.)\n- `By all means.` (Конечно.)\n- `Not at all.` (Совсем нет.)\n- `In any event.` (В любом случае.)\n\n**Dialect / archaic:**\n- `in the event` (BrE) = `in any case`.\n- `in the main` (в основном — формально).\n- `to boot` (в придачу — разговорно-идиоматично).\n- `of yore` (давних дней — литературно).\n- `in a trice` (в мгновение — архаично).\n\n**Фраза vs построение:**\nВ академическом письме предпочитай компактность. `Due to` короче чем `on account of` или `owing to the fact that`. Но variation важна для ритма.\n\n**Final craftsmanship note:** набор фиксированных фраз, которые ты владеешь — один из главных маркеров near-native. Не злоупотребляй идиомами в formal writing — 1-2 на абзац максимум, иначе текст звучит как phrasebook."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "frozen idiom (no slot is replaceable)  |  emphatic phrase + inversion",
+        "ru": "замороженная идиома (ни один элемент не заменяется) | эмфатическая фраза + инверсия"
       },
       "examples": [
         {
           "en": "We finished the project by the skin of our teeth.",
-          "ru": "Мы закончили проект едва-едва."
+          "ru": "Мы закончили проект едва-едва.",
+          "note": {
+            "en": "by the skin of our teeth",
+            "ru": "чудом, едва"
+          }
         },
         {
           "en": "Under no circumstances should this be shared.",
-          "ru": "Ни при каких обстоятельствах это нельзя распространять."
+          "ru": "Ни при каких обстоятельствах это нельзя распространять.",
+          "note": {
+            "en": "inversion after emphatic phrase",
+            "ru": "инверсия после эмфатической фразы"
+          }
         },
         {
           "en": "The agreement is in perpetuity.",
@@ -155,7 +255,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "In a nutshell, the plan failed.",
-          "ru": "В двух словах — план провалился."
+          "ru": "В двух словах — план провалился.",
+          "note": {
+            "en": "in a nutshell",
+            "ru": "в двух словах"
+          }
         },
         {
           "en": "With all due respect, I disagree.",
@@ -165,9 +269,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Замороженные идиомы менять нельзя: in the nick of time, by the skin of one’s teeth. 1-2 на абзац max."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Under no circumstances you should open the door.",
+          "right": "Under no circumstances should you open the door.",
+          "why": {
+            "en": "A fronted negative-emphatic phrase like 'under no circumstances' forces subject-auxiliary inversion.",
+            "ru": "Вынесенная вперёд отрицательно-эмфатическая фраза 'under no circumstances' требует инверсии подлежащего и вспомогательного глагола."
+          }
+        },
+        {
+          "wrong": "We finished it in the nick of the time.",
+          "right": "We finished it in the nick of time.",
+          "why": {
+            "en": "The idiom is fully frozen as 'in the nick of time' — adding 'the' before 'time' breaks it.",
+            "ru": "Идиома полностью заморожена как 'in the nick of time' — добавление 'the' перед 'time' её ломает."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "prepositions-after-verbs",
+    "prepositions-after-adjectives",
+    "prepositions-of-time",
+    "common-phrasal-verb-groups-by-topic"
+  ],
+  "crossTopic": [
+    "prepositions-of-time",
+    "prepositions-of-place",
+    "noun-phrases",
+    "phrasal-verbs-formal-informal"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "fixed phrase",
+      "preposition slot",
+      "frozen meaning"
+    ]
+  }
 };

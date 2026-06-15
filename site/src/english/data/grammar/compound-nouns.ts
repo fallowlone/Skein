@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "compound-nouns",
   "title": {
-    "en": "",
+    "en": "Compound Nouns",
     "ru": "Compound Nouns"
   },
   "cefr": "A2",
@@ -16,24 +16,30 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "nouns",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "slot-fill",
   "lessons": {
     "A2": {
       "cefr": "A2",
       "explain": {
-        "en": "",
+        "en": "A compound noun is two (sometimes three) words that join to name one thing: toothbrush, bookshop, bus stop, credit card. The first word describes; the second word is the head — the real thing you are talking about. Read it as 'head for/of the first word': a toothbrush is a brush for teeth, a bus stop is a stop for buses. There are three spellings and no single rule for which to use, so learn each compound from the dictionary: closed/one word (toothbrush, bedroom, football, notebook), hyphenated (mother-in-law, check-in), and open/two words (credit card, bus stop, living room, ice cream). The most important point at A2: the first word does not become plural. It works like an adjective, so it has no number — write toothbrushes (not teethbrushes), bus stops (not buses stop), shoe shop (not shoes shop). To make the whole thing plural, change only the end. Note also the stress: in a compound the stress falls on the first word — TOOTHbrush, BOOKshop, BUS stop — unlike an ordinary adjective + noun (a red CAR).",
         "ru": "**Составное существительное** (compound noun) — это два слова, которые работают вместе как одно понятие.\n\nВ английском это очень распространено. Важно знать, что первое слово **описывает** второе, а второе — **главное**.\n\n**Формула:** `описание + главное слово`.\n- `tooth + brush = toothbrush` (зубная щётка) — щётка для зубов.\n- `book + shop = bookshop` (книжный магазин) — магазин книг.\n- `foot + ball = football` (футбол, футбольный мяч).\n- `kitchen + table = kitchen table` (кухонный стол) — стол для кухни.\n- `credit + card = credit card` (кредитная карта).\n\n**Три типа написания:**\n1. **Слитно:** `toothbrush`, `bedroom`, `football`, `notebook`.\n2. **С дефисом:** `mother-in-law`, `check-in`, `self-portrait`.\n3. **Раздельно:** `credit card`, `bus stop`, `living room`, `ice cream`.\n\nНет единого правила, какой вариант выбрать. Это надо запомнить для каждого слова. Словарь — твой друг.\n\n**Важно: первое слово НЕ меняется на множественное.**\n- `toothbrush` → `toothbrushes` (не `teethbrushes`!)\n- `bus stop` → `bus stops` (не `buses stop`!)\n- `shoe shop` (не `shoes shop`).\n\nПервое слово — как прилагательное, оно не имеет числа.\n\n**Ударение:** в составных существительных обычно ударение падает на **первое** слово.\n- `TOOTHbrush`, `BOOKshop`, `BUSstop`.\n\nСравни с прилагательным + существительное, где ударение на обоих или на главном: `a RED CAR`.\n\n**Частые составные для повседневной жизни:**\n- `bedroom` (спальня), `kitchen` + другие комнаты.\n- `toothpaste` (зубная паста), `hairbrush` (расчёска).\n- `sunglasses` (очки от солнца), `raincoat` (плащ).\n- `newspaper` (газета), `notebook` (блокнот).\n- `birthday` (день рождения), `weekend` (выходные).\n\nВыучи их как готовые слова, не пытаясь разбирать на части.\n\n**Как формируются новые составные:**\nДва слова часто начинают жить вместе, когда обозначают одно понятие, для которого нет отдельного слова. Например, `mobile phone` (мобильный телефон) — два слова, которые стали обозначать один предмет. Со временем некоторые такие пары срастаются в одно слово (`smartphone`), а другие остаются раздельными (`ice cream`). Словарь подскажет актуальное написание."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "modifier (singular) + head noun = one compound; plural on the head: noun + noun(+ -s)",
+        "ru": "слово-описание (в ед. ч.) + главное слово = одно понятие; множественное у главного: существительное + существительное (+ -s)"
       },
       "examples": [
         {
           "en": "I need a new toothbrush.",
-          "ru": "Мне нужна новая зубная щётка."
+          "ru": "Мне нужна новая зубная щётка.",
+          "note": {
+            "en": "closed: one word",
+            "ru": "слитно: одно слово"
+          }
         },
         {
           "en": "She works in a bookshop.",
@@ -41,7 +47,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The bus stop is near my house.",
-          "ru": "Автобусная остановка рядом с моим домом."
+          "ru": "Автобусная остановка рядом с моим домом.",
+          "note": {
+            "en": "open: two words",
+            "ru": "раздельно: два слова"
+          }
         },
         {
           "en": "My bedroom is small.",
@@ -49,40 +59,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "Can I pay by credit card?",
-          "ru": "Можно расплатиться кредитной картой?"
+          "ru": "Можно расплатиться кредитной картой?",
+          "note": {
+            "en": "open compound",
+            "ru": "раздельное составное"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "В составных словах первое слово не принимает -s: toothbrushes, не teethbrushes."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I have two teethbrushes.",
+          "right": "I have two toothbrushes.",
+          "why": {
+            "en": "The first word stays singular; only the end of the whole compound takes -s.",
+            "ru": "Первое слово остаётся в единственном числе; -s добавляется только к концу всего слова."
+          }
+        },
+        {
+          "wrong": "She works in a shoes shop.",
+          "right": "She works in a shoe shop.",
+          "why": {
+            "en": "The first noun acts like an adjective, so it has no plural -s.",
+            "ru": "Первое существительное работает как прилагательное, поэтому без -s."
+          }
+        }
+      ]
     },
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "At B1 you sort compounds into open vs closed and pluralise each correctly. Closed compounds form a normal plural by adding -s/-es to the end: bedroom → bedrooms, toothbrush → toothbrushes, bookshelf → bookshelves, airport → airports. Open compounds put the plural on the head (usually the second word): credit card → credit cards, bus stop → bus stops, post office → post offices. Hyphenated compounds put the plural on the head word — and the head is not always last: mother-in-law → mothers-in-law, passer-by → passers-by, runner-up → runners-up; but grown-up → grown-ups, because the whole block is felt as one word. A very productive pattern uses a gerund (verb + -ing) as the modifier to show purpose: swimming pool, washing machine, dining room, running shoes, drinking water. The classic B1 error is making the modifier plural (shoes shop); keep it singular. Learn the few real exceptions that do carry -s as fixed items: sports car, sports centre, savings account, customs officer, news agency, arms dealer. Comprehension tip: unpack an unknown compound right-to-left through a preposition — bus stop = a stop for a bus.",
         "ru": "На B1 закрепляем **открытые vs закрытые** составные и учимся ставить множественное число правильно.\n\n**Закрытые (одно слово):** множественное — обычное, к концу добавляем `-s` / `-es`.\n- `bedroom → bedrooms`\n- `toothbrush → toothbrushes`\n- `bookshelf → bookshelves`\n- `airport → airports`\n\n**Открытые (два слова):** множественное обычно к **главному** слову (второму).\n- `credit card → credit cards`\n- `bus stop → bus stops`\n- `post office → post offices`\n- `shopping centre → shopping centres`\n\n**С дефисом:** множественное к главному слову, но главное может быть не последним!\n- `mother-in-law → mothers-in-law` (главное слово — `mother`, а не `law`).\n- `passer-by → passers-by` (главное — `passer`, тот, кто проходит).\n- `runner-up → runners-up` (главное — `runner`).\n\nИсключение: `grown-up → grown-ups` — главное «up» нет, весь блок воспринимается как слово.\n\n**Новое слово от герундия (verb + -ing):**\n- `swimming pool` (бассейн) — `swimming pools`.\n- `washing machine` (стиральная машина) — `washing machines`.\n- `dining room` (столовая) — `dining rooms`.\n\nЗдесь `swimming`, `washing`, `dining` описывают назначение.\n\n**Частая ошибка:** `shoes shop` вместо `shoe shop`. Первое слово в составном всегда в единственном числе (за редкими исключениями: `sports car`, `savings account`).\n\n**Исключения с -s в первом слове:**\n- `sports car`, `sports centre`, `sports club`\n- `savings account`, `customs officer`\n- `news agency`, `arms dealer`\n\nЭти слова запомни отдельно.\n\n**Типичные составные B1:**\n- Место + назначение: `bus stop`, `train station`, `petrol station`, `police station`.\n- Материал + предмет: `plastic bag`, `leather jacket`, `glass bottle`.\n- Время + предмет: `morning coffee`, `evening news`, `weekend plans`.\n- Часть + целое: `car door`, `book cover`, `table leg`.\n\n**Подсказка:** если встретишь незнакомое двухсловное выражение — прочитай его справа налево через предлог. `bus stop` = «stop for bus» = остановка для автобуса. Это помогает быстро понять смысл.\n\n**Ещё о множественном:**\nВ составных пары типа `toothbrush → toothbrushes` меняется только конец всего слова. Не меняй первую часть: `teethbrush` — ошибка. Первое слово остаётся в единственном числе почти всегда, потому что оно работает как прилагательное.\n\n**Составные от герундия:** часто первое слово — глагол с `-ing`, обозначающий назначение: `running shoes` (кроссовки для бега), `shopping bag` (сумка для покупок), `drinking water` (питьевая вода). Эти формы активно используются в повседневной речи."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "closed: compound + -s/-es; open/hyphenated: -s on the HEAD word (mother-in-law → mothers-in-law)",
+        "ru": "слитные: всё слово + -s/-es; раздельные/с дефисом: -s у ГЛАВНОГО слова (mother-in-law → mothers-in-law)"
       },
       "examples": [
         {
           "en": "My parents-in-law are coming tomorrow.",
-          "ru": "Мои свёкр и свекровь приезжают завтра."
+          "ru": "Мои свёкр и свекровь приезжают завтра.",
+          "note": {
+            "en": "plural on the head",
+            "ru": "множественное у главного слова"
+          }
         },
         {
           "en": "The swimming pool is closed today.",
-          "ru": "Бассейн сегодня закрыт."
+          "ru": "Бассейн сегодня закрыт.",
+          "note": {
+            "en": "gerund modifier",
+            "ru": "герундий как описание"
+          }
         },
         {
           "en": "He drives a sports car.",
-          "ru": "Он водит спортивную машину."
+          "ru": "Он водит спортивную машину.",
+          "note": {
+            "en": "-s exception",
+            "ru": "исключение с -s"
+          }
         },
         {
           "en": "Passers-by stopped to look.",
-          "ru": "Прохожие остановились посмотреть."
+          "ru": "Прохожие остановились посмотреть.",
+          "note": {
+            "en": "head is not last",
+            "ru": "главное слово не последнее"
+          }
         },
         {
           "en": "We need two new washing machines.",
@@ -92,17 +140,35 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Множественное ставь у главного слова: mothers-in-law, не mother-in-laws."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "My mother-in-laws are visiting.",
+          "right": "My mothers-in-law are visiting.",
+          "why": {
+            "en": "The head word is mother, so the plural -s goes there, not on law.",
+            "ru": "Главное слово — mother, поэтому -s ставится у него, а не у law."
+          }
+        },
+        {
+          "wrong": "We need a new washings machine.",
+          "right": "We need a new washing machine.",
+          "why": {
+            "en": "The gerund modifier does not take -s; pluralise the head: washing machines.",
+            "ru": "Герундий-описание не принимает -s; множественное — у главного слова: washing machines."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2 compounds grow to three or more parts and turn up as technical terms. Three-part compounds — credit card bill, ice cream cone, office building manager, water bottle holder — are read right-to-left: the last word is the head, the others narrow it (a credit card bill is a bill for a credit card). Technical and academic registers stack nouns even further: greenhouse gas emissions, artificial intelligence system, machine learning algorithm, climate change impact. The key skill is hyphenation when a compound works as an adjective before a noun. Pre-modifying compounds usually take hyphens and drop the plural -s: a five-year-old child (not a five years old child), a well-known actor, state-of-the-art technology. After the verb, the same idea needs no hyphen: the child is five years old, the actor is well known. Stress can change meaning, so train your ear: GREENhouse (a building for plants) vs a green HOUSE (a house that is green); BLACKbird (a species) vs a black BIRD (any dark bird). For style, avoid noun chains longer than four words — unpack the long government housing policy review committee chair into the chair of the committee that reviews government housing policy.",
         "ru": "На B2 появляются **трёхкомпонентные** составные и технические термины.\n\n**Три части:**\n- `credit card bill` (счёт по кредитной карте)\n- `ice cream cone` (рожок мороженого)\n- `coffee table book` (книга для журнального столика, альбом)\n- `office building manager` (управляющий офисным зданием)\n- `water bottle holder` (держатель для бутылок с водой)\n\nТакие составные читаются справа налево: главное — последнее слово, остальные его уточняют.\n\n**Тонкости с дефисами:**\n- Когда составное работает как прилагательное перед существительным, часто нужен дефис:\n  - `a five-year-old child` (пятилетний ребёнок).\n  - `a well-known actor` (известный актёр).\n  - `a state-of-the-art technology` (передовая технология).\n- Когда то же самое идёт после глагола, дефис не нужен:\n  - `The child is five years old.`\n  - `The actor is well known.`\n\n**Технические и научные термины:**\n- `greenhouse gas emissions` (выбросы парниковых газов)\n- `artificial intelligence system` (система ИИ)\n- `machine learning algorithm` (алгоритм машинного обучения)\n- `climate change impact` (влияние изменения климата)\n\nВ технических текстах эти конструкции «длинные» — 3-4 существительных подряд. Читатель распаковывает их, начиная с конца.\n\n**Типичная ошибка B2:** не понять, что `a five years old child` неправильно. Правильно — `a five-year-old child` (без `-s`, с дефисами).\n\n**Стиль:** избегай цепочек длиннее 4 слов. Лучше переписать:\n- Плохо: `the government housing policy review committee chair`\n- Лучше: `the chair of the committee that reviews government housing policy`.\n\n**Ещё о ударении (stress pattern):**\nВ составных ударение падает на первое слово: `GREENhouse` (теплица) — отличается от `a green HOUSE` (зелёный дом, прилагательное + существительное). То же с `BLACKbird` (чёрный дрозд, вид птицы) и `a black BIRD` (любая чёрная птица). Неправильное ударение меняет смысл!\n\nПослушай аудиокниги и подкасты, обращая внимание на ударение — это лучший способ интуитивно почувствовать разницу."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "[modifier]+[modifier]+head (read right-to-left); pre-modifier = hyphens, no -s: a five-year-old child",
+        "ru": "[описание]+[описание]+главное (читать справа налево); перед существительным — дефисы, без -s: a five-year-old child"
       },
       "examples": [
         {
@@ -111,40 +177,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "She is a five-year-old girl.",
-          "ru": "Она пятилетняя девочка."
+          "ru": "Она пятилетняя девочка.",
+          "note": {
+            "en": "pre-modifier: hyphens, no -s",
+            "ru": "перед существительным: дефисы, без -s"
+          }
         },
         {
           "en": "The artificial intelligence system works well.",
-          "ru": "Система искусственного интеллекта работает хорошо."
+          "ru": "Система искусственного интеллекта работает хорошо.",
+          "note": {
+            "en": "3-part technical term",
+            "ru": "трёхкомпонентный термин"
+          }
         },
         {
           "en": "He is a well-known scientist.",
-          "ru": "Он известный учёный."
+          "ru": "Он известный учёный.",
+          "note": {
+            "en": "pre-modifier compound",
+            "ru": "составное перед существительным"
+          }
         },
         {
           "en": "Greenhouse gas emissions are rising.",
-          "ru": "Выбросы парниковых газов растут."
+          "ru": "Выбросы парниковых газов растут.",
+          "note": {
+            "en": "noun stack",
+            "ru": "цепочка существительных"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Составное перед существительным — с дефисом: a five-year-old boy, но the boy is five years old."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "She is a five years old girl.",
+          "right": "She is a five-year-old girl.",
+          "why": {
+            "en": "As a pre-modifier the compound is hyphenated and year stays singular.",
+            "ru": "Перед существительным составное пишется через дефис, year — в единственном числе."
+          }
+        },
+        {
+          "wrong": "He is a well known scientist.",
+          "right": "He is a well-known scientist.",
+          "why": {
+            "en": "Before the noun, well known is hyphenated; after the verb it is not (he is well known).",
+            "ru": "Перед существительным well-known с дефисом; после глагола — без (he is well known)."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1 you control spelling variation and stylistic preference. Many compounds drift through the cycle two words → hyphen → one word as they become familiar: e-mail → email, web site → web-site → website, on-line → online, data base → database. Authorities (Oxford, Merriam-Webster) sometimes disagree, so check the dictionary for the genre you write in, and note British vs American habits: co-operation (BrE) / cooperation (AmE), pre-eminent / preeminent. Keep a hyphen where it prevents a misreading: re-cover (cover again) vs recover (get well), re-sign vs resign, re-present vs represent. Distinguish compound nouns from phrasal nouns built from phrasal verbs — a break-up, a check-in, a take-off — which are nearly always hyphenated as nouns, while the verb stays open (to break up). Watch register: noun stacks (quality improvement initiative, student performance assessment protocol) are compact but can be opaque, and good writers loosen the worst of them with a prepositional phrase (a protocol for assessing student performance). The internet keeps coining prefixed and fused forms — cybersecurity, e-commerce, biotechnology, ecosystem, selfie stick, podcast, livestream, burnout — so let a current dictionary settle the spelling.",
         "ru": "На C1 рассматриваем **варианты написания** и стилистические предпочтения.\n\n**Эволюция написания:** многие составные проходят путь «два слова → дефис → одно слово» по мере того, как становятся привычными.\n- `e-mail` → `email` (сейчас чаще одно слово).\n- `web site` → `web-site` → `website` (сейчас всегда слитно).\n- `on line` → `on-line` → `online`.\n- `data base` → `database`.\n\nВ отдельных случаях нормативные словари (Oxford, Merriam-Webster) расходятся. Проверяй актуальный словарь для жанра, в котором пишешь.\n\n**BrE vs AmE:**\n- `co-operation` (BrE) / `cooperation` (AmE) — дефис постепенно уходит в обоих вариантах.\n- `pre-eminent` (BrE) / `preeminent` (AmE).\n- `rest-room` (устар.) / `restroom` (совр. AmE).\n\n**Дефис для ясности:**\n- `re-cover` (покрыть заново) vs `recover` (выздороветь).\n- `re-sign` (снова подписать) vs `resign` (уйти в отставку).\n- `re-present` (снова представить) vs `represent` (представлять).\n\nДефис здесь критичен для смысла.\n\n**Стилистическая плотность:**\nВ академических и бюрократических текстах часто используют «noun stacks» (несколько существительных подряд):\n- `quality improvement initiative`\n- `student performance assessment protocol`\n- `public health intervention strategy`\n\nЭто экономично, но может быть неясным. Хороший автор разбавляет такие цепочки предложными фразами:\n- `protocol for assessing student performance` — яснее.\n\n**Новые термины:** в эпоху интернета появляются составные с `cyber-`, `e-`, `bio-`, `eco-`:\n- `cybersecurity`, `e-commerce`, `biotechnology`, `ecosystem`.\n- Префиксы постепенно срастаются со словом.\n\n**Типичная проблема:** путать compound noun и phrasal noun (от phrasal verb):\n- `a break-up` (расставание, от `break up`).\n- `a check-in` (регистрация, от `check in`).\n- `a take-off` (взлёт, от `take off`).\n- Эти фразовые существительные почти всегда с дефисом.\n\n**Различай:** `a breakup` vs `to break up` — первое существительное (расставание), второе фразовый глагол (расставаться). Ударение и часть речи зависят от того, используешь ли ты слово как существительное или как глагол. В письме существительное часто идёт с дефисом или слитно, глагол — всегда раздельно.\n\n**Новые составные XXI века:**\n- `selfie stick`, `smartphone`, `podcast`, `livestream`, `playlist`, `workout`, `burnout`, `takeout`.\n\nМногие из этих слов родились из сочетания и быстро срослись в одно слово. Следи за современными словарями — норма меняется."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "spelling evolves: two words → hyphen → one word; phrasal noun (a break-up) vs phrasal verb (to break up)",
+        "ru": "написание меняется: два слова → дефис → одно слово; фразовое существительное (a break-up) и фразовый глагол (to break up)"
       },
       "examples": [
         {
           "en": "He wrote an email to the team.",
-          "ru": "Он написал команде письмо."
+          "ru": "Он написал команде письмо.",
+          "note": {
+            "en": "fused: one word now",
+            "ru": "срослось: теперь одно слово"
+          }
         },
         {
           "en": "The website was updated yesterday.",
@@ -152,7 +256,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "They announced their break-up on social media.",
-          "ru": "Они объявили о расставании в соцсетях."
+          "ru": "Они объявили о расставании в соцсетях.",
+          "note": {
+            "en": "phrasal noun: hyphen",
+            "ru": "фразовое существительное: дефис"
+          }
         },
         {
           "en": "She works in cybersecurity.",
@@ -160,40 +268,78 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The protocol for assessing student performance is complex.",
-          "ru": "Протокол оценки успеваемости студентов сложен."
+          "ru": "Протокол оценки успеваемости студентов сложен.",
+          "note": {
+            "en": "unpacked noun stack",
+            "ru": "распакованная цепочка"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "С годами дефис уходит: e-mail → email, web-site → website; проверяй актуальный словарь."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "They announced their break up on social media.",
+          "right": "They announced their break-up on social media.",
+          "why": {
+            "en": "As a noun it is hyphenated (a break-up); the open form break up is the verb.",
+            "ru": "Как существительное — с дефисом (a break-up); открытая форма break up — глагол."
+          }
+        },
+        {
+          "wrong": "I need to re cover the chair, not get well.",
+          "right": "I need to re-cover the chair, not recover.",
+          "why": {
+            "en": "The hyphen separates re-cover (cover again) from recover (get well).",
+            "ru": "Дефис различает re-cover (покрыть заново) и recover (выздороветь)."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2 compound nouns are a tool of dense information packaging in journalism and academic prose, and you must both decode and coin them with control. Heavy compounds — global climate-change mitigation strategy, cross-sector labour-market integration framework, public-private-partnership financing — exist precisely to avoid long prepositional chains, and you unpack them right-to-left: global climate-change mitigation strategy = a strategy for the mitigation of global climate change. The press coins new compounds daily (flight-shame movement, tech-bro culture, fake-news phenomenon, deep-state conspiracy), and academic registers compound just as freely (gender-performativity theory, agenda-setting research, post-truth politics); some coinages stick, most fade. Multi-word strings can also pre-modify a noun as a single block: behind-the-scenes negotiations, middle-of-the-road approach. Morphological play is available too — the nonce form un-put-down-able for a book you cannot put down. The danger is over-compression: a chain like government-sponsored small-business loan-guarantee scheme applicant eligibility criteria reads as jargon, and fully unpacking it is just as clumsy, so break the idea into separate sentences. The C2 mark of style is balancing density against clarity: if one sentence carries more than two stacks of three-plus nouns, the reader is lost — rewrite.",
         "ru": "На C2 составные существительные — инструмент **плотной информационной упаковки** в публицистике и академическом письме.\n\n**Heavy noun compounds:**\n- `public-private-partnership infrastructure-financing mechanism`\n- `global climate-change mitigation strategy`\n- `cross-sector labour-market integration framework`\n\nТакие термины типичны для экономических, политических, научных текстов. Их создают, чтобы избежать длинных предложных цепочек.\n\n**Правило распаковки:** читай справа налево.\n- `global climate-change mitigation strategy` = a strategy for the mitigation of global climate change.\n- `public health intervention effectiveness study` = a study of the effectiveness of interventions in public health.\n\n**Журналистские coinages (новые образования):**\n- `flight-shame movement` (движение «стыд летать»)\n- `tech-bro culture` (культура «бро» в IT)\n- `fake-news phenomenon`\n- `deep-state conspiracy`\n\nВ газетах появляются десятки новых составных ежедневно. Многие исчезают, другие закрепляются.\n\n**Академические коинажи:**\n- `gender-performativity theory`\n- `agenda-setting research`\n- `post-truth politics`\n\nАкадемический язык активно образует новые термины через компаундинг.\n\n**Стилистические опасности:**\n- Слишком длинные цепочки читаются как жаргон: `government-sponsored small-business loan-guarantee scheme applicant eligibility criteria`.\n- В хорошем стиле такие сгустки разворачивают: `criteria determining the eligibility of applicants for loan guarantees under the small-business scheme sponsored by the government`.\n- Обе формы неудобны; переработай идею в несколько предложений.\n\n**Корпусное наблюдение:** в английском XXI века компаундов стало больше, чем в XX. Это глобальная тенденция сжатия, отражающая скорость коммуникации.\n\n**Рекомендация стилиста:** если в одном предложении больше двух стеков из 3+ существительных, читатель теряется. Перепиши. На C2 качество стиля — это умение балансировать между плотностью и ясностью.\n\n**Морфологическая игра:**\n- `un-put-down-able book` (книгу, которую невозможно отложить) — окказионализм.\n- `middle-of-the-road approach` (срединный подход) — идиоматическое составное.\n- `behind-the-scenes negotiations` — многокомпонентное прилагательное перед существительным.\n\nНа C2 ты должен уметь не только читать и распаковывать такие образования, но и создавать их — точно и уместно."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "stacked compound (read right-to-left) = N1 N2 N3 head; unpack heavy stacks with of/for to keep clarity",
+        "ru": "многокомпонентное составное (читать справа налево) = N1 N2 N3 главное; тяжёлые стеки распаковывать через of/for ради ясности"
       },
       "examples": [
         {
           "en": "The climate-change mitigation strategy was approved.",
-          "ru": "Стратегия смягчения изменения климата была одобрена."
+          "ru": "Стратегия смягчения изменения климата была одобрена.",
+          "note": {
+            "en": "heavy stack, read right-to-left",
+            "ru": "тяжёлый стек, читать справа налево"
+          }
         },
         {
           "en": "Behind-the-scenes negotiations lasted for hours.",
-          "ru": "Закулисные переговоры длились часами."
+          "ru": "Закулисные переговоры длились часами.",
+          "note": {
+            "en": "multi-word pre-modifier",
+            "ru": "многословное определение"
+          }
         },
         {
           "en": "She wrote an un-put-down-able thriller.",
-          "ru": "Она написала триллер, который невозможно отложить."
+          "ru": "Она написала триллер, который невозможно отложить.",
+          "note": {
+            "en": "nonce coinage",
+            "ru": "окказионализм"
+          }
         },
         {
           "en": "The fake-news phenomenon dominates media studies.",
-          "ru": "Феномен фейковых новостей доминирует в исследованиях СМИ."
+          "ru": "Феномен фейковых новостей доминирует в исследованиях СМИ.",
+          "note": {
+            "en": "journalistic coinage",
+            "ru": "журналистский неологизм"
+          }
         },
         {
           "en": "Public-private-partnership financing is complex.",
@@ -203,9 +349,44 @@ export const topic: GrammarTopic = {
       "tip": {
         "en": "",
         "ru": "Стеки больше трёх существительных — тяжело читаются; хороший стиль их распаковывает через of."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "It is a strategy mitigation climate-change global.",
+          "right": "It is a global climate-change mitigation strategy.",
+          "why": {
+            "en": "A compound stack is ordered modifier-to-head; the head (strategy) comes last.",
+            "ru": "В составном стеке порядок от определения к главному; главное слово (strategy) идёт последним."
+          }
+        },
+        {
+          "wrong": "The applicant must meet the government-sponsored small-business loan-guarantee scheme applicant eligibility criteria.",
+          "right": "The applicant must meet the eligibility criteria for the government's small-business loan-guarantee scheme.",
+          "why": {
+            "en": "An over-long noun stack reads as jargon; unpack part of it with of/for for clarity.",
+            "ru": "Слишком длинная цепочка читается как жаргон; часть её стоит распаковать через of/for."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "noun-phrases",
+    "abstract-nouns",
+    "possessive-nouns",
+    "gerund-as-noun"
+  ],
+  "crossTopic": [
+    "adjective-order",
+    "singular-plural-nouns",
+    "definite-article",
+    "indefinite-article"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "modifier (describes)",
+      "+ head (main word)",
+      "compound noun"
+    ]
+  }
 };

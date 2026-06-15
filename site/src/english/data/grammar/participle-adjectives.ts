@@ -5,7 +5,7 @@ import type { GrammarTopic } from "~/english/grammar-types";
 export const topic: GrammarTopic = {
   "id": "participle-adjectives",
   "title": {
-    "en": "",
+    "en": "Participle Adjectives (-ing / -ed)",
     "ru": "Participle Adjectives"
   },
   "cefr": "B1",
@@ -15,28 +15,38 @@ export const topic: GrammarTopic = {
     "C1",
     "C2"
   ],
-  "family": "unclassified",
-  "egp": [],
-  "archetype": "",
+  "family": "adjectives",
+  "egp": [
+    "EGP:best-effort"
+  ],
+  "archetype": "contrast-pair",
   "lessons": {
     "B1": {
       "cefr": "B1",
       "explain": {
-        "en": "",
+        "en": "Participle adjectives come from verbs. They have two forms with two different jobs.\n\n**The rule:**\n- The `-ing` form describes **what causes** a feeling (the source): `a boring film`.\n- The `-ed` form describes **the person who feels** it: `a bored student`.\n\n**The classic pair: boring / bored**\n- `The film is boring.` (The film is the cause of boredom.)\n- `I am bored.` (I am the one who feels it.)\n\n**Don't mix them up:**\n- `I am boring.` means you make *other people* bored.\n- `I am bored.` means *you* feel boredom. Learners almost always want the second one.\n\n**Common pairs:** interesting / interested, tiring / tired, surprising / surprised, exciting / excited, confusing / confused, frightening / frightened, amazing / amazed, shocking / shocked.\n\n**A quick test:** ask yourself — \"Does a person *feel* this?\" → use `-ed`. \"Does a thing *cause* the feeling?\" → use `-ing`.\n\n**Prepositions after the `-ed` form:** interested **in**, bored **with / of**, surprised **at / by**, excited **about**, worried **about**, frightened **of**.",
         "ru": "Participle adjectives — это прилагательные, сделанные из глагола. Есть два типа: на `-ing` и на `-ed`.\n\n**Правило:**\n- `-ing` описывает **то, что вызывает** эмоцию (причина).\n- `-ed` описывает **того, кто чувствует** эмоцию (человек).\n\n**Классическая пара: bored / boring**\n- `The film is boring.` (Фильм скучный — он вызывает скуку.)\n- `I am bored.` (Мне скучно — я чувствую скуку.)\n\n**НЕ путай:**\n- Wrong: `I am boring.` = «Я скучный человек» (я вызываю скуку у других).\n- Right: `I am bored.` = «Мне скучно.»\n\n**Другие пары:**\n- `interesting` (интересный) / `interested` (заинтересованный)\n- `tired` / `tiring`\n- `surprised` / `surprising`\n- `excited` / `exciting`\n- `confused` / `confusing`\n- `frightened` / `frightening`\n- `amazed` / `amazing`\n- `shocked` / `shocking`\n\n**Примеры:**\n- `The news is surprising.` (Новость удивительная.) — новость причина.\n- `I am surprised by the news.` (Я удивлён новостью.) — я чувствую.\n- `This book is interesting.` — `I am interested in this book.`\n- `The match was exciting.` — `We were excited about the match.`\n\n**Простой тест:** спроси — «этот человек чувствует?» → `-ed`. «Эта вещь вызывает чувство?» → `-ing`.\n\n**Предлоги после `-ed`:**\n- `interested in` (заинтересованный в)\n- `bored with / of` (скучающий от)\n- `surprised at / by`\n- `excited about`\n- `worried about`\n- `frightened of`"
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "thing that causes feeling = adjective + -ing | person who feels = adjective + -ed",
+        "ru": "то, что вызывает чувство = прилагательное + -ing | тот, кто чувствует = прилагательное + -ed"
       },
       "examples": [
         {
           "en": "The movie was boring, and I was bored.",
-          "ru": "Фильм был скучным, и мне было скучно."
+          "ru": "Фильм был скучным, и мне было скучно.",
+          "note": {
+            "en": "both forms",
+            "ru": "обе формы"
+          }
         },
         {
           "en": "I am interested in learning Spanish.",
-          "ru": "Я заинтересован в изучении испанского."
+          "ru": "Я заинтересован в изучении испанского.",
+          "note": {
+            "en": "interested + in",
+            "ru": "interested + in"
+          }
         },
         {
           "en": "She was surprised by the news.",
@@ -48,28 +58,54 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The children were frightened by the storm.",
-          "ru": "Дети были напуганы бурей."
+          "ru": "Дети были напуганы бурей.",
+          "note": {
+            "en": "person feels",
+            "ru": "человек чувствует"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "-ing = причина эмоции (boring film). -ed = кто чувствует (bored person)."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I am boring with this class.",
+          "right": "I am bored with this class.",
+          "why": {
+            "en": "You feel the boredom, so use the -ed form; -ing would mean you bore others.",
+            "ru": "Скучаешь именно ты, поэтому нужна форма -ed; -ing значило бы, что ты вызываешь скуку у других."
+          }
+        },
+        {
+          "wrong": "The lesson was bored.",
+          "right": "The lesson was boring.",
+          "why": {
+            "en": "A thing causes the feeling, so it takes the -ing form, not -ed.",
+            "ru": "Вещь вызывает чувство, поэтому нужна форма -ing, а не -ed."
+          }
+        }
+      ]
     },
     "B2": {
       "cefr": "B2",
       "explain": {
-        "en": "",
+        "en": "At B2, add a wider range of pairs and start treating participle adjectives as **shortened relative clauses**.\n\n**Advanced pairs:** exhausting / exhausted, fascinating / fascinated, overwhelming / overwhelmed, disappointing / disappointed, embarrassing / embarrassed, annoying / annoyed, inspiring / inspired, motivating / motivated, terrifying / terrified. The cause/feeler rule still holds: `It was an exhausting workload` (cause) vs `I was exhausted` (feeler).\n\n**A participle as a reduced relative clause:**\n- `the man reading the newspaper` = `the man who is reading the newspaper` (active → `-ing`).\n- `the book written by Tolstoy` = `the book that was written by Tolstoy` (passive → `-ed`).\n\n**Position:**\n- **Before** the noun, like an ordinary adjective, when it stands alone: `a bored student`, `a broken window`, `the rising sun`.\n- **After** the noun, when extra information follows: `a student bored with the lecture`, `a window broken by the ball`.\n\n**Neutral (non-emotion) participle adjectives:** `a burning candle`, `the rising sun`, `a broken chair`, `a finished project`. Here the cause/feeler rule does not apply — these describe activities or results, not feelings.",
         "ru": "На B2 добавь **продвинутые пары** и рассмотри participle adjective как сокращённые относительные придаточные.\n\n**Продвинутые пары:**\n- `exhausted / exhausting` (выжатый / выматывающий)\n- `fascinated / fascinating`\n- `overwhelmed / overwhelming`\n- `disappointed / disappointing`\n- `embarrassed / embarrassing`\n- `annoyed / annoying`\n- `inspired / inspiring`\n- `motivated / motivating`\n- `terrified / terrifying`\n\n**Примеры в контексте:**\n- `It was an exhausting workload.` (Нагрузка выматывающая — causes exhaustion.)\n- `I was exhausted after the workload.` (Я был измотан.)\n- `Her story was inspiring.` (Её история вдохновляет.)\n- `We were inspired by her story.`\n\n**Participle adjective как сокращённое relative clause:**\n- `The man reading the newspaper` = `The man who is reading the newspaper.`\n- `The book written by Tolstoy` = `The book that was written by Tolstoy.`\n- `The children playing in the garden` = `The children who are playing in the garden.`\n- `The window broken by the ball` = `The window that was broken by the ball.`\n\nЭто не совсем то же, что `boring/bored`, но близкая структура — тот же participle.\n\n**Position — перед или после noun:**\n- **Перед** — как обычное прилагательное: `a bored student`, `a broken window`, `the rising sun`.\n- **После** — с дополнительной информацией: `a student bored with the lecture`, `a window broken by the ball`.\n\n**Частая ошибка:**\n- Wrong: `I am confusing by the instructions.` → Right: `I am confused by the instructions.`\n- Wrong: `The lesson was bored.` → Right: `The lesson was boring.`\n- Wrong: `a confused situation` — двусмысленно. Лучше: `a confusing situation` (вызывает путаницу) vs `a confused person`.\n\n**Neutral participle adjectives (не emotion):**\n- `a burning candle` (горящая свеча — activity, not emotion).\n- `the rising sun` (восходящее солнце).\n- `a broken chair` (сломанный стул — результат).\n- `a finished project` (законченный проект).\n\nЗдесь правило про эмоцию не работает — это sizes/results/activities."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "noun + participle phrase = noun + (who/that + be) + participle … (reduced relative clause)",
+        "ru": "существительное + причастный оборот = существительное + (who/that + be) + причастие … (сокращённое относительное придаточное)"
       },
       "examples": [
         {
           "en": "The workload was exhausting — by Friday I was exhausted.",
-          "ru": "Нагрузка была выматывающей — к пятнице я был измотан."
+          "ru": "Нагрузка была выматывающей — к пятнице я был измотан.",
+          "note": {
+            "en": "cause vs feeler",
+            "ru": "причина и тот, кто чувствует"
+          }
         },
         {
           "en": "Her speech was deeply inspiring.",
@@ -77,7 +113,11 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "The man waiting at the door is my uncle.",
-          "ru": "Мужчина, ждущий у двери, — мой дядя."
+          "ru": "Мужчина, ждущий у двери, — мой дядя.",
+          "note": {
+            "en": "= who is waiting",
+            "ru": "= who is waiting"
+          }
         },
         {
           "en": "We found the situation quite embarrassing.",
@@ -85,89 +125,203 @@ export const topic: GrammarTopic = {
         },
         {
           "en": "A broken window needs replacing.",
-          "ru": "Разбитое окно нужно заменить."
+          "ru": "Разбитое окно нужно заменить.",
+          "note": {
+            "en": "result, before noun",
+            "ru": "результат, перед существительным"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Participle adjective = сокращённый relative clause: the man reading = who is reading."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "I am confusing by the instructions.",
+          "right": "I am confused by the instructions.",
+          "why": {
+            "en": "You are the one affected, so use the -ed form; -ing would mean you confuse others.",
+            "ru": "Воздействие испытываешь ты, поэтому нужна форма -ed; -ing значило бы, что ты путаешь других."
+          }
+        },
+        {
+          "wrong": "the man who reading the newspaper",
+          "right": "the man reading the newspaper",
+          "why": {
+            "en": "When you reduce the relative clause to a participle, drop the relative pronoun and the verb 'be'.",
+            "ru": "Сокращая относительное придаточное до причастия, опускают относительное местоимение и глагол 'be'."
+          }
+        }
+      ]
     },
     "C1": {
       "cefr": "C1",
       "explain": {
-        "en": "",
+        "en": "At C1, control reduced clauses precisely and avoid ambiguous `-ing` modifiers.\n\n**Reducing relative clauses:**\n- `-ing` for an active meaning: `the woman who is sitting at the table` → `the woman sitting at the table`.\n- `-ed` for a passive meaning: `the house which was built in 1900` → `the house built in 1900`.\n\n**Dangling participles — the classic error.** The participle must modify the subject of the main clause:\n- Wrong: `Walking down the street, the trees looked beautiful.` (the trees are not walking).\n- Right: `Walking down the street, I thought the trees looked beautiful.`\n\n**Present vs perfect participle:** `Having finished the task, she relaxed` (perfect — the action happened first) vs `Finishing the task, she relaxed` (simultaneous, sometimes ambiguous). Passive: `Being treated unfairly, he resigned`; `Having been warned, they took precautions`.\n\n**Compound participle adjectives:** well-known, much-loved, long-awaited, hand-made, home-grown, self-taught, well-educated. Hyphenate in attributive position (`a well-known author`) but not in predicative position (`The author is well known`).\n\n**Nominalised participles:** `the accused`, `the injured`, `the deceased`, `the unemployed`. With `the`, they behave as nouns.",
         "ru": "На C1 работа с reduced clauses и ambiguous `-ing` modifiers.\n\n**Reduced relative clauses — правила сокращения:**\n1. С `-ing`: активное действие.\n   - `The woman who is sitting at the table` → `The woman sitting at the table`.\n   - `The train which was leaving the station` → `The train leaving the station`.\n2. С `-ed`: пассивное значение.\n   - `The house which was built in 1900` → `The house built in 1900`.\n   - `The letter that was written in French` → `The letter written in French`.\n\n**Dangling participles — классическая ошибка:**\n- Wrong: `Walking down the street, the trees looked beautiful.` (грамматически trees walking).\n- Right: `Walking down the street, I thought the trees looked beautiful.`\n- Wrong: `Confused by the question, the answer was obvious.`\n- Right: `Confused by the question, I found the answer elusive.`\n\nParticiple должен модифицировать subject главного клауза.\n\n**Ambiguous reduced clauses:**\n- `The people visiting the museum` — может означать either «посетители» или «персонал, который их посещает». Context решает.\n- `The teacher talking to the students` — тот, кто говорит.\n\n**Stacked participles — читается тяжело:**\n- Heavy: `The man running carrying the bag shouting at the child was my neighbour.`\n- Better: `My neighbour ran past, carrying a bag and shouting at a child.`\n\n**Present vs perfect participle:**\n- `Having finished the task, she relaxed.` (perfect — действие до главного).\n- `Finishing the task, she relaxed.` (одновременно / сразу после — может двусмысленно).\n\n**Passive participle в reduced clauses:**\n- `Being treated unfairly, he resigned.` — «поскольку его несправедливо обращались».\n- `Having been warned, they took precautions.`\n\n**Participle adjectives в compound form:**\n- `well-known`, `much-loved`, `long-awaited`, `hand-made`, `home-grown`.\n- `self-taught`, `short-lived`, `well-educated`.\n\nДефис обязателен в attributive позиции: `a well-known author`. В predicative — без дефиса: `The author is well known.`\n\n**Nominalized participles:**\n- `the accused` (обвиняемый), `the injured` (раненые), `the deceased` (покойный), `the unemployed` (безработные).\n- Перед ними `the`, они ведут себя как существительные."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "(subordinator) + participle clause , subject (of main clause) + verb …",
+        "ru": "(союз) + причастный оборот , подлежащее (главного клауза) + сказуемое …"
       },
       "examples": [
         {
           "en": "Walking into the office, I noticed the new decoration.",
-          "ru": "Войдя в офис, я заметил новое оформление."
+          "ru": "Войдя в офис, я заметил новое оформление.",
+          "note": {
+            "en": "active, -ing",
+            "ru": "активное, -ing"
+          }
         },
         {
           "en": "The house, built in 1900, has been carefully restored.",
-          "ru": "Дом, построенный в 1900 году, был тщательно отреставрирован."
+          "ru": "Дом, построенный в 1900 году, был тщательно отреставрирован.",
+          "note": {
+            "en": "passive, -ed",
+            "ru": "пассивное, -ed"
+          }
         },
         {
           "en": "Having been warned about the delay, we took an earlier train.",
-          "ru": "Предупреждённые о задержке, мы поехали на более раннем поезде."
+          "ru": "Предупреждённые о задержке, мы поехали на более раннем поезде.",
+          "note": {
+            "en": "perfect passive",
+            "ru": "перфектное пассивное"
+          }
         },
         {
           "en": "The accused remained silent throughout the trial.",
-          "ru": "Обвиняемый молчал на протяжении всего процесса."
+          "ru": "Обвиняемый молчал на протяжении всего процесса.",
+          "note": {
+            "en": "nominalised",
+            "ru": "субстантивированное"
+          }
         },
         {
           "en": "A well-known author signed copies of her book.",
-          "ru": "Известный автор подписала экземпляры своей книги."
+          "ru": "Известный автор подписала экземпляры своей книги.",
+          "note": {
+            "en": "compound, hyphenated",
+            "ru": "сложное, с дефисом"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Dangling participle — ошибка: участник должен относиться к subject главного клауза."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "Confused by the question, the answer was obvious.",
+          "right": "Confused by the question, I found the answer elusive.",
+          "why": {
+            "en": "Dangling participle: 'confused' must attach to the human subject, not to 'the answer'.",
+            "ru": "Висячее причастие: 'confused' должно относиться к человеку-подлежащему, а не к 'the answer'."
+          }
+        },
+        {
+          "wrong": "a wellknown author",
+          "right": "a well-known author",
+          "why": {
+            "en": "A compound participle adjective is hyphenated when it comes before the noun.",
+            "ru": "Сложное причастное прилагательное пишется через дефис, когда стоит перед существительным."
+          }
+        }
+      ]
     },
     "C2": {
       "cefr": "C2",
       "explain": {
-        "en": "",
+        "en": "At C2, master the **stative vs dynamic** contrast and the stylistics of stacked participles.\n\n**Stative vs dynamic reading:** the same participle can describe a state or an action: `the worried parent` (a state of worry) vs `a parent worrying about everything` (actively worrying); `a confused student` (state) vs `a student confusing two concepts` (action).\n\n**Subtle pairs editors watch:** `a concerning trend` (it causes concern) vs `a concerned citizen` (feeling concern), and `Concerning your application…` (the preposition). `An interested party` is a fixed legal/business term, distinct from `an interesting development`. Note the native-speaker trap: `a disinterested observer` (impartial) ≠ `an uninterested observer` (bored).\n\n**Stacked participle phrases.** When a sentence carries more than two participle clauses, rewrite it: split `The paper presented at the conference held in Berlin attended by scholars visiting from abroad…` into separate sentences. Watch direction of modification too: `the painting depicting Christ` (active) vs `the painting depicted in the book` (passive).\n\n**Lexicalised forms** drift away from the verb: `drunk`, `learned` (erudite) vs `learned` (acquired), `aged` (elderly) vs `aged 5`.\n\n**Register:** academic — supporting evidence, underlying cause, resulting change; literary — the waning moon, the encroaching darkness, dwindling hopes; legal — the accused, the aforementioned, the undersigned. The craft note: a plain adjective often beats an elaborate participle — `tired` is stronger than `having experienced exhaustion`.",
         "ru": "На C2 — **stative vs dynamic** контраст и стилистика stacked participles.\n\n**Stative vs dynamic interpretation:**\nНекоторые participle adjectives могут читаться как **состояние** (stative) или **действие** (dynamic). Смысл меняется.\n\n- `The worried parent` (stative — parent is in a state of worry).\n- `A parent worrying about everything` (dynamic — actively worries).\n\n- `A confused student` (state of confusion).\n- `A student confusing two concepts` (dynamic — is confusing).\n\n**`Concerning` vs `concerned`:**\n- `A concerning trend` — тренд, который вызывает беспокойство.\n- `A concerned citizen` — обеспокоенный гражданин.\n- `Concerning your application...` — prepositional usage («касательно»).\n\n**`Interested` vs `interesting` в formal register:**\n- `an interested party` = заинтересованная сторона (идиома в деловом/юридическом).\n- `an interesting development` = любопытное развитие.\nИгра смыслов: `a disinterested observer` (беспристрастный) vs `an uninterested observer` (скучающий). Путать эти слова — обычная ошибка носителей.\n\n**Stacked participle phrases:**\nВ формальной прозе редакторы сокращают сложные конструкции:\n- Bad: `The paper presented at the conference held in Berlin attended by scholars visiting from abroad was controversial.`\n- Better (разделить): `The paper, presented at the Berlin conference, was controversial. Many of the attending scholars were visiting from abroad.`\n\n**Editorial test:** если в одном предложении больше двух participle clauses — переписывай.\n\n**Ambiguity and clarity:**\n- `The proposal opposed by the committee` — opposed committee или opposed proposal? Structurally opposed модифицирует proposal (subject), но читатель может запутаться. Добавь context: `The proposal, opposed by the committee, was withdrawn.`\n\n**Participle + object ambiguity:**\n- `The painting depicting Christ` — depicting активно (painting depicts Christ).\n- `The painting depicted in the book` — depicted passively (the painting is depicted).\n\nОдинаковые формы, разное значение по контексту.\n\n**Lexicalized forms (perhaps no longer participles):**\nНекоторые -ed/-ing формы полностью лексикализованы:\n- `drunk` (пьяный) — больше adj, чем participle.\n- `learned` (ˈlɜːnɪd, эрудированный) vs `learned` (выученный).\n- `aged` (ˈeɪdʒɪd, пожилой) vs `aged 5` (в возрасте 5).\n\n**Participle adjectives в headlines:**\nЖурналисты часто компрессируют через participles:\n- `Missing diplomat found alive.` (reduced relative + depictive).\n- `Warring factions agree ceasefire.`\n- `Man injured in crash dies in hospital.`\n\n**Register note:**\n- Academic: `supporting evidence`, `resulting change`, `underlying cause`, `pertaining regulations`.\n- Literary: `the waning moon`, `the encroaching darkness`, `dwindling hopes`.\n- Legal: `the accused`, `the deceased`, `the aforementioned`, `the undersigned`.\n\n**Final craft note:** в высоком письме не бойся простого adjective вместо complicated participle. `Tired` часто сильнее, чем `having experienced exhaustion`."
       },
       "structure": {
-        "en": "",
-        "ru": ""
+        "en": "participle + complement → reading depends on direction of modification (active -ing / passive -ed)",
+        "ru": "причастие + дополнение → значение зависит от направления связи (активное -ing / пассивное -ed)"
       },
       "examples": [
         {
           "en": "A disinterested observer would see the issue differently.",
-          "ru": "Беспристрастный наблюдатель увидел бы вопрос иначе."
+          "ru": "Беспристрастный наблюдатель увидел бы вопрос иначе.",
+          "note": {
+            "en": "≠ uninterested",
+            "ru": "≠ uninterested"
+          }
         },
         {
           "en": "The waning moon cast a pale light.",
-          "ru": "Убывающая луна отбрасывала бледный свет."
+          "ru": "Убывающая луна отбрасывала бледный свет.",
+          "note": {
+            "en": "literary register",
+            "ru": "литературный регистр"
+          }
         },
         {
           "en": "The underlying cause of the problem remains unclear.",
-          "ru": "Основная причина проблемы остаётся неясной."
+          "ru": "Основная причина проблемы остаётся неясной.",
+          "note": {
+            "en": "academic register",
+            "ru": "академический регистр"
+          }
         },
         {
           "en": "A concerning trend has emerged in recent data.",
-          "ru": "В последних данных появилась тревожная тенденция."
+          "ru": "В последних данных появилась тревожная тенденция.",
+          "note": {
+            "en": "cause vs feeler",
+            "ru": "причина и тот, кто чувствует"
+          }
         },
         {
           "en": "The aforementioned clause applies to all parties.",
-          "ru": "Вышеупомянутый пункт применим ко всем сторонам."
+          "ru": "Вышеупомянутый пункт применим ко всем сторонам.",
+          "note": {
+            "en": "legal register",
+            "ru": "юридический регистр"
+          }
         }
       ],
       "tip": {
         "en": "",
         "ru": "Disinterested (беспристрастный) ≠ uninterested (безразличный) — классическая путаница."
-      }
+      },
+      "pitfalls": [
+        {
+          "wrong": "an uninterested observer (meaning impartial)",
+          "right": "a disinterested observer",
+          "why": {
+            "en": "'Disinterested' means impartial; 'uninterested' means bored or indifferent — keep them apart in formal writing.",
+            "ru": "'Disinterested' значит беспристрастный; 'uninterested' — равнодушный или скучающий — в формальном письме их различают."
+          }
+        },
+        {
+          "wrong": "The paper presented at the conference held in Berlin attended by scholars visiting from abroad was controversial.",
+          "right": "The paper, presented at the Berlin conference, was controversial. Many of the attending scholars were visiting from abroad.",
+          "why": {
+            "en": "More than two stacked participle clauses are unreadable; split the sentence.",
+            "ru": "Больше двух нагромождённых причастных оборотов читаются тяжело; раздели предложение."
+          }
+        }
+      ]
     }
   },
-  "related": [],
-  "crossTopic": []
+  "related": [
+    "adjective-vs-adverb",
+    "adjective-order",
+    "reduced-relative-clauses",
+    "prepositions-after-adjectives"
+  ],
+  "crossTopic": [
+    "defining-relative-clauses",
+    "passive-present-simple",
+    "prepositions-after-adjectives",
+    "adverbial-clauses-time"
+  ],
+  "archetypeParams": {
+    "labels": [
+      "-ing: the cause",
+      "-ed: the feeler"
+    ]
+  }
 };
