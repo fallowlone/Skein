@@ -19,10 +19,13 @@ export const topic: GrammarTopic = {
   ],
   "family": "questions",
   "egp": [
-    "EGP:A1.questions.wh",
-    "EGP:A2.questions.wh-do-did",
-    "EGP:B1.questions.subject-vs-object",
-    "EGP:B2.questions.preposition-position"
+    "egp.a1.questions-negation.wh-questions-basic",
+    "egp.a2.questions-negation.wh-questions-past-and-present",
+    "egp.b1.questions-negation.subject-vs-object-questions",
+    "egp.b1.questions-negation.indirect-questions",
+    "egp.b2.questions-negation.indirect-questions-embedded",
+    "egp.c1.clauses.cleft-sentences-for-emphasis",
+    "egp.c2.prepositions.preposition-stranding-vs-pied-piping"
   ],
   "archetype": "slot-fill",
   "lessons": {

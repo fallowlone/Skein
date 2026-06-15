@@ -19,7 +19,13 @@ export const topic: GrammarTopic = {
   ],
   "family": "modals",
   "egp": [
-    "EGP:best-effort"
+    "egp.a1.modality.can-ability",
+    "egp.a1.modality.can-permission-requests",
+    "egp.a2.modality.could-past-ability-and-requests",
+    "egp.b1.modality.could-able-to-past-ability",
+    "egp.b1.modality.might-may-could-possibility",
+    "egp.b1.modality.must-cant-present-deduction",
+    "egp.b2.modality.past-deduction-must-have"
   ],
   "archetype": "contrast-pair",
   "lessons": {

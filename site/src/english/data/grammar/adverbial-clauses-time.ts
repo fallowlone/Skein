@@ -18,7 +18,14 @@ export const topic: GrammarTopic = {
   ],
   "family": "conjunctions",
   "egp": [
-    "EGP:best-effort"
+    "egp.a2.clauses.time-clauses-when-after-before",
+    "egp.b1.conditionals.if-clauses-with-when-unless",
+    "egp.b1.tenses-aspect.present-perfect-for-since",
+    "egp.b2.clauses.participle-clauses-reduced",
+    "egp.b2.word-order.inversion-after-negative-adverbials",
+    "egp.c1.questions-negation.negative-and-restrictive-adverbs",
+    "egp.c1.word-order.inversion-after-negative-adverbials",
+    "egp.c2.word-order.inversion-after-negative-adverbials"
   ],
   "archetype": "timeline",
   "lessons": {

@@ -16,7 +16,9 @@ export const topic: GrammarTopic = {
   ],
   "family": "reported-speech",
   "egp": [
-    "EGP:reported-speech-backshift"
+    "egp.b2.clauses.reported-speech-backshift",
+    "egp.c2.tenses-aspect.future-in-the-past-projection",
+    "egp.c2.clauses.subjunctive-and-mandative-clauses"
   ],
   "archetype": "transformation",
   "lessons": {

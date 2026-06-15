@@ -17,7 +17,11 @@ export const topic: GrammarTopic = {
   ],
   "family": "tenses",
   "egp": [
-    "EGP:can use the past perfect to show that one past action happened before another"
+    "egp.b1.tenses-aspect.past-perfect-earlier-event",
+    "egp.b2.conditionals.third-conditional-unreal-past",
+    "egp.b2.clauses.reported-speech-backshift",
+    "egp.c1.conditionals.inverted-conditionals-no-if",
+    "egp.c1.word-order.inversion-after-negative-adverbials"
   ],
   "archetype": "timeline",
   "lessons": {

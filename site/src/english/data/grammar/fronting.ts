@@ -16,8 +16,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "word-order",
   "egp": [
-    "EGP:C1: Can move a clause element to the front of a clause to mark it as the topic or for emphasis.",
-    "EGP:B2: Can front adverbials (time, place, manner, comment) to set context, usually marked off by a comma."
+    "egp.b2.word-order.fronting-for-emphasis",
+    "egp.c1.word-order.fronting-for-emphasis-and-cohesion",
+    "egp.c1.word-order.end-weight-and-extraposition",
+    "egp.c2.word-order.fronting-and-thematisation",
+    "egp.c2.word-order.inversion-after-fronted-adjuncts",
+    "egp.c2.discourse-cohesion.information-packaging-given-new"
   ],
   "archetype": "swap",
   "lessons": {

@@ -16,7 +16,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "discourse",
   "egp": [
-    "EGP:best-effort"
+    "egp.b2.word-order.cleft-sentences-it-was",
+    "egp.b2.word-order.what-cleft-sentences",
+    "egp.c1.clauses.cleft-sentences-for-emphasis",
+    "egp.c2.word-order.cleft-and-pseudo-cleft-focus"
   ],
   "archetype": "highlight",
   "lessons": {

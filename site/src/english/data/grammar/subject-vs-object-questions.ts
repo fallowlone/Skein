@@ -17,7 +17,8 @@ export const topic: GrammarTopic = {
   ],
   "family": "questions",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.questions-negation.subject-vs-object-questions",
+    "egp.a2.questions-negation.wh-questions-past-and-present"
   ],
   "archetype": "contrast-pair",
   "lessons": {

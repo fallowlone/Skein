@@ -17,7 +17,10 @@ export const topic: GrammarTopic = {
   ],
   "family": "conjunctions",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.discourse-cohesion.linkers-of-contrast",
+    "egp.b2.clauses.concession-clauses-although-though",
+    "egp.c1.clauses.concessive-and-purpose-subordination",
+    "egp.c2.clauses.fronted-and-nominal-relatives"
   ],
   "archetype": "contrast-pair",
   "lessons": {

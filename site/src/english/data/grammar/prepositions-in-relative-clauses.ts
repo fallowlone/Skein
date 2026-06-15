@@ -16,7 +16,8 @@ export const topic: GrammarTopic = {
   ],
   "family": "relative-clauses",
   "egp": [
-    "EGP:best-effort"
+    "egp.b2.clauses.relative-clauses-with-prepositions",
+    "egp.c2.prepositions.preposition-stranding-vs-pied-piping"
   ],
   "archetype": "swap",
   "lessons": {

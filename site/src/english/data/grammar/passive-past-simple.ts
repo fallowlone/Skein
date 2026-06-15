@@ -17,7 +17,12 @@ export const topic: GrammarTopic = {
   ],
   "family": "passive",
   "egp": [
-    "EGP:best-effort"
+    "egp.b1.passive.past-simple-passive",
+    "egp.b1.passive.passive-with-by-agent",
+    "egp.b2.passive.passive-by-agent-choice",
+    "egp.c1.passive.passive-for-focus-and-cohesion",
+    "egp.c2.passive.agentless-passive-for-focus",
+    "egp.c2.passive.get-passive-and-stative-passive"
   ],
   "archetype": "transformation",
   "lessons": {
