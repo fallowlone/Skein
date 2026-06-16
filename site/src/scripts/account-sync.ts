@@ -75,7 +75,11 @@ export async function fetchMe(): Promise<{
   try {
     const r = await fetch("/api/me", { credentials: "same-origin" });
     if (!r.ok) return null;
-    return await r.json();
+    const data = await r.json();
+    // /api/me answers 200 {authenticated:false} for anonymous visitors (it no
+    // longer 401s, which used to log a console error). Treat that as signed-out.
+    if (!data || data.authenticated === false || !data.login) return null;
+    return data;
   } catch { return null; }
 }
 
