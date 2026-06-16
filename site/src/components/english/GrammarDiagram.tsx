@@ -13,6 +13,39 @@ const CHIP_PAD = 14;
 const TICK_H = 8;
 const CHIP_DEFAULT_W = 100;
 
+/**
+ * Compute a font-size that keeps `text` within `maxPx` SVG units.
+ * Uses a simple character-count heuristic (assumes average char ≈ baseFontSize * 0.6 wide),
+ * clamped to [minFontSize, baseFontSize].
+ */
+function fitFontSize(
+  text: string,
+  maxPx: number,
+  baseFontSize: number,
+  minFontSize: number,
+): number {
+  const avgCharWidth = baseFontSize * 0.6;
+  const fitsAtBase = Math.floor(maxPx / avgCharWidth);
+  const len = text.length;
+  if (len <= fitsAtBase) return baseFontSize;
+  const scaled = Math.floor((baseFontSize * fitsAtBase) / len);
+  return Math.max(scaled, minFontSize);
+}
+
+/**
+ * Return `textLength` and `lengthAdjust` props when the text still risks
+ * overflowing at the given font size (backstop using a tighter char-width estimate).
+ */
+function backstopLength(
+  text: string,
+  maxPx: number,
+  fontSize: number,
+): { textLength?: number; lengthAdjust?: "spacingAndGlyphs" } {
+  const estimated = text.length * fontSize * 0.62;
+  if (estimated <= maxPx) return {};
+  return { textLength: Math.floor(maxPx), lengthAdjust: "spacingAndGlyphs" };
+}
+
 function midLift(from: Pt, to: Pt, lift: number): Pt {
   return {
     x: (from.x + to.x) / 2,
@@ -25,20 +58,35 @@ function renderPrim(p: Prim & { order?: number }, idx: number) {
   const stagger: preact.JSX.CSSProperties = { "--o": o } as preact.JSX.CSSProperties;
 
   switch (p.k) {
-    case "genre":
+    case "genre": {
+      // genre is left-anchored at p.x; allow up to x=760 from its anchor.
+      const gBase = 11;
+      const gMin = 9;
+      const gMax = Math.max(760 - p.x, 80);
+      const genreText = p.text.toUpperCase();
+      const genreFs = fitFontSize(genreText, gMax, gBase, gMin);
+      const genreBackstop = backstopLength(genreText, gMax, genreFs);
       return (
         <text
           key={`genre-${idx}`}
           x={p.x}
           y={p.y}
           class="gd-genre gd-reveal"
-          style={stagger}
+          style={{ ...stagger, fontSize: `${genreFs}px` }}
+          {...genreBackstop}
         >
-          {p.text.toUpperCase()}
+          {genreText}
         </text>
       );
+    }
 
-    case "formula":
+    case "formula": {
+      // formula is centered at x=400; max usable width ~700px (50px margin each side).
+      const fBase = 13;
+      const fMin = 9;
+      const fMax = 700;
+      const formulaFs = fitFontSize(p.text, fMax, fBase, fMin);
+      const formulaBackstop = backstopLength(p.text, fMax, formulaFs);
       return (
         <text
           key={`formula-${idx}`}
@@ -46,11 +94,13 @@ function renderPrim(p: Prim & { order?: number }, idx: number) {
           y={p.y}
           text-anchor="middle"
           class="gd-formula gd-reveal"
-          style={stagger}
+          style={{ ...stagger, fontSize: `${formulaFs}px` }}
+          {...formulaBackstop}
         >
           {p.text}
         </text>
       );
+    }
 
     case "axis": {
       const markerAttr = p.arrow ? MARKER_ID : undefined;
@@ -176,6 +226,12 @@ function renderPrim(p: Prim & { order?: number }, idx: number) {
     case "chip": {
       const w = p.w ?? CHIP_DEFAULT_W;
       const tone = p.tone ?? "ink";
+      // chip text must fit within (w - 2*CHIP_PAD) horizontal space.
+      const cBase = 12;
+      const cMin = 9;
+      const cMax = Math.max(w - CHIP_PAD * 2, 20);
+      const chipFs = fitFontSize(p.text, cMax, cBase, cMin);
+      const chipBackstop = backstopLength(p.text, cMax, chipFs);
       return (
         <g key={`chip-${idx}`} class={`gd-chip gd-chip--${tone} gd-reveal`} style={stagger}>
           <rect
@@ -191,6 +247,8 @@ function renderPrim(p: Prim & { order?: number }, idx: number) {
             y={p.y + 5}
             text-anchor="middle"
             class="gd-chip-text"
+            style={{ fontSize: `${chipFs}px` }}
+            {...chipBackstop}
           >
             {p.text}
           </text>
