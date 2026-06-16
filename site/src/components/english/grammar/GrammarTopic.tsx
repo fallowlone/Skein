@@ -6,7 +6,7 @@ import type { Locale } from "~/i18n";
 import type { Bi } from "~/english/types";
 import type { Cefr, GrammarFamily, GrammarTopic as Topic } from "~/english/grammar-types";
 import { resolveAnimation } from "~/english/animations/archetype-map";
-import GrammarAnimation from "~/components/english/GrammarAnimation";
+import { GrammarDiagram } from "~/components/english/GrammarDiagram";
 import { englishState, getPlacement, grammarCardOf } from "~/english/state";
 import { familyHue, isLevelLocked, masteryView } from "./ui";
 import { gt, masteryStateLabel } from "./strings";
@@ -46,8 +46,8 @@ export default function GrammarTopic({ lang, topic, familyTitle, related, crossS
   const levelLocked = isLevelLocked(level, band);
   const reduced = prefersReduced();
 
-  // Stable, memoised animation doc (the island re-inits if this identity changes).
-  const doc = useMemo(() => resolveAnimation(topic)?.doc() ?? null, [topic.id]);
+  // Resolve the editorial Scene factory (stable per topic+lang).
+  const scene = useMemo(() => resolveAnimation(topic, lang)?.scene() ?? null, [topic.id, lang]);
 
   const mv = masteryView(grammarCardOf(topic.id), now);
   const dueLabel =
@@ -139,8 +139,8 @@ export default function GrammarTopic({ lang, topic, familyTitle, related, crossS
                     {gt("reduced_motion", lang)}
                   </span>
                 )}
-                {doc ? (
-                  <GrammarAnimation doc={doc} reducedMotion={reduced} label={topic.title[lang]} />
+                {scene ? (
+                  <GrammarDiagram scene={scene} reducedMotion={reduced} label={topic.title[lang]} />
                 ) : (
                   <div class="contour-field" />
                 )}
