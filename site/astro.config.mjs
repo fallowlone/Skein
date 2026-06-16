@@ -12,6 +12,14 @@ import sitemap from "@astrojs/sitemap";
 export default defineConfig({
   site: "https://fallowlone.com",
   output: "static",
+  // Per-shard cache isolation for the parallel build. The content-layer data
+  // store lives at `${cacheDir}/data-store.json` and is written atomically
+  // (write `.tmp` → rename). When N shards share the default
+  // `node_modules/.astro`, they race on that single file: shard A's rename
+  // consumes the shared `.tmp` and shard B's rename then fails with ENOENT.
+  // parallel-build.mjs sets ASTRO_CACHE_DIR per shard so each owns its store.
+  // Unset (serial / incremental build) → Astro's default `node_modules/.astro`.
+  cacheDir: process.env.ASTRO_CACHE_DIR || undefined,
   // Render pages serially during the static build. The site emits ~4.2k pages;
   // concurrency >1 holds multiple render contexts in heap at once and pushed the
   // Cloudflare Pages 8GB builder into an OOM (heap limit) once all tracks landed.
