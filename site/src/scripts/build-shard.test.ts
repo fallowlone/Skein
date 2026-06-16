@@ -40,6 +40,22 @@ describe("build-shard partition", () => {
   }
 });
 
+describe("shardPaths partition", () => {
+  it("is disjoint and complete across N shards", () => {
+    const keys = Array.from({ length: 5000 }, (_, i) => `key-${i}`);
+    const N = 3;
+    const seen = new Set<string>();
+    for (let index = 0; index < N; index++) {
+      const slice = shardPaths(keys, (k) => k, { index, total: N });
+      for (const k of slice) {
+        expect(seen.has(k)).toBe(false);
+        seen.add(k);
+      }
+    }
+    expect(seen.size).toBe(keys.length);
+  });
+});
+
 describe("shardConfig env parsing", () => {
   it("defaults to a single full shard", () => {
     expect(shardConfig({})).toEqual({ index: 0, total: 1 });
