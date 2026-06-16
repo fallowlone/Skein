@@ -168,10 +168,9 @@ export function buildSwapScene(d: DiagramInput): Scene {
 export function buildHighlightScene(d: DiagramInput): Scene {
   const prims: P[] = [...header(d)];
   const tokens = d.labels.length ? d.labels : d.items.length ? d.items : ["token"];
-  // Focus index: archetypeParams may carry a numeric `focus`, else use first item if it parses, else middle
-  const rawFocus = (d as unknown as { archetypeParams?: { focus?: unknown } }).archetypeParams?.focus;
-  const numericFocus = typeof rawFocus === "number" ? rawFocus : parseInt(String(rawFocus), 10);
-  const focusIdx = !isNaN(numericFocus) && numericFocus >= 0 && numericFocus < tokens.length
+  // Focus index: d.focus carries a pre-validated numeric index from toDiagramInput, else middle
+  const numericFocus = d.focus;
+  const focusIdx = (numericFocus !== undefined && numericFocus >= 0 && numericFocus < tokens.length)
     ? numericFocus
     : Math.floor((tokens.length - 1) / 2);
 
