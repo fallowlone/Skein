@@ -132,5 +132,97 @@ export function buildBranchScene(d: DiagramInput): Scene {
   return { prims };
 }
 
+/** scale: stacked chips growing upward — base solid-toned, top accent */
+export function buildScaleScene(d: DiagramInput): Scene {
+  const prims: P[] = [...header(d)];
+  const levels = d.labels.length ? d.labels : d.items.length ? d.items : ["base"];
+  // y spread: base at 330, top at 120; chips get progressively wider towards the top
+  const count = levels.length;
+  const yBase = 330, yTop = 120;
+  levels.forEach((text, i) => {
+    const y = count === 1 ? yBase : yBase - (i * (yBase - yTop)) / (count - 1);
+    // Widen chips from base (narrowest) to top (widest)
+    const w = 120 + i * (80 / Math.max(count - 1, 1));
+    const tone: "ink" | "accent" = i === count - 1 ? "accent" : "ink";
+    prims.push({ k: "chip", text, x: 400, y, w, tone, order: 2 + i });
+  });
+  if (d.caption) prims.push({ k: "caption", text: d.caption, x: 400, y: 400, order: 2 + count });
+  return { prims };
+}
+
+/** swap: two chips with distinct `order` values so CSS slides them past each other */
+export function buildSwapScene(d: DiagramInput): Scene {
+  const prims: P[] = [...header(d)];
+  const leftText = d.labels[0] ?? d.items[0] ?? "A";
+  const rightText = d.labels[1] ?? d.items[1] ?? "B";
+  // Distinct orders drive the CSS reveal stagger; reduced-motion shows final state
+  prims.push(
+    { k: "chip", text: leftText, x: 250, y: 225, tone: "accent", order: 2 },
+    { k: "chip", text: rightText, x: 550, y: 225, tone: "ink", order: 4 },
+  );
+  if (d.caption) prims.push({ k: "caption", text: d.caption, x: 400, y: 340, order: 5 });
+  return { prims };
+}
+
+/** highlight: token row with exactly one `pulse` under the focus token */
+export function buildHighlightScene(d: DiagramInput): Scene {
+  const prims: P[] = [...header(d)];
+  const tokens = d.labels.length ? d.labels : d.items.length ? d.items : ["token"];
+  // Focus index: archetypeParams may carry a numeric `focus`, else use first item if it parses, else middle
+  const rawFocus = (d as unknown as { archetypeParams?: { focus?: unknown } }).archetypeParams?.focus;
+  const numericFocus = typeof rawFocus === "number" ? rawFocus : parseInt(String(rawFocus), 10);
+  const focusIdx = !isNaN(numericFocus) && numericFocus >= 0 && numericFocus < tokens.length
+    ? numericFocus
+    : Math.floor((tokens.length - 1) / 2);
+
+  const X0 = 170, X1 = 630;
+  const xs = tokens.length === 1
+    ? [400]
+    : tokens.map((_, i) => X0 + (i * (X1 - X0)) / (tokens.length - 1));
+
+  const Y = 225;
+  tokens.forEach((text, i) => {
+    const x = xs[i] ?? 400;
+    prims.push({ k: "label", text, x, y: Y, weight: "mono", order: 2 + i });
+    if (i === focusIdx) {
+      // pulse width approximates chip text length × char-width constant
+      const pw = Math.max(60, text.length * 10);
+      prims.push({ k: "pulse", x, y: Y + 18, w: pw, order: 2 + i });
+    }
+  });
+  if (d.caption) prims.push({ k: "caption", text: d.caption, x: 400, y: 340, order: 2 + tokens.length });
+  return { prims };
+}
+
+/** slot-fill: chips in a row; the focus slot is rendered hollow (the "to fill" gap) */
+export function buildSlotFillScene(d: DiagramInput): Scene {
+  const prims: P[] = [...header(d)];
+  const slots = d.labels.length ? d.labels : d.items.length ? d.items : ["___"];
+  // Focus slot (hollow): first blank-like label ("___", "…", empty) or index 0
+  const hollowIdx = slots.findIndex((s) => /^_+$/.test(s.trim()) || s.trim() === "…" || s.trim() === "") ?? 0;
+  const focusIdx = hollowIdx >= 0 ? hollowIdx : 0;
+
+  const X0 = 150, X1 = 650;
+  const xs = slots.length === 1
+    ? [400]
+    : slots.map((_, i) => X0 + (i * (X1 - X0)) / (slots.length - 1));
+
+  const Y = 225;
+  slots.forEach((text, i) => {
+    const x = xs[i] ?? 400;
+    if (i === focusIdx) {
+      // Render hollow node as the gap indicator + a label underneath
+      prims.push(
+        { k: "node", x, y: Y, fill: "hollow", d: 28, order: 2 + i },
+        { k: "label", text: text || "?", x, y: Y + 45, weight: "mono", order: 2 + i },
+      );
+    } else {
+      prims.push({ k: "chip", text, x, y: Y, tone: "ink", order: 2 + i });
+    }
+  });
+  if (d.caption) prims.push({ k: "caption", text: d.caption, x: 400, y: 360, order: 2 + slots.length });
+  return { prims };
+}
+
 // Re-export VIEW so consumers don't need a second import
 export { VIEW };
