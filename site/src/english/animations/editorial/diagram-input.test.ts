@@ -27,4 +27,16 @@ describe("toDiagramInput", () => {
     const empty = { id: "x", title: { en: "X" }, cefr: "A1", levels: [], family: "unclassified", archetype: "timeline", lessons: {}, related: [], crossTopic: [], egp: [] } as unknown as GrammarTopic;
     expect(() => toDiagramInput(empty, "en")).not.toThrow();
   });
+  it("maps archetypeParams.focus (number) to d.focus", () => {
+    const withFocus = { ...base, archetypeParams: { labels: ["a", "b", "c"], focus: 2 } } as unknown as GrammarTopic;
+    expect(toDiagramInput(withFocus, "en").focus).toBe(2);
+  });
+  it("maps archetypeParams.focus (string '1') to d.focus", () => {
+    const withFocusStr = { ...base, archetypeParams: { labels: ["a", "b", "c"], focus: "1" } } as unknown as GrammarTopic;
+    expect(toDiagramInput(withFocusStr, "en").focus).toBe(1);
+  });
+  it("leaves focus undefined when archetypeParams has no focus", () => {
+    const noFocus = { ...base, archetypeParams: { labels: ["a", "b"] } } as unknown as GrammarTopic;
+    expect(toDiagramInput(noFocus, "en").focus).toBeUndefined();
+  });
 });

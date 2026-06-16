@@ -1,8 +1,7 @@
 import "./grammar-diagram.css";
 import type { Scene, Prim, Pt } from "~/english/animations/editorial/scene-types";
-import type { Lang } from "~/types/index";
 
-type Props = { scene: Scene; reducedMotion?: boolean; lang: Lang };
+type Props = { scene: Scene; reducedMotion?: boolean; label?: string };
 
 // Arrowhead marker id — unique to avoid clashing with other SVG markers on the page.
 const MARKER_ID = "gd-arrow";
@@ -303,7 +302,7 @@ function renderPrim(p: Prim & { order?: number }, idx: number) {
   }
 }
 
-export function GrammarDiagram({ scene, reducedMotion = false }: Props) {
+export function GrammarDiagram({ scene, reducedMotion = false, label }: Props) {
   const rootClass = ["gdiagram", reducedMotion ? "reduced" : ""].filter(Boolean).join(" ");
 
   return (
@@ -312,7 +311,7 @@ export function GrammarDiagram({ scene, reducedMotion = false }: Props) {
       xmlns="http://www.w3.org/2000/svg"
       class={rootClass}
       role="img"
-      aria-label="Grammar diagram"
+      aria-label={label ?? "Grammar diagram"}
     >
       <defs>
         {/* Arrowhead marker */}
