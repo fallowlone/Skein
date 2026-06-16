@@ -11,6 +11,7 @@ export type DiagramInput = {
   caption?: string;         // examples[0].note OR a short gloss
   labels: string[];         // archetypeParams.labels (fallback ["past","now","future"] for timeline)
   items: string[];          // archetypeParams.items
+  focus?: number;           // archetypeParams.focus — highlight scene focus token index
 };
 
 const STOP = new Set(["the","a","an","i","you","we","they","he","she","it","have","has","to","is"]);
@@ -25,6 +26,7 @@ export function toDiagramInput(topic: GrammarTopic, lang: Lang): DiagramInput {
   const ex0 = lesson?.examples?.[0];
   const params = topic.archetypeParams ?? {};
   const asArr = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : typeof v === "string" ? [v] : []);
+  const rawFocus = params.focus;
   return {
     archetype: topic.archetype,
     family: topic.family,
@@ -34,5 +36,6 @@ export function toDiagramInput(topic: GrammarTopic, lang: Lang): DiagramInput {
     caption: ex0?.note?.[lang] ?? ex0?.note?.en ?? undefined,
     labels: asArr(params.labels),
     items: asArr(params.items),
+    focus: (rawFocus !== undefined && !Number.isNaN(Number(rawFocus))) ? Number(rawFocus) : undefined,
   };
 }

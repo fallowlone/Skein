@@ -140,7 +140,7 @@ export default function GrammarTopic({ lang, topic, familyTitle, related, crossS
                   </span>
                 )}
                 {scene ? (
-                  <GrammarDiagram scene={scene} reducedMotion={reduced} lang={lang} />
+                  <GrammarDiagram scene={scene} reducedMotion={reduced} label={topic.title[lang]} />
                 ) : (
                   <div class="contour-field" />
                 )}
