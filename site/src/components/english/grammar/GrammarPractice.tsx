@@ -2,7 +2,7 @@
 // from the topic's committed gen spec (pure, seeded engine), one at a time, with
 // calm correct/incorrect feedback. FSRS grades behind the scenes. Cross-topic
 // mixing widens the pool; BYOK affordance shows only when a key is connected.
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import type { Bi } from "~/english/types";
 import type { Cefr, TopicGenSpec } from "~/english/grammar-types";
@@ -10,6 +10,7 @@ import type { GeneratedExercise } from "~/english/practice-engine/types";
 import { generateFromSpec } from "~/english/practice-engine/generate";
 import { compositeFromSpecs } from "~/english/practice-engine/cross-topic";
 import { gradeGrammarTopic } from "~/english/state";
+import { keyStatus } from "~/english/byok";
 import { gt } from "./strings";
 
 export type CrossSpec = { id: string; spec: TopicGenSpec };
@@ -41,6 +42,17 @@ export default function GrammarPractice({
   const [value, setValue] = useState("");
   const [chosen, setChosen] = useState<number | null>(null);
   const [answered, setAnswered] = useState(false);
+
+  // BYOK affordance shows once an Anthropic key is connected on THIS device. The
+  // key lives only client-side (IndexedDB), so the SSR-passed `byok` prop is
+  // always false — detect after mount. Mirrors KeyEntry's keyStatus() probe.
+  const [keyConnected, setKeyConnected] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    keyStatus().then((s) => { if (alive && s !== "none") setKeyConnected(true); });
+    return () => { alive = false; };
+  }, []);
+  const showByok = byok || keyConnected;
 
   function draw(stepN: number, useCross: boolean, rnd: number): GeneratedExercise | null {
     const seed = seedBase + rnd * 9973 + stepN * 7;
@@ -183,7 +195,7 @@ export default function GrammarPractice({
         </div>
       )}
 
-      {byok && !complete && (
+      {showByok && !complete && (
         <div class="byok-more">
           <span class="bm-key">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
