@@ -20,6 +20,10 @@ function runShard(index) {
         SHARD_INDEX: String(index),
         SHARD_TOTAL: String(N),
         NODE_OPTIONS: `--max-old-space-size=${HEAP}`,
+        // Private content-layer cache per shard. Without this all shards share
+        // node_modules/.astro/data-store.json and race on its atomic write
+        // (tmp → rename) → ENOENT crash. Each shard owns its own store dir.
+        ASTRO_CACHE_DIR: resolve(SITE_ROOT, "node_modules", `.astro-shard-${index}`),
       },
     });
     child.on("exit", (code) =>
