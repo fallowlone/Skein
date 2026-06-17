@@ -51,6 +51,24 @@ export function serializeCookie(name: string, value: string, opts: CookieOpts = 
   return parts.join("; ");
 }
 
+/**
+ * Non-HttpOnly companion to the session cookie. It carries no auth power — just
+ * a readable "1" so the client can skip the /api/me round trip entirely when no
+ * session could exist (anonymous visitors, i.e. the common public-page case and
+ * every Lighthouse run). The HttpOnly session cookie remains the only thing the
+ * server trusts. Set on login, cleared on logout / account deletion.
+ */
+export const AUTH_HINT_COOKIE = "awesome.auth";
+
+export function authHintCookie(present: boolean, secure: boolean): string {
+  return serializeCookie(AUTH_HINT_COOKIE, present ? "1" : "", {
+    httpOnly: false,
+    secure,
+    sameSite: "Lax",
+    maxAge: present ? 60 * 60 * 24 * 30 : 0,
+  });
+}
+
 export function parseCookies(header: string | null): Record<string, string> {
   const out: Record<string, string> = {};
   if (!header) return out;
