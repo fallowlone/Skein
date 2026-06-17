@@ -2,7 +2,7 @@
 import type { Env, RequestData } from "../lib/types";
 import { deleteUser } from "../lib/db";
 import { destroyAllSessions } from "../lib/session";
-import { serializeCookie } from "../lib/cookies";
+import { serializeCookie, authHintCookie } from "../lib/cookies";
 import { json, error } from "../lib/response";
 
 function cookieName(env: Env): string { return env.COOKIE_NAME ?? "session"; }
@@ -18,5 +18,6 @@ export const onRequestDelete: PagesFunction<Env, any, RequestData> = async (ctx)
   // the cookie would never be deleted client-side.
   const secure = new URL(ctx.request.url).protocol === "https:";
   headers.append("Set-Cookie", serializeCookie(cookieName(ctx.env), "", { httpOnly: true, secure, maxAge: 0 }));
+  headers.append("Set-Cookie", authHintCookie(false, secure));
   return json({ ok: true }, 200, headers);
 };
