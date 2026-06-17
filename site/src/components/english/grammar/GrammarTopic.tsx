@@ -12,6 +12,7 @@ import { familyHue, isLevelLocked, masteryView } from "./ui";
 import { gt, masteryStateLabel } from "./strings";
 import { MasteryRing } from "./MasteryRing";
 import GrammarPractice, { type CrossSpec } from "./GrammarPractice";
+import { Prose } from "./Prose";
 
 export type RelatedTopic = { id: string; title: Bi; family: GrammarFamily };
 
@@ -157,14 +158,14 @@ export default function GrammarTopic({ lang, topic, familyTitle, related, crossS
                 <div class="teach">
                   <div class="teach-block">
                     <span class="prose-label"><span class="pl-gold">◆</span>{gt("explain_primary", lang)}</span>
-                    <p class="prose-primary">{lesson.explain.ru}</p>
+                    <div class="prose-primary"><Prose md={lesson.explain.ru} /></div>
                   </div>
                   {lesson.explain.en && (
                     <div class="teach-block">
-                      <p class="prose-secondary">
+                      <div class="prose-secondary">
                         <span class="ps-tag">{gt("explain_secondary", lang)}</span>
-                        {lesson.explain.en}
-                      </p>
+                        <Prose md={lesson.explain.en} />
+                      </div>
                     </div>
                   )}
                 </div>

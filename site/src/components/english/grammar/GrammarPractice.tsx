@@ -61,7 +61,12 @@ export default function GrammarPractice({
       const items = compositeFromSpecs(topicId, spec, sib.id, sib.spec, { count: 1, seed, level });
       if (items.length) return items[0];
     }
-    const items = generateFromSpec(topicId, spec, { count: 1, seed, level });
+    // Prefer items at the selected level. But a topic's templates span only part
+    // of its CEFR range (e.g. A1–A2 templates under an A0-default selector), so a
+    // level filter can match zero templates and strand the runner on the spinner.
+    // Fall back to the unfiltered pool so practice always has items to draw.
+    let items = generateFromSpec(topicId, spec, { count: 1, seed, level });
+    if (!items.length) items = generateFromSpec(topicId, spec, { count: 1, seed });
     return items[0] ?? null;
   }
 
