@@ -72,6 +72,13 @@ export async function fetchMe(): Promise<{
   login: string; nickname: string; avatarUrl: string | null;
   createdAt: number; termsAccepted: boolean; termsVersion: string;
 } | null> {
+  // Anonymous visitors (the common public-page case, and every Lighthouse run)
+  // carry no session, so /api/me would only ever answer {authenticated:false}.
+  // Skip the request entirely unless the readable hint cookie set at login is
+  // present — keeps /api/me off the page's initial network path for guests.
+  if (typeof document !== "undefined" && !/(?:^|;\s*)awesome\.auth=1(?:;|$)/.test(document.cookie)) {
+    return null;
+  }
   try {
     const r = await fetch("/api/me", { credentials: "same-origin" });
     if (!r.ok) return null;
