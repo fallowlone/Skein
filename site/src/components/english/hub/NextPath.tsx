@@ -58,6 +58,12 @@ export default function NextPath({ lang }: { lang: Locale }) {
           readRoute: "→ Reading (here)",
           readCite: "comprehensible input · Krashen",
           openReader: "Open reader",
+          gramTitle: "Drill a grammar topic",
+          gramReason:
+            "Targeted pattern practice — items generated on the fly with instant feedback, scheduled like your vocabulary.",
+          gramRoute: "→ Grammar (here)",
+          gramCite: "explicit practice · DeKeyser",
+          openGrammar: "Open grammar",
           speakTitle: "Explain a concept aloud — 90 seconds",
           speakReason:
             "You can read it; now produce it. Your AI coach plays a skeptical reviewer and probes follow-ups.",
@@ -94,6 +100,12 @@ export default function NextPath({ lang }: { lang: Locale }) {
           readRoute: "→ Чтение (здесь)",
           readCite: "понятный ввод · Krashen",
           openReader: "Открыть ридер",
+          gramTitle: "Отработай тему грамматики",
+          gramReason:
+            "Точечная практика паттернов — задания генерируются на лету, обратная связь сразу, расписание как у словаря.",
+          gramRoute: "→ Грамматика (здесь)",
+          gramCite: "осознанная практика · DeKeyser",
+          openGrammar: "Открыть грамматику",
           speakTitle: "Объясни концепцию вслух — 90 секунд",
           speakReason:
             "Прочитать можешь; теперь произведи. ИИ-коуч играет придирчивого ревьюера и задаёт уточнения.",
@@ -136,6 +148,17 @@ export default function NextPath({ lang }: { lang: Locale }) {
       cta: L.openReader,
     });
   }
+
+  actions.push({
+    mode: "own",
+    title: L.gramTitle,
+    reason: L.gramReason,
+    minutes: L.minutes(6),
+    route: L.gramRoute,
+    href: `/${lang}/english/grammar`,
+    cite: L.gramCite,
+    cta: L.openGrammar,
+  });
 
   actions.push({
     mode: "delegate",
