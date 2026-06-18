@@ -22,6 +22,7 @@ import AdvancedKnobs from "./planning/AdvancedKnobs";
 import TodayFocus from "./planning/TodayFocus";
 import PathConfigDrawer from "./PathConfigDrawer";
 import UnitProbe from "./UnitProbe";
+import PlacementMeter from "./planning/PlacementMeter";
 
 const L = {
   en: {
@@ -36,6 +37,7 @@ const L = {
     pathHead: "Next units — dependency-ordered", pathNote: "Prereqs first · concepts you know are skipped",
     dlHead: "Deadline & exam-prep mode", dlNote: "An honest, dated schedule from your real availability",
     secGoal: "01 · GOAL", secDl: "02 · INSTRUMENT", secPath: "03 · PATH", secMap: "04 · INSTRUMENT",
+    placeHead: "How well-placed are you?", placeNote: "Measured vs guessed across your goal",
   },
   ru: {
     level: "Уровень", xp: "XP", steps: "Шагов пройдено",
@@ -49,6 +51,7 @@ const L = {
     pathHead: "Следующие юниты — по зависимостям", pathNote: "Пререквизиты вперёд · известное пропускается",
     dlHead: "Дедлайн и подготовка к экзамену", dlNote: "Честный план по датам из твоей реальной загрузки",
     secGoal: "01 · ЦЕЛЬ", secDl: "02 · ИНСТРУМЕНТ", secPath: "03 · ПУТЬ", secMap: "04 · ИНСТРУМЕНТ",
+    placeHead: "Насколько точно ты размещён?", placeNote: "Измерено и угадано по твоей цели",
   },
 } as const;
 
@@ -82,6 +85,17 @@ export default function PathView({ lang }: { lang: Locale }) {
         </div>
         <GoalSection lang={lang} />
       </section>
+
+      {/* INSTRUMENT · placement completeness */}
+      {!isColdStart && (
+        <section class="screen-section" aria-labelledby="place-h">
+          <div class="sec-head">
+            <h2 id="place-h">{t.placeHead}</h2>
+            <span class="sec-note">{t.placeNote}</span>
+          </div>
+          <PlacementMeter lang={lang} />
+        </section>
+      )}
 
       {/* 02 · INSTRUMENT — deadline */}
       <section class="screen-section" aria-labelledby="dl-h">
