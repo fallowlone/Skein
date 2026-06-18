@@ -6,7 +6,10 @@ const diag = new Set(JSON.parse(readFileSync("src/content/path/diagnostics-index
 
 test("worklist meaningfully expands coverage and excludes already-diagnosable", () => {
   const sum = wl.rows.reduce((n: number, r: { marginal: number }) => n + r.marginal, 0);
-  expect(sum).toBeGreaterThan(600);
+  // Summed marginal must be positive (real expansion), but NO fixed floor: the
+  // authoring campaign deliberately shrinks it — every authored bank moves its
+  // keystone out of the undiagnosed candidate set, lowering the remaining sum.
+  expect(sum).toBeGreaterThan(0);
   for (const r of wl.rows) expect(diag.has(r.id)).toBe(false);
   // marginals are non-increasing (greedy set-cover pick order)
   for (let i = 1; i < wl.rows.length; i++) {
