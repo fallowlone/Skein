@@ -273,7 +273,7 @@ function breakCycles(requiresMap, order) {
 // ---------------------------------------------------------------------------
 function practiceMinutes(unit) {
   const dir = join(PRACTICE, unit.track, unit.unitSlug);
-  if (!existsSync(dir)) return 0;
+  if (!existsSync(dir)) return { total: 0, exists: false };
   let total = 0;
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".json")) continue;
@@ -282,16 +282,30 @@ function practiceMinutes(unit) {
       for (const t of j.tasks || []) total += Number(t.estMin) || 0;
     } catch { /* skip malformed */ }
   }
-  return total;
+  return { total, exists: true };
 }
 
-function estMinOf(unit) {
+/**
+ * Pure helper — exported for tests.
+ * practiceMap: { [unitId: string]: number } — pre-computed practice minutes per unit.
+ *   key present → practice file existed (use practice + prose); fellBack = false.
+ *   key absent  → no practice dir; fell back to prose only; fellBack = true.
+ * proseMin: reading-time estimate from word count (already a number, not rounded).
+ * Returns { min: number, fellBack: boolean }.
+ */
+export function estMinFor(unitId, practiceMap, proseMin) {
+  const fellBack = !(unitId in practiceMap);
+  const practiceMin = fellBack ? 0 : practiceMap[unitId];
+  return { min: Math.max(5, Math.round(proseMin + practiceMin)), fellBack };
+}
+
+function estMinOf(unit, practiceMap) {
   let reading = 0;
   for (const l of unit.lessons) {
     if (l.slug === "00-synthetic") continue;
     reading += Math.ceil(l.words / WPM) * (DEPTH_FACTOR[l.level] ?? 1.0);
   }
-  return Math.max(5, Math.round(reading + practiceMinutes(unit)));
+  return estMinFor(unit.id, practiceMap, reading);
 }
 
 // ---------------------------------------------------------------------------
@@ -416,8 +430,16 @@ function main() {
     return { id, label: { en, ru }, track: primaryTrack(rec), band: bandOfConcept(rec), requires: kept.get(id) || [] };
   });
 
+  // Build practice map once: unitId → total practice minutes (key absent = no practice dir).
+  const practiceMap = {};
+  for (const u of units.values()) {
+    const { total, exists } = practiceMinutes(u);
+    if (exists) practiceMap[u.id] = total;
+  }
+
   // unit-concepts (sorted by unit id).
   const unitConceptsOut = {};
+  const fellBackUnits = [];
   for (const u of [...units.values()].sort((a, b) => a.id.localeCompare(b.id))) {
     const teaches = [...new Set(u.lessons.flatMap((l) => l.concepts))].sort();
     const teachSet = new Set(teaches);
@@ -429,7 +451,12 @@ function main() {
     for (const c of teaches) for (const r of authoredReqByConcept.get(c) ?? []) {
       if (!teachSet.has(r) && ptOf(r) === u.track) reqs.add(r);
     }
-    unitConceptsOut[u.id] = { teaches, requires: [...reqs].sort(), estMin: estMinOf(u) };
+    const { min: estMin, fellBack } = estMinOf(u, practiceMap);
+    if (fellBack) fellBackUnits.push(u.id);
+    unitConceptsOut[u.id] = { teaches, requires: [...reqs].sort(), estMin };
+  }
+  if (fellBackUnits.length) {
+    console.error(`[build-path-data] ${fellBackUnits.length} units used prose estMin (no practice dir): ${fellBackUnits.slice(0, 10).join(", ")}`);
   }
 
   const goals = buildGoals(concepts);
@@ -495,4 +522,4 @@ function main() {
   }, null, 2));
 }
 
-main();
+if (import.meta.main) main();
