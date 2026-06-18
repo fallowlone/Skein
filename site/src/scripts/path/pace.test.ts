@@ -56,4 +56,23 @@ describe("pace", () => {
     expect(p.doneMin).toBe(0);
     expect(p.status).toBe("behind");
   });
+
+  it("flags clamped when realized rate cannot finish within horizon", () => {
+    // Arrange a starved scenario: large remaining work (800 min), tiny realized rate
+    // (200/600 per planned min), only 1 future day of 30 min — far too few to cover 800*3=2400
+    // planned minutes needed → the loop exhausts and clamps to the last horizon day.
+    const p = pace({
+      ...base,
+      currentRequiredMin: 800,
+      futureDays: [{ date: iso(1), minutes: 30 }],
+    });
+    expect(p.clamped).toBe(true);
+  });
+
+  it("does not flag clamped when the projection fits within the horizon", () => {
+    // On-track base: 500 done / 500 remaining, rate = 500/600 ≈ 0.833 per planned min,
+    // need 500/0.833 ≈ 600 planned minutes = 5 study days of 120 min → fits in 40-day horizon.
+    const p = pace(base);
+    expect(p.clamped).toBe(false);
+  });
 });
