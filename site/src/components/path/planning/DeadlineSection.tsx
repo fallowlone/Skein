@@ -40,6 +40,7 @@ const L = {
     paceAhead: "Ahead of your planned pace",
     paceOnTrack: "On your planned pace",
     paceFinish: (d: string) => `projected finish ${d}`,
+    paceClamped: "Projection capped — actual finish may be later",
     fixHead: "How to make it fit",
     fixRaise: (h: number, save: number) => `+${fmtH(h)} h on each weekday — frees ${Math.round(save / 60)} h`,
     fixExtend: (d: number, save: number) => `Move the date +${d} days — frees ${Math.round(save / 60)} h`,
@@ -74,6 +75,7 @@ const L = {
     paceAhead: "С опережением графика",
     paceOnTrack: "В графике",
     paceFinish: (d: string) => `прогноз финиша ${d}`,
+    paceClamped: "Прогноз упёрся в горизонт — реальный финиш может быть позже",
     fixHead: "Как уложиться",
     fixRaise: (h: number, save: number) => `+${fmtH(h)} ч в каждый будний день — освободит ${Math.round(save / 60)} ч`,
     fixExtend: (d: number, save: number) => `Сдвинь дату на +${d} дн. — освободит ${Math.round(save / 60)} ч`,
@@ -332,6 +334,7 @@ function PaceRow({ lang }: { lang: Locale }) {
       <span class="pace-done">{t.paceDone(doneH, totalH)}</span>
       <span class="pace-state">{state}</span>
       {finish && p.status === "behind" && <span class="pace-finish">{t.paceFinish(finish)}</span>}
+      {p.clamped && <span class="pace-finish">{t.paceClamped}</span>}
     </div>
   );
 }

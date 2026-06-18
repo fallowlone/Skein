@@ -16,6 +16,10 @@ export interface Pace {
   status: PaceStatus;
   projectedFinishMs: number | null;
   behindDays: number;
+  /** True when the projected finish was pinned to the last horizon day because the realized
+   *  rate is too low to cover the remaining work within the supplied future-day calendar.
+   *  When true, the projected finish is optimistic — the real finish may be later. */
+  clamped: boolean;
 }
 
 export interface PaceInputs {
@@ -42,6 +46,7 @@ export function pace(inp: PaceInputs): Pace {
   // cover the remaining work inside it; null until there's a non-zero rate to extrapolate.
   const rate = elapsedAvailMin > 0 ? doneMin / elapsedAvailMin : 0;
   let projectedFinishMs: number | null = null;
+  let clamped = false;
   if (currentRequiredMin === 0) {
     projectedFinishMs = nowMs;
   } else if (rate > 0 && futureDays.length) {
@@ -50,7 +55,11 @@ export function pace(inp: PaceInputs): Pace {
       needAvail -= d.minutes;
       if (needAvail <= 0) { projectedFinishMs = Date.parse(`${d.date}T00:00:00Z`); break; }
     }
-    if (projectedFinishMs === null) projectedFinishMs = Date.parse(`${futureDays[futureDays.length - 1].date}T00:00:00Z`);
+    if (projectedFinishMs === null) {
+      // Rate is too low to finish within the supplied horizon; pin to the last day and flag it.
+      projectedFinishMs = Date.parse(`${futureDays[futureDays.length - 1].date}T00:00:00Z`);
+      clamped = true;
+    }
   }
   const behindDays = projectedFinishMs !== null && projectedFinishMs > targetMs
     ? Math.ceil((projectedFinishMs - targetMs) / DAY) : 0;
@@ -61,5 +70,5 @@ export function pace(inp: PaceInputs): Pace {
   else if (ratio > AHEAD) status = "ahead";
   else status = "on-track";
 
-  return { doneMin, expectedDoneMin, ratio, status, projectedFinishMs, behindDays };
+  return { doneMin, expectedDoneMin, ratio, status, projectedFinishMs, behindDays, clamped };
 }
