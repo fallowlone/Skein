@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
+import { fetchMe } from "~/scripts/account-sync";
+import { activateSyncIfSignedIn } from "~/scripts/user-state";
 
 type Me = { login: string; nickname: string; avatarUrl: string | null };
 
@@ -10,20 +12,17 @@ export default function AccountMenu({ lang }: { lang: Locale }) {
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Dynamic-import the sync scripts so they stay out of this island's idle
-    // bootstrap chunk (shortens the network dependency chain on the guest path,
-    // where fetchMe short-circuits without a session cookie).
-    void (async () => {
-      const { fetchMe } = await import("~/scripts/account-sync");
-      const m = await fetchMe();
+    // Statically imported (not dynamic): a dynamic import() turns account-sync
+    // into a separate chunk that can only load AFTER preact mounts the island,
+    // adding a serial hop to the LCP network-dependency chain. Bundled into the
+    // island chunk it loads in parallel with the runtime. fetchMe still
+    // short-circuits for guests via the auth-hint cookie, so no /api/me call.
+    void fetchMe().then((m) => {
       setMe(m);
       // Present on every Topic/Lesson page: flush learning progress to the server
       // as the user reads, not only when they open /account. No-op if not signed in.
-      if (m) {
-        const { activateSyncIfSignedIn } = await import("~/scripts/user-state");
-        void activateSyncIfSignedIn();
-      }
-    })();
+      if (m) void activateSyncIfSignedIn();
+    });
   }, []);
 
   // Dismiss the dropdown on outside click or Escape (a11y + expected UX).
