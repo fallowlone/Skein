@@ -1,9 +1,8 @@
 // src/lint/rules/path.ts
 //
 // Build-gate validators for the P1 path-engine data artifacts under
-// src/content/path/. Mirrors the runtime graph/override/goal semantics of
-// src/scripts/path/{graph,planner}.ts but is self-contained (no ~ alias), so it
-// runs in the standalone post-build lint process exactly like the other rules.
+// src/content/path/. Uses the shared goal-resolution module so it stays in
+// sync with the runtime planner automatically.
 //
 // Spec §8: DAG acyclic after overrides; every requires exists; every concept
 // taught by ≥1 unit; diagnostic/goal concepts exist; diagnosed concept has a
@@ -12,10 +11,11 @@
 
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { resolveGoalTargets } from "../../scripts/path/goal-resolve";
+import type { Concept, Goal } from "../../scripts/path/types";
 
 const BANDS = ["foundations", "surface", "middle", "advanced"] as const;
 type Band = (typeof BANDS)[number];
-const BAND_RANK: Record<Band, number> = { foundations: 0, surface: 1, middle: 2, advanced: 3 };
 
 export interface PathConceptLike {
   id: string;
@@ -91,45 +91,6 @@ function cycleNodes(ids: Set<string>, req: Map<string, string[]>): string[] {
   return [...ids].filter((id) => (indeg.get(id) ?? 0) > 0);
 }
 
-function resolveGoal(goal: PathGoalLike, concepts: PathConceptLike[]): string[] {
-  if (goal.target.concepts) return [...goal.target.concepts];
-  const rule = goal.target.rule ?? "";
-
-  // track-band>=<band>: middle+ concepts in the goal's CORE tracks (trackWeights >= 1) only.
-  // Mirrors planner.resolveGoalTargets — keep the two in sync.
-  const tb = rule.match(/^track-band>=(\w+)$/);
-  if (tb) {
-    const min = BAND_RANK[tb[1] as Band];
-    if (min === undefined) return [];
-    const core = new Set(
-      Object.entries(goal.trackWeights ?? {}).filter(([, w]) => (w ?? 0) >= 1).map(([t]) => t),
-    );
-    return concepts.filter((c) => core.has(c.track) && BAND_RANK[c.band as Band] >= min).map((c) => c.id);
-  }
-
-  // track-band=<lo>..<hi>: concepts in the goal's CORE tracks whose band is inside the inclusive
-  // range. Mirrors planner.resolveGoalTargets — keep the two in sync.
-  const tbr = rule.match(/^track-band=(\w+)\.\.(\w+)$/);
-  if (tbr) {
-    const lo = BAND_RANK[tbr[1] as Band];
-    const hi = BAND_RANK[tbr[2] as Band];
-    if (lo === undefined || hi === undefined) return [];
-    const core = new Set(
-      Object.entries(goal.trackWeights ?? {}).filter(([, w]) => (w ?? 0) >= 1).map(([t]) => t),
-    );
-    return concepts
-      .filter((c) => core.has(c.track) && BAND_RANK[c.band as Band] >= lo && BAND_RANK[c.band as Band] <= hi)
-      .map((c) => c.id);
-  }
-
-  const m = rule.match(/^band>=(\w+)$/);
-  if (m) {
-    const min = BAND_RANK[m[1] as Band];
-    if (min === undefined) return [];
-    return concepts.filter((c) => BAND_RANK[c.band as Band] >= min).map((c) => c.id);
-  }
-  return [];
-}
 
 /** Pure validator: returns a list of `path: …` errors (empty = clean). */
 export function validatePathData(data: PathData): string[] {
@@ -209,7 +170,7 @@ export function validatePathData(data: PathData): string[] {
   // goals resolve to ≥1 existing concept
   for (const g of goals) {
     if (!g.label?.en?.trim() || !g.label?.ru?.trim()) push(`goal "${g.id}" missing en/ru label`);
-    const targets = resolveGoal(g, concepts);
+    const targets = resolveGoalTargets(g as unknown as Goal, concepts as unknown as Concept[]);
     if (!targets.length) push(`goal "${g.id}" resolves to no concepts`);
     for (const t of g.target.concepts ?? []) if (!ids.has(t)) push(`goal "${g.id}" targets unknown concept "${t}"`);
   }
