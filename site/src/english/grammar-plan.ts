@@ -11,6 +11,15 @@ const MIN_PRACTICE = 5;
 export const MIN_REVIEW = 3;
 const MATURE_DAYS = 21; // mirrors the word/grammar mastery threshold in state.ts / ui.ts
 
+const W_GAP = 10, W_NOCARD = 30, W_WEAKCARD = 15, W_FOUND = 2;
+
+export function stepValue(topic: PlanTopic, card: CardState | undefined, missing: Set<string>, targetCefr: Cefr, now: number): number {
+  const gap = topic.egp.reduce((n, id) => n + (missing.has(id) ? 1 : 0), 0) * W_GAP;
+  const weakness = card ? (isMastered(card, now) ? 0 : W_WEAKCARD) : W_NOCARD;
+  const foundational = Math.max(0, cefrIndex(targetCefr) - cefrIndex(topic.cefr)) * W_FOUND;
+  return gap + weakness + foundational;
+}
+
 export type PlanTopic = { id: string; title: Bi; cefr: Cefr; levels: Cefr[]; egp: string[]; related: string[] };
 export type GrammarStepKind = "learn" | "review";
 export type GrammarStep = { topicId: string; cefr: Cefr; kind: GrammarStepKind; reason: Bi; estMin: number; value: number };
@@ -85,6 +94,33 @@ export function buildGrammarPlan(input: BuildPlanInput): GrammarPlan {
     if (ci > bi || ci > ti) continue; // hard band gate + target ceiling
     steps.push({ topicId: t.id, cefr: t.cefr, kind: "learn", reason: learnReason, estMin: estMin(t, target), value: 0 });
   }
-  // value + deterministic ordering + today-cap arrive in Task 4.
-  return { steps, today: [], currentBand: band, targetCefr: target };
+  const missing = new Set<string>(input.coverage.bands.flatMap((b) => b.missing));
+  // assign value to learn steps (reviews stay 0 — they sort first by kind anyway)
+  for (const s of steps) {
+    if (s.kind !== "learn") continue;
+    const t = topics.find((x) => x.id === s.topicId)!;
+    s.value = stepValue(t, cardOf(s.topicId), missing, target, now);
+  }
+  const relatedOf = new Map(topics.map((t) => [t.id, t.related] as const));
+  const present = new Set(steps.map((s) => s.topicId));
+  // cluster key: smallest id among {self} ∪ related present in this step set — keeps confusables adjacent.
+  const clusterKey = (id: string): string => {
+    const rel = (relatedOf.get(id) ?? []).filter((r) => present.has(r));
+    return [id, ...rel].sort()[0];
+  };
+  const kindRank = (k: GrammarStepKind) => (k === "review" ? 0 : 1);
+  steps.sort((a, b) =>
+    kindRank(a.kind) - kindRank(b.kind) ||
+    cefrIndex(a.cefr) - cefrIndex(b.cefr) ||
+    b.value - a.value ||
+    clusterKey(a.topicId).localeCompare(clusterKey(b.topicId)) ||
+    a.topicId.localeCompare(b.topicId),
+  );
+  const today: GrammarStep[] = [];
+  let used = 0;
+  for (const s of steps) {
+    if (used + s.estMin > input.dailyBudgetMin) continue;
+    today.push(s); used += s.estMin;
+  }
+  return { steps, today, currentBand: band, targetCefr: target };
 }
