@@ -2,7 +2,8 @@ import { useEffect, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { recordRetrieval, dismissRevisit } from "~/scripts/user-state";
 import { cardsFromRetrieval } from "~/scripts/review-harvest";
-import { addCard } from "~/scripts/review-state";
+import { addCard, recordReview } from "~/scripts/review-state";
+import type { Grade } from "~/scripts/progression/srs";
 import { t, type Locale } from "~/i18n";
 
 // Tolerant reader: lesson MDX passes `{ q, a }` (no per-question `id`), while the
@@ -49,7 +50,7 @@ const labels = {
 export default function RetrievalDrawer({ pieceSlug, id, lang, questions }: Props) {
   const slug = pieceSlug ?? id ?? "";
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
-  const [confidence, setConfidence] = useState<Record<string, number>>({});
+  const [graded, setGraded] = useState<Record<string, Grade>>({});
   const [completed, setCompleted] = useState(false);
   const l = labels[lang];
 
@@ -79,7 +80,6 @@ export default function RetrievalDrawer({ pieceSlug, id, lang, questions }: Prop
           const key = q.id ?? `${slug}-${i}`;
           const answer = q.answer ?? q.a;
           const isOpen = revealed[key];
-          const conf = confidence[key] ?? 0;
           return (
             <li key={key}>
               <div class="flex items-start gap-3">
@@ -114,20 +114,24 @@ export default function RetrievalDrawer({ pieceSlug, id, lang, questions }: Prop
                     ) : (
                       <>
                         <div class="flex items-center gap-1">
-                          {[1, 2, 3, 4, 5].map((v) => {
-                            const active = conf === v;
+                          {(["again", "hard", "good", "easy"] as const).map((grade) => {
+                            const active = graded[key] === grade;
                             return (
                               <button
-                                key={v}
+                                key={grade}
                                 type="button"
-                                onClick={() =>
-                                  setConfidence({ ...confidence, [key]: v })
-                                }
-                                class={`w-6 h-6 font-mono text-[11px] border rounded-[1px] transition-colors ${active ? "bg-ink text-paper border-ink" : "bg-transparent text-muted border-rule-strong hover:border-ink"}`}
-                                aria-label={`confidence ${v}`}
+                                onClick={() => {
+                                  setGraded({ ...graded, [key]: grade });
+                                  // Positional card key — matches cardsFromRetrieval's `${slug}::retrieval::${index}`.
+                                  // Not q.id (the React key); a JSX-bodied question has no seeded card and
+                                  // recordReview no-ops safely on the missing key.
+                                  recordReview(`${slug}::retrieval::${i}`, grade);
+                                }}
+                                class={`px-2 h-6 font-mono text-[11px] border rounded-[1px] transition-colors ${active ? "bg-ink text-paper border-ink" : "bg-transparent text-muted border-rule-strong hover:border-ink"}`}
+                                aria-label={`grade ${grade}`}
                                 aria-pressed={active}
                               >
-                                {v}
+                                {grade}
                               </button>
                             );
                           })}
