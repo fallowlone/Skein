@@ -13,9 +13,9 @@ import goalsJson from "~/content/path/goals.json";
 import diagnosticsIndex from "~/content/path/diagnostics-index.json";
 import unitsJson from "~/content/units.json";
 import tracksJson from "~/content/tracks.json";
-import { masteryOf } from "./knowledge";
+import { masteryOf, applyReviewEvidence } from "./knowledge";
 import { readAttempts, recordAttempt, type AttemptRec } from "~/scripts/practice-state";
-import { dueBefore, recordReview } from "~/scripts/review-state";
+import { dueBefore, recordReview, allCards, type Card } from "~/scripts/review-state";
 import { unitStruggleFractions } from "./practice-signal";
 import { buildDoNow, type DoNowItem } from "./do-now";
 import diagnosticsBundle from "~/content/path/diagnostics-bundle.json";
@@ -344,6 +344,48 @@ export function refreshPracticeSignal(): void {
   knowledge.value = next;
 }
 if (typeof window !== "undefined") refreshPracticeSignal();
+
+// Review-health weight: a fully-healthy unit → confidence 0.7 (above masteryThreshold ~0.6 = known);
+// a half-lapsed unit → 0.35 (below it → the concept re-enters the path via effectiveKnowledge).
+const REVIEW_EVIDENCE_WEIGHT = 0.7;
+
+// ── review evidence: SM-2 card health → concept confidence ─────────────────────
+// Pure (exported for tests): per-unit review health from the card store. healthFrac is the share of
+// a unit's REVIEWED cards (lastReviewedAt != null) currently in good standing. Unreviewed cards carry
+// no signal and are excluded; a unit with no reviewed cards is omitted from the map.
+export function unitReviewHealth(cards: Card[], now: number): Map<string, number> {
+  const reviewed = new Map<string, number>();
+  const healthy = new Map<string, number>();
+  for (const c of cards) {
+    if (c.lastReviewedAt == null) continue;
+    const seg = c.lessonKey.split("/");
+    if (seg.length < 2) continue;
+    const unitId = `${seg[0]}/${seg[1]}`;
+    reviewed.set(unitId, (reviewed.get(unitId) ?? 0) + 1);
+    const isHealthy = c.sched.reps >= 2 && c.dueAt > now && c.sched.lapses === 0;
+    if (isHealthy) healthy.set(unitId, (healthy.get(unitId) ?? 0) + 1);
+  }
+  const out = new Map<string, number>();
+  for (const [unitId, total] of reviewed) out.set(unitId, (healthy.get(unitId) ?? 0) / total);
+  return out;
+}
+
+// Fold per-unit review health into concept confidence. Mirror of refreshStudyEvidence: keeps the
+// knowledge reference when nothing changes (no persist churn on every load). SSR-safe.
+export function refreshReviewEvidence(): void {
+  if (typeof window === "undefined") return;
+  const now = Date.now();
+  const health = unitReviewHealth(allCards(), now);
+  if (!health.size) return;
+  const floor = config.value.weights.decayFloor;
+  let next = knowledge.value;
+  for (const [unitId, healthFrac] of health) {
+    const taught = teachesByUnit.get(unitId);
+    if (taught) next = applyReviewEvidence(next, taught, healthFrac, REVIEW_EVIDENCE_WEIGHT, floor, now);
+  }
+  knowledge.value = next;
+}
+if (typeof window !== "undefined") refreshReviewEvidence();
 
 // Due-review read-model (fixes computePath's srsDue: []). SSR-safe: [] when there is no window.
 export function dueReviews(now = Date.now()): { cardKey: string; lessonKey: string }[] {
