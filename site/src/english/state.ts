@@ -9,8 +9,11 @@ import { fsrsScheduler } from "./scheduler/fsrs";
 import type { CardState, Grade } from "./scheduler/types";
 import { recordActiveDay } from "~/scripts/user-state";
 import type { Band } from "~/english/types";
+import type { Cefr } from "./grammar-types";
 import { appendHours, type HourEntry, type HourKind } from "./hours";
 import { migrateGrammarMastery, gradeGrammar, type GrammarMastery } from "./grammar-mastery";
+
+export type GrammarGoal = { targetCefr: Cefr; deadlineMs: number; perWeekdayHours: number[]; tzOffsetMin: number };
 
 const KEY = "awesome.english.v2"; // v2: scheduler-backed (v1 Leitner is discarded)
 const scheduler = fsrsScheduler();
@@ -45,6 +48,7 @@ export type EnglishState = {
   chunks: Record<string, { text: string; note?: string; src?: string; addedAt: number; card: CardState }>;
   /** FSRS grammar mastery cards, keyed by topicId. Migrated from grammarDone on load. */
   grammar: GrammarMastery;
+  grammarGoal?: GrammarGoal;
 };
 
 const DEFAULT_NEW_PER_DAY = 20;
@@ -91,6 +95,7 @@ function load(): EnglishState {
         parsed.grammarDone && typeof parsed.grammarDone === "object" ? parsed.grammarDone : undefined,
         parsed.grammar && typeof parsed.grammar === "object" ? parsed.grammar : {},
       ),
+      grammarGoal: parsed.grammarGoal && typeof parsed.grammarGoal === "object" ? parsed.grammarGoal : undefined,
     };
   } catch {
     return defaults;
@@ -176,6 +181,7 @@ export function resetEnglish() {
     hoursLog: [],
     chunks: {},
     grammar: {},
+    // grammarGoal omitted, stays undefined
   };
   if (typeof window !== "undefined") localStorage.removeItem(KEY);
 }
@@ -362,4 +368,17 @@ export function dueChunks(now: number): string[] {
     .filter(([, c]) => c.card.due <= now)
     .sort((a, b) => a[1].card.due - b[1].card.due)
     .map(([id]) => id);
+}
+
+export function getGrammarGoal(): GrammarGoal | undefined {
+  return englishState.value.grammarGoal;
+}
+
+export function setGrammarGoal(goal: GrammarGoal): void {
+  englishState.value = { ...englishState.value, grammarGoal: goal };
+}
+
+export function clearGrammarGoal(): void {
+  const { grammarGoal: _drop, ...rest } = englishState.value;
+  englishState.value = { ...rest };
 }
