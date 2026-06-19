@@ -47,6 +47,33 @@ export function buildTimelineScene(d: DiagramInput): Scene {
   return { prims };
 }
 
+/**
+ * arc: the retrospective timeline (the reference aesthetic) — axis + dashed
+ * past→now arc + hollow/solid nodes + ticks + optional hero word. Unlike
+ * `buildTimelineScene` this is decoupled from grammar `family`: it ALWAYS draws
+ * the arc, so general lessons can use it directly.
+ * labels: [left, right, far] — default ["past","now","future"].
+ */
+export function buildArcScene(d: DiagramInput): Scene {
+  const Y = 280;
+  const past = { x: 230, y: Y }, now = { x: 560, y: Y };
+  const labels = d.labels.length ? d.labels : ["past", "now", "future"];
+  const prims: P[] = [
+    ...header(d),
+    { k: "axis", x0: 90, x1: 710, y: Y, arrow: true, order: 2 },
+    { k: "arc", from: past, to: now, lift: 120, order: 3 },
+    { k: "node", x: past.x, y: Y, fill: "hollow", order: 4 },
+    { k: "node", x: now.x, y: Y, fill: "solid", order: 5 },
+    { k: "dropLine", x: now.x, y0: Y - 70, y1: Y, order: 5 },
+    { k: "tick", x: past.x, y: Y, label: (labels[0] ?? "past").toUpperCase(), order: 4 },
+    { k: "tick", x: now.x, y: Y, label: (labels[1] ?? "now").toUpperCase(), order: 5 },
+    { k: "tick", x: 700, y: Y, label: (labels[2] ?? "future").toUpperCase(), order: 6 },
+  ];
+  if (d.hero) prims.push({ k: "hero", text: d.hero, x: past.x - 30, y: Y - 90, order: 4 });
+  if (d.caption) prims.push({ k: "caption", text: d.caption, x: now.x, y: Y + 90, order: 6 });
+  return { prims };
+}
+
 /** contrast-pair: two chips left/right with a vertical divider */
 export function buildContrastScene(d: DiagramInput): Scene {
   const prims: P[] = [...header(d)];
