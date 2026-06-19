@@ -1,6 +1,6 @@
 // site/src/english/animations/editorial/build-scene.test.ts
 import { describe, it, expect } from "vitest";
-import { buildTimelineScene, buildContrastScene, buildTransformScene, buildMapScene, buildBranchScene, buildScaleScene, buildSwapScene, buildHighlightScene, buildSlotFillScene } from "./build-scene";
+import { buildTimelineScene, buildArcScene, buildContrastScene, buildTransformScene, buildMapScene, buildBranchScene, buildScaleScene, buildSwapScene, buildHighlightScene, buildSlotFillScene } from "./build-scene";
 import { VIEW } from "./scene-types";
 import type { DiagramInput } from "./diagram-input";
 
@@ -22,6 +22,28 @@ describe("buildTimelineScene", () => {
     const s = buildTimelineScene(inp({ labels: ["past", "now", "future"] }));
     for (const p of s.prims) {
       if ("x" in p) { expect((p as { x: number }).x).toBeGreaterThanOrEqual(0); expect((p as { x: number }).x).toBeLessThanOrEqual(VIEW.W); }
+    }
+  });
+});
+
+describe("buildArcScene", () => {
+  it("always draws the dashed arc + hollow past + solid now (grammar-decoupled)", () => {
+    const s = buildArcScene(inp({ family: "conjunctions", labels: ["shipped", "now", "later"] }));
+    expect(s.prims.some((p) => p.k === "arc")).toBe(true);
+    expect(s.prims.some((p) => p.k === "node" && p.fill === "hollow")).toBe(true);
+    expect(s.prims.some((p) => p.k === "node" && p.fill === "solid")).toBe(true);
+    expect(s.prims.filter((p) => p.k === "tick")).toHaveLength(3);
+  });
+  it("defaults to past/now/future ticks when labels empty", () => {
+    const s = buildArcScene(inp({ labels: [] }));
+    const ticks = s.prims.filter((p) => p.k === "tick") as Array<{ label?: string }>;
+    expect(ticks.map((t) => t.label)).toEqual(["PAST", "NOW", "FUTURE"]);
+  });
+  it("all coords inside viewBox", () => {
+    const s = buildArcScene(inp({ labels: ["a", "b", "c"], hero: "shipped", caption: "it's live now" }));
+    for (const p of s.prims) {
+      if ("x" in p) { expect((p as { x: number }).x).toBeGreaterThanOrEqual(0); expect((p as { x: number }).x).toBeLessThanOrEqual(VIEW.W); }
+      if ("y" in p) { expect((p as { y: number }).y).toBeGreaterThanOrEqual(0); expect((p as { y: number }).y).toBeLessThanOrEqual(VIEW.H); }
     }
   });
 });
