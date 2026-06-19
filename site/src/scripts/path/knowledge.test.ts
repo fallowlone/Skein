@@ -4,7 +4,7 @@ import { CONCEPTS } from "./__fixtures__/mini-graph";
 import { buildConceptGraph } from "./graph";
 import {
   emptyState, masteryOf, isKnown, applyDiagnostic, applyStudyEvidence, applySelfDeclare, decay,
-  applyPracticeStruggle, PROP_UP_FACTOR,
+  applyPracticeStruggle, PROP_UP_FACTOR, applyReviewEvidence,
 } from "./knowledge";
 
 const g = buildConceptGraph(CONCEPTS);
@@ -123,5 +123,38 @@ describe("applyPracticeStruggle (downward, bounded, activity-only)", () => {
     const after = applyPracticeStruggle(base, ["indexing"], 0, 0.3, 0.25, NOW);
     expect(after).toBe(base);
     expect(masteryOf(after, "indexing")).toBeCloseTo(0.75, 5);
+  });
+});
+
+describe("applyReviewEvidence", () => {
+  it("lifts taught concepts toward healthFrac*weight with source 'review', only the taught set", () => {
+    const s = applyReviewEvidence(emptyState(), ["indexing"], 1, 0.7, 0.3, NOW);
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.7, 5);
+    expect(s.get("indexing")!.source).toBe("review");
+    // no DAG up-propagation: a prereq of "indexing" is untouched
+    expect(masteryOf(s, "tcp-handshake")).toBe(0);
+  });
+
+  it("never overrides diagnostic or declared evidence", () => {
+    let s = applyDiagnostic(emptyState(), g, "indexing", 0.9, NOW); // diagnostic, strong
+    s = applyReviewEvidence(s, ["indexing"], 1, 0.7, 0.3, NOW);
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.9, 5); // unchanged
+    expect(s.get("indexing")!.source).toBe("diagnostic");
+  });
+
+  it("low healthFrac erodes activity-sourced confidence toward the floor", () => {
+    let s = applyStudyEvidence(emptyState(), ["indexing"], 1, 1, 0.35, 0.4, NOW); // activity ~0.75
+    s = applyReviewEvidence(s, ["indexing"], 0, 0.7, 0.3, NOW);                    // all cards lapsed
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.3, 5); // eroded to floor
+    expect(s.get("indexing")!.source).toBe("review");
+  });
+});
+
+describe("applyStudyEvidence review protection", () => {
+  it("does not override a 'review'-sourced concept", () => {
+    let s = applyReviewEvidence(emptyState(), ["indexing"], 1, 0.7, 0.3, NOW); // review 0.7
+    s = applyStudyEvidence(s, ["indexing"], 1, 1, 0.35, 0.4, NOW);             // study would set 0.75
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.7, 5); // review wins
+    expect(s.get("indexing")!.source).toBe("review");
   });
 });
