@@ -171,6 +171,13 @@ export function recordActiveDay() {
   const streak = updateStreak(p.streak, todayISO());
   if (streak === p.streak) return;
   userState.value = { ...userState.value, progression: { ...p, streak } };
+  // Closing ritual for the daily habit loop: announce the new streak once.
+  if (typeof window !== "undefined") {
+    const msg = userState.value.lang === "ru"
+      ? `🔥 Серия ${streak.count} дн.`
+      : `🔥 ${streak.count}-day streak`;
+    window.dispatchEvent(new CustomEvent("toast", { detail: { msg, kind: "ok" } }));
+  }
 }
 
 export function dismissRevisit(slug: string) {
