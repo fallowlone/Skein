@@ -19,15 +19,15 @@ type Bi = { en: string; ru: string };
 export type RetrievalQ = { id?: string; q: unknown; a?: unknown; answer?: unknown };
 export type PracticeTaskLite = { id: string; title: Bi; prompt: Bi };
 
-export function cardsFromRetrieval(pieceSlug: string, lang: Lang, questions: RetrievalQ[]): CardSeed[] {
+export function cardsFromRetrieval(cardSlug: string, lessonKey: string, lang: Lang, questions: RetrievalQ[]): CardSeed[] {
   return questions
     .map((q, index): CardSeed | null => {
       const front = q.q;
       const back = q.a ?? q.answer;
       if (typeof front !== "string" || typeof back !== "string") return null;
       return {
-        cardKey: `${pieceSlug}::retrieval::${index}`,
-        lessonKey: pieceSlug,
+        cardKey: `${cardSlug}::retrieval::${index}`,
+        lessonKey,
         source: "retrieval" as const,
         index,
         front: trunc(front),
