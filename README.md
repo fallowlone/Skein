@@ -17,12 +17,17 @@ From counting and propositional logic all the way up to distributed systems, sys
 ![Tailwind](https://img.shields.io/badge/Tailwind-CSS-06B6D4?logo=tailwindcss&logoColor=white)
 ![Cloudflare Pages](https://img.shields.io/badge/Cloudflare-Pages-F38020?logo=cloudflare&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-1144%20passing-2ea44f)
-![Lessons](https://img.shields.io/badge/lessons-4%2C000%2B%20bilingual-success)
+![Tracks](https://img.shields.io/badge/tracks-38-blueviolet)
+![Lessons](https://img.shields.io/badge/lessons-2%2C900%2B%20·%20EN%2BRU-success)
 ![PRs welcome](https://img.shields.io/badge/PRs-welcome-ff69b4)
 
 <br/>
 
 **[Explore the site »](https://fallowlone.com)** · [Learning path](https://fallowlone.com/en/roadmap) · [Tracks](#-whats-inside) · [Architecture](#%EF%B8%8F-architecture) · [Develop](#-develop)
+
+<br/>
+
+<img src="docs/screenshots/home.png" alt="open atlas — home" width="100%"/>
 
 </div>
 
@@ -30,17 +35,45 @@ From counting and propositional logic all the way up to distributed systems, sys
 
 ## ✨ Why open atlas
 
-Most courses are a flat list of videos. **open atlas is a graph.** ~4,800 concepts are connected by prerequisite edges across ~30 tracks, so the site can answer the question a real learner actually has — *"given what I know and where I want to go, what do I study next, and in what order?"* — and then schedule it against a deadline, drill it with graded practice, and bring it back for review before you forget it.
+Most courses are a flat list of videos. **open atlas is a graph.** ~4,800 concepts are connected by prerequisite edges across 38 tracks, so the site can answer the question a real learner actually has — *"given what I know and where I want to go, what do I study next, and in what order?"* — and then schedule it against a deadline, drill it with graded practice, and bring it back for review before you forget it.
 
 Everything is authored to a **middle+/senior depth bar**: mechanism → tradeoff → failure mode → real numbers. If a lesson reads like documentation, it's too shallow.
 
-> **~4,000 bilingual lessons · ~30 tracks · ~4,900 static pages · ~4,800-concept graph · EN + RU parity enforced at build time.**
+> **38 tracks · ~2,900 lessons (every one in EN + RU) · ~5,800 static pages · ~4,800-concept graph · i18n parity enforced at build time.**
+
+---
+
+## 📸 Screenshots
+
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/roadmap.png"><img src="docs/screenshots/roadmap.png" alt="Learning path / roadmap"/></a>
+      <p align="center"><b>/roadmap</b> — the path engine: what to learn next, in order, on a deadline.</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/lesson.png"><img src="docs/screenshots/lesson.png" alt="A lesson"/></a>
+      <p align="center"><b>A lesson</b> — depth tiers (Foundations → Senior), prerequisites, progress.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/english.png"><img src="docs/screenshots/english.png" alt="English for Engineers hub"/></a>
+      <p align="center"><b>/english</b> — English for Engineers: review → input → output, with coverage.</p>
+    </td>
+    <td width="50%" valign="top">
+      <a href="docs/screenshots/home.png"><img src="docs/screenshots/home.png" alt="Home / atlas"/></a>
+      <p align="center"><b>/</b> — the atlas: 38 tracks of fullstack, CS, and math.</p>
+    </td>
+  </tr>
+</table>
 
 ---
 
 ## 📚 Table of contents
 
 - [What's inside](#-whats-inside)
+- [Screenshots](#-screenshots)
 - [How the learning engine works](#-how-the-learning-engine-works)
 - [Architecture](#%EF%B8%8F-architecture)
 - [Tech stack](#-tech-stack)
