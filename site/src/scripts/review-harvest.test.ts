@@ -2,24 +2,27 @@ import { describe, it, expect } from "vitest";
 import { cardsFromRetrieval, cardsFromPractice, HARVEST_MAX } from "./review-harvest";
 
 describe("review-harvest", () => {
-  it("cardsFromRetrieval reads q + a, tags source, derives a stable key by position", () => {
+  it("cardsFromRetrieval keeps cardKey bare but seeds the canonical lessonKey for the unit join", () => {
     const qs = [
       { q: "Why does a stale estimate cascade?", a: "Nodes above re-plan on a wrong size." },
       { q: "What is a hash join's build side?", a: "The smaller input, hashed in memory." },
     ];
-    const a = cardsFromRetrieval("databases/03-plans/07-stability", "en", qs);
-    const b = cardsFromRetrieval("databases/03-plans/07-stability", "en", qs);
+    const a = cardsFromRetrieval("07-stability-retrieval", "databases/03-execution-plans/07-plan-stability", "en", qs);
+    const b = cardsFromRetrieval("07-stability-retrieval", "databases/03-execution-plans/07-plan-stability", "en", qs);
     expect(a).toHaveLength(2);
     expect(a[0].source).toBe("retrieval");
-    expect(a[0].cardKey).toBe("databases/03-plans/07-stability::retrieval::0");
+    // cardKey stays the bare author id → existing SM-2 schedules are preserved
+    expect(a[0].cardKey).toBe("07-stability-retrieval::retrieval::0");
+    // lessonKey is the canonical 3-segment join key → unitReviewHealth can bucket it
+    expect(a[0].lessonKey).toBe("databases/03-execution-plans/07-plan-stability");
     expect(a[0].front).toBe("Why does a stale estimate cascade?");
     expect(a[0].back).toBe("Nodes above re-plan on a wrong size.");
-    expect(b[0].cardKey).toBe(a[0].cardKey); // stable across calls
+    expect(b[0].cardKey).toBe(a[0].cardKey);
   });
 
   it("cardsFromRetrieval falls back to `answer` when `a` is absent (MDX/type prop drift)", () => {
     const qs = [{ q: "front", answer: "back-from-answer" }];
-    expect(cardsFromRetrieval("x", "en", qs)[0].back).toBe("back-from-answer");
+    expect(cardsFromRetrieval("x", "x", "en", qs)[0].back).toBe("back-from-answer");
   });
 
   it("cardsFromPractice uses task.id in the key and prompt→front, title→back", () => {
@@ -47,14 +50,14 @@ describe("review-harvest", () => {
       { q: "string front", a: "string back" },
       { q: { jsx: true } as unknown, a: "x" }, // JSX body → skipped
     ];
-    const cards = cardsFromRetrieval("k", "en", qs);
+    const cards = cardsFromRetrieval("k", "k", "en", qs);
     expect(cards).toHaveLength(1);
     expect(cards[0].cardKey).toBe("k::retrieval::0");
   });
 
   it("truncates front/back to HARVEST_MAX chars to bound localStorage growth", () => {
     const long = "x".repeat(HARVEST_MAX + 500);
-    const c = cardsFromRetrieval("k", "en", [{ q: long, a: long }])[0];
+    const c = cardsFromRetrieval("k", "k", "en", [{ q: long, a: long }])[0];
     expect(c.front.length).toBe(HARVEST_MAX);
     expect(c.back.length).toBe(HARVEST_MAX);
   });
