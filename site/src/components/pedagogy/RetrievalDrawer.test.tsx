@@ -35,7 +35,7 @@ const revealBtn = (li: HTMLElement) =>
   ) as HTMLButtonElement | undefined;
 const confBtns = (li: HTMLElement) =>
   Array.from(
-    li.querySelectorAll('button[aria-label^="confidence"]'),
+    li.querySelectorAll('button[aria-label^="grade"]'),
   ) as HTMLButtonElement[];
 
 // Mirrors the real broken MDX shape: top `id`, questions `{ q, a }`.
@@ -72,7 +72,7 @@ describe("RetrievalDrawer tolerant reader", () => {
     expect(lis()[0].textContent).toContain("ANSWER_ONE");
     expect(host.textContent).not.toContain("ANSWER_TWO");
     expect(revealBtn(lis()[1])).toBeTruthy();
-    expect(confBtns(lis()[0]).length).toBe(5);
+    expect(confBtns(lis()[0]).length).toBe(4);
     expect(confBtns(lis()[1]).length).toBe(0);
   });
 
@@ -83,13 +83,49 @@ describe("RetrievalDrawer tolerant reader", () => {
     revealBtn(lis()[1])!.click();
     await flush();
 
-    // Rate Q1 = 3; Q2 must stay unrated.
+    // Rate Q1 = "good" (index 2); Q2 must stay unrated.
     confBtns(lis()[0])[2].click();
     await flush();
 
     const pressed = (li: HTMLElement) =>
       confBtns(li).filter((b) => b.getAttribute("aria-pressed") === "true");
-    expect(pressed(lis()[0]).map((b) => b.textContent)).toEqual(["3"]);
+    expect(pressed(lis()[0]).map((b) => b.textContent)).toEqual(["good"]);
     expect(pressed(lis()[1]).length).toBe(0);
+  });
+});
+
+import { allCards } from "~/scripts/review-state";
+
+const gradeBtns = (li: HTMLElement) =>
+  Array.from(
+    li.querySelectorAll('button[aria-label^="grade"]'),
+  ) as HTMLButtonElement[];
+
+describe("grade persistence", () => {
+  it("clicking a grade after reveal advances the seeded SM-2 card", async () => {
+    render(
+      <RetrievalDrawer
+        id="networking/03-tcp-handshake"
+        lang="en"
+        questions={[{ q: "What is the handshake?", a: "SYN, SYN-ACK, ACK" }]}
+      />,
+      host,
+    );
+    await flush(); // lets the seed useEffect run (cardsFromRetrieval → addCard)
+
+    const li = lis()[0];
+    revealBtn(li)!.click();
+    await flush();
+
+    const good = gradeBtns(lis()[0]).find((b) => /good/i.test(b.getAttribute("aria-label") ?? ""))!;
+    good.click();
+    await flush();
+
+    const card = allCards().find(
+      (c) => c.cardKey === "networking/03-tcp-handshake::retrieval::0",
+    );
+    expect(card).toBeDefined();
+    expect(card!.sched.reps).toBe(1); // a non-"again" grade advances reps 0 → 1
+    expect(card!.lastReviewedAt).not.toBeNull();
   });
 });
