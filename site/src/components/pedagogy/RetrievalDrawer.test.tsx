@@ -129,3 +129,32 @@ describe("grade persistence", () => {
     expect(card!.lastReviewedAt).not.toBeNull();
   });
 });
+
+describe("lessonKey injection", () => {
+  it("seeds cards with the injected canonical lessonKey, keeping the bare id as cardKey", async () => {
+    render(
+      <RetrievalDrawer
+        id="07-stability-retrieval"
+        lessonKey="databases/03-execution-plans/07-plan-stability"
+        lang="en"
+        questions={[{ q: "front", a: "back" }]}
+      />,
+      host,
+    );
+    // Preact schedules useEffect via requestAnimationFrame → setTimeout chain.
+    // In jsdom that requires draining the rAF queue then one more setTimeout.
+    // Triggering a DOM interaction (clicking reveal) forces Preact to flush
+    // pending effects synchronously as part of its re-render cycle — the same
+    // pattern used by the grade-persistence test above.
+    const li = host.querySelector("ol > li") as HTMLElement;
+    const reveal = Array.from(li.querySelectorAll("button")).find((b) =>
+      /reveal/i.test(b.textContent ?? ""),
+    ) as HTMLButtonElement;
+    reveal.click();
+    await flush();
+
+    const card = allCards().find((c) => c.cardKey === "07-stability-retrieval::retrieval::0");
+    expect(card).toBeDefined();
+    expect(card!.lessonKey).toBe("databases/03-execution-plans/07-plan-stability");
+  });
+});
