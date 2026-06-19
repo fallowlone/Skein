@@ -109,6 +109,24 @@ const GUI: Record<string, Bi> = {
   cov_drill: { en: "Topics covering this band", ru: "Темы этого уровня" },
   cov_overall: { en: "EGP covered", ru: "EGP покрыто" },
   cov_cite: { en: "mapped to the English Grammar Profile", ru: "по English Grammar Profile" },
+
+  // planner
+  plan_tab: { en: "Plan", ru: "План" },
+  browse_tab: { en: "Browse", ru: "Обзор" },
+  goal_title: { en: "Set your grammar goal", ru: "Поставь цель по грамматике" },
+  goal_target: { en: "Target level", ru: "Целевой уровень" },
+  goal_deadline: { en: "Weeks to goal", ru: "Недель до цели" },
+  goal_hours: { en: "Study hours per weekday", ru: "Часы занятий по будням" },
+  goal_save: { en: "Start plan", ru: "Начать план" },
+  goal_change: { en: "Change goal", ru: "Изменить цель" },
+  fc_fits: { en: "On track", ru: "В графике" },
+  fc_under: { en: "Room to spare", ru: "Есть запас" },
+  fc_over: { en: "Behind pace", ru: "Отстаём от темпа" },
+  fc_countdown: { en: "days left", ru: "дней осталось" },
+  today_title: { en: "Today", ru: "Сегодня" },
+  plan_full_title: { en: "Your path", ru: "Твой путь" },
+  plan_empty: { en: "All caught up — nothing due.", ru: "Всё пройдено — ничего не запланировано." },
+  locked_band: { en: "Unlocks as you master this level", ru: "Откроется, когда освоишь этот уровень" },
 };
 
 export function gt(key: string, lang: Locale): string {
