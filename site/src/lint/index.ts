@@ -32,6 +32,41 @@ async function walk(dir: string): Promise<string[]> {
 }
 
 /**
+ * Source-only curriculum lint. Every rule here reads `src/` directly and needs
+ * no rendered `dist/` output, so it can run BEFORE `astro build` as a fast
+ * fail (seconds, not the ~65-min full build). `runLint` calls this for the
+ * post-build pass too, so both paths share one implementation — no drift.
+ */
+export async function runSourceLint(siteSrc: string): Promise<{ errors: string[]; warnings: string[] }> {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  errors.push(...(await checkI18nParity(siteSrc)));
+  errors.push(...(await checkCjkLeak(siteSrc)));
+  errors.push(...(await checkMathPrereqs(siteSrc)));
+  errors.push(...(await checkConnectionIntegrity(siteSrc)));
+  errors.push(...(await checkPracticeParity(siteSrc)));
+  errors.push(...(await checkPracticeLessonKey(siteSrc)));
+  errors.push(...(await checkPracticeReview(siteSrc)));
+  errors.push(...(await checkPracticeDebug(siteSrc)));
+  errors.push(...(await checkBlockStubs(siteSrc)));
+  errors.push(...(await checkRetrievalDrawer(siteSrc)));
+  errors.push(...(await checkPath(siteSrc)));
+  const pc = await checkPracticeCount(siteSrc);
+  errors.push(...pc.errors);
+  warnings.push(...pc.warnings);
+  const drillRes = await checkDrill(siteSrc);
+  errors.push(...drillRes.errors);
+  warnings.push(...drillRes.warnings);
+  const labRes = await checkLab(siteSrc);
+  errors.push(...labRes.errors);
+  warnings.push(...labRes.warnings);
+  const capRes = await checkCapstones(siteSrc);
+  errors.push(...capRes.errors);
+  warnings.push(...capRes.warnings);
+  return { errors, warnings };
+}
+
+/**
  * Lint the rendered site. `root` is the built `dist/` directory, `siteSrc` is
  * the `src/` directory. Writes `lint-report.json` into `root` and returns the
  * collected errors/warnings.
@@ -82,31 +117,14 @@ export async function runLint(root: string, siteSrc: string): Promise<{ errors: 
     warnings.push(...r.w);
   }
 
-  // Source-level + global checks
-  errors.push(...(await checkI18nParity(siteSrc)));
-  errors.push(...(await checkCjkLeak(siteSrc)));
-  errors.push(...(await checkMathPrereqs(siteSrc)));
-  errors.push(...(await checkConnectionIntegrity(siteSrc)));
+  // Rendered-output rule that needs dist/ (not part of the source lint).
   errors.push(...(await checkReducedMotion(root)));
-  errors.push(...(await checkPracticeParity(siteSrc)));
-  errors.push(...(await checkPracticeLessonKey(siteSrc)));
-  errors.push(...(await checkPracticeReview(siteSrc)));
-  errors.push(...(await checkPracticeDebug(siteSrc)));
-  errors.push(...(await checkBlockStubs(siteSrc)));
-  errors.push(...(await checkRetrievalDrawer(siteSrc)));
-  errors.push(...(await checkPath(siteSrc)));
-  const pc = await checkPracticeCount(siteSrc);
-  errors.push(...pc.errors);
-  warnings.push(...pc.warnings);
-  const drillRes = await checkDrill(siteSrc);
-  errors.push(...drillRes.errors);
-  warnings.push(...drillRes.warnings);
-  const labRes = await checkLab(siteSrc);
-  errors.push(...labRes.errors);
-  warnings.push(...labRes.warnings);
-  const capRes = await checkCapstones(siteSrc);
-  errors.push(...capRes.errors);
-  warnings.push(...capRes.warnings);
+
+  // Source-level + global checks — shared verbatim with the pre-build fast lint
+  // (scripts/lint-src.mjs) so both paths run identical logic with no drift.
+  const src = await runSourceLint(siteSrc);
+  errors.push(...src.errors);
+  warnings.push(...src.warnings);
 
   await writeFile(
     join(root, "lint-report.json"),
