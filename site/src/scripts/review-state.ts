@@ -44,12 +44,12 @@ function write(s: Store): void {
   }
 }
 
-/** Idempotent on cardKey: an existing card keeps its schedule; only content fields refresh. */
+/** Idempotent on cardKey: an existing card keeps its schedule; content fields and the derived lessonKey refresh. */
 export function addCard(seed: CardSeed, now = Date.now()): void {
   const s = read();
   const existing = s[seed.cardKey];
   if (existing) {
-    s[seed.cardKey] = { ...existing, front: seed.front, back: seed.back, lang: seed.lang };
+    s[seed.cardKey] = { ...existing, front: seed.front, back: seed.back, lang: seed.lang, lessonKey: seed.lessonKey };
   } else {
     const sched = freshSched();
     s[seed.cardKey] = { ...seed, sched, dueAt: dueAtFrom(now, sched), addedAt: now, lastReviewedAt: null };

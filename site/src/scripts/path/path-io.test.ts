@@ -9,7 +9,9 @@ import {
   tierOf, unitPracticeFractions, conceptsUpToBand,
   isColdStartView,
   readAttemptsAll, dueReviews, recordPracticeOutcome, computeDoNow,
+  unitReviewHealth,
 } from "./path-io";
+import { cardsFromRetrieval } from "../review-harvest";
 import { DEFAULT_CONFIG } from "./config";
 import { emptyState, applySelfDeclare } from "./knowledge";
 import { recordAttempt } from "~/scripts/practice-state";
@@ -351,5 +353,44 @@ describe("computeDoNow", () => {
       expect(taskRow).toBeDefined();
       expect(taskRow!.taskId).toBe("r1");
     }
+  });
+});
+
+describe("unitReviewHealth — Phase 3b retrieval join", () => {
+  it("buckets retrieval cards seeded with a canonical lessonKey (Phase 3b join)", () => {
+    const now = Date.now();
+    const seeds = cardsFromRetrieval(
+      "07-stability-retrieval",
+      "databases/03-execution-plans/07-plan-stability",
+      "en",
+      [{ q: "What is plan stability?", a: "Consistent query plans across executions." }],
+    );
+    const cards = seeds.map((s) => ({
+      ...s,
+      sched: { interval: 1, ease: 2.5, reps: 1, lapses: 0 },
+      dueAt: now + 86_400_000,
+      addedAt: now - 2000,
+      lastReviewedAt: now - 1000,
+    }));
+    const health = unitReviewHealth(cards as any, now);
+    expect(health.has("databases/03-execution-plans")).toBe(true);
+  });
+
+  it("still drops a bare-id lessonKey (pre-Phase-3b fallback is harmless)", () => {
+    const now = Date.now();
+    const cards = [{
+      cardKey: "07-x::retrieval::0",
+      lessonKey: "07-x",
+      source: "retrieval" as const,
+      index: 0,
+      front: "f",
+      back: "b",
+      lang: "en" as const,
+      sched: { interval: 1, ease: 2.5, reps: 1, lapses: 0 },
+      dueAt: now + 86_400_000,
+      addedAt: now - 2000,
+      lastReviewedAt: now - 1000,
+    }];
+    expect(unitReviewHealth(cards as any, now).has("07-x")).toBe(false);
   });
 });
