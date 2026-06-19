@@ -5,7 +5,7 @@
 //   TodayFocus · 01 · GOAL · 02 · INSTRUMENT (deadline) · 03 · PATH (next units)
 //   04 · INSTRUMENT (concept-mastery map) · Advanced knobs.
 // Owns the two reused modals: PathConfigDrawer, UnitProbe.
-import { useState } from "preact/hooks";
+import { useState, useEffect } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
   effectiveKnowledge, config, content, computePath,
@@ -57,6 +57,9 @@ const L = {
 
 export default function PathView({ lang }: { lang: Locale }) {
   const t = L[lang];
+  // client:only island → the SSR page shows #plan-skeleton until this mounts.
+  // Remove it once real content is in the DOM so there is no perceived "blank".
+  useEffect(() => { document.getElementById("plan-skeleton")?.remove(); }, []);
   const [modal, setModal] = useState<null | "config">(null);
   const [quickUnit, setQuickUnit] = useState<string | null>(null);
 
