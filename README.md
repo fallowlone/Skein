@@ -158,6 +158,9 @@ flowchart TB
         ISL <--> LS[(localStorage:<br/>path · knowledge · review)]
         ISL <-->|auth · sync · metrics| FN
     end
+
+    classDef store fill:#1f2933,color:#fff,stroke:#7b8794,stroke-width:1px;
+    class LS,D1,KV store;
 ```
 
 **Content that breaks the pedagogy rules fails the build.** The custom linter enforces text budgets, lesson skeletons, EN↔RU parity + glossary, sources, depth checkpoints, and a per-page hydration cap — so quality is a CI gate, not a code-review hope.
