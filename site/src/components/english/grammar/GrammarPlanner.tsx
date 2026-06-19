@@ -15,11 +15,24 @@ const TARGETS: Cefr[] = ["A2", "B1", "B2", "C1", "C2"];
 
 export type GrammarPlannerProps = { lang: Locale; topics: PlanTopic[]; coverage: GrammarCoverage };
 
-export default function GrammarPlanner({ lang, topics, coverage }: GrammarPlannerProps) {
-  englishState.value; // subscribe to mastery/goal changes
-  const goal = getGrammarGoal();
-  if (!goal) return <GoalSetter lang={lang} />;
+// Fix [MEDIUM]: Row lifted to module scope — no re-creation on each render.
+type RowProps = { s: GrammarStep; lang: Locale; bandIdx: number; titleById: Map<string, Record<Locale, string>> };
+function Row({ s, lang, bandIdx, titleById }: RowProps) {
+  const locked = s.kind === "learn" && cefrIndex(s.cefr) > bandIdx;
+  const inner = (
+    <>
+      <span class="gplan-row-title">{titleById.get(s.topicId)?.[lang] ?? s.topicId}</span>
+      <span class="gplan-row-meta">{s.cefr}{s.kind === "review" ? " · ↻" : ""}</span>
+    </>
+  );
+  return locked
+    ? <div class="gplan-row locked" aria-disabled="true" title={gt("locked_band", lang)}>{inner}</div>
+    : <a class="gplan-row" href={`/${lang}/english/grammar/${s.topicId}`}>{inner}</a>;
+}
 
+// Fix [CRITICAL]: PlanView contains all hooks unconditionally — only mounts when goal exists.
+type PlanViewProps = { lang: Locale; topics: PlanTopic[]; coverage: GrammarCoverage; goal: GrammarGoal };
+function PlanView({ lang, topics, coverage, goal }: PlanViewProps) {
   const now = Date.now();
   const placementBand = (getPlacement()?.band ?? "A2") as Cefr;
   const dailyBudgetMin = dailyBudgetMinutes(goal, now);
@@ -39,19 +52,6 @@ export default function GrammarPlanner({ lang, topics, coverage }: GrammarPlanne
     .map((c) => ({ cefr: c, steps: learns.filter((s) => s.cefr === c) }))
     .filter((g) => g.steps.length > 0);
 
-  const Row = ({ s }: { s: GrammarStep }) => {
-    const locked = s.kind === "learn" && cefrIndex(s.cefr) > bandIdx;
-    const inner = (
-      <>
-        <span class="gplan-row-title">{titleById.get(s.topicId)?.[lang] ?? s.topicId}</span>
-        <span class="gplan-row-meta">{s.cefr}{s.kind === "review" ? " · ↻" : ""}</span>
-      </>
-    );
-    return locked
-      ? <div class="gplan-row locked" aria-disabled="true" title={gt("locked_band", lang)}>{inner}</div>
-      : <a class="gplan-row" href={`/${lang}/english/grammar/${s.topicId}`}>{inner}</a>;
-  };
-
   return (
     <div class="gplan">
       <div class={"gplan-fc " + forecast.verdict}>
@@ -64,7 +64,7 @@ export default function GrammarPlanner({ lang, topics, coverage }: GrammarPlanne
         <h2>{gt("today_title", lang)}</h2>
         {plan.today.length === 0
           ? <p class="meta">{gt("plan_empty", lang)}</p>
-          : plan.today.map((s) => <Row key={s.topicId} s={s} />)}
+          : plan.today.map((s) => <Row key={s.topicId} s={s} lang={lang} bandIdx={bandIdx} titleById={titleById} />)}
       </section>
 
       <section class="gplan-full">
@@ -72,12 +72,20 @@ export default function GrammarPlanner({ lang, topics, coverage }: GrammarPlanne
         {byBand.map((g) => (
           <div class="gplan-band" key={g.cefr}>
             <div class="gplan-band-head">{g.cefr}</div>
-            {g.steps.map((s) => <Row key={s.topicId} s={s} />)}
+            {g.steps.map((s) => <Row key={s.topicId} s={s} lang={lang} bandIdx={bandIdx} titleById={titleById} />)}
           </div>
         ))}
       </section>
     </div>
   );
+}
+
+// Fix [CRITICAL]: GrammarPlanner is now a thin wrapper — hooks in PlanView always run unconditionally.
+export default function GrammarPlanner({ lang, topics, coverage }: GrammarPlannerProps) {
+  englishState.value; // subscribe to mastery/goal changes
+  const goal = getGrammarGoal();
+  if (!goal) return <GoalSetter lang={lang} />;
+  return <PlanView lang={lang} topics={topics} coverage={coverage} goal={goal} />;
 }
 
 function GoalSetter({ lang }: { lang: Locale }) {
