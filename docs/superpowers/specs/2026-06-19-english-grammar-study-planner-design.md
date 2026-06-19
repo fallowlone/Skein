@@ -24,7 +24,7 @@ budget, and gated to the learner's current band.
 |---|----------|--------|
 | 1 | Ambition | Full grammar Path Engine (deadline-aware) |
 | 2 | Goal model | Target CEFR + deadline |
-| 3 | UX surface | New plan view atop `GrammarModule`; flat list → "Browse all" tab |
+| 3 | UX surface | New parent on the grammar page with **Plan \| Browse** tabs; existing `GrammarAtlas` becomes the Browse tab (rendered as a child, not its own island) |
 | 4 | Ordering | CEFR-banded, value-ranked within band; `related` edges = soft tie-break |
 | 5 | Plan dynamics | Live recompute every load; persist only goal+deadline; no manual reorder |
 | 6 | Daily load | "Today" queue capped by goal's daily minute budget |
@@ -158,22 +158,29 @@ const MIN_REVIEW     = 3;     // a due review step
 `estMin(topic)` = (authored lessons at entry..min(target, levels.last)) × `MIN_PER_LESSON` +
 `MIN_PRACTICE`. Centralized so a single tune touches both planner and forecast.
 
-### Unit 5 — UI (`GrammarModule.tsx` rework + `grammar/GrammarPlan.tsx`, new)
+### Unit 5 — UI (new `grammar/GrammarHome.tsx` + `grammar/GrammarPlanner.tsx`; `grammar.astro` rework)
 
-`GrammarModule` gains a **Plan** default view; the existing flat list becomes a **Browse all**
-tab; Phrasing tab unchanged.
+The live grammar route mounts **`GrammarAtlas`** (over `grammarTopics`), not `GrammarModule`
+(legacy/orphaned — untouched). So the planner wraps the real surface:
 
-`GrammarPlan.tsx`:
+- New parent island **`GrammarHome.tsx`** mounted by `grammar.astro`, holding a **Plan | Browse**
+  tab. Plan tab = `GrammarPlanner`; Browse tab = the existing `GrammarAtlas` rendered as a
+  **child** (not its own island). Single hydrated island → no hydration-cap change.
+- `grammar.astro` enriches the island props: the slim projection adds `egp` and `related` (Atlas
+  currently passes only `id,title,cefr,levels,family`), and passes server-computed `coverage`
+  (`computeGrammarCoverage(grammarTopics, EGP_INVENTORY, COVERAGE_WAIVERS)`).
+
+**`GrammarPlanner.tsx`:**
 - **No goal** → goal-setter: target CEFR select, deadline date, per-weekday hours. Saves via
   `setGrammarGoal`.
 - **Goal set** → forecast banner (verdict pill `fits`/`under`/`over` + countdown days) → **Today**
   section (queue prefix capped by today's remaining minute budget) → **Full plan** grouped by
-  CEFR band, with locked bands shown dimmed (hard gate is visible, not hidden).
-- Each step row opens the **existing** `GrammarRun` (reused verbatim); completion grades through
-  the existing `gradeGrammarTopic`, which re-derives the plan on next render.
+  CEFR band, with locked (above-band) topics shown dimmed (hard gate is visible, not hidden).
+- Each step row is an **anchor to the existing topic route** `/${lang}/english/grammar/${topicId}`
+  (Atlas's own pattern) — the existing `GrammarTopic`/`GrammarPractice` page runs the lesson and
+  grades via `gradeGrammarTopic`. No runner is embedded or rebuilt.
 - "Change goal" affordance re-opens the goal-setter.
-
-Hydration: `GrammarModule` is already a single island — no new island, no hydration-cap change.
+- Mastery predicate reuses `masteryView(card, now).state === "mature"` from `grammar/ui.ts`.
 
 ## 5. Data flow
 
@@ -183,8 +190,11 @@ grammarGoal ────┼─→ buildGrammarPlan ─→ GrammarPlan ─→ Gra
 GrammarMastery ─┤        │                   │
 corpus topics ──┤        └─→ forecastGrammarPlan ─→ GrammarForecast (banner)
 EGP coverage ───┘
-GrammarRun (existing) ─→ gradeGrammarTopic ─→ englishState mutate ─→ live recompute
+topic route (existing) ─→ gradeGrammarTopic ─→ englishState mutate ─→ live recompute
 ```
+
+Note: `placementBand` is `Band` ("A2"|"B1"|"B2"); `targetCefr` ranges over full `Cefr`. New UI
+copy goes in `grammar/strings.ts` (`gt(key,lang)`), **not** global `ui.json`.
 
 ## 6. Testing
 
@@ -194,7 +204,7 @@ Pure, no `astro:content` (mirror existing path test isolation).
   empty corpus / no-goal, deterministic order under recompute.
 - `grammar-schedule.test.ts`: fits/under/over verdicts, inclusive deadline day, dropped-order by
   value density, zero study days.
-- i18n: EN+RU labels added to `src/i18n/ui.json` for goal-setter, verdict pills, step reasons.
+- i18n: EN+RU labels added to `grammar/strings.ts` (`gt`) for goal-setter, verdict pills, step reasons.
 
 ## 7. Risks & mitigations
 
