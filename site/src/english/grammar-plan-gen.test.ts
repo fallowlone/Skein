@@ -47,4 +47,13 @@ describe("currentBand", () => {
   it("stays at placement when current-band topics are unmastered", () => {
     expect(currentBand([T("a", "A2")], () => undefined, "A2", "B2", NOW)).toBe("A2");
   });
+  it("walks past an empty band to reach a later band with unmastered topics", () => {
+    const cardOf = (id: string) => (id === "a" ? mature : undefined);
+    const topics = [
+      T("a", "A2"),      // mastered
+      // B1 has no learn-eligible topics (empty band)
+      T("b", "B2"),      // unmastered, target
+    ];
+    expect(currentBand(topics, cardOf, "A2", "B2", NOW)).toBe("B2");
+  });
 });
