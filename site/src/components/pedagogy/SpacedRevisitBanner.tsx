@@ -20,6 +20,7 @@ export default function SpacedRevisitBanner({ lang }: Props) {
   });
   if (!due) return null;
   const [slug] = due;
+  const label = slug.split("/").pop()?.replace(/-/g, " ") ?? slug;
 
   return (
     <div class="bg-card-2 border-l-2 border-warn px-6 py-2 text-sm flex items-center gap-3">
@@ -27,7 +28,7 @@ export default function SpacedRevisitBanner({ lang }: Props) {
       <a class="underline font-semibold text-ink" href={`?revisit=${slug}#retrieval`}>
         {t("revisit.cta", lang)}
       </a>
-      <span class="font-mono text-xs text-muted">{slug}</span>
+      <span class="text-xs text-muted">{label}</span>
       <button
         type="button"
         class="ml-auto text-xs text-muted underline"
