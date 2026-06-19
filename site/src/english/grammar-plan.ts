@@ -65,7 +65,7 @@ export function currentBand(
   const ti = cefrIndex(targetCefr);
   while (bi < ti) {
     const here = bandLearnTopics(topics, CEFR_ORDER[bi], targetCefr);
-    const allMastered = here.length > 0 && here.every((t) => isMastered(cardOf(t.id), now));
+    const allMastered = here.every((t) => isMastered(cardOf(t.id), now));
     if (!allMastered) break;
     bi++;
   }
