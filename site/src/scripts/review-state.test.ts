@@ -58,4 +58,19 @@ describe("review-state store", () => {
     recordReview(card.cardKey, "good", Date.parse("2026-06-05T00:00:00Z"));
     expect(allCards()[0].sched.reps).toBe(1);
   });
+
+  it("addCard refreshes a stale lessonKey on an existing card without resetting its schedule", () => {
+    const base = { cardKey: "07-x::retrieval::0", source: "retrieval" as const, index: 0, front: "f", back: "b", lang: "en" as const };
+    // Phase-3a-era seed: bare lessonKey
+    addCard({ ...base, lessonKey: "07-x" });
+    recordReview("07-x::retrieval::0", "good"); // advance the schedule
+    const before = allCards().find((c) => c.cardKey === "07-x::retrieval::0")!;
+    // Phase-3b re-seed: canonical lessonKey
+    addCard({ ...base, lessonKey: "databases/03-execution-plans/07-x" });
+    const after = allCards().find((c) => c.cardKey === "07-x::retrieval::0")!;
+    expect(after.lessonKey).toBe("databases/03-execution-plans/07-x"); // join key healed
+    expect(after.dueAt).toBe(before.dueAt);                            // schedule untouched
+    expect(after.sched).toEqual(before.sched);
+    expect(after.lastReviewedAt).toBe(before.lastReviewedAt);
+  });
 });
