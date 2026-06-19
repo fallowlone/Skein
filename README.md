@@ -68,6 +68,17 @@ Everything is authored to a **middle+/senior depth bar**: mechanism → tradeoff
   </tr>
 </table>
 
+### 🌗 Light & dark
+
+Every surface ships both themes (toggle in the header; remembers your choice).
+
+<table>
+  <tr>
+    <td width="50%" valign="top"><a href="docs/screenshots/home.png"><img src="docs/screenshots/home.png" alt="Home — light"/></a><p align="center"><b>Light</b></p></td>
+    <td width="50%" valign="top"><a href="docs/screenshots/home-dark.png"><img src="docs/screenshots/home-dark.png" alt="Home — dark"/></a><p align="center"><b>Dark</b></p></td>
+  </tr>
+</table>
+
 ---
 
 ## 📚 Table of contents
