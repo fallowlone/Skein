@@ -4,6 +4,7 @@ import tailwind from "@astrojs/tailwind";
 import mdx from "@astrojs/mdx";
 import preact from "@astrojs/preact";
 import sitemap from "@astrojs/sitemap";
+import remarkRetrievalLessonKey from "./src/lib/remark-retrieval-lessonkey.mjs";
 // NOTE: the curriculum lint runs as a SEPARATE post-build process
 // (`bun scripts/lint-dist.mjs`, chained in package.json `build`), not as an
 // in-process astro:build:done integration — that inherited the render's ~10GB
@@ -34,6 +35,7 @@ export default defineConfig({
     }),
   ],
   markdown: {
+    remarkPlugins: [remarkRetrievalLessonKey],
     shikiConfig: {
       themes: { light: "github-light", dark: "github-dark" },
       wrap: true,
