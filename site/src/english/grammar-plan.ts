@@ -27,3 +27,64 @@ export function estMin(topic: PlanTopic, targetCefr: Cefr): number {
   const count = Math.max(1, levels.length);
   return count * MIN_PER_LESSON + MIN_PRACTICE;
 }
+
+// ─── Step generation + band gating (Task 3) ──────────────────────────────────
+import { isTopicDue } from "./grammar-mastery";
+import type { GrammarCoverage } from "./grammar-coverage";
+import { CEFR_ORDER } from "./grammar-types";
+import type { GrammarGoal } from "./state";
+
+export type GrammarPlan = { steps: GrammarStep[]; today: GrammarStep[]; currentBand: Cefr; targetCefr: Cefr };
+export type BuildPlanInput = {
+  topics: PlanTopic[]; cardOf: (id: string) => CardState | undefined; coverage: GrammarCoverage;
+  placementBand: Cefr; goal: GrammarGoal; dailyBudgetMin: number; now: number;
+};
+
+const isReview = (card: CardState | undefined, now: number): boolean =>
+  !!card && card.reps > 0 && isTopicDue(card, new Date(now));
+
+/** Topics whose entry CEFR === band and are within target. */
+const bandLearnTopics = (topics: PlanTopic[], band: Cefr, targetCefr: Cefr): PlanTopic[] =>
+  topics.filter((t) => t.cefr === band && cefrIndex(t.cefr) <= cefrIndex(targetCefr));
+
+/** Walk the band up from placement while every learn-eligible topic at the band is mastered. */
+export function currentBand(
+  topics: PlanTopic[], cardOf: (id: string) => CardState | undefined,
+  placementBand: Cefr, targetCefr: Cefr, now: number,
+): Cefr {
+  let bi = cefrIndex(placementBand);
+  const ti = cefrIndex(targetCefr);
+  while (bi < ti) {
+    const here = bandLearnTopics(topics, CEFR_ORDER[bi], targetCefr);
+    const allMastered = here.length > 0 && here.every((t) => isMastered(cardOf(t.id), now));
+    if (!allMastered) break;
+    bi++;
+  }
+  return CEFR_ORDER[bi];
+}
+
+const reviewReason: Bi = { en: "Due for review", ru: "Пора повторить" };
+const learnReason: Bi = { en: "New for your level", ru: "Новое для твоего уровня" };
+
+export function buildGrammarPlan(input: BuildPlanInput): GrammarPlan {
+  const { topics, cardOf, placementBand, goal, now } = input;
+  const target = goal.targetCefr;
+  const band = currentBand(topics, cardOf, placementBand, target, now);
+  const bi = cefrIndex(band);
+  const ti = cefrIndex(target);
+  const steps: GrammarStep[] = [];
+
+  for (const t of topics) {
+    const card = cardOf(t.id);
+    if (isReview(card, now)) {
+      steps.push({ topicId: t.id, cefr: t.cefr, kind: "review", reason: reviewReason, estMin: MIN_REVIEW, value: 0 });
+      continue;
+    }
+    if (isMastered(card, now)) continue;
+    const ci = cefrIndex(t.cefr);
+    if (ci > bi || ci > ti) continue; // hard band gate + target ceiling
+    steps.push({ topicId: t.id, cefr: t.cefr, kind: "learn", reason: learnReason, estMin: estMin(t, target), value: 0 });
+  }
+  // value + deterministic ordering + today-cap arrive in Task 4.
+  return { steps, today: [], currentBand: band, targetCefr: target };
+}
