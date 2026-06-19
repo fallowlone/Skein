@@ -11,6 +11,9 @@ export const PASS_HIGH = 0.6;      // >= => "passed", propagate up-closure lift
 export const FAIL_LOW = 0.4;       // <  => "failed", propagate down to dependents
 const FRESH_DAYS = 30, STALE_DAYS = 120;
 const STRONG: Source[] = ["diagnostic", "declared"];
+// Study-activity must not overwrite review evidence (review > activity). Kept separate from STRONG
+// so applyDiagnostic's propagation and applyPracticeStruggle's erosion guard are unchanged.
+const STUDY_PROTECTED: Source[] = ["diagnostic", "declared", "review"];
 
 export const emptyState = (): KnowledgeState => new Map();
 
@@ -63,7 +66,7 @@ export function applyStudyEvidence(
   const target = clamp01(wLessons * clamp01(touchedFrac) + wPractice * clamp01(doneFrac));
   for (const c of taught) {
     const cur = next.get(c);
-    if (cur && STRONG.includes(cur.source)) continue;     // never override stronger evidence
+    if (cur && STUDY_PROTECTED.includes(cur.source)) continue;     // never override stronger evidence
     if (masteryOf(next, c) >= target) continue;           // never lower
     next = setMastery(next, c, { confidence: target, source: "activity", lastAt: now });
   }
@@ -90,6 +93,32 @@ export function applyPracticeStruggle(
     const target = Math.max(floor, cur.confidence - drop);
     if (target >= cur.confidence) continue;      // never raise
     next = setMastery(next, c, { confidence: target, source: "activity", lastAt: now });
+  }
+  return next;
+}
+
+// Aggregate review-health evidence for a unit's taught concepts. `healthFrac` in [0,1] is the share
+// of the unit's reviewed cards in good standing. Like applyStudyEvidence, lift toward
+// healthFrac*weight with source "review" (mid-tier: overrides activity, never diagnostic/declared,
+// no DAG propagation). Unlike study, a low healthFrac also ERODES review/activity confidence toward
+// `floor` — event-driven forgetting evidence, distinct from decay()'s age-driven read-model.
+export function applyReviewEvidence(
+  state: KnowledgeState, taught: string[], healthFrac: number, weight: number, floor: number, now: number,
+): KnowledgeState {
+  let next = state;
+  const target = clamp01(clamp01(healthFrac) * weight);
+  for (const c of taught) {
+    const cur = next.get(c);
+    if (cur && STRONG.includes(cur.source)) continue;            // diagnostic/declared are immune
+    const m = masteryOf(next, c);
+    if (target > m) {
+      next = setMastery(next, c, { confidence: target, source: "review", lastAt: now });
+    } else if (cur && (cur.source === "review" || cur.source === "activity")) {
+      const lowered = Math.max(floor, target);                   // forgetting: erode toward floor
+      if (lowered < cur.confidence) {
+        next = setMastery(next, c, { confidence: lowered, source: "review", lastAt: now });
+      }
+    }
   }
   return next;
 }
