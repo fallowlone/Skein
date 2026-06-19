@@ -16,18 +16,23 @@ type Bi = { en: string; ru: string };
 // MDX passes { q, a }. Worse, q/answer are ComponentChildren — sometimes JSX, not
 // strings. Accept both keys (`a ?? answer`) and harvest ONLY string-valued cards;
 // JSX-bodied questions are skipped (a card needs plain text to review against).
+//
+// cardsFromRetrieval takes TWO ids: `cardSlug` builds the stable SM-2 cardKey (the
+// bare author id, so existing schedules survive) while `lessonKey` is the canonical
+// "<track>/<unit>/<slug>" join key (injected by the remark plugin) that unitReviewHealth
+// buckets on. They differ on purpose — see path-io.ts unitReviewHealth.
 export type RetrievalQ = { id?: string; q: unknown; a?: unknown; answer?: unknown };
 export type PracticeTaskLite = { id: string; title: Bi; prompt: Bi };
 
-export function cardsFromRetrieval(pieceSlug: string, lang: Lang, questions: RetrievalQ[]): CardSeed[] {
+export function cardsFromRetrieval(cardSlug: string, lessonKey: string, lang: Lang, questions: RetrievalQ[]): CardSeed[] {
   return questions
     .map((q, index): CardSeed | null => {
       const front = q.q;
       const back = q.a ?? q.answer;
       if (typeof front !== "string" || typeof back !== "string") return null;
       return {
-        cardKey: `${pieceSlug}::retrieval::${index}`,
-        lessonKey: pieceSlug,
+        cardKey: `${cardSlug}::retrieval::${index}`,
+        lessonKey,
         source: "retrieval" as const,
         index,
         front: trunc(front),
