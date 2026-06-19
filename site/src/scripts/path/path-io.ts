@@ -353,6 +353,12 @@ const REVIEW_EVIDENCE_WEIGHT = 0.7;
 // Pure (exported for tests): per-unit review health from the card store. healthFrac is the share of
 // a unit's REVIEWED cards (lastReviewedAt != null) currently in good standing. Unreviewed cards carry
 // no signal and are excluded; a unit with no reviewed cards is omitted from the map.
+//
+// KNOWN LIMITATION (Phase 3b): only cards whose lessonKey is a "<track>/<unit>/…" path join here.
+// PRACTICE cards carry the route-derived key and join. RETRIEVAL cards seeded by RetrievalDrawer
+// currently carry the author's bare `id` (e.g. "07-stability-retrieval"), so they fail the seg<2
+// guard below and contribute nothing — the retrieval-grade→mastery loop is not yet closed. Closing
+// it needs giving RetrievalDrawer the canonical lessonKey at its ~2696 call sites (Phase 3b).
 export function unitReviewHealth(cards: Card[], now: number): Map<string, number> {
   const reviewed = new Map<string, number>();
   const healthy = new Map<string, number>();
