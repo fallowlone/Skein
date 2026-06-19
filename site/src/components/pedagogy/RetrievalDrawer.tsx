@@ -19,9 +19,13 @@ type Q = {
 
 // Likewise the slug arrives as `id` from MDX but `pieceSlug` from the renamed
 // contract; either identifies the lesson for retrieval/SRS bookkeeping.
+// `lessonKey` is the canonical join key injected by the remark plugin at build
+// time (e.g. "databases/03-execution-plans/07-plan-stability"); when absent the
+// bare slug is used as a fallback so existing MDX call sites regress-free.
 type Props = {
   pieceSlug?: string;
   id?: string;
+  lessonKey?: string;
   lang: Locale;
   questions: Q[];
 };
@@ -47,7 +51,7 @@ const labels = {
   },
 };
 
-export default function RetrievalDrawer({ pieceSlug, id, lang, questions }: Props) {
+export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questions }: Props) {
   const slug = pieceSlug ?? id ?? "";
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [graded, setGraded] = useState<Record<string, Grade>>({});
@@ -57,7 +61,7 @@ export default function RetrievalDrawer({ pieceSlug, id, lang, questions }: Prop
   // Lazy-seed spaced-repetition cards on first visit (string-valued Q/A only).
   useEffect(() => {
     if (typeof window === "undefined") return;
-    cardsFromRetrieval(slug, lang, questions).forEach(addCard);
+    cardsFromRetrieval(slug, lessonKey ?? slug, lang, questions).forEach(addCard);
   }, []);
 
   return (
