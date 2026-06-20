@@ -72,45 +72,53 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
     );
   }
 
+  const progress = Math.round((idx / queue.length) * 100);
+
   return (
-    <section class="my-10 hr-top hr-bot py-6">
-      <header class="flex items-center justify-between mb-5">
-        <span class="meta">{t("review.title", lang)}</span>
-        <span class="font-mono text-[11px] text-muted tabular-nums">
-          {idx + 1} {t("review.cardOf", lang)} {queue.length}
-        </span>
-      </header>
+    <section class="my-10">
+      <div class="rounded-[var(--r-lg)] border-[0.5px] border-hairline-2 bg-card shadow-soft p-6 sm:p-7">
+        <header class="flex items-center justify-between mb-4">
+          <span class="meta">{t("review.title", lang)}</span>
+          <span class="font-mono text-[11px] text-muted tabular-nums">
+            {idx + 1} {t("review.cardOf", lang)} {queue.length}
+          </span>
+        </header>
 
-      <div class="font-display text-[17px] font-semibold leading-snug text-ink mb-4">{card.front}</div>
+        <div class="h-[3px] w-full overflow-hidden rounded-full bg-hairline-2 mb-6">
+          <div class="h-full rounded-full bg-accent transition-[width] duration-300 ease-out" style={`width:${progress}%`} />
+        </div>
 
-      {!revealed ? (
-        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={() => setRevealed(true)}>
-          {t("review.showAnswer", lang)}
-        </button>
-      ) : (
-        <>
-          <div class="pl-3 border-l-2 border-accent text-[13.5px] leading-relaxed text-ink-2 mb-5">
-            <div class="meta mb-1.5" style="color: var(--accent);">answer</div>
-            {card.back}
-          </div>
-          <div class="flex items-center gap-2">
-            {GRADES.map((g) => (
-              <button
-                key={g}
-                type="button"
-                onClick={() => grade(g)}
-                class={`px-3 h-8 font-mono text-[11px] border rounded-[1px] bg-transparent transition-colors ${GRADE_CLS[g]}`}
-              >
-                {t(`review.${g}`, lang)}
-              </button>
-            ))}
-          </div>
-        </>
-      )}
+        <div class="font-display text-[19px] sm:text-[21px] font-semibold leading-snug text-ink mb-6">{card.front}</div>
 
-      <footer class="mt-6 pt-4 hr-top">
-        <span class="font-mono text-[10px] text-muted uppercase tracking-wide">{card.lessonKey}</span>
-      </footer>
+        {!revealed ? (
+          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={() => setRevealed(true)}>
+            {t("review.showAnswer", lang)}
+          </button>
+        ) : (
+          <>
+            <div class="rounded-[var(--r-md)] border-l-2 border-accent bg-paper-2 pl-4 pr-3 py-3 text-[14px] leading-relaxed text-ink-2 mb-6 animate-reveal-up">
+              <div class="meta mb-1.5" style="color: var(--accent);">{t("review.title", lang)}</div>
+              {card.back}
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              {GRADES.map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() => grade(g)}
+                  class={`px-3 h-8 font-mono text-[11px] border rounded-[var(--r-sm)] bg-transparent transition-colors ${GRADE_CLS[g]}`}
+                >
+                  {t(`review.${g}`, lang)}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        <footer class="mt-7 pt-4 border-t border-hairline">
+          <span class="font-mono text-[10px] text-muted uppercase tracking-wide">{card.lessonKey}</span>
+        </footer>
+      </div>
     </section>
   );
 }
