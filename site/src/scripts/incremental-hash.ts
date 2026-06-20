@@ -24,9 +24,43 @@ export function hashParts(parts: string[]): string {
   return h.digest("hex");
 }
 
-/** Per-page hash: the only inputs rendered solely on a lesson's own page. */
-export function pageHash(bodyRaw: string, practiceRaw: string): string {
-  return hashParts([bodyRaw, practiceRaw]);
+/**
+ * Frontmatter fields that render ONLY on a lesson's own page, so a change to one
+ * should rebuild ONLY that page (incremental), not the whole site. Anything NOT
+ * listed here stays in the global hash (→ full rebuild), so a newly added field
+ * is safe-by-default. Keep to single-line SCALAR fields whose value never feeds a
+ * cross-page surface (nav, sidebar, units.json, roadmap, prereq graph).
+ */
+export const PAGE_LOCAL_FRONTMATTER_FIELDS: readonly string[] = [
+  // seeded conservatively; finalized in sub-task 1.2 from grep evidence
+  "description",
+  "estMin",
+];
+
+/**
+ * Partition a frontmatter block by top-level key. A line matching `^key:` opens a
+ * field; subsequent more-indented lines are its continuation. The whole field
+ * block routes to `local` if its key is in `localFields`, else to `rest`.
+ */
+export function partitionFrontmatter(
+  fm: string,
+  localFields: readonly string[] = PAGE_LOCAL_FRONTMATTER_FIELDS,
+): { local: string; rest: string } {
+  const localSet = new Set(localFields);
+  const localLines: string[] = [];
+  const restLines: string[] = [];
+  let current: "local" | "rest" = "rest";
+  for (const line of fm.split("\n")) {
+    const top = line.match(/^([A-Za-z0-9_]+):/);
+    if (top) current = localSet.has(top[1]) ? "local" : "rest";
+    (current === "local" ? localLines : restLines).push(line);
+  }
+  return { local: localLines.join("\n").trim(), rest: restLines.join("\n").trim() };
+}
+
+/** Per-page hash: inputs rendered solely on a lesson's own page. */
+export function pageHash(bodyRaw: string, practiceRaw: string, localFmRaw = ""): string {
+  return hashParts([bodyRaw, practiceRaw, localFmRaw]);
 }
 
 /** The page identity the lesson route's getStaticPaths keys on. */
