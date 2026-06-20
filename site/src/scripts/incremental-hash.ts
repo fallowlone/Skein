@@ -32,9 +32,14 @@ export function hashParts(parts: string[]): string {
  * cross-page surface (nav, sidebar, units.json, roadmap, prereq graph).
  */
 export const PAGE_LOCAL_FRONTMATTER_FIELDS: readonly string[] = [
-  // seeded conservatively; finalized in sub-task 1.2 from grep evidence
-  "description",
-  "estMin",
+  // Evidence-backed page-local scalars (render ONLY on the lesson's own page):
+  // - "level": [lesson].astro:48 only; never in nav/sidebar/search-index/units.json
+  //
+  // Rejected candidates:
+  // - "description": not a real lesson frontmatter field; zero usage found
+  // - "estMin": cross-page — [track]/index.astro (total min) + learn/index.astro (minutes-by-track)
+  // - "summary": cross-page — search-index.json.ts feeds sitewide search
+  "level",
 ];
 
 /**
