@@ -12,7 +12,7 @@ export function buildCsp(extra?: CspExtra): string {
     scriptSrc,
     "style-src 'self' 'unsafe-inline'",
     "font-src 'self'",
-    "img-src 'self' data:",
+    "img-src 'self' data: https://avatars.githubusercontent.com",
     "connect-src 'self' https://api.anthropic.com",
     "base-uri 'self'",
     "form-action 'self'",

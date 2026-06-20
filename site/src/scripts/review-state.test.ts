@@ -59,6 +59,22 @@ describe("review-state store", () => {
     expect(allCards()[0].sched.reps).toBe(1);
   });
 
+  it("drops legacy/corrupt cards missing a string lessonKey instead of surfacing them to splitters", () => {
+    // A pre-lessonKey card persisted by an old build: every consumer does lessonKey.split("/"),
+    // so an undefined lessonKey crashed the Planning page. read() must filter it at the boundary.
+    localStorage.setItem(
+      REVIEW_KEY,
+      JSON.stringify({
+        legacy: { cardKey: "legacy", source: "retrieval", index: 0, front: "f", back: "b", lang: "en", sched: { reps: 0, lapses: 0 }, dueAt: 0, addedAt: 0, lastReviewedAt: null },
+        good: { ...card, sched: { reps: 0, lapses: 0 }, dueAt: 0, addedAt: 0, lastReviewedAt: null },
+      }),
+    );
+    const cards = allCards();
+    expect(cards.map((c) => c.cardKey)).toEqual([card.cardKey]); // legacy dropped, good kept
+    expect(() => dueBefore(1)).not.toThrow();
+    expect(dueBefore(1).map((c) => c.cardKey)).toEqual([card.cardKey]);
+  });
+
   it("addCard refreshes a stale lessonKey on an existing card without resetting its schedule", () => {
     const base = { cardKey: "07-x::retrieval::0", source: "retrieval" as const, index: 0, front: "f", back: "b", lang: "en" as const };
     // Phase-3a-era seed: bare lessonKey
