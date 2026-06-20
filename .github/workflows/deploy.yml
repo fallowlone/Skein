@@ -51,19 +51,106 @@ jobs:
         run: bun run verify:scenario
         working-directory: site
 
-  # Single job: plan (full vs incremental) → build → lint → deploy, all in one
-  # runner. No cross-job artifacts — the only state handed between runs is the
-  # rolling dist+manifest cache (actions/cache, a separate quota from the
-  # artifact storage that the old sharded pipeline exhausted on the free tier).
-  build-deploy:
+  # Standalone plan job: decides full vs incremental, outputs the mode so both
+  # the shard-render matrix and the build-deploy job can branch on it.
+  plan:
     needs: gates
     runs-on: ubuntu-latest
-    # 180, not 90: a full (non-incremental) build now renders 5777 pages
-    # single-threaded (~65 min local, slower on the runner) and Cloudflare Pages
-    # upload intermittently degrades to ~minutes per hundred files. Two full-build
-    # deploys (grammar system, pagespeed fixes) died at the 90-min wall. Incremental
-    # builds finish in minutes; this cap only bites shared-file / large-content pushes.
-    timeout-minutes: 180
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      - name: Install site deps
+        run: bun install --frozen-lockfile
+        working-directory: site
+      - name: Restore dist + manifest cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            site/dist
+            site/build-cache/manifest.json
+          key: site-dist-${{ github.run_id }}
+          restore-keys: site-dist-
+      - name: Plan build
+        id: plan
+        working-directory: site
+        env:
+          FORCE_FULL_BUILD: ${{ (github.event_name == 'schedule' || inputs.force_full == 'true') && '1' || '0' }}
+        run: bun scripts/incremental-plan.mjs
+      # Upload plan outputs as an artifact so build-deploy can consume them
+      # without writing to the rolling dist cache (which only build-deploy owns).
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-plan
+          path: |
+            site/build-cache/plan.json
+            site/build-cache/next-manifest.json
+          retention-days: 1
+
+  # Matrix job: render one shard per runner in parallel (full builds only).
+  # Each runner gets its own 16 GB — no OOM risk that plagued single-runner
+  # multi-process sharding (parallel-build.mjs). SHARD_TOTAL=4 means ~16–18 min
+  # per shard vs ~65 min serial. Incremental builds skip this job entirely.
+  shard-render:
+    needs: plan
+    if: needs.plan.outputs.mode == 'full'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: true
+      matrix:
+        index: [0, 1, 2, 3]    # SHARD_TOTAL = 4; tune by measuring runner wall-clock
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      - name: Install site deps
+        run: bun install --frozen-lockfile
+        working-directory: site
+      - name: Restore Astro/Vite build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            site/node_modules/.astro
+            site/node_modules/.vite
+          key: astro-vite-${{ hashFiles('site/bun.lock', 'site/astro.config.mjs') }}-${{ github.run_id }}
+          restore-keys: |
+            astro-vite-${{ hashFiles('site/bun.lock', 'site/astro.config.mjs') }}-
+            astro-vite-
+      - name: Render shard ${{ matrix.index }}
+        working-directory: site
+        env:
+          SHARD_INDEX: ${{ matrix.index }}
+          SHARD_TOTAL: "4"
+        run: NODE_OPTIONS=--max-old-space-size=10240 bunx astro build --outDir dist-shard-${{ matrix.index }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-shard-${{ matrix.index }}
+          path: site/dist-shard-${{ matrix.index }}
+          retention-days: 1
+
+  # Single job: build (full-via-merge or incremental) → lint → deploy, all in
+  # one runner. For full builds: shard-render ran N parallel renders; this job
+  # downloads the slices and merges them into dist. For incremental builds:
+  # shard-render is skipped, and the incremental render/overlay path runs here
+  # exactly as before. No cross-job artifacts for the incremental path — the only
+  # state is the rolling dist+manifest cache (actions/cache, a separate quota
+  # from the artifact storage that the old sharded pipeline exhausted on the
+  # free tier; the repo is now public so artifact storage limits are relaxed).
+  build-deploy:
+    needs: [plan, shard-render]
+    if: always() && needs.plan.result == 'success' && (needs.shard-render.result == 'success' || needs.shard-render.result == 'skipped')
+    runs-on: ubuntu-latest
+    # Full builds are now handled by 4 parallel shard runners (≈18–20 min each)
+    # + this merge+deploy job. Serial full builds no longer run here; 60 min
+    # covers merge + lint + CF Pages upload with headroom for upload spikes.
+    # Incremental builds finish in minutes; this cap only bites on upload degradation.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -75,6 +162,17 @@ jobs:
         run: bun install --frozen-lockfile
         working-directory: site
 
+      - name: Restore Astro/Vite build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            site/node_modules/.astro
+            site/node_modules/.vite
+          key: astro-vite-${{ hashFiles('site/bun.lock', 'site/astro.config.mjs') }}-${{ github.run_id }}
+          restore-keys: |
+            astro-vite-${{ hashFiles('site/bun.lock', 'site/astro.config.mjs') }}-
+            astro-vite-
+
       - name: Restore dist + manifest cache
         uses: actions/cache/restore@v4
         with:
@@ -84,36 +182,39 @@ jobs:
           key: site-dist-${{ github.run_id }}
           restore-keys: site-dist-
 
-      - name: Plan build
-        id: plan
+      # Download plan outputs (plan.json + next-manifest.json) produced by the
+      # plan job and uploaded as an artifact — keeps the rolling dist cache
+      # write-once (only build-deploy saves it).
+      - name: Download plan artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-plan
+          path: site/build-cache
+
+      # ── FULL: download shard slices + merge into dist ──
+      # The plan job ran incremental-plan.mjs and wrote next-manifest.json which
+      # is now in the restored cache above. After merge-shards passes completeness,
+      # we promote next-manifest.json → manifest.json so the next run has a fresh
+      # baseline. shard-render uploaded the per-shard dist slices as artifacts.
+      - name: Download shard slices (full)
+        if: needs.plan.outputs.mode == 'full'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-shard-*
+          path: site
+      - name: Merge shards (full)
+        if: needs.plan.outputs.mode == 'full'
         working-directory: site
         env:
-          FORCE_FULL_BUILD: ${{ (github.event_name == 'schedule' || inputs.force_full == 'true') && '1' || '0' }}
-        run: bun scripts/incremental-plan.mjs
-
-      # ── FULL: render the whole site serially (single process, ~65 min) ──
-      # Parallel multi-process render was attempted (parallel-build.mjs, 2-3 shards)
-      # but every shard OOM'd: each astro process loads the FULL content store +
-      # content-modules.mjs + Vite module graph (~6 GB baseline) before rendering only
-      # its slice, so 2 shards need ~16 GB combined with no headroom on the 16 GB
-      # runner. The fat per-process baseline caps parallelism below 2. Serial fits the
-      # 180-min job cap (proven green: run 27613031145). Faster parallel render would
-      # require sharding the content LOAD, not just the routes — a separate redesign.
-      - name: Full build
-        if: steps.plan.outputs.mode == 'full'
-        working-directory: site
-        run: NODE_OPTIONS=--max-old-space-size=10240 bunx astro build
-      - name: Verify dist completeness
-        if: steps.plan.outputs.mode == 'full'
-        run: bun scripts/check-dist-complete.mjs
-        working-directory: site
+          SHARD_TOTAL: "4"
+        run: bun scripts/merge-shards.mjs
       - name: Promote manifest (full)
-        if: steps.plan.outputs.mode == 'full'
+        if: needs.plan.outputs.mode == 'full'
         run: mv site/build-cache/next-manifest.json site/build-cache/manifest.json
 
       # ── INCREMENTAL: render only changed pages, overlay onto cached dist ──
       - name: Snapshot cached dist
-        if: steps.plan.outputs.mode == 'incremental'
+        if: needs.plan.outputs.mode == 'incremental'
         run: |
           if [ ! -d site/dist ]; then
             echo "Restored cache had no dist/ — cannot run incremental." >&2
@@ -122,7 +223,7 @@ jobs:
           rm -rf site/build-cache/prev-dist
           cp -a site/dist site/build-cache/prev-dist
       - name: Render changed pages
-        if: steps.plan.outputs.mode == 'incremental'
+        if: needs.plan.outputs.mode == 'incremental'
         working-directory: site
         env:
           SHARD_TOTAL: "1"
@@ -130,7 +231,7 @@ jobs:
           INCREMENTAL_PLAN="$(cat build-cache/plan.json)" \
             NODE_OPTIONS=--max-old-space-size=10240 bunx astro build
       - name: Overlay + guard + promote manifest
-        if: steps.plan.outputs.mode == 'incremental'
+        if: needs.plan.outputs.mode == 'incremental'
         run: bun scripts/incremental-merge.mjs
         working-directory: site
 
@@ -161,6 +262,10 @@ jobs:
             exit 1
           fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
+      # NOTE: wrangler uploads only files whose content hash is missing from the
+      # live deployment. Incremental builds overlay byte-identical unchanged pages,
+      # so the upload is a delta. Do NOT introduce per-build nondeterminism into
+      # rendered HTML (timestamps/build-ids) — it defeats this and re-uploads all pages.
       - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

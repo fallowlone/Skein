@@ -1,14 +1,15 @@
 #!/usr/bin/env bun
 // Pre-build decision. Walks src/, categorizes every input into the GLOBAL hash
-// (anything that can affect >1 page, incl. ALL lesson frontmatter) vs per-page
-// hashes (lesson MDX body + its practice JSON), compares to the restored
+// (anything that can affect >1 page, incl. the cross-page "rest" portion of
+// lesson frontmatter) vs per-page hashes (lesson MDX body + practice JSON +
+// page-local frontmatter fields), compares to the restored
 // manifest, and writes build-cache/plan.json + build-cache/next-manifest.json.
 // Honors FORCE_FULL_BUILD=1. Prints the mode (and appends it to GITHUB_OUTPUT).
 import { readdir, readFile, mkdir, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  splitFrontmatter, frontmatterField, hashParts, pageHash, pageKeyOf, decideBuild,
+  splitFrontmatter, frontmatterField, hashParts, pageHash, pageKeyOf, decideBuild, partitionFrontmatter,
 } from "../src/scripts/incremental-hash.ts";
 
 const siteRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -80,8 +81,9 @@ for (const p of lessonFiles) {
   }
   const id = `${track}/${unit}/${slug}`;
   const key = pageKeyOf({ lang, track, unit, slug });
-  fmProjection.push(`${relative(siteRoot, p)}\0${frontmatter}`);
-  pages[key] = pageHash(body, practiceRawByKey[id] ?? "");
+  const { local, rest } = partitionFrontmatter(frontmatter);
+  fmProjection.push(`${relative(siteRoot, p)}\0${rest}`);
+  pages[key] = pageHash(body, practiceRawByKey[id] ?? "", local);
 }
 
 // ---- 4. GLOBAL_HASH = sorted shared files + config + sorted frontmatter projection ----
