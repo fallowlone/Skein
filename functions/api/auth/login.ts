@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env } from "../../lib/types";
 import { authorizeUrl } from "../../lib/github";
-import { signValue, serializeCookie } from "../../lib/cookies";
+import { signValue, serializeCookie, isSecureRequest } from "../../lib/cookies";
 
 export const onRequestGet: PagesFunction<Env> = async (ctx) => {
   const { request, env } = ctx;
@@ -15,7 +15,7 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
 
   const headers = new Headers();
   headers.append("Set-Cookie", serializeCookie("oauth_state", stateCookie, {
-    httpOnly: true, secure: url.protocol === "https:", maxAge: 600, sameSite: "Lax",
+    httpOnly: true, secure: isSecureRequest(url, env), maxAge: 600, sameSite: "Lax",
   }));
   headers.set("Location", authorizeUrl(env.GITHUB_CLIENT_ID, redirectUri, state));
   return new Response(null, { status: 302, headers });
