@@ -1,6 +1,6 @@
 // functions/lib/cookies.test.ts
 import { describe, it, expect } from "vitest";
-import { signValue, verifyValue, serializeCookie, parseCookies } from "./cookies";
+import { signValue, verifyValue, serializeCookie, parseCookies, isSecureRequest } from "./cookies";
 
 const SECRET = "test-secret-please-ignore";
 
@@ -19,6 +19,14 @@ describe("cookies", () => {
   it("rejects a wrong secret", async () => {
     const signed = await signValue("hello", SECRET);
     expect(await verifyValue(signed, "other-secret")).toBeNull();
+  });
+
+  it("isSecureRequest: https always secure; http secure only when CF_PAGES set", () => {
+    const https = new URL("https://example.com/api/auth/login");
+    const http = new URL("http://localhost:8788/api/auth/login");
+    expect(isSecureRequest(https, {})).toBe(true);              // prod TLS
+    expect(isSecureRequest(http, { CF_PAGES: "1" })).toBe(true); // CF behind http proxy
+    expect(isSecureRequest(http, {})).toBe(false);             // local wrangler dev
   });
 
   it("serializes attributes and parses a header", () => {
