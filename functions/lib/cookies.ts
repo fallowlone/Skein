@@ -33,6 +33,17 @@ export async function verifyValue(signed: string, secret: string): Promise<strin
   return diff === 0 ? value : null;
 }
 
+/**
+ * Whether cookies set on this request must carry `Secure`. True for any HTTPS
+ * request, and also whenever `CF_PAGES` is set — Cloudflare Pages always defines
+ * it, so production stays Secure even if a fronting proxy makes the worker see
+ * `http:`. Only a local `wrangler pages dev` over plain HTTP (no CF_PAGES) is
+ * allowed to set non-Secure cookies, so dev login still works.
+ */
+export function isSecureRequest(url: URL, env: { CF_PAGES?: string }): boolean {
+  return url.protocol === "https:" || env.CF_PAGES === "1";
+}
+
 export interface CookieOpts {
   httpOnly?: boolean;
   secure?: boolean;

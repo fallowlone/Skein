@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { splitFrontmatter, frontmatterField, hashParts, pageHash, pageKeyOf, decideBuild, type Manifest } from "./incremental-hash";
+import {
+  splitFrontmatter, frontmatterField, hashParts, pageHash, pageKeyOf,
+  decideBuild, partitionFrontmatter, PAGE_LOCAL_FRONTMATTER_FIELDS,
+  type Manifest,
+} from "./incremental-hash";
 
 describe("splitFrontmatter", () => {
   it("separates the YAML frontmatter block from the body", () => {
@@ -101,5 +105,60 @@ describe("decideBuild", () => {
   it("is FULL when a page key was removed (present in prev, absent in current)", () => {
     const d = decideBuild(prev, { globalHash: "G1", pages: { "en/n/01/a": "h1" } });
     expect(d.mode).toBe("full");
+  });
+});
+
+describe("partitionFrontmatter", () => {
+  const fm = [
+    "lang: en",
+    "track: networking",
+    "title: TCP Handshake",
+    "description: A page-only blurb",
+    "estMin: 12",
+    "prereqs:",
+    "  - networking/02-ip/01-addressing",
+  ].join("\n");
+
+  it("routes allowlisted scalar fields to `local`", () => {
+    const { local } = partitionFrontmatter(fm, ["description", "estMin"]);
+    expect(local).toContain("description: A page-only blurb");
+    expect(local).toContain("estMin: 12");
+    expect(local).not.toContain("title:");
+  });
+
+  it("routes everything else (incl. nested blocks) to `rest`", () => {
+    const { rest } = partitionFrontmatter(fm, ["description", "estMin"]);
+    expect(rest).toContain("title: TCP Handshake");
+    expect(rest).toContain("prereqs:");
+    expect(rest).toContain("  - networking/02-ip/01-addressing");
+    expect(rest).not.toContain("description:");
+  });
+
+  it("keeps an indented continuation with its parent field", () => {
+    const { rest, local } = partitionFrontmatter(fm, ["estMin"]);
+    expect(rest).toContain("  - networking/02-ip/01-addressing");
+    expect(local).toBe("estMin: 12");
+  });
+
+  it("is a complete, disjoint partition (no field lost or duplicated)", () => {
+    const { local, rest } = partitionFrontmatter(fm, ["description", "estMin"]);
+    const lines = (local + "\n" + rest).split("\n").filter(Boolean).sort();
+    expect(lines).toEqual(fm.split("\n").filter(Boolean).sort());
+  });
+
+  it("exposes a non-empty page-local allowlist", () => {
+    expect(PAGE_LOCAL_FRONTMATTER_FIELDS.length).toBeGreaterThan(0);
+  });
+});
+
+describe("pageHash (with local frontmatter)", () => {
+  it("changes when the local frontmatter projection changes", () => {
+    expect(pageHash("b", "p", "estMin: 10")).not.toBe(pageHash("b", "p", "estMin: 11"));
+  });
+  it("2-arg call equals the legacy 2-part hash (manifest backward-compat)", () => {
+    expect(pageHash("b", "p")).toBe(hashParts(["b", "p"]));
+  });
+  it("3-arg with non-empty local frontmatter differs from the 2-arg value", () => {
+    expect(pageHash("b", "p", "level: senior")).not.toBe(pageHash("b", "p"));
   });
 });
