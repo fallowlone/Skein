@@ -28,10 +28,30 @@ export interface Card extends CardSeed {
 
 type Store = Record<string, Card>;
 
+// A card is usable only if it carries the string `lessonKey` every consumer splits
+// and the numeric `dueAt` the queue sorts on. Legacy entries seeded before lessonKey
+// existed (or otherwise corrupt) are dropped here, at the one boundary — so no
+// downstream `.split`/sort site has to defend against a malformed card.
+function isCard(c: unknown): c is Card {
+  return (
+    !!c &&
+    typeof c === "object" &&
+    typeof (c as Card).lessonKey === "string" &&
+    (c as Card).lessonKey.length > 0 &&
+    typeof (c as Card).dueAt === "number"
+  );
+}
+
 function read(): Store {
   try {
     const raw = localStorage.getItem(REVIEW_KEY);
-    return raw ? (JSON.parse(raw) as Store) : {};
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const out: Store = {};
+    for (const [key, card] of Object.entries(parsed)) {
+      if (isCard(card)) out[key] = card;
+    }
+    return out;
   } catch {
     return {};
   }
