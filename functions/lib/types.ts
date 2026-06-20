@@ -9,6 +9,7 @@ export interface Env {
   TERMS_VERSION: string;
   COOKIE_NAME?: string; // defaults to "session" in dev, "__Host-session" in prod
   ADMIN_TOKEN?: string; // gates /api/admin/*; unset = admin endpoints disabled (503)
+  CF_PAGES?: string;    // system var Cloudflare Pages always sets ("1"); used to force Secure cookies
 }
 
 export interface UserRow {
