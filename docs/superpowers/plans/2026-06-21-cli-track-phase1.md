@@ -15,7 +15,7 @@
 - Target: bash / POSIX, Linux-first; macOS/BSD-vs-GNU differences only in `<Inset>` asides.
 - Practice CANNOT execute a real shell. Allowed task types: `predict`, `diagnose`, `review`, `design`, and `sandbox` ONLY when it faithfully MODELS shell behaviour in JS with a real check. Never fake shell execution.
 - Every ready lesson carries `level` frontmatter (`zero`/`junior` for these units) and exactly one structural diagram.
-- A new track must be wired into ALL seams or it won't render: `src/content/tracks.json`, `src/content/units.json`, `TRACK_BAND`, and `track-meta.ts` `TRACK_ABBR`. (units.json merges union-dedup-by-id.)
+- A new track must be wired into ALL FIVE coupled seams or TypeScript/zod reject it: (1) `src/types/index.ts` — add `cli` to BOTH the `Track` union type AND the `TRACKS` array (single source the zod `Track` enum derives from); (2) `src/content/tracks.json` — track entry (keyed by `slug`, e.g. `{slug:"cli", order:39, color:"sky", title, blurb}`); (3) `src/content/units.json` — units (merges union-dedup-by-id); (4) `src/components/atlas/track-band.ts` `TRACK_BAND` → `"cli": "foundations"`; (5) `src/scripts/track-meta.ts` `TRACK_ABBR` → `"cli": "CLI"`. TRACK_BAND/TRACK_ABBR are exhaustive `Record<Track,…>`, so adding to the `Track` union FORCES matching entries in both (else a TS error). Do NOT register the track with zero units — an empty track ships a broken/empty page and can fail track/unit tests; Task 1 lands the scaffold + unit 01 together as one coherent slice.
 - Gate per task: `bun run build`'s linter clean (or at minimum `bunx astro sync` + `bun scripts/lint-src.mjs` clean for content-only increments) + EN/RU parity.
 
 ---
@@ -27,14 +27,15 @@
 **Files:**
 - Modify: `site/src/content/tracks.json` — add the `cli` track entry (mirror an existing foundations track entry: id `cli`, bilingual title "Command line"/"Командная строка", crux, order).
 - Modify: `site/src/content/units.json` — add `cli/01-the-shell` (id, slug, track `cli`, order 1, bilingual title, crux, lessons list).
-- Modify: the `TRACK_BAND` map (grep `TRACK_BAND` to locate) — add `cli` with the beginner band.
-- Modify: `site/src/.../track-meta.ts` (grep `TRACK_ABBR`) — add the `cli` abbreviation.
+- Modify: `site/src/types/index.ts` — add `cli` to the `Track` union type AND the `TRACKS` array (the zod `Track` enum derives from `TRACKS`; this is the gating seam).
+- Modify: `site/src/components/atlas/track-band.ts` — `TRACK_BAND` → `"cli": "foundations"`.
+- Modify: `site/src/scripts/track-meta.ts` — `TRACK_ABBR` → `"cli": "CLI"`.
 - Create (via `/teach cli/01-the-shell/<lesson>`): `site/src/content/lessons/{en,ru}/cli/01-the-shell/{01-what-is-a-terminal,02-the-prompt-and-commands,03-where-am-i}/index.mdx`.
 - Create: `site/src/content/practice/cli/01-the-shell/*.json` (one per lesson).
 
 **Unit 01 lessons:** `01-what-is-a-terminal` (terminal vs shell vs prompt), `02-the-prompt-and-commands` (command, arguments, flags; `ls`), `03-where-am-i` (`pwd`, `cd`, the filesystem tree).
 
-- [ ] **Step 1: Wire the track stubs.** Add the `cli` entry to `tracks.json`, the `cli/01-the-shell` unit to `units.json`, the `TRACK_BAND` band, and the `track-meta.ts` `TRACK_ABBR`. Copy the shape of an existing foundations track verbatim; only values change.
+- [ ] **Step 1: Wire all 5 seams together** (see Global Constraints): `cli` into `src/types/index.ts` (`Track` union + `TRACKS`), `tracks.json` (the `cli` entry), `units.json` (the `cli/01-the-shell` unit), `track-band.ts` `TRACK_BAND`, and `track-meta.ts` `TRACK_ABBR`. Copy an existing foundations track's shape verbatim; only values change. Land this WITH unit 01 content (Steps 3–4) in the same commit — never register an empty track.
 - [ ] **Step 2: Verify wiring resolves.** Run: `cd site && bunx astro sync`. Expected: clean (collections validate; `cli` track + unit recognized).
 - [ ] **Step 3: Author unit 01 lessons** via `/teach cli/01-the-shell/01-what-is-a-terminal` (then `02`, `03`). Each: linear skeleton, EN+RU, one diagram, `level: zero`, illustrative shell in fenced blocks, macOS notes in `<Inset>`.
 - [ ] **Step 4: Author unit 01 practice** — for each lesson a `practice/cli/01-the-shell/<lesson>.json` with 3–5 tasks drawn from {predict output, diagnose the command/flag, review a one-liner, design a small task}. Bilingual.
