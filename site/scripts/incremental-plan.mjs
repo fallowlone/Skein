@@ -8,7 +8,7 @@ import { readdir, readFile, mkdir, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  splitFrontmatter, frontmatterField, hashParts, pageHash, pageKeyOf, decideBuild,
+  splitFrontmatter, frontmatterField, hashParts, pageHash, pageKeyOf, decideBuild, partitionFrontmatter,
 } from "../src/scripts/incremental-hash.ts";
 
 const siteRoot = fileURLToPath(new URL("../", import.meta.url));
@@ -80,8 +80,9 @@ for (const p of lessonFiles) {
   }
   const id = `${track}/${unit}/${slug}`;
   const key = pageKeyOf({ lang, track, unit, slug });
-  fmProjection.push(`${relative(siteRoot, p)}\0${frontmatter}`);
-  pages[key] = pageHash(body, practiceRawByKey[id] ?? "");
+  const { local, rest } = partitionFrontmatter(frontmatter);
+  fmProjection.push(`${relative(siteRoot, p)}\0${rest}`);
+  pages[key] = pageHash(body, practiceRawByKey[id] ?? "", local);
 }
 
 // ---- 4. GLOBAL_HASH = sorted shared files + config + sorted frontmatter projection ----
