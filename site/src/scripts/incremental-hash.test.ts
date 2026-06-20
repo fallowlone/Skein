@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { splitFrontmatter, frontmatterField, hashParts, pageHash, pageKeyOf, decideBuild, type Manifest } from "./incremental-hash";
 import {
-  partitionFrontmatter, PAGE_LOCAL_FRONTMATTER_FIELDS,
+  splitFrontmatter, frontmatterField, hashParts, pageHash, pageKeyOf,
+  decideBuild, partitionFrontmatter, PAGE_LOCAL_FRONTMATTER_FIELDS,
+  type Manifest,
 } from "./incremental-hash";
 
 describe("splitFrontmatter", () => {
@@ -154,7 +155,10 @@ describe("pageHash (with local frontmatter)", () => {
   it("changes when the local frontmatter projection changes", () => {
     expect(pageHash("b", "p", "estMin: 10")).not.toBe(pageHash("b", "p", "estMin: 11"));
   });
-  it("defaults the 3rd arg to empty (old 2-arg value preserved)", () => {
-    expect(pageHash("b", "p")).toBe(pageHash("b", "p", ""));
+  it("2-arg call equals the legacy 2-part hash (manifest backward-compat)", () => {
+    expect(pageHash("b", "p")).toBe(hashParts(["b", "p"]));
+  });
+  it("3-arg with non-empty local frontmatter differs from the 2-arg value", () => {
+    expect(pageHash("b", "p", "level: senior")).not.toBe(pageHash("b", "p"));
   });
 });

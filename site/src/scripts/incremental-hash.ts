@@ -56,7 +56,7 @@ export function partitionFrontmatter(
   const restLines: string[] = [];
   let current: "local" | "rest" = "rest";
   for (const line of fm.split("\n")) {
-    const top = line.match(/^([A-Za-z0-9_]+):/);
+    const top = line.match(/^([A-Za-z0-9_-]+):/);
     if (top) current = localSet.has(top[1]) ? "local" : "rest";
     (current === "local" ? localLines : restLines).push(line);
   }
@@ -65,7 +65,9 @@ export function partitionFrontmatter(
 
 /** Per-page hash: inputs rendered solely on a lesson's own page. */
 export function pageHash(bodyRaw: string, practiceRaw: string, localFmRaw = ""): string {
-  return hashParts([bodyRaw, practiceRaw, localFmRaw]);
+  return localFmRaw
+    ? hashParts([bodyRaw, practiceRaw, localFmRaw])
+    : hashParts([bodyRaw, practiceRaw]);
 }
 
 /** The page identity the lesson route's getStaticPaths keys on. */

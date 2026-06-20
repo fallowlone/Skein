@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // Pre-build decision. Walks src/, categorizes every input into the GLOBAL hash
-// (anything that can affect >1 page, incl. ALL lesson frontmatter) vs per-page
-// hashes (lesson MDX body + its practice JSON), compares to the restored
+// (anything that can affect >1 page, incl. the cross-page "rest" portion of
+// lesson frontmatter) vs per-page hashes (lesson MDX body + practice JSON +
+// page-local frontmatter fields), compares to the restored
 // manifest, and writes build-cache/plan.json + build-cache/next-manifest.json.
 // Honors FORCE_FULL_BUILD=1. Prints the mode (and appends it to GITHUB_OUTPUT).
 import { readdir, readFile, mkdir, writeFile } from "node:fs/promises";
