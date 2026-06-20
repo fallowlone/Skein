@@ -10,8 +10,8 @@ export function buildCsp(extra?: CspExtra): string {
   const parts = [
     "default-src 'self'",
     scriptSrc,
-    "style-src 'self' https://fonts.googleapis.com 'unsafe-inline'",
-    "font-src https://fonts.gstatic.com",
+    "style-src 'self' 'unsafe-inline'",
+    "font-src 'self'",
     "img-src 'self' data:",
     "connect-src 'self' https://api.anthropic.com",
     "base-uri 'self'",
