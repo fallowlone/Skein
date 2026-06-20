@@ -17,6 +17,7 @@ export const TRACK_ABBR: Record<Track, string> = {
   "docker": "DOCK",
   "security-foundations": "SECF", "security-offensive": "RED",
   "security-defensive": "BLUE", "security-cloud": "CLOUD",
+  "cli": "CLI",
 };
 
 export type TrackColor = "lilac" | "mint" | "peach" | "sky" | "rose";
