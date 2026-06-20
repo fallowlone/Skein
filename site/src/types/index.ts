@@ -31,7 +31,8 @@ export type Track =
   | "logic" | "react" | "nextjs" | "go"
   | "docker"
   | "security-foundations" | "security-offensive"
-  | "security-defensive" | "security-cloud";
+  | "security-defensive" | "security-cloud"
+  | "cli";
 
 export const TRACKS: Track[] = [
   "math", "base-cs", "algorithms",
@@ -47,6 +48,7 @@ export const TRACKS: Track[] = [
   "docker",
   "security-foundations", "security-offensive",
   "security-defensive", "security-cloud",
+  "cli",
 ];
 
 export type LessonStatus = "stub" | "draft" | "ready";
