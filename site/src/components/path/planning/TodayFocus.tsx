@@ -38,6 +38,21 @@ function reviewHref(lang: Locale, lessonKey: string): string {
   return lessonKey.split("/").length >= 3 ? `/${lang}/learn/${lessonKey}` : `/${lang}/review/`;
 }
 
+// A review row should read as the lesson it resurfaces, not a generic "Review".
+// lessonKey is "<track>/<unit-slug>/<lesson>"; its first two segments are the
+// unit id, so the unit title is the most recognisable, client-available label.
+// Bare piece slugs (retrieval cards) fall back to a humanised last segment.
+function reviewTitle(lang: Locale, lessonKey: string): string {
+  const seg = lessonKey.split("/");
+  if (seg.length >= 3) {
+    const title = content.unitTitleById.get(`${seg[0]}/${seg[1]}`)?.[lang];
+    if (title) return title;
+  }
+  const last = seg[seg.length - 1] ?? lessonKey;
+  const words = last.replace(/^\d+[-_]/, "").replace(/[-_]/g, " ").trim();
+  return words ? words.charAt(0).toUpperCase() + words.slice(1) : lessonKey;
+}
+
 export default function TodayFocus({ lang }: { lang: Locale }) {
   const t = L[lang];
   const cfg = config.value; // subscribe
@@ -67,7 +82,7 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
   const reviewRows = reviews
     .filter((r) => (seenReviewLessons.has(r.lessonKey) ? false : (seenReviewLessons.add(r.lessonKey), true)))
     .slice(0, 5)
-    .map((r) => ({ key: r.cardKey, href: reviewHref(lang, r.lessonKey), reason: t.reviewReason }));
+    .map((r) => ({ key: r.cardKey, href: reviewHref(lang, r.lessonKey), title: reviewTitle(lang, r.lessonKey), reason: t.reviewReason }));
   const leadRows = path.steps.slice(0, 3).flatMap((s) => {
     const href = startHref(lang, s.unit);
     if (!href) return [];
@@ -81,7 +96,7 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
       <ol class="dn-list">
         {reviewRows.map((r) => (
           <li key={`r:${r.key}`} class="dn-row">
-            <a class="dn-link" href={r.href}><span class="dn-title">{t.review}</span><span class="dn-reason">{r.reason}</span></a>
+            <a class="dn-link" href={r.href}><span class="dn-title">{r.title}</span><span class="dn-reason">{r.reason}</span></a>
           </li>
         ))}
         {leadRows.map((r) => (
