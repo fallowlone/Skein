@@ -13,14 +13,10 @@ export default function StreakBadge() {
   const word = isRu ? "дн. подряд" : "day streak";
   const label = isRu ? `Серия: ${count} дн.` : `${count}-day streak`;
   return (
-    <span
-      class="inline-flex shrink-0 items-center gap-1.5 font-mono text-xs leading-none text-ink-2"
-      title={label}
-      aria-label={label}
-    >
-      <Icon name="flame" class="h-4 w-4 shrink-0 text-accent" />
-      <span class="tabular-nums tracking-wide font-semibold text-ink">{count}</span>
-      <span class="whitespace-nowrap text-muted">{word}</span>
+    <span class="streak-badge" title={label} aria-label={label}>
+      <Icon name="flame" size={14} class="sb-flame" />
+      <span class="sb-num">{count}</span>
+      <span class="sb-word">{word}</span>
     </span>
   );
 }
