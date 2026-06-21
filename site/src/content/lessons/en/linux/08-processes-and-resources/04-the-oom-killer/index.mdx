@@ -1,0 +1,302 @@
+---
+concepts:
+- OOM killer
+- oom_score
+- oom_score_adj
+- memory overcommit
+- dmesg OOM
+- journalctl OOM
+- cgroup OOM
+- MemoryMax
+- victim selection
+- Out of Memory
+estMin: 22
+lang: en
+lessonType: concept
+level: senior
+mathPrereqs: []
+order: 4
+prereqs: []
+slug: 04-the-oom-killer
+sources:
+- https://man7.org/linux/man-pages/man5/proc.5.html
+- https://www.kernel.org/doc/html/latest/admin-guide/mm/oom_killer.html
+status: ready
+summary: 'When physical memory is exhausted the kernel OOM killer picks a victim by oom_score and kills it. oom_score_adj biases selection. A cgroup MemoryMax triggers a cgroup-local OOM before system memory runs out. The kill shows in dmesg and journalctl.'
+title: The OOM killer
+track: linux
+unit: 08-processes-and-resources
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Goal from "~/components/lesson/Goal.astro";
+import Step from "~/components/lesson/Step.astro";
+import WorkedExample from "~/components/lesson/WorkedExample.astro";
+import Check from "~/components/lesson/Check.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A service disappears. No crash log. No stack trace. Monitoring shows it went from running to gone in under a second. You search `/var/log/syslog` and find nothing. Then you check `dmesg` and see it: `Out of memory: Killed process 8823 (java) score 742 or sacrifice child`. The OOM killer struck. It picked your JVM, decided it was the best candidate to sacrifice, and terminated it without warning — no SIGTERM, straight to SIGKILL. Understanding why the OOM killer picked your process, how to read the kill event, and how to make it less likely is a senior Linux operator skill.
+</Hook>
+
+<Goal lang="en">
+After this lesson you can find an OOM kill in dmesg and journalctl, read oom_score to understand why a process was chosen, use oom_score_adj to bias the selection, distinguish system-wide OOM from cgroup OOM (MemoryMax), and explain memory overcommit and why it enables OOM kills.
+</Goal>
+
+<Step n={1}>
+**Why the OOM killer exists: memory overcommit.**
+
+Linux allocates memory optimistically. When a process calls `malloc()` or `mmap()`, the kernel grants virtual address space but does not back it with physical RAM until the memory is actually written (demand paging). This is **overcommit**: the sum of all processes' virtual memory exceeds physical RAM plus swap. It works because most allocations are never fully used (think: a process that allocates 1 GB but only touches 100 MB).
+
+```bash
+# Check the overcommit policy:
+cat /proc/sys/vm/overcommit_memory
+# 0 = heuristic (default): allow some overcommit, refuse obviously impossible requests
+# 1 = always overcommit: never refuse malloc, no matter how large
+# 2 = never overcommit: total committed memory <= RAM + swap * ratio
+
+cat /proc/sys/vm/overcommit_ratio
+# 50  (used only when overcommit_memory=2: commit limit = RAM + 50% of swap)
+
+# Check how much is currently committed:
+grep -E 'MemTotal|MemAvailable|SwapTotal|Committed_AS|CommitLimit' /proc/meminfo
+# MemTotal:       16384000 kB
+# MemAvailable:    2048000 kB    ← actual free+reclaimable
+# CommitLimit:    20971520 kB    ← maximum committal (RAM + swap)
+# Committed_AS:   18500000 kB    ← how much has been promised to processes
+
+# When Committed_AS approaches CommitLimit and pages are actually touched,
+# the kernel runs out of physical pages. It must either:
+# a) Get pages from swap (if swap is available and not also exhausted)
+# b) Invoke the OOM killer
+```
+</Step>
+
+<Step n={2}>
+**oom_score: how the kernel picks the victim.**
+
+Every process has an `oom_score` between 0 and 1000. The kernel kills the process with the **highest** score. The score is computed from:
+- **RSS (resident set size)**: how much physical RAM the process is using — the primary factor
+- **swap usage**
+- **run time**: longer-running processes get a slight discount (they are assumed more important)
+- **oom_score_adj**: a bias added to the raw score, set by the user or systemd
+
+```bash
+# Read any process's current oom_score:
+cat /proc/1234/oom_score
+# 742   ← high: this process is a likely OOM victim
+
+# Read the oom_score_adj (the bias):
+cat /proc/1234/oom_score_adj
+# 0     ← no bias applied (range: -1000 to +1000)
+
+# oom_score_adj = -1000: NEVER kill this process (kernel skips it entirely)
+# oom_score_adj = -500:  half as likely to be chosen
+# oom_score_adj = 0:     neutral
+# oom_score_adj = +500:  half again more likely
+# oom_score_adj = +1000: kill this first (used for memory-hungry batch jobs)
+
+# Protect a critical process (e.g., sshd — you need it for remote access):
+echo -1000 | sudo tee /proc/$(pgrep sshd)/oom_score_adj
+
+# Set high score for a disposable worker:
+echo 500 | sudo tee /proc/$(pgrep batch-worker)/oom_score_adj
+
+# Persistent: set in systemd unit file:
+# [Service]
+# OOMScoreAdjust=-900   (for critical services like databases)
+# OOMScoreAdjust=200    (for batch jobs that should die first)
+
+# Scan all processes by oom_score to understand current exposure:
+for pid in /proc/[0-9]*/oom_score; do
+  score=$(cat "$pid" 2>/dev/null)
+  comm=$(cat "${pid%oom_score}comm" 2>/dev/null)
+  echo "$score $comm"
+done | sort -rn | head -10
+```
+</Step>
+
+<Step n={3}>
+**Reading the OOM kill event in dmesg and journalctl.**
+
+The kernel logs a detailed kill report. Knowing how to read it is the first step in any OOM postmortem.
+
+```bash
+# Check dmesg for OOM events (most direct):
+sudo dmesg | grep -A 20 'Out of memory'
+# [123456.789] Out of memory: Killed process 8823 (java) total-vm:4194304kB,
+#              anon-rss:3145728kB, file-rss:65536kB, shmem-rss:0kB,
+#              UID:1000 pgtables:12288kB oom_score_adj:0
+# [123456.790] oom_reaper: reaped process 8823 (java), now anon-rss:0kB,
+#              file-rss:0kB, shmem-rss:0kB
+
+# Decode the fields:
+# total-vm:4194304kB  = 4 GB virtual address space (allocated but not all in RAM)
+# anon-rss:3145728kB  = 3 GB of anonymous (heap/stack) pages in physical RAM
+# file-rss:65536kB    = 64 MB of file-backed pages (mmap'd files, shared libs)
+# oom_score_adj:0     = no bias was applied
+
+# Also in journalctl (journald captures kernel messages):
+sudo journalctl -k | grep -i 'oom\|killed process\|out of memory' | tail -20
+
+# journald also records the systemd unit that was killed:
+sudo journalctl -u your-service --since '1 hour ago' | grep -i 'kill\|oom'
+# If systemd-oomd or the kernel OOM killer hit the service, you see:
+# "Memory cgroup out of memory: Killed process ..."  (cgroup OOM)
+# or the kernel log line above (system OOM)
+
+# See the full memory snapshot at time of OOM kill:
+sudo dmesg | grep -B 5 -A 50 'Out of memory' | head -80
+# The kernel dumps a table of all processes with their RSS and oom_score
+# before killing the victim — invaluable for understanding what consumed memory
+```
+</Step>
+
+<Step n={4}>
+**Cgroup OOM vs system OOM: MemoryMax fires first.**
+
+When a systemd service has `MemoryMax` set, it gets a **cgroup-local OOM kill** the moment the cgroup exceeds that limit — even if the host has gigabytes of free memory. This is intentional: the cgroup limit contains the blast radius.
+
+```bash
+# Distinguish the two in logs:
+sudo journalctl -k | grep 'oom'
+# Kernel OOM (system-wide):
+#   "Out of memory: Killed process 8823 (java) score 742..."
+#   Fires when the entire system is out of memory.
+#
+# Cgroup OOM (MemoryMax exceeded):
+#   "Memory cgroup out of memory: Killed process 8823 (java)..."
+#   OR (on newer kernels):
+#   "oom-kill:constraint=CONSTRAINT_MEMCG,..."
+#   Fires when a single cgroup exceeds its memory.max.
+
+# Check if a service has a MemoryMax set:
+systemctl show your-service | grep -E 'MemoryMax|MemoryHigh|MemoryCurrent'
+# MemoryMax=536870912    ← 512 MB hard cap
+# MemoryHigh=infinity    ← no soft pressure point set
+# MemoryCurrent=498073600  ← currently at 475 MB — close to the cap!
+
+# The cgroup-local OOM kill appears in the service's journal:
+sudo journalctl -u your-service | grep -i kill
+
+# Tuning: if the service legitimately needs more memory, raise MemoryMax:
+sudo systemctl set-property your-service.service MemoryMax=1G
+
+# If the service has a memory leak (grows without bound), MemoryMax is a
+# safety net — but the real fix is the leak.
+```
+
+<FlowDiagram
+  label="OOM killer decision path: from memory pressure to kill"
+  caption="Memory pressure triggers the OOM killer. It scores all processes by RSS, run time, and oom_score_adj. The highest scorer is killed via SIGKILL. A cgroup MemoryMax triggers a cgroup-local OOM before the system-wide killer activates."
+  nodes={[
+    { id: "pressure", label: "Memory pressure", sub: "allocation fails, no free pages" },
+    { id: "swap", label: "Swap available?", sub: "try swap first" },
+    { id: "cgroup_oom", label: "Cgroup OOM", sub: "MemoryMax exceeded in cgroup" },
+    { id: "system_oom", label: "System OOM", sub: "whole system out of memory" },
+    { id: "score", label: "Score all processes", sub: "RSS + runtime + oom_score_adj" },
+    { id: "victim", label: "Highest scorer", sub: "selected as victim" },
+    { id: "sigkill", label: "SIGKILL sent", sub: "no SIGTERM, no warning" },
+    { id: "log", label: "dmesg / journald", sub: "kill event logged" },
+  ]}
+  edges={[
+    { from: "pressure", to: "swap", label: "reclaim attempt" },
+    { from: "swap", to: "system_oom", label: "swap exhausted too" },
+    { from: "cgroup_oom", to: "score", label: "score processes in cgroup" },
+    { from: "system_oom", to: "score", label: "score all processes" },
+    { from: "score", to: "victim", label: "highest oom_score" },
+    { from: "victim", to: "sigkill", label: "kernel sends" },
+    { from: "sigkill", to: "log", label: "kill event recorded" },
+  ]}
+/>
+
+<WorkedExample lang="en">
+**Incident: Java service killed overnight — OOM postmortem.**
+
+Alert fires at 06:14: `payment-service` is down. No deployment happened overnight. Here is the complete diagnosis.
+
+```bash
+# Step 1: confirm it was OOM-killed, not a crash or a deploy
+sudo journalctl -u payment-service --since '2026-06-22 00:00' | tail -30
+# Jun 22 06:14:03 prod-1 kernel: Memory cgroup out of memory:
+#   Killed process 11203 (java) total-vm:8388608kB, anon-rss:1572864kB ...
+# Jun 22 06:14:04 prod-1 systemd[1]: payment-service.service: Main process
+#   exited, code=killed, status=9/KILL
+# Jun 22 06:14:04 prod-1 systemd[1]: payment-service.service: Failed with
+#   result 'oom-kill'.
+# ← 'oom-kill' result field: systemd knows it was OOM, not a clean exit
+
+# Step 2: what was the memory state at kill time?
+sudo journalctl -k --since '2026-06-22 06:13' --until '2026-06-22 06:15'
+# The kernel OOM dump shows all processes' RSS at time of kill
+# Look at the table: which processes were consuming the most RSS?
+
+# Step 3: was this cgroup OOM (MemoryMax) or system OOM?
+# 'Memory cgroup out of memory' → cgroup OOM (MemoryMax exceeded)
+# 'Out of memory: Killed process' → system-wide OOM
+# In this case: cgroup OOM at MemoryMax=1.5G
+
+# Step 4: is 1.5G actually the right limit for this service?
+systemctl show payment-service | grep Memory
+# MemoryMax=1610612736   (1.5 GB)
+# MemoryCurrent at time of kill: ~1.58 GB (from the dmesg log)
+
+# Step 5: investigate the memory growth
+# Pull heap dumps, GC logs, or use async-profiler before the next occurrence
+# Quick check: is there a known load increase?
+grep '06:1[0-4]' /var/log/nginx/access.log | wc -l
+# 48203  ← vs normal ~5000: 10x traffic spike at 06:10
+
+# Step 6: immediate remediation
+# Option A: raise MemoryMax (buys time, not a fix for a leak)
+sudo systemctl set-property payment-service.service MemoryMax=3G
+sudo systemctl restart payment-service
+
+# Option B: add MemoryHigh to get early warning pressure before hitting MemoryMax
+# [Service]
+# MemoryHigh=1200M   (soft pressure: kernel reclaims aggressively at this point)
+# MemoryMax=1600M    (hard cap: OOM kill if exceeded)
+
+# Step 7: protect sshd so a future OOM never kills your access to the box
+echo -1000 | sudo tee /proc/$(pgrep -x sshd | head -1)/oom_score_adj
+# In sshd unit file: OOMScoreAdjust=-1000
+```
+</WorkedExample>
+
+<Inset kind="why" lang="en">
+On macOS, there is no OOM killer in the Linux sense. Instead, macOS uses **memory pressure** signals and `jetsam` (the iOS-originated low-memory handler adopted by macOS). When memory is tight, `jetsam` terminates background processes first, then foreground apps, according to a priority table. Processes can register for memory pressure notifications via `dispatch_source_create(DISPATCH_SOURCE_TYPE_MEMORYPRESSURE, ...)`. You will never see `Out of memory: Killed process` in macOS logs — the equivalent is entries in `/var/log/system.log` or `Console.app` showing `jetsam` events. The overcommit model is also different: macOS uses a compressor that swaps compressed memory before evicting pages.
+</Inset>
+
+<Inset kind="mistake" lang="en">
+**Raising MemoryMax or tuning oom_score_adj does not fix a memory leak — it just changes who dies.** If a service is genuinely leaking memory and you raise MemoryMax, it will eventually grow to fill the new limit too, and then either get OOM-killed again or consume so much RAM that another process gets killed instead. oom_score_adj=-900 on a leaking process just means the OOM killer will pick a different (innocent) victim next time. The correct approach: treat the OOM kill as a symptom report. Use heap profiling, GC logs, and memory trend graphs to find the leak. MemoryMax and oom_score_adj are operational guardrails while the root cause is being fixed, not permanent solutions.
+</Inset>
+
+<Check lang="en">
+  <Quiz
+    id="the-oom-killer-check"
+    pieceSlug="04-the-oom-killer"
+    lang="en"
+    question="journalctl shows: 'Memory cgroup out of memory: Killed process 5501 (node)'. The host has 4 GB of free RAM. How is this possible, and what caused the kill?"
+    choices={[
+      {
+        label: "The process exceeded its cgroup MemoryMax limit. A cgroup OOM kill fires when a cgroup's memory usage exceeds memory.max, regardless of how much free RAM the host has.",
+        correct: true,
+      },
+      {
+        label: "The log message is misleading — if 4 GB of RAM is free, the OOM killer cannot fire. The process must have crashed for another reason.",
+        misconception: "The cgroup OOM killer is independent of system-wide memory availability. MemoryMax sets a hard ceiling on a cgroup; exceeding it triggers an OOM kill even when the host has ample free memory. The 'Memory cgroup' prefix in the log message distinguishes this from a system-wide OOM event.",
+      },
+      {
+        label: "The process received SIGKILL from systemd's watchdog because it exceeded its CPU quota, and the log message reflects a memory accounting error.",
+        misconception: "SIGKILL from a CPUQuota violation is not the mechanism here — CPUQuota throttles (slows) a process, it does not kill it. The 'Memory cgroup out of memory' log message is specifically the kernel's cgroup memory controller reporting an OOM kill due to MemoryMax being exceeded.",
+      },
+    ]}
+  />
+</Check>
+
+<Recap lang="en">
+The **OOM killer** is the kernel's last resort when physical memory is exhausted. It scores every process by RSS, run time, and `oom_score_adj`, then sends SIGKILL to the highest scorer — no warning, no SIGTERM. Find OOM kills in `dmesg` (`Out of memory: Killed process`) or `journalctl -k`; systemd records the result field `oom-kill` in the service journal. `oom_score_adj` (range −1000 to +1000) biases selection: set −1000 on `sshd` and other critical processes; set +200 on disposable batch jobs. **Cgroup OOM** (`Memory cgroup out of memory`) fires when a service exceeds its `MemoryMax` — even if the host has gigabytes free. Use `MemoryHigh` as a soft pressure point below `MemoryMax` to get early warning before the hard kill. Overcommit (`/proc/sys/vm/overcommit_memory`) is the root cause model: the kernel promises more memory than exists, and the OOM killer cleans up when that promise cannot be kept. Tuning `oom_score_adj` and `MemoryMax` are operational guardrails — they do not fix memory leaks.
+</Recap>
