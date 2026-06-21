@@ -1,0 +1,334 @@
+---
+concepts:
+- nftables
+- netfilter
+- table
+- chain
+- hook
+- input chain
+- output chain
+- forward chain
+- default-deny
+- firewalld
+- nft
+- rule
+- packet filter
+- prerouting
+- postrouting
+estMin: 22
+lang: ru
+lessonType: concept
+level: senior
+mathPrereqs: []
+order: 4
+prereqs: []
+slug: 04-firewalls-nftables
+sources:
+- https://man7.org/linux/man-pages/man8/nft.8.html
+status: ready
+summary: 'nftables организует правила в таблицы и цепочки, подключённые к точкам netfilter (input, forward, output). Политика default-deny сбрасывает всё кроме явно разрешённого. firewalld — высокоуровневый менеджер поверх той же подсистемы nftables ядра.'
+title: Межсетевые экраны и nftables
+track: linux
+unit: 09-networking
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Goal from "~/components/lesson/Goal.astro";
+import Step from "~/components/lesson/Step.astro";
+import WorkedExample from "~/components/lesson/WorkedExample.astro";
+import Check from "~/components/lesson/Check.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Свежая VM без правил firewall принимает соединения на каждый открытый порт — включая порты, на которых сервисы слушают по умолчанию (postgres на 5432, redis на 6379), потому что разработчик предположил «он слушает только на localhost». Но `ss -tlnp` показывает `0.0.0.0:6379`, а правил nftables нет. Любой хост в том же сегменте сети может подключиться. Правильная ментальная модель — default-deny: сбрасывать всё входящее и явно разрешать только то, что нужно открыть. nftables — это пакетный фильтр ядра, который это обеспечивает. firewalld — высокоуровневый инструмент поверх него. Понимание объектной модели nftables — таблицы, цепочки, хуки, правила — позволяет читать, отлаживать и писать политику firewall, не копируя правила вслепую. Моделирование угроз и hardening-позиция — в треке security-defensive; здесь — механика.
+</Hook>
+
+<Goal lang="ru">
+После этого урока ты сможешь описать объектную модель nftables (таблицы → цепочки → правила, цепочки подключены к хукам netfilter), написать default-deny входящий набор правил с разрешением SSH, читать существующий набор правил через `nft list ruleset`, понимать, что добавляет firewalld поверх сырого nftables, и объяснять разницу хуков input/forward/output.
+</Goal>
+
+<Step n={1}>
+**Объектная модель nftables: таблицы, цепочки, хуки, правила.**
+
+nftables заменяет iptables, ip6tables, arptables и ebtables единым унифицированным фреймворком. Вся политика живёт в этой иерархии:
+
+```bash
+# Показать весь текущий набор правил:
+sudo nft list ruleset
+
+# Если ничего не настроено — вывод пуст.
+# Заполненный набор правил выглядит так:
+# table inet filter {
+#     chain input {
+#         type filter hook input priority filter; policy drop;
+#         iif "lo" accept
+#         ct state established,related accept
+#         tcp dport 22 accept
+#     }
+#     chain forward {
+#         type filter hook forward priority filter; policy drop;
+#     }
+#     chain output {
+#         type filter hook output priority filter; policy accept;
+#     }
+# }
+
+# Объектная модель:
+# table  = пространство имён; family = inet (IPv4+IPv6), ip, ip6, arp, bridge
+# chain  = упорядоченный список правил; привязана к хуку netfilter
+# hook   = точка в пути пакета в ядре:
+#          input    = пакеты, адресованные этому хосту
+#          forward  = пакеты, маршрутизируемые через этот хост
+#          output   = пакеты, исходящие от этого хоста
+#          prerouting / postrouting = до/после решения о маршрутизации (NAT)
+# rule   = условие + вердикт (accept / drop / reject / jump / goto)
+# policy = вердикт по умолчанию, когда ни одно правило не совпало (accept или drop)
+```
+</Step>
+
+<Step n={2}>
+**Написание минимального default-deny набора правил.**
+
+```bash
+# Создать таблицу (inet = применяется к IPv4 и IPv6):
+sudo nft add table inet filter
+
+# Добавить input-цепочку с политикой default-deny:
+sudo nft add chain inet filter input \
+  '{ type filter hook input priority 0; policy drop; }'
+
+# Правило 1: всегда разрешать loopback (lo) — нарушение ломает localhost:
+sudo nft add rule inet filter input iif lo accept
+
+# Правило 2: разрешить установленные/связанные соединения (возвратный трафик):
+sudo nft add rule inet filter input ct state established,related accept
+
+# Правило 3: разрешить новые SSH-соединения:
+sudo nft add rule inet filter input tcp dport 22 accept
+
+# Правило 4 (опционально): разрешить веб-сервер:
+sudo nft add rule inet filter input tcp dport { 80, 443 } accept
+
+# Добавить output и forward цепочки:
+sudo nft add chain inet filter forward \
+  '{ type filter hook forward priority 0; policy drop; }'
+sudo nft add chain inet filter output \
+  '{ type filter hook output priority 0; policy accept; }'
+
+# Проверить весь набор правил:
+sudo nft list ruleset
+```
+
+Правило `ct state established,related accept` критично — без него возвратные пакеты твоей SSH-сессии (ответы ядра на TCP-сегменты клиента) сбрасываются политикой default-deny, и соединение зависает сразу после установки правила.
+</Step>
+
+<Step n={3}>
+**Сохранение правил nftables после перезагрузки.**
+
+Правила, добавленные через `nft add`, живут только в памяти ядра. При перезагрузке они исчезают.
+
+```bash
+# Сохранить текущий набор правил в файл:
+sudo nft list ruleset > /etc/nftables.conf
+
+# Файл — валидный nft-скрипт. Содержимое:
+# #!/usr/sbin/nft -f
+# table inet filter {
+#     chain input { ... }
+#     chain forward { ... }
+#     chain output { ... }
+# }
+
+# Загрузить набор правил из файла (заменяет текущие правила):
+sudo nft -f /etc/nftables.conf
+
+# Включить systemd-сервис для загрузки правил при загрузке:
+sudo systemctl enable nftables
+sudo systemctl start nftables
+# nftables.service запускает: nft -f /etc/nftables.conf при старте
+
+# Проверить файл без применения:
+sudo nft -c -f /etc/nftables.conf
+# -c = только проверка, не загружать
+```
+
+nftables.service на Debian/Ubuntu по умолчанию загружает `/etc/nftables.conf`. Проверь файл сервиса для уточнения пути: `systemctl cat nftables`.
+</Step>
+
+<Step n={4}>
+**firewalld: высокоуровневый менеджер поверх nftables.**
+
+На RHEL/Fedora и всё чаще на Debian `firewalld` предоставляет зонально-ориентированную абстракцию поверх nftables (до firewalld 0.6 управлял iptables; начиная с 0.6 по умолчанию нацелен на nftables).
+
+```bash
+# Концепции firewalld:
+# zone    = уровень доверия, применяемый к интерфейсу или источнику
+#           (public, internal, trusted, drop, block, work, home, dmz, external)
+# service = именованный набор портов/протоколов (ssh = tcp/22, http = tcp/80, ...)
+
+# Проверить статус:
+sudo firewall-cmd --state
+# running
+
+# Список активных зон и их интерфейсов:
+sudo firewall-cmd --get-active-zones
+# public
+#   interfaces: ens3
+
+# Что разрешено в зоне public:
+sudo firewall-cmd --zone=public --list-all
+# public (active)
+#   target: default
+#   interfaces: ens3
+#   services: dhcpv6-client ssh
+
+# Постоянно разрешить HTTP:
+sudo firewall-cmd --zone=public --add-service=http --permanent
+sudo firewall-cmd --reload
+
+# Разрешить конкретный порт:
+sudo firewall-cmd --zone=public --add-port=8080/tcp --permanent
+sudo firewall-cmd --reload
+
+# НЕ смешивай сырые nft-правила с firewalld — firewalld перестраивает
+# набор правил nftables при перезагрузке и перезапишет любые вручную
+# добавленные правила.
+sudo nft list ruleset | head -5
+# table inet firewalld { ... }   ← firewalld владеет этой таблицей
+```
+</Step>
+
+<Step n={5}>
+**Чтение и отладка существующего набора правил.**
+
+```bash
+# Полный дамп набора правил — источник истины:
+sudo nft list ruleset
+
+# Список одной таблицы:
+sudo nft list table inet filter
+
+# Список одной цепочки:
+sudo nft list chain inet filter input
+
+# Добавить правило со счётчиком — сколько пакетов совпало:
+sudo nft add rule inet filter input tcp dport 443 counter accept
+sudo nft list chain inet filter input
+# tcp dport 443 counter packets 847 bytes 51234 accept
+
+# Удалить конкретное правило по его handle (показывается флагом --handle):
+sudo nft list chain inet filter input --handle
+# tcp dport 22 accept  # handle 3
+sudo nft delete rule inet filter input handle 3
+
+# Очистить (удалить все правила) цепочки без удаления самой цепочки:
+sudo nft flush chain inet filter input
+
+# Удалить всю таблицу:
+sudo nft delete table inet filter
+```
+</Step>
+
+<FlowDiagram
+  label="Цепочки nftables, подключённые к пути пакетов netfilter"
+  caption="Входящие пакеты сначала попадают в prerouting, затем разветвляются: адресованные этому хосту идут в input, маршрутизируемые через него — в forward. Пакеты, сгенерированные локально, проходят через output, затем postrouting. Каждая цепочка выполняет правила по порядку; политика цепочки срабатывает, когда ни одно правило не совпало."
+  nodes={[
+    { id: "net", label: "Сеть (входящий)", sub: "пакет приходит на ens3" },
+    { id: "pre", label: "хук prerouting", sub: "DNAT / отслеживание соединений" },
+    { id: "input", label: "цепочка input", sub: "адресован этому хосту" },
+    { id: "fwd", label: "цепочка forward", sub: "маршрутизируется через хост" },
+    { id: "local", label: "Локальный процесс", sub: "получает или отправляет пакет" },
+    { id: "output", label: "цепочка output", sub: "сгенерирован этим хостом" },
+    { id: "post", label: "хук postrouting", sub: "SNAT / masquerade" },
+    { id: "wire", label: "Сеть (исходящий)", sub: "пакет уходит на ens3" },
+  ]}
+  edges={[
+    { from: "net", to: "pre", label: "приходит" },
+    { from: "pre", to: "input", label: "dst = локальный IP" },
+    { from: "pre", to: "fwd", label: "dst = другой хост" },
+    { from: "input", to: "local", label: "accept" },
+    { from: "local", to: "output", label: "отправить" },
+    { from: "fwd", to: "post", label: "принято" },
+    { from: "output", to: "post", label: "принято" },
+    { from: "post", to: "wire", label: "egress" },
+  ]}
+/>
+
+<WorkedExample lang="ru">
+**Блокировка новой VM: разрешить только SSH и HTTP, всё остальное входящее запретить.**
+
+```bash
+# Начинаем с чистого состояния:
+sudo nft list ruleset
+# (пусто)
+
+# Строим набор правил:
+sudo nft add table inet filter
+sudo nft add chain inet filter input \
+  '{ type filter hook input priority 0; policy drop; }'
+sudo nft add chain inet filter forward \
+  '{ type filter hook forward priority 0; policy drop; }'
+sudo nft add chain inet filter output \
+  '{ type filter hook output priority 0; policy accept; }'
+
+# Основные правила — добавляем по порядку (выполняются сверху вниз):
+sudo nft add rule inet filter input iif lo accept
+sudo nft add rule inet filter input ct state established,related accept
+sudo nft add rule inet filter input ct state invalid drop
+sudo nft add rule inet filter input tcp dport 22 accept
+sudo nft add rule inet filter input tcp dport { 80, 443 } accept
+
+# Проверить: SSH ещё работает?
+# (тестируй из другого терминала ДО сохранения — если этот терминал зависнет,
+# ты закрылся снаружи)
+ssh 10.0.0.10 echo ok
+# ok
+
+# Сохранить и включить:
+sudo nft list ruleset > /etc/nftables.conf
+sudo systemctl enable --now nftables
+
+# Убедиться: postgres на 5432 теперь недоступен снаружи,
+# даже если он слушает 0.0.0.0:5432 — input-цепочка сбрасывает SYN.
+```
+
+Правило `ct state invalid drop` перехватывает некорректные пакеты и атаки на номера TCP-последовательностей до того, как они дойдут до accept-правил — распространённое усиление.
+</WorkedExample>
+
+<Inset kind="why" lang="ru">
+**Этот урок — мост к треку security-defensive.** Механика здесь — default-deny, политика цепочки, разрешение по исключению — это основа пакетного фильтра. Трек security-defensive покрывает то, что строится поверх: моделирование угроз для выбора портов для открытия, правила ограничения частоты запросов против брутфорса, логирование сброшенных пакетов для реагирования на инциденты и hardening-позиция (fail2ban, системы обнаружения вторжений). Знание механики nftables делает эти высокоуровневые решения понятными; пропуск механики означает копирование правил firewall, которые нельзя отладить.
+</Inset>
+
+<Inset kind="mistake" lang="ru">
+**Применение политики default-deny до добавления правила established/related.** Если запустить `sudo nft add chain inet filter input '{ type filter hook input priority 0; policy drop; }'` до добавления `ct state established,related accept`, твоя текущая SSH-сессия перестаёт получать возвратные пакеты и зависает в течение секунд. Всегда пиши полный набор правил в файл и загружай его атомарно через `nft -f /etc/nftables.conf`, или добавляй правило established/related самым первым делом перед изменением политики цепочки. На удалённом сервере держи открытым второй терминал перед сохранением.
+</Inset>
+
+<Check lang="ru">
+  <Quiz
+    id="firewalls-nftables-check"
+    pieceSlug="04-firewalls-nftables"
+    lang="ru"
+    question="Твоя input-цепочка nftables имеет политику drop и такие правила по порядку: (1) iif lo accept, (2) ct state established,related accept, (3) tcp dport 22 accept. Приходит новый входящий TCP SYN на порт 5432. Что произойдёт?"
+    choices={[
+      {
+        label: "Пакет будет сброшен политикой цепочки — ни одно правило не совпало с портом 5432, поэтому срабатывает политика default-deny.",
+        correct: true,
+      },
+      {
+        label: "Пакет будет принят, потому что ct state established,related accept охватывает все TCP-соединения после начала рукопожатия.",
+        misconception: "ct state established,related совпадает только с пакетами, которые являются частью соединения, уже известного ядру. Новый SYN на порт 5432 не имеет записи в conntrack — его состояние 'new', что не совпадает с established/related.",
+      },
+      {
+        label: "Пакет будет перенаправлен в цепочку forward, потому что хост не является конечным адресатом.",
+        misconception: "Цепочка forward обрабатывает пакеты, маршрутизируемые через этот хост к другому адресату. Пакет, адресованный собственному IP этого хоста, попадает в цепочку input, а не forward.",
+      },
+    ]}
+  />
+</Check>
+
+<Recap lang="ru">
+**nftables** — фреймворк фильтрации пакетов ядра Linux, заменяющий iptables. Его объектная модель: **таблицы** (пространства имён, family `inet` охватывает IPv4+IPv6) содержат **цепочки**, подключённые к **точкам netfilter** — `input` (адресованные этому хосту), `forward` (транзитные), `output` (локально сгенерированные). Каждая цепочка содержит упорядоченные **правила**; когда ни одно не совпало — срабатывает **политика** цепочки (`accept` или `drop`). **Политика default-deny** (policy drop) означает, что проходит только явно разрешённый трафик. Критическое сопровождающее правило — `ct state established,related accept` — без него возвратные пакеты исходящих соединений сбрасываются. Сохраняй правила через `nft list ruleset > /etc/nftables.conf` и `systemctl enable nftables`. **firewalld** — зонально-ориентированный менеджер, генерирующий и владеющий правилами nftables — никогда не смешивай ручные команды `nft` с firewalld на одном хосте. Моделирование угроз, ограничение частоты и hardening-позиция — в треке security-defensive.
+</Recap>
