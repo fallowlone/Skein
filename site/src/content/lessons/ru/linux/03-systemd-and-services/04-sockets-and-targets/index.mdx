@@ -1,0 +1,293 @@
+---
+concepts:
+- socket activation
+- .socket unit
+- .service unit pairing
+- lazy start
+- zero-downtime restart
+- custom target
+- target as group
+- Accept=
+- ListenStream=
+- PartOf=
+estMin: 24
+lang: ru
+lessonType: concept
+level: senior
+mathPrereqs: []
+order: 4
+prereqs: []
+slug: 04-sockets-and-targets
+sources:
+- https://www.freedesktop.org/software/systemd/man/latest/systemd.socket.html
+status: ready
+summary: 'Socket activation позволяет systemd держать сокет открытым пока сервис стартует лениво при первом подключении — обеспечивая рестарты без простоя и более быструю загрузку. Кастомные target группируют связанные сервисы в именованную точку синхронизации.'
+title: Socket activation и кастомные target'ы
+track: linux
+unit: 03-systemd-and-services
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Goal from "~/components/lesson/Goal.astro";
+import Step from "~/components/lesson/Step.astro";
+import WorkedExample from "~/components/lesson/WorkedExample.astro";
+import Check from "~/components/lesson/Check.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+Ты перезапускаешь API-сервис для деплоя нового бинарника. За две секунды пока новый процесс стартует, каждое входящее соединение получает "connection refused". Балансировщик нагрузки может повторить попытку, но мобильный клиент скорее всего покажет ошибку. В systemd есть примитив, который полностью устраняет этот разрыв: socket unit. systemd держит слушающий сокет открытым во время рестарта — ядро ставит соединения в очередь в своём backlog — и передаёт сокет новому процессу в момент его готовности. Клиент никогда не видит разрыва. Это socket activation, и он встроен в systemd без каких-либо изменений кода в твоём сервисе.
+</Hook>
+
+<Goal lang="ru">
+После этого урока ты сможешь объяснить как работает socket activation и почему он обеспечивает рестарты без простоя, написать парные юниты `.socket` и `.service`, описать когда использовать `Accept=yes` vs `Accept=no`, и создать кастомный `.target` юнит для группировки и синхронизации связанных сервисов.
+</Goal>
+
+<Step n={1}>
+**Socket activation разделяет "держать сокет" и "запускать сервис." systemd владеет сокетом; он запускает сервис по требованию.** Ключевая идея: TCP-backlog ядра может буферизовать входящие соединения даже пока процесс ещё не слушает. systemd создаёт сокет, ядро принимает соединения в backlog, и когда приходит первое соединение, systemd запускает сервис и передаёт ему файловый дескриптор. `connect()` клиента завершается успешно немедленно — он лишь кратко блокируется в backlog ядра.
+
+Socket unit и парный service unit разделяют имя (всё до расширения):
+
+```
+sshd.socket   → systemd держит сокет
+sshd.service  → systemd запускает это при входящем соединении
+```
+
+Socket unit всегда включён; service unit запускается лениво.
+</Step>
+
+<Step n={2}>
+**Написание socket unit.** Минимальная форма для TCP-сокета на порту 8080:
+
+```ini
+# /etc/systemd/system/myapi.socket
+[Unit]
+Description=My API socket
+
+[Socket]
+ListenStream=8080
+# Accept=no (по умолчанию): один экземпляр сервиса обрабатывает все соединения
+# Accept=yes: systemd форкает новый экземпляр сервиса для каждого соединения (inetd-стиль)
+
+[Install]
+WantedBy=sockets.target
+```
+
+`ListenStream=` для TCP (stream-сокеты). Для UDP используй `ListenDatagram=`. Для Unix domain socket используй путь: `ListenStream=/run/myapi.sock`.
+
+`Accept=no` (по умолчанию) — почти всегда правильный выбор: systemd запускает один экземпляр сервиса, передаёт ему слушающий сокет через файловый дескриптор 3 (протокол SD_LISTEN_FDS), и сервис сам обрабатывает все соединения. `Accept=yes` порождает новый экземпляр сервиса для каждого соединения — полезно только для очень простых per-connection обработчиков (классическая модель inetd). Большинство современных сервисов используют `Accept=no`.
+</Step>
+
+<Step n={3}>
+**Парный сервис получает сокет через `SD_LISTEN_FDS`.** Сервис не вызывает `bind()` или `listen()` сам — он получает уже привязанный, уже слушающий сокет от systemd через переменную окружения и унаследованные файловые дескрипторы:
+
+```ini
+# /etc/systemd/system/myapi.service
+[Unit]
+Description=My API service
+Requires=myapi.socket
+After=myapi.socket
+
+[Service]
+Type=notify
+ExecStart=/opt/myapi/server
+# Порт НЕ указывать здесь — сокет наследуется от myapi.socket
+Restart=on-failure
+User=myapi
+
+[Install]
+# Нет WantedBy здесь — socket unit подтягивает сервис
+Also=myapi.socket
+```
+
+Директива `Also=` в `[Install]` означает "когда включаешь этот сервис, также включи `myapi.socket`". Это держит пару в синхронизации.
+
+Для рестартов без простоя: `systemctl restart myapi.service` останавливает и запускает сервис пока `myapi.socket` продолжает слушать. Ядро ставит в очередь входящие соединения во время разрыва. Новый процесс сервиса стартует, вызывает `sd_listen_fds()` для получения fd сокета, и соединения из очереди обслуживаются нормально.
+
+```bash
+# Включить оба вместе (Also= обрабатывает сокет)
+sudo systemctl enable --now myapi.service
+
+# Перезапустить только сервис — сокет продолжает слушать всё время
+sudo systemctl restart myapi.service
+
+# Проверить что сокет держится открытым
+systemctl status myapi.socket
+```
+</Step>
+
+<Step n={4}>
+**Кастомные target'ы группируют связанные сервисы и предоставляют именованную точку синхронизации.** Target — просто unit-файл с расширением `.target` и секцией `[Unit]` — без секции `[Service]`. Его назначение — быть тем, против чего другие юниты могут объявлять `After=`, `Requires=` или `WantedBy=`.
+
+Пример: target "бэкенд-стека", группирующий базу данных, кеш и API:
+
+```ini
+# /etc/systemd/system/backend.target
+[Unit]
+Description=Full backend stack
+Requires=postgresql.service redis.service myapi.service
+After=postgresql.service redis.service myapi.service
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Теперь можно:
+
+```bash
+# Поднять весь бэкенд-стек
+sudo systemctl start backend.target
+
+# Остановить весь стек
+sudo systemctl stop backend.target
+
+# Изолировать только этот target (останавливает всё остальное — использовать осторожно)
+sudo systemctl isolate backend.target
+```
+
+Другие юниты могут объявлять `After=backend.target` чтобы гарантировать что весь стек поднят перед их стартом.
+</Step>
+
+<Step n={5}>
+**`PartOf=` заставляет сервис останавливаться при остановке владеющего target'а, без жёсткой зависимости.** Это правильная директива для семантики "член группы":
+
+```ini
+# /etc/systemd/system/myworker.service
+[Unit]
+Description=Background worker
+PartOf=backend.target
+After=backend.target
+```
+
+С `PartOf=backend.target`, если запустить `systemctl stop backend.target`, worker тоже останавливается. Но если worker падает сам по себе, `backend.target` не затрагивается. Это отличается от `Requires=` (которое остановило бы target при падении члена). Используй `PartOf=` когда юниты логически являются частью группы, но их индивидуальный сбой не должен разрушать всю группу.
+
+```bash
+# Проверить распространение остановки
+sudo systemctl start backend.target
+sudo systemctl stop backend.target
+systemctl status myworker.service
+# Active: inactive (dead) — остановлен потому что его target остановился
+```
+</Step>
+
+<FlowDiagram
+  label="Поток socket activation"
+  caption="systemd держит сокет; сервис стартует лениво при первом соединении и наследует fd. При рестарте ядро ставит соединения в очередь в backlog — клиенты не видят разрыва."
+  nodes={[
+    { id: "client",   label: "Клиент",          sub: "connect() на порт 8080" },
+    { id: "kernel",   label: "Backlog ядра",    sub: "TCP SYN в очереди пока сервис рестартует" },
+    { id: "socket",   label: "myapi.socket",    sub: "ListenStream=8080 — всегда активен" },
+    { id: "service",  label: "myapi.service",   sub: "запускается по требованию, наследует fd 3" },
+    { id: "systemd",  label: "systemd",         sub: "владеет сокетом, активирует сервис" },
+  ]}
+  edges={[
+    { from: "client",  to: "kernel",  label: "connect()" },
+    { from: "kernel",  to: "socket",  label: "сокет держится systemd" },
+    { from: "socket",  to: "systemd", label: "приходит первое соединение" },
+    { from: "systemd", to: "service", label: "запуск + передача fd 3" },
+    { from: "service", to: "client",  label: "accept() + ответ" },
+  ]}
+/>
+
+<WorkedExample lang="ru">
+**Реализовать рестарты без простоя для Go HTTP-сервера через socket activation.**
+
+Стандартная библиотека Go поддерживает socket activation через `net.FileListener`:
+
+```go
+// main.go — получает сокет от systemd вместо его привязки
+package main
+
+import (
+    "net"
+    "net/http"
+    "os"
+)
+
+func main() {
+    // SD_LISTEN_FDS: systemd передаёт сокеты начиная с fd 3
+    f := os.NewFile(3, "socket")
+    ln, err := net.FileListener(f)
+    if err != nil {
+        // Fallback: привязать свой сокет (для локальной разработки без systemd)
+        ln, err = net.Listen("tcp", ":8080")
+        if err != nil {
+            panic(err)
+        }
+    }
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("ok"))
+    })
+    http.Serve(ln, nil)
+}
+```
+
+Unit-файлы:
+
+```ini
+# myapp.socket
+[Socket]
+ListenStream=8080
+
+[Install]
+WantedBy=sockets.target
+```
+
+```ini
+# myapp.service
+[Service]
+Type=simple
+ExecStart=/opt/myapp/server
+Restart=on-failure
+```
+
+Деплой нового бинарника:
+
+```bash
+# Скопировать новый бинарник
+sudo cp myapp-v2 /opt/myapp/server
+
+# Перезапустить сервис — сокет слушает всё время рестарта
+sudo systemctl restart myapp.service
+
+# Подтвердить: соединения во время рестарта были в очереди, не отклонены
+curl http://localhost:8080/   # должно успешно ответить сразу после рестарта
+```
+</WorkedExample>
+
+<Inset kind="why" lang="ru">
+macOS launchd имеет socket activation с OS X 10.4 (2005) — это на несколько лет раньше аналога systemd. Ключ `Sockets` в launchd plist эквивалентен `ListenStream=` в `.socket` unit. Системные демоны macOS, например `sshd`, используют launchd socket activation — вот почему `ssh` соединяется с macOS-машиной мгновенно, хотя `sshd` мог не работать непрерывно. systemd принял ту же модель и стандартизировал её через переменную окружения `SD_LISTEN_FDS` и функцию `sd_listen_fds()` из `libsystemd`.
+</Inset>
+
+<Inset kind="mistake" lang="ru">
+Не указывай `ListenStream=0.0.0.0:8080` — префикс `0.0.0.0:` не нужен и игнорируется в новых версиях systemd, которые могут выводить предупреждение. Просто используй `ListenStream=8080` для слушания на всех интерфейсах или `ListenStream=127.0.0.1:8080` для ограничения localhost. Для Unix domain socket используй абсолютный путь: `ListenStream=/run/myapi/myapi.sock`. Также: не забудь `Also=myapi.socket` в секции `[Install]` сервиса, иначе `systemctl enable myapi.service` не включит socket unit и сервис никогда не будет активирован.
+</Inset>
+
+<Check lang="ru">
+  <Quiz
+    id="sockets-and-targets-check"
+    pieceSlug="04-sockets-and-targets"
+    lang="ru"
+    question="Ты запускаешь `systemctl restart myapi.service` пока активен парный `myapi.socket`. Что происходит с входящими TCP-соединениями за две секунды рестарта сервиса?"
+    choices={[
+      {
+        label: "Ядро ставит их в очередь в TCP-backlog. myapi.socket держит слушающий сокет открытым, поэтому вызовы connect() клиентов завершаются успешно немедленно. Соединения обслуживаются когда новый процесс сервиса наследует fd сокета.",
+        correct: true,
+      },
+      {
+        label: "Соединения получают TCP RST (connection refused), потому что процесс сервиса не запущен чтобы принимать их через accept().",
+        misconception: "RST отправляется только если никто не держит слушающий сокет открытым. При socket activation systemd держит сокет открытым через myapi.socket — слушающий сокет никогда не закрывается при рестарте сервиса, поэтому ядро ставит соединения в очередь, а не отклоняет.",
+      },
+      {
+        label: "myapi.socket тоже перезапускается автоматически, потому что сервис имеет Requires= на него, вызывая кратковременный разрыв в обоих.",
+        misconception: "Сервис имеет After=myapi.socket и Requires=myapi.socket, но рестарт сервиса не рестартует socket unit. Socket unit независим и остаётся активным. Только явный systemctl restart myapi.socket перезапустил бы его.",
+      },
+    ]}
+  />
+</Check>
+
+<Recap lang="ru">
+**Socket activation** разделяет "держать сокет" (`.socket` unit, всегда активен) и "запускать сервис" (`.service` unit, запускается по требованию). systemd владеет сокетом; ядро ставит соединения в очередь в своём backlog при рестартах сервиса, обеспечивая поведение без простоя без координации на уровне приложения. Сервис получает уже привязанный сокет через fd 3 (`SD_LISTEN_FDS`). `Accept=no` (по умолчанию) — правильный выбор для сервисов с собственным циклом обработки соединений. **Кастомные target'ы** — именованные точки синхронизации: объявляй `Requires=` и `After=` внутри target, а другие юниты используют `WantedBy=` или `PartOf=` для присоединения. `PartOf=` распространяет остановку (но не сбой) от target к члену — правильная директива для членства в группе без жёсткой связи по сбоям.
+</Recap>
