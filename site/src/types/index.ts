@@ -32,7 +32,8 @@ export type Track =
   | "docker"
   | "security-foundations" | "security-offensive"
   | "security-defensive" | "security-cloud"
-  | "cli";
+  | "cli"
+  | "linux";
 
 export const TRACKS: Track[] = [
   "math", "base-cs", "algorithms",
@@ -49,6 +50,7 @@ export const TRACKS: Track[] = [
   "security-foundations", "security-offensive",
   "security-defensive", "security-cloud",
   "cli",
+  "linux",
 ];
 
 export type LessonStatus = "stub" | "draft" | "ready";

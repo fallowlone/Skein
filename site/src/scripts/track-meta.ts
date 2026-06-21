@@ -18,6 +18,7 @@ export const TRACK_ABBR: Record<Track, string> = {
   "security-foundations": "SECF", "security-offensive": "RED",
   "security-defensive": "BLUE", "security-cloud": "CLOUD",
   "cli": "CLI",
+  "linux": "LIN",
 };
 
 export type TrackColor = "lilac" | "mint" | "peach" | "sky" | "rose";
