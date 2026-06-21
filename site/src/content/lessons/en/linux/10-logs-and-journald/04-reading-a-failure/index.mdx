@@ -1,0 +1,310 @@
+---
+concepts:
+- incident investigation
+- reading logs backwards
+- first error vs last error
+- journalctl correlation
+- systemctl status
+- boot failure
+- service failure
+- timestamp correlation
+- -p err
+- --since
+- kernel messages
+- ExecStartPre
+estMin: 24
+lang: en
+lessonType: concept
+level: senior
+mathPrereqs: []
+order: 4
+prereqs: []
+slug: 04-reading-a-failure
+sources:
+- https://www.freedesktop.org/software/systemd/man/latest/journalctl.html
+status: ready
+summary: 'When a service or boot fails, the operator workflow is: journalctl -u svc -b -p err, find the FIRST error not the last, correlate timestamps across units, and check systemctl status for the exit code. Chasing the last error is the most common log-reading mistake.'
+title: Reading a failure from the logs
+track: linux
+unit: 10-logs-and-journald
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Goal from "~/components/lesson/Goal.astro";
+import Step from "~/components/lesson/Step.astro";
+import WorkedExample from "~/components/lesson/WorkedExample.astro";
+import Check from "~/components/lesson/Check.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A service enters failed state at 2:47 am. By the time you open the logs at 9 am, there are thousands of lines — retry storms, watchdog timeouts, dependent service cascades, kernel OOM messages, and finally a clean restart that hid the original problem. The last error in the log is "connection refused." That is not the cause — it is a symptom. The cause is three minutes earlier: a misconfigured environment variable that made the process exit with code 1 on startup. The most expensive operator mistake is chasing the **last** error. The skill this lesson teaches is finding the **first** error, correlating it across units, and reading the failure timeline backwards from the symptom to the root cause.
+</Hook>
+
+<Goal lang="en">
+After this lesson you can apply the structured operator workflow for diagnosing a service or boot failure from journald logs: scope with `systemctl status`, pull the error window with `journalctl -u -b -p err --since`, find the first error, correlate timestamps across units, and distinguish root cause from cascading symptoms.
+</Goal>
+
+<Step n={1}>
+**Start with `systemctl status` — it gives you the exit code and the last snippet.**
+
+Before opening the full journal, `systemctl status` gives you two critical pieces of information: the exit code and the last 10 lines of the journal. These scope the investigation.
+
+```bash
+# Check status of a failed service:
+systemctl status myapp.service
+# ● myapp.service - My Application
+#    Loaded: loaded (/etc/systemd/system/myapp.service; enabled)
+#    Active: failed (Result: exit-code) since Mon 2024-03-18 02:47:13 UTC; 6h ago
+#   Process: 3821 ExecStart=/usr/bin/myapp (code=exited, status=1/FAILURE)
+#  Main PID: 3821 (code=exited, status=1/FAILURE)
+#
+# Mar 18 02:47:13 host myapp[3821]: connection to database refused
+# Mar 18 02:47:13 host systemd[1]: myapp.service: Main process exited, code=exited, status=1
+# Mar 18 02:47:13 host systemd[1]: Failed to start My Application.
+
+# Key information extracted:
+# - Exit code: status=1/FAILURE (app exited non-zero, not killed by signal)
+# - Timestamp: 02:47:13 — anchor for the journal query
+# - Last message: "connection to database refused" — a symptom, not the cause
+
+# Other Result values you will see:
+# Result: exit-code    → process exited non-zero
+# Result: signal       → process killed by a signal (e.g. OOM killer → SIGKILL)
+# Result: timeout      → ExecStart timed out
+# Result: core-dump    → process crashed with a core dump
+```
+
+The exit code tells you the failure mode. `exit-code` with `status=1` is an application error. `signal` with `SIGKILL` often means OOM. `timeout` means the process never signalled ready within `TimeoutStartSec`.
+</Step>
+
+<Step n={2}>
+**Pull the error window: `-b -p err --since`.**
+
+Now query the journal for the full picture around the failure time:
+
+```bash
+# Pull errors from the current boot for this unit:
+journalctl -u myapp.service -b -p err
+# Mar 18 02:44:01 host myapp[3821]: WARN: DATABASE_URL not set, using default
+# Mar 18 02:44:01 host myapp[3821]: ERR: failed to connect: dial tcp 127.0.0.1:5432: refused
+# Mar 18 02:47:13 host myapp[3821]: connection to database refused
+# Mar 18 02:47:13 host systemd[1]: myapp.service: Main process exited, code=exited, status=1
+
+# Notice: the FIRST error is at 02:44:01 — three minutes before the final failure.
+# The app retried for 3 minutes before systemd marked it failed.
+
+# Widen to info level to see the retry loop:
+journalctl -u myapp.service -b -p info --since "02:43:00" --until "02:48:00"
+# 02:44:01  WARN: DATABASE_URL not set, using default        ← ROOT CAUSE
+# 02:44:01  ERR: failed to connect: dial tcp 127.0.0.1:5432
+# 02:44:06  INFO: retrying connection (attempt 2/10)
+# 02:44:16  INFO: retrying connection (attempt 3/10)
+# ...
+# 02:47:13  ERR: connection to database refused               ← SYMPTOM (last error)
+# 02:47:13  systemd: Main process exited
+
+# The root cause is clear: DATABASE_URL was not set, so the app connected to
+# 127.0.0.1:5432 (the default), which has no PostgreSQL listening.
+```
+
+The pattern: errors at the **top** of the error window are root causes. Errors at the **bottom** are symptoms of the cascade. Always read the error window from the top down, not from the bottom up.
+</Step>
+
+<Step n={3}>
+**Correlate across units: the failure rarely lives in one service.**
+
+Services depend on each other. A database connection failure may be caused by postgres failing to start. Pull the journal for the dependency in the same time window.
+
+```bash
+# Check if postgres was running at 02:44:
+journalctl -u postgresql.service -b -p err --since "02:40:00" --until "02:48:00"
+# Mar 18 02:43:47 host postgres[3712]: FATAL: data directory "/var/lib/postgresql/14/main"
+#                                       has wrong ownership
+# Mar 18 02:43:47 host systemd[1]: postgresql.service: Main process exited, code=exited, status=1
+# Mar 18 02:43:47 host systemd[1]: Failed to start PostgreSQL Database Server.
+
+# Postgres failed 14 seconds before myapp tried to connect.
+# The ownership problem on the data directory is the real root cause.
+
+# Cross-unit timeline reconstruction:
+journalctl -b -p err --since "02:43:00" --until "02:48:00"
+# (shows ALL units in that window, in time order)
+# 02:43:47  postgresql: FATAL: data directory has wrong ownership
+# 02:43:47  systemd: postgresql.service: Failed to start
+# 02:44:01  myapp: DATABASE_URL not set (secondary issue)
+# 02:44:01  myapp: failed to connect: 127.0.0.1:5432 refused
+# 02:47:13  myapp: Main process exited
+
+# Full causal chain visible:
+# 1. postgres data dir has wrong ownership → postgres fails
+# 2. myapp starts, DATABASE_URL not set → connects to localhost (wrong)
+# 3. localhost has no postgres → connection refused → myapp exits after retries
+```
+
+The multi-unit query (`journalctl -b -p err --since ... --until ...` without `-u`) shows the full system timeline. This is how you reconstruct a cascade.
+</Step>
+
+<Step n={4}>
+**Boot failures: reading the startup sequence.**
+
+When the system itself fails to reach the target (e.g. hangs at boot), the approach is the same but you query the previous boot with `-b -1`.
+
+```bash
+# List boots to confirm the previous boot exists:
+journalctl --list-boots
+# -1  abc123...  Mon 2024-03-18 02:43:00 → Mon 2024-03-18 02:47:15  (crash/reboot)
+#  0  def456...  Mon 2024-03-18 02:48:00 → Mon 2024-03-18 09:12:00  (current)
+
+# Pull all errors from the previous (crashed) boot:
+journalctl -b -1 -p err
+# Mar 18 02:43:47 host kernel: EXT4-fs error (device sda1): ...
+# Mar 18 02:43:47 host postgres: FATAL: data directory has wrong ownership
+# Mar 18 02:43:47 host systemd: postgresql.service: Failed
+# Mar 18 02:43:48 host systemd: Job postgresql.service/start failed
+
+# Check which unit blocked the boot target:
+journalctl -b -1 | grep -E "Failed|Timed out|reached target"
+# systemd: Failed to start PostgreSQL Database Server.
+# systemd: Reached target Basic System.     ← basic system OK
+# systemd: multi-user.target: Job timed out  ← boot hung here
+
+# ExecStartPre failures are especially common boot-killers:
+journalctl -b -1 -u myapp.service | grep -i "pre\|exec\|failed"
+# ExecStartPre=/usr/bin/check-config.sh (code=exited, status=1/FAILURE)
+# Main process exited before ExecStart ran
+```
+
+`ExecStartPre` failures are silent boot-killers: the main process never starts, so there are no application logs — only the systemd line reporting the pre-check script failed. Always check for `ExecStartPre` in the unit file when a service produces no logs at all.
+</Step>
+
+<Step n={5}>
+**Kernel messages and OOM events.**
+
+Some failures originate in the kernel — OOM kills, filesystem errors, network driver resets. These appear in the journal under the `kernel` transport.
+
+```bash
+# Show kernel messages from current boot (all severities):
+journalctl -k -b
+
+# Show kernel errors only:
+journalctl -k -b -p err
+# Mar 18 03:15:22 host kernel: Out of memory: Killed process 4921 (myapp) total-vm:2048000kB
+# Mar 18 03:15:22 host kernel: oom_kill_process+0x...
+
+# Correlate: what happened right after the OOM kill?
+journalctl -b -p err --since "03:15:20" --until "03:15:30"
+# 03:15:22  kernel: Out of memory: Killed process 4921 (myapp)
+# 03:15:22  systemd: myapp.service: Main process exited, code=killed, status=9/KILL
+# 03:15:22  systemd: myapp.service: Failed with result 'signal'.
+
+# The Result: signal and status=9/KILL confirm OOM — not a bug in the app.
+
+# Check oom_score for a running process (to anticipate future OOM kills):
+cat /proc/$(pgrep myapp)/oom_score
+# 847  ← high score = more likely to be killed next OOM event
+
+# Protect a critical process (set adjustment to -500; requires root):
+echo -500 | sudo tee /proc/$(pgrep myapp)/oom_score_adj
+```
+
+The `Result: signal` with `status=9/KILL` fingerprint is the OOM kill signature. The kernel log entry directly above it (within the same second) confirms it. Without reading both layers — kernel and systemd — you would think the app crashed, not that it was killed.
+</Step>
+
+<FlowDiagram
+  label="Operator workflow for diagnosing a service failure from journald logs"
+  caption="Start with systemctl status for the exit code and timestamp anchor. Pull the error window with journalctl -u -b -p err. Find the first error (root cause), not the last. Correlate across units in the same time window. Check kernel log for OOM or hardware events."
+  nodes={[
+    { id: "status", label: "systemctl status", sub: "exit code + timestamp anchor" },
+    { id: "errwin", label: "journalctl -u -b -p err", sub: "error window for the unit" },
+    { id: "first", label: "First error", sub: "root cause — read top-down" },
+    { id: "last", label: "Last error", sub: "symptom — do not chase this" },
+    { id: "cross", label: "journalctl -b -p err --since/until", sub: "cross-unit timeline" },
+    { id: "kernel", label: "journalctl -k -b -p err", sub: "OOM / hardware events" },
+  ]}
+  edges={[
+    { from: "status", to: "errwin", label: "use timestamp as anchor" },
+    { from: "errwin", to: "first", label: "top of window = root cause" },
+    { from: "errwin", to: "last", label: "bottom = cascade symptom" },
+    { from: "first", to: "cross", label: "find dependency failures" },
+    { from: "cross", to: "kernel", label: "check for OOM/hw cause" },
+  ]}
+/>
+
+<WorkedExample lang="en">
+**Full incident walkthrough: app fails every night at 2 am.**
+
+Reports: `payment-worker.service` fails every night around 2 am, recovers on restart, but transactions are dropped during the outage window.
+
+```bash
+# Step 1: scope with systemctl status
+systemctl status payment-worker.service
+# Active: failed (Result: exit-code) since Tue 2024-03-19 02:01:44 UTC; 7h ago
+# Process: 7823 ExecStart=... (code=exited, status=137/FAILURE)
+# status=137 = 128 + 9 = killed by signal 9 (SIGKILL)
+# But Result is exit-code not signal — the process handled SIGKILL and returned 137
+
+# Step 2: pull errors
+journalctl -u payment-worker.service -b -1 -p err
+# Mar 19 01:58:11  payment-worker: heap allocation failed: cannot allocate 512MB
+# Mar 19 01:58:11  payment-worker: fatal: out of memory, shutting down
+# Mar 19 02:01:44  systemd: payment-worker: Main process exited, status=137
+
+# Step 3: correlate — check kernel OOM at same time
+journalctl -k -b -1 -p err --since "01:57:00" --until "02:02:00"
+# Mar 19 01:58:10  kernel: Out of memory: Killed process 7712 (redis-server) total-vm:...
+# kernel killed redis one second BEFORE payment-worker logged "out of memory"
+
+# Full picture:
+# 01:58:10  OOM killer kills redis (redis was using 600MB, payment-worker needed 512MB)
+# 01:58:11  payment-worker tries to allocate 512MB → fails (physical memory exhausted)
+# 01:58:11  payment-worker self-terminates with exit 137
+
+# Step 4: confirm the nightly pattern
+journalctl --list-boots | head -5
+# -4  ...  Tue 2024-03-15 02:01 → ...
+# -3  ...  Wed 2024-03-16 02:00 → ...
+# Same time each night → memory grows until 2 am, then OOM
+
+# Root cause: payment-worker has a memory leak; redis is collateral damage.
+# Fix: add SystemMaxMemory=400M to the payment-worker unit file as a temporary
+# cap, and track heap growth in monitoring.
+```
+</WorkedExample>
+
+<Inset kind="mistake" lang="en">
+**Chasing the last error is the most expensive log-reading mistake.** In a cascade, the last error is always a symptom — "connection refused," "timeout," "address already in use." These are what the failing service printed in its death throes. The root cause is always earlier: the dependency that started it all. Train yourself to read the error window from the **top** (earliest error) and treat the bottom as noise until you have found the origin. A useful heuristic: if the first error and the last error are the same message, you have found the root cause. If they are different, you are still in the cascade.
+</Inset>
+
+<Inset kind="why" lang="en">
+**Why `--since` + `--until` beats scrolling.** On a busy system, `journalctl -b -p err` without time bounds can return thousands of lines spanning hours. Anchoring with `--since` and `--until` around the failure timestamp (from `systemctl status`) limits the window to the relevant 2–5 minutes. You are doing a targeted binary search, not a linear scroll. The failure timestamp from `systemctl status` is your anchor — always start there.
+</Inset>
+
+<Check lang="en">
+  <Quiz
+    id="reading-failure-check"
+    pieceSlug="04-reading-a-failure"
+    lang="en"
+    question="A service fails. journalctl -u svc -b -p err shows 40 lines. The first line (02:44:01) says 'config file not found'. The last line (02:47:13) says 'connection to database refused'. Which is the root cause and why?"
+    choices={[
+      {
+        label: "'config file not found' at 02:44:01. The service could not load its config, so it likely fell back to defaults (or failed to set DATABASE_URL), causing the later connection failure. The database error is a cascade symptom.",
+        correct: true,
+      },
+      {
+        label: "'connection to database refused' at 02:47:13. This is the final and most recent error, which is what caused the service to exit.",
+        misconception: "The last error in a cascade is almost always a symptom, not the root cause. The service exited because of accumulated failures that started with the config error three minutes earlier. Chasing the last error leads to fixing the wrong thing.",
+      },
+      {
+        label: "Both are equally likely root causes — you need to check the database logs to decide.",
+        misconception: "Chronological ordering resolves this: the config error happened first (02:44:01) and the database error followed (02:47:13). A cause must precede its effect. Start with the first error in the window.",
+      },
+    ]}
+  />
+</Check>
+
+<Recap lang="en">
+The operator workflow for a failed service: **`systemctl status`** gives the exit code (`exit-code`, `signal`, `timeout`, `core-dump`) and a timestamp anchor. **`journalctl -u svc -b -p err`** pulls the error window — read it **top to bottom**, because the first error is the root cause and the last is the cascade symptom. **`--since`/`--until`** bounds the window to the relevant minutes. **Cross-unit correlation** (`journalctl -b -p err --since ... --until ...` without `-u`) reconstructs the full dependency cascade. **`journalctl -k -b -p err`** adds kernel events — OOM kills show as `Result: signal` + `status=9/KILL` with a kernel log line one second earlier. `ExecStartPre` failures produce no application logs — if a service emits nothing, check for a failing pre-check script in the unit file. The discipline is: find the first error, not the last.
+</Recap>
