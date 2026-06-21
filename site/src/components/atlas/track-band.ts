@@ -56,6 +56,8 @@ export const TRACK_BAND: Record<Track, Band> = {
   "security-cloud":       "advanced",
   // cli track
   "cli":                  "foundations",
+  // linux track
+  "linux":                "foundations",
 };
 
 export function bandOf(slug: Track): Band {
