@@ -1,0 +1,332 @@
+---
+concepts:
+- degraded array
+- mdadm --fail
+- mdadm --remove
+- mdadm --add
+- rebuild window
+- URE
+- unrecoverable read error
+- /proc/mdstat
+- mdadm --detail
+- second failure risk
+- RAID recovery
+estMin: 24
+lang: ru
+lessonType: concept
+level: senior
+mathPrereqs: []
+order: 4
+prereqs: []
+slug: 04-disk-failure-and-recovery
+sources:
+- https://man7.org/linux/man-pages/man4/md.4.html
+- https://man7.org/linux/man-pages/man8/mdadm.8.html
+status: ready
+summary: 'Когда диск умирает в RAID 1/5, массив деградирует но продолжает работать. Восстановление: обнаружить отказ в /proc/mdstat, пометить диск неисправным, удалить, добавить замену, следить за перестройкой. Окно перестройки — момент наивысшего риска второго отказа.'
+title: Отказ диска и восстановление RAID
+track: linux
+unit: 07-storage-and-lvm
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Goal from "~/components/lesson/Goal.astro";
+import Step from "~/components/lesson/Step.astro";
+import WorkedExample from "~/components/lesson/WorkedExample.astro";
+import Check from "~/components/lesson/Check.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+3 ночи. Мониторинг срабатывает: `md/raid5 array md0 has degraded`. Открываешь `/proc/mdstat` и видишь `[4/3] [UUU_]`. Один диск пропал. Массив ещё отдаёт данные — пока. Задача одна: вставить замену и запустить перестройку до того, как упадёт второй диск.
+
+Это не та ситуация, которую хочется импровизировать. Шаги чётко определены, порядок важен, и окно между первым и вторым отказом — момент наибольшего риска для данных. Операторы, которые делали это раньше, знают что печатать. Те, кто не делал, склонны ухудшить ситуацию, удалив не тот диск.
+</Hook>
+
+<Goal lang="ru">
+После этого урока ты сможешь определить деградировавший RAID-массив по /proc/mdstat, выполнить правильную последовательность fail/remove/add для замены диска, объяснить почему окно перестройки — период наивысшего риска, и знать что такое URE и почему это важно при перестройке.
+</Goal>
+
+<Step n={1}>
+**Обнаружение отказа: читаем /proc/mdstat и mdadm --detail.**
+
+```bash
+# Немедленная проверка при срабатывании алерта
+cat /proc/mdstat
+# Personalities : [raid5]
+# md0 : active raid5 sde[3] sdc[1] sdb[0]
+#       3145728 blocks super 1.2 level 5, 512k chunk, algorithm 2 [4/3] [UUU_]
+#
+# Расшифровка:
+# [4/3]   = ожидалось 4 диска, активны 3
+# [UUU_]  = позиции 0,1,3 работают; позиция 2 (sdd) отсутствует — это упавший диск
+# Заметь: sdd полностью отсутствует в списке устройств
+
+# Подробнее
+sudo mdadm --detail /dev/md0
+# State : clean, degraded          <-- данные отдаются, но без избыточности
+# Active Devices : 3
+# Failed Devices : 1
+#
+# Number   Major   Minor   RaidDevice State
+#    0     8:16      0      active sync   /dev/sdb
+#    1     8:32      1      active sync   /dev/sdc
+#    -     0:0       2      removed       <-- слот 2 — пропавший диск
+#    3     8:80      3      active sync   /dev/sde
+
+# Проверяем логи ядра на событие отказа и ошибки ввода-вывода
+sudo journalctl -b | grep -i 'md0\|raid\|sdd\|I/O error' | tail -30
+# Ищи: "md/raid:md0: Disk failure on sdd, disabling device"
+# или: "blk_update_request: I/O error, dev sdd"
+```
+</Step>
+
+<Step n={2}>
+**Помечаем упавший диск неисправным (если ядро ещё не сделало это).**
+
+```bash
+# Проверяем состояние диска в массиве
+sudo mdadm --detail /dev/md0 | grep sdd
+# (если всё ещё отображается со статусом 'faulty')
+#    2     8:48      2      faulty   /dev/sdd
+
+# Явно помечаем как неисправный (нужно перед --remove если ядро не сделало это само)
+sudo mdadm /dev/md0 --fail /dev/sdd
+# mdadm: set /dev/sdd faulty in /dev/md0
+
+# Теперь удаляем из массива (слот остаётся — уходит только диск)
+sudo mdadm /dev/md0 --remove /dev/sdd
+# mdadm: hot removed /dev/sdd from /dev/md0
+
+# Подтверждаем удаление
+sudo mdadm --detail /dev/md0 | grep -E 'State|Devices|RaidDevice'
+# State : clean, degraded
+# Active Devices : 3
+# Failed Devices : 0   <-- очищено
+# Removed Devices : 1
+```
+</Step>
+
+<Step n={3}>
+**Hot-add диска замены и запуск перестройки.**
+
+```bash
+# Физический шаг: вставляем новый диск. В hot-swap лотке это вживую.
+# В VM/облаке: подключаем новое блочное устройство.
+# Проверяем что ОС видит его:
+lsblk | grep -v dm
+# sdb    8:16   0  1T  0 disk
+# sdc    8:32   0  1T  0 disk
+# sde    8:80   0  1T  0 disk
+# sdf    8:96   0  1T  0 disk   <-- новый диск
+
+# Новый диск должен быть не меньше упавшего
+# (mdadm использует размер наименьшего диска для массива)
+
+# Добавляем в массив — перестройка стартует автоматически
+sudo mdadm /dev/md0 --add /dev/sdf
+# mdadm: added /dev/sdf
+
+# Следим за перестройкой
+watch -n5 cat /proc/mdstat
+# md0 : active raid5 sdf[4] sde[3] sdc[1] sdb[0]
+#       3145728 blocks super 1.2 level 5 [4/3] [UUU_]
+#       [=>...................]  recovery = 7.3% (...)
+#       finish=142.3min speed=198400K/sec
+#
+# После завершения:
+# md0 : active raid5 sdf[4] sde[3] sdc[1] sdb[0]
+#       3145728 blocks super 1.2 level 5 [4/4] [UUUU]
+# [4/4] [UUUU] = полностью перестроен, все диски здоровы
+```
+</Step>
+
+<Step n={4}>
+**Окно перестройки: почему это момент наивысшего риска.**
+
+```bash
+# Риск 1: Unrecoverable Read Error (URE) — неисправимая ошибка чтения
+# Корпоративные диски: частота URE ~1 на 10^15 бит прочитанных
+# Потребительские диски: ~1 на 10^14 бит прочитанных
+#
+# RAID 5 с 4 × 4 ТБ дисками: всего данных = 12 ТБ = ~10^14 бит
+# На потребительских дисках: примерно 1 URE ожидается при перестройке такого размера
+# URE во время перестройки = данные которые нельзя реконструировать = частичное повреждение
+#
+# Вот почему большие массивы RAID 5 на потребительских дисках не рекомендуются.
+# RAID 6 допускает URE при перестройке (вторая чётность покрывает).
+
+# Риск 2: второй отказ диска во время перестройки
+# Оставшиеся диски под максимальной нагрузкой чтения часами.
+# Диски из одной партии часто отказывают в схожем возрасте.
+# Второй отказ во время перестройки = полная потеря данных на RAID 5.
+
+# Что делать в окне перестройки:
+# 1. НЕ добавляй лишнюю нагрузку ввода-вывода — приостанови некритичные задачи
+# 2. Следи за /proc/mdstat каждые несколько минут
+# 3. Наблюдай за логами ядра на предмет новых ошибок ввода-вывода:
+sudo journalctl -f | grep -i 'I/O error\|error.*sd'
+# 4. Держи процедуру восстановления из бэкапа наготове — на всякий случай
+
+# Можно ограничить скорость перестройки для снижения нагрузки на диски:
+# (ценой более длинного окна перестройки)
+echo 50000 | sudo tee /proc/sys/dev/raid/speed_limit_max
+# По умолчанию обычно 200000 КБ/с; 50000 снижает нагрузку за счёт времени
+```
+</Step>
+
+<Step n={5}>
+**После перестройки: проверяем и обновляем конфигурацию mdadm.**
+
+```bash
+# Убеждаемся что массив полностью здоров
+sudo mdadm --detail /dev/md0
+# State : clean                    <-- больше нет 'degraded'
+# Active Devices : 4
+# Failed Devices : 0
+# Spare Devices : 0
+#
+# Number   Major   Minor   RaidDevice State
+#    0     8:16      0      active sync   /dev/sdb
+#    1     8:32      1      active sync   /dev/sdc
+#    4     8:96      2      active sync   /dev/sdf  <-- новый диск в слоте 2
+#    3     8:80      3      active sync   /dev/sde
+
+# Обновляем mdadm.conf для отражения нового диска
+sudo mdadm --detail --scan | sudo tee /etc/mdadm/mdadm.conf
+sudo update-initramfs -u
+# Без этого: следующая перезагрузка может не собрать массив корректно
+
+# Запускаем проверку массива для верификации согласованности чётности
+echo check | sudo tee /sys/block/md0/md/sync_action
+# Следим:
+cat /sys/block/md0/md/sync_completed
+# После завершения mismatch_cnt должен быть 0:
+cat /sys/block/md0/md/mismatch_cnt
+# 0   <-- хорошо; ненулевое значение = найдены несоответствия чётности (расследовать)
+
+# Планируем регулярные проверки (mdadm поставляется со скриптом cron):
+# /etc/cron.d/mdadm — запускает проверку ежемесячно по умолчанию на Debian/Ubuntu
+```
+</Step>
+
+<FlowDiagram
+  label="Отказ диска RAID и восстановление: последовательность инцидента"
+  caption="Отказ диска деградирует массив, но сохраняет работоспособность. Последовательность восстановления — fail, remove, add — запускает перестройку. Окно перестройки — когда второй отказ приведёт к полной потере данных."
+  nodes={[
+    { id: "healthy", label: "Массив здоров", sub: "[4/4] [UUUU]" },
+    { id: "fail", label: "Диск отказывает", sub: "ядро обнаруживает ошибки ввода-вывода" },
+    { id: "degraded", label: "Массив деградирован", sub: "[4/3] [UUU_] — данные отдаются" },
+    { id: "remove", label: "mdadm --fail/--remove", sub: "очищаем упавший слот" },
+    { id: "add", label: "mdadm --add /dev/sdX", sub: "hot-add диска замены" },
+    { id: "rebuild", label: "Перестройка идёт", sub: "максимальный риск — следи внимательно" },
+    { id: "restored", label: "Массив восстановлен", sub: "[4/4] [UUUU] — обновить mdadm.conf" },
+  ]}
+  edges={[
+    { from: "healthy", to: "fail", label: "аппаратное событие" },
+    { from: "fail", to: "degraded", label: "автообнаружение" },
+    { from: "degraded", to: "remove", label: "действие оператора" },
+    { from: "remove", to: "add", label: "вставить новый диск" },
+    { from: "add", to: "rebuild", label: "автоматически" },
+    { from: "rebuild", to: "restored", label: "через несколько часов" },
+  ]}
+/>
+
+<WorkedExample lang="ru">
+**Полная замена диска RAID 1 на production-сервере.**
+
+```bash
+# Ситуация: алерт мониторинга — md1 деградирован. RAID 1 на /dev/sdb и /dev/sdc.
+# /dev/sdb упал. Замена /dev/sdd устанавливается в hot-swap.
+
+# Шаг 1: подтверждаем отказ
+cat /proc/mdstat
+# md1 : active raid1 sdc[1]
+#       488386584 blocks super 1.2 [2/1] [_U]
+# [_U] = первый диск (sdb) упал, второй (sdc) работает
+
+sudo mdadm --detail /dev/md1 | grep -E 'State|Devices|Number'
+# State : clean, degraded
+# Active Devices : 1
+# Failed Devices : 1
+#    0     0:0      0      removed   <-- слот sdb пуст (ядро авто-упало)
+#    1     8:32     1      active sync   /dev/sdc
+
+# Шаг 2: если диск показывается как 'faulty' (не 'removed'), явно помечаем его
+# sudo mdadm /dev/md1 --fail /dev/sdb
+# Затем:
+# sudo mdadm /dev/md1 --remove /dev/sdb
+
+# Шаг 3: hot-swap завершён — ОС видит /dev/sdd
+lsblk /dev/sdd
+# sdd  8:48  0  500G  0 disk   (того же размера что и упавший диск)
+
+# Шаг 4: обнуляем старый суперблок (предотвращаем путаницу mdadm)
+sudo mdadm --zero-superblock /dev/sdd
+
+# Шаг 5: добавляем в массив
+sudo mdadm /dev/md1 --add /dev/sdd
+# mdadm: added /dev/sdd
+
+# Шаг 6: следим за перестройкой
+watch -n10 cat /proc/mdstat
+# md1 : active raid1 sdd[2] sdc[1]
+#       488386584 blocks super 1.2 [2/1] [_U]
+#       [=========>...........]  recovery = 45.2% (220M/488M)
+#       finish=38.4min speed=108800K/sec
+# ... ждём ...
+# md1 : active raid1 sdd[2] sdc[1]
+#       488386584 blocks super 1.2 [2/2] [UU]
+# Готово!
+
+# Шаг 7: обновляем конфигурацию
+sudo mdadm --detail --scan | sudo tee /etc/mdadm/mdadm.conf
+sudo update-initramfs -u
+
+# Шаг 8: проверка после перестройки
+echo check | sudo tee /sys/block/md1/md/sync_action
+# Ждём завершения, затем:
+cat /sys/block/md1/md/mismatch_cnt
+# 0 — чисто
+
+# Итого прошло: ~45 минут для зеркала 500 ГБ на HDD.
+# В этом окне: следили за ошибками чтения sdc в journalctl.
+```
+</WorkedExample>
+
+<Inset kind="mistake" lang="ru">
+Самая частая ошибка восстановления: удаление не того диска. В RAID 5 с `[UUU_]` символ `_` на позиции 3 — но операторы под давлением иногда смотрят на список устройств и удаляют ещё активный диск. Удаление активного диска из деградированного RAID 5 приводит к немедленной потере данных (массив падает до `[UU__]`, ниже минимума для RAID 5). Перед любой командой `--remove`: сверь вывод `mdadm --detail` (показывает статус устройства явно как `active sync` vs `faulty`/`removed`), логи ядра (`journalctl | grep 'Disk failure'`) и данные SMART (`smartctl -a /dev/sdd`). При сомнениях — диск с переназначенными секторами или ошибками ввода-вывода в SMART данных и есть упавший.
+</Inset>
+
+<Inset kind="why" lang="ru">
+Почему массив остаётся в деградированном режиме даже после `--remove`, до `--add`? Слой md продолжает работать с оставшимися дисками — для RAID 1 это чтение с выжившего зеркала; для RAID 5 реконструкция отсутствующих данных при каждом чтении через расчёт чётности. Это медленнее нормального (каждое чтение теперь касается всех дисков), но данные доступны. Слот с меткой `removed` — просто пустая позиция: массив знает, что там должен быть диск, и использует первый совместимый диск добавленный через `--add` для начала перестройки. Файловая система сверху не видит никаких прерываний.
+</Inset>
+
+<Check lang="ru">
+  <Quiz
+    id="disk-failure-and-recovery-check"
+    pieceSlug="04-disk-failure-and-recovery"
+    lang="ru"
+    question="После замены упавшего диска и запуска 'mdadm /dev/md0 --add /dev/sdf' перестройка завершилась и /proc/mdstat показывает [4/4] [UUUU]. Какие два шага остались до закрытия инцидента?"
+    choices={[
+      {
+        label: "Обновить /etc/mdadm/mdadm.conf (mdadm --detail --scan > /etc/mdadm/mdadm.conf) и запустить update-initramfs -u, чтобы новая конфигурация попала в initramfs. Без этого следующая перезагрузка может не собрать массив корректно.",
+        correct: true,
+      },
+      {
+        label: "Перезагрузить сервер для подтверждения что массив собирается корректно — единственный надёжный тест.",
+        misconception: "Перезагрузка не требуется и не является рекомендованной проверкой. Вместо этого обновляем mdadm.conf и initramfs (чтобы сборка работала при следующей перезагрузке), затем запускаем 'echo check > /sys/block/md0/md/sync_action' для верификации согласованности чётности. Перезагрузка в production только для проверки RAID добавляет ненужный риск простоя.",
+      },
+      {
+        label: "Запустить fsck на файловой системе /dev/md0 для проверки на повреждения в период деградации.",
+        misconception: "fsck на смонтированной ext4/xfs файловой системе не нужен после чистой перестройки RAID — слой RAID гарантирует корректную реконструкцию данных из чётности. fsck уместен если файловая система была принудительно отмонтирована или система упала посреди записи, но не после чистого восстановления RAID. Вместо этого запусти 'echo check > /sys/block/md0/md/sync_action' для проверки согласованности чётности RAID.",
+      },
+    ]}
+  />
+</Check>
+
+<Recap lang="ru">
+Когда диск отказывает в массиве RAID 1/5/6, массив деградирует но продолжает отдавать данные. Последовательность восстановления: **обнаружь** отказ в `/proc/mdstat` (ищи `[N/N-1]` и `_` на карте дисков) и `mdadm --detail`; **пометь** диск неисправным через `mdadm --fail` если ядро ещё не сделало это; **удали** через `mdadm --remove`; **добавь** замену через `mdadm --add` и перестройка стартует автоматически. **Окно перестройки** — период наивысшего риска: все выжившие диски под максимальной нагрузкой чтения, URE (неисправимые ошибки чтения) становятся вероятны на больших потребительских дисках, второй отказ означает полную потерю данных на RAID 5. После перестройки: обнови `/etc/mdadm/mdadm.conf`, запусти `update-initramfs -u` и проверку чётности через `/sys/block/md0/md/sync_action`. Никогда не удаляй диск без сверки состояния в `mdadm --detail`, логах ядра и данных SMART — удаление не того диска из деградированного массива уничтожает его.
+</Recap>
