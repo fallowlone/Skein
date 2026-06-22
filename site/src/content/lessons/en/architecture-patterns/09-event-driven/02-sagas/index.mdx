@@ -1,0 +1,180 @@
+---
+slug: "02-sagas"
+lang: en
+track: "architecture-patterns"
+unit: "09-event-driven"
+order: 2
+title: "Sagas"
+summary: "A saga coordinates a business process across services using local transactions and compensating actions — not a distributed 2PC lock. Compensation is not rollback: it appends a corrective action. Sagas accept visible intermediate states."
+estMin: 25
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - saga
+  - compensating-action
+  - local-transaction
+  - orchestrated-saga
+  - choreographed-saga
+  - saga-atomicity
+prereqs: []
+sources:
+  - https://microservices.io/patterns/data/saga.html
+  - https://www.cs.cornell.edu/andru/cs711/2002fa/reading/sagas.pdf
+  - https://microservices.io/patterns/data/transactional-outbox.html
+  - https://martinfowler.com/eaaDev/EventSourcing.html
+---
+import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The B2B billing platform needed to handle order placement as a cross-service operation: reserve inventory, charge payment, update order status — all or nothing. The team tried a distributed transaction using two-phase commit. It worked in staging. In production, the payment gateway sometimes took eight seconds to respond. The distributed transaction held inventory records locked for those eight seconds. Under load, lock timeouts cascaded: inventory locks starved other orders, timeouts triggered retries, retries piled on more locks. The system ground to a halt. They abandoned 2PC and implemented a saga instead — a sequence of local transactions, each committed independently, with explicit compensating actions to undo earlier steps if a later step failed.
+</Hook>
+
+<Crux>A saga is a sequence of local transactions coordinating a business process across services, without distributed locks. Each step commits independently; compensation appends a corrective action if a later step fails.</Crux>
+
+<Explanation>
+
+## Why 2PC fails in distributed systems
+
+Two-phase commit (2PC) provides ACID atomicity across multiple participants: either all commit or all abort. The coordinator asks all participants to prepare (phase 1), waits for acknowledgment from all, then sends commit or abort (phase 2). If any participant says "no" in phase 1, the coordinator aborts all.
+
+This sounds correct. The problem is operational:
+
+**Long-held locks.** In phase 1, each participant holds its local resources locked until it receives the phase 2 commit or abort message. If the payment gateway takes 8 seconds, the inventory lock is held for 8 seconds. Under concurrency, slow participants block unrelated transactions.
+
+**Coordinator failure.** If the coordinator crashes between phase 1 and phase 2, participants are stuck in an "uncertain" state — they prepared but do not know whether to commit or abort. They cannot release their locks until the coordinator recovers. Recovery can take minutes.
+
+**Participant unavailability.** 2PC requires all participants to be available simultaneously. If the shipping service is down during phase 1, the entire transaction aborts — even if payment and inventory are fully ready.
+
+The failure mode is not "sometimes the transaction fails" — it is "sometimes the entire system stalls with held locks and uncertain participants." For high-throughput B2B billing, this is not acceptable.
+
+<Inset kind="why">
+Sagas replace coordination with compensation. Instead of requiring all participants to be available simultaneously under a shared lock, each participant commits its local transaction independently as soon as it succeeds. Compensation handles failures after the fact, by appending corrective actions. This shifts the failure model from "stall" to "compensate" — which is recoverable and non-blocking.
+</Inset>
+
+## What a saga is
+
+A saga is a sequence of **local transactions** — each committed within a single service — that together implement a business process spanning multiple services. Each local transaction updates one service's state and publishes an event or sends a message to trigger the next step.
+
+Each step has a corresponding **compensating action**: a business operation that semantically undoes the prior step if a later step in the saga fails. Compensation is not a rollback — the prior transaction is already committed to the database. Compensation appends a new corrective event. If inventory was reserved, the compensation is to release that reservation — a new write, not an undo.
+
+The key property sagas do NOT provide is **isolation**: intermediate states are visible to other transactions. If a saga reserves inventory at step 2 and then fails at step 3 (payment declined), between step 2 and the compensation, the inventory appears reserved to other readers. This is a structural consequence of using local transactions without a distributed lock.
+
+Countermeasures for isolation loss:
+- **Semantic locks:** mark resources as "pending saga" so other transactions treat them as reserved
+- **Commutative updates:** design updates so they produce the same final state regardless of order, making intermediate state observability harmless
+
+<Quiz
+  id="arch-09-02-quiz-1"
+  lessonSlug="02-sagas"
+  lang="en"
+  question="A team migrates from 2PC to sagas for their order fulfillment flow. A developer says: 'Sagas give us the same all-or-nothing guarantee as 2PC, just implemented differently.' A senior engineer corrects this claim. What is the precise difference?"
+  choices={[
+    { label: "Sagas provide atomicity-like outcomes — either the complete business process succeeds or compensation runs to undo completed steps — but they do NOT provide isolation. Between the time a step commits and the time compensation runs, intermediate states are visible to concurrent transactions. 2PC provides both atomicity AND isolation: no intermediate state is observable because participants hold locks until the coordinator sends the final commit/abort decision. Sagas trade isolation for availability and throughput: no coordinator bottleneck, no cross-service locks, no cascading timeouts.", correct: true },
+    { label: "There is no difference. Both sagas and 2PC provide full ACID guarantees; sagas just implement it at the application level instead of the database level.", misconception: "Sagas do not provide isolation, which is the 'I' in ACID. Between saga steps, intermediate states are committed and visible. 2PC provides isolation by holding participants in a prepared-but-not-committed state until all agree. This is a fundamental structural difference, not an implementation detail." },
+    { label: "Sagas are only used for read operations. For write operations spanning multiple services, 2PC is still required.", misconception: "Sagas are specifically designed for write operations spanning multiple services. They replace 2PC for coordinating multi-service writes. Read operations do not require distributed transactions." },
+    { label: "The difference is only performance. Sagas and 2PC both provide ACID guarantees, but sagas are faster because they use asynchronous messaging.", misconception: "The performance difference is real, but it is a consequence of the structural difference: sagas do not provide isolation. They are not 2PC-with-async. The isolation loss is a first-class property of the saga pattern, not a side effect of the implementation." },
+  ]}
+/>
+
+## The B2B order saga: steps and compensating actions
+
+The billing platform's order placement saga:
+
+1. **OrderCreated** — `OrderService` creates the order record locally, status: `pending`. Compensation: cancel the order (mark as `cancelled`).
+2. **ReserveCredit** — `PaymentService` reserves the customer's credit limit for the order amount. Compensation: release the credit reservation.
+3. **ReserveInventory** — `InventoryService` reserves the required stock. Compensation: release the inventory reservation.
+4. **ScheduleShipment** — `ShippingService` schedules the delivery. Compensation: cancel the scheduled shipment.
+
+If `ScheduleShipment` fails (e.g., no carrier available for the address), the saga runs compensation in reverse: cancel the scheduled shipment (already failed), release the inventory reservation, release the credit reservation, cancel the order.
+
+<FlowDiagram
+  label="B2B order saga: steps and compensating actions on failure"
+  caption="Each step commits locally and triggers the next. If ScheduleShipment fails, compensation runs in reverse: release inventory, release credit, cancel order. Compensation is not rollback — each compensation is a new committed action."
+  nodes={[
+    { id: "order", label: "OrderCreated", sub: "local tx — status: pending" },
+    { id: "credit", label: "ReserveCredit", sub: "local tx — credit reserved" },
+    { id: "inventory", label: "ReserveInventory", sub: "local tx — stock reserved" },
+    { id: "ship", label: "ScheduleShipment", sub: "local tx — FAILS" },
+    { id: "comp-inv", label: "ReleaseInventory", sub: "compensation — stock released" },
+    { id: "comp-credit", label: "ReleaseCredit", sub: "compensation — credit released" },
+    { id: "comp-order", label: "CancelOrder", sub: "compensation — order cancelled" },
+  ]}
+  edges={[
+    { from: "order", to: "credit", label: "success" },
+    { from: "credit", to: "inventory", label: "success" },
+    { from: "inventory", to: "ship", label: "success" },
+    { from: "ship", to: "comp-inv", label: "failure — compensate" },
+    { from: "comp-inv", to: "comp-credit", label: "compensate" },
+    { from: "comp-credit", to: "comp-order", label: "compensate" },
+  ]}
+/>
+
+<Quiz
+  id="arch-09-02-quiz-2"
+  lessonSlug="02-sagas"
+  lang="en"
+  question="The billing platform's saga fails at the ScheduleShipment step after successfully committing ReserveCredit and ReserveInventory. The team's compensation implementation marks the saga as 'failed' in the saga log but does not run any compensating actions, reasoning that the inventory and credit reservations will expire automatically after 24 hours via a scheduled job. What is wrong with this approach?"
+  choices={[
+    { label: "The 24-hour expiry means inventory and credit are locked for up to 24 hours, preventing other orders from using those resources. A saga's compensation must run as soon as possible after failure detection — not on a slow scheduled cleanup cycle. The resources appear reserved to concurrent transactions during the entire expiry window, which directly causes availability loss: inventory reads show stock as unavailable; credit checks show capacity as consumed. Compensation exists precisely to release resources promptly, making the saga's failure transparent to the system within milliseconds, not hours.", correct: true },
+    { label: "The approach is acceptable as a temporary measure. Automated expiry is a valid compensation strategy as long as the expiry window is short enough for the business.", misconception: "Expiry-based 'compensation' is not saga compensation — it is a fallback cleanup mechanism. Saga compensation is a deliberate, prompt corrective action that restores system state as soon as possible after failure. Relying on expiry treats intermediate state pollution as acceptable, which it is not: inventory held for 24 hours against a failed order is availability loss for real orders." },
+    { label: "The approach is wrong because the saga log must use 2PC to ensure the 'failed' status write is atomic with the compensation actions.", misconception: "Using 2PC for the saga log write defeats the purpose of using sagas. The saga log is typically updated via a local transaction within the saga orchestrator's own database. Compensation actions are local transactions in participant services. Sagas intentionally avoid distributed transactions." },
+    { label: "The approach is correct. Since the saga log records the failure, the saga's atomicity guarantee is maintained — no data is lost.", misconception: "Recording a failure in the saga log does not restore the resources that were committed by earlier steps. Atomicity-like outcomes require that either the full saga completes or compensation runs to undo the effects of completed steps. Without compensation, resources remain in an intermediate state that is visible and unavailable to other transactions." },
+  ]}
+/>
+
+## Orchestrated vs choreographed sagas
+
+The saga pattern can be implemented in either coordination style from lesson 01:
+
+**Orchestrated saga:** a dedicated saga orchestrator service holds the complete saga state machine. It directs each participant step by step, tracks which steps have completed, and coordinates compensation when a step fails. The flow is explicit and visible. The orchestrator can emit saga-state events for observability. The downside is the coupling hub: all participants depend on the orchestrator.
+
+**Choreographed saga:** each participant reacts to the previous step's event and emits its own event on success or failure. The saga state is distributed across the events in the event log. No central coordinator. Participants are loosely coupled. The downside is that tracking the saga's overall state — and knowing whether compensation has completed — requires correlating events across all participants with no single authoritative record.
+
+For the B2B billing platform's order saga with four to twelve services and frequent business-rule changes, an orchestrated saga is the better fit: the flow complexity warrants explicit coordination, and the business needs to be able to add rules like "pause if credit limit exceeded" in one place.
+
+<Quiz
+  id="arch-09-02-quiz-3"
+  lessonSlug="02-sagas"
+  lang="en"
+  question="A new engineer joins the billing team and asks: 'Why can't we just wrap the order placement in a database transaction across OrderService, PaymentService, and InventoryService? We already use PostgreSQL everywhere.' What is the structural answer?"
+  choices={[
+    { label: "A database transaction provides ACID guarantees only within a single database connection (or distributed XA transaction). Each service owns its own database — this is a core microservices constraint. A transaction that spans multiple independent databases requires either a distributed transaction coordinator (with the locking and availability problems described above) or a saga. Beyond the technical constraint: even if all services shared one database (which would be a monolith's data model), wrapping a call to an external payment gateway in a database transaction is impossible — the gateway is external I/O, not a database participant. Sagas are the correct coordination primitive for operations that cross service boundaries and include external I/O.", correct: true },
+    { label: "It is technically possible but slow. A shared database transaction would work but would hold locks for the duration of all three service operations, causing the same timeouts as 2PC.", misconception: "This partially identifies the locking problem but misses the service ownership constraint. In a proper microservices architecture, each service owns its own database. Cross-database transactions require XA or 2PC, which have the failure modes described in the lesson. More fundamentally, external service calls (like payment gateways) cannot participate in a database transaction at all." },
+    { label: "It is possible if you use a single shared PostgreSQL instance. The real problem is that the team split their services prematurely.", misconception: "Sharing a database across services collapses the service boundary — two services that share a database are coupled at the data model level, which defeats the autonomy and independent deployability that services are supposed to provide. Service isolation includes database isolation. Sagas exist precisely to coordinate across these boundaries without collapsing them." },
+    { label: "Database transactions across services are possible using PostgreSQL foreign data wrappers (FDWs). The team should configure FDWs between their databases.", misconception: "FDWs allow querying remote tables as if they were local, but they do not provide distributed ACID transactions across independent PostgreSQL instances. A transaction that reads and writes via FDW still fails the I requirement — remote writes via FDW do not participate in the local transaction's atomicity guarantee in the way required for cross-service coordination." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Sagas coordinate cross-service business processes via local transactions and compensating actions, avoiding distributed locks. Compensation is not rollback — it appends a corrective action after the fact. Sagas accept visible intermediate states; isolation is not guaranteed. Choose orchestrated sagas for complex flows; choreographed sagas for simpler ones.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="arch-09-02-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is a compensating action in a saga, and why is it not the same as a database rollback?", a: "A compensating action is a new business operation appended to undo the effect of a prior saga step that has already committed. It is not a rollback because the prior transaction is already durably committed to the database — there is no transaction to roll back. For example, if ReserveCredit committed successfully and a later step fails, the compensation is a new ReleaseCredit operation that writes a new row or updates a column to release the reserved amount. The event log grows by one more entry; it is not truncated. This is why events in event sourcing use compensating events (OrderApprovalReverted) rather than deletions — the same principle." },
+    { q: "Why do sagas not provide isolation, and what are the two main countermeasures?", a: "Sagas use local transactions with independent commits. Between the time step N commits and the time a compensation for step N runs (if a later step fails), the intermediate state of step N is visible to concurrent readers and writers — there is no distributed lock hiding it. The two main countermeasures: (1) Semantic locks — mark a resource as 'pending saga' before modifying it, so concurrent transactions treat it as in-flight and wait or decline rather than operating on it. (2) Commutative updates — design the updates so the final result is the same regardless of the order in which concurrent sagas' steps arrive, making intermediate observability harmless." },
+    { q: "What is the main operational advantage of a choreographed saga over an orchestrated saga, and what is its main disadvantage?", a: "Advantage: no central coordinator — participants are loosely coupled and can be developed, deployed, and scaled independently. Adding a new participant that reacts to a step requires no change to any existing service. Disadvantage: the saga's overall state is distributed across the event log, with no single authoritative record of which steps completed and which compensation has run. Debugging a failed saga requires correlating events across all participant services' logs using a correlation ID. The implicit state of the saga makes it hard to answer 'is this saga fully compensated yet?' without a dedicated state-aggregation query." },
+  ]}
+/>
+
+<Recap lang="en">
+The billing platform's 2PC experiment failed not because the implementation was wrong, but because 2PC is structurally unfit for high-throughput distributed systems: slow participants hold locks that cascade into timeouts, and coordinator crashes leave participants in an uncertain state.
+
+Sagas replace the distributed lock with local transactions and compensating actions. Each step commits independently. If a later step fails, compensation runs backwards — not as a rollback, but as a new corrective action appended to the record. The inventory that was reserved is explicitly released; the credit that was charged is explicitly refunded.
+
+The cost is isolation: between the commit of step N and the execution of its compensation, the intermediate state is visible. This is not a bug — it is a structural consequence of replacing a distributed lock with local transactions. Countermeasures like semantic locks and commutative updates manage the exposure, but they do not eliminate it.
+
+Saga coordination can be orchestrated (explicit, visible, centralised) or choreographed (implicit, decoupled, distributed state). The right choice depends on flow complexity, how frequently business rules change, and how important it is to have a single authoritative view of saga state at any given moment.
+</Recap>
