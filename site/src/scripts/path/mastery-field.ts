@@ -24,7 +24,7 @@ export const DOMAIN_FAMILIES: DomainFamily[] = [
   { key: "frontend", label: { en: "Frontend · runtime", ru: "Фронтенд · рантайм" }, hue: "--d-frontend",
     tracks: ["browser", "frontend", "typescript", "js-engine", "react", "nextjs"] as Track[] },
   { key: "backend", label: { en: "Backend · APIs", ru: "Бэкенд · API" }, hue: "--d-backend",
-    tracks: ["backend", "apis", "node", "nest", "python", "go"] as Track[] },
+    tracks: ["backend", "apis", "node", "nest", "python", "go", "architecture-patterns"] as Track[] },
   { key: "data", label: { en: "Databases · data", ru: "Базы · данные" }, hue: "--d-data",
     tracks: ["databases", "sql-postgres", "caching", "data-engineering"] as Track[] },
   { key: "distributed", label: { en: "Distributed · design", ru: "Распределённые · дизайн" }, hue: "--d-systems",
