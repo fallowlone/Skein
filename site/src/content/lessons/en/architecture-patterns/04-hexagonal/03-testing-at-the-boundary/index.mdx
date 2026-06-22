@@ -1,0 +1,299 @@
+---
+slug: "03-testing-at-the-boundary"
+lang: en
+track: "architecture-patterns"
+unit: "04-hexagonal"
+order: 3
+title: "Testing at the boundary"
+summary: "Hexagonal architecture makes the domain trivially testable: drive through the primary port, substitute in-memory fakes at secondary ports, and the entire domain runs without a database or HTTP server. This structural property defines the test pyramid hexagonal teams actually use."
+estMin: 24
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - test-driver
+  - in-memory-fake
+  - port-substitution
+  - test-pyramid
+  - adapter-test
+  - domain-test
+prereqs: []
+sources:
+  - https://alistair.cockburn.us/hexagonal-architecture/
+  - https://martinfowler.com/bliki/TestPyramid.html
+  - https://martinfowler.com/articles/practical-test-pyramid.html
+---
+import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Before hexagonal architecture, the B2B order platform's `OrderService` test suite had a problem the team had learned to live with: every test that touched order confirmation required a running PostgreSQL instance, an active Stripe test account, and a configured SendGrid sandbox. The CI pipeline spun up a Docker Compose stack on every push. Tests took four minutes to execute. Flakiness was a constant: Stripe's sandbox occasionally returned rate-limit errors; the database container sometimes failed to initialize in time; SendGrid's sandbox had a daily email cap that the test suite would hit by midday. Engineers ran the full suite locally maybe once per week. The coverage was nominally 72%, but much of it was integration surface, not logic surface. When the order amount validation was changed — a purely domain rule with no infrastructure dependency — it still required a full integration environment to test, because the validation logic was inside `OrderService`, which imported `PostgresOrderRepository`, `StripeClient`, and `SendGridClient`. The untestability was not a testing problem. It was an architecture problem: the domain's logic was entangled with its infrastructure dependencies. Hexagonal architecture solves this structurally — not by making mocking easier, but by making infrastructure dependencies structurally absent from the domain.
+</Hook>
+
+<Crux>Hexagonal architecture makes domain logic testable without infrastructure because the domain depends only on ports it owns — substitute a fake adapter at each secondary port and the entire use case runs in memory.</Crux>
+
+<Explanation>
+
+## Why the old architecture was untestable
+
+The opening story's untestability was structural. `OrderService` had compile-time dependencies on `PostgresOrderRepository`, `StripeClient`, and `SendGridClient`. To instantiate `OrderService` in a test, you either provided real infrastructure or mocked those classes with a mocking framework. Both options carry costs:
+
+**Real infrastructure in tests** requires environment setup (Docker Compose, external accounts, network access), is slow (seconds per test, minutes per suite), and is flaky (external services fail, containers timeout, rate limits hit).
+
+**Mock frameworks** require the test to know the internal implementation details of `OrderService` — which methods it calls on which dependencies, in what order, with what arguments. When `OrderService` is refactored (say, extracting a domain method), the mocks break, even if the behavior is unchanged. The tests become fragile maintenance burden instead of reliable safety nets.
+
+Both problems share a root cause: `OrderService` has direct source-code dependencies on infrastructure classes. The test cannot isolate the domain logic from those dependencies without either providing them or replacing them with structurally identical copies (mocks).
+
+Hexagonal architecture removes the root cause. The domain does not have source-code dependencies on infrastructure classes — it has source-code dependencies only on its own port interfaces. You cannot instantiate `PostgresOrderRepository` accidentally inside the domain, because the domain does not import it. The only way to satisfy a secondary port is to provide an implementation — which can be a fast, in-memory fake.
+
+## Driving through the primary port with a test driver
+
+The test driver is a driving adapter (lesson 02). It calls the primary port directly, just as the HTTP controller does. There is no HTTP involved — no server, no request parsing, no response formatting.
+
+```typescript
+// domain/ports/OrderConfirmationPort.ts
+interface OrderConfirmationPort {
+  confirmOrder(orderId: string, approverId: string): Promise<ConfirmationResult>;
+}
+
+// Test: drive through the primary port
+describe('Order confirmation use case', () => {
+  let useCase: OrderConfirmationPort;
+  let orderRepo: InMemoryOrderRepository;
+  let paymentGateway: FakePaymentGateway;
+  let emailNotifier: FakeEmailNotifier;
+
+  beforeEach(() => {
+    orderRepo = new InMemoryOrderRepository();
+    paymentGateway = new FakePaymentGateway();
+    emailNotifier = new FakeEmailNotifier();
+
+    // Wire up the use case with fake driven adapters
+    useCase = new OrderConfirmationUseCase(orderRepo, paymentGateway, emailNotifier);
+  });
+
+  it('confirms a pending order and charges the customer', async () => {
+    // Arrange: plant a pending order in the fake repo
+    const order = Order.pending({ id: 'order-1', customerId: 'cust-42', amount: Money.of(500, 'USD') });
+    await orderRepo.save(order);
+
+    // Act: drive through the primary port
+    const result = await useCase.confirmOrder('order-1', 'approver-99');
+
+    // Assert: domain outcome
+    expect(result.success).toBe(true);
+    expect(paymentGateway.chargesIssued).toHaveLength(1);
+    expect(paymentGateway.chargesIssued[0].amount).toEqual(Money.of(500, 'USD'));
+    expect(emailNotifier.sentMessages).toHaveLength(1);
+  });
+
+  it('rejects confirmation when order has overdue invoices', async () => {
+    const order = Order.pending({ id: 'order-2', customerId: 'cust-42', amount: Money.of(200, 'USD') });
+    order.markInvoiceOverdue('inv-7');
+    await orderRepo.save(order);
+
+    const result = await useCase.confirmOrder('order-2', 'approver-99');
+
+    expect(result.success).toBe(false);
+    expect(result.reason).toBe('overdue-invoice');
+    expect(paymentGateway.chargesIssued).toHaveLength(0);
+  });
+});
+```
+
+No Docker Compose. No Stripe account. No SendGrid sandbox. Each test runs in milliseconds. The test suite can be hundreds of tests and finish in under two seconds.
+
+## In-memory fakes at secondary ports
+
+The key enabler is the in-memory fake — a simple, fast implementation of a secondary port that stores state in memory. It is not a mock (which records call expectations); it is a real implementation that happens to use memory instead of a network or disk.
+
+```typescript
+// Implements the secondary port: IOrderRepository
+class InMemoryOrderRepository implements IOrderRepository {
+  private store = new Map<string, Order>();
+
+  async findById(id: string): Promise<Order | null> {
+    return this.store.get(id) ?? null;
+  }
+
+  async save(order: Order): Promise<void> {
+    this.store.set(order.id, order);
+  }
+
+  async findByCustomerId(customerId: string): Promise<Order[]> {
+    return [...this.store.values()].filter(o => o.customerId === customerId);
+  }
+}
+
+// Implements the secondary port: IPaymentGateway
+class FakePaymentGateway implements IPaymentGateway {
+  public chargesIssued: Array<{ customerId: string; amount: Money }> = [];
+  public shouldFail = false;
+
+  async charge(customerId: CustomerId, amount: Money): Promise<ChargeResult> {
+    if (this.shouldFail) return ChargeResult.failure('card-declined');
+    this.chargesIssued.push({ customerId: customerId.value, amount });
+    return ChargeResult.success(`charge-${Date.now()}`);
+  }
+
+  async refund(chargeId: ChargeId, amount: Money): Promise<RefundResult> {
+    return RefundResult.success();
+  }
+}
+```
+
+The fakes implement the secondary port interface exactly — the same interface the production Postgres and Stripe adapters implement. The domain use case cannot distinguish between them at compile time. At runtime, the test injects the fake; production wires the real adapter. The same use case runs in both contexts without modification.
+
+<FlowDiagram
+  label="Test substituting fake adapters at secondary ports"
+  nodes={[
+    { id: "testdriver", label: "Test Driver", sub: "driving adapter — calls primary port" },
+    { id: "pport", label: "OrderConfirmationPort", sub: "primary port" },
+    { id: "usecase", label: "OrderConfirmationUseCase", sub: "application core" },
+    { id: "sport-repo", label: "IOrderRepository", sub: "secondary port" },
+    { id: "sport-pay", label: "IPaymentGateway", sub: "secondary port" },
+    { id: "fake-repo", label: "InMemoryOrderRepository", sub: "fake driven adapter — in test" },
+    { id: "fake-pay", label: "FakePaymentGateway", sub: "fake driven adapter — in test" },
+  ]}
+  edges={[
+    { from: "testdriver", to: "pport", label: "calls (test)" },
+    { from: "pport", to: "usecase", label: "implements" },
+    { from: "usecase", to: "sport-repo", label: "calls (runtime)" },
+    { from: "usecase", to: "sport-pay", label: "calls (runtime)" },
+    { from: "fake-repo", to: "sport-repo", label: "implements (test substitution)" },
+    { from: "fake-pay", to: "sport-pay", label: "implements (test substitution)" },
+  ]}
+  caption="In a domain test, the test driver replaces the HTTP controller as the driving adapter. Fake in-memory implementations replace the production Postgres and Stripe driven adapters. The application core (OrderConfirmationUseCase) runs identically — it only sees the port interfaces it owns. No infrastructure required."
+/>
+
+<Inset kind="why" lang="en">
+Why is this a structural property rather than a testing technique? Because the testability emerges from the dependency structure, not from test setup discipline. A team using a layered architecture can write in-memory fakes too — but they must mock the concrete classes their service imports, which means their test setup depends on implementation details. When the service is refactored, mocks break. In hexagonal architecture, the domain imports only its own interfaces. The in-memory fake is a legitimate implementation of that interface — not a mock of a concrete class. Refactoring the use case does not break the fakes (the fakes implement the port, which changes only when domain requirements change). The testability is baked in by construction.
+</Inset>
+
+## The test pyramid hexagonal teams actually use
+
+The structural separation of domain from adapters produces a natural three-level test pyramid:
+
+**Level 1 — Domain tests (many, milliseconds):** Drive through the primary port with a test driver and fake driven adapters. Test every business rule, every invariant, every edge case in the domain. These tests have no infrastructure dependencies — they run anywhere, instantly. This is the bulk of the test suite: every combination of order state, approval logic, billing rule, and error condition. In the B2B platform, this is hundreds of tests covering the full confirmation, invoicing, and billing approval logic.
+
+**Level 2 — Adapter tests (fewer, seconds):** Test each adapter in isolation against its port contract. The PostgreSQL repository test starts a real database, saves and retrieves domain objects, and verifies the mapping is correct. The Stripe adapter test (against Stripe's test API) verifies the charge/refund mapping. The HTTP controller test verifies that HTTP request fields are correctly parsed into port parameters and port results are correctly serialized to HTTP responses. These tests verify that the adapter correctly implements the port — they do not re-test domain logic.
+
+**Level 3 — End-to-end tests (very few, seconds to minutes):** Start the full application with all real adapters wired. Send real HTTP requests. Verify the whole stack integrates. These tests are expensive — keep them to critical happy paths only.
+
+```
+Level 1: Domain tests      ████████████████████████████████████  (hundreds)
+Level 2: Adapter tests     ██████████                            (tens)
+Level 3: E2E tests         ██                                    (handful)
+```
+
+The B2B platform's original problem — 72% nominal coverage achieved through slow integration tests — was a symptom of having no Level 1 tests at all. Everything was Level 3. Hexagonal architecture inverts this: Level 1 tests are cheap to write because the domain is fully accessible through the primary port without infrastructure.
+
+<Inset kind="note" lang="en">
+There is a nuanced failure mode called the "ice cream cone" anti-pattern: many E2E tests, few adapter tests, almost no domain tests. Teams in layered architectures naturally drift toward it because unit-testing the domain requires mocking many concrete infrastructure dependencies — which is tedious and fragile. Hexagonal architecture makes the domain tests cheap to write (no mocking framework, just fakes implementing the ports), so the pyramid inverts naturally. If a hexagonal team's test suite still looks like an ice cream cone, it usually means the secondary ports were not correctly inverted — the domain is still importing concrete infrastructure classes somewhere.
+</Inset>
+
+## Adapter tests: testing the boundary from the outside
+
+The adapter tests are structurally independent of the domain tests. They test a different question: "Does this adapter correctly implement the port contract?"
+
+```typescript
+// Adapter test: PostgresOrderRepository implements IOrderRepository
+describe('PostgresOrderRepository', () => {
+  let db: Pool; // Real PostgreSQL connection
+  let repo: PostgresOrderRepository;
+
+  beforeAll(async () => {
+    db = await createTestDatabase();
+    repo = new PostgresOrderRepository(db);
+  });
+
+  it('saves and retrieves an order by id', async () => {
+    const order = Order.pending({ id: 'test-1', customerId: 'c-1', amount: Money.of(100, 'USD') });
+    await repo.save(order);
+    const retrieved = await repo.findById('test-1');
+    expect(retrieved).toEqual(order);
+  });
+
+  it('returns null for a non-existent order', async () => {
+    const result = await repo.findById('no-such-id');
+    expect(result).toBeNull();
+  });
+});
+```
+
+These tests start the real database. They are slower than domain tests. But they cover the one thing domain tests cannot: the correct mapping between domain objects and database rows (column names, types, NULL handling, serialization). A domain test with a fake repository would never catch a column mapping bug. The adapter test catches it exactly, without testing any domain logic.
+
+<Quiz
+  id="arch-04-03-quiz-1"
+  lessonSlug="03-testing-at-the-boundary"
+  lang="en"
+  question="A team converts their layered architecture to hexagonal. The OrderConfirmationUseCase now receives IOrderRepository and IPaymentGateway via its constructor (injected at startup). A developer says: 'We already had dependency injection before — we could mock OrderRepository and StripeClient in tests. What does hexagonal give us that we did not already have?' How do you answer?"
+  choices={[
+    { label: "Before: the mocks were of concrete classes (PostgresOrderRepository, StripeClient) owned by infrastructure. When those classes changed internally — new method, refactored structure — the mocks broke even if domain logic was unchanged. The fakes had to mirror internal implementation details. After hexagonal: the fakes implement interfaces owned by the domain (IOrderRepository, IPaymentGateway). The domain defines those interfaces; they change only when domain requirements change. Infrastructure can be completely rewritten without touching the fakes or the domain tests. The compile-time boundary is now at the domain's own interfaces, not at the infrastructure's concrete class shapes.", correct: true },
+    { label: "Hexagonal gives you nothing new here — dependency injection with interfaces was always sufficient for testability.", misconception: "Dependency injection with interfaces is a prerequisite for testability, but the key question is who owns the interfaces. If IOrderRepository was defined in the infrastructure package before hexagonal, the infrastructure team controlled it. Mocks/fakes written against it depended on infrastructure decisions. After hexagonal, IOrderRepository is in the domain package — the domain team controls it. This is the ownership inversion from unit 02, applied to test infrastructure." },
+    { label: "Hexagonal gives you in-memory fakes instead of mock objects, which are faster.", misconception: "The performance improvement is real but secondary. The primary benefit is ownership of the interface. In-memory fakes implementing infrastructure-owned interfaces still break when infrastructure restructures those interfaces. The structural change hexagonal makes is moving interface ownership to the domain, so that neither fakes nor production code ever needs to track infrastructure's internal changes." },
+    { label: "Hexagonal enables running tests without a DI container, which was not possible before.", misconception: "DI containers are not required by hexagonal architecture — the use case can be constructed manually in the test (new OrderConfirmationUseCase(fakeRepo, fakePayment, fakeEmail)). But this is also true of any DI-based layered architecture. The difference hexagonal makes is not about the DI container but about interface ownership and the structural enforceability of that ownership." },
+  ]}
+/>
+
+<Quiz
+  id="arch-04-03-quiz-2"
+  lessonSlug="03-testing-at-the-boundary"
+  lang="en"
+  question="The team writes a domain test that uses InMemoryOrderRepository and FakePaymentGateway. The test for order confirmation passes. Later, the Postgres adapter is deployed and a production order fails because the amount column stores values as integers (cents) but the domain uses a Money value object that stores as a decimal string. Which test level catches this bug, and why did the domain test not catch it?"
+  choices={[
+    { label: "The adapter test (Level 2) catches it. The domain test did not catch it because the fake repository stores the domain Money object directly in memory — no serialization occurs. The bug is in the mapping between domain types and database column types, which is adapter logic, not domain logic. Adapter tests run the real Postgres adapter against a real database, exercising the serialization/deserialization path the domain test bypasses.", correct: true },
+    { label: "The E2E test (Level 3) catches it. Adapter tests only test the adapter in isolation, so they cannot catch type mapping bugs.", misconception: "Adapter tests specifically test whether the adapter correctly maps domain objects to and from the storage format. A PostgresOrderRepository adapter test that saves an Order with a Money value and then retrieves it would catch the integer vs decimal mismatch immediately. E2E tests can also catch it, but adapter tests are targeted at exactly this failure mode and are faster and easier to diagnose." },
+    { label: "The domain test should have caught it — the fake repository should serialize to and from the database format to simulate production.", misconception: "If the fake repository simulates database serialization, it becomes a partial re-implementation of the Postgres adapter — defeating the purpose of a fast, simple fake. The fake exists to test domain logic in isolation; it stores domain objects directly. The serialization logic is the adapter's concern and belongs in an adapter test with a real database. Mixing serialization simulation into fakes creates maintenance overhead and blurs the responsibility boundary." },
+    { label: "No test catches it — this is a type mismatch that only manifests at runtime and cannot be tested statically.", misconception: "This type mismatch is exactly what adapter tests are designed to catch. A PostgresOrderRepository adapter test that inserts an order (with a Money value object) and retrieves it would fail at the comparison step if the round-trip serialization corrupts the amount. It is entirely testable — it just requires testing the adapter with a real database, not a fake." },
+  ]}
+/>
+
+<Quiz
+  id="arch-04-03-quiz-3"
+  lessonSlug="03-testing-at-the-boundary"
+  lang="en"
+  question="A team has 400 domain tests (Level 1), 30 adapter tests (Level 2), and 5 E2E tests (Level 3). CI takes 45 seconds. A new developer says: 'We should add more E2E tests to increase confidence — they test the real system.' How do you evaluate this argument?"
+  choices={[
+    { label: "The argument conflates 'tests the real system' with 'higher confidence.' E2E tests verify integration wiring — that adapters connect correctly end-to-end. The 400 domain tests already verify all business rules exhaustively and with precise failure diagnosis. Adding more E2E tests duplicates domain logic coverage at much higher cost (slow, flaky, hard to diagnose). The correct response: identify what the 5 E2E tests are missing (a specific integration path not covered by adapter tests), add targeted adapter tests for it, and keep E2E tests to the minimal set that proves the wiring is correct.", correct: true },
+    { label: "The developer is right — only E2E tests provide real confidence because they test the actual deployed stack.", misconception: "E2E tests test integration wiring: does the HTTP controller correctly connect to the use case, which correctly connects to the Postgres adapter? Domain tests test the business logic: is the confirmation rule correctly implemented? Both are necessary but neither substitutes for the other. An E2E test that passes does not tell you which business rule was executed correctly. A domain test failure pinpoints exactly which rule failed. Confidence in business logic comes from domain tests; confidence in wiring comes from E2E and adapter tests." },
+    { label: "More E2E tests are needed if the domain tests use fakes — fakes are not real, so domain tests are not reliable.", misconception: "Fakes are real implementations of the secondary port interfaces. They implement the same interface that Postgres and Stripe implement — the domain cannot distinguish them. A domain test failure means the business rule in the use case failed, regardless of which adapter was used. The reliability of domain tests comes from the port contract: if the fake correctly implements the port interface, and the use case passes with the fake, it will also pass with any correct Postgres or Stripe adapter. Adapter tests verify that the production adapters implement the port correctly." },
+    { label: "The 45-second CI time is evidence that more tests are needed — fast CI means insufficient coverage.", misconception: "45 seconds with 400 domain tests is a good result — domain tests run fast. Adding E2E tests would increase CI time significantly (each E2E test might add 5-30 seconds). Faster CI is a feature of the hexagonal pyramid, not a sign of insufficient coverage. The right metric is: do the domain tests cover every business rule, and do the adapter tests cover every port implementation? Not: is CI slow enough?" },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Hexagonal architecture makes domain tests structurally cheap: the domain imports only its own port interfaces, so any in-memory fake implementing those interfaces substitutes perfectly for production infrastructure. The test pyramid this produces — many fast domain tests, fewer adapter tests, very few E2E tests — is a structural outcome of port ownership, not a testing convention imposed on top of the architecture.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="arch-04-03-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the structural reason that domain tests in hexagonal architecture do not require a mock framework?", a: "In a layered architecture, domain service tests require mocking because the service has compile-time dependencies on concrete infrastructure classes (PostgresOrderRepository, StripeClient). Mocks must mirror the concrete class's interface — method names, return types, call expectations. When those classes change, mocks break. In hexagonal architecture, the use case has compile-time dependencies only on secondary port interfaces it owns (IOrderRepository, IPaymentGateway). An in-memory fake implements those interfaces legitimately — it is a real implementation, not a mock of a concrete class. No reflection, no mock framework, no recording of expected calls. The fake is compiled against the same interface the production adapter is compiled against. Refactoring the Postgres adapter does not break the fake because the fake implements the domain's interface definition, not the Postgres class's interface." },
+    { q: "What is the difference between an in-memory fake and a mock object, and why does the distinction matter for test maintenance?", a: "A mock object is typically generated by a mocking framework and configured per-test to expect specific call sequences. It verifies that the system under test called the mock's methods in a specific order with specific arguments. This couples the test to the implementation details of the system under test — when the use case is refactored (extracting a domain method, reordering operations), the mock expectations break even if the observable behavior is unchanged. An in-memory fake is a full implementation of the secondary port interface that stores state in memory. It does not care which methods were called in what order — it behaves correctly for any valid sequence of port calls. When the use case is refactored, the fake does not break (as long as the port interface and the contract are unchanged). The distinction matters for test maintenance: mock-heavy test suites become a maintenance burden during refactoring; fake-based test suites remain stable." },
+    { q: "The B2B platform team has 400 domain tests using fakes. A production bug is found: orders with amounts over $10,000 in certain currencies fail the payment charge silently. The fake payment gateway did not surface this. What does this reveal about the fake, and how should the team respond?", a: "It reveals that the FakePaymentGateway does not correctly simulate the behavior of the real payment gateway for high-value, multi-currency charges — specifically, it does not fail (or silently succeeds) where the real gateway returns an error. This is a gap in the fake, not a flaw in the hexagonal structure. The team should: (1) add a test case to the Stripe adapter test suite (Level 2) that exercises the specific currency/amount combination that triggers the failure against Stripe's test API; (2) update FakePaymentGateway to replicate the same behavior (return an error for that scenario) so the domain test suite can prevent regressions; (3) investigate whether the domain use case correctly handles a ChargeResult.failure response — this may reveal a missing error-handling branch in the domain logic that should be covered by a domain test. The fix is to enrich the fake's behavior and the adapter test coverage, not to abandon the pyramid structure." },
+  ]}
+/>
+
+<Recap lang="en">
+The untestability of the original B2B platform was not a test-writing problem. It was a structural problem: the service layer had compile-time dependencies on infrastructure classes, so every test of business logic required the full infrastructure stack.
+
+Hexagonal architecture removes the compile-time dependencies. The domain imports only its own port interfaces. Secondary ports are satisfied at runtime by whichever adapter is injected — production or fake. The domain cannot accidentally import a concrete infrastructure class.
+
+In-memory fakes implement secondary port interfaces fully and correctly, without using any external infrastructure. The domain use case runs identically against fakes as against production adapters, because it only sees the port interfaces it owns.
+
+The test pyramid this produces has three levels. Domain tests (many, milliseconds) drive through the primary port with fake driven adapters — they test every business rule without infrastructure. Adapter tests (fewer, seconds) test each adapter with real infrastructure — they verify the mapping between domain objects and database rows, API responses, or message formats. End-to-end tests (very few) verify integration wiring.
+
+The ice cream cone anti-pattern — many E2E tests, almost no domain tests — is a symptom of insufficient port ownership. When domain tests become cheap by construction, the pyramid inverts naturally.
+
+This structural testability is the practical payoff that makes hexagonal architecture worth its cost. The boundaries that prevent layer-skipping (unit 03's problem) and the port ownership that inverts infrastructure dependency (unit 02's DIP) also happen to make the entire domain testable without a database, without a payment SDK, and without a running server.
+</Recap>
