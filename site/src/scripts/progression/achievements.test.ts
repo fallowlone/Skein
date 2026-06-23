@@ -26,3 +26,21 @@ describe("achievements", () => {
     expect(evaluateAchievements(empty, ctx0)).not.toContain("en-words-500");
   });
 });
+
+const ctx: any = {}; // rank predicates ignore ctx; other achievements stay false on empty state.
+const base = { pretest: null as any, history: {}, retrieval: {}, progression: { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [] } as any };
+
+describe("rank achievements track study", () => {
+  it("fires rank-engineer from study peakRating with no pretest", () => {
+    const s = { ...base, progression: { ...base.progression, peakRating: 460 } };
+    expect(evaluateAchievements(s, ctx)).toContain("rank-engineer");
+  });
+  it("still fires from pretest.rating when no study peak (backward compatible)", () => {
+    const s = { ...base, pretest: { rating: 460 } as any };
+    expect(evaluateAchievements(s, ctx)).toContain("rank-engineer");
+  });
+  it("does not fire rank-senior below 750", () => {
+    const s = { ...base, progression: { ...base.progression, peakRating: 700 } };
+    expect(evaluateAchievements(s, ctx)).not.toContain("rank-senior");
+  });
+});

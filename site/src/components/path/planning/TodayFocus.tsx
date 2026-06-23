@@ -2,7 +2,10 @@
 // Top-of-screen focus: what to do TODAY. Deadline set → today's schedule row; otherwise the
 // next path step. When behind/over, surfaces the single best catch-up action inline.
 import type { Locale } from "~/i18n";
-import { config, content, computePath, currentPace, currentFixes, applyFix, dueReviews } from "~/scripts/path/path-io";
+import { config, content, computePath, currentPace, currentFixes, applyFix, dueReviews, currentWeakSpots } from "~/scripts/path/path-io";
+import { userState } from "~/scripts/user-state";
+import { ratingToRank } from "~/scripts/progression/ranks";
+import { barRatingForGoal, projectRatingDate } from "~/scripts/progression/effective-rating";
 import unitsJson from "~/content/units.json";
 
 type UnitMeta = { track: string; slug: string; firstLesson?: string; lessonCount: number };
@@ -88,7 +91,28 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
     if (!href) return [];
     return [{ key: s.unit, href, title: content.unitTitleById.get(s.unit)?.[lang] ?? s.unit, reason: t.lessonReason }];
   });
+  const weakRows = currentWeakSpots()
+    .map((w) => ({ key: w.unitId, href: startHref(lang, w.unitId), title: content.unitTitleById.get(w.unitId)?.[lang] ?? w.unitId }))
+    .filter((r) => r.href) as { key: string; href: string; title: string }[];
   const hasDoNow = reviewRows.length > 0 || leadRows.length > 0;
+
+  // Weak-spots section renders independently of hasDoNow: failure evidence on frontier units
+  // must surface even when reviewRows and leadRows are both empty (no-trap contract).
+  const weakSection = weakRows.length > 0 ? (
+    <section class="today-card do-now dn-weak-card">
+      <span class="tc-head">{lang === "ru" ? "Слабые места" : "Weak spots"}</span>
+      <ul class="dn-list">
+        {weakRows.map((r) => (
+          <li key={`w:${r.key}`} class="dn-row">
+            <a class="dn-link" href={r.href}>
+              <span class="dn-title">{r.title}</span>
+              <span class="dn-reason">{lang === "ru" ? "тут стабильно ошибаешься" : "you keep missing this"}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ) : null;
 
   const doNow = hasDoNow ? (
     <section class="today-card do-now">
@@ -109,13 +133,30 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
   ) : null;
 
   // Cold-start: no path AND nothing due → keep the existing empty card unchanged.
+  // Still render weakSection independently so failure evidence surfaces even on cold-start.
   if (units.length === 0) {
-    return doNow ?? <section class="today-card empty"><p>{t.done}</p></section>;
+    if (weakSection || doNow) {
+      return <>{weakSection}{doNow ?? <section class="today-card empty"><p>{t.done}</p></section>}</>;
+    }
+    return <section class="today-card empty"><p>{t.done}</p></section>;
   }
 
   const href = startHref(lang, units[0].unit);
   const lessonCount = UNIT_META.get(units[0].unit)?.lessonCount ?? 0;
   const p = currentPace();
+  const us = userState.value;
+  const dl = config.value.deadline;
+  const goalsSorted = [...config.value.goals].sort((a, b) => a.priority - b.priority);
+  const goalId = goalsSorted[0]?.id ?? "senior-fullstack";
+  const barRating = barRatingForGoal(goalId);
+  const effRating = Math.max(us.pretest?.rating ?? 0, us.progression.studyEma ?? 0);
+  const rf = dl ? projectRatingDate(effRating, barRating, p?.projectedFinishMs ?? null, dl.targetDateMs) : null;
+  const barLabel = ratingToRank(barRating).label[lang];
+  const fmtDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  const aheadBehind = (d: number) =>
+    d > 0 ? (lang === "ru" ? `на ${d} дн. позже дедлайна` : `${d} days behind deadline`)
+    : d < 0 ? (lang === "ru" ? `на ${-d} дн. раньше` : `${-d} days ahead`)
+    : (lang === "ru" ? "точно к дедлайну" : "right on deadline");
   const { fixes, combo } = currentFixes();
   // combo is empty when there's no budget deficit; fall back to the top catch-up lever so the
   // "behind but budget still fits" case still surfaces an action (combo only covers over-budget).
@@ -123,6 +164,7 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
 
   return (
     <>
+      {weakSection}
       {doNow}
       <section class="today-card">
         <div class="tc-main">
@@ -137,6 +179,18 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
             {p?.status === "behind" && <span>{t.behind(p.behindDays)}</span>}
             <button type="button" class="btn btn-sm" onClick={() => applyFix(catchUp)}>{t.apply}</button>
           </div>
+        )}
+        {rf && rf.reached && (
+          <p class="rating-forecast" style="margin:0.25rem 0 0;font-size:0.85rem;opacity:0.8;">
+            {lang === "ru" ? `Ты достиг планки ${barLabel}` : `You've reached the ${barLabel} bar`}
+          </p>
+        )}
+        {rf && !rf.reached && rf.projectedMs && (
+          <p class="rating-forecast" style="margin:0.25rem 0 0;font-size:0.85rem;opacity:0.8;">
+            {lang === "ru"
+              ? `При текущем темпе достигнешь планки ${barLabel} к ${fmtDate(rf.projectedMs)} — ${aheadBehind(rf.daysAheadBehind)}`
+              : `At this pace you reach the ${barLabel} bar by ${fmtDate(rf.projectedMs)} — ${aheadBehind(rf.daysAheadBehind)}`}
+          </p>
         )}
       </section>
     </>
