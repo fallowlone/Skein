@@ -1,6 +1,8 @@
 import { useEffect, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { userState, setTier, setMotion, resetAll, setPretest } from "~/scripts/user-state";
+import { todayISO } from "~/scripts/progression/streak";
+import { exportModel, importModel } from "~/scripts/model-backup";
 import { type Locale } from "~/i18n";
 import type { Tier } from "~/types";
 
@@ -25,6 +27,12 @@ const labels = {
     reset: "Reset all progress",
     resetConfirm: "Reset all progress?",
     section: "settings",
+    yourData: "Your data",
+    yourDataHint: "Your progress lives in this browser. Keep a backup.",
+    exportBtn: "Export progress",
+    importBtn: "Import",
+    importedMsg: (n: number) => `Restored ${n} keys. Reloading…`,
+    importErrMsg: "Invalid backup file",
   },
   ru: {
     title: "Настройки",
@@ -44,6 +52,12 @@ const labels = {
     reset: "Сбросить весь прогресс",
     resetConfirm: "Сбросить весь прогресс?",
     section: "настройки",
+    yourData: "Твои данные",
+    yourDataHint: "Прогресс хранится в этом браузере. Сохрани резервную копию.",
+    exportBtn: "Экспорт прогресса",
+    importBtn: "Импорт",
+    importedMsg: (n: number) => `Восстановлено ключей: ${n}. Перезагрузка…`,
+    importErrMsg: "Неверный файл резервной копии",
   },
 };
 
@@ -77,6 +91,33 @@ export default function SettingsDrawer({ lang }: Props) {
     } catch {}
     window.dispatchEvent(new CustomEvent("toast", { detail: { msg: `density: ${next}`, kind: "info" } }));
   }
+
+  const handleExport = () => {
+    const json = exportModel(localStorage);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `awesome-progress-${todayISO()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImport = (e: Event) => {
+    const file = (e.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const { restored } = importModel(localStorage, String(reader.result));
+        window.dispatchEvent(new CustomEvent("toast", { detail: { msg: l.importedMsg(restored), kind: "ok" } }));
+        setTimeout(() => location.reload(), 600);
+      } catch {
+        window.dispatchEvent(new CustomEvent("toast", { detail: { msg: l.importErrMsg, kind: "err" } }));
+      }
+    };
+    reader.readAsText(file);
+  };
 
   const segClass = "tier-seg";
   const segBtn = (active: boolean) =>
@@ -149,6 +190,24 @@ export default function SettingsDrawer({ lang }: Props) {
             <option value="off">{l.motionOff}</option>
           </select>
         </Row>
+      </div>
+
+      <div class="mt-8 border-t border-rule pt-6">
+        <div class="font-display text-[14px] font-semibold text-ink mb-1">{l.yourData}</div>
+        <p class="text-[12px] text-muted mb-4">{l.yourDataHint}</p>
+        <div class="flex flex-wrap gap-3">
+          <button
+            type="button"
+            class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
+            onClick={handleExport}
+          >
+            {l.exportBtn}
+          </button>
+          <label class="oa-btn oa-btn-secondary oa-btn-sm text-[12px] cursor-pointer">
+            {l.importBtn}
+            <input type="file" accept="application/json" class="sr-only" onChange={handleImport} />
+          </label>
+        </div>
       </div>
 
       <div class="mt-8 flex flex-wrap gap-3">
