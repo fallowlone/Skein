@@ -38,7 +38,7 @@ const defaults: UserState = {
   lang: "en",
   motion: "auto",
   pretest: null,
-  progression: { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [] },
+  progression: { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0, freezes: 0 }, titles: [] },
   history: {},
   retrieval: {},
   dismissedRevisit: {},
@@ -122,7 +122,7 @@ export function setMotion(m: UserState["motion"]) {
 }
 
 export function defaultProgression(): Progression {
-  return { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [] };
+  return { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0, freezes: 0 }, titles: [] };
 }
 
 /** Upgrade a legacy { takenAt, score, answers } pretest to a PretestResult. Idempotent. */
@@ -170,12 +170,13 @@ export function recordActiveDay() {
   const p = userState.value.progression;
   const streak = updateStreak(p.streak, todayISO());
   if (streak === p.streak) return;
+  const usedFreeze = streak.count === p.streak.count && (streak.freezes ?? 0) < (p.streak.freezes ?? 0);
   userState.value = { ...userState.value, progression: { ...p, streak } };
-  // Closing ritual for the daily habit loop: announce the new streak once.
   if (typeof window !== "undefined") {
-    const msg = userState.value.lang === "ru"
-      ? `🔥 Серия ${streak.count} дн.`
-      : `🔥 ${streak.count}-day streak`;
+    const ru = userState.value.lang === "ru";
+    const msg = usedFreeze
+      ? (ru ? `❄️ Заморозка спасла серию: ${streak.count} дн.` : `❄️ Freeze saved your ${streak.count}-day streak`)
+      : (ru ? `🔥 Серия ${streak.count} дн.` : `🔥 ${streak.count}-day streak`);
     window.dispatchEvent(new CustomEvent("toast", { detail: { msg, kind: "ok" } }));
   }
 }
