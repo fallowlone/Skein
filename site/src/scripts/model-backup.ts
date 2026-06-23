@@ -24,7 +24,7 @@ export function exportModel(store: StorageLike): string {
     const v = store.getItem(k);
     if (v !== null) data[k] = v;
   }
-  const blob: BackupBlob = { version: BACKUP_VERSION, data };
+  const blob: BackupBlob = { version: BACKUP_VERSION, exportedAt: Date.now(), data };
   return JSON.stringify(blob);
 }
 
