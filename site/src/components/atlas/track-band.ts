@@ -60,6 +60,7 @@ export const TRACK_BAND: Record<Track, Band> = {
   "linux":                "foundations",
   // code craft & patterns
   "code-patterns":        "surface",
+  "react-patterns":       "surface",
 };
 
 export function bandOf(slug: Track): Band {
