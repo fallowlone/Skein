@@ -2,7 +2,7 @@
 // Top-of-screen focus: what to do TODAY. Deadline set → today's schedule row; otherwise the
 // next path step. When behind/over, surfaces the single best catch-up action inline.
 import type { Locale } from "~/i18n";
-import { config, content, computePath, currentPace, currentFixes, applyFix, dueReviews } from "~/scripts/path/path-io";
+import { config, content, computePath, currentPace, currentFixes, applyFix, dueReviews, currentWeakSpots } from "~/scripts/path/path-io";
 import { userState } from "~/scripts/user-state";
 import { ratingToRank } from "~/scripts/progression/ranks";
 import { barRatingForGoal, projectRatingDate } from "~/scripts/progression/effective-rating";
@@ -91,7 +91,28 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
     if (!href) return [];
     return [{ key: s.unit, href, title: content.unitTitleById.get(s.unit)?.[lang] ?? s.unit, reason: t.lessonReason }];
   });
+  const weakRows = currentWeakSpots()
+    .map((w) => ({ key: w.unitId, href: startHref(lang, w.unitId), title: content.unitTitleById.get(w.unitId)?.[lang] ?? w.unitId }))
+    .filter((r) => r.href) as { key: string; href: string; title: string }[];
   const hasDoNow = reviewRows.length > 0 || leadRows.length > 0;
+
+  // Weak-spots section renders independently of hasDoNow: failure evidence on frontier units
+  // must surface even when reviewRows and leadRows are both empty (no-trap contract).
+  const weakSection = weakRows.length > 0 ? (
+    <section class="today-card do-now dn-weak-card">
+      <span class="tc-head">{lang === "ru" ? "Слабые места" : "Weak spots"}</span>
+      <ul class="dn-list">
+        {weakRows.map((r) => (
+          <li key={`w:${r.key}`} class="dn-row">
+            <a class="dn-link" href={r.href}>
+              <span class="dn-title">{r.title}</span>
+              <span class="dn-reason">{lang === "ru" ? "тут стабильно ошибаешься" : "you keep missing this"}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
+    </section>
+  ) : null;
 
   const doNow = hasDoNow ? (
     <section class="today-card do-now">
@@ -112,8 +133,12 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
   ) : null;
 
   // Cold-start: no path AND nothing due → keep the existing empty card unchanged.
+  // Still render weakSection independently so failure evidence surfaces even on cold-start.
   if (units.length === 0) {
-    return doNow ?? <section class="today-card empty"><p>{t.done}</p></section>;
+    if (weakSection || doNow) {
+      return <>{weakSection}{doNow ?? <section class="today-card empty"><p>{t.done}</p></section>}</>;
+    }
+    return <section class="today-card empty"><p>{t.done}</p></section>;
   }
 
   const href = startHref(lang, units[0].unit);
@@ -139,6 +164,7 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
 
   return (
     <>
+      {weakSection}
       {doNow}
       <section class="today-card">
         <div class="tc-main">
