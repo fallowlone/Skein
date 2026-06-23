@@ -5,22 +5,27 @@ import { recordPracticeOutcome } from "~/scripts/path/path-io";
 import { recordActiveDay, userState } from "~/scripts/user-state";
 import { cardsFromPractice } from "~/scripts/review-harvest";
 import { addCard } from "~/scripts/review-state";
-import { readinessScore, type SessionItem, type Outcome } from "~/scripts/interview/interview-session";
+import { readinessScore, selectRound, type SessionItem, type Outcome } from "~/scripts/interview/interview-session";
 
 const PICKS: Outcome[] = ["pass", "partial", "fail"];
+const SESSION_SIZE = 8;
 
 export default function InterviewRunner({ lang, items }: { lang: Locale; items: SessionItem[] }) {
   const [idx, setIdx] = useState(0);
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
   const [pick, setPick] = useState<Outcome | null>(null);
+  // Captured once at mount: which rotation window to show. Each completed session advances it, so
+  // repeat practice surfaces a different slice of the question pool (selectRound wraps).
+  const [round] = useState(() => userState.value.progression.interviewRounds ?? 0);
+  const view = selectRound(items, SESSION_SIZE, round);
 
   // Remove the SSR fallback once the island mounts.
   useEffect(() => { document.getElementById("interview-fallback")?.remove(); }, []);
 
-  // Seed the interview tasks as SRS cards once, so they re-surface in /review.
+  // Seed this round's interview tasks as SRS cards once, so they re-surface in /review.
   useEffect(() => {
     const byLesson = new Map<string, SessionItem["task"][]>();
-    for (const it of items) {
+    for (const it of view) {
       const arr = byLesson.get(it.lessonKey) ?? [];
       arr.push(it.task);
       byLesson.set(it.lessonKey, arr);
@@ -31,26 +36,29 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Persist interview readiness (high-water) once the session completes. Runs in an effect
-  // (not render) so we never write a signal during Preact's render pass.
+  // On completion: advance the rotation counter (so next session differs) and persist interview
+  // readiness as a high-water mark. Runs in an effect (not render) so we never write a signal
+  // during Preact's render pass; deps [idx] fire it once when the session finishes.
   useEffect(() => {
-    if (idx < items.length) return;
+    if (idx < view.length) return;
     const score = Math.round(readinessScore(outcomes));
     const prog = userState.value.progression;
-    if (score > (prog.interviewReadiness ?? 0)) {
-      userState.value = {
-        ...userState.value,
-        progression: { ...prog, interviewReadiness: score, interviewCompletedAt: Date.now() },
-      };
-    }
+    const readinessPatch =
+      score > (prog.interviewReadiness ?? 0)
+        ? { interviewReadiness: score, interviewCompletedAt: Date.now() }
+        : {};
+    userState.value = {
+      ...userState.value,
+      progression: { ...prog, interviewRounds: (prog.interviewRounds ?? 0) + 1, ...readinessPatch },
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idx]);
 
-  if (!items.length) {
+  if (!view.length) {
     return <p class="re-lead">{t("interview.empty", lang)}</p>;
   }
 
-  if (idx >= items.length) {
+  if (idx >= view.length) {
     const score = Math.round(readinessScore(outcomes));
     return (
       <section class="iv-done">
@@ -62,7 +70,7 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
     );
   }
 
-  const item = items[idx];
+  const item = view[idx];
   const task = item.task;
 
   function next() {
@@ -74,7 +82,7 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
     setIdx((i) => i + 1);
   }
 
-  const counter = t("interview.task", lang).replace("{n}", String(idx + 1)).replace("{total}", String(items.length));
+  const counter = t("interview.task", lang).replace("{n}", String(idx + 1)).replace("{total}", String(view.length));
 
   return (
     <section class="iv-task">
