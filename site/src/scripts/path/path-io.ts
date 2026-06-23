@@ -32,7 +32,10 @@ import {
   highWater,
   hasEnoughEvidence,
   barRatingForGoal,
+  projectRatingDate,
+  type RatingForecast,
 } from "~/scripts/progression/effective-rating";
+import { ratingToRank } from "~/scripts/progression/ranks";
 import committedOverrides from "~/content/path/concept-overrides.json";
 import type { Overrides } from "./graph";
 import { applyOverridesFull, mergeOverrides, loosenUnitEdges } from "./overrides";
@@ -876,3 +879,50 @@ export function currentWeakSpots(): WeakSpot[] {
     healthByUnit: unitReviewHealth(allCards(), Date.now()),
   });
 }
+
+export interface Readiness {
+  displayRating: number;
+  displayRank: string;
+  placedRating: number;
+  movedUp: boolean;
+  barRating: number;
+  forecast: RatingForecast | null;
+  pace: Pace | null;
+  weakSpots: WeakSpot[];
+  interviewReadiness: number | null;
+}
+
+/** One bundle for the readiness dashboard: live rank (high-water), the senior-by-date
+ *  forecast, weak spots, and the persisted interview readiness. Reuses the existing tested
+ *  selectors; SSR-safe ([] / nulls on the server). */
+export function currentReadiness(): Readiness {
+  const s = userState.value;            // subscribe
+  const cfg = config.value;             // subscribe
+  const pretest = s.pretest;
+  const placedRating = pretest?.rating ?? 0;
+  const peakRating = s.progression.peakRating ?? 0;
+  const displayRating = Math.max(placedRating, peakRating);
+  const displayRank = ratingToRank(displayRating).id;
+  const movedUp = !!pretest && displayRating > placedRating;
+
+  const goalsSorted = [...cfg.goals].sort((a, b) => a.priority - b.priority);
+  const goalId = goalsSorted[0]?.id ?? "senior-fullstack";
+  const barRating = barRatingForGoal(goalId);
+  const effRating = Math.max(placedRating, s.progression.studyEma ?? 0);
+  const dl = cfg.deadline;
+  const p = typeof window === "undefined" ? null : currentPace();
+  const forecast = dl ? projectRatingDate(effRating, barRating, p?.projectedFinishMs ?? null, dl.targetDateMs) : null;
+
+  return {
+    displayRating,
+    displayRank,
+    placedRating,
+    movedUp,
+    barRating,
+    forecast,
+    pace: p,
+    weakSpots: typeof window === "undefined" ? [] : currentWeakSpots(),
+    interviewReadiness: s.progression.interviewReadiness ?? null,
+  };
+}
+

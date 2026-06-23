@@ -49,6 +49,8 @@ export interface Progression {
   peakRating?: number;   // monotonic high-water of effectiveRating (visible rank; never decreases)
   studyEma?: number;     // EMA of studyRating, carried into the next blend
   studyRatingAt?: number; // epoch ms of last recompute
+  interviewReadiness?: number;   // 0–100, best score from a completed interview session (high-water)
+  interviewCompletedAt?: number; // epoch ms of last interview finish
 }
 
 export interface AchievementCtx {
