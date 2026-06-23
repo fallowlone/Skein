@@ -33,7 +33,7 @@ export default function ProjectsFilter({ lang, projects }: Props) {
       <div class="proj-filters">
         <select class="proj-select" value={category} onChange={(e) => setCategory((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All categories", "Все категории")}</option>
-          {[["frontend","Frontend"],["backend","Backend"],["fullstack","Fullstack"],["infra","Infra"]].map(([v,l]) => <option value={v} key={v}>{l}</option>)}
+          {[["frontend","Frontend"],["backend","Backend"],["fullstack","Fullstack"],["infra","Infra"],["data","Data"],["systems","Systems"],["security","Security"],["algorithms","Algorithms"]].map(([v,l]) => <option value={v} key={v}>{l}</option>)}
         </select>
         <select class="proj-select" value={track} onChange={(e) => setTrack((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All tracks", "Все треки")}</option>
