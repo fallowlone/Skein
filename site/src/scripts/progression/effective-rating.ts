@@ -18,3 +18,17 @@ export function studyRating(
   const coverage = sum / frontier.size;
   return Math.round(floorRating + (barRating - floorRating) * coverage);
 }
+
+/** Blend study into placement: placement is a FLOOR, study only adds on top (max).
+ *  EMA damps single-session jitter. */
+export function blendRating(
+  placementRating: number,
+  prevStudyEma: number | undefined,
+  studyRatingRaw: number,
+  alpha = 0.3,
+): { ema: number; effective: number } {
+  const ema = prevStudyEma === undefined
+    ? studyRatingRaw
+    : Math.round(alpha * studyRatingRaw + (1 - alpha) * prevStudyEma);
+  return { ema, effective: Math.max(placementRating, ema) };
+}
