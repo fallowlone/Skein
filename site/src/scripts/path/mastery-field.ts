@@ -22,7 +22,7 @@ export const DOMAIN_FAMILIES: DomainFamily[] = [
   { key: "foundations", label: { en: "Foundations", ru: "Основы" }, hue: "--d-hardware",
     tracks: ["math", "base-cs", "cli", "algorithms", "logic", "linux"] as Track[] },
   { key: "frontend", label: { en: "Frontend · runtime", ru: "Фронтенд · рантайм" }, hue: "--d-frontend",
-    tracks: ["browser", "frontend", "typescript", "js-engine", "react", "nextjs"] as Track[] },
+    tracks: ["browser", "frontend", "typescript", "js-engine", "react", "nextjs", "react-patterns"] as Track[] },
   { key: "backend", label: { en: "Backend · APIs", ru: "Бэкенд · API" }, hue: "--d-backend",
     tracks: ["backend", "apis", "node", "nest", "python", "go", "architecture-patterns"] as Track[] },
   { key: "data", label: { en: "Databases · data", ru: "Базы · данные" }, hue: "--d-data",
@@ -32,7 +32,7 @@ export const DOMAIN_FAMILIES: DomainFamily[] = [
   { key: "network-sec", label: { en: "Networking · security", ru: "Сети · безопасность" }, hue: "--d-network",
     tracks: ["networking", "security", "security-foundations", "security-offensive", "security-defensive", "security-cloud"] as Track[] },
   { key: "infra", label: { en: "Infra · operations", ru: "Инфра · эксплуатация" }, hue: "--d-crypto",
-    tracks: ["deployment", "aws", "ci-cd", "docker", "observability", "performance", "engineering-practice"] as Track[] },
+    tracks: ["deployment", "aws", "ci-cd", "docker", "observability", "performance", "engineering-practice", "code-patterns"] as Track[] },
   { key: "ai", label: { en: "AI · LLMs", ru: "AI · LLM" }, hue: "--d-ai",
     tracks: ["ai-llm"] as Track[] },
 ];
