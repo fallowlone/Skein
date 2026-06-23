@@ -61,6 +61,8 @@ export const TRACK_BAND: Record<Track, Band> = {
   // code craft & patterns
   "code-patterns":        "surface",
   "react-patterns":       "surface",
+  // patterns cluster
+  "architecture-patterns": "advanced",
 };
 
 export function bandOf(slug: Track): Band {

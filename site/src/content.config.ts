@@ -247,7 +247,7 @@ export const ProjectSchema = z.object({
   pitch: BiText,
   deliverable: BiText,
   tracks: z.array(Track).min(1),
-  category: z.enum(["frontend", "backend", "fullstack", "infra", "data", "systems", "security", "algorithms"]),
+  category: z.enum(["frontend", "backend", "fullstack", "infra", "security", "systems", "data", "algorithms"]),
   difficulty: z.enum(["starter", "intermediate", "advanced"]),
   estDays: z.number().int().positive(),
   skills: z.array(z.string()).min(1),
