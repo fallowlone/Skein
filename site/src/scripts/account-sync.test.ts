@@ -76,4 +76,43 @@ describe("mergeProgress", () => {
     const server = { progression: { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [], englishSummary: sum }, history: {}, retrieval: {} } as any;
     expect(mergeProgress(local, server).progression.englishSummary).toEqual(sum);
   });
+
+  it("preserves rating + interview + streak-freeze progression across a sync merge (no silent reset)", () => {
+    // Regression: mergeProgression once rebuilt an explicit object that dropped these optional fields,
+    // so a single sync wiped P1 living-rank, P2 freezes, P4 readiness, and the interview rotation counter.
+    const local = {
+      progression: {
+        xp: 50, level: 3, achievements: {}, titles: [],
+        streak: { lastActiveDay: "2026-06-24", count: 4, best: 6, freezes: 2 },
+        peakRating: 720, studyEma: 690, studyRatingAt: 2000,
+        interviewReadiness: 80, interviewCompletedAt: 1500, interviewRounds: 3,
+      },
+      history: {}, retrieval: {},
+    } as any;
+    const server = {
+      progression: {
+        xp: 40, level: 2, achievements: {}, titles: [],
+        streak: { lastActiveDay: "2026-06-20", count: 1, best: 6, freezes: 1 },
+        peakRating: 680, studyEma: 650, studyRatingAt: 1000,
+        interviewReadiness: 60, interviewCompletedAt: 1200, interviewRounds: 5,
+      },
+      history: {}, retrieval: {},
+    } as any;
+    const p = mergeProgress(local, server).progression;
+    expect(p.peakRating).toBe(720);            // high-water
+    expect(p.studyEma).toBe(690);              // from the more recent recompute (studyRatingAt 2000)
+    expect(p.studyRatingAt).toBe(2000);
+    expect(p.interviewReadiness).toBe(80);     // high-water
+    expect(p.interviewCompletedAt).toBe(1500); // latest
+    expect(p.interviewRounds).toBe(5);         // more advanced counter wins
+    expect(p.streak.freezes).toBe(2);          // max
+  });
+
+  it("leaves optional rating/interview fields undefined when neither side set them", () => {
+    const bare = { progression: { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [] }, history: {}, retrieval: {} } as any;
+    const p = mergeProgress(bare, bare).progression;
+    expect(p.peakRating).toBeUndefined();        // must stay absent, not become 0 (would corrupt rank display)
+    expect(p.interviewReadiness).toBeUndefined();
+    expect(p.interviewRounds).toBeUndefined();
+  });
 });
