@@ -1,0 +1,207 @@
+---
+slug: "02-read-models-and-projections"
+lang: en
+track: "architecture-patterns"
+unit: "07-cqrs"
+order: 2
+title: "Read models and projections"
+summary: "Denormalized read models are built by projecting write-side state changes. The projection creates a sync problem: the read model can be stale. Bounding staleness is a design choice — synchronous projection is consistent but slower; asynchronous is fast but eventually consistent."
+estMin: 24
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - read-model
+  - projection
+  - staleness
+  - sync-projection
+  - async-projection
+  - replay
+prereqs: []
+sources:
+  - https://cqrs.files.wordpress.com/2010/11/cqrs_documents.pdf
+  - https://martinfowler.com/bliki/CQRS.html
+  - https://learn.microsoft.com/en-us/azure/architecture/patterns/cqrs
+  - https://udidahan.com/2009/12/09/clarified-cqrs/
+---
+import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The billing platform team had split their write and read models. The write side — the normalized `Order` aggregate — was clean. The read side was a separate `OrderDashboardRow` table: one denormalized row per order, pre-joined with account manager name, last payment event, and overdue status. Dashboard queries became fast. But the read model had to come from somewhere. The team's first attempt was simple: after each command handler committed a write, it also updated the `OrderDashboardRow` table directly, in the same database transaction. This worked. Consistency was perfect. Then the team noticed that every `Order` write — even writes that had nothing to do with the dashboard — took longer because of the additional `OrderDashboardRow` update. Worse, when the product team added a second read model for account manager reporting, the command handlers grew again. And when they added a third read model, a senior engineer pointed out that the command handlers now had three responsibilities: enforcing the order invariants, updating the dashboard view, and updating the manager report view. The command handlers had become entangled with read model construction. The team stepped back and asked: where should the read models come from? The answer is projection: the read model is built by observing state changes on the write side and transforming them into the read model's shape. The projection mechanism — not the command handler — is responsible for keeping the read model current. But projection introduces a question the team did not expect: the read model might not be current yet when a query arrives. How stale is acceptable, and how do you keep that window bounded?
+</Hook>
+
+<Crux>A read model is a denormalized projection of write-side events — built for queries, not writes. Staleness is a deliberate choice.</Crux>
+
+<Explanation>
+
+## What a read model is
+
+A read model is a pre-built, denormalized data structure shaped for a specific query. It is not the write model viewed through a different angle — it is a **different artifact**, built from the write side's state changes, and structured for a specific read concern.
+
+For the order dashboard, the read model might be an `OrderDashboardRow` table with columns: `order_id`, `customer_name`, `account_manager_name`, `submitted_at`, `total_amount`, `status`, `last_payment_event`, `is_overdue`. This row exists purely to serve the dashboard query. No invariant is enforced on it. No business rule lives in it. It is the materialized answer to "what does the dashboard need to display?"
+
+Different read models serve different queries. A read model for the account manager's pipeline view has different columns than the dashboard. A read model for the finance team's overdue-orders report has different grouping and filtering. Each read model is shaped for its specific consumer. This is the structural freedom CQRS provides: reads are no longer forced to use the write model's shape.
+
+## Where read models come from: projection
+
+A **projection** is the process that translates write-side state changes into a read model. When an `Order` is submitted, the write side commits the change to the normalized `orders` table. The projection observes that change and updates the `OrderDashboardRow`: it fetches the account manager name, computes the total, sets the status. The read model is now current.
+
+The projection is the mechanism that owns the transformation: write-side event or state change → read model update. Command handlers do not update read models. That responsibility belongs entirely to the projection.
+
+<FlowDiagram
+  label="Write side to read model via projection"
+  caption="The command handler mutates the write model only. The projection observes the write-side change (via a domain event or a database trigger/outbox) and updates the read model. The query handler reads from the read model directly. Arrows show the direction of data flow: command into write model, state change observed by projection, projection writes to read model, query reads from read model."
+  nodes={[
+    { id: "cmd", label: "Command handler", sub: "SubmitOrder, ApproveOrder" },
+    { id: "write", label: "Write model", sub: "normalized orders table, aggregate" },
+    { id: "proj", label: "Projection", sub: "observes write changes, transforms to read shape" },
+    { id: "read", label: "Read model", sub: "OrderDashboardRow, denormalized" },
+    { id: "qry", label: "Query handler", sub: "GetOrderDashboard" },
+  ]}
+  edges={[
+    { from: "cmd", to: "write", label: "mutates" },
+    { from: "write", to: "proj", label: "state change / event" },
+    { from: "proj", to: "read", label: "updates" },
+    { from: "qry", to: "read", label: "reads" },
+  ]}
+/>
+
+The projection can observe write-side changes through different mechanisms:
+- **Domain events**: the command handler emits a `OrderSubmitted` event; the projection subscribes and handles it.
+- **Database triggers or change-data capture**: the projection watches the `orders` table directly at the database level.
+- **Synchronous in-process call**: the projection is called directly after the write commits, still within the same thread (but in a separate concern from the command handler).
+
+Which mechanism you choose determines the staleness characteristics of the read model.
+
+## The sync problem: staleness
+
+When the projection runs **asynchronously** — via a message bus or a background process observing change-data capture — the read model is eventually consistent with the write side. There is a window between when the write commits and when the projection runs and updates the read model. During that window, queries see the old data.
+
+This is not an accident or a failure. It is a deliberate trade-off. Asynchronous projection decouples the write path from the read model construction: writes commit quickly; the projection runs in the background without blocking the command handler. The cost is staleness.
+
+The staleness window is typically milliseconds to low seconds in a healthy system. But the team must decide: is that acceptable for each specific read model?
+
+For the order dashboard, a few seconds of staleness is usually fine. The sales rep who submitted an order does not need to see the updated dashboard status in the same request. Eventual consistency is acceptable.
+
+For a `CurrentCreditAvailability` read model used to make the credit-limit decision during order submission, staleness is dangerous. If the read model lags, a second order might pass the credit check against a stale available-credit figure. This read model probably should not be a denormalized projection at all — it should be a synchronous query against the write side.
+
+<Inset kind="why">
+The right question about staleness is not "how do we eliminate it?" but "what is the acceptable staleness for each specific read model?" Some read models tolerate seconds; some tolerate minutes (a weekly report); some cannot tolerate any lag at all and should not be asynchronous projections. Designing read models means explicitly deciding the staleness budget for each one, not defaulting to eventual consistency everywhere.
+</Inset>
+
+## Synchronous projection: consistency at the cost of coupling
+
+A synchronous projection runs within the same transaction as the write. When `SubmitOrder` commits, the projection updates `OrderDashboardRow` in the same database transaction. The read model is always consistent with the write side.
+
+The cost: the write transaction is now longer (it must also complete the read model update), and the command handler's transaction boundary now encompasses the read model concern. If the projection fails, the entire command fails. Adding another read model makes the transaction longer again.
+
+Synchronous projection is appropriate when:
+- The read model is simple and small (one row, one fast update).
+- The staleness of the read model is unacceptable even for milliseconds.
+- The performance overhead of the extra write is acceptable.
+
+It becomes problematic when there are many read models, when read model construction is expensive, or when you want the write and read concerns to evolve independently.
+
+## Asynchronous projection: decoupled at the cost of eventual consistency
+
+An asynchronous projection runs after the write commits — via a domain event on a message bus, or via change-data capture. The command handler commits only the write-side change. The projection runs in a separate process or thread.
+
+<FlowDiagram
+  label="Async projection timeline: write commits before read model updates"
+  caption="The command handler commits the write at T=0. The async projection observes the event and updates the read model at T=Δ, where Δ is the projection lag. Queries between T=0 and T=Δ see stale data. The staleness window Δ is bounded by the projection pipeline's throughput and latency. Arrows show temporal sequence: write commit, event propagation, projection update."
+  nodes={[
+    { id: "t0", label: "T=0: write commits", sub: "OrderSubmitted event emitted" },
+    { id: "bus", label: "Event bus / CDC", sub: "propagates the event" },
+    { id: "tdelta", label: "T=Δ: projection runs", sub: "OrderDashboardRow updated" },
+    { id: "query-stale", label: "Query at T=0..Δ", sub: "sees old read model (stale)" },
+    { id: "query-fresh", label: "Query after T=Δ", sub: "sees updated read model" },
+  ]}
+  edges={[
+    { from: "t0", to: "bus", label: "event" },
+    { from: "bus", to: "tdelta", label: "consumed" },
+    { from: "query-stale", to: "t0", label: "within window" },
+    { from: "query-fresh", to: "tdelta", label: "after update" },
+  ]}
+/>
+
+The benefits: the command handler's transaction is minimal and fast; the projection concern is decoupled from the write concern; multiple read models can be updated by independent projection workers without affecting the write path; the write and read models can be deployed and scaled independently.
+
+## Rebuilding by replay
+
+One of the most powerful properties of a projection-based read model: it can be **rebuilt from scratch by replaying write-side history**. If the read model schema changes — you add an `is_overdue` column that did not exist before — you can drop the read model, replay all historical write-side events (or re-project from the source-of-truth write table), and reconstruct the read model with the new column. No data migration on the write side. No schema migration on the write table.
+
+This works because the read model is a **derived artifact**. It holds no data that does not also exist on the write side. The write side is the source of truth; the read model is a materialized view of it. Dropping and rebuilding the read model loses nothing that cannot be recovered.
+
+This property becomes even more powerful when the write side uses an event log as its source of truth (event sourcing, covered in unit 08). With an event log, you can replay the exact sequence of events that produced every order in history and build a new read model from scratch in a background job without any downtime.
+
+<Quiz
+  id="arch-07-02-quiz-1"
+  lessonSlug="02-read-models-and-projections"
+  lang="en"
+  question="The team has an async projection updating the order dashboard read model. A product manager complains: 'After I approve an order, my dashboard still shows it as pending for a few seconds.' The engineering lead responds: 'That is expected — the read model is eventually consistent.' Is this acceptable, and how should the decision have been made?"
+  choices={[
+    { label: "It depends on the staleness budget for that specific read model. The right answer is not 'always acceptable' or 'never acceptable' — it is a design decision that should have been made explicitly when the read model was designed. For a dashboard viewed by a product manager reviewing orders, a few seconds of eventual consistency is almost certainly fine: the approval was recorded reliably on the write side, and the dashboard will catch up. The engineering lead's response is defensible if this trade-off was thought through and documented. The problem arises if the team never considered the staleness question and just defaulted to async projection everywhere.", correct: true },
+    { label: "It is not acceptable. A user should always see the immediate effect of their own action. The team should switch to synchronous projection.", misconception: "Read-your-own-writes consistency is a specific requirement that needs to be designed for — not a universal requirement for all read models. For many dashboard scenarios, a few seconds of lag is perfectly acceptable. Switching all projections to synchronous removes the decoupling benefit of CQRS and makes every write transaction longer. The right approach is to decide per read model whether the staleness is acceptable, not to eliminate eventual consistency everywhere because one user is surprised by it." },
+    { label: "It is acceptable because eventual consistency is a fundamental property of CQRS and all read models must be eventually consistent.", misconception: "CQRS does not mandate eventual consistency. Synchronous projection — updating the read model in the same transaction as the write — is a valid CQRS approach. The eventual consistency comes from choosing async projection, which is one implementation strategy, not a requirement of the CQRS pattern itself." },
+    { label: "The problem should be fixed by adding a cache-busting mechanism that invalidates the dashboard immediately after the approval command completes.", misconception: "Cache invalidation on the client might hide the staleness for that specific user, but it does not address the structural question of what the read model's staleness budget should be. It also adds complexity without addressing the root decision. The right approach is to decide whether sync or async projection is appropriate for this read model based on its staleness requirements." },
+  ]}
+/>
+
+<Quiz
+  id="arch-07-02-quiz-2"
+  lessonSlug="02-read-models-and-projections"
+  lang="en"
+  question="The team needs to add a new column `days_since_last_contact` to the order dashboard read model. With a traditional normalized schema, this would require a database migration. In a projection-based CQRS system, how is this handled differently?"
+  choices={[
+    { label: "In a projection-based CQRS system, the read model is a derived artifact — everything in it can be recomputed from the write side. To add the new column: update the projection logic to compute and populate `days_since_last_contact` from the write-side data; rebuild the read model by replaying write-side history (or re-projecting from the write table). The write-side schema is unchanged. No write-side migration is needed. A new column in the read model is purely a projection concern — the derivation changes, not the source of truth.", correct: true },
+    { label: "It is handled the same way. A new column in the read model still requires a database migration on the read model table, and the projection logic must be updated.", misconception: "A database migration on the read model table may be needed as a DDL step (adding the column to the table definition), but that is different from a write-side migration. The key difference is that the read model can be rebuilt by re-projection — all data for the new column can be derived from existing write-side history without needing to modify the write-side schema or run data migrations on the source-of-truth table." },
+    { label: "Read model columns can never be added after initial deployment because all existing rows would have null values for the new column.", misconception: "Existing rows would have null values only if you simply add the column without backfilling. Because the read model is a projection, you can rebuild it entirely by replaying write-side history, which backfills all historical rows with computed values for the new column. This is the key advantage of projection-based read models over traditional schemas." },
+    { label: "The new column should be added to the write model first, then projected into the read model.", misconception: "Adding a read-concern column to the write model couples the two sides, exactly the structural problem CQRS is designed to avoid. The write model should only hold what is needed to enforce write-side invariants. Read-concern data belongs in the read model, derived by the projection. The write model does not need to change." },
+  ]}
+/>
+
+<Quiz
+  id="arch-07-02-quiz-3"
+  lessonSlug="02-read-models-and-projections"
+  lang="en"
+  question="A senior engineer proposes: 'We should keep a single read model that all our queries use. Having multiple read models for different views is wasteful duplication.' What is the counter-argument?"
+  choices={[
+    { label: "A single read model optimized for multiple different queries is the original problem that CQRS solves. Each query has different data needs: the dashboard needs account manager name and overdue status; the finance report needs grouping by billing period; the manager pipeline view needs open quotes per rep. A single read model that serves all three must carry columns needed by one view but irrelevant to others, use a shape that is a compromise between the three, and maintain joins or aggregations that are only needed by some queries. The result is a read model that is the right shape for none of them. Multiple read models — each shaped for its specific consumer — allows each query to be served at optimal speed with zero wasted computation.", correct: true },
+    { label: "The engineer is right. Having multiple read models increases storage costs and the number of projections to maintain. A single read model is simpler.", misconception: "Storage is cheap. The structural cost of a single read model that must serve multiple queries with different shapes is far higher: compromised performance for every query, columns that exist for some views but not others, and read model changes that affect all consumers. The projection maintenance cost of multiple read models is real but bounded; the structural degradation of a shared read model compounds over time as queries multiply." },
+    { label: "Having multiple read models is only justified when the queries run on different databases. If they use the same database, a single read model with views is sufficient.", misconception: "Multiple read models are justified by structural difference in query shapes, not by physical database placement. A view in the same database can provide a different projection, but it is limited to SQL transformations — it cannot aggregate events, it cannot compute derived fields using application logic, and it cannot be rebuilt by replaying domain events. The argument for multiple read models is structural, not topological." },
+    { label: "Multiple read models make sense only if the system uses event sourcing, because event replay is needed to build them.", misconception: "Multiple read models can be built by projection from any write-side mechanism — a relational write table, domain events on a message bus, or an event log. Event sourcing (unit 08) makes rebuild-by-replay particularly powerful, but multiple read models are a valid CQRS pattern regardless of whether the write side uses event sourcing." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>A read model is a derived, denormalized artifact shaped for a specific query. It is built by a projection that observes write-side state changes. Async projection decouples the write path from read model construction but introduces a staleness window; sync projection is consistent but couples the write transaction to read model updates. Every read model needs an explicit staleness budget. Read models can be rebuilt by replaying write-side history — they are materialized views of the write side, not a source of truth.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="arch-07-02-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is a projection, and why does it exist as a separate concern from the command handler?", a: "A projection is the mechanism that translates write-side state changes into a read model. When the write side commits a change (an order is submitted, approved, paid), the projection observes that change and updates the read model to reflect the new state. It exists as a separate concern from the command handler because the command handler's job is to enforce write-side invariants and commit state changes — not to construct read views. Mixing read model construction into command handlers couples two different concerns, making both harder to change independently. As the number of read models grows, command handlers that build read models inline become entangled with an increasing number of view concerns. The projection separates that responsibility." },
+    { q: "What is the staleness window in async projection and how should it be managed?", a: "The staleness window is the time between when the write side commits a change and when the async projection observes that change and updates the read model. During this window, queries see the previous version of the read model — the old data. Managing it means: (1) deciding explicitly what staleness is acceptable for each read model, not defaulting to eventual consistency everywhere; (2) for read models where staleness is unacceptable (e.g. a credit availability check used in the write path), using synchronous projection or not using a read model at all; (3) for read models where seconds of lag are acceptable (a dashboard, a report), choosing async projection and communicating the eventual consistency behavior to users. The staleness window is bounded by the projection pipeline's throughput and latency — milliseconds to low seconds in a healthy system." },
+    { q: "Why can a read model be rebuilt by replaying write-side history, and when is this valuable?", a: "A read model is a derived artifact — all its data is computed from write-side state changes. It holds nothing that does not already exist on the write side. Because the read model is fully derived, dropping and rebuilding it from the write side's history loses no data that cannot be recovered. Rebuild by replay is valuable when: (1) the read model schema changes (add a column, change the grouping) — instead of a migration, rebuild the read model by re-projecting from write-side history; (2) the projection logic had a bug — fix the logic, rebuild, and the read model is now correct for all historical data; (3) a new read model is needed for a new query — build it from the existing write-side history without waiting for future events to accumulate. When the write side uses an event log (event sourcing, unit 08), rebuild by replay becomes particularly powerful because the full sequence of events is preserved and can be replayed exactly." },
+  ]}
+/>
+
+<Recap lang="en">
+The opening story's entangled command handlers — updating three read models inline — were not a bad implementation of CQRS. They were the right instinct (keep read models separate from the write model) executed with the wrong mechanism (building read models in command handlers). The fix is projection: a separate concern that observes write-side state changes and transforms them into read model updates. The command handler's transaction covers only the write side.
+
+Projection introduces staleness. Async projection is fast and decoupled — the write path is lean — but the read model lags behind the write side. That lag is almost always acceptable for views like dashboards. It is not acceptable for read models involved in write-side decision-making. Every read model needs an explicit staleness budget.
+
+Read models are derived artifacts. They can be dropped and rebuilt from write-side history without losing anything. New columns, bug fixes, new view requirements — all can be handled by updating the projection logic and replaying history. The write side does not need to change.
+
+The next lesson examines when CQRS is overkill — the complexity it introduces, which cases justify it, and the common mistake of conflating CQRS with event sourcing.
+</Recap>
