@@ -34,7 +34,8 @@ export type Track =
   | "security-defensive" | "security-cloud"
   | "cli"
   | "linux"
-  | "code-patterns";
+  | "code-patterns"
+  | "react-patterns";
 
 export const TRACKS: Track[] = [
   "math", "base-cs", "algorithms",
@@ -53,6 +54,7 @@ export const TRACKS: Track[] = [
   "cli",
   "linux",
   "code-patterns",
+  "react-patterns",
 ];
 
 export type LessonStatus = "stub" | "draft" | "ready";
