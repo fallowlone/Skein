@@ -35,7 +35,8 @@ export type Track =
   | "cli"
   | "linux"
   | "code-patterns"
-  | "react-patterns";
+  | "react-patterns"
+  | "architecture-patterns";
 
 export const TRACKS: Track[] = [
   "math", "base-cs", "algorithms",
@@ -55,6 +56,7 @@ export const TRACKS: Track[] = [
   "linux",
   "code-patterns",
   "react-patterns",
+  "architecture-patterns",
 ];
 
 export type LessonStatus = "stub" | "draft" | "ready";
