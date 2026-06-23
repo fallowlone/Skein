@@ -66,3 +66,26 @@ export function hasEnoughEvidence(
   }
   return n >= minEvidence;
 }
+
+export interface RatingForecast {
+  reached: boolean;            // effective rating already at/above target
+  projectedMs: number | null;  // projected date the rating crosses target (path-completion proxy)
+  daysAheadBehind: number;     // >0 behind deadline, <0 ahead, 0 on-time/unknown
+}
+
+const FORECAST_DAY = 86_400_000;
+
+/** v1: the rating crosses the goal bar when the goal-frontier path completes, which pace()
+ *  already projects as projectedFinishMs. Honest because clearing knowledge raises the path's
+ *  remaining minutes and pushes that date out; the high-water badge is unaffected. */
+export function projectRatingDate(
+  effectiveRating: number,
+  targetRating: number,
+  projectedFinishMs: number | null,
+  targetDateMs: number,
+): RatingForecast {
+  if (effectiveRating >= targetRating) return { reached: true, projectedMs: null, daysAheadBehind: 0 };
+  if (projectedFinishMs === null) return { reached: false, projectedMs: null, daysAheadBehind: 0 };
+  const daysAheadBehind = Math.round((projectedFinishMs - targetDateMs) / FORECAST_DAY);
+  return { reached: false, projectedMs: projectedFinishMs, daysAheadBehind };
+}

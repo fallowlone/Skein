@@ -4,6 +4,7 @@ import { studyRating } from "./effective-rating";
 import { blendRating } from "./effective-rating";
 import { highWater } from "./effective-rating";
 import { barRatingForGoal, hasEnoughEvidence } from "./effective-rating";
+import { projectRatingDate } from "./effective-rating";
 
 // Build a KnowledgeState from { conceptId: confidence } pairs.
 const K = (pairs: Record<string, number>): KnowledgeState =>
@@ -80,5 +81,30 @@ describe("hasEnoughEvidence", () => {
   it("confidence below tau does not count", () => {
     const f = new Set(["a", "b", "c", "d", "e"]);
     expect(hasEnoughEvidence(f, K({ a: 0.5, b: 0.5, c: 0.5, d: 0.5, e: 0.5 }), 0.6, 5)).toBe(false);
+  });
+});
+
+const DAY = 86_400_000;
+const T = Date.UTC(2026, 6, 15); // deadline 2026-07-15
+
+describe("projectRatingDate", () => {
+  it("already at/above target ⇒ reached, no projected date", () => {
+    const r = projectRatingDate(620, 600, T + 5 * DAY, T);
+    expect(r).toEqual({ reached: true, projectedMs: null, daysAheadBehind: 0 });
+  });
+  it("below target, finish after deadline ⇒ positive days behind", () => {
+    const finish = T + 5 * DAY;
+    const r = projectRatingDate(500, 600, finish, T);
+    expect(r.reached).toBe(false);
+    expect(r.projectedMs).toBe(finish);
+    expect(r.daysAheadBehind).toBe(5);
+  });
+  it("below target, finish before deadline ⇒ negative days (ahead)", () => {
+    const r = projectRatingDate(500, 600, T - 3 * DAY, T);
+    expect(r.daysAheadBehind).toBe(-3);
+  });
+  it("no projected finish ⇒ null date, zero days", () => {
+    const r = projectRatingDate(500, 600, null, T);
+    expect(r).toEqual({ reached: false, projectedMs: null, daysAheadBehind: 0 });
   });
 });
