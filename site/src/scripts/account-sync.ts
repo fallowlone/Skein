@@ -136,19 +136,39 @@ function mergeEnglishSummary(a?: EnglishSummary, b?: EnglishSummary): EnglishSum
   };
 }
 
+// Undefined-preserving max: keep the field absent when neither side has it, so optional progression
+// fields (peakRating, interviewReadiness, …) are never forced to a meaningful 0 that consumers would
+// read as a real value (e.g. peakRating:0 → rank for rating 0).
+function maxOpt(x?: number, y?: number): number | undefined {
+  if (x == null && y == null) return undefined;
+  return Math.max(x ?? 0, y ?? 0);
+}
+
 function mergeProgression(a?: Progression, b?: Progression): Progression {
   const base: Progression = a ?? { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0 }, titles: [] };
   if (!b) return base;
+  const aNewer = (a?.streak.lastActiveDay ?? "") >= (b.streak.lastActiveDay ?? "");
+  // studyEma is an EMA snapshot, not monotonic — carry the one from the most recent recompute.
+  const studyEma = (a?.studyRatingAt ?? 0) >= (b.studyRatingAt ?? 0) ? a?.studyEma : b.studyEma;
   return {
     xp: Math.max(a?.xp ?? 0, b.xp ?? 0),
     level: Math.max(a?.level ?? 1, b.level ?? 1),
     achievements: { ...b.achievements, ...(a?.achievements ?? {}) },
     streak: {
-      lastActiveDay: (a?.streak.lastActiveDay ?? "") >= (b.streak.lastActiveDay ?? "") ? (a?.streak.lastActiveDay ?? "") : b.streak.lastActiveDay,
-      count: (a?.streak.lastActiveDay ?? "") >= (b.streak.lastActiveDay ?? "") ? (a?.streak.count ?? 0) : b.streak.count,
+      lastActiveDay: aNewer ? (a?.streak.lastActiveDay ?? "") : b.streak.lastActiveDay,
+      count: aNewer ? (a?.streak.count ?? 0) : b.streak.count,
       best: Math.max(a?.streak.best ?? 0, b.streak.best ?? 0),
+      freezes: maxOpt(a?.streak.freezes, b.streak.freezes),
     },
     titles: Array.from(new Set([...(a?.titles ?? []), ...b.titles])),
     englishSummary: mergeEnglishSummary(a?.englishSummary, b?.englishSummary),
+    // P1 living-rank + P4 interview + Phase C/D — preserve across sync (high-water / most-recent),
+    // never silently reset to undefined on a merge.
+    peakRating: maxOpt(a?.peakRating, b.peakRating),
+    studyEma,
+    studyRatingAt: maxOpt(a?.studyRatingAt, b.studyRatingAt),
+    interviewReadiness: maxOpt(a?.interviewReadiness, b.interviewReadiness),
+    interviewCompletedAt: maxOpt(a?.interviewCompletedAt, b.interviewCompletedAt),
+    interviewRounds: maxOpt(a?.interviewRounds, b.interviewRounds),
   };
 }
