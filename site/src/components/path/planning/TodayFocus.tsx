@@ -3,6 +3,9 @@
 // next path step. When behind/over, surfaces the single best catch-up action inline.
 import type { Locale } from "~/i18n";
 import { config, content, computePath, currentPace, currentFixes, applyFix, dueReviews } from "~/scripts/path/path-io";
+import { userState } from "~/scripts/user-state";
+import { ratingToRank } from "~/scripts/progression/ranks";
+import { barRatingForGoal, projectRatingDate } from "~/scripts/progression/effective-rating";
 import unitsJson from "~/content/units.json";
 
 type UnitMeta = { track: string; slug: string; firstLesson?: string; lessonCount: number };
@@ -116,6 +119,19 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
   const href = startHref(lang, units[0].unit);
   const lessonCount = UNIT_META.get(units[0].unit)?.lessonCount ?? 0;
   const p = currentPace();
+  const us = userState.value;
+  const dl = config.value.deadline;
+  const goalsSorted = [...config.value.goals].sort((a, b) => a.priority - b.priority);
+  const goalId = goalsSorted[0]?.id ?? "senior-fullstack";
+  const barRating = barRatingForGoal(goalId);
+  const effRating = Math.max(us.pretest?.rating ?? 0, us.progression.studyEma ?? 0);
+  const rf = dl ? projectRatingDate(effRating, barRating, p?.projectedFinishMs ?? null, dl.targetDateMs) : null;
+  const barLabel = ratingToRank(barRating).label[lang];
+  const fmtDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  const aheadBehind = (d: number) =>
+    d > 0 ? (lang === "ru" ? `на ${d} дн. позже дедлайна` : `${d} days behind deadline`)
+    : d < 0 ? (lang === "ru" ? `на ${-d} дн. раньше` : `${-d} days ahead`)
+    : (lang === "ru" ? "точно к дедлайну" : "right on deadline");
   const { fixes, combo } = currentFixes();
   // combo is empty when there's no budget deficit; fall back to the top catch-up lever so the
   // "behind but budget still fits" case still surfaces an action (combo only covers over-budget).
@@ -137,6 +153,18 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
             {p?.status === "behind" && <span>{t.behind(p.behindDays)}</span>}
             <button type="button" class="btn btn-sm" onClick={() => applyFix(catchUp)}>{t.apply}</button>
           </div>
+        )}
+        {rf && rf.reached && (
+          <p class="rating-forecast" style="margin:0.25rem 0 0;font-size:0.85rem;opacity:0.8;">
+            {lang === "ru" ? `Ты достиг планки ${barLabel}` : `You've reached the ${barLabel} bar`}
+          </p>
+        )}
+        {rf && !rf.reached && rf.projectedMs && (
+          <p class="rating-forecast" style="margin:0.25rem 0 0;font-size:0.85rem;opacity:0.8;">
+            {lang === "ru"
+              ? `При текущем темпе достигнешь планки ${barLabel} к ${fmtDate(rf.projectedMs)} — ${aheadBehind(rf.daysAheadBehind)}`
+              : `At this pace you reach the ${barLabel} bar by ${fmtDate(rf.projectedMs)} — ${aheadBehind(rf.daysAheadBehind)}`}
+          </p>
         )}
       </section>
     </>
