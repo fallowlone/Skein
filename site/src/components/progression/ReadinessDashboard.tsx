@@ -50,8 +50,24 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
     title: content.unitTitleById.get(w.unitId)?.[lang] ?? w.unitId,
   }));
 
+  const recal = r.recalibration;
+  const recalMsg =
+    recal.reason === "gain"
+      ? t("readiness.recalibrateGain", lang).replace("{n}", String(Math.round(recal.studyGain)))
+      : recal.reason === "age"
+        ? t("readiness.recalibrateAge", lang).replace("{d}", String(recal.daysSinceCalibration))
+        : "";
+
   return (
-    <div class="rd-grid">
+    <>
+      {recal.stale && (
+        <aside class="rd-recal" role="note">
+          <span class="rd-head">{t("readiness.recalibrate", lang)}</span>
+          <p>{recalMsg}</p>
+          <a class="rd-recal-cta" href={`/${lang}/calibrate/`}>{t("readiness.recalibrateCta", lang)}</a>
+        </aside>
+      )}
+      <div class="rd-grid">
       <section class="rd-card rd-rank" style={`--rk:${rank.color}`}>
         <span class="rd-head">{t("readiness.rank", lang)}</span>
         <strong class="rd-rank-label">
@@ -119,6 +135,7 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
           </div>
         )}
       </section>
-    </div>
+      </div>
+    </>
   );
 }
