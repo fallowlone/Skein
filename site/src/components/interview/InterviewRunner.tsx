@@ -40,7 +40,7 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
   // readiness as a high-water mark. Runs in an effect (not render) so we never write a signal
   // during Preact's render pass; deps [idx] fire it once when the session finishes.
   useEffect(() => {
-    if (idx < view.length) return;
+    if (!view.length || idx < view.length) return; // never advance the round on an empty pool
     const score = Math.round(readinessScore(outcomes));
     const prog = userState.value.progression;
     const readinessPatch =
