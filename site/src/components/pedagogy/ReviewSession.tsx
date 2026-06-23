@@ -34,8 +34,10 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
   const [reviewed, setReviewed] = useState(0);
 
   // Snapshot the due list once at mount — cards graded this session must not
-  // pop back in immediately.
+  // pop back in immediately. Also clear the SSR fallback the page renders while
+  // this client:only island boots.
   useEffect(() => {
+    document.getElementById("review-fallback")?.remove();
     setQueue(dueBefore(Date.now()));
   }, []);
 
