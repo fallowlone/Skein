@@ -1,0 +1,215 @@
+---
+slug: "03-eventual-consistency-as-structure"
+lang: en
+track: "architecture-patterns"
+unit: "09-event-driven"
+order: 3
+title: "Eventual consistency as a design choice"
+summary: "Designing for eventual consistency means solving the dual-write problem with the transactional outbox, making consumers idempotent, and accepting that read-your-writes requires explicit design. Consistency is a structural decision, not an afterthought."
+estMin: 25
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - dual-write
+  - transactional-outbox
+  - idempotent-consumer
+  - at-least-once-delivery
+  - eventual-consistency
+  - change-data-capture
+prereqs: []
+sources:
+  - https://microservices.io/patterns/data/transactional-outbox.html
+  - https://microservices.io/patterns/data/idempotent-consumer.html
+  - https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/
+  - https://microservices.io/patterns/data/saga.html
+---
+import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The billing platform's OrderService saved order state to PostgreSQL and then published an OrderPlaced event to Kafka. Simple enough. But under load, the service occasionally crashed after the database write and before the Kafka publish. The event was lost. Downstream services — inventory, payment, shipping — never received it. Orders were stuck in a limbo state: confirmed in the database, invisible to everyone else. The team added retry logic. Now, on crash-then-restart, the service sometimes published the event twice. Downstream services processed the same order twice, double-charging customers. The dual-write problem — two separate I/O operations with no atomicity — had two failure modes, and fixing one exposed the other.
+</Hook>
+
+<Crux>Fix dual-write with a transactional outbox: event and state in one DB tx. Idempotent consumers — at-least-once delivery is guaranteed.</Crux>
+
+<Explanation>
+
+## The dual-write problem
+
+Any time a service must update its own state AND notify the rest of the system, it faces two separate I/O operations:
+
+1. Write to the database (the service's source of truth)
+2. Publish to a message broker (the signal to downstream services)
+
+These two writes have no atomicity guarantee. Any of four outcomes is possible:
+
+| DB write | Broker publish | Effect |
+|----------|---------------|--------|
+| success  | success       | correct |
+| success  | failure       | event lost — downstream stuck |
+| failure  | success       | phantom event — downstream acts on data that was never persisted |
+| failure  | failure       | clean failure — no harm, retry safe |
+
+The third case (phantom event) is particularly dangerous: downstream services process an event for an order that does not exist in the source database. In billing, this means charging a customer for a non-existent order.
+
+The first two failure cases — lost events and phantom events — cannot be eliminated by adding retry logic. Retry logic that republishes after a crash fixes "event lost on crash" but introduces "event published twice on retry." The dual-write problem is structural, not operational.
+
+<FlowDiagram
+  label="The dual-write problem: crash between DB write and broker publish"
+  caption="OrderService writes to PostgreSQL (success), then crashes before publishing to Kafka. The event is lost. Downstream services never receive OrderPlaced. The order exists in the database but is invisible to inventory and shipping."
+  nodes={[
+    { id: "svc", label: "OrderService", sub: "writes DB, then crashes" },
+    { id: "db", label: "PostgreSQL", sub: "order row committed" },
+    { id: "kafka", label: "Kafka", sub: "event never arrives" },
+    { id: "inv", label: "InventoryService", sub: "never sees OrderPlaced" },
+    { id: "pay", label: "PaymentService", sub: "never sees OrderPlaced" },
+  ]}
+  edges={[
+    { from: "svc", to: "db", label: "1. write — success" },
+    { from: "svc", to: "kafka", label: "2. publish — CRASH" },
+    { from: "kafka", to: "inv", label: "no event" },
+    { from: "kafka", to: "pay", label: "no event" },
+  ]}
+/>
+
+<Quiz
+  id="arch-09-03-quiz-1"
+  lessonSlug="03-eventual-consistency-as-structure"
+  lang="en"
+  question="A developer proposes solving the dual-write problem by wrapping the DB write and Kafka publish in a try/catch: if Kafka publish fails, roll back the DB transaction. A senior engineer says this does not solve the problem. Why?"
+  choices={[
+    { label: "Rolling back the DB transaction on Kafka failure handles the case where Kafka publish fails before acknowledgment. But it does not handle the case where the service crashes after Kafka receives and acknowledges the message but before the service receives the acknowledgment — the event is published, the DB is rolled back, and downstream services act on data that was never committed. Network partitions and process crashes can produce this scenario. The only reliable structural fix is to make publishing an atomic part of the DB transaction — which the transactional outbox achieves.", correct: true },
+    { label: "The approach is correct. Rolling back the DB transaction on Kafka failure ensures both writes either succeed or fail together.", misconception: "The rollback approach handles the case where Kafka is unavailable and returns an error. It does not handle the case where Kafka receives the message, the network drops before the acknowledgment returns to the service, and the service then rolls back the DB transaction. This produces a published event with no corresponding DB state — a phantom event." },
+    { label: "The approach is incorrect only if Kafka is configured with acks=0. With acks=all, the publish either fully succeeds or returns a clear error, making the try/catch approach reliable.", misconception: "acks=all ensures the message is replicated before the acknowledgment is sent, but it does not solve the failure window between Kafka receiving the message and the service receiving the acknowledgment. A process crash in that window still produces a phantom event scenario if the DB transaction is rolled back based on not receiving an ack." },
+    { label: "The approach works for single-instance services. The problem only occurs with multiple service instances, where two instances might both retry.", misconception: "The phantom-event failure mode occurs even with a single service instance. A single-instance service can crash after Kafka receives the message but before the service receives the ack — producing a published event with a rolled-back DB state. Multi-instance adds additional concurrency concerns, but the fundamental dual-write problem exists with a single instance." },
+  ]}
+/>
+
+## The transactional outbox
+
+The transactional outbox solves the dual-write problem by removing the second write from the service's request path. Instead of publishing directly to Kafka, the service writes the event to an **outbox table** in the same database transaction as the state update. The DB transaction is the single source of truth.
+
+```sql
+BEGIN;
+INSERT INTO orders (id, customer_id, status) VALUES ($1, $2, 'pending');
+INSERT INTO outbox (id, aggregate_type, aggregate_id, event_type, payload)
+  VALUES (gen_random_uuid(), 'order', $1, 'OrderPlaced', $3);
+COMMIT;
+```
+
+If the DB transaction commits, both the order row and the outbox row are durably written. If it fails, neither is written. Atomicity is guaranteed by the database.
+
+A separate **outbox relay** process reads uncommitted outbox rows and publishes them to Kafka. The relay marks rows as processed after successful publish. The relay can be:
+
+- **Polling-based:** a background thread or service that queries `SELECT * FROM outbox WHERE published_at IS NULL LIMIT 100` on an interval
+- **CDC-based (change-data-capture):** tools like Debezium read the database's WAL (write-ahead log) and stream outbox insertions directly to Kafka without polling
+
+<FlowDiagram
+  label="Transactional outbox: DB transaction atomically includes the event"
+  caption="OrderService writes state and outbox entry in one DB transaction. The outbox relay reads pending outbox rows and publishes to Kafka. If the relay crashes after publishing but before marking processed, it republishes — idempotent consumers handle the duplicate."
+  nodes={[
+    { id: "svc", label: "OrderService", sub: "single DB transaction" },
+    { id: "db", label: "PostgreSQL", sub: "orders + outbox table" },
+    { id: "relay", label: "Outbox relay", sub: "polling or CDC" },
+    { id: "kafka", label: "Kafka", sub: "at-least-once delivery" },
+    { id: "consumer", label: "Consumer", sub: "idempotent processing" },
+  ]}
+  edges={[
+    { from: "svc", to: "db", label: "1. atomic tx: order + outbox row" },
+    { from: "db", to: "relay", label: "2. relay reads outbox" },
+    { from: "relay", to: "kafka", label: "3. publish event" },
+    { from: "relay", to: "db", label: "4. mark outbox row published" },
+    { from: "kafka", to: "consumer", label: "5. consume event" },
+  ]}
+/>
+
+<Inset kind="note">
+The outbox pattern shifts the reliability problem to the relay. The relay guarantees at-least-once delivery: it reads an outbox row, publishes to Kafka, and marks the row as processed. If the relay crashes after publishing but before marking, it will republish the same event on restart. This is intentional — it is the source of the at-least-once guarantee. Idempotent consumers handle the duplicate. This is why idempotency is structural, not optional: the outbox relay's correctness depends on consumers tolerating duplicates.
+</Inset>
+
+<Quiz
+  id="arch-09-03-quiz-2"
+  lessonSlug="03-eventual-consistency-as-structure"
+  lang="en"
+  question="The billing platform implements the transactional outbox. A developer says: 'Now that we have the outbox guaranteeing exactly-once delivery, our consumers do not need to handle duplicates.' What is wrong with this claim?"
+  choices={[
+    { label: "The outbox guarantees at-least-once delivery, not exactly-once. The relay marks an outbox row as processed after publishing, but if the relay crashes after the Kafka publish and before the mark-as-processed write, it will republish on restart. The consumer will receive the same event twice. Idempotency is a consumer responsibility — the outbox does not eliminate duplicates, it only guarantees no events are lost. Exactly-once delivery in a distributed system requires end-to-end coordination that is far more complex (Kafka's exactly-once semantics require producer idempotence, transactional consumers, and careful offset management — and even then it is exactly-once per partition, not across system boundaries).", correct: true },
+    { label: "The claim is correct if the relay uses Kafka's transactional producer API. With transactions, the publish and mark-as-processed can be atomic.", misconception: "Kafka's transactional producer API provides exactly-once within the Kafka cluster — messages are not duplicated within the broker. But the mark-as-processed write is to PostgreSQL, not to Kafka. There is no atomic transaction that spans a Kafka producer transaction and a PostgreSQL write. The relay still faces the window where it has published to Kafka but not yet updated the outbox row." },
+    { label: "The claim is correct. The outbox table acts as a deduplication log — if the relay sees a row it has already processed, it skips it.", misconception: "The outbox table is marked after publishing — it does not prevent republishing during the crash window. If the relay crashes after the Kafka publish and before marking the row, the row still appears as unprocessed on restart. The relay republishes. The consumer receives a duplicate." },
+    { label: "The claim is correct for PostgreSQL outboxes but not for CDC-based outboxes, which can produce duplicates due to log replication lag.", misconception: "Both polling-based and CDC-based outbox relays have the same at-least-once property. CDC relays read from the WAL and commit their offset after publishing — if the relay crashes after publishing but before committing the offset, it replays from the last committed position and republishes. The source of at-least-once is the same: publish then acknowledge, with a crash window between them." },
+  ]}
+/>
+
+## Idempotent consumers
+
+At-least-once delivery is not a delivery failure — it is a guarantee. Every consumer in an event-driven system must be designed to process the same event multiple times and produce the same result as processing it once.
+
+The standard structural approach: maintain a **deduplication table** that records processed event IDs. Before processing an event, check if its ID is already in the table. If yes, skip. If no, process and insert.
+
+```sql
+BEGIN;
+-- Check for duplicate
+SELECT 1 FROM processed_events WHERE event_id = $1;
+-- If no row: process the event and record it
+INSERT INTO processed_events (event_id, processed_at) VALUES ($1, NOW());
+UPDATE inventory SET reserved = reserved + $2 WHERE product_id = $3;
+COMMIT;
+```
+
+The deduplication check and the business update must be in the same transaction. If they are separate, a crash between the business update and the deduplication record insert produces a processed event with no deduplication record — the next delivery will process it again.
+
+## Read-your-writes under eventual consistency
+
+After a user submits an order, they expect to see it immediately in their dashboard. If the dashboard reads from an async projection fed by events, the order may not appear for hundreds of milliseconds. The user submitted, received a success response, and the UI shows nothing.
+
+Solutions:
+
+- **Read-after-write from the write side:** for the user's own recent writes, read directly from the service that owns the state (the write model), bypassing the async projection. This requires the UI to know which service to query for the user's own recent data.
+- **Optimistic UI update:** update the UI immediately on submit, before the event is processed downstream. If the server rejects the submission, roll back the UI. This does not fix the underlying eventual consistency but hides its latency from the user.
+- **Sticky sessions to the same replica:** for read replicas of the write model, route the user's reads after a write to the same replica that received the write, until replication catches up.
+
+<Quiz
+  id="arch-09-03-quiz-3"
+  lessonSlug="03-eventual-consistency-as-structure"
+  lang="en"
+  question="A team builds a payment dashboard that reads from a read model updated by Kafka events. A product manager reports: 'After a payment is confirmed, users sometimes do not see it in their dashboard for 2-3 seconds.' The team's lead says this is 'working as designed.' A developer wants to fix it. Which fix is architecturally correct?"
+  choices={[
+    { label: "For the user's own just-submitted payment, have the API response include the payment data directly (bypassing the read model) and return it immediately to the client for optimistic display. The client can show the payment immediately from the API response, then the read model catches up in the background. This is read-after-write consistency: for the user's own recent writes, bypass the eventual consistency path. For other users' payments, the 2-3 second lag is acceptable eventual consistency behavior that does not require a fix.", correct: true },
+    { label: "Reduce Kafka consumer lag by adding more consumer partitions. The 2-3 second lag is a performance problem, not a design problem.", misconception: "Consumer lag reduction addresses throughput, not the fundamental eventual consistency delay. Even with zero consumer lag, there is still latency between the API commit and the Kafka event being consumed and projected. The architectural issue is that the dashboard reads from an async projection — this is a design property, not a tuning problem." },
+    { label: "Replace the Kafka-based read model with a synchronous database query to the payments table. Eventual consistency is inappropriate for financial data.", misconception: "Eventual consistency is a design choice with known tradeoffs — it is not inappropriate for financial data per se. Many financial systems use eventual consistency for read models. Replacing the entire read model is a large architectural change to fix a UX issue that is solvable with read-after-write consistency for the user's own recent writes." },
+    { label: "Add a 3-second client-side delay before navigating to the dashboard after payment confirmation, giving the read model time to catch up.", misconception: "A fixed delay is fragile (the lag may exceed 3 seconds under load) and harms UX for the majority of cases where the read model catches up in under 500ms. It also does not fix the underlying problem — it hides it with a sleep. Read-after-write consistency is the correct structural solution." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The dual-write problem — DB write and broker publish with no atomicity — requires the transactional outbox: write the event to an outbox table in the same DB transaction, then relay it to the broker. The relay guarantees at-least-once delivery; consumers must be idempotent. Read-your-writes requires explicit design, not hope.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="arch-09-03-retrieval"
+  lang="en"
+  questions={[
+    { q: "What are the two dangerous failure modes of the naive dual-write pattern (DB write then broker publish)?", a: "First: the service crashes or the broker is unavailable after the DB write but before the publish — the event is lost, downstream services never see it, the system diverges. Second: the service publishes successfully, the broker acknowledges, but the service crashes before it can record the publish — on restart it republishes, downstream services receive the same event twice and process it again. Adding retry logic fixes the first mode but amplifies the second. The outbox pattern fixes both by making the event part of the DB transaction." },
+    { q: "Describe the transactional outbox in one paragraph: what is written where, and who is responsible for delivery?", a: "The service writes both its state change and an outbox event row in a single database transaction — atomically. If the transaction commits, both the state and the outbox row exist durably. A separate relay process (polling or CDC-based) reads uncommitted outbox rows and publishes them to the message broker. After a successful publish, the relay marks the outbox row as processed. The relay guarantees at-least-once delivery: if it crashes after publishing but before marking, it republishes on restart. This means consumers must be idempotent." },
+    { q: "Why must the deduplication check and the business update in an idempotent consumer be in the same database transaction?", a: "If the deduplication check and the business update are in separate transactions, a crash between them leaves the system in an inconsistent state. If the business update commits first and then the crash occurs before the deduplication record is inserted, the next delivery of the same event will find no deduplication record and process the event again — resulting in a double-apply. Wrapping both in the same transaction ensures that either both the business update and the deduplication record exist, or neither does." },
+  ]}
+/>
+
+<Recap lang="en">
+The billing platform's dual-write bug had two modes: lost events when the service crashed after the DB write, and duplicate events when retry logic republished on restart. Neither mode was fixable by adjusting retry parameters — the problem was structural.
+
+The transactional outbox removes the second write from the request path entirely. The event is written as an outbox row in the same database transaction as the state update. The relay handles delivery asynchronously. Atomicity is guaranteed by the database; eventual delivery is guaranteed by the relay's retry behavior.
+
+The relay's retry behavior is the source of at-least-once delivery — and at-least-once means consumers will receive duplicates. Idempotency is not a nice-to-have; it is the contract that makes the outbox pattern work. A consumer that processes the same event twice and produces a double-charge is not idempotent. The deduplication table, transactionally tied to the business update, is the structural fix.
+
+Eventual consistency under this design is a deliberate choice: the system accepts that downstream state lags the source by milliseconds to seconds, in exchange for availability, throughput, and the freedom to evolve services independently. Read-your-writes is the most common user-visible symptom of that lag, and it requires its own structural answer — not a sleep and a prayer.
+</Recap>

@@ -21,6 +21,7 @@ export const TRACK_ABBR: Record<Track, string> = {
   "linux": "LIN",
   "code-patterns": "CP",
   "react-patterns": "RXP",
+  "architecture-patterns": "ARCH",
 };
 
 export type TrackColor = "lilac" | "mint" | "peach" | "sky" | "rose";

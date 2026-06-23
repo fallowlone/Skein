@@ -1,0 +1,217 @@
+---
+slug: "02-projections-and-replay"
+lang: en
+track: "architecture-patterns"
+unit: "08-event-sourcing"
+order: 2
+title: "Projections, replay, and snapshots"
+summary: "Read models in event sourcing are built by replaying the event log through a projection. Replay enables rebuild-on-demand and temporal queries. Snapshots bound replay cost. Event versioning and upcasting keep old events readable as the schema evolves."
+estMin: 28
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - projection-replay
+  - snapshot
+  - temporal-query
+  - event-versioning
+  - upcasting
+  - read-model-rebuild
+prereqs: []
+sources:
+  - https://martinfowler.com/eaaDev/EventSourcing.html
+  - https://cqrs.files.wordpress.com/2010/11/cqrs_documents.pdf
+  - https://verraes.net/2019/08/eventsourcing-state-from-events-vs-events-as-state/
+  - https://microservices.io/patterns/data/event-sourcing.html
+---
+import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+The billing team's new event log was working. Every order event was being appended correctly. But a product manager asked: "Can you give me a dashboard showing all open orders, sorted by account manager, with overdue ones highlighted?" The team looked at the event log. It contained the full history of every order — but answering that query meant reading the complete history for every order, folding each one to get its current status, filtering the pending ones, joining with the account manager data, and sorting. On 200,000 orders, that query would take minutes. The event log was the source of truth, but it was not designed for query access patterns. The team needed a separate structure — a read model — shaped for the dashboard query. And they needed a mechanism to build and maintain it. The mechanism is projection: a process that reads the event log and transforms it into a denormalized read model. But projection raised a new question immediately: what happens when the event log format changes six months from now? The team had just added an `approval_threshold` field to `OrderApproved` events. What about the 40,000 `OrderApproved` events already in the log that were appended before the field existed?
+</Hook>
+
+<Crux>Event sourcing read models replay the log through a projection. Snapshots bound replay cost; upcasting keeps old events readable.</Crux>
+
+<Explanation>
+
+## Projections: read models derived from the event log
+
+The event log is the source of truth for the write side. It is not designed for read access patterns. Answering "show all overdue orders for account manager Chen" by scanning and folding a 200,000-entry event log on every page load is structurally wrong.
+
+A **projection** is a process that reads events from the log and builds a denormalized read model shaped for a specific query. It is the same concept as in CQRS (unit 07) — the key difference is that the source being projected is the event log rather than a normalized relational table.
+
+Each projection subscribes to the event stream and handles each event type it cares about:
+
+```
+on OrderPlaced:    insert row into OrderDashboard with status "pending"
+on OrderApproved:  update row, set status "approved", approved_by, approved_at
+on InvoiceGenerated: update row, set status "invoiced", invoice_id
+```
+
+The result is an `OrderDashboard` table with one row per order, denormalized and shaped for the dashboard query. Queries hit the read model directly — no event folding at query time.
+
+<FlowDiagram
+  label="Event log to read model via projection"
+  caption="The event log is the source of truth. The projection reads events in sequence (replay direction: oldest to newest) and transforms them into the read model. Commands produce new events that are appended to the log; the projection observes them and updates the read model. Arrows show the data flow direction: command to aggregate to event log, event log to projection to read model, query to read model."
+  nodes={[
+    { id: "cmd", label: "Command", sub: "PlaceOrder, ApproveOrder" },
+    { id: "agg", label: "Aggregate", sub: "fold log → state → validate → emit event" },
+    { id: "log", label: "Event log", sub: "append-only, immutable source of truth" },
+    { id: "proj", label: "Projection", sub: "replays events → builds read model" },
+    { id: "rm", label: "Read model", sub: "OrderDashboard, denormalized" },
+    { id: "qry", label: "Query", sub: "GetOverdueOrders" },
+  ]}
+  edges={[
+    { from: "cmd", to: "agg", label: "triggers" },
+    { from: "agg", to: "log", label: "appends event" },
+    { from: "log", to: "proj", label: "event stream" },
+    { from: "proj", to: "rm", label: "writes" },
+    { from: "qry", to: "rm", label: "reads" },
+  ]}
+/>
+
+## Rebuild by replay: the structural superpower
+
+Because the event log is the source of truth and the read model is a derived artifact, the read model can be **rebuilt from scratch at any time by replaying the full event log through the projection function**. This is structurally different from a CRUD system where the read model and the write model are the same data — there is nothing to "replay."
+
+Rebuild-by-replay is valuable in multiple scenarios:
+
+**Schema change:** The dashboard needs a new column `days_to_first_payment`. Add the column to the read model table, update the projection logic to compute it, then replay all events. Every historical row gets the correct value computed from the original event data. No write-side migration.
+
+**Bug fix:** The projection had a bug — it was computing overdue status incorrectly, marking orders as overdue two days too early. Fix the projection logic, replay the event log, and the read model is now correct for all historical data.
+
+**New read model:** The finance team needs a new view: all orders grouped by billing period. Create a new projection that builds a `BillingPeriodSummary` table. Replay the existing event log to build it from history. No waiting for future events to accumulate.
+
+<Inset kind="why">
+Rebuild-by-replay is only possible because the event log is never modified. If events could be edited or deleted, a replay would not reproduce the original history. Immutability is not just a design preference in event sourcing — it is the structural prerequisite for replay to be meaningful.
+</Inset>
+
+## Snapshots: bounding the replay cost
+
+Loading an aggregate by folding its full event log becomes expensive as the log grows. An order with 4,000 events requires 4,000 applyEvent calls before a command can even begin. This is the fold-performance problem from lesson 1.
+
+A **snapshot** is a cached intermediate fold result. At some sequence number N, the application persists the aggregate's derived state as a snapshot alongside the event log:
+
+```
+{
+  aggregate_id: "order-48291",
+  snapshot_seq: 3800,
+  state: { status: "invoiced", total: 48200, line_items: [...], ... },
+  created_at: "2024-06-01T12:00"
+}
+```
+
+On the next load, instead of starting from event 1 and applying all 4,000 events, the application:
+1. Loads the latest snapshot (state at seq 3800)
+2. Loads only events after seq 3800 (events 3801–4000)
+3. Folds only those 200 events onto the snapshot state
+
+The fold cost drops from 4,000 to 200. As new events are appended, a new snapshot is taken periodically.
+
+<FlowDiagram
+  label="Snapshot-assisted aggregate load: replay starts from snapshot, not from event 1"
+  caption="The snapshot stores the derived aggregate state at a specific sequence number. On load, the application starts from the snapshot and folds only events after the snapshot's sequence number. The full event log is still present and still the source of truth — the snapshot is a performance optimization only. Arrow direction shows load path: snapshot loaded first, then tail events applied on top."
+  nodes={[
+    { id: "log-head", label: "Events 1–3800", sub: "not re-folded when snapshot exists" },
+    { id: "snap", label: "Snapshot at seq 3800", sub: "cached aggregate state — not source of truth" },
+    { id: "log-tail", label: "Events 3801–4000", sub: "folded onto snapshot state" },
+    { id: "state", label: "Current aggregate state", sub: "result of snapshot + tail fold" },
+  ]}
+  edges={[
+    { from: "snap", to: "state", label: "loaded first" },
+    { from: "log-tail", to: "state", label: "folded onto" },
+    { from: "log-head", to: "snap", label: "was source for snapshot" },
+  ]}
+/>
+
+The critical invariant: a snapshot is **not** the source of truth. The event log is. A snapshot can be discarded at any time — the aggregate state can always be reconstructed by folding the full event log from event 1. Snapshots exist purely for fold performance; they do not replace events.
+
+## Temporal queries: replaying a prefix of the log
+
+Lesson 1 introduced the temporal query: to get the state of order #48291 on March 3rd at 2 PM, filter the event log to events before that timestamp and fold the prefix. This is a structural consequence of the immutable, append-only log.
+
+Temporal queries have a performance implication: they cannot use a snapshot taken after the target timestamp (that snapshot includes events you want to exclude). They must fold from the beginning of the log to the target timestamp. For aggregates with very long histories, temporal queries over old timestamps are expensive. This is a known structural cost of event sourcing — it is manageable for occasional compliance queries, but should not be on the hot path of real-time queries.
+
+## Event versioning and upcasting
+
+The event log is immutable — events already stored cannot be changed. But the application's understanding of what an event means evolves. Six months after the system launched, `OrderApproved` gains a new field `approval_threshold`. The 40,000 existing `OrderApproved` events in the log predate this field. When the projection replays them, it will encounter events missing the new field.
+
+The two structural responses:
+
+**Weak schema / tolerant reader:** The projection handles `OrderApproved` with a tolerance policy: if `approval_threshold` is absent, treat it as null or a default value. The projection code handles both old and new versions of the event. This works for additive changes (new optional fields) and is the simplest approach.
+
+**Upcasting:** On load (or at read time), old event versions are transformed to the current format before reaching the aggregate's `applyEvent` function. An upcast function for v1 → v2 `OrderApproved` might set `approval_threshold: null` for all v1 events. The aggregate's fold logic sees only the current format. The event log retains the original v1 bytes — upcasting is applied at read time, not written back to the log.
+
+<Quiz
+  id="arch-08-02-quiz-1"
+  lessonSlug="02-projections-and-replay"
+  lang="en"
+  question="The billing team's event log has grown to 12 million events for the order aggregate. The team notices that rebuilding the OrderDashboard read model from scratch (for schema changes) is now taking 4 hours. A developer proposes: 'We should take a snapshot of the read model at regular intervals and use it as the starting point for future rebuilds, instead of replaying from event 1.' Is this a sound proposal?"
+  choices={[
+    { label: "This is a valid optimization for read model rebuild time, but it is not the same as an aggregate snapshot. A 'read model checkpoint' (saving the state of the read model at a certain event position) lets you resume a rebuild from the checkpoint rather than from event 1, cutting rebuild time proportionally. The structural constraint is: the checkpoint must store the event log position (sequence number) at which it was saved, so that rebuilds resume from that exact position. If the projection logic changes (schema change, bug fix) before the checkpoint was taken, the checkpoint is invalid for that rebuild and must be discarded. Aggregate snapshots and projection checkpoints are similar in structure but serve different purposes — don't conflate them.", correct: true },
+    { label: "This proposal is unsound. Read model checkpoints violate the immutability principle of event sourcing. The read model must always be rebuilt from event 1 to ensure correctness.", misconception: "Immutability applies to the event log — events cannot be modified. It does not prohibit caching intermediate states of derived artifacts (read models or aggregates). A projection checkpoint is a performance optimization for the derived artifact, not a modification of the source events. The event log remains unchanged and authoritative; the checkpoint just records where a previous rebuild reached so that future rebuilds can resume from there." },
+    { label: "The 4-hour rebuild time indicates the event log is too large. The team should archive events older than 6 months to a cold store and only replay recent events.", misconception: "Archiving events from the active log means they cannot be replayed for full rebuilds. This breaks the rebuild-by-replay guarantee — the read model could not be reconstructed for the full history, which was the structural property that made event sourcing valuable for audit and temporal queries. If old events are needed only occasionally, they can be tiered to cheaper storage, but they must remain accessible for replay." },
+    { label: "The proposal conflates aggregate snapshots and projection checkpoints. For aggregate load performance, snapshots are appropriate. For read model rebuild performance, the correct solution is to increase the projection worker's processing rate (parallelism, batching), not to checkpoint the read model.", misconception: "Parallelism and batching can improve projection throughput, but a checkpoint is also a valid approach for read model rebuild performance. The answer above (first option) is more complete: checkpoints are valid but must be invalidated when projection logic changes. Both techniques can be combined. The key point is that a projection checkpoint is a valid optimization distinct from aggregate snapshots, not a conflation." },
+  ]}
+/>
+
+<Quiz
+  id="arch-08-02-quiz-2"
+  lessonSlug="02-projections-and-replay"
+  lang="en"
+  question="The billing team wants to add a new field `freight_zone` to all OrderPlaced events going forward. They also want to backfill the field for existing OrderPlaced events in the log. A developer proposes: 'We can UPDATE the existing OrderPlaced event rows in the database to add the freight_zone field for historical events.' What is the structural problem with this proposal?"
+  choices={[
+    { label: "Updating existing event rows breaks the append-only, immutable contract of the event log. Events are facts about what happened — they cannot be retroactively changed. Mutating historical OrderPlaced events would mean the log no longer accurately represents history: the original OrderPlaced event recorded that an order was placed with no freight_zone (because the concept did not exist in the domain at that time). Changing it to include a backfilled freight_zone produces a false historical record. The correct approach for schema evolution is upcasting: when a historical OrderPlaced event is read, an upcast function adds freight_zone with a default value (null or 'unknown') at read time. The event log retains the original bytes. The domain logic sees a consistent schema. History is preserved.", correct: true },
+    { label: "The proposal is fine if done in a transaction. Updating historical events is a valid migration strategy in event sourcing, equivalent to schema migrations in CRUD systems.", misconception: "Event sourcing's value for audit, temporal queries, and rebuild-by-replay depends on the event log being an accurate record of what actually happened. A CRUD schema migration changes the shape of the current-state store — it does not retroactively alter the history of what happened. Updating historical events is categorically different and fundamentally breaks the audit contract. An order placed in 2022 did not have a freight_zone at placement time; updating the event to say it did is a falsification of the record." },
+    { label: "The proposal is acceptable only for non-compliance-sensitive fields like freight_zone. For financial fields, events must be immutable, but operational metadata can be updated.", misconception: "The immutability of events is not domain-specific. An audit trail that is immutable except for 'non-important' fields is not a reliable audit trail — it is a selectively editable record. The structural guarantee that replay always produces the same result breaks the moment any event is mutated. The correct approach is upcasting for all schema evolution, regardless of field sensitivity." },
+    { label: "The proposal is correct but should be batched. Updating all historical OrderPlaced events in a single transaction might lock the table.", misconception: "The problem is not transaction size — it is the fundamental immutability violation. Batching the UPDATE does not fix the structural issue: the event log would still contain historically inaccurate records after the backfill. The correct solution is upcasting, which operates at read time without modifying the stored events." },
+  ]}
+/>
+
+<Quiz
+  id="arch-08-02-quiz-3"
+  lessonSlug="02-projections-and-replay"
+  lang="en"
+  question="The team is designing an event sourced system for an order aggregate. They plan to take a snapshot every 100 events. A new team member asks: 'If we have a snapshot, can we delete the events before the snapshot to save storage?' What is the correct answer, and what does it depend on?"
+  choices={[
+    { label: "Deleting events before the snapshot is only safe if you are certain you will never need those events again. The conditions where you might need them: (1) temporal queries before the snapshot's timestamp — if you need to reconstruct the state at any point before the snapshot was taken, you need the original events; (2) rebuilding a read model from full history — projection checkpoints that were taken before the snapshot become invalid; (3) debugging or auditing specific past decisions. If the system truly has no need for temporal queries, full-history rebuilds, or deep audits, then archiving pre-snapshot events to cold storage (not deleting them) is defensible. Deleting them permanently is a one-way door — once gone, the historical guarantees are lost. Most event sourcing practitioners keep the full log indefinitely or archive to cold storage rather than delete.", correct: true },
+    { label: "Yes, events before the snapshot can be deleted. The snapshot contains the full aggregate state at that point, so the events are redundant. Deleting them saves storage without losing any information.", misconception: "The snapshot contains the derived aggregate state — the result of folding those events. It does not preserve the individual events or their payloads. Temporal queries before the snapshot require the original events. A projection that needs to process the OrderPlaced event payload (not just the aggregate state) cannot use the snapshot as a substitute. Deleting the events loses the ability to answer 'what line items were included in order #48291 when it was first placed?'" },
+    { label: "Events can never be deleted in event sourcing. The system must retain the full event log permanently, with no exceptions.", misconception: "While immutability of events (no modifications) is a hard structural requirement, permanent retention is a policy choice that intersects with storage costs, compliance requirements, and GDPR (covered in unit 08 lesson 3). Some jurisdictions require deletion of personal data, which creates a real tension with immutability. The answer is not 'never delete' as an absolute — it is 'understand the consequences and have a deliberate policy.'" },
+    { label: "Deleting events before the snapshot is fine as long as the snapshot was taken within the last 24 hours. Events older than that have no operational value.", misconception: "The operational value of historical events is not bounded by recency. Financial audits, regulatory compliance requirements, and temporal queries can span years. A 24-hour cutoff is an arbitrary policy that would make the system unable to answer the exact compliance queries that event sourcing was adopted to support." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Read models in event sourcing are built by replaying the event log through projection functions, making them fully rebuildable from history. Snapshots cache intermediate fold results to bound load-time cost — they are a performance optimization, not the source of truth. Temporal queries work by folding a prefix of the log. Event schema evolution is handled by upcasting (transforming old events at read time) or tolerant readers — never by modifying stored events.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="arch-08-02-retrieval"
+  lang="en"
+  questions={[
+    { q: "Why can a read model in event sourcing be rebuilt from scratch at any time, and what makes this valuable?", a: "A read model in event sourcing is a derived artifact — built entirely by replaying the event log through a projection function. Because the event log is immutable and complete, no information lives in the read model that cannot be recomputed from the log. The read model can be dropped and rebuilt at any time: apply the projection function to all historical events and the same read model is reconstructed. This is valuable when: (1) the read model schema changes — rebuild with the new projection logic and all historical rows are populated correctly; (2) the projection had a bug — fix the logic, rebuild, and the read model is now correct for all historical data; (3) a new read model is needed — build it from existing history without waiting for future events. None of this is possible in a CRUD system where the current state table is the only record." },
+    { q: "What is a snapshot in event sourcing and what invariant must it preserve?", a: "A snapshot is a cached intermediate fold result — the derived aggregate state persisted at a specific event sequence number. Instead of folding all N events on every aggregate load, the system loads the latest snapshot (state at seq K) and folds only the events after K. This reduces the fold cost from N steps to N-K steps. The critical invariant: a snapshot is not the source of truth. The event log remains authoritative. A snapshot can be discarded at any time — the aggregate state can always be reconstructed by folding the full event log from event 1. The snapshot's only purpose is fold performance optimization." },
+    { q: "What is upcasting and why does it exist in event sourced systems?", a: "Upcasting is a transformation applied to stored events at read time to convert older event versions to the current schema. Events in the log are immutable — they store the bytes that were appended at the time the event occurred. When the event schema evolves (a field is added, renamed, or restructured), old events in the log do not conform to the new schema. Rather than modifying the stored events (which would break immutability), an upcast function is applied when reading: it takes a stored event and returns the current-schema version, filling in defaults for new fields or transforming renamed ones. The event log retains the original bytes. The aggregate's applyEvent function sees only the current-format event. Upcasting is a compatibility layer between the immutable history and the evolving domain model." },
+  ]}
+/>
+
+<Recap lang="en">
+The event log solves the audit and temporal-query problem structurally. But the product manager's dashboard query — all open orders sorted by account manager — cannot be answered by scanning the event log at query time. The event log is optimized for write-side consistency and history preservation, not for arbitrary read queries.
+
+Projections bridge this gap: a projection function replays events from the log and materializes a read model shaped for a specific query. Because the read model is derived from the immutable event log, it can be rebuilt at any time — schema changes, bug fixes, new query requirements are handled by updating the projection logic and replaying. No write-side migrations.
+
+As the event log grows, fold performance degrades. Snapshots solve this: they cache the aggregate's derived state at a sequence number, bounding the number of events that must be folded on load. Snapshots are pure performance optimization — the event log remains the source of truth, and snapshots can be discarded and rebuilt.
+
+The event log is immutable, but the domain model is not static. Fields are added, renamed, restructured. Upcasting handles this: old events are transformed to the current schema at read time, leaving the stored bytes unchanged. History is preserved; the domain model can evolve.
+
+The next lesson covers the traps: the operational and structural costs that event sourcing introduces in production — eventual consistency, GDPR tension, compensating events, and honest guidance on when not to event-source.
+</Recap>

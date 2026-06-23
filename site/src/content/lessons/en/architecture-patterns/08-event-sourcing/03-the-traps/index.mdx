@@ -1,0 +1,233 @@
+---
+slug: "03-the-traps"
+lang: en
+track: "architecture-patterns"
+unit: "08-event-sourcing"
+order: 3
+title: "The traps"
+summary: "Event sourcing's immutability and eventual consistency are features on paper and constraints in production — schema evolution, GDPR erasure, bad events, and projection lag all require deliberate structural answers. Knowing when not to event-source is as important as knowing how."
+estMin: 28
+status: ready
+lessonType: topic
+level: senior
+concepts:
+  - eventual-consistency
+  - schema-evolution
+  - crypto-shredding
+  - compensating-event
+  - gdpr-immutability
+  - event-sourcing-when-not
+prereqs: []
+sources:
+  - https://martinfowler.com/eaaDev/EventSourcing.html
+  - https://verraes.net/2019/08/eventsourcing-state-from-events-vs-events-as-state/
+  - https://microservices.io/patterns/data/event-sourcing.html
+  - https://gdpr-info.eu/art-17-gdpr/
+---
+import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Eighteen months into the event sourced billing platform, three distinct fires were burning simultaneously. First: a customer had submitted a GDPR erasure request. Legal said the customer's name, email, and tax ID had to be purged within 30 days. The legal team had assumed the engineers could just delete the relevant rows. The engineering team explained that the customer's personal data was embedded in hundreds of events — OrderPlaced, InvoiceGenerated, PaymentReceived — spread across the immutable event log. Deleting them would corrupt the log. Second: a billing engineer had accidentally appended an OrderApproved event for the wrong order ID — a fat-finger error during a manual support operation. "Just delete it," said the support manager. The engineering team explained again: events in the log are immutable. Deleting it would corrupt replay for every read model. Third: the finance projection had been showing stale totals for about two seconds after each order update — normally fine — but during a high-traffic period the projection pipeline had backed up and the lag had stretched to forty seconds. The CFO saw a dashboard showing incorrect overdue amounts and called the CEO. Three fires, one root cause: the team had adopted event sourcing without fully pricing in its structural constraints.
+</Hook>
+
+<Crux>Event sourcing constraints in production — schema evolution, GDPR erasure, bad events, projection lag — each needs a structural answer.</Crux>
+
+<Explanation>
+
+## Trap 1: Eventual consistency between log and projections
+
+In an event sourced system, the event log is updated synchronously with each command. The read models (projections) are updated asynchronously — they consume events from the log and update their materialized views in a separate process. This creates a **staleness window**: between when an event is appended and when the projection has processed it, queries against the read model return the previous state.
+
+During normal operation this lag is milliseconds to low seconds. During high load, projection backpressure, or a restart, it can stretch further. The dashboard showing incorrect overdue amounts was not a bug — it was the projection lag exposed under load.
+
+<FlowDiagram
+  label="Projection lag: event appended before read model is updated"
+  caption="The command appends an event to the log at T=0. The projection worker picks up the event and updates the read model at T=Δ. Queries between T=0 and T=Δ see stale data. The lag Δ depends on projection pipeline throughput. Arrows show the temporal sequence: event appended, event consumed by projection, read model updated."
+  nodes={[
+    { id: "append", label: "T=0: event appended", sub: "OrderApproved written to log" },
+    { id: "pipeline", label: "Projection pipeline", sub: "backpressure stretches lag" },
+    { id: "update", label: "T=Δ: read model updated", sub: "dashboard reflects approval" },
+    { id: "stale-query", label: "Query during T=0..Δ", sub: "sees pre-approval state (stale)" },
+  ]}
+  edges={[
+    { from: "append", to: "pipeline", label: "event flows to" },
+    { from: "pipeline", to: "update", label: "projection writes" },
+    { from: "stale-query", to: "append", label: "within staleness window" },
+  ]}
+/>
+
+Managing projection lag requires deliberate design:
+
+- **Monitor lag as a first-class metric**: alert when the projection-to-log offset exceeds a threshold (seconds, not minutes).
+- **Size the projection workers** for peak event throughput, not average throughput.
+- **Design read models with staleness in mind**: a dashboard showing "as of N seconds ago" is better than a dashboard that silently shows wrong data without acknowledging it.
+- **Do not use async projections for decisions on the write path**: if the write side needs to read a value before appending an event, query the write-side aggregate state, not a potentially-stale read model.
+
+The eventual consistency trap is not unique to event sourcing — it appears in any CQRS system with async projection (unit 07). In event sourcing it is amplified because the read model is the *only* query path; there is no normalized current-state table to fall back on.
+
+## Trap 2: Schema evolution — the immutable past, the changing future
+
+Events are immutable facts about the past. The domain model is not static. These two truths create a recurring tension: the structure of an event that was correct in 2023 may not match what the domain model expects in 2025.
+
+Lesson 2 introduced upcasting as the mechanism. The trap is the **operational discipline** required to make it work at scale:
+
+- Every event type needs a version identifier (explicit or embedded in the type name: `OrderApproved.v1`, `OrderApproved.v2`).
+- Every upcast function must be maintained indefinitely — as long as v1 events exist in the log, the upcast from v1 → v2 must be deployed.
+- **Additive changes** (new optional fields) are safe: tolerant readers handle them with defaults.
+- **Destructive changes** (renaming or removing a field, changing a field's meaning) require a new version and a migration strategy.
+- A renamed field that appears in thousands of projections creates a wide blast radius — every projection that reads the old field name must be updated.
+
+The trap: teams that do not enforce event versioning from day one accumulate implicit v1 events everywhere, then face a painful untangling when the first breaking change arrives. Discipline in naming (`OrderApproved.v1`) and in maintaining a registry of upcast functions is maintenance overhead that must be staffed.
+
+<Inset kind="why">
+The structural lesson: an event schema is a public API with the worst possible deprecation policy — you cannot remove old consumers (the event log contains them permanently). Treat event schema changes with more care than REST API changes. The event log is the one dependency you can never break.
+</Inset>
+
+## Trap 3: GDPR and the right to be forgotten
+
+Article 17 of the GDPR requires that personal data be erased upon request. The immutable event log is a structural obstacle: personal data embedded in event payloads cannot be deleted without corrupting the log.
+
+The standard structural response is **crypto-shredding** (also called crypto-erasure):
+
+1. Personal data in event payloads is **encrypted** using a per-subject encryption key (one key per customer, or per data-subject boundary).
+2. The event log stores the **encrypted** personal data — the ciphertext, not the plaintext.
+3. When an erasure request arrives, the encryption key is **destroyed**. The event payloads in the log still exist, but the personal data is now computationally irretrievable — effectively erased.
+
+<FlowDiagram
+  label="Crypto-shredding: personal data encrypted per subject, key destroyed on erasure"
+  caption="At write time, personal data in the event payload is encrypted with the subject's key before being appended to the log. The key is stored separately in a key store. On GDPR erasure, the key is deleted from the key store. Existing events in the log retain only ciphertext — the personal data is computationally unrecoverable. Arrows show the encryption flow at write time and the key deletion path at erasure time."
+  nodes={[
+    { id: "event", label: "Event payload", sub: "contains personal data plaintext" },
+    { id: "encrypt", label: "Encrypt with subject key", sub: "before appending to log" },
+    { id: "log", label: "Event log", sub: "stores ciphertext only" },
+    { id: "keystore", label: "Key store", sub: "subject key — separate from log" },
+    { id: "erasure", label: "GDPR erasure request", sub: "delete subject key from key store" },
+  ]}
+  edges={[
+    { from: "event", to: "encrypt", label: "plaintext in" },
+    { from: "encrypt", to: "log", label: "ciphertext appended" },
+    { from: "keystore", to: "encrypt", label: "key used at write" },
+    { from: "erasure", to: "keystore", label: "key deleted" },
+  ]}
+/>
+
+Crypto-shredding has structural prerequisites:
+
+- Personal data must be **identified upfront** in every event type. Ad-hoc fields added months later may be missed.
+- The key store must be separate from the event log. Losing the key store before an erasure request is processed means the data is never erasable.
+- **Projections that materialized the plaintext** must also be updated — crypto-shredding the event log does not automatically purge a read model that already extracted and stored the personal data in plaintext.
+
+Teams that do not design for crypto-shredding from the beginning face a painful retrofit: identifying all personal data in hundreds of event types, adding encryption retroactively (not possible for existing events), and potentially accepting that pre-retrofit personal data cannot be erased from the log.
+
+## Trap 4: The bad event is set in stone
+
+During a manual support operation, an engineer appended an `OrderApproved` event for the wrong order ID. In a CRUD system, the fix is an `UPDATE`. In an event sourced system, there is no `UPDATE`.
+
+The correct response to a bad event is a **compensating event**: a new event appended to the log that reverses the business effect of the erroneous one. For the wrong-order approval, a `OrderApprovalReverted` event is appended with a reason explaining the error. The aggregate's fold logic handles `OrderApprovalReverted` by returning the order to its previous state.
+
+This is not a workaround — it is the intended mechanism. It preserves the full audit trail: the approval, the error, and the correction are all visible in the log. A compliance auditor can see exactly what happened, when, and why.
+
+<Inset kind="note">
+Compensating events require forethought: the domain model must define correction events for each write that can go wrong operationally. Teams that discover this only when a bad event has already been appended face the worst possible moment to design a compensating event schema.
+</Inset>
+
+The structural implication: **operator tooling that directly writes to the event log** must be treated with the same discipline as production application code. Appending a wrong event via a maintenance script causes exactly the same problem as a code bug. Event logs in production should be access-controlled with the same strictness as production databases.
+
+<Quiz
+  id="arch-08-03-quiz-1"
+  lessonSlug="03-the-traps"
+  lang="en"
+  question="The billing platform receives a GDPR erasure request for customer #C-8821. The customer's data (name, email, tax ID) appears in 340 events across the OrderPlaced, InvoiceGenerated, and PaymentReceived event types. The system was NOT designed with crypto-shredding. What are the realistic options, and what does each cost?"
+  choices={[
+    { label: "Without crypto-shredding, the realistic options are: (1) Redact in place — overwrite the personal fields in the event payloads with null or a placeholder. This violates the append-only contract and corrupts the audit trail (replaying the redacted events produces a different state than the original). It may satisfy GDPR technically if the data is gone, but it breaks the structural integrity of the log. (2) Delete the events containing personal data — similar structural violation, and likely produces an inconsistent fold for subsequent replay. (3) Accept the compliance violation and pay the regulatory consequence. (4) Migrate the system to crypto-shredding retroactively — cannot protect events already stored in plaintext; requires a full architectural retrofit. All options carry serious costs. This is the structural consequence of not designing for GDPR from the start in an event sourced system.", correct: true },
+    { label: "The team can delete only the personal data fields from the event payloads while keeping the events themselves, satisfying GDPR without breaking replay.", misconception: "Deleting fields from stored events violates the immutability of the event log. The 'state as a fold' invariant depends on each event producing exactly the same result on every replay. A partially-redacted OrderPlaced event that is missing the customer_name field may cause the projection to produce different output than the original — particularly if the projection's applyEvent function expected that field. More importantly, this is still a modification of the historical record, which is the structural constraint event sourcing is built on." },
+    { label: "GDPR erasure requests do not apply to event logs because the data was not stored 'intentionally as personal data' — it was a side effect of business operations.", misconception: "GDPR applies to any personal data stored in any form, regardless of the storage mechanism or intent. The event log is a data store. Personal data in it is subject to GDPR Article 17 like any other stored personal data. The immutability of the event log is an engineering constraint, not a legal defense." },
+    { label: "The team can satisfy the request by purging only the read models (projections) that contain the customer's data. The event log is an internal technical detail that does not need to be erased.", misconception: "GDPR Article 17 requires erasure of personal data from all systems where it is stored, not just the user-visible surfaces. The event log stores personal data. It must be addressed. Purging only the projections while retaining personal data in the event log does not satisfy the erasure request." },
+  ]}
+/>
+
+## Trap 5: Operational and complexity cost — when not to event-source
+
+Event sourcing is not a default architectural choice. It imposes costs that must be justified by requirements:
+
+- **Write side complexity**: instead of an `INSERT`/`UPDATE`, every write requires loading the aggregate (fold or snapshot + tail), validating the command, producing an event, and appending it atomically. This is significantly more code than CRUD.
+- **Read side complexity**: there is no normalized current-state table to query. Every query needs a read model, which needs a projection, which needs a pipeline. For a system with 20 entity types, this means 20+ projections to build and maintain.
+- **Operational complexity**: the event store, the projection workers, the snapshot store, and the key store are all production infrastructure. Each needs monitoring, capacity planning, and failure recovery. Projection lag must be monitored as a first-class metric.
+- **Testing complexity**: event sourced aggregates are tested by asserting on emitted events (given these past events → when this command → expect these new events). This is learnable but unfamiliar to most backend teams.
+
+<Quiz
+  id="arch-08-03-quiz-2"
+  lessonSlug="03-the-traps"
+  lang="en"
+  question="An engineer proposes applying event sourcing to every entity in the B2B billing platform: orders, line items, invoices, payment records, user preferences, UI notification settings, and session tokens. What is the correct response, and how should the decision actually be made?"
+  choices={[
+    { label: "Event sourcing the full entity set imposes write complexity, read model maintenance, and operational overhead on every entity — including ones where the costs are completely unjustified. User preferences and session tokens have no audit requirement, no temporal-query need, and no business decision-capture value. Applying event sourcing to them adds infrastructure cost with zero structural benefit. The decision should be made entity by entity against three questions: (1) Is the history of state transitions a first-class business requirement (audit, compliance, dispute resolution)? (2) Are temporal queries ('state as of date X') needed? (3) Does the domain require capturing the intent/context behind each state change? If the answer to all three is no, a CRUD model is almost certainly appropriate. Orders and invoices likely pass all three. Notification settings and session tokens almost certainly fail all three.", correct: true },
+    { label: "Event sourcing should be applied uniformly across the system for consistency. A mixed architecture (some entities CRUD, some event sourced) is harder to reason about and maintain.", misconception: "Architectural uniformity is a means, not an end. Forcing every entity through the event sourcing model to avoid a mixed architecture imposes costs with no benefit for entities that do not need auditability or temporal queries. The engineering cost of maintaining projections and event schemas for session tokens and UI preferences is real and recurring. A system that event-sources only the domain entities that warrant it (orders, invoices, payments) and uses CRUD for the rest is not inconsistent — it is appropriately fit for each entity's requirements." },
+    { label: "The engineer is right — uniformity is important and the overhead of event sourcing is low after the initial setup.", misconception: "The overhead of event sourcing is not low. Each event-sourced entity type requires: event type definitions, applyEvent logic, snapshot strategy, at least one projection, projection worker infrastructure, lag monitoring, and upcast functions for future schema changes. Multiplied across 20+ entity types including ones with no audit need, this is a substantial and recurring engineering cost. 'Low overhead after setup' is the framing used to justify choices that are later regretted in maintenance." },
+    { label: "The proposal is fine as long as the team stores all events in a single shared event store. The overhead scales sublinearly with entity count.", misconception: "A shared event store reduces storage infrastructure cost, but it does not reduce the per-entity costs of projections, applyEvent functions, upcasting logic, and monitoring. The structural maintenance cost scales with entity count regardless of whether the events share a physical store." },
+  ]}
+/>
+
+The honest guidance on when to event-source:
+
+**Event sourcing is a strong fit when:**
+- The entity's history of state transitions is a compliance or legal requirement (financial transactions, healthcare records, regulated decisions)
+- Temporal queries over past state are needed in production, not just for debugging
+- The domain requires distinguishing between different business reasons for the same resulting state (OrderApproved by reviewer vs AutoApproved by rule)
+- The engineering team has genuine experience with the pattern — event sourcing adopted by a team that has never maintained a projection pipeline is high-risk
+
+**Event sourcing is a poor fit when:**
+- The entity is CRUD-heavy with no meaningful history (preferences, settings, session data, cache entries)
+- The primary requirement is fast, flexible querying of current state — there is no audit need
+- The team is not yet experienced with projection infrastructure and lag management
+- The system must be delivered on a tight timeline — event sourcing increases initial delivery time significantly
+
+<Quiz
+  id="arch-08-03-quiz-3"
+  lessonSlug="03-the-traps"
+  lang="en"
+  question="A developer argues: 'Event sourcing and CQRS are the same pattern — you can't use one without the other.' What is the correct position, and why does the distinction matter?"
+  choices={[
+    { label: "Event sourcing and CQRS are independent patterns that compose well but are not the same thing. CQRS (unit 07) splits the write model from the read model — it says nothing about how the write side stores state. You can apply CQRS with a normalized write-side database and no event sourcing. Event sourcing concerns how the write side stores state — as an append-only event log rather than as current state. You can use event sourcing without CQRS: load the aggregate from events, process a command, append an event, and query the aggregate state directly from the fold. The confusion arises because they compose naturally: event sourcing produces a complete event log that projections (CQRS read models) can replay. But composing them is a choice, not a requirement. Conflating them leads teams to adopt both when they only need one, significantly increasing complexity.", correct: true },
+    { label: "CQRS and event sourcing are effectively the same pattern in practice. Every event sourced system uses CQRS, and every CQRS system eventually needs event sourcing for full replay capabilities.", misconception: "Neither direction of this claim is true. Event sourcing can be used without CQRS: the aggregate is loaded by fold, commands are processed, events are appended, and the current state is derived from the fold. Queries can be served from the folded aggregate state without a separate read model. Conversely, CQRS can be implemented with a normalized write-side table and sync or async projection — no event sourcing required. The patterns compose well but are independent." },
+    { label: "The distinction is theoretical. In a production system, the two patterns are always used together, so treating them as separate is over-academic.", misconception: "The distinction is practically important because the adoption cost of each pattern is significant. Adopting CQRS without event sourcing is a moderate architectural decision: it adds a read model and a projection pipeline. Adopting event sourcing without CQRS is uncommon but valid for simple domains with few query patterns. Adopting both adds substantial complexity. A team that conflates them and adopts both when only one is warranted is paying unnecessary complexity cost." },
+    { label: "CQRS is a prerequisite for event sourcing. You must split the write and read models before you can store state as events.", misconception: "CQRS is not a prerequisite for event sourcing. Event sourcing concerns only the write side's storage model — the event log as source of truth with state derived by fold. A system can event-source its write side and serve read queries directly from the folded aggregate state without any separate read model infrastructure. Adding CQRS projections is a scaling and query-shape optimization, not a structural requirement of event sourcing." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>Event sourcing's production traps are structural, not incidental: projection lag requires explicit monitoring and staleness budgets; schema evolution requires versioned event types and upcast functions maintained indefinitely; GDPR erasure requires crypto-shredding designed in from day one; bad events require compensating events, never edits. Event sourcing is the right choice for aggregates with genuine audit, temporal-query, or intent-capture requirements — and the wrong choice for everything else.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="arch-08-03-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is crypto-shredding and why is it the standard GDPR response for event sourced systems?", a: "Crypto-shredding is the technique of encrypting personal data in event payloads with a per-subject encryption key before appending the event to the log. The key is stored separately. When a GDPR erasure request arrives, the subject's key is destroyed. The event payloads in the log still exist but contain only ciphertext — the personal data is computationally unrecoverable. This satisfies the erasure requirement without modifying the event log, preserving its immutability and append-only structure. It is the standard response because the alternative approaches — deleting or redacting events — corrupt the log and break replay. Crypto-shredding must be designed in from the start; it cannot be retrofitted to events already stored in plaintext." },
+    { q: "A bad event was appended to the event log due to a support engineer's mistake. Why can it not simply be deleted, and what is the correct response?", a: "The event log's integrity depends on its append-only, immutable nature. Deleting an event from the log means that every projection and aggregate that replays the log will produce different results after the deletion than before. The audit trail is corrupted — the historical record no longer accurately reflects what happened. The correct response is a compensating event: a new event appended to the log that reverses the business effect of the erroneous event. For an incorrect OrderApproved, a OrderApprovalReverted event is appended with the reason and the reverting actor. The aggregate's fold logic processes both events and arrives at the correct state. The audit trail is preserved: the error and its correction are visible in the log. Compensating events must be defined in the domain model proactively — they cannot be improvised reliably at incident time." },
+    { q: "Name three categories of entities for which event sourcing is a poor fit, and explain why.", a: "Three categories: (1) Session and authentication data (session tokens, OAuth tokens, refresh tokens) — these have no audit requirement, no temporal-query need, and a natural TTL. Storing them as events adds projection infrastructure with zero structural benefit. (2) User preference and settings data (UI configuration, notification preferences, theme choices) — these change frequently, have no compliance requirement to retain history, and the intent behind each change is not a domain fact worth capturing. (3) Cache entries and derived data — these are already derived artifacts; event-sourcing them creates event logs for data that was never the source of truth in the first place. The common thread: entities are poor fits for event sourcing when the history of their state transitions has no business value, no compliance requirement, and no temporal-query need." },
+  ]}
+/>
+
+<Recap lang="en">
+Three fires, one root cause: the team adopted event sourcing without pricing in its structural constraints.
+
+The GDPR fire was predictable. Personal data in an immutable event log cannot be deleted. Crypto-shredding — encrypting personal data per subject, destroying the key on erasure — is the structural solution, but it must be designed in from day one. A retrofit is painful or impossible for events already stored in plaintext.
+
+The bad-event fire was also predictable. The event log is immutable. Operator tooling that writes directly to it must be treated with production discipline. When a bad event lands, the response is a compensating event — a new fact that reverses the business effect. History is preserved; the error and its correction are both visible.
+
+The projection-lag fire was a monitoring failure. Eventual consistency between the event log and the projections is structural. Under load, the lag stretches. Projection lag must be monitored as a first-class metric, sized for peak throughput, and acknowledged in the UI where it matters.
+
+Event sourcing and CQRS are independent patterns that compose well but are not the same thing. Event sourcing justifies its costs for aggregates with genuine audit, temporal-query, or intent-capture requirements. For preferences, session data, and simple CRUD entities, the costs are real and the benefits are absent.
+
+The structural track ends here. The next unit (09) steps from event sourcing — how state is stored — to event-driven architecture: how modules communicate through events and how that shapes coupling.
+</Recap>

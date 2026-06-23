@@ -1,0 +1,241 @@
+---
+slug: "03-where-layering-leaks"
+lang: en
+track: "architecture-patterns"
+unit: "03-layered-architecture"
+order: 3
+title: "Where layering leaks"
+summary: "Layered architecture leaks through three failure modes: the transaction-script trap (procedures, not layers), layer-skipping (presentation reaches into infrastructure), and the fat service god object. Each leak is a force that motivated hexagonal and clean architecture."
+estMin: 22
+status: ready
+lessonType: topic
+level: middle
+concepts:
+  - transaction-script-trap
+  - layer-skipping
+  - leaky-abstraction
+  - fat-service
+  - god-object
+  - architecture-erosion
+prereqs: []
+sources:
+  - https://martinfowler.com/eaaCatalog/transactionScript.html
+  - https://martinfowler.com/bliki/PresentationDomainDataLayering.html
+  - https://alistair.cockburn.us/hexagonal-architecture/
+---
+import Hook from "~/components/lesson/Hook.astro";
+import Crux from "~/components/prose/Crux.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+
+<Hook>
+Eighteen months into the B2B order platform, a senior engineer audited the codebase. The four-layer structure was in place — the packages were named correctly. But `OrderController` had grown to 900 lines because engineers added quick logic there rather than risk touching the service. `OrderService` had 61 methods and imported directly from `PostgresOrderRepository`, `StripeClient`, `SendGridClient`, `PDFGenerator`, and `S3Client` — the service layer had become the integration layer, not the orchestration layer. And there was a `getBillingReportData()` method in `OrderController` that called `OrderRepository.findRawSql()` directly, because the developer who wrote it needed a specific join that no service method exposed. The layers existed as package names. The discipline that makes layers valuable — keeping each layer's concerns distinct and its imports bounded — had eroded entirely. The architecture was layered in structure and a big ball of mud in practice.
+</Hook>
+
+<Crux>Layering erodes through three leaks: transaction-script trap, layer-skipping, fat services — each a force clean architectures address.</Crux>
+
+<Explanation>
+
+## Leak 1: The transaction-script trap
+
+The transaction-script trap is what happens when layering is applied structurally but the team's mental model stays procedural. Each use case becomes a long procedure in a service method — step 1, step 2, step 3, if this then that — with the domain objects as passive data containers that the procedure manipulates.
+
+```typescript
+// Transaction script masquerading as a layered architecture
+class OrderService {
+  async confirmOrder(orderId: string, userId: string): Promise<void> {
+    // Step 1: load
+    const order = await this.orderRepo.findById(orderId);
+    const user = await this.userRepo.findById(userId);
+    const invoices = await this.invoiceRepo.findByOrderId(orderId);
+
+    // Step 2: validate (all logic inline, none in the domain)
+    if (order.status !== 'pending') throw new Error('Not pending');
+    if (!user.hasRole('manager')) throw new Error('Unauthorized');
+    if (invoices.some(i => i.status === 'overdue')) throw new Error('Overdue invoices');
+    if (order.totalAmount > 10000 && !order.approvalId) throw new Error('Needs approval');
+
+    // Step 3: mutate (directly setting fields)
+    order.status = 'confirmed';
+    order.confirmedAt = new Date();
+    order.confirmedBy = userId;
+
+    // Step 4: side effects (service directly calls infrastructure)
+    await this.orderRepo.save(order);
+    await this.emailClient.send(order.customerEmail, 'Order confirmed', ...);
+    await this.eventBus.publish({ type: 'OrderConfirmed', orderId });
+  }
+}
+```
+
+The layers exist but the logic lives in one long procedure inside the service. Testing this method requires a real database (or mocking 5 dependencies). Adding a new rule means editing the procedure. The domain layer has no behavior — the service is both the application layer and the domain layer simultaneously.
+
+This is the Transaction Script pattern masquerading as layered architecture. The service package and the domain package are both technically present — but the domain package is empty of real logic, and the service package has absorbed everything.
+
+## Leak 2: Layer-skipping and leaky abstractions
+
+Layer-skipping occurs when a higher layer imports from a lower layer, bypassing the intermediate layers. The canonical violation: a controller that imports a repository class directly.
+
+```typescript
+// Controller importing infrastructure directly
+import { PostgresOrderRepository } from '../infra/PostgresOrderRepository';
+
+class BillingReportController {
+  private repo = new PostgresOrderRepository();
+
+  async getBillingReport(req: Request): Promise<Response> {
+    // Direct SQL in the controller
+    const rows = await this.repo.findRawSql(`
+      SELECT o.id, o.total_amount, i.invoice_number
+      FROM orders o JOIN invoices i ON i.order_id = o.id
+      WHERE o.status = 'confirmed' AND o.confirmed_at > $1
+    `, [req.query.since]);
+    return Response.json(rows);
+  }
+}
+```
+
+This is the `getBillingReportData` problem from the opening story. The developer needed a specific SQL join that no existing service or domain method exposed. Rather than add a method to the appropriate layer, they reached directly into infrastructure.
+
+The leak is self-reinforcing. Once one controller imports a repository, other developers see the pattern and repeat it. Within months, controllers throughout the application have direct repository dependencies. The infrastructure layer is now directly coupled to the presentation layer — swapping the database requires changing controllers.
+
+<FlowDiagram
+  label="Layer-skipping: presentation reaches into infrastructure"
+  nodes={[
+    { id: "ctrl", label: "BillingReportController", sub: "presentation layer" },
+    { id: "svc", label: "OrderService", sub: "application layer — bypassed" },
+    { id: "domain", label: "Order (domain)", sub: "domain layer — bypassed" },
+    { id: "repo", label: "PostgresOrderRepository", sub: "infrastructure layer" },
+  ]}
+  edges={[
+    { from: "ctrl", to: "repo", label: "imports directly — SKIP" },
+    { from: "ctrl", to: "svc", label: "normal path" },
+    { from: "svc", to: "domain", label: "normal path" },
+    { from: "svc", to: "repo", label: "normal path" },
+  ]}
+  caption="The controller has two paths: the normal path through the application and domain layers, and a shortcut directly to the infrastructure layer. The shortcut bypasses every abstraction the layered architecture was supposed to provide. Once one skip is permitted, the pattern spreads."
+/>
+
+**Leaky abstractions** are a subtler form of the same failure: the abstraction boundary nominally exists, but implementation details from a lower layer bleed through it. A domain service that returns a `Knex.QueryBuilder` object instead of a domain type leaks the query builder into the layer above. A repository interface that exposes an `EntityManager` parameter leaks the ORM into the application layer. The caller now depends on implementation details even though there is an apparent interface boundary.
+
+<Inset kind="why" lang="en">
+Why does layer-skipping happen? The immediate cause is pressure: a deadline, a one-off reporting need, a complex query that is faster to write in SQL than to express through domain methods. The underlying cause is that layered architecture has no enforcement mechanism. There is no compiler error when a controller imports a repository. The only enforcement is discipline, code review, and team convention — all of which degrade under pressure. This is the structural gap that hexagonal architecture addresses: by making the domain own its ports (interfaces), it makes the correct dependency direction the path of least resistance, not an opt-in convention.
+</Inset>
+
+## Leak 3: The fat service and the god object
+
+The fat service is the end state of an application where all business logic gravitates to the service layer. It starts with reasonable methods — `createOrder`, `confirmOrder`, `cancelOrder` — and grows as features accumulate. After 18 months, `OrderService` has 61 methods and imports from 11 different dependencies.
+
+The fat service has the structural properties of a god object:
+- **It knows about everything**: infrastructure clients, domain entities, external services, reporting queries, notification logic, audit logging.
+- **Everything depends on it**: presentation layer, background jobs, batch processors, integration adapters.
+- **It is untestable in isolation**: instantiating `OrderService` requires mocking 11 dependencies. A test for `confirmOrder` must configure the full dependency tree.
+- **Changes ripple everywhere**: modifying `OrderService` can affect any of its 61 callers.
+
+The fat service is the result of a correct layering instinct — keep business logic out of controllers — combined with the absence of a domain layer that can absorb that logic. Without a rich domain model to hold invariants and entities, and without clear use-case boundaries in the application layer, the service layer becomes the catch-all.
+
+```
+// What a fat OrderService imports after 18 months:
+import { OrderRepository } from '../infra/OrderRepository';
+import { InvoiceRepository } from '../infra/InvoiceRepository';
+import { UserRepository } from '../infra/UserRepository';
+import { StripeClient } from '../infra/StripeClient';
+import { SendGridClient } from '../infra/SendGridClient';
+import { PDFGenerator } from '../infra/PDFGenerator';
+import { S3Client } from '../infra/S3Client';
+import { EventBus } from '../infra/EventBus';
+import { AuditLogger } from '../infra/AuditLogger';
+import { ReportingQueryRunner } from '../infra/ReportingQueryRunner';
+import { FeatureFlagClient } from '../infra/FeatureFlagClient';
+```
+
+The service layer has become the integration layer. It is not orchestrating domain logic — it IS the domain logic, mixed with infrastructure calls. Extracting a single use case (say, order confirmation) requires untangling it from 61 other methods sharing the same dependency tree.
+
+<Inset kind="note" lang="en">
+The three leaks are not independent failures — they compound each other. The transaction-script trap hollows out the domain layer, so the fat service absorbs the logic the domain should hold. The fat service accretes more and more infrastructure dependencies, making it tempting to skip through it to reach those dependencies directly. Layer-skipping then creates tight coupling between presentation and infrastructure. The result is that all three failure modes arrive together in a mature codebase that started with good architectural intentions.
+</Inset>
+
+## Why these leaks motivated hexagonal and clean architecture
+
+Each of the three leaks points to a structural gap in flat n-tier layering:
+
+**The transaction-script trap** points to the gap: no mechanism forces the domain layer to contain real logic. A flat four-layer stack does not prevent a service from absorbing all behavior.
+
+**Layer-skipping** points to the gap: no mechanism prevents higher layers from importing lower layers. The dependency rule is a convention, not a structural constraint. Nothing in a plain package structure stops a controller from importing a repository.
+
+**The fat service** points to the gap: no mechanism defines the boundary of a use case. A service class can grow without limit, absorbing concerns that should be in separate components.
+
+Hexagonal architecture (unit 04) addresses all three by inverting the dependency at the domain boundary. The domain owns its ports — the interfaces it needs from the outside world. No infrastructure class can be imported by the domain because the domain defines the interface and infrastructure implements it. The service (application layer) is bounded by its primary port, not by a class that happens to live in a "services" package. The inside of the hexagon (domain + application) is testable without any infrastructure at all, because the infrastructure is always behind an interface the domain owns.
+
+Clean architecture (unit 05) generalizes this to concentric layers with the same dependency rule: no inner layer imports any outer layer. The entity core, the use-case ring, the interface adapters, and the frameworks/drivers are separated by hard dependency constraints — not by package naming conventions.
+
+<Quiz
+  id="arch-03-03-quiz-1"
+  lessonSlug="03-where-layering-leaks"
+  lang="en"
+  question="The team's OrderService has grown to 80 methods and imports from 12 infrastructure classes. A new engineer proposes splitting it into OrderCommandService (writes) and OrderQueryService (reads). Does this fix the fat service problem, and why or why not?"
+  choices={[
+    { label: "It reduces size but does not fix the root cause. The fat service grew because the domain layer is hollow (logic lives in the service) and use-case boundaries are undefined (any caller adds methods to the service). Splitting into command/query services halves the method count but does not move logic into the domain or define use-case boundaries. Both new services will re-accumulate the same methods within a year unless the domain layer is enriched and the application layer is organized by use case, not by class.", correct: true },
+    { label: "Yes, splitting by command and query (CQRS) is the correct architectural fix for a fat service.", misconception: "CQRS is a valid pattern for separating read and write models, but it does not address the root cause of a fat service: the absence of a domain layer with real logic and the absence of use-case boundaries in the application layer. Two fat services (one for commands, one for queries) still have the same structural problems — they just have different names. CQRS is useful in its own right but is not a remedy for a hollow domain." },
+    { label: "The fat service problem is inherent to layered architecture and cannot be fixed within a layered structure — the team must migrate to microservices.", misconception: "Microservices address deployment and scaling concerns, not internal application structure. A microservice can have exactly the same fat-service problem as a monolith — the service boundaries in microservices are between deployable units, not between architectural layers within a single service. The fat service problem is fixed by enriching the domain layer and defining use-case boundaries in the application layer, which are layered architecture concerns, not deployment concerns." },
+    { label: "The fix is to add more layers — a dedicated business rules layer between application and domain would absorb the excess logic.", misconception: "Adding more layers without changing where logic lives just adds more empty delegation. The root cause is that the domain layer has no real logic — the fix is to move logic into the domain (entities, value objects, domain services), not to introduce another intermediate layer." },
+  ]}
+/>
+
+<Quiz
+  id="arch-03-03-quiz-2"
+  lessonSlug="03-where-layering-leaks"
+  lang="en"
+  question="A repository interface IOrderRepository is defined in the domain layer. Its only method is `findByCustomerAndDateRange(customerId: string, from: Date, to: Date): Promise<Order[]>`. The PostgreSQL implementation constructs a complex query using multiple JOINs. Is this a leaky abstraction?"
+  choices={[
+    { label: "No. The interface exposes domain concepts (customerId, date range, Order return type) — none of which are infrastructure-specific. The implementation details (JOINs, SQL) stay inside the PostgreSQL adapter. The caller knows only the domain concept; it has no knowledge of how the query is executed.", correct: true },
+    { label: "Yes. The existence of complex JOINs in the implementation means the abstraction is leaking infrastructure details.", misconception: "Leaky abstraction is about what crosses the interface boundary — what the caller must know. If the interface returns a domain type and accepts domain parameters, the complexity of the underlying implementation is irrelevant to the caller. Complex SQL behind a clean interface is good encapsulation. The abstraction leaks when the implementation's mechanism bleeds into the interface: returning a QueryBuilder, accepting an EntityManager, returning a raw SQL row object." },
+    { label: "Yes. The method signature is too specific — it will require a new interface method for every query variant, so the infrastructure implementation details will leak through the proliferation of methods.", misconception: "Method proliferation is a design smell but not a leaky abstraction in the technical sense. Leaky abstraction means implementation details are visible through the interface to callers. A stable, domain-concept-based interface with many methods is still a clean abstraction if all methods speak in domain terms. The concern about proliferation is valid for interface maintainability, but it is separate from whether infrastructure details are leaking." },
+    { label: "Yes. The interface is in the domain layer, but it uses infrastructure concepts (date ranges are a database query pattern, not a domain concept).", misconception: "Date ranges are not infrastructure concepts — they are time-based business parameters. Querying 'orders placed between these dates' is a business need expressed in domain terms. The interface would leak if it exposed SQL WHERE clauses, query builders, or pagination via database-offset parameters. Using DateRange as a parameter is a domain concept." },
+  ]}
+/>
+
+<Quiz
+  id="arch-03-03-quiz-3"
+  lessonSlug="03-where-layering-leaks"
+  lang="en"
+  question="The team decides to adopt hexagonal architecture to fix the three layering leaks. How does hexagonal architecture structurally prevent each of the three leaks discussed in this lesson?"
+  choices={[
+    { label: "Transaction-script trap: the hexagon's domain/application core owns its ports — the interfaces it needs — forcing real domain logic to exist inside the core, not as pass-through to infrastructure. Layer-skipping: the dependency rule is structurally enforced by port ownership — infrastructure can only reach the core through primary ports; the core never imports infrastructure. Fat service: use cases are bounded by their primary port definition, making each use case an explicit entry point rather than an open method list.", correct: true },
+    { label: "Hexagonal architecture prevents all three leaks by enforcing package-level visibility rules — only public methods cross layer boundaries.", misconception: "Hexagonal architecture does not rely on package visibility rules for its enforcement. Its structural mechanism is port ownership: the domain defines the interfaces (ports) it needs, and infrastructure implements them. This inverts the dependency so that infrastructure can never be imported by the domain — not because of package visibility, but because the domain only imports its own interfaces, and infrastructure adapters implement those interfaces." },
+    { label: "Hexagonal architecture prevents leaks by requiring all code to go through a single entry point (the primary port), creating a bottleneck that prevents bypassing.", misconception: "Hexagonal architecture defines primary ports (how the outside world drives the application) and secondary ports (how the application reaches out). There can be multiple primary ports — an HTTP adapter, a CLI adapter, a test driver are all primary. The enforcement mechanism is dependency direction (the core owns its interfaces), not a single entry point." },
+    { label: "Hexagonal architecture prevents all three leaks by eliminating the service layer — all logic moves into the domain and is directly called by the presentation layer.", misconception: "Hexagonal architecture retains an application layer — the use cases or application services that orchestrate domain logic. It does not eliminate orchestration; it relocates it into a bounded core and inverts the infrastructure dependency. The presentation layer calls through a primary port into the application layer, which delegates to the domain. The service layer is not eliminated — it is bounded." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>The three leaks of layered architecture — transaction-script trap (domain is hollow), layer-skipping (presentation imports infrastructure), and the fat service (service absorbs everything) — are the structural forces that motivated hexagonal and clean architecture. Both invert the dependency at the domain boundary, making the correct direction structural rather than conventional.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:load
+  id="arch-03-03-retrieval"
+  lang="en"
+  questions={[
+    { q: "What is the transaction-script trap and how does it differ from a legitimate use of the Transaction Script pattern?", a: "The transaction-script trap is when a team applies the structural form of layered architecture (packages named controller, service, domain, repository) but writes all business logic as procedural steps inside the service methods — with domain objects as passive data holders. The layers exist as packaging but not as a separation of concerns. The domain layer has no real logic; the service layer has absorbed it all as long step-by-step procedures. It differs from a legitimate Transaction Script pattern: the legitimate use is a deliberate choice for genuinely simple workflows where the domain has no meaningful invariants and procedural clarity outweighs the cost of object-oriented modeling. The trap is applying a transaction-script mental model inside a nominally layered architecture — getting the overhead of four layers without the benefit of domain logic isolation." },
+    { q: "What is layer-skipping, and why does it self-reinforce once it appears?", a: "Layer-skipping is when a higher layer bypasses intermediate layers and imports directly from a lower layer — for example, a controller importing a repository directly instead of going through the application and domain layers. It self-reinforces because: (1) once one skip is visible in the codebase, it is perceived as an established pattern; (2) skipping often solves an immediate problem faster than adding a method to the correct layer; (3) there is no compiler enforcement stopping the import — the discipline is social, not structural. Each skip normalizes the next. Over months, controllers throughout the application have direct repository dependencies, and the infrastructure layer is now coupled to the presentation layer. The dependency-inverted architectures (hexagonal, clean) address this by making the correct direction structural: the domain owns its interfaces, so importing infrastructure from the domain is impossible by construction." },
+    { q: "What are the three structural gaps in flat n-tier layering that the three leaks expose, and what architectural response does each motivate?", a: "Gap 1 (transaction-script trap): no mechanism forces the domain layer to contain real logic. A service can absorb domain behavior without any structural error. This motivates the domain-core model in hexagonal and clean architectures, where the core is the protected, testable center — but more fundamentally it motivates the rich domain model (unit 03-02) as the content of that core. Gap 2 (layer-skipping): no mechanism prevents higher layers from importing lower layers. The dependency rule is a naming convention, not a structural constraint. Hexagonal architecture addresses this by inverting the dependency: the domain defines the port interface; infrastructure implements it. The domain can never import infrastructure because the domain only imports its own interfaces. Gap 3 (fat service): no mechanism defines the boundary of a use case. Use-case boundaries in hexagonal/clean architecture are the primary ports — each use case is an explicit entry point, not an open method added to a shared service class." },
+  ]}
+/>
+
+<Recap lang="en">
+Layered architecture leaks through three predictable failure modes, each exposing a structural gap in the flat four-layer model.
+
+The transaction-script trap: the service layer absorbs all business logic as long procedures while the domain layer stays empty. The layers exist by name but not by concern separation. Domain objects are passive data bags with no enforced invariants. Testing requires the full dependency tree.
+
+Layer-skipping: higher layers bypass intermediate layers and import from lower ones directly. A controller imports a repository because the query it needs was faster to write in raw SQL than to expose through a domain method. Once one skip appears, it normalizes. The infrastructure ends up coupled to the presentation, defeating the replaceability layering was supposed to provide. Leaky abstractions are a subtler form: interface boundaries exist but implementation details (query builders, ORMs, SQL row types) bleed through them.
+
+The fat service: when the domain is hollow and use-case boundaries are undefined, the service layer becomes the catch-all. After 18 months it has 60 methods and 11 infrastructure imports. It is a god object disguised as a service layer — untestable in isolation, risky to modify, and impossible to extract a single use case from.
+
+Each leak names a force that motivated the next generation of structural patterns. Hexagonal architecture (unit 04) inverts the dependency at the domain boundary: the domain owns its ports, infrastructure implements them, and the core is testable with no infrastructure. Clean architecture (unit 05) generalizes this to concentric layers with a hard dependency rule enforced by structure, not convention. Both exist because flat layering's discipline degrades under the pressure of deadlines and growing codebases.
+</Recap>
