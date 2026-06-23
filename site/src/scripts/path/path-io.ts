@@ -14,7 +14,7 @@ import diagnosticsIndex from "~/content/path/diagnostics-index.json";
 import unitsJson from "~/content/units.json";
 import tracksJson from "~/content/tracks.json";
 import { masteryOf, applyReviewEvidence } from "./knowledge";
-import { readAttempts, recordAttempt, type AttemptRec } from "~/scripts/practice-state";
+import { recordAttempt, type AttemptRec } from "~/scripts/practice-state";
 import { dueBefore, recordReview, allCards, type Card } from "~/scripts/review-state";
 import { unitStruggleFractions } from "./practice-signal";
 import { buildDoNow, type DoNowItem } from "./do-now";
@@ -26,12 +26,20 @@ import { seedFromPretest } from "./pretest-seed";
 import { pickProbe, placementPlan, type DiagItem } from "./calibration";
 import { DOMAIN_FAMILIES } from "./mastery-field";
 import { targetFrontier } from "./planner";
+import {
+  studyRating,
+  blendRating,
+  highWater,
+  hasEnoughEvidence,
+  barRatingForGoal,
+} from "~/scripts/progression/effective-rating";
 import committedOverrides from "~/content/path/concept-overrides.json";
 import type { Overrides } from "./graph";
 import { applyOverridesFull, mergeOverrides, loosenUnitEdges } from "./overrides";
 import { serializeStateBundle, parseStateBundle } from "./state-io";
 import { resolveIrt, priorFor, collapse, type SelfPlace, type Irt } from "./bayes";
 import type { Band } from "./types";
+import { rankWeakSpots, type WeakSpot } from "./weak-spots";
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────────────────
 export function unitsFromMap(map: Record<string, { teaches: string[]; requires: string[]; estMin: number }>): UnitConcepts[] {
@@ -393,6 +401,45 @@ export function refreshReviewEvidence(): void {
   knowledge.value = next;
 }
 if (typeof window !== "undefined") refreshReviewEvidence();
+
+/** Recompute the study-derived effective rating from decayed knowledge and persist the
+ *  high-water peak + EMA into progression. Reactive: reruns on knowledge/config change.
+ *  Reads user state via peek() so the userState write does not re-trigger this effect. */
+function syncEffectiveRating(): void {
+  const s = userState.peek();
+  const goalObjs = config.value.goals
+    .map((g) => goalById.get(g.id))
+    .filter(Boolean) as Goal[];
+  if (!goalObjs.length) {
+    const fallback = goalById.get("senior-fullstack");
+    if (fallback) goalObjs.push(fallback);
+  }
+  const sorted = [...config.value.goals].sort((a, b) => a.priority - b.priority);
+  const primaryId = sorted[0]?.id ?? "senior-fullstack";
+  const barRating = barRatingForGoal(primaryId);
+  const frontier = new Set(targetFrontier(goalObjs, config.value, concepts));
+  const K = effectiveKnowledge();
+  if (!hasEnoughEvidence(frontier, K)) return;
+  const placement = s.pretest?.rating ?? 0;
+  const prog = s.progression;
+  const raw = studyRating(frontier, K, barRating);
+  const { ema, effective } = blendRating(placement, prog.studyEma, raw);
+  const peak = highWater(prog.peakRating, effective);
+  if (peak === prog.peakRating && ema === prog.studyEma) return;
+  userState.value = {
+    ...s,
+    progression: { ...prog, peakRating: peak, studyEma: ema, studyRatingAt: Date.now() },
+  };
+}
+
+if (typeof window !== "undefined") {
+  effect(() => {
+    // Subscribe to the signals that should drive a recompute.
+    knowledge.value;
+    config.value;
+    syncEffectiveRating();
+  });
+}
 
 // Due-review read-model (fixes computePath's srsDue: []). SSR-safe: [] when there is no window.
 export function dueReviews(now = Date.now()): { cardKey: string; lessonKey: string }[] {
@@ -807,3 +854,25 @@ export function applyFix(fix: Fix): void {
 }
 
 export function applyCombo(combo: Fix[]): void { for (const f of combo) applyFix(f); }
+
+/** Live weak-spots for the planning UI: units teaching below-mastery goal-frontier concepts
+ *  that the learner keeps failing (practice struggle or SRS lapses), ranked by priority.
+ *  Empty when there is no failure signal — the normal path then drives (no remediation trap). */
+export function currentWeakSpots(): WeakSpot[] {
+  if (typeof window === "undefined") return [];
+  const cfg = config.value; // subscribe
+  const goalObjs = cfg.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
+  if (!goalObjs.length) {
+    const fallback = goalById.get("senior-fullstack");
+    if (fallback) goalObjs.push(fallback);
+  }
+  const frontier = new Set(targetFrontier(goalObjs, cfg, concepts));
+  return rankWeakSpots({
+    frontier,
+    knowledge: effectiveKnowledge(), // subscribes to knowledge via decay(knowledge.value, …)
+    masteryThreshold: cfg.weights.masteryThreshold,
+    teachesByUnit,
+    struggleByUnit: unitStruggleFractions(readAttemptsAll(), unitLessonCounts),
+    healthByUnit: unitReviewHealth(allCards(), Date.now()),
+  });
+}

@@ -13,6 +13,7 @@ import { getPlacement } from "~/english/state";
 import { knownTotal, readUnitsCount, gradedOutputCount, grammarDoneCount, collocationDoneCount } from "~/english/stats";
 import { evaluateAchievements } from "~/scripts/progression/achievements";
 import { titlesFromState, TITLES } from "~/scripts/progression/titles";
+import { ratingToRank } from "~/scripts/progression/ranks";
 import { pretestQuestions, advancedQuestions } from "~/scripts/pretest-questions";
 import { type Locale } from "~/i18n";
 import Pretest from "~/components/pedagogy/Pretest";
@@ -66,6 +67,10 @@ export default function ProfilePanel({ lang }: { lang: Locale }) {
   const t = L[lang];
   const s = userState.value;
   const pretest = s.pretest;
+  const peakRating = s.progression.peakRating ?? 0;
+  const displayRating = Math.max(pretest?.rating ?? 0, peakRating);
+  const displayRank = ratingToRank(displayRating).id;
+  const movedUp = !!pretest && displayRating > pretest.rating;
 
   const store = loadStore();
   const solvedEntries = Object.entries(store).filter(([, e]: any) => e.status === "solved");
@@ -126,8 +131,15 @@ export default function ProfilePanel({ lang }: { lang: Locale }) {
           <span class="sec-note">{t.rankNote}</span>
         </div>
         <div class="rank-top">
-          <RankNow lang={lang} rank={pretest.rank} rating={pretest.rating} confidence={pretest.confidence} />
-          <RankLadder lang={lang} rating={pretest.rating} />
+          <RankNow lang={lang} rank={displayRank} rating={displayRating} confidence={pretest.confidence} />
+          {movedUp && (
+            <p class="rank-progress-note" style="margin:0.25rem 0 0;font-size:0.85rem;opacity:0.75;">
+              {lang === "ru"
+                ? `Размещён на ${pretest.rating} → сейчас ${displayRating}`
+                : `Placed at ${pretest.rating} → now ${displayRating}`}
+            </p>
+          )}
+          <RankLadder lang={lang} rating={displayRating} />
         </div>
       </section>
 
