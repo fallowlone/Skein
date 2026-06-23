@@ -88,7 +88,9 @@ export default function ProfilePanel({ lang }: { lang: Locale }) {
   const titles = titlesFromState(s);
 
   // Persist newly-unlocked achievements once on mount (real side-effect, unchanged from v1).
+  // Also clear the SSR fallback the page renders while this client:only island boots.
   useEffect(() => {
+    document.getElementById("profile-fallback")?.remove();
     if (!pretest) return;
     const now = Date.now();
     const have = s.progression.achievements;
