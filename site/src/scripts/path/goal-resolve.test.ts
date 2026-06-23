@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { content } from "./path-io"; // concepts catalog
 import { resolveGoalTargets, targetFrontier } from "./goal-resolve";
 import type { Concept, Goal } from "./types";
+import goalsJson from "~/content/path/goals.json";
 
 describe("goal-resolve", () => {
   it("track-band=surface..middle returns core-track concepts within [surface,middle]", () => {
@@ -68,5 +69,14 @@ describe("senior-fullstack frontier is scoped to its senior-defining tracks", ()
     expect(ids.has("idx-foundations")).toBe(false);
     expect(ids.has("flexbox")).toBe(false);
     expect(ids.has("hooks")).toBe(false);
+  });
+
+  // Regression guard: the production goal must keep the scoped rule, not revert to band>=middle (all tracks).
+  it("production goals.json senior-fullstack uses the scoped track-band>=middle rule", () => {
+    const senior = (goalsJson as Goal[]).find((g) => g.id === "senior-fullstack");
+    expect(senior?.target?.rule).toBe("track-band>=middle");
+    for (const t of ["distributed", "databases", "system-design", "backend", "security", "observability", "performance"]) {
+      expect((senior!.trackWeights as Record<string, number>)[t]).toBeGreaterThanOrEqual(1);
+    }
   });
 });
