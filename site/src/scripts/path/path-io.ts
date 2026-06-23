@@ -39,6 +39,7 @@ import { applyOverridesFull, mergeOverrides, loosenUnitEdges } from "./overrides
 import { serializeStateBundle, parseStateBundle } from "./state-io";
 import { resolveIrt, priorFor, collapse, type SelfPlace, type Irt } from "./bayes";
 import type { Band } from "./types";
+import { rankWeakSpots, type WeakSpot } from "./weak-spots";
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────────────────
 export function unitsFromMap(map: Record<string, { teaches: string[]; requires: string[]; estMin: number }>): UnitConcepts[] {
@@ -853,3 +854,25 @@ export function applyFix(fix: Fix): void {
 }
 
 export function applyCombo(combo: Fix[]): void { for (const f of combo) applyFix(f); }
+
+/** Live weak-spots for the planning UI: units teaching below-mastery goal-frontier concepts
+ *  that the learner keeps failing (practice struggle or SRS lapses), ranked by priority.
+ *  Empty when there is no failure signal — the normal path then drives (no remediation trap). */
+export function currentWeakSpots(): WeakSpot[] {
+  if (typeof window === "undefined") return [];
+  const cfg = config.value; // subscribe
+  const goalObjs = cfg.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
+  if (!goalObjs.length) {
+    const fallback = goalById.get("senior-fullstack");
+    if (fallback) goalObjs.push(fallback);
+  }
+  const frontier = new Set(targetFrontier(goalObjs, cfg, concepts));
+  return rankWeakSpots({
+    frontier,
+    knowledge: effectiveKnowledge(), // subscribes to knowledge via decay(knowledge.value, …)
+    masteryThreshold: cfg.weights.masteryThreshold,
+    teachesByUnit,
+    struggleByUnit: unitStruggleFractions(readAttemptsAll(), unitLessonCounts),
+    healthByUnit: unitReviewHealth(allCards(), Date.now()),
+  });
+}
