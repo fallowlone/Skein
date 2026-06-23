@@ -36,6 +36,7 @@ import {
   type RatingForecast,
 } from "~/scripts/progression/effective-rating";
 import { ratingToRank } from "~/scripts/progression/ranks";
+import { calibrationFreshness, type CalibrationFreshness } from "~/scripts/progression/calibration-freshness";
 import committedOverrides from "~/content/path/concept-overrides.json";
 import type { Overrides } from "./graph";
 import { applyOverridesFull, mergeOverrides, loosenUnitEdges } from "./overrides";
@@ -890,6 +891,7 @@ export interface Readiness {
   pace: Pace | null;
   weakSpots: WeakSpot[];
   interviewReadiness: number | null;
+  recalibration: CalibrationFreshness;
 }
 
 /** One bundle for the readiness dashboard: live rank (high-water), the senior-by-date
@@ -923,6 +925,12 @@ export function currentReadiness(): Readiness {
     pace: p,
     weakSpots: typeof window === "undefined" ? [] : currentWeakSpots(),
     interviewReadiness: s.progression.interviewReadiness ?? null,
+    recalibration: calibrationFreshness(
+      pretest?.rating ?? null,
+      pretest?.takenAt ?? null,
+      s.progression.studyEma,
+      Date.now(),
+    ),
   };
 }
 
