@@ -3,7 +3,8 @@ import { lazy, Suspense } from "preact/compat";
 import type { Locale } from "~/i18n";
 import type { PracticeTaskData } from "~/content.config";
 import { checkBlank } from "~/scripts/practice-grade";
-import { setTaskStatus, readProgress } from "~/scripts/practice-state";
+import { setTaskStatus, readProgress, readAttempts } from "~/scripts/practice-state";
+import { recommendNext } from "~/scripts/path/adaptive-difficulty";
 import { recordPracticeResult } from "~/scripts/metrics";
 import { recordPracticeOutcome } from "~/scripts/path/path-io";
 import { runDebug, type DebugRunResult } from "~/scripts/debug-runner";
@@ -26,6 +27,10 @@ const PARAMETRIC: Record<string, ReturnType<typeof lazy>> = {
 type Props = { lang: Locale; lessonKey: string; tasks: PracticeTaskData[] };
 
 const tt = (lang: Locale, en: string, ru: string) => (lang === "en" ? en : ru);
+
+// Mirrors the global masteryThreshold default so the recall/apply/stretch band cutoffs in
+// recommendNext line up with the rest of the adaptive engine without importing the path config.
+const PRACTICE_THRESHOLD = 0.6;
 
 export const DIFFICULTY_ORDER = ["recall", "apply", "stretch"] as const;
 export function difficultyRank(d: string): number {
@@ -72,12 +77,13 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
   void tick; // tick only forces a re-render; readProgress is re-read each render
   const p = readProgress(lessonKey);
   const done = ordered.filter((t) => p[t.id] === "done").length;
-  // Adaptive "do this next" cue. A per-concept mastery number is NOT cheap here (the island has no
-  // lesson→unit-concept map and would have to import the path graph + decayed knowledge), so per the
-  // plan we use the simplest signal that still gives a clear next-action: the first not-"done" task
-  // in the easiest→hardest order. `ordered` already sorts recall→apply→stretch, so this lands on the
-  // lowest open tier — the same task difficulty.recommendTask would pick for a weak/new learner.
-  const recommendedId = ordered.find((t) => p[t.id] !== "done")?.id;
+  // Adaptive "do this next" cue. We deliberately avoid importing the path graph / decayed knowledge
+  // here (it would bloat every lesson bundle). Instead we use the cheapest, most direct assessment
+  // signal — the learner's own attempt record on THIS lesson's tasks (readAttempts, already local) —
+  // to derive a difficulty band and recommend the matching open task. With no attempts yet this is
+  // byte-identical to "first open task, easiest→hardest" (`ordered` is pre-sorted recall→apply→stretch).
+  const rec = recommendNext(ordered, p, readAttempts(lessonKey), PRACTICE_THRESHOLD);
+  const recommendedId = rec.taskId ?? undefined;
   return (
     <section data-practice-layer data-lesson-key={lessonKey} class="my-12">
       <h2 class="font-display font-[520] text-ink text-2xl mb-1">{tt(lang, "Practice", "Практика")}</h2>
@@ -95,7 +101,7 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
       <ol class="space-y-4">
         {ordered.map((task) => (
           <li key={task.id}>
-            <TaskCard lang={lang} lessonKey={lessonKey} task={task} recommended={task.id === recommendedId} onChange={bump} />
+            <TaskCard lang={lang} lessonKey={lessonKey} task={task} recommended={task.id === recommendedId} adaptive={task.id === recommendedId && rec.reason === "performance"} onChange={bump} />
           </li>
         ))}
       </ol>
@@ -103,7 +109,7 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
   );
 }
 
-function TaskCard({ lang, lessonKey, task, recommended, onChange }: { lang: Locale; lessonKey: string; task: PracticeTaskData; recommended?: boolean; onChange?: () => void }) {
+function TaskCard({ lang, lessonKey, task, recommended, adaptive, onChange }: { lang: Locale; lessonKey: string; task: PracticeTaskData; recommended?: boolean; adaptive?: boolean; onChange?: () => void }) {
   const [open, setOpen] = useState(false);
   const onOpen = () => {
     setOpen((v) => {
@@ -118,7 +124,13 @@ function TaskCard({ lang, lessonKey, task, recommended, onChange }: { lang: Loca
         <span class="flex items-center gap-2 min-w-0">
           <span class="font-medium text-ink">{tt(lang, task.title.en, task.title.ru)}</span>
           {recommended && (
-            <span class="text-[10px] font-mono uppercase tracking-wide px-2 py-0.5 rounded-[var(--r-sm)] bg-accent-ghost text-accent shrink-0">{tt(lang, "Start here", "Начни здесь")}</span>
+            <span
+              class="text-[10px] font-mono uppercase tracking-wide px-2 py-0.5 rounded-[var(--r-sm)] bg-accent-ghost text-accent shrink-0"
+              title={adaptive ? tt(lang, "Matched to your recent practice on this lesson", "Подобрано по твоей недавней практике в этом уроке") : undefined}
+              aria-label={adaptive ? tt(lang, "Recommended: matched to your recent practice on this lesson", "Рекомендовано: подобрано по твоей недавней практике в этом уроке") : tt(lang, "Recommended: start here", "Рекомендовано: начни здесь")}
+            >
+              {adaptive ? tt(lang, "Matched to you", "Под тебя") : tt(lang, "Start here", "Начни здесь")}
+            </span>
           )}
         </span>
         <span class="flex items-center gap-2 shrink-0">
