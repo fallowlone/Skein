@@ -14,7 +14,7 @@ import diagnosticsIndex from "~/content/path/diagnostics-index.json";
 import unitsJson from "~/content/units.json";
 import tracksJson from "~/content/tracks.json";
 import { masteryOf, applyReviewEvidence } from "./knowledge";
-import { readAttempts, recordAttempt, type AttemptRec } from "~/scripts/practice-state";
+import { recordAttempt, type AttemptRec } from "~/scripts/practice-state";
 import { dueBefore, recordReview, allCards, type Card } from "~/scripts/review-state";
 import { unitStruggleFractions } from "./practice-signal";
 import { buildDoNow, type DoNowItem } from "./do-now";
