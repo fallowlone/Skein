@@ -34,6 +34,8 @@ export type Track =
   | "security-defensive" | "security-cloud"
   | "cli"
   | "linux"
+  | "code-patterns"
+  | "react-patterns"
   | "architecture-patterns";
 
 export const TRACKS: Track[] = [
@@ -52,6 +54,8 @@ export const TRACKS: Track[] = [
   "security-defensive", "security-cloud",
   "cli",
   "linux",
+  "code-patterns",
+  "react-patterns",
   "architecture-patterns",
 ];
 

@@ -19,6 +19,8 @@ export const TRACK_ABBR: Record<Track, string> = {
   "security-defensive": "BLUE", "security-cloud": "CLOUD",
   "cli": "CLI",
   "linux": "LIN",
+  "code-patterns": "CP",
+  "react-patterns": "RXP",
   "architecture-patterns": "ARCH",
 };
 
