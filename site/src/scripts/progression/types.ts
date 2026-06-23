@@ -45,6 +45,10 @@ export interface Progression {
   streak: { lastActiveDay: string; count: number; best: number };
   titles: string[];
   englishSummary?: EnglishSummary;   // optional → old payloads stay valid
+  // Study-derived rating (P1 — living rank). Absent ⇒ no study signal yet; fall back to pretest.
+  peakRating?: number;   // monotonic high-water of effectiveRating (visible rank; never decreases)
+  studyEma?: number;     // EMA of studyRating, carried into the next blend
+  studyRatingAt?: number; // epoch ms of last recompute
 }
 
 export interface AchievementCtx {
