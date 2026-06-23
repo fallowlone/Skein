@@ -27,6 +27,21 @@ export function buildSession(
   return out.slice(0, Math.max(0, max));
 }
 
+/** Rotate a windowed slice so consecutive sessions surface different tasks instead of the same
+ *  first `size` every time. `pool` is the full ordered set (buildSession output). Returns up to
+ *  `size` DISTINCT items starting at a round-derived offset, wrapping around the pool. Pure:
+ *  same (pool, size, round) ⇒ same slice. When the pool is no larger than `size`, returns it
+ *  unchanged (nothing to rotate) — so small pools behave exactly as before. */
+export function selectRound(pool: SessionItem[], size: number, round: number): SessionItem[] {
+  if (size <= 0) return [];
+  if (pool.length <= size) return pool.slice();
+  const n = pool.length;
+  const start = (Math.max(0, Math.floor(round)) * size) % n;
+  const view: SessionItem[] = [];
+  for (let i = 0; i < size; i++) view.push(pool[(start + i) % n]);
+  return view;
+}
+
 const WEIGHT: Record<Outcome, number> = { pass: 1, partial: 0.5, fail: 0 };
 
 /** Interview readiness 0–100 from per-task self/graded outcomes. */
