@@ -31,11 +31,10 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!items.length) {
-    return <p class="re-lead">{t("interview.empty", lang)}</p>;
-  }
-
-  if (idx >= items.length) {
+  // Persist interview readiness (high-water) once the session completes. Runs in an effect
+  // (not render) so we never write a signal during Preact's render pass.
+  useEffect(() => {
+    if (idx < items.length) return;
     const score = Math.round(readinessScore(outcomes));
     const prog = userState.value.progression;
     if (score > (prog.interviewReadiness ?? 0)) {
@@ -44,6 +43,15 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
         progression: { ...prog, interviewReadiness: score, interviewCompletedAt: Date.now() },
       };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [idx]);
+
+  if (!items.length) {
+    return <p class="re-lead">{t("interview.empty", lang)}</p>;
+  }
+
+  if (idx >= items.length) {
+    const score = Math.round(readinessScore(outcomes));
     return (
       <section class="iv-done">
         <div class="meta mb-2">{t("interview.title", lang)}</div>
