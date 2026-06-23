@@ -32,3 +32,8 @@ export function blendRating(
     : Math.round(alpha * studyRatingRaw + (1 - alpha) * prevStudyEma);
   return { ema, effective: Math.max(placementRating, ema) };
 }
+
+/** Visible rank uses the high-water mark — earned rank is never taken away. */
+export function highWater(prevPeak: number | undefined, effective: number): number {
+  return Math.max(prevPeak ?? 0, effective);
+}
