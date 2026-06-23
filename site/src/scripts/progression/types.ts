@@ -51,6 +51,7 @@ export interface Progression {
   studyRatingAt?: number; // epoch ms of last recompute
   interviewReadiness?: number;   // 0–100, best score from a completed interview session (high-water)
   interviewCompletedAt?: number; // epoch ms of last interview finish
+  interviewRounds?: number;      // completed interview sessions; rotates which task window is shown next
 }
 
 export interface AchievementCtx {
