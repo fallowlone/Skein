@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import type { KnowledgeState } from "~/scripts/path/types";
 import { studyRating } from "./effective-rating";
 import { blendRating } from "./effective-rating";
+import { highWater } from "./effective-rating";
 
 // Build a KnowledgeState from { conceptId: confidence } pairs.
 const K = (pairs: Record<string, number>): KnowledgeState =>
@@ -38,5 +39,17 @@ describe("blendRating", () => {
   it("ema smooths a single session (alpha 0.3)", () => {
     // 0.3*200 + 0.7*100 = 130
     expect(blendRating(0, 100, 200).ema).toBe(130);
+  });
+});
+
+describe("highWater", () => {
+  it("undefined previous peak returns the current effective", () => {
+    expect(highWater(undefined, 500)).toBe(500);
+  });
+  it("never decreases below the previous peak", () => {
+    expect(highWater(700, 500)).toBe(700); // decay must not demote the badge
+  });
+  it("rises when effective exceeds the peak", () => {
+    expect(highWater(500, 620)).toBe(620);
   });
 });
