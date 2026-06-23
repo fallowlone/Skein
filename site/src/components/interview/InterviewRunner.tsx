@@ -2,7 +2,7 @@ import { useState, useEffect } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
 import GradeWithAi from "~/components/pedagogy/GradeWithAi";
 import { recordPracticeOutcome } from "~/scripts/path/path-io";
-import { recordActiveDay } from "~/scripts/user-state";
+import { recordActiveDay, userState } from "~/scripts/user-state";
 import { cardsFromPractice } from "~/scripts/review-harvest";
 import { addCard } from "~/scripts/review-state";
 import { readinessScore, type SessionItem, type Outcome } from "~/scripts/interview/interview-session";
@@ -37,6 +37,13 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
 
   if (idx >= items.length) {
     const score = Math.round(readinessScore(outcomes));
+    const prog = userState.value.progression;
+    if (score > (prog.interviewReadiness ?? 0)) {
+      userState.value = {
+        ...userState.value,
+        progression: { ...prog, interviewReadiness: score, interviewCompletedAt: Date.now() },
+      };
+    }
     return (
       <section class="iv-done">
         <div class="meta mb-2">{t("interview.title", lang)}</div>
