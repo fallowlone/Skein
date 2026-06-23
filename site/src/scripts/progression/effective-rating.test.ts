@@ -3,6 +3,7 @@ import type { KnowledgeState } from "~/scripts/path/types";
 import { studyRating } from "./effective-rating";
 import { blendRating } from "./effective-rating";
 import { highWater } from "./effective-rating";
+import { barRatingForGoal, hasEnoughEvidence } from "./effective-rating";
 
 // Build a KnowledgeState from { conceptId: confidence } pairs.
 const K = (pairs: Record<string, number>): KnowledgeState =>
@@ -51,5 +52,33 @@ describe("highWater", () => {
   });
   it("rises when effective exceeds the peak", () => {
     expect(highWater(500, 620)).toBe(620);
+  });
+});
+
+describe("barRatingForGoal", () => {
+  it("senior-fullstack maps to the senior bar (600)", () => {
+    expect(barRatingForGoal("senior-fullstack")).toBe(600);
+  });
+  it("job-ready-junior maps to the junior ceiling (450)", () => {
+    expect(barRatingForGoal("job-ready-junior")).toBe(450);
+  });
+  it("unknown goal defaults to the senior bar (600)", () => {
+    expect(barRatingForGoal("whatever")).toBe(600);
+  });
+});
+
+describe("hasEnoughEvidence", () => {
+  const K = (pairs: Record<string, number>): KnowledgeState =>
+    new Map(Object.entries(pairs).map(([id, confidence]) => [id, { confidence, source: "activity" as const, lastAt: 0 }]));
+  it("false when fewer than minEvidence concepts clear tau", () => {
+    expect(hasEnoughEvidence(new Set(["a", "b", "c"]), K({ a: 0.9, b: 0.9 }), 0.6, 5)).toBe(false);
+  });
+  it("true when at least minEvidence concepts clear tau", () => {
+    const f = new Set(["a", "b", "c", "d", "e"]);
+    expect(hasEnoughEvidence(f, K({ a: 0.7, b: 0.7, c: 0.7, d: 0.7, e: 0.7 }), 0.6, 5)).toBe(true);
+  });
+  it("confidence below tau does not count", () => {
+    const f = new Set(["a", "b", "c", "d", "e"]);
+    expect(hasEnoughEvidence(f, K({ a: 0.5, b: 0.5, c: 0.5, d: 0.5, e: 0.5 }), 0.6, 5)).toBe(false);
   });
 });

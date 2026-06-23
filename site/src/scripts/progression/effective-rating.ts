@@ -37,3 +37,32 @@ export function blendRating(
 export function highWater(prevPeak: number | undefined, effective: number): number {
   return Math.max(prevPeak ?? 0, effective);
 }
+
+/** Goal → rating bar, anchored on the rank ladder's market annotations:
+ *  apprentice-1=125 (junior baseline), engineer-1=450 (junior ceiling / entry-middle),
+ *  engineer-2=500 (middle interviews), senior-engineer-1=600 (the senior bar). Tunable in P2. */
+const GOAL_BAR: Record<string, number> = {
+  "senior-fullstack": 600,
+  "ai-engineer": 600,
+  "interview-prep": 600,
+  "job-ready-junior": 450,
+};
+export function barRatingForGoal(goalId: string): number {
+  return GOAL_BAR[goalId] ?? 600;
+}
+
+/** Suppress the "now Y" surface until enough frontier concepts are genuinely cleared,
+ *  so a sparse early signal can't mislead. */
+export function hasEnoughEvidence(
+  frontier: Set<string>,
+  knowledge: KnowledgeState,
+  tau = 0.6,
+  minEvidence = 5,
+): boolean {
+  let n = 0;
+  for (const id of frontier) {
+    const m = knowledge.get(id);
+    if (m && m.confidence >= tau) n++;
+  }
+  return n >= minEvidence;
+}
