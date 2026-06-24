@@ -37,6 +37,16 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
   const rank = ratingToRank(r.displayRating);
   const barLabel = ratingToRank(r.barRating).label[lang];
 
+  // What the rank MEANS: the market gloss on anchor ranks (e.g. "≈ junior baseline"), else the
+  // tier band so every rank reads as junior / middle / senior. Plus the 0–1000 scale + goal target.
+  const tierBand: Record<string, { en: string; ru: string }> = {
+    junior: { en: "junior level", ru: "джуниор-уровень" },
+    middle: { en: "middle level", ru: "миддл-уровень" },
+    senior: { en: "senior level", ru: "сеньор-уровень" },
+  };
+  const meaning = rank.market?.[lang] ?? tierBand[rank.contentTier]?.[lang] ?? "";
+  const scaleHint = lang === "ru" ? `шкала 0–1000 · цель ${r.barRating}` : `0–1000 scale · goal ${r.barRating}`;
+
   const deltaText = (d: number) =>
     d > 0
       ? t("readiness.behind", lang).replace("{d}", String(d))
@@ -74,6 +84,7 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
           <span class="rd-ico" aria-hidden="true">{rank.icon}</span> {rank.label[lang]}
         </strong>
         <span class="rd-rating">{r.displayRating}</span>
+        <span class="rd-meaning">{meaning ? `${meaning} · ${scaleHint}` : scaleHint}</span>
         {r.movedUp && (
           <span class="rd-moved">
             {t("readiness.placedNow", lang)
