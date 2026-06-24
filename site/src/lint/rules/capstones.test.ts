@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkCapstones } from "./capstones";
+import { checkCapstones, checkWorkbenchCoherence } from "./capstones";
 
 async function withRoot(fn: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "cap-"));
@@ -72,5 +72,90 @@ describe("checkCapstones", () => {
       await project(root, "p.json", proj([{ ...ms("m1"), feedsFrom: ["not-a-key"] }, ms("m2")]));
       expect((await checkCapstones(root)).warnings.some((w) => /feedsFrom/.test(w))).toBe(true);
     });
+  });
+
+  it("flags an untranslated rubric cell (en===ru, prose)", async () => {
+    await withRoot(async (root) => {
+      const same = "This rubric cell is identical in both languages and long enough.";
+      await project(root, "p.json", {
+        slug: "p", milestones: [ms("m1"), ms("m2")],
+        rubric: [{ dimension: { en: "Correctness of refill", ru: "Корректность пополнения" },
+          junior: { en: same, ru: same }, mid: { en: "m", ru: "м" }, senior: { en: "s", ru: "с" } }],
+      });
+      expect((await checkCapstones(root)).errors.some((e) => /rubric.*untranslated/.test(e))).toBe(true);
+    });
+  });
+
+  it("passes a fully-translated rubric + reference", async () => {
+    await withRoot(async (root) => {
+      await project(root, "p.json", {
+        slug: "p", milestones: [ms("m1"), ms("m2")],
+        rubric: [{ dimension: { en: "Correctness of refill", ru: "Корректность пополнения" },
+          junior: { en: "passes the happy path", ru: "проходит счастливый путь" },
+          mid: { en: "handles the cap and refill", ru: "учитывает лимит и пополнение" },
+          senior: { en: "handles contention and abuse", ru: "учитывает гонки и злоупотребление" } }],
+        reference: [{ en: "The token bucket fits because bursts are cheap to allow.",
+          ru: "Token bucket подходит, потому что всплески дёшево разрешать." }],
+      });
+      expect((await checkCapstones(root)).errors).toEqual([]);
+    });
+  });
+});
+
+describe("checkWorkbenchCoherence", () => {
+  async function wb(root: string, slug: string, opts: { stack?: string; scaffold?: boolean; solution?: boolean; test?: boolean }) {
+    const base = join(root, slug);
+    await mkdir(base, { recursive: true });
+    await writeFile(join(base, "manifest.json"), JSON.stringify({ stack: opts.stack ?? "bun-ts", test: "bun test" }));
+    if (opts.scaffold !== false) {
+      await mkdir(join(base, "scaffold", "test"), { recursive: true });
+      if (opts.test !== false) await writeFile(join(base, "scaffold", "test", "x.test.ts"), "// test");
+    }
+    if (opts.solution !== false) await mkdir(join(base, "solution"), { recursive: true });
+  }
+
+  it("passes a complete workbench", async () => {
+    const root = await mkdtemp(join(tmpdir(), "wbc-"));
+    try {
+      await wb(root, "p", {});
+      const errs = await checkWorkbenchCoherence([{ file: "p.json", data: { slug: "p", workbench: true } }], root);
+      expect(errs).toEqual([]);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("flags workbench:true with no directory", async () => {
+    const root = await mkdtemp(join(tmpdir(), "wbc-"));
+    try {
+      const errs = await checkWorkbenchCoherence([{ file: "p.json", data: { slug: "missing", workbench: true } }], root);
+      expect(errs.some((e) => /missing/.test(e))).toBe(true);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("flags a missing solution dir and a missing test file", async () => {
+    const root = await mkdtemp(join(tmpdir(), "wbc-"));
+    try {
+      await wb(root, "p", { solution: false, test: false });
+      const errs = await checkWorkbenchCoherence([{ file: "p.json", data: { slug: "p", workbench: true } }], root);
+      expect(errs.some((e) => /solution/.test(e))).toBe(true);
+      expect(errs.some((e) => /no \*\.test\.ts/.test(e))).toBe(true);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("flags an orphan workbench dir (no claiming project)", async () => {
+    const root = await mkdtemp(join(tmpdir(), "wbc-"));
+    try {
+      await wb(root, "orphan", {});
+      const errs = await checkWorkbenchCoherence([], root);
+      expect(errs.some((e) => /orphan/.test(e))).toBe(true);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("flags an invalid manifest stack", async () => {
+    const root = await mkdtemp(join(tmpdir(), "wbc-"));
+    try {
+      await wb(root, "p", { stack: "go" });
+      const errs = await checkWorkbenchCoherence([{ file: "p.json", data: { slug: "p", workbench: true } }], root);
+      expect(errs.some((e) => /invalid stack/.test(e))).toBe(true);
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
