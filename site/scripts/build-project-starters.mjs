@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+// Requires the `zip` binary on PATH (present on the ubuntu/Cloudflare build images).
 // build:starters — zip each workbench scaffold into public/project-starters/<slug>.zip
 // (the learner's download). The detail page reads the scaffold file tree directly from
 // the filesystem at render time, so no generated index is needed here — only the zips.
