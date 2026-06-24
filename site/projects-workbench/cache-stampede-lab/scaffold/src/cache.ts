@@ -7,9 +7,13 @@
 // Contract:
 //
 //   Cache<V>
-//     set(key, value, ttl, now, delta)  — store entry; delta = time to compute value (ms).
-//     get(key, now, loader)             — single-flight: concurrent gets share ONE loader call.
-//     getStale(key, now)                — return stale entry value without triggering loader.
+//     set(key, value, ttl, now, delta)           — store entry; delta = declared compute cost (ms).
+//     get(key, now, loader, ttl?, delta?, beta?, rand?)
+//                                                — single-flight: concurrent gets share ONE loader call.
+//                                                  ttl controls entry lifetime; delta is stored for XFetch.
+//                                                  When rand < 1 and the XFetch threshold is crossed on a
+//                                                  fresh hit, trigger one background refresh (coalesced).
+//     getStale(key, now)                         — return stale entry value without triggering loader.
 //
 //   shouldEarlyRefresh(now, expiry, delta, beta, rand)
 //     → boolean
@@ -31,10 +35,26 @@ export class Cache<V> {
     void _key; void _value; void _ttl; void _now; void _delta;
   }
 
-  get(_key: string, _now: number, _loader: () => Promise<V>): Promise<V> {
-    // TODO: return stale value when available; otherwise coalesce concurrent loaders
-    //       into a single in-flight Promise (single-flight).
-    void _key; void _now; void _loader;
+  get(
+    _key: string,
+    _now: number,
+    _loader: () => Promise<V>,
+    _ttl = 1000,
+    _delta = 0,
+    _beta = 1,
+    _rand = 1,
+  ): Promise<V> {
+    // TODO:
+    //   1. Fresh hit (now < entry.expiry):
+    //      - If XFetch threshold crossed (shouldEarlyRefresh), start ONE background
+    //        refresh (coalesced via inflight). Return current value.
+    //      - Otherwise return current value.
+    //   2. Expired, inflight exists → return stale value immediately.
+    //   3. No entry, inflight exists → join existing promise (single-flight).
+    //   4. Otherwise (cold miss or expired, no inflight):
+    //      - Start loader, store { value, expiry: now + _ttl, delta: _delta }.
+    //      - Register inflight; delete when done.
+    void _key; void _now; void _loader; void _ttl; void _delta; void _beta; void _rand;
     return Promise.reject(new Error("not implemented"));
   }
 

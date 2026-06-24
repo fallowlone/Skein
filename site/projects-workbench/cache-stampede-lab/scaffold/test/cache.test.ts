@@ -122,3 +122,80 @@ test("stale-while-revalidate: callers get stale value while refresh is in-flight
   const fresh = await firstRefresh;
   expect(fresh).toBe("fresh-value");
 });
+
+// ---------------------------------------------------------------------------
+// (e) XFetch delta stored: after a get()-driven load the entry's delta matches
+//     the caller-declared delta (non-zero, meaningful for XFetch decisions).
+// ---------------------------------------------------------------------------
+test("get() stores caller-declared delta in the cache entry (non-zero)", async () => {
+  const cache = new Cache<string>();
+  const TTL = 5000;
+  const DELTA = 200; // declared compute cost
+
+  let callCount = 0;
+  await cache.get("key", 0, () => {
+    callCount++;
+    return Promise.resolve("computed");
+  }, TTL, DELTA);
+
+  expect(callCount).toBe(1);
+
+  // Retrieve the entry directly to inspect its stored delta.
+  // Use getStale — if the entry exists it returns the value; we verify early-refresh
+  // fires at a time consistent with the stored DELTA (not with delta=0).
+  //
+  // XFetch with delta=0 → Math.log(rand) term disappears → early-refresh
+  // never fires before expiry. With DELTA=200, rand=0.1:
+  //   gap = 200 * 1 * 2.302 ≈ 460 ms  → refresh fires when now >= 5000 - 460 = 4540
+  //
+  // We verify by triggering a get at now=4600 (< TTL=5000, so still valid)
+  // with the same rand=0.1. If delta was stored as 0 no refresh fires; if
+  // stored as 200 a background refresh fires (loader called a second time).
+  const now2 = 4600;
+  const rand = 0.1;
+  await cache.get("key", now2, () => {
+    callCount++;
+    return Promise.resolve("refreshed");
+  }, TTL, DELTA, 1, rand);
+
+  // Early-refresh triggered because stored delta=200, not 0
+  expect(callCount).toBe(2);
+});
+
+// ---------------------------------------------------------------------------
+// (f) XFetch via get(): still-valid entry crossing XFetch threshold fires
+//     exactly ONE background refresh (coalesced, not multiple).
+// ---------------------------------------------------------------------------
+test("get() triggers exactly one early background refresh when XFetch threshold crossed", async () => {
+  const cache = new Cache<string>();
+  const TTL = 10_000;
+  const DELTA = 500;
+  const BETA = 1;
+  // rand=0.1 → gap ≈ 1151 ms → XFetch fires when now >= 10000 - 1151 = 8849
+  const RAND = 0.1;
+
+  let callCount = 0;
+
+  // Seed — entry stored with delta=500, expiry=10000
+  await cache.get("key", 0, () => {
+    callCount++;
+    return Promise.resolve("original");
+  }, TTL, DELTA);
+
+  expect(callCount).toBe(1);
+
+  // now=9000: still valid (< 10000), but XFetch threshold crossed for DELTA=500
+  // Multiple concurrent callers — all should get current value + exactly ONE refresh
+  const now = 9_000;
+  const results = await Promise.all([
+    cache.get("key", now, () => { callCount++; return Promise.resolve("early-refresh"); }, TTL, DELTA, BETA, RAND),
+    cache.get("key", now, () => { callCount++; return Promise.resolve("early-refresh"); }, TTL, DELTA, BETA, RAND),
+    cache.get("key", now, () => { callCount++; return Promise.resolve("early-refresh"); }, TTL, DELTA, BETA, RAND),
+  ]);
+
+  // All callers get the current (still-valid) value
+  expect(results.every((r) => r === "original")).toBe(true);
+
+  // Exactly one background refresh was triggered (coalesced)
+  expect(callCount).toBe(2);
+});

@@ -12,11 +12,50 @@ export class Cache<V> {
     this.store.set(key, { value, expiry: now + ttl, delta });
   }
 
-  get(key: string, now: number, loader: () => Promise<V>): Promise<V> {
+  /**
+   * get(key, now, loader, ttl, delta, beta, rand)
+   *
+   * - ttl:   time-to-live in ms for entries stored by this call (default 1000).
+   * - delta: caller-declared compute cost in ms; stored in the entry and used by XFetch.
+   *          Pass the real cost when known; omit (default 0) for tests that don't
+   *          exercise early-refresh.
+   * - beta:  XFetch aggressiveness multiplier (default 1).
+   * - rand:  injected random value in (0, 1] — NEVER use Math.random() in tests.
+   *          Default 1 disables probabilistic early-refresh (Math.log(1) == 0).
+   *
+   * Behaviour:
+   *  1. Fresh hit → return immediately.
+   *  2. Fresh hit but XFetch threshold crossed → return current value AND trigger
+   *     a single background refresh (coalesced via inflight map).
+   *  3. Expired, inflight refresh exists → return stale value immediately.
+   *  4. Expired, no inflight → start refresh loader, return its promise (cold/expired miss).
+   *  5. Cold (no entry), inflight → join existing promise (single-flight).
+   *  6. Cold (no entry), no inflight → start loader, register inflight, return promise.
+   */
+  get(
+    key: string,
+    now: number,
+    loader: () => Promise<V>,
+    ttl = 1000,
+    delta = 0,
+    beta = 1,
+    rand = 1,
+  ): Promise<V> {
     const entry = this.store.get(key);
 
-    // Fresh hit — return immediately
     if (entry && now < entry.expiry) {
+      // Fresh hit — check probabilistic early-refresh (XFetch)
+      if (shouldEarlyRefresh(now, entry.expiry, entry.delta, beta, rand)) {
+        // Trigger background refresh only if one isn't already in flight
+        if (!this.inflight.has(key)) {
+          const promise = loader().then((value) => {
+            this.store.set(key, { value, expiry: now + ttl, delta });
+            this.inflight.delete(key);
+            return value;
+          });
+          this.inflight.set(key, promise);
+        }
+      }
       return Promise.resolve(entry.value);
     }
 
@@ -31,10 +70,8 @@ export class Cache<V> {
     }
 
     // Start a new loader (cold miss or expired with no in-flight yet)
-    const start = now;
     const promise = loader().then((value) => {
-      const elapsed = now - start; // deterministic; loader has no real wall time
-      this.store.set(key, { value, expiry: now + 1000, delta: elapsed });
+      this.store.set(key, { value, expiry: now + ttl, delta });
       this.inflight.delete(key);
       return value;
     });
