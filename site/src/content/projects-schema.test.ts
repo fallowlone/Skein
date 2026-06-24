@@ -2,9 +2,12 @@ import { describe, expect, test } from "vitest";
 import { z } from "astro/zod";
 import { TRACKS } from "~/types";
 
-// Mirror of the projects schema in content.config.ts
+// Mirror of the projects schema in content.config.ts (astro:content cannot import under vitest).
+// Note: milestones are mirrored as the BiText branch only — the real schema is a union with
+// GuidedMilestone, whose shape is covered by the astro:content runtime schema + capstones.ts lint.
 const BiText = z.object({ en: z.string().min(1), ru: z.string().min(1) });
 const Track = z.enum(TRACKS as [string, ...string[]]);
+const RubricLevel = z.object({ dimension: BiText, junior: BiText, mid: BiText, senior: BiText });
 const ProjectSchema = z.object({
   slug: z.string().regex(/^[a-z0-9-]+$/),
   title: BiText,
@@ -20,6 +23,9 @@ const ProjectSchema = z.object({
   milestones: z.array(BiText).min(2),
   seniorStretch: z.array(BiText).min(1),
   brief: BiText.optional(),
+  rubric: z.array(RubricLevel).min(1).optional(),
+  reference: z.array(BiText).min(1).optional(),
+  workbench: z.boolean().optional(),
 });
 
 const bi = { en: "x", ru: "х" };
@@ -75,5 +81,19 @@ describe("projects schema", () => {
   test("allows omitting optional stack/brief", () => {
     const { stack, brief, ...lean } = valid as any;
     expect(() => ProjectSchema.parse(lean)).not.toThrow();
+  });
+  test("accepts rubric + reference + workbench", () => {
+    expect(() => ProjectSchema.parse({
+      ...valid, workbench: true,
+      rubric: [{ dimension: bi, junior: bi, mid: bi, senior: bi }],
+      reference: [bi],
+    })).not.toThrow();
+  });
+  test("rejects a rubric row missing a level", () => {
+    expect(() => ProjectSchema.parse({ ...valid,
+      rubric: [{ dimension: bi, junior: bi, mid: bi }] })).toThrow();
+  });
+  test("rejects an empty rubric array", () => {
+    expect(() => ProjectSchema.parse({ ...valid, rubric: [] })).toThrow();
   });
 });
