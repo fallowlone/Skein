@@ -2,7 +2,7 @@
 // The "due today" spaced-repetition island: snapshots the due queue at mount,
 // walks one card at a time, reveals the answer, and grades again|hard|good|easy,
 // writing the next interval back via the SM-2 store. Pure client state (no SSR).
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
 import { dueBefore, recordReview, allCards, type Card } from "~/scripts/review-state";
 import { recordActiveDay } from "~/scripts/user-state";
@@ -27,19 +27,44 @@ function nextDueLabel(lang: Locale): string {
   return lang === "ru" ? `через ~${days} дн.` : `in ~${days}d`;
 }
 
+// Cap one sitting so a huge backlog doesn't become a fatigue marathon — retention degrades and
+// cards get graded carelessly past ~40, corrupting the very ease/interval signal the engine needs.
+// Capping only DEFERS the overflow (it stays due); a "continue" button loads the next batch on demand.
+const SESSION_CAP = 40;
+
 export default function ReviewSession({ lang }: { lang: Locale }) {
   const [queue, setQueue] = useState<Card[]>([]);
+  const [totalDue, setTotalDue] = useState(0);
   const [idx, setIdx] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [reviewed, setReviewed] = useState(0);
+  // Cards graded in THIS sitting. Excluded from later batches + the "remaining" count so a lapsed
+  // ("again", interval 0 → due immediately) card can't re-enter the queue and make Continue loop
+  // forever — it resurfaces in a future session like any other due card.
+  const gradedThisSession = useRef<Set<string>>(new Set());
 
-  // Snapshot the due list once at mount — cards graded this session must not
-  // pop back in immediately. Also clear the SSR fallback the page renders while
+  // Snapshot the due list once at mount, capped. Also clear the SSR fallback the page renders while
   // this client:only island boots.
   useEffect(() => {
     document.getElementById("review-fallback")?.remove();
-    setQueue(dueBefore(Date.now()));
+    loadBatch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadBatch is a hoisted declaration; intentional mount-only fire
   }, []);
+
+  // Due cards not yet touched this sitting — the genuine remaining work, regardless of grade.
+  function freshDue(): Card[] {
+    return dueBefore(Date.now()).filter((c) => !gradedThisSession.current.has(c.cardKey));
+  }
+
+  // (Re)load the next capped batch of untouched due cards. On "continue" this is only the overflow
+  // beyond what's already been reviewed this sitting.
+  function loadBatch() {
+    const due = freshDue();
+    setTotalDue(due.length);
+    setQueue(due.slice(0, SESSION_CAP));
+    setIdx(0);
+    setRevealed(false);
+  }
 
   const card = queue[idx];
 
@@ -47,6 +72,7 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
     if (!card) return;
     if (reviewed === 0) recordActiveDay(); // review feeds the existing streak
     recordReview(card.cardKey, g);
+    gradedThisSession.current.add(card.cardKey);
     setReviewed((n) => n + 1);
     setRevealed(false);
     setIdx((i) => i + 1);
@@ -85,6 +111,7 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
   }
 
   if (idx >= queue.length) {
+    const remaining = freshDue().length; // untouched due cards beyond this batch (excludes this sitting's)
     const next = nextDueLabel(lang);
     return (
       <section class="my-10">
@@ -92,7 +119,13 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
         <p class="text-ink text-sm mb-1">
           {t("review.done", lang)} — {reviewed}
         </p>
-        {next && <p class="text-muted text-xs">{t("review.nextDue", lang)}: {next}</p>}
+        {remaining > 0 ? (
+          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px] mt-1" onClick={loadBatch}>
+            {t("review.continue", lang).replace("{n}", String(remaining))}
+          </button>
+        ) : (
+          next && <p class="text-muted text-xs">{t("review.nextDue", lang)}: {next}</p>
+        )}
       </section>
     );
   }
@@ -106,6 +139,7 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
           <span class="meta">{t("review.title", lang)}</span>
           <span class="font-mono text-[11px] text-muted tabular-nums">
             {idx + 1} {t("review.cardOf", lang)} {queue.length}
+            {totalDue > queue.length && <span class="opacity-70"> · {totalDue} {t("review.dueCount", lang)}</span>}
           </span>
         </header>
 
