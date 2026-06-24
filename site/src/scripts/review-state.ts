@@ -81,8 +81,11 @@ export function recordReview(cardKey: string, grade: Grade, now = Date.now()): v
   const s = read();
   const c = s[cardKey];
   if (!c) return;
-  const sched = schedule(c.sched, grade);
-  s[cardKey] = { ...c, sched, dueAt: dueAtFrom(now, sched), lastReviewedAt: now };
+  // Days the card actually survived since its last review — drives the late-success interval bonus.
+  const elapsedDays = c.lastReviewedAt ? Math.max(0, (now - c.lastReviewedAt) / 86_400_000) : undefined;
+  const sched = schedule(c.sched, grade, { elapsedDays });
+  // Seed the due-time fuzz with the cardKey so same-day cohorts spread out deterministically.
+  s[cardKey] = { ...c, sched, dueAt: dueAtFrom(now, sched, cardKey), lastReviewedAt: now };
   write(s);
 }
 
