@@ -2,7 +2,9 @@ import { describe, expect, test } from "vitest";
 import { z } from "astro/zod";
 import { TRACKS } from "~/types";
 
-// Mirror of the projects schema in content.config.ts
+// Mirror of the projects schema in content.config.ts (astro:content cannot import under vitest).
+// Note: milestones are mirrored as the BiText branch only — the real schema is a union with
+// GuidedMilestone, whose shape is covered by the astro:content runtime schema + capstones.ts lint.
 const BiText = z.object({ en: z.string().min(1), ru: z.string().min(1) });
 const Track = z.enum(TRACKS as [string, ...string[]]);
 const RubricLevel = z.object({ dimension: BiText, junior: BiText, mid: BiText, senior: BiText });
