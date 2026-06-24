@@ -1,8 +1,9 @@
 // src/components/path/planning/TodayFocus.tsx
 // Top-of-screen focus: what to do TODAY. Deadline set → today's schedule row; otherwise the
 // next path step. When behind/over, surfaces the single best catch-up action inline.
+import { useState, useEffect } from "preact/hooks";
 import type { Locale } from "~/i18n";
-import { config, content, computePath, currentPace, currentFixes, applyFix, dueReviews, currentWeakSpots } from "~/scripts/path/path-io";
+import { config, content, computePath, currentPace, currentFixes, applyFix, dueReviews, currentWeakSpots, computeDoNow } from "~/scripts/path/path-io";
 import { userState } from "~/scripts/user-state";
 import { ratingToRank } from "~/scripts/progression/ranks";
 import { barRatingForGoal, projectRatingDate } from "~/scripts/progression/effective-rating";
@@ -56,8 +57,31 @@ function reviewTitle(lang: Locale, lessonKey: string): string {
   return words ? words.charAt(0).toUpperCase() + words.slice(1) : lessonKey;
 }
 
+const TIER_REASON: Record<string, { en: string; ru: string }> = {
+  recall: { en: "Recall · next task", ru: "Вспомнить · следующая задача" },
+  apply: { en: "Apply · next task", ru: "Применить · следующая задача" },
+  stretch: { en: "Stretch · next task", ru: "Углубить · следующая задача" },
+};
+const tierReason = (lang: Locale, d?: string): string =>
+  d && TIER_REASON[d] ? TIER_REASON[d][lang] : lang === "ru" ? "Следующая задача" : "Next task";
+
+type LessonTaskIndex = Record<string, { id: string; difficulty: string }[]>;
+
 export default function TodayFocus({ lang }: { lang: Locale }) {
   const t = L[lang];
+  // Lazily code-split the per-lesson task index (it is ~0.5MB; dynamic import keeps it out of the
+  // main planning bundle). Until it loads, the "do now" list shows unit-level "start" rows; once
+  // loaded, lead units upgrade to the specific next task at the learner's adaptive tier.
+  const [taskIndex, setTaskIndex] = useState<LessonTaskIndex | null>(null);
+  useEffect(() => {
+    let alive = true;
+    // Relative path (not the ~ alias) so the dynamic import resolves identically in dev, build, and test.
+    import("../../../content/path/lesson-tasks.json")
+      .then((m) => { if (alive) setTaskIndex(m.default as LessonTaskIndex); })
+      .catch(() => {}); // index is an enhancement — failure just leaves the baseline rows
+    return () => { alive = false; };
+  }, []);
+
   const cfg = config.value; // subscribe
   const { path, schedule } = computePath();
 
@@ -86,7 +110,23 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
     .filter((r) => (seenReviewLessons.has(r.lessonKey) ? false : (seenReviewLessons.add(r.lessonKey), true)))
     .slice(0, 5)
     .map((r) => ({ key: r.cardKey, href: reviewHref(lang, r.lessonKey), title: reviewTitle(lang, r.lessonKey), reason: t.reviewReason }));
+  // Adaptive "do this specific task next" rows from the tested do-now assembler (computeDoNow →
+  // recommendTask at the learner's tier). Only the `task` kind, only once the lazy index has loaded;
+  // each upgrades a lead unit's generic "start" row into the exact next task at its difficulty tier.
+  const doNowTasks = taskIndex
+    ? computeDoNow({ tasksByLesson: (lk) => taskIndex[lk] ?? [], maxUnits: 3 }).filter((i) => i.kind === "task" && i.lesson)
+    : [];
+  const coveredUnits = new Set(doNowTasks.map((i) => i.unit));
+  const taskRows = doNowTasks.map((i) => ({
+    key: `t:${i.lesson}:${i.taskId}`,
+    href: `/${lang}/learn/${i.lesson}`,
+    title: content.unitTitleById.get(i.unit)?.[lang] ?? i.unit,
+    reason: tierReason(lang, i.difficulty),
+  }));
+  // Lead "start unit" rows — only for lead units a specific task row hasn't already covered, so the
+  // pre-load baseline (all lead units) degrades gracefully into the adaptive view with no duplication.
   const leadRows = path.steps.slice(0, 3).flatMap((s) => {
+    if (coveredUnits.has(s.unit)) return [];
     const href = startHref(lang, s.unit);
     if (!href) return [];
     return [{ key: s.unit, href, title: content.unitTitleById.get(s.unit)?.[lang] ?? s.unit, reason: t.lessonReason }];
@@ -94,7 +134,7 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
   const weakRows = currentWeakSpots()
     .map((w) => ({ key: w.unitId, href: startHref(lang, w.unitId), title: content.unitTitleById.get(w.unitId)?.[lang] ?? w.unitId }))
     .filter((r) => r.href) as { key: string; href: string; title: string }[];
-  const hasDoNow = reviewRows.length > 0 || leadRows.length > 0;
+  const hasDoNow = reviewRows.length > 0 || taskRows.length > 0 || leadRows.length > 0;
 
   // Weak-spots section renders independently of hasDoNow: failure evidence on frontier units
   // must surface even when reviewRows and leadRows are both empty (no-trap contract).
@@ -120,6 +160,11 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
       <ol class="dn-list">
         {reviewRows.map((r) => (
           <li key={`r:${r.key}`} class="dn-row">
+            <a class="dn-link" href={r.href}><span class="dn-title">{r.title}</span><span class="dn-reason">{r.reason}</span></a>
+          </li>
+        ))}
+        {taskRows.map((r) => (
+          <li key={`t:${r.key}`} class="dn-row">
             <a class="dn-link" href={r.href}><span class="dn-title">{r.title}</span><span class="dn-reason">{r.reason}</span></a>
           </li>
         ))}
