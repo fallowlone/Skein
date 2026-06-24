@@ -52,6 +52,29 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
     setIdx((i) => i + 1);
   }
 
+  // Keyboard: Space/Enter reveals the answer; 1–4 grade once revealed. A fast grading loop lifts
+  // cards-per-session, which is what spaced repetition actually depends on. Rebinds on state change.
+  useEffect(() => {
+    if (!card) return; // no listener on the empty / session-complete screens
+    function onKey(e: KeyboardEvent) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      // let a focused control handle its own keys (buttons activate on Space/Enter natively)
+      if (tag && /^(input|textarea|select|button)$/i.test(tag)) return;
+      if (!revealed) {
+        if (e.key === " " || e.key === "Enter") { e.preventDefault(); setRevealed(true); }
+        return;
+      }
+      const i = ["1", "2", "3", "4"].indexOf(e.key);
+      if (i >= 0) { e.preventDefault(); grade(GRADES[i]); }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // grade is a hoisted function declaration; its closure over card/reviewed is recaptured on every
+    // re-bind because idx+queue are deps, so no stale capture is possible — the disable is safe.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealed, idx, queue]);
+
   if (queue.length === 0) {
     return (
       <section class="my-10">
@@ -94,7 +117,7 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
 
         {!revealed ? (
           <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={() => setRevealed(true)}>
-            {t("review.showAnswer", lang)}
+            {t("review.showAnswer", lang)} <span class="opacity-50 font-mono">␣</span>
           </button>
         ) : (
           <>
@@ -103,14 +126,14 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
               {card.back}
             </div>
             <div class="flex flex-wrap items-center gap-2">
-              {GRADES.map((g) => (
+              {GRADES.map((g, i) => (
                 <button
                   key={g}
                   type="button"
                   onClick={() => grade(g)}
                   class={`px-3 h-8 font-mono text-[11px] border rounded-[var(--r-sm)] bg-transparent transition-colors ${GRADE_CLS[g]}`}
                 >
-                  {t(`review.${g}`, lang)}
+                  <span class="opacity-50 mr-1">{i + 1}</span>{t(`review.${g}`, lang)}
                 </button>
               ))}
             </div>
