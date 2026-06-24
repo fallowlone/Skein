@@ -39,15 +39,23 @@ export function clampConfig(c: PathConfig): PathConfig {
       stepsAhead,
       srsAggressiveness: clamp(c.pace.srsAggressiveness, 0, 1),
     },
-    weights: {
-      ...c.weights,
-      lessons: clamp(c.weights.lessons, 0, 1),
-      practice: clamp(c.weights.practice, 0, 1),
-      masteryThreshold: clamp(c.weights.masteryThreshold, 0.1, 0.95),
-      // must stay below masteryThreshold's floor (0.1..0.95): a decayFloor above the threshold
-      // makes decay incapable of ever un-knowing a concept (the pre-repair 0.85 default bug)
-      decayFloor: clamp(c.weights.decayFloor, 0, 0.5),
-    },
+    weights: weightsClamp(c),
+  };
+}
+
+// decayFloor MUST stay strictly below masteryThreshold, else decay() can never erode a concept
+// below the "known" cutoff and concepts become permanently known — silently corrupting every
+// downstream path/rating decision (the pre-repair 0.85 default bug). Clamp the threshold first,
+// then cap decayFloor at (threshold − 0.1) so the invariant holds for ANY knob combination, not
+// just the safe defaults.
+function weightsClamp(c: PathConfig): PathConfig["weights"] {
+  const masteryThreshold = clamp(c.weights.masteryThreshold, 0.1, 0.95);
+  return {
+    ...c.weights,
+    lessons: clamp(c.weights.lessons, 0, 1),
+    practice: clamp(c.weights.practice, 0, 1),
+    masteryThreshold,
+    decayFloor: clamp(c.weights.decayFloor, 0, Math.max(0, masteryThreshold - 0.1)),
   };
 }
 
