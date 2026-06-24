@@ -66,18 +66,91 @@ test("parses zero", () => {
   expect(parse("0")).toBe(0);
 });
 
-// (e) Throws on a trailing comma
+// (e) Throws on a trailing comma — with position check
 test("throws ParseError on trailing comma in object", () => {
   expect(() => parse('{"a":1,}')).toThrow(ParseError);
+  let err: unknown;
+  try { parse('{"a":1,}'); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ParseError);
+  expect(typeof (err as ParseError).position).toBe("number");
 });
 
 test("throws ParseError on trailing comma in array", () => {
   expect(() => parse("[1,2,]")).toThrow(ParseError);
+  let err: unknown;
+  try { parse("[1,2,]"); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ParseError);
+  expect(typeof (err as ParseError).position).toBe("number");
 });
 
-// (f) Throws on an unterminated string
+// (f) Throws on an unterminated string — with position check
 test("throws ParseError on unterminated string", () => {
   expect(() => parse('"hello')).toThrow(ParseError);
+  let err: unknown;
+  try { parse('"hello'); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ParseError);
+  expect(typeof (err as ParseError).position).toBe("number");
+});
+
+// (h) RFC 8259 number rejections — invalid forms must throw ParseError with numeric position
+test("throws ParseError on leading-zero number 01", () => {
+  let err: unknown;
+  try { parse("01"); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ParseError);
+  expect(typeof (err as ParseError).position).toBe("number");
+});
+
+test("throws ParseError on leading-dot number .5", () => {
+  let err: unknown;
+  try { parse(".5"); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ParseError);
+  expect(typeof (err as ParseError).position).toBe("number");
+});
+
+test("throws ParseError on trailing-dot number 1.", () => {
+  let err: unknown;
+  try { parse("1."); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ParseError);
+  expect(typeof (err as ParseError).position).toBe("number");
+});
+
+test("throws ParseError on bare Infinity", () => {
+  let err: unknown;
+  try { parse("Infinity"); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ParseError);
+  expect(typeof (err as ParseError).position).toBe("number");
+});
+
+test("throws ParseError on bare NaN", () => {
+  let err: unknown;
+  try { parse("NaN"); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ParseError);
+  expect(typeof (err as ParseError).position).toBe("number");
+});
+
+// (i) String escape rejections
+test("throws ParseError on unknown escape \\q", () => {
+  // JSON string: "\q"
+  let err: unknown;
+  try { parse('"\\q"'); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ParseError);
+  expect(typeof (err as ParseError).position).toBe("number");
+});
+
+test("throws ParseError on lone high surrogate \\uD83D with no low surrogate", () => {
+  // JSON string: "\uD83D" — high surrogate with no following \uDC00–\uDFFF
+  let err: unknown;
+  try { parse('"\\uD83D"'); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ParseError);
+  expect(typeof (err as ParseError).position).toBe("number");
+});
+
+// (j) Trailing content after a valid value
+test("throws ParseError on trailing content after valid value", () => {
+  let err: unknown;
+  try { parse("{}garbage"); } catch (e) { err = e; }
+  expect(err).toBeInstanceOf(ParseError);
+  expect(typeof (err as ParseError).position).toBe("number");
 });
 
 // (g) ParseError.position is a number at the offending character
