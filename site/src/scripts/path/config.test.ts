@@ -71,3 +71,22 @@ describe("cold-start goal", () => {
     expect(mergeConfig({}).goals).toEqual([{ id: "senior-fullstack", priority: 1 }]);
   });
 });
+
+describe("clampConfig decayFloor invariant", () => {
+  it("keeps decayFloor strictly below masteryThreshold for any knobs", () => {
+    const c = clampConfig({ ...DEFAULT_CONFIG, weights: { lessons: 0.3, practice: 0.4, masteryThreshold: 0.4, decayFloor: 0.5 } });
+    expect(c.weights.masteryThreshold).toBe(0.4);
+    expect(c.weights.decayFloor).toBeLessThanOrEqual(0.4 - 0.1 + 1e-9);
+    expect(c.weights.decayFloor).toBeCloseTo(0.3, 9); // capped at threshold - 0.1
+  });
+  it("clamps decayFloor to 0 when threshold is at its floor", () => {
+    const c = clampConfig({ ...DEFAULT_CONFIG, weights: { lessons: 0.3, practice: 0.4, masteryThreshold: 0.1, decayFloor: 0.4 } });
+    expect(c.weights.masteryThreshold).toBe(0.1);
+    expect(c.weights.decayFloor).toBe(0); // max(0, 0.1 - 0.1)
+  });
+  it("leaves safe defaults untouched", () => {
+    const c = clampConfig(DEFAULT_CONFIG);
+    expect(c.weights.decayFloor).toBe(0.3);
+    expect(c.weights.masteryThreshold).toBe(0.6);
+  });
+});
