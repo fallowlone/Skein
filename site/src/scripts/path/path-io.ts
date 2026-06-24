@@ -26,6 +26,7 @@ import { seedFromPretest } from "./pretest-seed";
 import { pickProbe, placementPlan, type DiagItem } from "./calibration";
 import { DOMAIN_FAMILIES } from "./mastery-field";
 import { targetFrontier } from "./planner";
+import { frontierCompleteness, type FrontierCompleteness } from "./completeness";
 import {
   studyRating,
   blendRating,
@@ -501,6 +502,36 @@ function effectiveContent(): { concepts: Concept[]; units: UnitConcepts[]; dropp
   const result = applyOverridesFull(concepts, units, committedOverrides as Overrides, key);
   _applyCache = { key, result };
   return result;
+}
+
+// The concept graph the planner actually traverses — built from the OVERRIDE-APPLIED concepts
+// (committed + live), so it carries the same prerequisite edges computePath/buildPath use, unlike
+// the base `content.graph` (raw concepts). Memoized on the overrides signal identity (the signal is
+// replaced, not mutated, on every edit) so the ~tens-of-ms rebuild runs only when overrides change.
+let _effectiveGraphCache: { key: Overrides; result: ReturnType<typeof buildConceptGraph> } | null = null;
+function effectiveGraph(): ReturnType<typeof buildConceptGraph> {
+  const key = overrides.value;
+  if (_effectiveGraphCache && _effectiveGraphCache.key === key) return _effectiveGraphCache.result;
+  const { concepts: eff } = effectiveContent();
+  const result = buildConceptGraph(eff);
+  _effectiveGraphCache = { key, result };
+  return result;
+}
+
+// Read-model for PlacementMeter: goal-frontier completeness (measured/declared/propagated/guessed)
+// computed over the EFFECTIVE concepts + graph — the same structure the planner uses — so the meter
+// reflects the real prerequisite closure, not a base graph missing the committed edges. SSR-safe.
+export function currentCompleteness(): FrontierCompleteness | null {
+  if (typeof window === "undefined") return null;
+  const cfg = config.value; // subscribe
+  const { concepts: eff } = effectiveContent();
+  const goalObjs = cfg.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
+  // No goal selected → empty frontier → null (render nothing), matching the old PlacementMeter
+  // cold-start guard. No senior-fullstack fallback here: the meter must stay hidden until the
+  // learner picks a goal.
+  const frontier = new Set(targetFrontier(goalObjs, cfg, eff));
+  if (frontier.size === 0) return null;
+  return frontierCompleteness(frontier, effectiveKnowledge(), diagnosedConcepts, effectiveGraph());
 }
 
 // Read-model: knowledge with time decay applied (stale confidence erodes toward decayFloor and
