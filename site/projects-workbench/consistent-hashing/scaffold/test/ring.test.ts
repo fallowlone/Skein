@@ -22,7 +22,7 @@ function murmur3(s: string): number {
 }
 
 // Fixed key population used across multiple tests
-const KEYS: string[] = Array.from({ length: 100 }, (_, i) => `key-${i}`);
+const KEYS: string[] = Array.from({ length: 200 }, (_, i) => `key-${i}`);
 
 // ---------------------------------------------------------------------------
 // (a) Basic contract: getNode returns one of the present node ids
@@ -49,8 +49,10 @@ test("getNode with a single node assigns all keys to it", () => {
 });
 
 // ---------------------------------------------------------------------------
-// (b) MINIMAL REMAP: after addNode, the fraction of keys that moved is < 0.5
-//     This proves consistent hashing rather than a full reshuffle.
+// (b) MINIMAL REMAP: after addNode, the fraction of keys that moved is tight
+//     AND every key that moved now routes to the newly-added node.
+//     This is the property that distinguishes consistent hashing from any
+//     scheme that merely happens to move fewer than half the keys.
 // ---------------------------------------------------------------------------
 test("addNode remaps well below half the keyspace (minimal remap)", () => {
   const ring = new HashRing({ vnodes: 50, hash: murmur3 });
@@ -64,15 +66,26 @@ test("addNode remaps well below half the keyspace (minimal remap)", () => {
 
   ring.addNode("node-D");
 
-  // Count how many keys changed assignment
+  // Count how many keys changed assignment and where they went
   let changed = 0;
+  let movedToNewNode = 0;
   for (const key of KEYS) {
-    if (ring.getNode(key) !== before.get(key)) changed++;
+    const after = ring.getNode(key);
+    if (after !== before.get(key)) {
+      changed++;
+      if (after === "node-D") movedToNewNode++;
+    }
   }
 
   const fraction = changed / KEYS.length;
-  // With 4 nodes after addNode, expected remap ≈ 25%. Assert well below 50%.
-  expect(fraction).toBeLessThan(0.5);
+  // With 4 nodes after addNode, expected remap ≈ 1/4 = 0.25.
+  // Assert tighter than 0.4 — a bad scheme can still satisfy < 0.5.
+  expect(fraction).toBeLessThan(0.4);
+
+  // Strong consistent-hashing property: EVERY key that moved must have
+  // landed on the newly-added node. No key should have moved between
+  // two pre-existing nodes (node-A, node-B, node-C).
+  expect(movedToNewNode).toBe(changed);
 });
 
 // ---------------------------------------------------------------------------
@@ -111,7 +124,7 @@ function stddev(counts: number[]): number {
   return Math.sqrt(variance);
 }
 
-test("vnodes = 50 produces lower load stddev than vnodes = 1", () => {
+test("vnodes = 150 produces lower load stddev than vnodes = 1, with CV < 0.3 absolute", () => {
   const nodeIds = ["node-A", "node-B", "node-C", "node-D", "node-E"];
 
   // vnodes = 1
@@ -125,17 +138,24 @@ test("vnodes = 50 produces lower load stddev than vnodes = 1", () => {
   }
   const sd1 = stddev([...counts1.values()]);
 
-  // vnodes = 50
-  const ring50 = new HashRing({ vnodes: 50, hash: murmur3 });
-  for (const id of nodeIds) ring50.addNode(id);
+  // vnodes = 150
+  const ring150 = new HashRing({ vnodes: 150, hash: murmur3 });
+  for (const id of nodeIds) ring150.addNode(id);
 
-  const counts50 = new Map<string, number>(nodeIds.map((id) => [id, 0]));
+  const counts150 = new Map<string, number>(nodeIds.map((id) => [id, 0]));
   for (const key of KEYS) {
-    const n = ring50.getNode(key);
-    counts50.set(n, (counts50.get(n) ?? 0) + 1);
+    const n = ring150.getNode(key);
+    counts150.set(n, (counts150.get(n) ?? 0) + 1);
   }
-  const sd50 = stddev([...counts50.values()]);
+  const sd150 = stddev([...counts150.values()]);
 
-  // Higher vnodes must yield strictly lower standard deviation
-  expect(sd50).toBeLessThan(sd1);
+  // Relative assertion: higher vnodes must yield strictly lower standard deviation
+  expect(sd150).toBeLessThan(sd1);
+
+  // Absolute assertion: at 150 vnodes the coefficient of variation must be
+  // below 0.3 — a meaningful upper bound that a naive single-point-per-node
+  // scheme cannot satisfy (CV is typically 0.5–1.0 at vnodes=1 for N=5).
+  const mean150 = [...counts150.values()].reduce((a, b) => a + b, 0) / nodeIds.length;
+  const cv150 = sd150 / mean150;
+  expect(cv150).toBeLessThan(0.3);
 });
