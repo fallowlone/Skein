@@ -78,7 +78,10 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
     // Relative path (not the ~ alias) so the dynamic import resolves identically in dev, build, and test.
     import("../../../content/path/lesson-tasks.json")
       .then((m) => { if (alive) setTaskIndex(m.default as LessonTaskIndex); })
-      .catch(() => {}); // index is an enhancement — failure just leaves the baseline rows
+      .catch((e) => {
+        // index is an enhancement — failure just leaves the baseline rows; surface it in dev only
+        if (import.meta.env.DEV) console.warn("[TodayFocus] lesson-tasks.json failed to load; do-now task rows disabled:", e);
+      });
     return () => { alive = false; };
   }, []);
 
@@ -114,11 +117,11 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
   // recommendTask at the learner's tier). Only the `task` kind, only once the lazy index has loaded;
   // each upgrades a lead unit's generic "start" row into the exact next task at its difficulty tier.
   const doNowTasks = taskIndex
-    ? computeDoNow({ tasksByLesson: (lk) => taskIndex[lk] ?? [], maxUnits: 3 }).filter((i) => i.kind === "task" && i.lesson)
+    ? computeDoNow({ tasksByLesson: (lk) => taskIndex[lk] ?? [], maxUnits: 3, path }).filter((i) => i.kind === "task" && i.lesson)
     : [];
   const coveredUnits = new Set(doNowTasks.map((i) => i.unit));
   const taskRows = doNowTasks.map((i) => ({
-    key: `t:${i.lesson}:${i.taskId}`,
+    key: `${i.lesson}:${i.taskId}`,
     href: `/${lang}/learn/${i.lesson}`,
     title: content.unitTitleById.get(i.unit)?.[lang] ?? i.unit,
     reason: tierReason(lang, i.difficulty),
