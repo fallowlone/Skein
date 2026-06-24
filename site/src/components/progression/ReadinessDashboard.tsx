@@ -81,6 +81,13 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
               .replace("{n}", String(r.displayRating))}
           </span>
         )}
+        {r.evidence && !r.evidence.met && (
+          <span class="rd-evidence" title={t("readiness.evidenceHint", lang)}>
+            {t("readiness.evidence", lang)
+              .replace("{p}", String(r.evidence.proven))
+              .replace("{n}", String(r.evidence.needed))}
+          </span>
+        )}
       </section>
 
       <section class="rd-card rd-forecast">

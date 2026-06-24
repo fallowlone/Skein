@@ -33,7 +33,9 @@ import {
   hasEnoughEvidence,
   barRatingForGoal,
   projectRatingDate,
+  evidenceProgress,
   type RatingForecast,
+  type EvidenceProgress,
 } from "~/scripts/progression/effective-rating";
 import { ratingToRank } from "~/scripts/progression/ranks";
 import { calibrationFreshness, type CalibrationFreshness } from "~/scripts/progression/calibration-freshness";
@@ -881,6 +883,20 @@ export function currentWeakSpots(): WeakSpot[] {
   });
 }
 
+/** How close the study rating is to going live (the evidence gate in syncEffectiveRating).
+ *  Mirrors the goal frontier that gate builds; SSR-safe (null off-window). Lets the dashboard
+ *  show an "X/N proven" badge while the rating is still provisional instead of a frozen number. */
+export function currentEvidenceProgress(): EvidenceProgress | null {
+  if (typeof window === "undefined") return null;
+  const goalObjs = config.value.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
+  if (!goalObjs.length) {
+    const fb = goalById.get("senior-fullstack");
+    if (fb) goalObjs.push(fb);
+  }
+  const frontier = new Set(targetFrontier(goalObjs, config.value, concepts));
+  return evidenceProgress(frontier, effectiveKnowledge());
+}
+
 export interface Readiness {
   displayRating: number;
   displayRank: string;
@@ -892,6 +908,7 @@ export interface Readiness {
   weakSpots: WeakSpot[];
   interviewReadiness: number | null;
   recalibration: CalibrationFreshness;
+  evidence: EvidenceProgress | null;
 }
 
 /** One bundle for the readiness dashboard: live rank (high-water), the senior-by-date
@@ -931,6 +948,7 @@ export function currentReadiness(): Readiness {
       s.progression.studyEma,
       Date.now(),
     ),
+    evidence: typeof window === "undefined" ? null : currentEvidenceProgress(),
   };
 }
 

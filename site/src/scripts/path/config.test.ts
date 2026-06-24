@@ -37,10 +37,15 @@ describe("config", () => {
     expect(c.pace.stepsAhead).toBe(1);
     expect(c.pace.srsAggressiveness).toBe(0);
   });
-  it("decayFloor defaults below masteryThreshold and clamps to [0, 0.5]", () => {
+  it("repairs a legacy decayFloor above masteryThreshold (cap = threshold - 0.1)", () => {
     expect(DEFAULT_CONFIG.weights.decayFloor).toBe(0.3);
     // a stored pre-repair config (0.85 — above the threshold, made decay a no-op) is pulled down
-    expect(mergeConfig({ weights: { ...DEFAULT_CONFIG.weights, decayFloor: 0.85 } }).weights.decayFloor).toBe(0.5);
+    // to threshold-0.1; for the default threshold (0.6) that cap is 0.5.
+    expect(mergeConfig({ weights: { ...DEFAULT_CONFIG.weights, decayFloor: 0.85 } }).weights.decayFloor).toBeCloseTo(0.5, 9);
+    // and the cap tracks the threshold, not a fixed 0.5: threshold 0.7 → cap 0.6.
+    expect(
+      mergeConfig({ weights: { ...DEFAULT_CONFIG.weights, masteryThreshold: 0.7, decayFloor: 0.85 } }).weights.decayFloor,
+    ).toBeCloseTo(0.6, 9);
   });
 });
 
@@ -69,5 +74,24 @@ describe("cold-start goal", () => {
     // an existing learner with knowledge but no stored goals falls back to the general default,
     // NOT the cold-start goal.
     expect(mergeConfig({}).goals).toEqual([{ id: "senior-fullstack", priority: 1 }]);
+  });
+});
+
+describe("clampConfig decayFloor invariant", () => {
+  it("keeps decayFloor strictly below masteryThreshold for any knobs", () => {
+    const c = clampConfig({ ...DEFAULT_CONFIG, weights: { lessons: 0.3, practice: 0.4, masteryThreshold: 0.4, decayFloor: 0.5 } });
+    expect(c.weights.masteryThreshold).toBe(0.4);
+    expect(c.weights.decayFloor).toBeLessThanOrEqual(0.4 - 0.1 + 1e-9);
+    expect(c.weights.decayFloor).toBeCloseTo(0.3, 9); // capped at threshold - 0.1
+  });
+  it("clamps decayFloor to 0 when threshold is at its floor", () => {
+    const c = clampConfig({ ...DEFAULT_CONFIG, weights: { lessons: 0.3, practice: 0.4, masteryThreshold: 0.1, decayFloor: 0.4 } });
+    expect(c.weights.masteryThreshold).toBe(0.1);
+    expect(c.weights.decayFloor).toBe(0); // max(0, 0.1 - 0.1)
+  });
+  it("leaves safe defaults untouched", () => {
+    const c = clampConfig(DEFAULT_CONFIG);
+    expect(c.weights.decayFloor).toBe(0.3);
+    expect(c.weights.masteryThreshold).toBe(0.6);
   });
 });

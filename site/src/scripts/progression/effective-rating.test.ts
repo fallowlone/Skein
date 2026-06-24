@@ -5,6 +5,7 @@ import { blendRating } from "./effective-rating";
 import { highWater } from "./effective-rating";
 import { barRatingForGoal, hasEnoughEvidence } from "./effective-rating";
 import { projectRatingDate } from "./effective-rating";
+import { evidenceProgress } from "./effective-rating";
 
 // Build a KnowledgeState from { conceptId: confidence } pairs.
 const K = (pairs: Record<string, number>): KnowledgeState =>
@@ -106,5 +107,36 @@ describe("projectRatingDate", () => {
   it("no projected finish ⇒ null date, zero days", () => {
     const r = projectRatingDate(500, 600, null, T);
     expect(r).toEqual({ reached: false, projectedMs: null, daysAheadBehind: 0 });
+  });
+});
+
+describe("evidenceProgress", () => {
+  const big = new Set(["a", "b", "c", "d", "e", "f"]);
+  it("counts frontier concepts at or above tau as proven", () => {
+    const e = evidenceProgress(big, K({ a: 0.9, b: 0.7, c: 0.6, d: 0.59, e: 0.2 }), 0.6, 5);
+    expect(e.proven).toBe(3);     // a,b,c >= 0.6 ; d=0.59 below ; e below
+    expect(e.needed).toBe(5);
+    expect(e.met).toBe(false);
+  });
+  it("met flips true at the minEvidence threshold", () => {
+    const e = evidenceProgress(big, K({ a: 0.9, b: 0.9, c: 0.9, d: 0.9, e: 0.9 }), 0.6, 5);
+    expect(e.proven).toBe(5);
+    expect(e.met).toBe(true);
+  });
+  it("hasEnoughEvidence agrees with evidenceProgress.met (gate unchanged)", () => {
+    const k = K({ a: 0.9, b: 0.9, c: 0.9, d: 0.9 });
+    expect(hasEnoughEvidence(big, k, 0.6, 5)).toBe(evidenceProgress(big, k, 0.6, 5).met);
+    expect(hasEnoughEvidence(big, k, 0.6, 5)).toBe(false); // 4 < 5
+  });
+  it("counts beyond minEvidence (proven is not capped at needed)", () => {
+    const e = evidenceProgress(big, K({ a: 0.9, b: 0.9, c: 0.9, d: 0.9, e: 0.9, f: 0.9 }), 0.6, 5);
+    expect(e.proven).toBe(6);
+    expect(e.needed).toBe(5);
+    expect(e.met).toBe(true);
+  });
+  it("empty frontier proves nothing", () => {
+    const e = evidenceProgress(new Set(), K({}), 0.6, 5);
+    expect(e.proven).toBe(0);
+    expect(e.met).toBe(false);
   });
 });
