@@ -469,9 +469,10 @@ export function recordPracticeOutcome(lessonKey: string, taskId: string, passed:
 export function computeDoNow(opts?: {
   tasksByLesson?: (lessonKey: string) => { id: string; difficulty: string }[];
   maxUnits?: number;
+  path?: Path; // pass an already-computed path to avoid a second (expensive) set-cover build per render
 }): DoNowItem[] {
   const eff = effectiveKnowledge();
-  const { path } = computePath();
+  const path = opts?.path ?? computePath().path;
   // A unit resolves to the mastery of its first taught concept (its representative knowledge level).
   const masteryOfUnit = (unitId: string): number => {
     const first = teachesByUnit.get(unitId)?.[0];
