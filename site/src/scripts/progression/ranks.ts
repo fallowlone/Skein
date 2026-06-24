@@ -14,15 +14,15 @@ function tier(name: string, ct: RankDef["contentTier"], icon: string, color: str
 function roman(d: number): string { return d === 1 ? "I" : d === 2 ? "II" : "III"; }
 
 export const RANKS: RankDef[] = [
-  ...tier("Initiate", "junior", "🌱", "#8a8f9c", [0, 42, 84, 125], { en: "Initiate", ru: "Initiate" }),
-  ...tier("Apprentice", "junior", "🔧", "#7c9aa6", [125, 177, 228, 280], { en: "Apprentice", ru: "Apprentice" }),
-  ...tier("Practitioner", "junior", "⚙️", "#6fae8f", [280, 337, 394, 450], { en: "Practitioner", ru: "Practitioner" }),
-  ...tier("Engineer", "middle", "🛠️", "#6aa3d6", [450, 500, 550, 600], { en: "Engineer", ru: "Engineer" }),
-  ...tier("Senior Engineer", "middle", "📐", "#5c8ad6", [600, 650, 700, 750], { en: "Senior Engineer", ru: "Senior Engineer" }),
+  ...tier("Initiate", "junior", "🌱", "#8a8f9c", [0, 42, 84, 125], { en: "Initiate", ru: "Новичок" }),
+  ...tier("Apprentice", "junior", "🔧", "#7c9aa6", [125, 177, 228, 280], { en: "Apprentice", ru: "Ученик" }),
+  ...tier("Practitioner", "junior", "⚙️", "#6fae8f", [280, 337, 394, 450], { en: "Practitioner", ru: "Практик" }),
+  ...tier("Engineer", "middle", "🛠️", "#6aa3d6", [450, 500, 550, 600], { en: "Engineer", ru: "Инженер" }),
+  ...tier("Senior Engineer", "middle", "📐", "#5c8ad6", [600, 650, 700, 750], { en: "Senior Engineer", ru: "Сеньор-инженер" }),
   ...tier("Staff", "senior", "🧭", "#9a7cd6", [750, 780, 810, 840], { en: "Staff", ru: "Staff" }),
   ...tier("Principal", "senior", "🔭", "#c07cd6", [840, 870, 900, 930], { en: "Principal", ru: "Principal" }),
-  ...tier("Architect", "senior", "🏛️", "#d6a25c", [930, 950, 970, 990], { en: "Architect", ru: "Architect" }),
-  { id: "distinguished", tier: "Distinguished", division: null, min: 990, max: 1000, contentTier: "senior", icon: "👑", color: "#d6c15c", label: { en: "Distinguished", ru: "Distinguished" } },
+  ...tier("Architect", "senior", "🏛️", "#d6a25c", [930, 950, 970, 990], { en: "Architect", ru: "Архитектор" }),
+  { id: "distinguished", tier: "Distinguished", division: null, min: 990, max: 1000, contentTier: "senior", icon: "👑", color: "#d6c15c", label: { en: "Distinguished", ru: "Эксперт" } },
 ];
 
 // Market-level annotations on a few anchor ranks — what each milestone means relative to
