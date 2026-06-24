@@ -8,7 +8,13 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const WB = new URL("../projects-workbench/", import.meta.url).pathname;
-const PUB = new URL("../public/project-starters/", import.meta.url).pathname;
+// Output dir: argv[2] when given (CI writes straight into the built dist, since the sharded
+// deploy runs `astro build` directly and never the `bun run build` script), else public/ for
+// local builds (astro copies public/ → dist/).
+const outArg = process.argv[2];
+const PUB = outArg
+  ? (outArg.startsWith("/") ? outArg : join(process.cwd(), outArg))
+  : new URL("../public/project-starters/", import.meta.url).pathname;
 
 if (!existsSync(WB)) { console.log("build:starters: no workbench dir, nothing to do"); process.exit(0); }
 rmSync(PUB, { recursive: true, force: true });
