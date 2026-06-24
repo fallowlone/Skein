@@ -9,12 +9,14 @@ export function filterProjects(
   track: string,
   difficulty: string,
   category: string,
+  runnable: string = "all",
 ): ProjectData[] {
   return projects.filter(
     (p) =>
       (track === "all" || p.tracks.includes(track)) &&
       (difficulty === "all" || p.difficulty === difficulty) &&
-      (category === "all" || p.category === category),
+      (category === "all" || p.category === category) &&
+      (runnable === "all" || p.workbench === true),
   );
 }
 
@@ -24,9 +26,11 @@ export default function ProjectsFilter({ lang, projects }: Props) {
   const [track, setTrack] = useState("all");
   const [difficulty, setDifficulty] = useState("all");
   const [category, setCategory] = useState("all");
+  const [runnable, setRunnable] = useState("all");
 
   const tracks = Array.from(new Set(projects.flatMap((p) => p.tracks))).sort();
-  const shown = filterProjects(projects, track, difficulty, category);
+  const runnableTotal = projects.filter((p) => p.workbench === true).length;
+  const shown = filterProjects(projects, track, difficulty, category, runnable);
 
   return (
     <div>
@@ -43,7 +47,14 @@ export default function ProjectsFilter({ lang, projects }: Props) {
           <option value="all">{tt(lang, "All levels", "Все уровни")}</option>
           {["starter", "intermediate", "advanced"].map((d) => <option value={d} key={d}>{d}</option>)}
         </select>
+        <select class="proj-select" value={runnable} onChange={(e) => setRunnable((e.target as HTMLSelectElement).value)}>
+          <option value="all">{tt(lang, "All projects", "Все проекты")}</option>
+          <option value="runnable">{tt(lang, "Runnable only", "Только запускаемые")}</option>
+        </select>
       </div>
+      <p class="proj-count">
+        {tt(lang, `${shown.length} shown · ${runnableTotal} runnable starters`, `Показано: ${shown.length} · запускаемых стартеров: ${runnableTotal}`)}
+      </p>
       <ul class="proj-grid">
         {shown.map((p) => (
           <li key={p.slug} class="proj-card">
@@ -53,6 +64,7 @@ export default function ProjectsFilter({ lang, projects }: Props) {
             </div>
             <p class="pc-pitch">{tt(lang, p.pitch.en, p.pitch.ru)}</p>
             <div class="pc-tracks">
+              {p.workbench && <span class="pc-runnable" title={tt(lang, "Downloadable starter + tests you run", "Скачиваемый стартер + тесты для запуска")}>{tt(lang, "● Runnable", "● Запускаемый")}</span>}
               {p.tracks.map((tr: string) => <span key={tr} class="pc-track">{tr}</span>)}
             </div>
             <a href={`/${lang}/projects/${p.slug}`} class="pc-link">{tt(lang, "Open project →", "Открыть проект →")}</a>
