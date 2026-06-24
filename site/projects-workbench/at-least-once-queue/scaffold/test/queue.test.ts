@@ -72,11 +72,12 @@ test("processOnce is idempotent — effect runs exactly once per key", () => {
 
 // (f) a job nacked > maxAttempts times lands in deadLetter and is no longer claimable
 test("job exceeding maxAttempts moves to dead-letter and is not claimable", () => {
-  const q = new Queue({ visibilityMs: 1, maxAttempts: 2 });
+  const LOCAL_MAX = 2;
+  const q = new Queue({ visibilityMs: 1, maxAttempts: LOCAL_MAX });
   q.enqueue({ id: "poison" });
 
   // nack maxAttempts + 1 times (each nack must happen after the lease expires)
-  for (let i = 0; i <= OPTS.maxAttempts; i++) {
+  for (let i = 0; i <= LOCAL_MAX; i++) {
     const job = q.claim(i * 2); // t=0,2,4,6 — always past prior lease of 1ms
     if (job) q.nack(job.id);
   }

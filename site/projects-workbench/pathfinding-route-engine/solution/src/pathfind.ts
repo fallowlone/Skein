@@ -222,12 +222,13 @@ export function astar(grid: Grid, start: [number, number], goal: [number, number
   let expanded = 0;
 
   while (heap.size > 0) {
-    const { value: [cx, cy] } = heap.pop()!;
+    const { value: [cx, cy], priority: pf } = heap.pop()!;
     const ck = key(cx, cy);
     const g = dist.get(ck)!;
 
-    // Skip stale heap entries
-    if (dist.has(ck) && g > dist.get(ck)!) continue;
+    // Skip stale heap entries: this entry was pushed with an f-value that has
+    // since been beaten. The optimal f for this cell is dist[ck] + h(ck).
+    if (pf > g + manhattan(cx, cy, gx, gy)) continue;
 
     expanded++;
 
