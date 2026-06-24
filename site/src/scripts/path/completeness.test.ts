@@ -36,4 +36,23 @@ describe("frontierCompleteness", () => {
     expect(r.measured).toBe(1);
     expect(r.propagated).toBe(1);
   });
+
+  // Why currentCompleteness must use the effective (override-applied) graph, not the base one:
+  // an added prerequisite edge pulls more concepts into the frontier closure, changing the buckets.
+  it("is sensitive to prerequisite edges — an added edge widens the closure", () => {
+    const nodes = [
+      { id: "f", label: { en: "", ru: "" }, track: "t", band: "middle", requires: [] }, // the frontier concept
+      { id: "p", label: { en: "", ru: "" }, track: "t", band: "surface", requires: [] }, // a potential prereq
+    ] as any;
+    const state: KnowledgeState = new Map([["f", { confidence: 1, source: "diagnostic", lastAt: 0 }]]);
+    // base graph: f has no prereq → closure = {f}
+    const base = frontierCompleteness(new Set(["f"]), state, new Set(), buildConceptGraph(nodes));
+    expect(base.total).toBe(1);
+    expect(base.guessed).toBe(0);
+    // effective graph: an override adds f requires p → closure = {f, p}; p is unmeasured → guessed
+    const withEdge = nodes.map((n: any) => (n.id === "f" ? { ...n, requires: ["p"] } : n));
+    const eff = frontierCompleteness(new Set(["f"]), state, new Set(), buildConceptGraph(withEdge));
+    expect(eff.total).toBe(2);
+    expect(eff.guessed).toBe(1); // p entered the closure as an unmeasured prerequisite
+  });
 });
