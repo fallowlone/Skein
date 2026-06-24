@@ -37,10 +37,15 @@ describe("config", () => {
     expect(c.pace.stepsAhead).toBe(1);
     expect(c.pace.srsAggressiveness).toBe(0);
   });
-  it("decayFloor defaults below masteryThreshold and clamps to [0, 0.5]", () => {
+  it("repairs a legacy decayFloor above masteryThreshold (cap = threshold - 0.1)", () => {
     expect(DEFAULT_CONFIG.weights.decayFloor).toBe(0.3);
     // a stored pre-repair config (0.85 — above the threshold, made decay a no-op) is pulled down
-    expect(mergeConfig({ weights: { ...DEFAULT_CONFIG.weights, decayFloor: 0.85 } }).weights.decayFloor).toBe(0.5);
+    // to threshold-0.1; for the default threshold (0.6) that cap is 0.5.
+    expect(mergeConfig({ weights: { ...DEFAULT_CONFIG.weights, decayFloor: 0.85 } }).weights.decayFloor).toBeCloseTo(0.5, 9);
+    // and the cap tracks the threshold, not a fixed 0.5: threshold 0.7 → cap 0.6.
+    expect(
+      mergeConfig({ weights: { ...DEFAULT_CONFIG.weights, masteryThreshold: 0.7, decayFloor: 0.85 } }).weights.decayFloor,
+    ).toBeCloseTo(0.6, 9);
   });
 });
 

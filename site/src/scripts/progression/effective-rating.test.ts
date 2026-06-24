@@ -128,6 +128,12 @@ describe("evidenceProgress", () => {
     expect(hasEnoughEvidence(big, k, 0.6, 5)).toBe(evidenceProgress(big, k, 0.6, 5).met);
     expect(hasEnoughEvidence(big, k, 0.6, 5)).toBe(false); // 4 < 5
   });
+  it("counts beyond minEvidence (proven is not capped at needed)", () => {
+    const e = evidenceProgress(big, K({ a: 0.9, b: 0.9, c: 0.9, d: 0.9, e: 0.9, f: 0.9 }), 0.6, 5);
+    expect(e.proven).toBe(6);
+    expect(e.needed).toBe(5);
+    expect(e.met).toBe(true);
+  });
   it("empty frontier proves nothing", () => {
     const e = evidenceProgress(new Set(), K({}), 0.6, 5);
     expect(e.proven).toBe(0);
