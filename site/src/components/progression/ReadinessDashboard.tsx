@@ -114,6 +114,15 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
               .replace("{date}", fmtDate(r.forecast.projectedMs, lang))
               .replace("{delta}", deltaText(r.forecast.daysAheadBehind))}
           </p>
+        ) : r.forecast.plan && r.deadlineMs != null ? (
+          // Deadline set but no study history yet → answer from the plan feasibility (the same
+          // verdict the deadline tool shows) instead of the misleading "set a deadline" copy.
+          <p class={r.forecast.plan.fits ? "rd-strong" : undefined}>
+            {t(r.forecast.plan.fits ? "readiness.forecastPlanFits" : "readiness.forecastPlanOver", lang)
+              .replace("{bar}", barLabel)
+              .replace("{date}", fmtDate(r.deadlineMs, lang))
+              .replace("{h}", String(Math.max(0, Math.round(r.forecast.plan.deltaMin / 60))))}
+          </p>
         ) : (
           <p class="rd-muted">{t("readiness.forecastNoData", lang)}</p>
         )}

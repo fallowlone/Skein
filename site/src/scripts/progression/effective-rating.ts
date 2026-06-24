@@ -90,21 +90,39 @@ export interface RatingForecast {
   reached: boolean;            // effective rating already at/above target
   projectedMs: number | null;  // projected date the rating crosses target (path-completion proxy)
   daysAheadBehind: number;     // >0 behind deadline, <0 ahead, 0 on-time/unknown
+  /** Plan-based fallback used when there is no realized-pace projection yet. A freshly-set
+   *  deadline has zero study history, so pace() can't extrapolate a finish date (rate=0 ⇒
+   *  projectedFinishMs null). Rather than show "no data", fall back to the schedule feasibility
+   *  — does the planned study budget cover the required work by the deadline? — which is the same
+   *  verdict the deadline tool shows. `fits` ⇔ not over-budget; `deltaMin` is the surplus when it
+   *  fits, the deficit when it does not (always ≥0). Omitted when a realized projection exists. */
+  plan?: { fits: boolean; deltaMin: number };
 }
 
 const FORECAST_DAY = 86_400_000;
 
 /** v1: the rating crosses the goal bar when the goal-frontier path completes, which pace()
  *  already projects as projectedFinishMs. Honest because clearing knowledge raises the path's
- *  remaining minutes and pushes that date out; the high-water badge is unaffected. */
+ *  remaining minutes and pushes that date out; the high-water badge is unaffected. When no
+ *  realized projection exists yet (a just-set deadline), fall back to the plan feasibility so the
+ *  forecast is meaningful immediately instead of telling the learner to set a deadline they have. */
 export function projectRatingDate(
   effectiveRating: number,
   targetRating: number,
   projectedFinishMs: number | null,
   targetDateMs: number,
+  planFeasibility?: { verdict: "over" | "fits" | "under"; deltaMin: number } | null,
 ): RatingForecast {
   if (effectiveRating >= targetRating) return { reached: true, projectedMs: null, daysAheadBehind: 0 };
-  if (projectedFinishMs === null) return { reached: false, projectedMs: null, daysAheadBehind: 0 };
-  const daysAheadBehind = Math.round((projectedFinishMs - targetDateMs) / FORECAST_DAY);
-  return { reached: false, projectedMs: projectedFinishMs, daysAheadBehind };
+  if (projectedFinishMs !== null) {
+    const daysAheadBehind = Math.round((projectedFinishMs - targetDateMs) / FORECAST_DAY);
+    return { reached: false, projectedMs: projectedFinishMs, daysAheadBehind };
+  }
+  if (planFeasibility) {
+    return {
+      reached: false, projectedMs: null, daysAheadBehind: 0,
+      plan: { fits: planFeasibility.verdict !== "over", deltaMin: planFeasibility.deltaMin },
+    };
+  }
+  return { reached: false, projectedMs: null, daysAheadBehind: 0 };
 }

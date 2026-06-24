@@ -191,14 +191,15 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
 
   const href = startHref(lang, units[0].unit);
   const lessonCount = UNIT_META.get(units[0].unit)?.lessonCount ?? 0;
-  const p = currentPace();
+  const p = currentPace(path); // reuse the path computed above; don't re-run the set-cover
   const us = userState.value;
   const dl = config.value.deadline;
   const goalsSorted = [...config.value.goals].sort((a, b) => a.priority - b.priority);
   const goalId = goalsSorted[0]?.id ?? "senior-fullstack";
   const barRating = barRatingForGoal(goalId);
   const effRating = Math.max(us.pretest?.rating ?? 0, us.progression.studyEma ?? 0);
-  const rf = dl ? projectRatingDate(effRating, barRating, p?.projectedFinishMs ?? null, dl.targetDateMs) : null;
+  const planFeas = schedule ? { verdict: schedule.feasibility.verdict, deltaMin: schedule.feasibility.deltaMin } : null;
+  const rf = dl ? projectRatingDate(effRating, barRating, p?.projectedFinishMs ?? null, dl.targetDateMs, planFeas) : null;
   const barLabel = ratingToRank(barRating).label[lang];
   const fmtDate = (ms: number) => new Date(ms).toISOString().slice(0, 10);
   const aheadBehind = (d: number) =>
@@ -238,6 +239,18 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
             {lang === "ru"
               ? `При текущем темпе достигнешь планки ${barLabel} к ${fmtDate(rf.projectedMs)} — ${aheadBehind(rf.daysAheadBehind)}`
               : `At this pace you reach the ${barLabel} bar by ${fmtDate(rf.projectedMs)} — ${aheadBehind(rf.daysAheadBehind)}`}
+          </p>
+        )}
+        {rf && !rf.reached && !rf.projectedMs && rf.plan && dl && (
+          // No study history yet → plan-feasibility answer, so a just-set deadline still gets a verdict.
+          <p class="rating-forecast" style="margin:0.25rem 0 0;font-size:0.85rem;opacity:0.8;">
+            {rf.plan.fits
+              ? (lang === "ru"
+                  ? `По плану выходишь на ${barLabel} к ${fmtDate(dl.targetDateMs)} — запас ~${Math.max(0, Math.round(rf.plan.deltaMin / 60))}ч`
+                  : `On plan you reach ${barLabel} by ${fmtDate(dl.targetDateMs)} — ~${Math.max(0, Math.round(rf.plan.deltaMin / 60))}h to spare`)
+              : (lang === "ru"
+                  ? `По плану не успеваешь к ${fmtDate(dl.targetDateMs)} — не хватает ~${Math.round(rf.plan.deltaMin / 60)}ч`
+                  : `On plan you miss ${fmtDate(dl.targetDateMs)} by ~${Math.round(rf.plan.deltaMin / 60)}h`)}
           </p>
         )}
       </section>
