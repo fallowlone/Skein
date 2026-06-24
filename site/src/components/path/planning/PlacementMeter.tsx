@@ -4,10 +4,7 @@
 // isolated-leaf concepts that diagnostics can never reach.
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
-import type { Goal } from "~/scripts/path/types";
-import { content, config, effectiveKnowledge } from "~/scripts/path/path-io";
-import { targetFrontier } from "~/scripts/path/planner";
-import { frontierCompleteness } from "~/scripts/path/completeness";
+import { currentCompleteness } from "~/scripts/path/path-io";
 import SelfPlacement from "../SelfPlacement";
 
 const L = {
@@ -48,21 +45,12 @@ export default function PlacementMeter({ lang }: { lang: Locale }) {
   const t = L[lang];
   const [declareOpen, setDeclareOpen] = useState(false);
 
-  // Subscribe to signals by reading .value / calling effectiveKnowledge() in render.
-  const cfg = config.value;
-  const k = effectiveKnowledge();
-
-  const goalObjs = cfg.goals
-    .map((g) => content.goalById.get(g.id))
-    .filter(Boolean) as Goal[];
-
-  const frontier = new Set(targetFrontier(goalObjs, cfg, content.concepts));
-
-  // No goal selected yet — render nothing (cold-start guard is also in PathView,
-  // but be defensive here too).
-  if (frontier.size === 0) return null;
-
-  const c = frontierCompleteness(frontier, k, content.diagnosedConcepts, content.graph);
+  // Completeness over the EFFECTIVE goal frontier + graph (the structure the planner traverses),
+  // resolved once in the adapter so the meter matches computePath. Reading it in render subscribes
+  // this island to the config, knowledge, AND overrides signals (currentCompleteness reads all three).
+  // Null = no goal yet (cold-start) → render nothing.
+  const c = currentCompleteness();
+  if (!c) return null;
 
   const measuredPct = Math.round(100 * (c.measured + c.declared) / c.total);
   const showDeclare = c.guessed > 0.2 * c.total;
