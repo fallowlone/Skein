@@ -229,6 +229,15 @@ const lab = defineCollection({
 export type LabData = z.infer<typeof lab.schema>;
 
 // ── Projects ────────────────────────────────────────────────────────────────
+// One rubric row: a quality dimension graded at three levels (all bilingual).
+// Lets a project state explicitly what a junior / mid / senior solution looks like.
+const RubricLevel = z.object({
+  dimension: BiText,
+  junior: BiText,
+  mid: BiText,
+  senior: BiText,
+});
+
 // A guided milestone (additive over the legacy plain {en,ru}): staged goal +
 // a self-checklist definition-of-done + the lessons that feed it. `reviewPrompt`
 // is the P3 seam (stored, not graded in v1).
@@ -256,6 +265,10 @@ export const ProjectSchema = z.object({
   milestones: z.array(z.union([BiText, GuidedMilestone])).min(2),
   seniorStretch: z.array(BiText).min(1),
   brief: BiText.optional(),
+  // Workbench additions (all optional → the 39 existing projects validate unchanged):
+  rubric: z.array(RubricLevel).min(1).optional(),     // junior/mid/senior bar per dimension
+  reference: z.array(BiText).min(1).optional(),        // reference-solution walkthrough, one item per section
+  workbench: z.boolean().optional(),                   // true ⇒ projects-workbench/<slug>/{scaffold,solution} exists
 });
 
 const projects = defineCollection({
