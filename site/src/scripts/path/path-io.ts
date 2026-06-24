@@ -783,11 +783,11 @@ export function writePlacementPosteriors(posteriors: Map<string, number>, now: n
 }
 
 // ── deadline read-models for the UI (pace + optimization suggestions) ──────────
-export function currentPace(): Pace | null {
+export function currentPace(precomputedPath?: Path): Pace | null {
   const cfg = config.value;
   const dl = cfg.deadline;
   if (!dl?.startedAtMs || dl.baselineRequiredMin == null) return null;
-  const { path } = computePath();
+  const path = precomputedPath ?? computePath().path;
   const tier = tierOf(cfg);
   const required = path.steps.reduce((n, s) => n + Math.round(s.estMin * tierEffort(tier)), 0);
   // Scope growth (content updates re-adding units) must never read as regress: when required
@@ -936,6 +936,7 @@ export interface Readiness {
   movedUp: boolean;
   barRating: number;
   forecast: RatingForecast | null;
+  deadlineMs: number | null;
   pace: Pace | null;
   weakSpots: WeakSpot[];
   interviewReadiness: number | null;
@@ -961,8 +962,17 @@ export function currentReadiness(): Readiness {
   const barRating = barRatingForGoal(goalId);
   const effRating = Math.max(placedRating, s.progression.studyEma ?? 0);
   const dl = cfg.deadline;
-  const p = typeof window === "undefined" ? null : currentPace();
-  const forecast = dl ? projectRatingDate(effRating, barRating, p?.projectedFinishMs ?? null, dl.targetDateMs) : null;
+  // One computePath drives both pace and the plan-feasibility fallback (passed into currentPace so
+  // it doesn't recompute the set-cover). The plan verdict lets the forecast answer immediately on a
+  // just-set deadline — before any study history exists for pace() to extrapolate a finish date.
+  let p: Pace | null = null;
+  let planFeas: { verdict: "over" | "fits" | "under"; deltaMin: number } | null = null;
+  if (typeof window !== "undefined" && dl) {
+    const { path, schedule } = computePath();
+    p = currentPace(path);
+    if (schedule) planFeas = { verdict: schedule.feasibility.verdict, deltaMin: schedule.feasibility.deltaMin };
+  }
+  const forecast = dl ? projectRatingDate(effRating, barRating, p?.projectedFinishMs ?? null, dl.targetDateMs, planFeas) : null;
 
   return {
     displayRating,
@@ -971,6 +981,7 @@ export function currentReadiness(): Readiness {
     movedUp,
     barRating,
     forecast,
+    deadlineMs: dl?.targetDateMs ?? null,
     pace: p,
     weakSpots: typeof window === "undefined" ? [] : currentWeakSpots(),
     interviewReadiness: s.progression.interviewReadiness ?? null,

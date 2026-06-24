@@ -104,9 +104,35 @@ describe("projectRatingDate", () => {
     const r = projectRatingDate(500, 600, T - 3 * DAY, T);
     expect(r.daysAheadBehind).toBe(-3);
   });
-  it("no projected finish ⇒ null date, zero days", () => {
+  it("no projected finish and no plan ⇒ null date, zero days, no plan", () => {
     const r = projectRatingDate(500, 600, null, T);
     expect(r).toEqual({ reached: false, projectedMs: null, daysAheadBehind: 0 });
+    expect(r.plan).toBeUndefined();
+  });
+  it("no realized projection but a fitting plan ⇒ plan fallback fits=true", () => {
+    const r = projectRatingDate(125, 450, null, T, { verdict: "under", deltaMin: 5388 });
+    expect(r.reached).toBe(false);
+    expect(r.projectedMs).toBeNull();
+    expect(r.plan).toEqual({ fits: true, deltaMin: 5388 });
+  });
+  it("plan 'fits' verdict (tight) still counts as fits=true", () => {
+    const r = projectRatingDate(125, 450, null, T, { verdict: "fits", deltaMin: 0 });
+    expect(r.plan).toEqual({ fits: true, deltaMin: 0 });
+  });
+  it("over-budget plan ⇒ plan fallback fits=false with the deficit", () => {
+    const r = projectRatingDate(125, 450, null, T, { verdict: "over", deltaMin: 1200 });
+    expect(r.plan).toEqual({ fits: false, deltaMin: 1200 });
+  });
+  it("a realized projection wins over the plan fallback (no plan attached)", () => {
+    const finish = T + 5 * DAY;
+    const r = projectRatingDate(500, 600, finish, T, { verdict: "over", deltaMin: 1200 });
+    expect(r.projectedMs).toBe(finish);
+    expect(r.plan).toBeUndefined();
+  });
+  it("already reached ignores the plan fallback", () => {
+    const r = projectRatingDate(620, 600, null, T, { verdict: "over", deltaMin: 1200 });
+    expect(r.reached).toBe(true);
+    expect(r.plan).toBeUndefined();
   });
 });
 
