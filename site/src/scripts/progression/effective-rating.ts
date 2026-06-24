@@ -51,20 +51,39 @@ export function barRatingForGoal(goalId: string): number {
   return GOAL_BAR[goalId] ?? 600;
 }
 
+export interface EvidenceProgress {
+  proven: number;  // frontier concepts cleared at >= tau confidence
+  needed: number;  // minEvidence required to make the study rating go live
+  met: boolean;    // proven >= needed
+}
+
+/** How close the study rating is to going live: how many frontier concepts are genuinely
+ *  cleared vs the minimum required. Lets the UI turn the opaque suppression into an
+ *  "X/N concepts proven" progress signal instead of a frozen rating. */
+export function evidenceProgress(
+  frontier: Set<string>,
+  knowledge: KnowledgeState,
+  tau = 0.6,
+  minEvidence = 5,
+): EvidenceProgress {
+  let proven = 0;
+  for (const id of frontier) {
+    const m = knowledge.get(id);
+    if (m && m.confidence >= tau) proven++;
+  }
+  return { proven, needed: minEvidence, met: proven >= minEvidence };
+}
+
 /** Suppress the "now Y" surface until enough frontier concepts are genuinely cleared,
- *  so a sparse early signal can't mislead. */
+ *  so a sparse early signal can't mislead. Boolean view of evidenceProgress — the gate
+ *  logic is unchanged. */
 export function hasEnoughEvidence(
   frontier: Set<string>,
   knowledge: KnowledgeState,
   tau = 0.6,
   minEvidence = 5,
 ): boolean {
-  let n = 0;
-  for (const id of frontier) {
-    const m = knowledge.get(id);
-    if (m && m.confidence >= tau) n++;
-  }
-  return n >= minEvidence;
+  return evidenceProgress(frontier, knowledge, tau, minEvidence).met;
 }
 
 export interface RatingForecast {
