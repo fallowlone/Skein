@@ -31,7 +31,7 @@ export function overviewCards(i: OverviewInput): OverviewCard[] {
     {
       key: "cefr", label: { en: "English (CEFR)", ru: "Английский (CEFR)" },
       value: i.cefr ?? null,
-      sub: { en: "English Hub →", ru: "English Hub →" }, href: (l) => `/${l}/english`,
+      sub: { en: "English Hub →", ru: "Английский хаб →" }, href: (l) => `/${l}/english`,
     },
     {
       key: "goal", label: { en: "Current goal", ru: "Текущая цель" },
