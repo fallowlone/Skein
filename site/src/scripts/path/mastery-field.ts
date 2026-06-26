@@ -20,7 +20,7 @@ export interface DomainFamily {
 // is mapped exactly once — adding a track without updating this map fails CI.
 export const DOMAIN_FAMILIES: DomainFamily[] = [
   { key: "foundations", label: { en: "Foundations", ru: "Основы" }, hue: "--d-hardware",
-    tracks: ["math", "base-cs", "cli", "algorithms", "logic", "linux"] as Track[] },
+    tracks: ["math", "base-cs", "cli", "algorithms", "logic", "linux", "git"] as Track[] },
   { key: "frontend", label: { en: "Frontend · runtime", ru: "Фронтенд · рантайм" }, hue: "--d-frontend",
     tracks: ["browser", "frontend", "typescript", "js-engine", "react", "nextjs", "react-patterns"] as Track[] },
   { key: "backend", label: { en: "Backend · APIs", ru: "Бэкенд · API" }, hue: "--d-backend",
