@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   splitFrontmatter, frontmatterField, hashParts, pageHash, pageKeyOf,
   decideBuild, partitionFrontmatter, PAGE_LOCAL_FRONTMATTER_FIELDS,
+  MAX_INCREMENTAL_PAGES,
   type Manifest,
 } from "./incremental-hash";
 
@@ -105,6 +106,30 @@ describe("decideBuild", () => {
   it("is FULL when a page key was removed (present in prev, absent in current)", () => {
     const d = decideBuild(prev, { globalHash: "G1", pages: { "en/n/01/a": "h1" } });
     expect(d.mode).toBe("full");
+  });
+  it("promotes to FULL when more than MAX_INCREMENTAL_PAGES pages changed (env-arg overflow guard)", () => {
+    const n = MAX_INCREMENTAL_PAGES + 1;
+    const prevPages: Record<string, string> = {};
+    const currPages: Record<string, string> = {};
+    for (let i = 0; i < n; i++) {
+      prevPages[`en/t/u/${i}`] = "h";
+      currPages[`en/t/u/${i}`] = "h-NEW"; // every page's hash moved
+    }
+    const d = decideBuild({ globalHash: "G1", pages: prevPages }, { globalHash: "G1", pages: currPages });
+    expect(d.mode).toBe("full");
+    expect(d.changedPages).toEqual([]);
+  });
+  it("stays INCREMENTAL at exactly MAX_INCREMENTAL_PAGES changed pages", () => {
+    const n = MAX_INCREMENTAL_PAGES;
+    const prevPages: Record<string, string> = {};
+    const currPages: Record<string, string> = {};
+    for (let i = 0; i < n; i++) {
+      prevPages[`en/t/u/${i}`] = "h";
+      currPages[`en/t/u/${i}`] = "h-NEW";
+    }
+    const d = decideBuild({ globalHash: "G1", pages: prevPages }, { globalHash: "G1", pages: currPages });
+    expect(d.mode).toBe("incremental");
+    expect(d.changedPages.length).toBe(n);
   });
 });
 
