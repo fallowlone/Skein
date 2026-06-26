@@ -22,6 +22,7 @@ export const TRACK_ABBR: Record<Track, string> = {
   "code-patterns": "CP",
   "react-patterns": "RXP",
   "architecture-patterns": "ARCH",
+  "git": "GIT",
 };
 
 export type TrackColor = "lilac" | "mint" | "peach" | "sky" | "rose";
