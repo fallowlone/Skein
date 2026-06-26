@@ -21,6 +21,12 @@ export default defineConfig({
   // parallel-build.mjs sets ASTRO_CACHE_DIR per shard so each owns its store.
   // Unset (serial / incremental build) → Astro's default `node_modules/.astro`.
   cacheDir: process.env.ASTRO_CACHE_DIR || undefined,
+  // Prefetch internal page HTML on link hover so lesson→lesson and sidebar
+  // navigation feels instant. `hover` only fetches once the pointer lands on a
+  // link (intent signal); `prefetchAll` opts every same-origin <a> in without
+  // per-link attributes. Static HTML, low-priority fetch, deduped by Astro —
+  // negligible cost, large perceived-nav win on a content site.
+  prefetch: { prefetchAll: true, defaultStrategy: "hover" },
   // Render pages serially during the static build. The site emits ~4.2k pages;
   // concurrency >1 holds multiple render contexts in heap at once and pushed the
   // Cloudflare Pages 8GB builder into an OOM (heap limit) once all tracks landed.
