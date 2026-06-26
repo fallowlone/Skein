@@ -87,6 +87,12 @@ export interface BuildDecision {
   changedPages: string[];
 }
 
+// Above this many changed pages, fall back to a full build: the incremental
+// plan travels as one `INCREMENTAL_PLAN` env string (Linux MAX_ARG_STRLEN =
+// 128 KiB) and a few thousand page keys overflow it. ~1000 keys is well under
+// the limit and below the point where overlay stops being cheaper than full.
+export const MAX_INCREMENTAL_PAGES = 1000;
+
 /**
  * Decide full vs incremental. FULL whenever anything shared could affect other
  * pages (no cache, global hash changed, or forced). Otherwise INCREMENTAL with
@@ -117,6 +123,15 @@ export function decideBuild(
   }
   if (Object.keys(prev.pages).length !== Object.keys(current.pages).length) {
     return { mode: "full", changedPages: [] }; // a prev page vanished
+  }
+  // A site-wide change (e.g. flipping a hydration directive across every lesson)
+  // produces thousands of changed pages. The incremental plan is handed to the
+  // build as the single `INCREMENTAL_PLAN` env var, and Linux caps one env/arg
+  // string at MAX_ARG_STRLEN (128 KiB) — ~2k page keys overflow it ("Argument
+  // list too long"). Past this many pages an incremental overlay also isn't
+  // meaningfully cheaper than a clean full render, so promote to full.
+  if (changedPages.length > MAX_INCREMENTAL_PAGES) {
+    return { mode: "full", changedPages: [] };
   }
   return { mode: "incremental", changedPages };
 }
