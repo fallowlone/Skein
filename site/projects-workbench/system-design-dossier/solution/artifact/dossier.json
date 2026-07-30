@@ -1,0 +1,128 @@
+{
+  "system": "Order timeline service",
+  "problem": "Support cannot answer 'what happened to this order' without three tabs and a query nobody trusts; the data lives in four services and no one owns the sequence.",
+  "load": {
+    "peakRps": 4000,
+    "readWriteRatio": 50,
+    "avgPayloadBytes": 1500,
+    "retentionDays": 180
+  },
+  "capacity": {
+    "storageGb": 1830,
+    "peakBandwidthMbps": 48,
+    "derivation": "writes = 4000/(1+50) ≈ 78.4/s; 78.4 × 1500B × 86400s × 180d ≈ 1830 GB before replication; peak egress = 4000 × 1500B × 8 ≈ 48 Mbps"
+  },
+  "bottleneck": "Fan-in write amplification: every order touches 6 upstream events, so the timeline table takes 6x the write rate of the order table and its index is the first thing to saturate",
+  "decisions": [
+    {
+      "id": "d1",
+      "title": "Read model",
+      "chosen": "Materialised timeline table, written by a consumer",
+      "rejected": [
+        {
+          "option": "Query the four services on read",
+          "why": "p99 becomes the slowest dependency, and support reads happen during incidents when those services are already unhealthy"
+        },
+        {
+          "option": "Nightly batch view",
+          "why": "the question is asked about orders from minutes ago"
+        }
+      ],
+      "tradeoff": "Duplicated state that can drift; paid for with a reconciler and a drift metric"
+    },
+    {
+      "id": "d2",
+      "title": "Transport",
+      "chosen": "Kafka with per-order partitioning",
+      "rejected": [
+        {
+          "option": "HTTP webhooks between services",
+          "why": "no replay, and every consumer reimplements retry"
+        },
+        {
+          "option": "SQS",
+          "why": "no ordering guarantee within an order, which the timeline needs"
+        }
+      ],
+      "tradeoff": "Operational weight of a broker for ordering and replay"
+    },
+    {
+      "id": "d3",
+      "title": "Delivery semantics",
+      "chosen": "At-least-once with an idempotency key per event",
+      "rejected": [
+        {
+          "option": "Exactly-once via transactions across services",
+          "why": "cost and coupling exceed the benefit; duplicates are cheap to absorb here"
+        }
+      ],
+      "tradeoff": "Every handler must be idempotent, enforced by a shared helper and a test"
+    },
+    {
+      "id": "d4",
+      "title": "Storage",
+      "chosen": "Postgres partitioned by month with a retention job",
+      "rejected": [
+        {
+          "option": "Cassandra",
+          "why": "the access pattern is a range scan by order id, and no one on the team operates it"
+        },
+        {
+          "option": "Elasticsearch",
+          "why": "we need an authoritative record, not a search index"
+        }
+      ],
+      "tradeoff": "A vertical ceiling we will hit around 4x current load; the partition scheme buys the runway to move"
+    }
+  ],
+  "slos": [
+    {
+      "metric": "p99 timeline read latency",
+      "target": "< 300ms",
+      "measuredBy": "server-side histogram, 30-day rolling window in Prometheus",
+      "errorBudgetPolicy": "at 50% burn, feature work stops until the budget recovers; at 100%, the on-call owns a written plan"
+    },
+    {
+      "metric": "event-to-visible lag (p95)",
+      "target": "< 10s",
+      "measuredBy": "timestamp delta emitted by the consumer per event",
+      "errorBudgetPolicy": "sustained breach pages the owning team; a 1h breach triggers a postmortem"
+    },
+    {
+      "metric": "availability of the read API",
+      "target": "99.9% monthly",
+      "measuredBy": "black-box probe every 30s from two regions",
+      "errorBudgetPolicy": "fast-burn alert pages immediately; slow burn is reviewed weekly"
+    }
+  ],
+  "failureModes": [
+    {
+      "component": "Kafka consumer",
+      "failure": "Consumer group rebalances repeatedly under load and lag grows without bound",
+      "blastRadius": "Timeline goes stale for every order; reads still succeed, so nobody notices until support complains",
+      "mitigation": "Bounded processing time per message, heartbeat tuned above the p99 handler time, and a lag-based autoscaler",
+      "detection": "Consumer lag alert at 60s of lag, plus the event-to-visible SLO burn alert"
+    },
+    {
+      "component": "Postgres primary",
+      "failure": "Failover: writes rejected for ~30 seconds",
+      "blastRadius": "Ingest pauses; reads continue from the replica with data up to the failover point",
+      "mitigation": "Consumer retries with backoff against a bounded in-memory buffer, then pauses the partition rather than dropping",
+      "detection": "Write error-rate alert and a replica-lag alert"
+    },
+    {
+      "component": "Upstream order service",
+      "failure": "Emits a malformed event schema after a deploy",
+      "blastRadius": "One partition stops advancing; other orders unaffected",
+      "mitigation": "Schema validation at the consumer boundary, dead-letter after 3 attempts, and a contract test in the upstream CI",
+      "detection": "Dead-letter queue depth alert, which is also the first thing the runbook checks"
+    },
+    {
+      "component": "Reconciler",
+      "failure": "Silent drift between the timeline and the source of truth",
+      "blastRadius": "Support answers confidently from wrong data — the worst outcome, because it is invisible",
+      "mitigation": "Hourly sampled comparison against the source services; drift above 0.1% opens a ticket automatically",
+      "detection": "Drift metric with an alert; the number is on the service dashboard, not buried in a job log"
+    }
+  ]
+}
