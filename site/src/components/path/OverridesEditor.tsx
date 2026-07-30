@@ -4,8 +4,8 @@ import type { Locale } from "~/i18n";
 import { overrides, addOverrideEdge, removeOverrideEntry, clearOverrides, conceptExists } from "~/scripts/path/path-io";
 
 const L = {
-  en: { title: "Fix prerequisites", concept: "concept id", requires: "prereq id", add: "Add prereq", remove: "Remove prereq", reset: "Reset all", none: "No local overrides.", unknown: "Unknown concept id", removeE: "remove", addE: "add" },
-  ru: { title: "Исправить пререквизиты", concept: "id концепта", requires: "id пререквизита", add: "Добавить", remove: "Убрать", reset: "Сбросить все", none: "Нет локальных правок.", unknown: "Неизвестный id концепта", removeE: "убрать", addE: "добавить" },
+  en: { title: "Fix prerequisites", concept: "concept id", requires: "prereq id", add: "Add prereq", remove: "Remove prereq", reset: "Reset all", none: "No local overrides.", unknown: "Unknown concept id", removeE: "remove", addE: "add", del: "Delete" },
+  ru: { title: "Исправить пререквизиты", concept: "id концепта", requires: "id пререквизита", add: "Добавить", remove: "Убрать", reset: "Сбросить все", none: "Нет локальных правок.", unknown: "Неизвестный id концепта", removeE: "убрать", addE: "добавить", del: "Удалить" },
 } as const;
 
 export default function OverridesEditor({ lang }: { lang: Locale }) {
@@ -40,7 +40,7 @@ export default function OverridesEditor({ lang }: { lang: Locale }) {
           <li key={`${e.kind}-${e.concept}-${e.requires}`} class="flex items-center gap-2">
             <span class="text-stone-500">{e.kind === "add" ? t.addE : t.removeE}</span>
             <code>{e.concept} → {e.requires}</code>
-            <button class="ml-auto text-rose-500" onClick={() => removeOverrideEntry(e.kind, e.concept, e.requires)} aria-label="delete">✕</button>
+            <button class="ml-auto text-rose-500" onClick={() => removeOverrideEntry(e.kind, e.concept, e.requires)} aria-label={t.del}>✕</button>
           </li>
         ))}
       </ul>

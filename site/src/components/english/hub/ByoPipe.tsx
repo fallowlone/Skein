@@ -223,7 +223,7 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
               value={text}
               onInput={(e) => setText((e.target as HTMLInputElement).value)}
             />
-            <div class="seg src-seg" role="group" aria-label="Source type">
+            <div class="seg src-seg" role="group" aria-label={lang === "en" ? "Source type" : "Тип источника"}>
               {(["text", "url"] as SrcType[]).map((s) => (
                 <button key={s} type="button" aria-pressed={srcType === s} onClick={() => setSrcType(s)}>
                   {s === "text" ? L.text : L.url}
