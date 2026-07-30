@@ -103,13 +103,24 @@ describe("checkCapstones", () => {
 });
 
 describe("checkWorkbenchCoherence", () => {
+  // Each stack's runner looks in a different place: bun-ts under scaffold/test/,
+  // python and go at the scaffold root (unittest discovery / `go test ./...`).
+  const SUITE_FILE: Record<string, { dir: string; name: string }> = {
+    "bun-ts": { dir: "test", name: "x.test.ts" },
+    python: { dir: "", name: "test_x.py" },
+    go: { dir: "", name: "x_test.go" },
+  };
+
   async function wb(root: string, slug: string, opts: { stack?: string; scaffold?: boolean; solution?: boolean; test?: boolean }) {
     const base = join(root, slug);
+    const stack = opts.stack ?? "bun-ts";
     await mkdir(base, { recursive: true });
-    await writeFile(join(base, "manifest.json"), JSON.stringify({ stack: opts.stack ?? "bun-ts", test: "bun test" }));
+    await writeFile(join(base, "manifest.json"), JSON.stringify({ stack, test: "bun test" }));
     if (opts.scaffold !== false) {
-      await mkdir(join(base, "scaffold", "test"), { recursive: true });
-      if (opts.test !== false) await writeFile(join(base, "scaffold", "test", "x.test.ts"), "// test");
+      const suite = SUITE_FILE[stack] ?? SUITE_FILE["bun-ts"];
+      const dir = suite.dir ? join(base, "scaffold", suite.dir) : join(base, "scaffold");
+      await mkdir(dir, { recursive: true });
+      if (opts.test !== false) await writeFile(join(dir, suite.name), "// test");
     }
     if (opts.solution !== false) await mkdir(join(base, "solution"), { recursive: true });
   }
@@ -150,12 +161,34 @@ describe("checkWorkbenchCoherence", () => {
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
-  it("flags an invalid manifest stack", async () => {
+  it("flags a stack no runner supports", async () => {
     const root = await mkdtemp(join(tmpdir(), "wbc-"));
     try {
-      await wb(root, "p", { stack: "go" });
+      await wb(root, "p", { stack: "rust" });
       const errs = await checkWorkbenchCoherence([{ file: "p.json", data: { slug: "p", workbench: true } }], root);
       expect(errs.some((e) => /invalid stack/.test(e))).toBe(true);
     } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it("accepts the python and go stacks with their own suite layouts", async () => {
+    for (const stack of ["python", "go"]) {
+      const root = await mkdtemp(join(tmpdir(), "wbc-"));
+      try {
+        await wb(root, "p", { stack });
+        const errs = await checkWorkbenchCoherence([{ file: "p.json", data: { slug: "p", workbench: true } }], root);
+        expect(errs).toEqual([]);
+      } finally { await rm(root, { recursive: true, force: true }); }
+    }
+  });
+
+  it("flags a python or go workbench whose suite file is missing", async () => {
+    for (const [stack, label] of [["python", /test_\*\.py/], ["go", /\*_test\.go/]] as const) {
+      const root = await mkdtemp(join(tmpdir(), "wbc-"));
+      try {
+        await wb(root, "p", { stack, test: false });
+        const errs = await checkWorkbenchCoherence([{ file: "p.json", data: { slug: "p", workbench: true } }], root);
+        expect(errs.some((e) => label.test(e))).toBe(true);
+      } finally { await rm(root, { recursive: true, force: true }); }
+    }
   });
 });
