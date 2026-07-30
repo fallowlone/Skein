@@ -50,6 +50,11 @@ export default defineConfig({
   },
   vite: {
     ssr: { noExternal: ["gsap"] },
+    // Dev only: the dep optimizer rewrites quickjs-emscripten into .vite/deps but does
+    // not copy its sibling emscripten-module.wasm, so every sandbox run 404s with
+    // "both async and sync fetching of the wasm failed". Serving the package unbundled
+    // keeps its own asset URLs intact. Production builds never run the optimizer.
+    optimizeDeps: { exclude: ["quickjs-emscripten"] },
     resolve: {
       alias: {
         "~": fileURLToPath(new URL("./src", import.meta.url)),
