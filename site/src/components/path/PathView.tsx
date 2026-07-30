@@ -9,8 +9,9 @@ import { useState, useEffect } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
   effectiveKnowledge, config, content, computePath,
-  isColdStartView,
+  isColdStartView, resetPath,
 } from "~/scripts/path/path-io";
+import { resetAll } from "~/scripts/user-state";
 import { currentXp } from "~/scripts/progression/current";
 import { levelFromXp } from "~/scripts/progression/xp";
 import { completedStepCount, PATH_STEP_BONUS } from "~/scripts/progression/path-xp";
@@ -38,6 +39,10 @@ const L = {
     dlHead: "Deadline & exam-prep mode", dlNote: "An honest, dated schedule from your real availability",
     secGoal: "01 · GOAL", secDl: "02 · INSTRUMENT", secPath: "03 · PATH", secMap: "04 · INSTRUMENT",
     placeHead: "How well-placed are you?", placeNote: "Measured vs guessed across your goal",
+    resetHead: "Start over", resetNote: "Local data only",
+    resetDesc: "Erase your path, calibration, progression, and settings on this device. This cannot be undone.",
+    resetCta: "Reset all progress…",
+    resetConfirm: "Reset all local progress? This cannot be undone.",
   },
   ru: {
     level: "Уровень", xp: "XP", steps: "Шагов пройдено",
@@ -52,6 +57,10 @@ const L = {
     dlHead: "Дедлайн и подготовка к экзамену", dlNote: "Честный план по датам из твоей реальной загрузки",
     secGoal: "01 · ЦЕЛЬ", secDl: "02 · ИНСТРУМЕНТ", secPath: "03 · ПУТЬ", secMap: "04 · ИНСТРУМЕНТ",
     placeHead: "Насколько точно ты размещён?", placeNote: "Измерено и угадано по твоей цели",
+    resetHead: "Начать заново", resetNote: "Только локальные данные",
+    resetDesc: "Стереть путь, калибровку, прогрессию и настройки на этом устройстве. Отменить нельзя.",
+    resetCta: "Сбросить весь прогресс…",
+    resetConfirm: "Сбросить весь локальный прогресс? Отменить нельзя.",
   },
 } as const;
 
@@ -74,6 +83,13 @@ export default function PathView({ lang }: { lang: Locale }) {
   const intoPct = lvl.intoLevel + lvl.toNext > 0
     ? Math.round((lvl.intoLevel / (lvl.intoLevel + lvl.toNext)) * 100)
     : 0;
+
+  function onResetAll() {
+    if (!confirm(t.resetConfirm)) return;
+    resetAll();   // user-state: progression / pretest / tier / motion
+    resetPath();  // path-io: knowledge / config / overrides
+    location.reload(); // every section here reads a signal seeded at load — re-read from scratch
+  }
 
   // The four numbered sections + advanced knobs. Rendered flat when the student has a
   // plan; tucked inside a collapsed inset at cold-start (see below).
@@ -133,6 +149,21 @@ export default function PathView({ lang }: { lang: Locale }) {
       {/* Advanced knobs */}
       <section class="screen-section">
         <AdvancedKnobs lang={lang} onGraphEdits={() => setModal("config")} />
+      </section>
+
+      {/* Start over — same two-call reset the account screen performs; resetAll alone
+          leaves the path graph behind, which reads as "the reset did nothing". */}
+      <section class="screen-section" aria-labelledby="reset-h">
+        <div class="sec-head">
+          <h2 id="reset-h">{t.resetHead}</h2>
+          <span class="sec-note">{t.resetNote}</span>
+        </div>
+        <div class="reset-block">
+          <p class="rb-desc">{t.resetDesc}</p>
+          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm rb-btn" onClick={onResetAll}>
+            {t.resetCta}
+          </button>
+        </div>
       </section>
     </>
   );
