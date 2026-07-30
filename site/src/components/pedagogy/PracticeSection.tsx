@@ -3,7 +3,18 @@ import { lazy, Suspense } from "preact/compat";
 import type { Locale } from "~/i18n";
 import type { PracticeTaskData } from "~/content.config";
 import { checkBlank } from "~/scripts/practice-grade";
-import { setTaskStatus, readProgress, readAttempts } from "~/scripts/practice-state";
+import {
+  setTaskStatus,
+  readProgress,
+  readAttempts,
+  readResponses,
+  writeResponse,
+  readSelfGrades,
+  setSelfGrade,
+  isCommitted,
+  selfGradeToPass,
+  type SelfGrade,
+} from "~/scripts/practice-state";
 import { recommendNext } from "~/scripts/path/adaptive-difficulty";
 import { recordPracticeResult } from "~/scripts/metrics";
 import { recordPracticeOutcome } from "~/scripts/path/path-io";
@@ -88,7 +99,7 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
     <section data-practice-layer data-lesson-key={lessonKey} class="my-12">
       <h2 class="font-display font-[520] text-ink text-2xl mb-1">{tt(lang, "Practice", "Практика")}</h2>
       <p class="text-sm text-muted mb-3">
-        {tt(lang, "Start at the top. Tasks go easiest → hardest: recall a fact, apply it to a case, then a senior-level stretch. Open one, attempt it, then reveal.", "Начни сверху. Задачи идут от простого к сложному: вспомнить факт, применить к случаю, затем senior-уровень. Открой, попробуй, потом открой ответ.")}
+        {tt(lang, "Start at the top. Tasks go easiest → hardest: recall a fact, apply it to a case, then a senior-level stretch. Write your answer first — the model answer unlocks after you commit to one, and your own honest grade is what marks a task done.", "Начни сверху. Задачи идут от простого к сложному: вспомнить факт, применить к случаю, затем senior-уровень. Сначала запиши свой ответ — эталон открывается после этого, а задача считается выполненной по твоей честной оценке.")}
       </p>
       <div class="flex items-center gap-3 mb-6 text-xs font-mono text-muted">
         <span class="px-2 py-0.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2">{tt(lang, "recall", "вспомнить")}</span>
@@ -152,13 +163,13 @@ function TaskCard({ lang, lessonKey, task, recommended, adaptive, onChange }: { 
 function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey: string; task: PracticeTaskData; onChange?: () => void }) {
   switch (task.type) {
     case "predict":
-      return <Reveal lang={lang} lessonKey={lessonKey} taskId={task.id} body={tt(lang, task.reveal.en, task.reveal.ru)} pre={tt(lang, task.scenario.en, task.scenario.ru)} onChange={onChange} />;
+      return <CommitReveal lang={lang} lessonKey={lessonKey} taskId={task.id} taskType="predict" body={tt(lang, task.reveal.en, task.reveal.ru)} pre={tt(lang, task.scenario.en, task.scenario.ru)} onChange={onChange} />;
     case "design":
       return (
         <div>
           <Constraints lang={lang} text={tt(lang, task.constraints.en, task.constraints.ru)} />
-          <Rubric lang={lang} items={task.rubric.map((r) => tt(lang, r.en, r.ru))} />
-          <Reveal lang={lang} lessonKey={lessonKey} taskId={task.id} body={tt(lang, task.model.en, task.model.ru)} onChange={onChange} />
+          <Rubric lang={lang} lessonKey={lessonKey} taskId={task.id} items={task.rubric.map((r) => tt(lang, r.en, r.ru))} />
+          <CommitReveal lang={lang} lessonKey={lessonKey} taskId={task.id} taskType="design" body={tt(lang, task.model.en, task.model.ru)} onChange={onChange} />
           <Suspense fallback={null}><GradeWithAi lang={lang} task={task} /></Suspense>
         </div>
       );
@@ -179,8 +190,8 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
       return (
         <div>
           {task.evidence && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{tt(lang, task.evidence.en, task.evidence.ru)}</pre>}
-          <Rubric lang={lang} items={task.grading.rubric.map((r) => tt(lang, r.en, r.ru))} />
-          <Reveal lang={lang} lessonKey={lessonKey} taskId={task.id} body={tt(lang, task.grading.model.en, task.grading.model.ru)} onChange={onChange} />
+          <Rubric lang={lang} lessonKey={lessonKey} taskId={task.id} items={task.grading.rubric.map((r) => tt(lang, r.en, r.ru))} />
+          <CommitReveal lang={lang} lessonKey={lessonKey} taskId={task.id} taskType="diagnose" body={tt(lang, task.grading.model.en, task.grading.model.ru)} onChange={onChange} />
           <Suspense fallback={null}><GradeWithAi lang={lang} task={task} /></Suspense>
         </div>
       );
@@ -189,8 +200,8 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
         return (
           <div>
             {task.starter && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{task.starter}</pre>}
-            <Rubric lang={lang} items={task.grading.rubric.map((r) => tt(lang, r.en, r.ru))} />
-            <Reveal lang={lang} lessonKey={lessonKey} taskId={task.id} body={tt(lang, task.grading.model.en, task.grading.model.ru)} onChange={onChange} />
+            <Rubric lang={lang} lessonKey={lessonKey} taskId={task.id} items={task.grading.rubric.map((r) => tt(lang, r.en, r.ru))} />
+            <CommitReveal lang={lang} lessonKey={lessonKey} taskId={task.id} taskType="fix" body={tt(lang, task.grading.model.en, task.grading.model.ru)} onChange={onChange} />
           </div>
         );
       }
@@ -365,18 +376,137 @@ function ReviewBody({ lang, lessonKey, taskId, diff, findings, decoys, onChange 
   );
 }
 
-function Reveal({ lang, lessonKey, taskId, body, pre, onChange }: { lang: Locale; lessonKey: string; taskId: string; body: string; pre?: string; onChange?: () => void }) {
+/**
+ * Commit → reveal → self-grade.
+ *
+ * The old version was a single "Reveal model answer" button that also marked the
+ * task done. That made the generation effect optional (nothing stopped you from
+ * reading the answer straight away) and produced no signal: the adaptive engine
+ * and the SRS loop learned nothing from these tasks, which is 39% of all practice.
+ *
+ * Now the model answer is gated behind writing your own, the two sit side by side
+ * for comparison, and the honest self-grade is what marks progress. Skipping is a
+ * first-class option — an admitted "I did not know" is real signal, whereas
+ * forcing keystrokes to unlock the answer just teaches people to type junk.
+ */
+function CommitReveal({ lang, lessonKey, taskId, body, pre, taskType, onChange }: {
+  lang: Locale;
+  lessonKey: string;
+  taskId: string;
+  body: string;
+  pre?: string;
+  taskType: string;
+  onChange?: () => void;
+}) {
+  const [draft, setDraft] = useState(() => readResponses(lessonKey)[taskId] ?? "");
   const [shown, setShown] = useState(false);
+  const [skipped, setSkipped] = useState(false);
+  const [grade, setGrade] = useState<SelfGrade | null>(() => readSelfGrades(lessonKey)[taskId] ?? null);
+  const committed = isCommitted(draft);
+
+  const persistDraft = (text: string) => {
+    setDraft(text);
+    writeResponse(lessonKey, taskId, text);
+  };
+
+  const reveal = (viaSkip: boolean) => {
+    setShown(true);
+    setSkipped(viaSkip);
+    // Reaching the model answer is not completion — the self-grade below is.
+    setTaskStatus(lessonKey, taskId, "attempted");
+    if (viaSkip) applyGrade("skipped");
+    onChange?.();
+  };
+
+  const applyGrade = (g: SelfGrade) => {
+    setGrade(g);
+    setSelfGrade(lessonKey, taskId, g);
+    const passed = selfGradeToPass(g);
+    recordPracticeResult(lessonKey, taskId, taskType, passed);
+    recordPracticeOutcome(lessonKey, taskId, passed);
+    setTaskStatus(lessonKey, taskId, passed ? "done" : "attempted");
+    onChange?.();
+  };
+
   return (
     <div>
       {pre && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{pre}</pre>}
-      {!shown ? (
-        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm"
-          onClick={() => { setShown(true); setTaskStatus(lessonKey, taskId, "done"); onChange?.(); }}>
-          {tt(lang, "Reveal model answer", "Показать ответ")}
-        </button>
-      ) : (
-        <div class="prose max-w-none text-sm mt-2" dangerouslySetInnerHTML={{ __html: body }} />
+
+      <label class="block text-[10px] font-mono uppercase tracking-wide text-muted mb-1" for={`commit-${taskId}`}>
+        {tt(lang, "Your answer — write it before revealing", "Твой ответ — запиши до раскрытия")}
+      </label>
+      <textarea
+        id={`commit-${taskId}`}
+        class="w-full text-sm p-3 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 bg-card text-ink min-h-[84px] resize-y"
+        value={draft}
+        readOnly={shown}
+        placeholder={tt(lang, "State your prediction and the reason for it…", "Сформулируй прогноз и его причину…")}
+        onInput={(e) => persistDraft((e.target as HTMLTextAreaElement).value)}
+      />
+
+      {!shown && (
+        <div class="flex flex-wrap items-center gap-3 mt-2">
+          <button
+            type="button"
+            class="oa-btn oa-btn-primary oa-btn-sm"
+            disabled={!committed}
+            aria-disabled={!committed}
+            onClick={() => reveal(false)}
+          >
+            {tt(lang, "Compare with the model answer", "Сравнить с эталоном")}
+          </button>
+          <button type="button" class="text-xs text-muted underline" onClick={() => reveal(true)}>
+            {tt(lang, "I don't know — show it", "Не знаю — показать")}
+          </button>
+          {!committed && (
+            <span class="text-xs text-muted">
+              {tt(lang, "Write a sentence to unlock.", "Напиши хотя бы фразу, чтобы открыть.")}
+            </span>
+          )}
+        </div>
+      )}
+
+      {shown && (
+        <div class="mt-4">
+          <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">
+            {tt(lang, "Model answer", "Эталонный ответ")}
+          </div>
+          <div class="prose max-w-none text-sm" dangerouslySetInnerHTML={{ __html: body }} />
+
+          <div class="mt-4 pt-3 border-t border-hairline">
+            <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-2">
+              {skipped
+                ? tt(lang, "Recorded as not known — it will come back in review", "Записано как «не знал» — вернётся в повторении")
+                : tt(lang, "How did your answer do?", "Насколько твой ответ совпал?")}
+            </div>
+            {!skipped && (
+              <div class="flex flex-wrap gap-2">
+                {([
+                  ["hit", tt(lang, "Got it", "Попал")],
+                  ["partial", tt(lang, "Partly", "Частично")],
+                  ["miss", tt(lang, "Missed it", "Не попал")],
+                ] as const).map(([g, label]) => (
+                  <button
+                    key={g}
+                    type="button"
+                    class={`oa-btn oa-btn-sm ${grade === g ? "oa-btn-primary" : "oa-btn-secondary"}`}
+                    aria-pressed={grade === g}
+                    onClick={() => applyGrade(g)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {grade && grade !== "skipped" && (
+              <p class="text-xs text-muted mt-2">
+                {grade === "hit"
+                  ? tt(lang, "Marked done.", "Отмечено как выполненное.")
+                  : tt(lang, "Kept in the review queue — partial recall decays fastest.", "Оставлено в очереди повторения — частичное припоминание забывается быстрее всего.")}
+              </p>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -391,14 +521,46 @@ function Constraints({ lang, text }: { lang: Locale; text: string }) {
   );
 }
 
-function Rubric({ lang, items }: { lang: Locale; items: string[] }) {
+/**
+ * Self-grade checklist.
+ *
+ * The checkboxes used to be uncontrolled and unstored: ticking them changed
+ * nothing, survived nothing, and told the engine nothing. They now persist per
+ * task and report coverage, so the learner sees how much of the rubric they
+ * actually hit before comparing with the model answer.
+ */
+function Rubric({ lang, lessonKey, taskId, items }: { lang: Locale; lessonKey: string; taskId: string; items: string[] }) {
+  const storeKey = `${taskId}::rubric`;
+  const [checked, setChecked] = useState<boolean[]>(() => {
+    const raw = readResponses(lessonKey)[storeKey];
+    const saved = raw ? raw.split(",") : [];
+    return items.map((_, i) => saved[i] === "1");
+  });
+  const toggle = (i: number) => {
+    const next = checked.map((v, j) => (j === i ? !v : v));
+    setChecked(next);
+    writeResponse(lessonKey, storeKey, next.map((v) => (v ? "1" : "0")).join(","));
+  };
+  const hit = checked.filter(Boolean).length;
   return (
     <div class="mb-3">
-      <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">{tt(lang, "Self-grade checklist", "Чек-лист самооценки")}</div>
+      <div class="flex items-baseline gap-2 mb-1">
+        <div class="text-[10px] font-mono uppercase tracking-wide text-muted">{tt(lang, "Self-grade checklist", "Чек-лист самооценки")}</div>
+        <span class="text-[10px] font-mono text-muted tabular-nums ml-auto">
+          {hit}/{items.length}
+        </span>
+      </div>
       <ul class="space-y-1">
         {items.map((it, i) => (
           <li key={i} class="flex items-start gap-2 text-sm">
-            <input type="checkbox" class="mt-1" /> <span dangerouslySetInnerHTML={{ __html: it }} />
+            <input
+              type="checkbox"
+              class="mt-1"
+              id={`${taskId}-rubric-${i}`}
+              checked={checked[i]}
+              onChange={() => toggle(i)}
+            />
+            <label for={`${taskId}-rubric-${i}`} dangerouslySetInnerHTML={{ __html: it }} />
           </li>
         ))}
       </ul>
@@ -460,7 +622,42 @@ function Incident({ lang, lessonKey, taskId, steps, onChange }: {
   steps: { label: string; prompt: string; reveal: string }[];
   onChange?: () => void;
 }) {
+  // An incident walkthrough is only training if each step is answered before it is
+  // opened; a bare "Reveal" per step turned the whole thing into reading. Each step
+  // now gates on a written answer (with an honest skip), and the task counts as done
+  // only if every step was actually answered rather than skipped.
   const [revealed, setRevealed] = useState<Record<number, boolean>>({});
+  const [skippedSteps, setSkippedSteps] = useState<Record<number, boolean>>({});
+  const [drafts, setDrafts] = useState<Record<number, string>>(() => {
+    const stored = readResponses(lessonKey);
+    const out: Record<number, string> = {};
+    steps.forEach((_, i) => {
+      const v = stored[`${taskId}::step${i}`];
+      if (v) out[i] = v;
+    });
+    return out;
+  });
+
+  const setDraft = (i: number, text: string) => {
+    setDrafts((d) => ({ ...d, [i]: text }));
+    writeResponse(lessonKey, `${taskId}::step${i}`, text);
+  };
+
+  const open = (i: number, viaSkip: boolean) => {
+    const nextRevealed = { ...revealed, [i]: true };
+    const nextSkipped = viaSkip ? { ...skippedSteps, [i]: true } : skippedSteps;
+    setRevealed(nextRevealed);
+    setSkippedSteps(nextSkipped);
+    const allOpen = steps.every((_, j) => nextRevealed[j]);
+    const answeredAll = allOpen && steps.every((_, j) => !nextSkipped[j]);
+    if (allOpen) {
+      recordPracticeResult(lessonKey, taskId, "incident", answeredAll);
+      recordPracticeOutcome(lessonKey, taskId, answeredAll);
+    }
+    setTaskStatus(lessonKey, taskId, answeredAll ? "done" : "attempted");
+    onChange?.();
+  };
+
   return (
     <ol class="space-y-4">
       {steps.map((s, i) => (
@@ -468,17 +665,39 @@ function Incident({ lang, lessonKey, taskId, steps, onChange }: {
           <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">{s.label}</div>
           <div class="prose max-w-none text-sm mb-2" dangerouslySetInnerHTML={{ __html: s.prompt }} />
           {!revealed[i] ? (
-            <button type="button" class="text-sm text-ok font-semibold"
-              onClick={() => {
-                const next = { ...revealed, [i]: true };
-                setRevealed(next);
-                setTaskStatus(lessonKey, taskId, Object.keys(next).length === steps.length ? "done" : "attempted");
-                onChange?.();
-              }}>
-              {tt(lang, "Reveal", "Показать")}
-            </button>
+            <div>
+              <textarea
+                class="w-full text-sm p-2.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 bg-card text-ink min-h-[60px] resize-y"
+                value={drafts[i] ?? ""}
+                aria-label={tt(lang, "Your answer for this step", "Твой ответ на этот шаг")}
+                placeholder={tt(lang, "What do you do at this step, and why?", "Что делаешь на этом шаге и почему?")}
+                onInput={(e) => setDraft(i, (e.target as HTMLTextAreaElement).value)}
+              />
+              <div class="flex flex-wrap items-center gap-3 mt-1.5">
+                <button
+                  type="button"
+                  class="oa-btn oa-btn-secondary oa-btn-sm"
+                  disabled={!isCommitted(drafts[i] ?? "")}
+                  aria-disabled={!isCommitted(drafts[i] ?? "")}
+                  onClick={() => open(i, false)}
+                >
+                  {tt(lang, "Compare this step", "Сравнить шаг")}
+                </button>
+                <button type="button" class="text-xs text-muted underline" onClick={() => open(i, true)}>
+                  {tt(lang, "Skip", "Пропустить")}
+                </button>
+              </div>
+            </div>
           ) : (
-            <div class="prose max-w-none text-sm bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)]" dangerouslySetInnerHTML={{ __html: s.reveal }} />
+            <div>
+              {drafts[i] && !skippedSteps[i] && (
+                <div class="mb-2">
+                  <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">{tt(lang, "You wrote", "Ты написал")}</div>
+                  <p class="text-sm text-ink-2 whitespace-pre-wrap">{drafts[i]}</p>
+                </div>
+              )}
+              <div class="prose max-w-none text-sm bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)]" dangerouslySetInnerHTML={{ __html: s.reveal }} />
+            </div>
           )}
         </li>
       ))}
