@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 
 type Step = { id: string; label: string; durationMs: number };
-type Props = { id: string; steps: Step[]; loop?: boolean; children?: ComponentChildren };
+type Props = { id: string; steps: Step[]; loop?: boolean; lang?: "en" | "ru"; children?: ComponentChildren };
 
-export default function Sequencer({ id, steps, loop = false, children }: Props) {
+export default function Sequencer({ id, steps, loop = false, lang = "en", children }: Props) {
   const [active, setActive] = useState(0);
   const [playing, setPlaying] = useState(false);
   const timer = useRef<number | null>(null);
@@ -36,7 +36,7 @@ export default function Sequencer({ id, steps, loop = false, children }: Props) 
           type="button"
           class="oa-btn oa-btn-ghost oa-btn-sm"
           onClick={() => setActive(Math.max(0, active - 1))}
-          aria-label="Previous step"
+          aria-label={lang === "en" ? "Previous step" : "Предыдущий шаг"}
         >
           ‹
         </button>
@@ -52,7 +52,7 @@ export default function Sequencer({ id, steps, loop = false, children }: Props) 
           type="button"
           class="oa-btn oa-btn-ghost oa-btn-sm"
           onClick={() => setActive(Math.min(steps.length - 1, active + 1))}
-          aria-label="Next step"
+          aria-label={lang === "en" ? "Next step" : "Следующий шаг"}
         >
           ›
         </button>
