@@ -150,7 +150,9 @@ export function checkArchitecture(a: Architecture): Finding[] {
     }
     if (r.status === "superseded") {
       if (missing(r.supersededBy)) err("adr-superseded-dangling", `${where}: superseded by nothing — say which ADR replaced it`);
-      else if (!adrIds.has(r.supersededBy)) err("adr-superseded-unknown", `${where}: superseded by unknown ADR "${r.supersededBy}"`);
+      // `missing` is not a type guard, so the optional field is coalesced here rather
+      // than asserted — the empty string can never be a known ADR id.
+      else if (!adrIds.has(r.supersededBy ?? "")) err("adr-superseded-unknown", `${where}: superseded by unknown ADR "${r.supersededBy}"`);
     }
   }
 
