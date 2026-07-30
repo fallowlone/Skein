@@ -203,7 +203,7 @@ npx degit ${REPO}/projects/lru-cache my-lru-cache
 cd my-lru-cache && bun test
 \`\`\`
 
-Or download the zip from the project page on the site, or clone everything:
+Or clone everything:
 
 \`\`\`bash
 git clone https://github.com/${REPO}.git
