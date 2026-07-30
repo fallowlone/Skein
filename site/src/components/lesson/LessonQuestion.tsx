@@ -68,6 +68,7 @@ export default function LessonQuestion({ lang, lessonKey }: { lang: Locale; less
         class="w-full text-sm p-3 rounded-[var(--r-sm)] border border-hairline-2 bg-card-2 text-ink min-h-[80px]"
         maxLength={MAX_CHARS}
         placeholder={tt(lang, "What confused you here?", "Что здесь запутало?")}
+        aria-label={tt(lang, "Your question about this lesson", "Твой вопрос по этому уроку")}
         value={text}
         onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
       />

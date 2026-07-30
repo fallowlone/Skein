@@ -1,15 +1,13 @@
 import { describe, expect, test } from "vitest";
 import { render } from "preact-render-to-string";
-import ProjectsFilter, { filterProjects } from "./ProjectsFilter";
-import type { ProjectData } from "~/content.config";
+import ProjectsFilter, { filterProjects, type ProjectCard } from "./ProjectsFilter";
 
-const p = (slug: string, tracks: string[], difficulty: ProjectData["difficulty"]): ProjectData => ({
-  slug, tracks, difficulty, estDays: 3, skills: ["x"],
-  title: { en: slug, ru: slug }, pitch: { en: "p", ru: "п" },
-  deliverable: { en: "d", ru: "д" },
-  milestones: [{ en: "m1", ru: "м1" }, { en: "m2", ru: "м2" }],
-  seniorStretch: [{ en: "s", ru: "с" }],
-} as ProjectData);
+// The island takes a locale-resolved projection, not the raw content entry —
+// see ProjectCard in ProjectsFilter.tsx for why.
+const p = (slug: string, tracks: string[], difficulty: string): ProjectCard => ({
+  slug, tracks, difficulty, estDays: 3,
+  title: slug, pitch: "p", category: "backend",
+});
 
 const all = [p("a", ["databases"], "starter"), p("b", ["backend"], "advanced"), p("c", ["databases", "backend"], "intermediate")];
 

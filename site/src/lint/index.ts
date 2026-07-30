@@ -19,6 +19,8 @@ import { checkLab } from "./rules/lab";
 import { checkCapstones } from "./rules/capstones";
 import { checkPath } from "./rules/path";
 import { checkRetrievalDrawer } from "./rules/retrieval-drawer";
+import { checkInfographicWidth } from "./rules/infographic-width";
+import { checkTermKeys } from "./rules/term-keys";
 
 async function walk(dir: string): Promise<string[]> {
   const items = await readdir(dir, { withFileTypes: true });
@@ -63,6 +65,12 @@ export async function runSourceLint(siteSrc: string): Promise<{ errors: string[]
   const capRes = await checkCapstones(siteSrc);
   errors.push(...capRes.errors);
   warnings.push(...capRes.warnings);
+  const igRes = await checkInfographicWidth(siteSrc);
+  errors.push(...igRes.errors);
+  warnings.push(...igRes.warnings);
+  const termRes = await checkTermKeys(siteSrc);
+  errors.push(...termRes.errors);
+  warnings.push(...termRes.warnings);
   return { errors, warnings };
 }
 
