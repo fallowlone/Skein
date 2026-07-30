@@ -91,13 +91,17 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
                   {String(i + 1).padStart(2, "0")}
                 </span>
                 <div class="flex-1 min-w-0">
-                  <div class="font-display text-[16px] font-semibold leading-snug text-ink">
+                  {/* The question labels its own answer box — a placeholder is
+                      not a label (it disappears on input and is not reliably
+                      announced), so the box points at the prompt by id. */}
+                  <div id={`${key}-prompt`} class="font-display text-[16px] font-semibold leading-snug text-ink">
                     {q.q}
                   </div>
                   <textarea
                     class="mt-3 w-full bg-card border border-rule-strong rounded-[1px] px-3 py-2 text-[13px] font-mono text-ink resize-y min-h-[60px] focus:outline-none focus:border-ink"
                     rows={2}
                     placeholder={l.write}
+                    aria-labelledby={`${key}-prompt`}
                   />
                   <div class="flex items-center gap-3 mt-2">
                     {!isOpen ? (
