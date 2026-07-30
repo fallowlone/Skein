@@ -70,10 +70,23 @@ async function exists(p: string): Promise<boolean> {
   try { await stat(p); return true; } catch { return false; }
 }
 
+/** Per-stack shape of a workbench's acceptance suite. Keep in sync with STACKS in
+ *  scripts/run-project-workbench.mjs — the runner executes these, this rule only
+ *  checks that the files a learner needs are actually there.
+ *
+ *  `dir` is where the suite lives relative to scaffold/ ("" = scaffold root, which is
+ *  what `go test ./...` and unittest discovery expect). */
+const WORKBENCH_STACKS: Record<string, { dir: string; matches: (f: string) => boolean; label: string }> = {
+  "bun-ts": { dir: "test", matches: (f) => f.endsWith(".test.ts"), label: "*.test.ts" },
+  python: { dir: "", matches: (f) => f.startsWith("test_") && f.endsWith(".py"), label: "test_*.py" },
+  go: { dir: "", matches: (f) => f.endsWith("_test.go"), label: "*_test.go" },
+};
+
 /** Workbench coherence: every `workbench:true` project has a complete projects-workbench/<slug>/
- *  (manifest stack=bun-ts + non-empty test, scaffold/, solution/, ≥1 *.test.ts under scaffold/test),
- *  and every workbench directory is claimed by exactly one such project (no orphans). `wbRoot` is the
- *  projects-workbench directory; injected so this is testable in isolation. */
+ *  (manifest with a supported stack + non-empty test, scaffold/, solution/, and at least one
+ *  acceptance-suite file in the place that stack's runner looks), and every workbench directory is
+ *  claimed by exactly one such project (no orphans). `wbRoot` is the projects-workbench directory;
+ *  injected so this is testable in isolation. */
 export async function checkWorkbenchCoherence(
   projects: { file: string; data: any }[], wbRoot: string,
 ): Promise<string[]> {
@@ -89,18 +102,33 @@ export async function checkWorkbenchCoherence(
       errors.push(`capstones: "${file}" workbench:true but projects-workbench/${slug}/ is missing`);
       continue;
     }
+    let stack = "bun-ts";
     try {
       const mf = JSON.parse(await readFile(join(base, "manifest.json"), "utf8"));
-      if (mf.stack !== "bun-ts") errors.push(`capstones: projects-workbench/${slug}/manifest.json has invalid stack "${mf.stack}"`);
+      stack = typeof mf.stack === "string" ? mf.stack : "bun-ts";
+      if (!WORKBENCH_STACKS[stack]) {
+        errors.push(
+          `capstones: projects-workbench/${slug}/manifest.json has invalid stack "${mf.stack}" ` +
+            `(supported: ${Object.keys(WORKBENCH_STACKS).join(", ")})`,
+        );
+      }
       if (!mf.test) errors.push(`capstones: projects-workbench/${slug}/manifest.json is missing "test"`);
     } catch {
       errors.push(`capstones: projects-workbench/${slug}/manifest.json is missing or invalid`);
     }
     if (!(await exists(join(base, "scaffold")))) errors.push(`capstones: projects-workbench/${slug}/scaffold/ is missing`);
     if (!(await exists(join(base, "solution")))) errors.push(`capstones: projects-workbench/${slug}/solution/ is missing`);
-    let hasTest = false;
-    try { hasTest = (await readdir(join(base, "scaffold", "test"))).some((f) => f.endsWith(".test.ts")); } catch { /* none */ }
-    if (!hasTest) errors.push(`capstones: projects-workbench/${slug}/scaffold/test/ has no *.test.ts`);
+
+    const shape = WORKBENCH_STACKS[stack];
+    if (shape) {
+      const suiteDir = shape.dir ? join(base, "scaffold", shape.dir) : join(base, "scaffold");
+      let hasTest = false;
+      try { hasTest = (await readdir(suiteDir)).some(shape.matches); } catch { /* none */ }
+      if (!hasTest) {
+        const where = shape.dir ? `scaffold/${shape.dir}/` : "scaffold/";
+        errors.push(`capstones: projects-workbench/${slug}/${where} has no ${shape.label}`);
+      }
+    }
   }
   // Orphan scan: a workbench directory with no claiming project.
   try {
