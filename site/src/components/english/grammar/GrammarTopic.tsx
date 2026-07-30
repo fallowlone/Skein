@@ -94,7 +94,7 @@ export default function GrammarTopic({ lang, topic, familyTitle, related, crossS
           </h1>
           <div class="th-top">
             <span class="domain-tag" style={{ "--d": hue }}><span class="sq" />{familyTitle[lang]}</span>
-            <div class="level-seg" role="group" aria-label="CEFR level">
+            <div class="level-seg" role="group" aria-label={lang === "en" ? "CEFR level" : "Уровень CEFR"}>
               {topic.levels.map((lv) => {
                 const locked = isLevelLocked(lv, band);
                 return (

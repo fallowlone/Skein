@@ -1,16 +1,32 @@
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
-import type { ProjectData } from "~/content.config";
 
 const tt = (lang: Locale, en: string, ru: string) => (lang === "en" ? en : ru);
 
-export function filterProjects(
-  projects: ProjectData[],
+/** The only fields this island renders or filters on.
+ *
+ *  Deliberately NOT `ProjectData`: passing the whole entry serialised every
+ *  milestone, rubric and reference text of all 51 projects — in both locales —
+ *  into the island's `props` attribute, which alone weighed 1.57 MB of HTML on
+ *  /projects/. The page builds this projection instead (~5% of the bytes). */
+export type ProjectCard = {
+  slug: string;
+  title: string;
+  pitch: string;
+  tracks: string[];
+  difficulty: string;
+  category: string;
+  estDays: number;
+  workbench?: boolean;
+};
+
+export function filterProjects<T extends Pick<ProjectCard, "tracks" | "difficulty" | "category" | "workbench">>(
+  projects: T[],
   track: string,
   difficulty: string,
-  category: string,
+  category: string = "all",
   runnable: string = "all",
-): ProjectData[] {
+): T[] {
   return projects.filter(
     (p) =>
       (track === "all" || p.tracks.includes(track)) &&
@@ -20,7 +36,7 @@ export function filterProjects(
   );
 }
 
-type Props = { lang: Locale; projects: ProjectData[] };
+type Props = { lang: Locale; projects: ProjectCard[] };
 
 export default function ProjectsFilter({ lang, projects }: Props) {
   const [track, setTrack] = useState("all");
@@ -34,20 +50,22 @@ export default function ProjectsFilter({ lang, projects }: Props) {
 
   return (
     <div>
+      {/* Each select needs a programmatic name: the "All …" option reads as a
+          value, not as what the control does. */}
       <div class="proj-filters">
-        <select class="proj-select" value={category} onChange={(e) => setCategory((e.target as HTMLSelectElement).value)}>
+        <select class="proj-select" aria-label={tt(lang, "Category", "Категория")} value={category} onChange={(e) => setCategory((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All categories", "Все категории")}</option>
           {[["frontend","Frontend"],["backend","Backend"],["fullstack","Fullstack"],["infra","Infra"],["data","Data"],["systems","Systems"],["security","Security"],["algorithms","Algorithms"]].map(([v,l]) => <option value={v} key={v}>{l}</option>)}
         </select>
-        <select class="proj-select" value={track} onChange={(e) => setTrack((e.target as HTMLSelectElement).value)}>
+        <select class="proj-select" aria-label={tt(lang, "Track", "Трек")} value={track} onChange={(e) => setTrack((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All tracks", "Все треки")}</option>
           {tracks.map((tr) => <option value={tr} key={tr}>{tr}</option>)}
         </select>
-        <select class="proj-select" value={difficulty} onChange={(e) => setDifficulty((e.target as HTMLSelectElement).value)}>
+        <select class="proj-select" aria-label={tt(lang, "Level", "Уровень")} value={difficulty} onChange={(e) => setDifficulty((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All levels", "Все уровни")}</option>
           {["starter", "intermediate", "advanced"].map((d) => <option value={d} key={d}>{d}</option>)}
         </select>
-        <select class="proj-select" value={runnable} onChange={(e) => setRunnable((e.target as HTMLSelectElement).value)}>
+        <select class="proj-select" aria-label={tt(lang, "Kind", "Вид")} value={runnable} onChange={(e) => setRunnable((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All projects", "Все проекты")}</option>
           <option value="runnable">{tt(lang, "Runnable only", "Только запускаемые")}</option>
         </select>
@@ -59,10 +77,10 @@ export default function ProjectsFilter({ lang, projects }: Props) {
         {shown.map((p) => (
           <li key={p.slug} class="proj-card">
             <div class="pc-head">
-              <h3 class="pc-title">{tt(lang, p.title.en, p.title.ru)}</h3>
+              <h2 class="pc-title">{p.title}</h2>
               <span class="pc-meta">{p.difficulty} · {p.estDays}d</span>
             </div>
-            <p class="pc-pitch">{tt(lang, p.pitch.en, p.pitch.ru)}</p>
+            <p class="pc-pitch">{p.pitch}</p>
             <div class="pc-tracks">
               {p.workbench && <span class="pc-runnable" title={tt(lang, "Downloadable starter + tests you run", "Скачиваемый стартер + тесты для запуска")}>{tt(lang, "● Runnable", "● Запускаемый")}</span>}
               {p.tracks.map((tr: string) => <span key={tr} class="pc-track">{tr}</span>)}
