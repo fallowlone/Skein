@@ -57,15 +57,38 @@ export function applyResponse(
   return next;
 }
 
-/** Below this mass on the top two levels there is nothing worth propagating. */
+/**
+ * Below this expected-level index (the mass-weighted mean over LEVELS computed by
+ * `expectedLevel`, 0 = certainly gap .. 3 = certainly senior) a result is not settled enough
+ * toward the top to say anything about prerequisites.
+ */
 const PROPAGATE_MIN_LEVEL = 1.8;
-/** Propagated evidence is a rumour, not a measurement — it moves a prior by at most this. */
+/**
+ * Per-hop decay base for propagated evidence — it is a rumour, not a measurement. A direct
+ * prerequisite is blended at this weight; each hop further out is damped by another factor
+ * of it: PROPAGATE_DAMP ** hop, i.e. 0.35, 0.1225, 0.042875, ...
+ */
 const PROPAGATE_DAMP = 0.35;
+/**
+ * Stop the transitive walk once the per-hop blend weight drops below this. Beyond it the
+ * update is noise, and walking further is wasted work on a graph with thousands of concepts.
+ */
+const PROPAGATE_MIN_WEIGHT = 0.02;
 
 /**
- * Push a settled result to prerequisites. Only mechanism and production propagate:
- * recognising a term says nothing about the machinery underneath it (spec §4.3).
- * Cells with their own evidence are never overwritten.
+ * Push a settled result to prerequisites, walking the transitive closure of `requires` with
+ * per-hop decay — a direct prereq is blended at PROPAGATE_DAMP, two hops out at
+ * PROPAGATE_DAMP**2, and so on until the weight drops below PROPAGATE_MIN_WEIGHT. Only
+ * mechanism and production propagate: recognising a term says nothing about the machinery
+ * underneath it (spec §4.3). Cells that already hold their own direct evidence are never
+ * overwritten, though the walk still passes through them to reach their own prerequisites.
+ *
+ * `ancestors()` in path/graph.ts returns a flat Set with no hop distance — not enough to
+ * compute per-hop decay or bound the walk — so hops are tracked here via a breadth-first
+ * walk over `graph.requires`, the same override-aware edge map `ancestors` itself closes
+ * over (unlike the raw, override-blind `Concept.requires` field on each node). The graph is
+ * meant to be acyclic, but user-editable prerequisite overrides can introduce a cycle, so a
+ * visited-set guards against a walk that would otherwise hang the tab.
  */
 export function propagate(
   cells: ReadonlyMap<CellKey, Cell>,
@@ -82,13 +105,28 @@ export function propagate(
   const level = expectedLevel(source.posterior);
   if (level < PROPAGATE_MIN_LEVEL) return next;
 
-  const node = graph.nodes.get(conceptId);
-  for (const prereqId of node?.requires ?? []) {
-    const key = cellKey(prereqId, facet);
-    const existing = next.get(key);
-    if (existing && existing.evidence.length > 0) continue; // measured beats inferred
-    const base = existing ?? emptyCell(prereqId, facet, bandOf(prereqId));
-    next.set(key, { ...base, posterior: blendToward(base.posterior, source.posterior, PROPAGATE_DAMP) });
+  const visited = new Set<string>([conceptId]);
+  let frontier = [conceptId];
+  let hop = 1;
+  let weight = PROPAGATE_DAMP ** hop;
+  while (frontier.length > 0 && weight >= PROPAGATE_MIN_WEIGHT) {
+    const nextFrontier: string[] = [];
+    for (const id of frontier) {
+      for (const prereqId of graph.requires.get(id) ?? []) {
+        if (visited.has(prereqId)) continue;
+        visited.add(prereqId);
+        nextFrontier.push(prereqId);
+
+        const key = cellKey(prereqId, facet);
+        const existing = next.get(key);
+        if (existing && existing.evidence.length > 0) continue; // measured beats inferred
+        const base = existing ?? emptyCell(prereqId, facet, bandOf(prereqId));
+        next.set(key, { ...base, posterior: blendToward(base.posterior, source.posterior, weight) });
+      }
+    }
+    frontier = nextFrontier;
+    hop += 1;
+    weight = PROPAGATE_DAMP ** hop;
   }
   return next;
 }
