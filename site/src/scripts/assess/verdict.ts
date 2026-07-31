@@ -1,7 +1,7 @@
 // site/src/scripts/assess/verdict.ts
 // Cells → a per-concept verdict. Pure.
 import { bandLabel, entropyOrd, expectedLevel, type BandLabel } from "./ordinal";
-import { FACETS, cellKey, type Cell, type CellKey, type Facet } from "./types";
+import { FACETS, LEVELS, cellKey, type Cell, type CellKey, type Facet } from "./types";
 
 /**
  * Entropy below which a cell stops being asked about. Tuned by the simulation harness
@@ -36,7 +36,12 @@ function facetVerdict(cell: Cell | undefined): FacetVerdict {
   if (!cell || cell.items === 0) {
     return { status: "untested", band: null, items: 0, fragile: false, declined: 0 };
   }
-  const fragile = cell.evidence.some((e) => e.response.outcome === "correct" && e.response.hintsUsed >= 2);
+  // A single hint is already priced into the posterior itself: pCorrect() (likelihood.ts)
+  // discounts item difficulty per hint, so being right with one hint already pulls the level
+  // down directly. `fragile` marks the stronger, separate claim — the learner had to be
+  // walked all the way to the answer — so it fires only at the ladder's top. hintsUsed is
+  // typed 0 | 1 | 2, so `=== 2` reads as intent, not an open-ended "2 or more" threshold.
+  const fragile = cell.evidence.some((e) => e.response.outcome === "correct" && e.response.hintsUsed === 2);
   const declined = cell.evidence.filter((e) => e.response.outcome === "dont_know").length;
   return { status: "measured", band: bandLabel(cell.posterior), items: cell.items, fragile, declined };
 }
@@ -51,12 +56,24 @@ export function conceptVerdict(cells: ReadonlyMap<CellKey, Cell>, conceptId: str
     return { conceptId, status: "untested", band: null, facets, fragile: false, evidenceCount: 0 };
   }
 
-  // A hole in any facet is a hole: the concept's band is the weakest measured facet.
+  // A hole in any facet is a hole: the concept's band is the weakest measured facet. Order
+  // by the SAME ordinal the reported label uses — LEVELS.indexOf(band.level), the mode — not
+  // by expectedLevel (the posterior's mean). Those two statistics can disagree (a bimodal
+  // posterior can have a higher mean than a sharply-peaked one sitting a level below it), and
+  // selecting by one while reporting the other lets the concept's band contradict a measured
+  // facet that is genuinely weaker. Ties at the same level are broken by lower expectedLevel,
+  // purely to stay deterministic and to prefer the genuinely weaker of two same-level facets.
   let worst: Facet = measured[0];
   for (const f of measured) {
-    const cur = cells.get(cellKey(conceptId, f))!;
-    const best = cells.get(cellKey(conceptId, worst))!;
-    if (expectedLevel(cur.posterior) < expectedLevel(best.posterior)) worst = f;
+    const facetLevel = LEVELS.indexOf(facets[f].band!.level);
+    const worstLevel = LEVELS.indexOf(facets[worst].band!.level);
+    if (facetLevel < worstLevel) {
+      worst = f;
+    } else if (facetLevel === worstLevel) {
+      const cur = cells.get(cellKey(conceptId, f))!;
+      const best = cells.get(cellKey(conceptId, worst))!;
+      if (expectedLevel(cur.posterior) < expectedLevel(best.posterior)) worst = f;
+    }
   }
   return {
     conceptId,

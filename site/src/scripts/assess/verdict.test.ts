@@ -44,6 +44,26 @@ describe("conceptVerdict", () => {
     cell.evidence[0].response = { outcome: "correct", hintsUsed: 2, elapsedMs: 1 };
     expect(conceptVerdict(cells, "c").fragile).toBe(true);
   });
+
+  test("a cell reached without hints is NOT flagged fragile", () => {
+    const cells = mk([["mechanism", [0, 0.2, 0.7, 0.1]]]);
+    const cell = cells.get(cellKey("c", "mechanism"))!;
+    cell.evidence[0].response = { outcome: "correct", hintsUsed: 0, elapsedMs: 1 };
+    expect(conceptVerdict(cells, "c").fragile).toBe(false);
+  });
+
+  test("band selection agrees with the reported label, not the posterior mean", () => {
+    // recognition: mode senior (mass 0.51), but expectedLevel ~1.53 (mean pulled down by
+    // the 0.49 mass sitting on gap). mechanism: mode middle (mass 0.99), expectedLevel
+    // ~2.01. Mean-ordering picks recognition as "worst" and reports its label (senior) —
+    // wrong, because a measured facet (mechanism) sits at the weaker level middle. The
+    // band must be the minimum of the REPORTED labels, i.e. middle.
+    const v = conceptVerdict(mk([
+      ["recognition", [0.49, 0, 0, 0.51]],
+      ["mechanism", [0, 0, 0.99, 0.01]],
+    ]), "c");
+    expect(v.band?.level).toBe("middle");
+  });
 });
 
 describe("isSettled", () => {
@@ -73,6 +93,26 @@ describe("detectPatterns", () => {
       ["mechanism", [0.7, 0.3, 0, 0]],
     ]), "c");
     expect(detectPatterns(v)).toContain("does-without-explaining");
+  });
+
+  test("names knows-cannot-apply, and only that pattern, when mechanism outstrips production", () => {
+    const v = conceptVerdict(mk([
+      ["mechanism", [0, 0, 0.8, 0.2]],
+      ["production", [0.7, 0.3, 0, 0]],
+    ]), "c");
+    const patterns = detectPatterns(v);
+    expect(patterns).toContain("knows-cannot-apply");
+    expect(patterns).not.toContain("term-without-mechanism");
+    expect(patterns).not.toContain("does-without-explaining");
+  });
+
+  test("one dont_know answer does not fire declined", () => {
+    // cellWith's default items=2 gives two evidence entries; only the first is set to
+    // dont_know, so exactly one dont_know exists — below the "declined" threshold of two.
+    const cells = mk([["mechanism", [0.6, 0.3, 0.1, 0]]]);
+    const cell = cells.get(cellKey("c", "mechanism"))!;
+    cell.evidence[0].response = { outcome: "dont_know", hintsUsed: 0, elapsedMs: 1 };
+    expect(detectPatterns(conceptVerdict(cells, "c"))).not.toContain("declined");
   });
 
   test("names declined after two dont_know answers", () => {
