@@ -38,46 +38,63 @@ export function pCorrect(level: Level, band: Band, hintsUsed: number, kind: Item
   return c + (1 - c) / (1 + Math.exp(-z));
 }
 
-// A knower occasionally says "don't know"; a non-knower says it often rather than guessing.
-// Same constants as scripts/path/bayes.ts, kept in sync deliberately.
+// A knower occasionally says "don't know" instead of committing to a correct answer, so the
+// correct branch is scaled down slightly to reflect that; a non-knower who guesses wrong is
+// common, so the wrong branch is scaled up. Same constants as scripts/path/bayes.ts, kept in
+// sync deliberately. `dont_know` itself is NOT built from these — see DK_ATTENUATION below.
 const PDK_KNOWN = 0.04;
 const PDK_UNKNOWN = 0.55;
 
-/** Three-category base likelihoods at one level; they sum to 1 by construction. */
-function categories(p: number): { correct: number; wrong: number; dont_know: number } {
+/** Two-category base likelihoods at one level: correct vs wrong. */
+function categories(p: number): { correct: number; wrong: number } {
   return {
     correct: p * (1 - PDK_KNOWN),
-    dont_know: p * PDK_KNOWN + (1 - p) * PDK_UNKNOWN,
     wrong: (1 - p) * (1 - PDK_UNKNOWN),
   };
 }
 
 /**
- * `partial` sits between correct and wrong — geometric mean, which keeps it strictly
- * between the two in likelihood-ratio terms whatever the level.
+ * All four outcomes live in one exponent family built from `correct` (c) and `wrong` (w):
+ *   correct    -> c
+ *   partial    -> c^0.5 . w^0.5     (geometric mean — unchanged in value)
+ *   dont_know  -> w^DK_ATTENUATION  (an attenuated wrong, NOT a separate mixture)
+ *   wrong      -> w
+ *
+ * This makes the ordering correct > partial > dont_know > wrong an algebraic identity, true
+ * at every band/hints/kind — not just in the narrow range of p where the old three-branch
+ * mixture happened to hold. Proof: let A = ln(c_senior/c_gap) > 0 and B = ln(w_senior/w_gap) < 0
+ * (a higher-ability level is always more likely to be correct and less likely to be wrong,
+ * whatever the band/hints/kind — pCorrect is monotone increasing in level). The multiplicative
+ * PDK constants are level-independent so they cancel out of both ratios; they don't affect A or B.
+ * The four outcomes' log-likelihood-ratios (senior vs gap) reduce to A, 0.5A+0.5B,
+ * DK_ATTENUATION*B, and B. Then:
+ *   A > 0.5A+0.5B                 <=> A > B                          (holds: A>0>B)
+ *   0.5A+0.5B > DK_ATTENUATION*B  <=> 0.5A > (DK_ATTENUATION-0.5)*B  (holds for 0.6: 0.5A > 0.1B, A>0>B)
+ *   DK_ATTENUATION*B > B          <=> DK_ATTENUATION < 1             (holds: 0.6<1)
+ * The facet-alignment exponent (see likelihoodVector) multiplies every log-ratio by the same
+ * positive constant, so it preserves this order too.
  */
 function rawLikelihood(outcome: AssessResponse["outcome"], p: number): number {
   const c = categories(p);
   if (outcome === "correct") return c.correct;
   if (outcome === "wrong") return c.wrong;
-  if (outcome === "dont_know") return c.dont_know;
+  if (outcome === "dont_know") return Math.pow(c.wrong, DK_ATTENUATION);
   return Math.sqrt(c.correct * c.wrong);
 }
 
 /**
- * Damping applied to the log-likelihood ratio. Below 1 flattens the evidence:
- *  - cross-facet leakage uses FACET_ALIGN;
- *  - an honest "don't know" is attenuated so it is gentler than a wrong answer (spec §4.2).
+ * How much an honest "don't know" is softened relative to a confidently wrong answer: it is
+ * treated as `wrong` raised to this power (0 < DK_ATTENUATION < 1), which reads as weaker
+ * evidence against ability than committing to a wrong answer.
  */
 const DK_ATTENUATION = 0.6;
 
 export function likelihoodVector(item: AssessItem, response: AssessResponse, targetFacet: Facet): Posterior {
   const align = FACET_ALIGN[item.kind][targetFacet];
-  const damp = align * (response.outcome === "dont_know" ? DK_ATTENUATION : 1);
   const raw = LEVELS.map((level) =>
     rawLikelihood(response.outcome, pCorrect(level, item.band, response.hintsUsed, item.kind)),
   );
-  // Flatten toward uniform by raising to a power ≤ 1: damp=1 keeps the evidence intact,
-  // damp→0 makes the response uninformative.
-  return normalize(raw.map((x) => Math.pow(x, damp)));
+  // Flatten toward uniform by raising to a power ≤ 1: align=1 keeps the evidence intact,
+  // align→0 (cross-facet leakage) makes the response uninformative for that facet.
+  return normalize(raw.map((x) => Math.pow(x, align)));
 }
