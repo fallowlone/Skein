@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { likelihoodVector, pCorrect } from "./likelihood";
-import type { AssessItem, AssessResponse } from "./types";
+import type { AssessItem, AssessResponse, Band, ItemKind } from "./types";
 
 const item = (over: Partial<AssessItem> = {}): AssessItem => ({
   id: "l#t", lessonKey: "l", taskId: "t", kind: "exec", facet: "production",
@@ -36,12 +36,26 @@ describe("likelihood", () => {
     expect(hinted).toBeGreaterThan(wrong);
   });
 
-  test("dont_know is gentler than wrong and harsher than partial", () => {
-    const dk = llr(likelihoodVector(item(), res({ outcome: "dont_know" }), "production"));
-    const wrong = llr(likelihoodVector(item(), res({ outcome: "wrong" }), "production"));
-    const partial = llr(likelihoodVector(item(), res({ outcome: "partial" }), "production"));
-    expect(dk).toBeGreaterThan(wrong);
-    expect(dk).toBeLessThan(partial);
+  const BANDS: readonly Band[] = ["foundations", "surface", "middle", "advanced"];
+  const HINTS = [0, 1, 2] as const;
+  const KINDS: readonly ItemKind[] = ["mcq", "predict", "debug", "review", "exec", "explain"];
+
+  test("dont_know is gentler than wrong and harsher than partial, for every band/hints/kind", () => {
+    for (const band of BANDS) {
+      for (const hintsUsed of HINTS) {
+        for (const kind of KINDS) {
+          const it = item({ kind, band, facet: kind === "mcq" ? "recognition" : "production" });
+          const facet = it.facet;
+          const correct = llr(likelihoodVector(it, res({ hintsUsed, outcome: "correct" }), facet));
+          const partial = llr(likelihoodVector(it, res({ hintsUsed, outcome: "partial" }), facet));
+          const dk = llr(likelihoodVector(it, res({ hintsUsed, outcome: "dont_know" }), facet));
+          const wrong = llr(likelihoodVector(it, res({ hintsUsed, outcome: "wrong" }), facet));
+          expect(correct, `${band}/${kind}/${hintsUsed}h correct vs partial`).toBeGreaterThan(partial);
+          expect(partial, `${band}/${kind}/${hintsUsed}h partial vs dont_know`).toBeGreaterThan(dk);
+          expect(dk, `${band}/${kind}/${hintsUsed}h dont_know vs wrong`).toBeGreaterThan(wrong);
+        }
+      }
+    }
   });
 
   test("evidence for a non-primary facet is damped and never certifies it", () => {
