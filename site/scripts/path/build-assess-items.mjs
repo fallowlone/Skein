@@ -91,6 +91,12 @@ export function buildAssessIndex(files, unitConcepts, bandOf, read = (p) => read
     }
   }
 
+  // Deterministic, run-to-run stable key order (identical output every regeneration), NOT
+  // human-alphabetical: JS object property enumeration always lists all-digit keys first, in
+  // ascending numeric order, ahead of every other key regardless of .sort() — e.g. concept id
+  // "40001" (Postgres serialization-failure code) enumerates at position 0, not its alphabetical
+  // slot. Keep this an object (consumers expect a lookup map); the churn to force true
+  // lexicographic order via an array/Map is not worth it.
   const sortKeys = (o) => Object.fromEntries(Object.keys(o).sort().map((k) => [k, o[k]]));
   return { items: sortKeys(items), coverage: sortKeys(coverage) };
 }

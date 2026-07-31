@@ -60,4 +60,13 @@ describe("buildAssessIndex", () => {
     const { items } = buildAssessIndex(files, unitConcepts, bandOf, orphan);
     expect(Object.keys(items)).toHaveLength(0);
   });
+
+  test("an unknown task type is skipped per-task, not per-file", () => {
+    const mixed = () => file("backend/01-promises", [
+      { id: "t1", type: "speedrun", difficulty: "apply", estMin: 4 },
+      { id: "t2", type: "predict", difficulty: "recall", estMin: 3 },
+    ]);
+    const { items } = buildAssessIndex(files, unitConcepts, bandOf, mixed);
+    expect(Object.keys(items)).toEqual(["backend/01-promises#t2"]);
+  });
 });
