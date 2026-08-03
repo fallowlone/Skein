@@ -70,8 +70,12 @@ describe("nextItem", () => {
 
 describe("nextItem at scale", () => {
   test("stays fast against a corpus-sized pool instead of scanning it per cell", () => {
-    const CONCEPT_COUNT = 1500;
-    const ITEM_COUNT = 5000;
+    // Sized to the real corpus (Task 6 measured it directly): ~6520 items over
+    // ~4894 concepts, ~14.7k candidate cells. At this size the quadratic cost of a
+    // per-cell full-pool scan diverges far enough from the indexed cost that a loose
+    // budget still discriminates a regression without flaking on a slower runner.
+    const CONCEPT_COUNT = 4894;
+    const ITEM_COUNT = 6520;
     const FACETS_CYCLE: Facet[] = ["recognition", "mechanism", "production"];
     const KINDS_CYCLE: ItemKind[] = ["mcq", "predict", "debug", "review", "exec", "explain"];
     const concepts = Array.from({ length: CONCEPT_COUNT }, (_, i) => `concept-${i}`);
@@ -98,9 +102,12 @@ describe("nextItem at scale", () => {
     const elapsedMs = performance.now() - start;
 
     expect(picked).not.toBeNull();
-    // Generous budget: the point is catching a return to O(cells * pool) scanning,
-    // not pinning an exact number. A per-cell pool scan of this size would take
-    // seconds; an indexed lookup should land in low single-digit milliseconds.
-    expect(elapsedMs).toBeLessThan(500);
+    // Measured (task-7-report.md, fix round 1): indexed ~42-45ms across 4 runs; a
+    // per-cell full-pool scan reinstated temporarily at this same corpus size (the
+    // brief's original nested loop) measured ~782ms and ~966ms and failed this exact
+    // assertion. 300ms sits comfortably above the indexed cost and well below the
+    // naive one, so a regression back to scanning the whole pool per cell fails loudly
+    // instead of silently passing under a budget that can't tell them apart.
+    expect(elapsedMs).toBeLessThan(300);
   });
 });
