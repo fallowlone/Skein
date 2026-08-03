@@ -40,4 +40,23 @@ describe("buildPool", () => {
     const pool = buildPool(multi as typeof index, () => ({ t3: "attempted" }));
     expect(pool.find((i) => i.taskId === "t3")!.weight).toBeCloseTo(0.25);
   });
+
+  test("an unrecognised status is treated as unseen — kept at full weight, never NaN", () => {
+    const pool = buildPool(index, () => ({ t1: "started" as never }));
+    const item = pool.find((i) => i.taskId === "t1")!;
+    expect(item.weight).toBe(1);
+    expect(Number.isNaN(item.weight)).toBe(false);
+  });
+
+  test("a bogus status on one task does not corrupt the burn rule for a genuinely done sibling", () => {
+    const pool = buildPool(index, () => ({ t1: "started" as never, t2: "done" }));
+    expect(pool.some((i) => i.taskId === "t1")).toBe(true);
+    expect(pool.find((i) => i.taskId === "t1")!.weight).toBe(1);
+    expect(pool.some((i) => i.taskId === "t2")).toBe(false);
+  });
+
+  test("a seen task also stays at half weight", () => {
+    const pool = buildPool(index, () => ({ t1: "seen" }));
+    expect(pool.find((i) => i.taskId === "t1")!.weight).toBeCloseTo(0.5);
+  });
 });
