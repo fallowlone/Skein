@@ -19,7 +19,12 @@ export function buildPool(
   const out: AssessItem[] = [];
   for (const [id, raw] of Object.entries(index)) {
     const status = progressOf(raw.lessonKey)[raw.taskId];
-    const discount = status ? BURN_WEIGHT[status] : 1;
+    // `status` can be a stale/legacy value outside TaskStatus — readProgress does not validate
+    // what it parses back out of localStorage (see the RetrievalDrawer SRS-contract incident).
+    // Treat anything unrecognised as unseen (full weight, item kept) rather than dropping it:
+    // silently shrinking the pool would look like a coverage gap, which is worse than asking
+    // one extra question the learner has in fact not done.
+    const discount = status !== undefined && status in BURN_WEIGHT ? BURN_WEIGHT[status] : 1;
     if (discount === null) continue;
     out.push({ ...raw, id, weight: raw.weight * discount });
   }
