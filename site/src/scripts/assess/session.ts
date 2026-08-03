@@ -10,7 +10,8 @@ import type { AssessItem, AssessResponse, Band, Cell, CellKey, ItemKind } from "
 export const BLOCK_MAX_ITEMS = 10;
 export const BLOCK_MAX_MIN = 15;
 
-export type Phase = "scope" | "asking" | "block-verdict" | "report";
+export const PHASES = ["scope", "asking", "block-verdict", "report"] as const;
+export type Phase = (typeof PHASES)[number];
 
 export interface AssessState {
   scope: string[];
