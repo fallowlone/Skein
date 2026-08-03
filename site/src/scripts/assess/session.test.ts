@@ -64,6 +64,18 @@ describe("session", () => {
     expect(ev[0].response.hintsUsed).toBe(2);
   });
 
+  test("a third hint does not push hintsUsed past its 0|1|2 cap", () => {
+    let s = startSession(["backend"], 0);
+    s = reduce(s, { type: "serve", item: item("a"), atMs: 0 }, deps);
+    s = reduce(s, { type: "hint", atMs: 1 }, deps);
+    s = reduce(s, { type: "hint", atMs: 2 }, deps);
+    s = reduce(s, { type: "hint", atMs: 3 }, deps); // third hint — must clamp, not overflow to 3
+    expect(s.hintsUsed).toBe(2);
+    s = reduce(s, { type: "answer", response: { outcome: "correct", hintsUsed: s.hintsUsed, elapsedMs: 5 }, atMs: 4 }, deps);
+    const ev = [...s.cells.values()].flatMap((c) => c.evidence);
+    expect(ev[0].response.hintsUsed).toBe(2);
+  });
+
   test("abandoning leaves unasked concepts untested, not failed", () => {
     let s = startSession(["backend"], 0);
     s = reduce(s, { type: "serve", item: item("a"), atMs: 0 }, deps);
