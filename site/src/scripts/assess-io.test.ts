@@ -94,6 +94,52 @@ describe("assess-io round trip", () => {
     expect(loadSession()).toBeNull();
   });
 
+  test("a session saved mid-block restores its block-budget counters, not zeroed", () => {
+    const state: AssessState = {
+      scope: ["backend"], phase: "asking", cells: new Map(), asked: new Set(["l#t1", "l#t2"]),
+      current: null, hintsUsed: 0, blockIndex: 1, blockItems: 4, blockMinutes: 7,
+      recentKinds: ["predict"], startedAtMs: 1000, updatedAtMs: 1500,
+    };
+    saveSession(state);
+    const restored = loadSession();
+    expect(restored?.blockItems).toBe(4);
+    expect(restored?.blockMinutes).toBe(7);
+    expect(restored?.current).toBeNull(); // still can't restore the in-flight question
+  });
+
+  test("a corrupt cell entry is dropped, not trusted whole, while sound cells survive", () => {
+    const goodCell = cell("concept-a");
+    // Three ways a stored cell can be corrupt: a posterior that doesn't sum to 1,
+    // a posterior with the wrong arity, and an entry that isn't a [key, cell] pair
+    // at all. Each must be dropped individually rather than poisoning the load.
+    const badSumCell = { ...cell("concept-b"), posterior: [0, 0, 0, 0] };
+    const badArityCell = { ...cell("concept-c"), posterior: [0.5, 0.5, 0] };
+    const rawPayload = {
+      scope: ["backend"],
+      phase: "asking",
+      cells: [
+        ["concept-a::mechanism", goodCell],
+        ["concept-b::mechanism", badSumCell],
+        ["concept-c::mechanism", badArityCell],
+        "not-a-pair",
+      ],
+      asked: ["l#t1"],
+      blockIndex: 0,
+      blockItems: 0,
+      blockMinutes: 0,
+      startedAtMs: 0,
+      updatedAtMs: 0,
+    };
+    localStorage.setItem(ASSESS_KEY, JSON.stringify(rawPayload));
+
+    const restored = loadSession();
+    expect(restored).not.toBeNull();
+    expect(restored!.cells.size).toBe(1);
+    expect(restored!.cells.has("concept-a::mechanism" as CellKey)).toBe(true);
+    expect(restored!.cells.has("concept-b::mechanism" as CellKey)).toBe(false);
+    expect(restored!.cells.has("concept-c::mechanism" as CellKey)).toBe(false);
+  });
+
   test("clearSession removes the stored blob", () => {
     const state: AssessState = {
       scope: [], phase: "report", cells: new Map(), asked: new Set(), current: null,
