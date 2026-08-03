@@ -3,7 +3,7 @@
 // review-state.ts: its own key, a defensive parse that drops anything malformed,
 // and a silent degrade (private mode / quota) — a broken store never crashes the
 // audit, it just means the session will not resume across a reload.
-import type { AssessState } from "./assess/session";
+import { PHASES, type AssessState } from "./assess/session";
 import type { Cell, CellKey } from "./assess/types";
 
 export const ASSESS_KEY = "atlas.assess.v1";
@@ -26,6 +26,7 @@ function isSerialized(p: unknown): p is Serialized {
   const s = p as Serialized;
   return (
     Array.isArray(s.scope) &&
+    (PHASES as readonly string[]).includes(s.phase) &&
     Array.isArray(s.cells) &&
     Array.isArray(s.asked) &&
     typeof s.blockIndex === "number" &&
