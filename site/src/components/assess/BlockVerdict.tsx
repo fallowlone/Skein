@@ -8,8 +8,7 @@ import { t, type Locale } from "~/i18n";
 import type { AssessState } from "~/scripts/assess/session";
 import { conceptVerdict } from "~/scripts/assess/verdict";
 import { detectPatterns, PATTERN_LABELS } from "~/scripts/assess/patterns";
-import { tt } from "./item-bodies";
-import { levelLabel } from "./labels";
+import { tt, levelLabel } from "./labels";
 
 type Props = {
   lang: Locale;
