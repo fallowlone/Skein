@@ -10,10 +10,26 @@ export const PROP_UP_FACTOR = 0.8; // share of a passed concept's confidence gra
 export const PASS_HIGH = 0.6;      // >= => "passed", propagate up-closure lift
 export const FAIL_LOW = 0.4;       // <  => "failed", propagate down to dependents
 const FRESH_DAYS = 30, STALE_DAYS = 120;
-const STRONG: Source[] = ["diagnostic", "declared"];
+// "assess" (site/src/scripts/assess/report.ts's toKnowledgeWrites, applied via
+// assess-apply-knowledge.ts) joins STRONG/STUDY_PROTECTED alongside diagnostic/
+// declared: a /assess run is a deliberate, multi-item Bayesian measurement, not
+// an inferred activity signal, and deserves the same immunity from being
+// silently overwritten or relabelled by incidental practice/review/struggle
+// evidence that diagnostic/declared already have. Concretely: touching one
+// practice task in a lesson must not erase (or restamp the source of) a gap
+// /assess just measured for that lesson's concepts — see the note this closes
+// in task-11-report.md, and the C1/C2 fix in task-12-report.md.
+//
+// Assess is intentionally NOT given special-case immunity inside applyDiagnostic
+// itself — a fresh diagnostic (e.g. /calibrate) and a fresh assess run are both
+// deliberate re-measurements of the SAME concept, and either should be allowed
+// to supersede the other; the asymmetric protection here is about incidental
+// activity/review/struggle signals never being able to override a deliberate
+// measurement, not about which deliberate measurement wins over another.
+const STRONG: Source[] = ["diagnostic", "declared", "assess"];
 // Study-activity must not overwrite review evidence (review > activity). Kept separate from STRONG
 // so applyDiagnostic's propagation and applyPracticeStruggle's erosion guard are unchanged.
-const STUDY_PROTECTED: Source[] = ["diagnostic", "declared", "review"];
+const STUDY_PROTECTED: Source[] = ["diagnostic", "declared", "review", "assess"];
 
 export const emptyState = (): KnowledgeState => new Map();
 

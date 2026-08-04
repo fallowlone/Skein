@@ -10,7 +10,8 @@ import type { ExecCheck, ExecResult } from "~/scripts/practice-grade";
 import { runDebug, type DebugRunResult } from "~/scripts/debug-runner";
 import { gradeExec } from "~/scripts/assess/graders";
 import HintLadder from "./HintLadder";
-import { tt, KindMismatch, type Submit } from "./item-bodies";
+import { KindMismatch, type Submit } from "./item-bodies";
+import { tt } from "./labels";
 
 const JsSandbox = lazy(() => import("~/components/pedagogy/JsSandbox"));
 const SqlSandbox = lazy(() => import("~/components/pedagogy/SqlSandbox"));
@@ -24,13 +25,25 @@ export function DebugBody({ lang, task, hintsUsed, onHint, onSubmit }: DebugProp
   const [code, setCode] = useState(task.starter);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<DebugRunResult | null>(null);
+  // I4 (task-12-report.md fix round 1): unlimited free retries are right for
+  // practice and wrong for a measurement — ten iterations in the editor must
+  // not read the same as a first-try solve. Counting attempts and degrading a
+  // later pass to "partial" (an outcome the likelihood model already has) was
+  // chosen over a hard attempt cap: it keeps the free-iteration UX debug tasks
+  // need (the bug has to actually be found) while still being honest about how
+  // long that took.
+  const [attempts, setAttempts] = useState(0);
 
   const run = async () => {
     setBusy(true);
+    const attemptNo = attempts + 1;
     try {
       const r = await runDebug({ setup: task.setup, learnerCode: code, verify: task.verify, check: task.check });
+      setAttempts(attemptNo);
       setResult(r);
-      if (r.status === "pass") onSubmit("correct", { answerDigest: code.slice(0, DIGEST_MAX) });
+      if (r.status === "pass") {
+        onSubmit(attemptNo === 1 ? "correct" : "partial", { answerDigest: code.slice(0, DIGEST_MAX) });
+      }
     } finally {
       setBusy(false);
     }
@@ -109,13 +122,7 @@ function UngradableExecFallback({ lang, onSubmit }: Omit<ExecProps, "task">) {
   };
   return (
     <div class="assess-body">
-      <p class="assess-mismatch">
-        {tt(
-          lang,
-          "This item can't be auto-graded — rate your own attempt honestly.",
-          "Это задание нельзя проверить автоматически — честно оцени свою попытку.",
-        )}
-      </p>
+      <p class="assess-mismatch">{t("assess.exec.ungradable", lang)}</p>
       <div class="assess-selfgrade">
         <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("hit")}>{t("assess.selfgrade.hit", lang)}</button>
         <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("partial")}>{t("assess.selfgrade.partial", lang)}</button>
@@ -127,6 +134,12 @@ function UngradableExecFallback({ lang, onSubmit }: Omit<ExecProps, "task">) {
 
 export function ExecBody({ lang, task, onSubmit }: ExecProps) {
   const content = resolveExec(task);
+  // I4: same attempt-aware degrading as DebugBody (see its comment). Also fixes
+  // a real dead end the previous version had: the "submit" button only rendered
+  // for a FAILING lastResult, so a passing run had no way to be recorded at all
+  // — onResult below now submits directly the moment a run passes, the same
+  // shape DebugBody's run() already used.
+  const [attempts, setAttempts] = useState(0);
   const [lastResult, setLastResult] = useState<{ ok: boolean; result: ExecResult } | null>(null);
 
   if (!content) {
@@ -135,15 +148,15 @@ export function ExecBody({ lang, task, onSubmit }: ExecProps) {
   }
 
   const onResult = (ok: boolean, result?: ExecResult) => {
-    if (result) setLastResult({ ok, result });
+    if (!result) return;
+    const attemptNo = attempts + 1;
+    setAttempts(attemptNo);
+    setLastResult({ ok, result });
+    if (ok) onSubmit(attemptNo === 1 ? "correct" : "partial");
   };
 
   const submitLast = () => {
-    if (!lastResult) return;
-    if (lastResult.ok) {
-      onSubmit("correct");
-      return;
-    }
+    if (!lastResult || lastResult.ok) return;
     const gr = gradeExec(content.check, lastResult.result);
     onSubmit(gr.outcome, { failureNote: gr.failureNote });
   };
