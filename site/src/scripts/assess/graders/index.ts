@@ -9,9 +9,11 @@ export interface GradeResult {
 }
 
 export function gradeMcq(choices: readonly { correct?: boolean }[], picked: number): GradeResult {
-  const correct = choices.findIndex((c) => c.correct === true);
-  if (picked === correct) return { outcome: "correct" };
-  return { outcome: "wrong", failureNote: `picked option ${picked + 1}, correct was ${correct + 1}` };
+  if (choices[picked]?.correct === true) return { outcome: "correct" };
+  if (!choices.some((c) => c.correct === true)) {
+    return { outcome: "wrong", failureNote: "item has no correct choice — authoring error" };
+  }
+  return { outcome: "wrong", failureNote: `picked option ${picked + 1} — not correct` };
 }
 
 export function gradeBlanks(blanks: readonly { accept: string[] }[], answers: readonly string[]): GradeResult {
@@ -29,11 +31,12 @@ export function gradeReview(
   const found = planted.filter((id) => picked.includes(id));
   const decoys = picked.filter((id) => !planted.includes(id));
   if (found.length === planted.length && decoys.length === 0) return { outcome: "correct" };
+  const decoyNote = decoys.length ? `${decoys.length} decoy(s) selected` : "";
   if (found.length === 0) {
-    return { outcome: "wrong", failureNote: `missed all ${planted.length} planted findings` };
+    const note = [`missed all ${planted.length} planted findings`, decoyNote].filter(Boolean).join("; ");
+    return { outcome: "wrong", failureNote: note };
   }
-  const note = [`found ${found.length}/${planted.length}`, decoys.length ? `${decoys.length} decoy(s) selected` : ""]
-    .filter(Boolean).join("; ");
+  const note = [`found ${found.length}/${planted.length}`, decoyNote].filter(Boolean).join("; ");
   return { outcome: "partial", failureNote: note };
 }
 
