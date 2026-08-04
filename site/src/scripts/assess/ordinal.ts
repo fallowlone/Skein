@@ -43,19 +43,29 @@ export function bandLabel(p: Posterior): BandLabel {
 }
 
 // Prior mass by concept band. Harder bands start with more mass on `gap`.
+// `surface` tuned by the simulation harness (Task 10): the original [0.30, 0.35, 0.25, 0.10]
+// pulled the estimator's mean systematically below the truth (meanSignedError) once
+// DISCRIMINATION was sharpened enough to clear the band-recovery gate — see the note atop
+// verdict.ts. Gap mass stays above `foundations` (0.20) and well below `middle` (0.45), so
+// the harder-band-more-gap ordering the rest of the table encodes still holds.
 const BAND_PRIOR: Record<Band, Posterior> = {
   foundations: [0.20, 0.35, 0.30, 0.15],
-  surface:     [0.30, 0.35, 0.25, 0.10],
+  surface:     [0.21, 0.31, 0.27, 0.21],
   middle:      [0.45, 0.30, 0.18, 0.07],
   advanced:    [0.60, 0.25, 0.11, 0.04],
 };
 
 // Recognising a term is strictly easier than producing working code, so the facets do
 // not start equal. Weights multiply the prior and are renormalised.
+// `production`'s lean toward gap tuned down by the simulation harness (Task 10): the original
+// [1.3, 1.0, 0.8, 0.7] fought real evidence hard enough that a learner who is genuinely
+// stronger at production than mechanism (the "production-not-mechanism" profile) could not
+// be told apart from one who is not — see the note atop verdict.ts. Production still starts
+// strictly below recognition for the same band (ordinal.test.ts asserts this).
 const FACET_TILT: Record<Facet, Posterior> = {
   recognition: [0.8, 1.1, 1.1, 1.0],
   mechanism:   [1.0, 1.0, 1.0, 1.0],
-  production:  [1.3, 1.0, 0.8, 0.7],
+  production:  [1.05, 1.0, 0.95, 0.9],
 };
 
 export function priorFromBand(band: Band, facet: Facet): Posterior {

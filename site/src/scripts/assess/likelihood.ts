@@ -12,7 +12,12 @@ const BAND_B: Record<Band, number> = { foundations: -1.0, surface: 0, middle: 0.
 /** Guess floor: an MCQ can be right by luck; writing working code cannot. */
 const GUESS: Record<ItemKind, number> = { mcq: 0.25, predict: 0.10, review: 0.15, debug: 0.05, exec: 0.02, explain: 0.05 };
 
-const DISCRIMINATION = 1.2;
+/**
+ * Curve sharpness. Tuned by the simulation harness (Task 10): with only up to
+ * MAX_ITEMS_PER_CELL items available per cell, 1.2 left too much overlap between adjacent
+ * levels for the band-recovery gate (`withinOne`) to clear — see the note atop verdict.ts.
+ */
+const DISCRIMINATION = 3.85;
 
 /**
  * How much an item of kind K informs facet F. The diagonal is 1; everything else is capped
