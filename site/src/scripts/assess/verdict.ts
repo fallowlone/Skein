@@ -4,8 +4,26 @@ import { bandLabel, entropyOrd, expectedLevel, type BandLabel } from "./ordinal"
 import { FACETS, LEVELS, cellKey, type Cell, type CellKey, type Facet } from "./types";
 
 /**
- * Entropy below which a cell stops being asked about. Tuned by the simulation harness
- * (Task 10) — the loosest threshold that still clears the band-recovery gate.
+ * Simulation harness results (Task 10, `simulate.test.ts`, seed 20260731, 200 learners ×
+ * 12 concepts) for the constants currently checked in, so a future edit of SETTLE_ENTROPY
+ * (or DISCRIMINATION/HINT_STEP in likelihood.ts, or BAND_PRIOR/FACET_TILT in ordinal.ts) can
+ * see what it is trading away:
+ *
+ *   withinOne            0.9104   (gate: >= 0.90)
+ *   meanSignedError      -0.1486  (gate: |x| <= 0.25 — estimator runs slightly harsh)
+ *   medianItemsToSettle  3        (gate: <= 3, at MAX_ITEMS_PER_CELL — see note below)
+ *   gapsWithoutEvidence  0        (gate: == 0)
+ *   honestMinusGuesser   0.0421   (gate: >= 0)
+ *
+ * SETTLE_ENTROPY/MAX_ITEMS_PER_CELL were left at their original values: at this pool size
+ * (4 items per kind per concept) even a noise-free run of five straight "correct" answers for
+ * a senior learner still leaves entropy at ~0.58 — above the 0.55 threshold, so raising
+ * MAX_ITEMS_PER_CELL a little would not have let those cells settle by entropy either. Within
+ * the fixed per-learner step budget the harness uses, raising the cap just starves *other*
+ * cells of their share of that budget instead (confirmed empirically: cap=4..6 pushed
+ * gapsWithoutEvidence from 0 up to 87). The real lever for `withinOne` turned out to be
+ * DISCRIMINATION (1.2 → 3.85 in likelihood.ts) plus a bias correction in ordinal.ts
+ * (BAND_PRIOR.surface, FACET_TILT.production) — see the comments at those constants.
  */
 export const SETTLE_ENTROPY = 0.55;
 export const MAX_ITEMS_PER_CELL = 3;
