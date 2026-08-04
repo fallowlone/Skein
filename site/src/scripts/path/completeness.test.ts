@@ -23,6 +23,16 @@ describe("frontierCompleteness", () => {
     expect(r.total).toBe(3);
   });
 
+  it("counts assess as measured — a new Source member must not silently fall into guessed", () => {
+    const g = buildConceptGraph([
+      { id: "z", label: { en: "", ru: "" }, track: "t", band: "surface", requires: [] },
+    ] as any);
+    const state: KnowledgeState = new Map([["z", { confidence: 0.2, source: "assess", lastAt: 0 }]]);
+    const r = frontierCompleteness(new Set(["z"]), state, new Set(), g);
+    expect(r.measured).toBe(1);
+    expect(r.guessed).toBe(0);
+  });
+
   it("counts pretest as measured and activity as propagated", () => {
     const g = buildConceptGraph([
       { id: "x", label: { en: "", ru: "" }, track: "t", band: "surface", requires: [] },

@@ -32,7 +32,10 @@ export function frontierCompleteness(
 
   for (const id of closure) {
     const source = state.get(id)?.source;
-    if (source === "diagnostic" || source === "pretest") {
+    // "assess" is a deliberate per-concept skill measurement (site/src/scripts/assess/),
+    // at least as strong an evidence source as a one-shot diagnostic/pretest — it belongs
+    // in the same bucket, not silently in "guessed" for having no explicit branch.
+    if (source === "diagnostic" || source === "pretest" || source === "assess") {
       measured++;
     } else if (source === "declared") {
       declared++;
