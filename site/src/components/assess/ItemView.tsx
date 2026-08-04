@@ -12,8 +12,9 @@ import { t, type Locale } from "~/i18n";
 import type { AssessItem, AssessResponse, Outcome } from "~/scripts/assess/types";
 import type { ResponseMeta } from "~/scripts/assess/update";
 import { useItemContent } from "./item-content";
-import { KindMismatch, McqBody, PredictBody, ExplainBody, ReviewBody, tt } from "./item-bodies";
+import { KindMismatch, McqBody, PredictBody, ExplainBody, ReviewBody } from "./item-bodies";
 import { DebugBody, ExecBody } from "./item-bodies-code";
+import { tt } from "./labels";
 
 type Props = {
   lang: Locale;
@@ -33,6 +34,14 @@ export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onSt
     onAnswer({ outcome, hintsUsed, elapsedMs: Date.now() - servedAtMs }, meta);
   };
   const dontKnow = () => submit("dont_know");
+  // I2 (task-12-report.md fix round 1): "I don't know" records real Evidence for
+  // a question the learner was actually shown — it must not be clickable while
+  // the content is still loading, or after it failed to load (404 / a stale
+  // taskId). Both would inject false evidence into the measurement this whole
+  // feature exists to keep honest. "Finish" has no such risk (it stops the
+  // session, it does not answer this item) and stays available throughout —
+  // a learner must always be able to leave.
+  const loaded = content !== "loading" && content !== null;
 
   return (
     <article class="assess-item" data-kind={item.kind}>
@@ -52,7 +61,7 @@ export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onSt
       )}
 
       <div class="assess-item-controls">
-        <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={dontKnow}>
+        <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={dontKnow} disabled={!loaded} aria-disabled={!loaded}>
           {t("assess.item.dontKnow", lang)}
         </button>
         <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={onStop}>
