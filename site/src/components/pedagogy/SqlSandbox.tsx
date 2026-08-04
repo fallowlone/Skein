@@ -7,7 +7,10 @@ type Props = {
   setup?: string;
   initialSql?: string;
   check?: ExecCheck;
-  onResult?: (passed: boolean) => void;
+  // Second arg added for /assess (ItemView.tsx): its exec items need the raw
+  // ExecResult to build a Task-9-grader failureNote via gradeExec(check, result).
+  // Backward compatible — see the identical note in CodeDrawer.tsx.
+  onResult?: (passed: boolean, result?: ExecResult) => void;
 };
 
 const tt = (lang: Locale, en: string, ru: string) => (lang === "en" ? en : ru);
@@ -31,15 +34,16 @@ export default function SqlSandbox({ lang, setup, initialSql, check, onResult }:
       if (check) {
         const r: ExecResult = { rows: out };
         const ok = applyExecCheck(check, r);
-        setVerdict(ok); onResult?.(ok);
+        setVerdict(ok); onResult?.(ok, r);
       }
       await db.close?.();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setError(msg);
       if (check) {
-        const ok = applyExecCheck(check, { error: msg });
-        setVerdict(ok); onResult?.(ok);
+        const r: ExecResult = { error: msg };
+        const ok = applyExecCheck(check, r);
+        setVerdict(ok); onResult?.(ok, r);
       }
     } finally {
       setBusy(false);

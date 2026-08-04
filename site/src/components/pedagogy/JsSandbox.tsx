@@ -5,7 +5,7 @@
 import { useState } from "preact/hooks";
 import { lazy, Suspense } from "preact/compat";
 import type { Locale } from "~/i18n";
-import type { ExecCheck } from "~/scripts/practice-grade";
+import type { ExecCheck, ExecResult } from "~/scripts/practice-grade";
 
 const CodeDrawer = lazy(() => import("./CodeDrawer"));
 
@@ -14,7 +14,8 @@ type Props = {
   setup?: string;
   initialCode?: string;
   check?: ExecCheck;
-  onResult?: (passed: boolean) => void;
+  // Second arg added for /assess (ItemView.tsx): see the identical note in CodeDrawer.tsx.
+  onResult?: (passed: boolean, result?: ExecResult) => void;
   title?: string;
 };
 
@@ -51,7 +52,7 @@ export default function JsSandbox({ lang, setup, initialCode, check, onResult, t
             onClose={() => setOpen(false)}
             setup={setup}
             check={check}
-            onResult={(ok) => { setVerdict(ok); onResult?.(ok); }}
+            onResult={(ok, result) => { setVerdict(ok); onResult?.(ok, result); }}
           />
         </Suspense>
       )}

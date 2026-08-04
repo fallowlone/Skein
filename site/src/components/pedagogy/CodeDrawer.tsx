@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import { runJs } from "~/scripts/run-js";
-import { applyExecCheck, type ExecCheck } from "~/scripts/practice-grade";
+import { applyExecCheck, type ExecCheck, type ExecResult } from "~/scripts/practice-grade";
 
 type Props = {
   lang: Locale;
@@ -15,7 +15,12 @@ type Props = {
   onClose: () => void;
   setup?: string;
   check?: ExecCheck;
-  onResult?: (passed: boolean) => void;
+  // Second arg added for /assess (ItemView.tsx): its exec items need the raw
+  // ExecResult to build a Task-9-grader failureNote via gradeExec(check, result),
+  // not just pass/fail. Backward compatible — a callback declared with fewer
+  // params (the existing PracticeSection usage) is still assignable here; JS
+  // ignores extra call args, so no existing caller needs to change.
+  onResult?: (passed: boolean, result: ExecResult) => void;
 };
 
 const L = {
@@ -57,9 +62,10 @@ export default function CodeDrawer(
     setStdout(r.stdout);
     if (r.error) setError(r.error);
     if (check) {
-      const ok = applyExecCheck(check, r.error ? { error: r.error } : { stdout: r.stdout });
+      const result: ExecResult = r.error ? { error: r.error } : { stdout: r.stdout };
+      const ok = applyExecCheck(check, result);
       setVerdict(ok);
-      onResult?.(ok);
+      onResult?.(ok, result);
     }
   };
   runRef.current = () => { void run(); };
