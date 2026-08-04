@@ -118,6 +118,15 @@ describe("applyPracticeStruggle (downward, bounded, activity-only)", () => {
     expect(masteryOf(s, "mvcc")).toBeCloseTo(1, 5);
   });
 
+  // C1/C2 (task-12-report.md): a /assess measurement is STRONG-tier, same as
+  // diagnostic/declared — inferred practice struggle must not erode it.
+  it("never erodes assess-sourced evidence", () => {
+    const s0 = new Map([["indexing", { confidence: 0.9, source: "assess" as const, lastAt: NOW }]]);
+    const s = applyPracticeStruggle(s0, ["indexing"], 1, 0.3, 0.25, NOW);
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.9, 5);
+    expect(s.get("indexing")!.source).toBe("assess");
+  });
+
   it("struggleFrac 0 is a no-op (returns the same reference)", () => {
     const base = applyStudyEvidence(emptyState(), ["indexing"], 1, 1, 0.35, 0.4, NOW);
     const after = applyPracticeStruggle(base, ["indexing"], 0, 0.3, 0.25, NOW);
@@ -142,6 +151,18 @@ describe("applyReviewEvidence", () => {
     expect(s.get("indexing")!.source).toBe("diagnostic");
   });
 
+  // C1/C2: review-card health (an inferred, per-unit signal) must not overwrite
+  // or relabel a deliberate /assess measurement, even a low one.
+  it("never overrides assess evidence, in either direction", () => {
+    const s0 = new Map([["indexing", { confidence: 0.2, source: "assess" as const, lastAt: NOW }]]);
+    const lifted = applyReviewEvidence(s0, ["indexing"], 1, 0.7, 0.3, NOW);   // would lift to 0.7
+    expect(masteryOf(lifted, "indexing")).toBeCloseTo(0.2, 5);
+    expect(lifted.get("indexing")!.source).toBe("assess");
+    const eroded = applyReviewEvidence(s0, ["indexing"], 0, 0.7, 0.3, NOW);   // would erode toward floor
+    expect(masteryOf(eroded, "indexing")).toBeCloseTo(0.2, 5);
+    expect(eroded.get("indexing")!.source).toBe("assess");
+  });
+
   it("low healthFrac erodes activity-sourced confidence toward the floor", () => {
     let s = applyStudyEvidence(emptyState(), ["indexing"], 1, 1, 0.35, 0.4, NOW); // activity ~0.75
     s = applyReviewEvidence(s, ["indexing"], 0, 0.7, 0.3, NOW);                    // all cards lapsed
@@ -156,5 +177,15 @@ describe("applyStudyEvidence review protection", () => {
     s = applyStudyEvidence(s, ["indexing"], 1, 1, 0.35, 0.4, NOW);             // study would set 0.75
     expect(masteryOf(s, "indexing")).toBeCloseTo(0.7, 5); // review wins
     expect(s.get("indexing")!.source).toBe("review");
+  });
+
+  // C1/C2 (task-12-report.md): the bug this closes — touching one practice task
+  // in a lesson must not erase a /assess gap for that lesson's concepts, and
+  // must never restamp its source to "activity".
+  it("does not override or relabel an 'assess'-sourced concept", () => {
+    const s0 = new Map([["indexing", { confidence: 0.1, source: "assess" as const, lastAt: NOW }]]);
+    const s = applyStudyEvidence(s0, ["indexing"], 1, 1, 0.35, 0.4, NOW); // study would set 0.75
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.1, 5); // assess gap survives
+    expect(s.get("indexing")!.source).toBe("assess");     // and is never restamped "activity"
   });
 });

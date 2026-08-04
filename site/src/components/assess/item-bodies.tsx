@@ -18,8 +18,7 @@ import type { Outcome } from "~/scripts/assess/types";
 import type { ResponseMeta } from "~/scripts/assess/update";
 import { gradeBlanks, gradeReview } from "~/scripts/assess/graders";
 import { isCommitted } from "~/scripts/practice-state";
-
-export const tt = (lang: Locale, en: string, ru: string) => (lang === "en" ? en : ru);
+import { tt } from "./labels";
 
 export type Submit = (outcome: Outcome, meta?: ResponseMeta) => void;
 type BodyProps = { lang: Locale; task: PracticeTaskData; onSubmit: Submit };
@@ -31,7 +30,7 @@ const DIGEST_MAX = 240;
  *  doesn't know about yet). Never silently mis-grade — surface it and let the
  *  learner fall through to the shared "I don't know" / "Finish" controls. */
 export function KindMismatch({ lang }: { lang: Locale }) {
-  return <p class="assess-mismatch">{tt(lang, "This item's content could not be loaded correctly.", "Содержимое этого задания не удалось загрузить корректно.")}</p>;
+  return <p class="assess-mismatch">{t("assess.item.mismatch", lang)}</p>;
 }
 
 export function McqBody({ lang, task, onSubmit }: BodyProps) {
@@ -47,20 +46,30 @@ export function McqBody({ lang, task, onSubmit }: BodyProps) {
   return (
     <div class="assess-body">
       {task.evidence && <pre class="assess-evidence">{tt(lang, task.evidence.en, task.evidence.ru)}</pre>}
-      {blanks.map((b: { id: string; accept: string[]; hint?: { en: string; ru: string } }, i: number) => (
-        <div key={b.id} class="assess-blank">
-          {b.hint && <label class="assess-blank-hint">{tt(lang, b.hint.en, b.hint.ru)}</label>}
-          <input
-            class="assess-input"
-            value={answers[i]}
-            placeholder={t("assess.item.blankPlaceholder", lang)}
-            onInput={(e) => {
-              const v = (e.target as HTMLInputElement).value;
-              setAnswers((prev) => prev.map((cur, j) => (j === i ? v : cur)));
-            }}
-          />
-        </div>
-      ))}
+      {blanks.map((b: { id: string; accept: string[]; hint?: { en: string; ru: string } }, i: number) => {
+        // Every blank gets a real, unique label — a hint when the content has
+        // one, else a numbered fallback ("Blank 2") — so a multi-blank item
+        // does not leave every input sharing the same accessible name (they
+        // previously fell back to the shared placeholder text with no label
+        // at all when a blank had no authored hint).
+        const inputId = `assess-blank-${b.id}`;
+        const labelText = b.hint ? tt(lang, b.hint.en, b.hint.ru) : t("assess.item.blankN", lang).replace("{n}", String(i + 1));
+        return (
+          <div key={b.id} class="assess-blank">
+            <label class="assess-blank-hint" for={inputId}>{labelText}</label>
+            <input
+              id={inputId}
+              class="assess-input"
+              value={answers[i]}
+              placeholder={t("assess.item.blankPlaceholder", lang)}
+              onInput={(e) => {
+                const v = (e.target as HTMLInputElement).value;
+                setAnswers((prev) => prev.map((cur, j) => (j === i ? v : cur)));
+              }}
+            />
+          </div>
+        );
+      })}
       <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={submit}>
         {t("assess.item.submit", lang)}
       </button>

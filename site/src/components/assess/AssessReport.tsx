@@ -13,8 +13,7 @@ import type { Cell, CellKey } from "~/scripts/assess/types";
 import { PATTERN_LABELS } from "~/scripts/assess/patterns";
 import { addCard } from "~/scripts/review-state";
 import { applyKnowledgeWrites } from "~/scripts/assess-apply-knowledge";
-import { tt } from "./item-bodies";
-import { levelLabel } from "./labels";
+import { tt, levelLabel } from "./labels";
 
 type Props = {
   lang: Locale;
@@ -23,6 +22,13 @@ type Props = {
   labelOf: (conceptId: string) => { en: string; ru: string };
   onRestart: () => void;
 };
+
+// An "everything" scope is ~5035 concepts; after a couple of answers nearly all
+// of them are untested, so rendering the full list would mean ~5000 <li> chips.
+// 300 bounds that worst case while staying well above any single-track scope's
+// concept count except the largest few (e.g. networking, 513) — a capped list
+// still shows the count truncated (below), so nothing is silently hidden.
+const UNTESTED_RENDER_CAP = 300;
 
 function ConceptRow({ lang, row, labelOf }: { lang: Locale; row: ReportRow; labelOf: Props["labelOf"] }) {
   const label = labelOf(row.conceptId);
@@ -60,16 +66,24 @@ function ConceptList({ lang, rows, labelOf, emptyKey }: {
 export default function AssessReport({ lang, model, cells, labelOf, onRestart }: Props) {
   const [applied, setApplied] = useState<{ n: number; m: number } | null>(null);
 
+  // Exactly the concept set this report was built over (rows ∪ untested — every
+  // scope concept lands in precisely one of the two, per buildReport's loop).
+  // Passed to applyKnowledgeWrites so a concept the learner never saw in these
+  // results can never be silently rewritten behind the Save button (C1/C2
+  // rule 1, task-12-report.md).
+  const scopeConcepts = [...model.rows.map((r) => r.conceptId), ...model.untested];
+
   // "Apply" writes the assess result into the durable stores the rest of the app
   // reads (KnowledgeState, retest cards) — see assess-apply-knowledge.ts for why
-  // that does NOT go through path-io.ts directly. `promptFor` has no real item
-  // text to draw on (Evidence keeps itemId/lessonKey, not the question itself),
-  // so the retrieval cue falls back to "concept label (facet)" — an honest cue,
-  // not a reconstruction of the original question.
+  // that does NOT go through path-io.ts directly, and for the overwrite
+  // precedence rule. `promptFor` has no real item text to draw on (Evidence
+  // keeps itemId/lessonKey, not the question itself), so the retrieval cue
+  // falls back to "concept label (facet)" — an honest cue, not a reconstruction
+  // of the original question.
   const apply = () => {
     const now = Date.now();
     const writes = toKnowledgeWrites(cells, now);
-    const n = applyKnowledgeWrites(writes);
+    const n = applyKnowledgeWrites(writes, cells, scopeConcepts);
     const cards = toRetestCards(cells, lang, now, (conceptId, cell) => {
       const label = labelOf(conceptId);
       return `${tt(lang, label.en, label.ru)} (${cell.facet})`;
@@ -104,11 +118,16 @@ export default function AssessReport({ lang, model, cells, labelOf, onRestart }:
         <h3>{t("assess.report.untested", lang)}</h3>
         <p class="ar-untested-note">{t("assess.report.untestedNote", lang)}</p>
         <ul class="ar-untested-list">
-          {model.untested.map((id) => {
+          {model.untested.slice(0, UNTESTED_RENDER_CAP).map((id) => {
             const label = labelOf(id);
             return <li key={id}>{tt(lang, label.en, label.ru)}</li>;
           })}
         </ul>
+        {model.untested.length > UNTESTED_RENDER_CAP && (
+          <p class="ar-untested-more">
+            {t("assess.report.untestedMore", lang).replace("{n}", String(model.untested.length - UNTESTED_RENDER_CAP))}
+          </p>
+        )}
       </section>
 
       <div class="assess-item-controls">
