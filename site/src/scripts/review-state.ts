@@ -7,7 +7,7 @@ import { freshSched, schedule, dueAtFrom, type Grade, type Sched } from "./progr
 
 export const REVIEW_KEY = "atlas.review.v1";
 
-export type CardSource = "retrieval" | "practice";
+export type CardSource = "retrieval" | "practice" | "assess";
 
 export interface CardSeed {
   cardKey: string;

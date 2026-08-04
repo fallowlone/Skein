@@ -20,7 +20,7 @@ export interface UnitConcepts {
   estMin: number;
 }
 
-export type Source = "pretest" | "diagnostic" | "activity" | "declared" | "review";
+export type Source = "pretest" | "diagnostic" | "activity" | "declared" | "review" | "assess";
 export interface ConceptMastery { confidence: number; source: Source; lastAt: number; }
 export type KnowledgeState = Map<string, ConceptMastery>;
 
