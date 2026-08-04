@@ -2,10 +2,11 @@
 // Virtual learners with KNOWN ground truth, so the engine can be measured instead of
 // trusted. Test-only: never imported by UI code.
 import { pCorrect } from "./likelihood";
-import { bandLabel, expectedLevel } from "./ordinal";
+import { expectedLevel } from "./ordinal";
 import { indexPool, nextItem } from "./select";
-import { emptyCell, applyResponse } from "./update";
-import { isSettled } from "./verdict";
+import { applyResponse } from "./update";
+import { isUngroundedGap } from "./ungrounded-gap";
+import { MAX_ITEMS_PER_CELL, isSettled } from "./verdict";
 import { LEVELS, cellKey, type AssessItem, type Band, type Cell, type CellKey, type Facet, type Level, type Outcome } from "./types";
 
 export interface Profile {
@@ -58,6 +59,14 @@ export interface SimResult {
   withinOne: number;
   meanSignedError: number;
   medianItemsToSettle: number;
+  /**
+   * Share of settled cells that settled on entropy strictly before hitting
+   * MAX_ITEMS_PER_CELL. `medianItemsToSettle <= 3` alone cannot fail while the cap is 3
+   * (isSettled forces every cell to stop by its third item regardless of how informative the
+   * evidence was) — this is the discriminating half of that gate: a flat or broken likelihood
+   * would drive this toward 0 while the median stayed a comfortable 3.
+   */
+  subCapSettleFraction: number;
   gapsWithoutEvidence: number;
   honestMinusGuesser: number;
   byProfile: Record<string, Record<Facet, FacetStat>>;
@@ -86,20 +95,6 @@ function poolFor(conceptIds: string[], band: Band): AssessItem[] {
   return out;
 }
 
-/**
- * A (concept, facet) pair carries no direct evidence when either no cell exists for it yet,
- * or a cell exists but only from cross-facet damping (items === 0). In both cases the
- * reported band must not read as a gap — an untested skill is unknown, not disproven. This
- * checks the SAME statistic the report uses to label a band (`bandLabel`), independent of
- * `verdict.ts`'s own "untested" status guard, so a drift in the prior/likelihood math would
- * show up here even if a future consumer forgot to gate on `items === 0` first.
- */
-function isUngroundedGap(cell: Cell | undefined, conceptId: string, facet: Facet, band: Band): boolean {
-  if (cell && cell.items > 0) return false;
-  const posterior = cell ? cell.posterior : emptyCell(conceptId, facet, band).posterior;
-  return bandLabel(posterior).level === "gap";
-}
-
 export function runSimulation({ learners, conceptsPerLearner, seed }: SimArgs): SimResult {
   const rand = rng(seed);
   const names = Object.keys(PROFILES);
@@ -107,6 +102,7 @@ export function runSimulation({ learners, conceptsPerLearner, seed }: SimArgs): 
 
   const errors: number[] = [];
   const itemsToSettle: number[] = [];
+  let subCapSettles = 0;
   let gapsWithoutEvidence = 0;
   const byProfile: Record<string, Record<Facet, { sum: number; n: number }>> = {};
   const profileErrorSums: Record<string, number> = {};
@@ -124,7 +120,13 @@ export function runSimulation({ learners, conceptsPerLearner, seed }: SimArgs): 
     const asked = new Set<string>();
     let recentKinds: AssessItem["kind"][] = [];
 
-    for (let step = 0; step < conceptsPerLearner * FACETS.length * 3; step++) {
+    // Budget is proportional to MAX_ITEMS_PER_CELL, not a hardcoded "3", so that a future
+    // change to the cap doesn't silently starve every cell's fair share of questions — a
+    // fixed budget under a raised cap is exactly the confound Task 10 fix round 1 (finding 3)
+    // flagged in the tuning experiment: some cells hog the larger cap while others go
+    // unasked, which corrupts gapsWithoutEvidence as a side effect of the harness's own
+    // bookkeeping rather than telling you anything about the engine.
+    for (let step = 0; step < conceptsPerLearner * FACETS.length * MAX_ITEMS_PER_CELL; step++) {
       const item = nextItem({ index, cells, candidates: conceptIds, bandOf, askedIds: asked, recentKinds });
       if (!item) break;
       asked.add(item.id);
@@ -150,7 +152,10 @@ export function runSimulation({ learners, conceptsPerLearner, seed }: SimArgs): 
         learnerCells++;
         byProfile[name][f].sum += est;
         byProfile[name][f].n += 1;
-        if (isSettled(cell)) itemsToSettle.push(cell.items);
+        if (isSettled(cell)) {
+          itemsToSettle.push(cell.items);
+          if (cell.items < MAX_ITEMS_PER_CELL) subCapSettles++;
+        }
       }
     }
     if (learnerCells > 0) {
@@ -171,6 +176,7 @@ export function runSimulation({ learners, conceptsPerLearner, seed }: SimArgs): 
     withinOne: errors.filter((e) => Math.abs(e) <= 1).length / Math.max(1, errors.length),
     meanSignedError: errors.reduce((a, b) => a + b, 0) / Math.max(1, errors.length),
     medianItemsToSettle: median,
+    subCapSettleFraction: itemsToSettle.length ? subCapSettles / itemsToSettle.length : 0,
     gapsWithoutEvidence,
     honestMinusGuesser: (profileMeans["honest-beginner"] ?? 0) - (profileMeans["guesser-beginner"] ?? 0),
     byProfile: Object.fromEntries(
