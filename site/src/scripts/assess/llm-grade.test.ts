@@ -6,10 +6,13 @@ import {
   gradeExplainVerdict,
   llmAvailable,
   buildAssessRubric,
+  anchorLevel,
   ASSESS_RUBRIC_EN,
   ASSESS_RUBRIC_RU,
 } from "./llm-grade";
-import { LEVELS, type AssessItem, type Level } from "./types";
+import { emptyCell } from "./update";
+import { bandLabel } from "./ordinal";
+import { cellKey, LEVELS, type AssessItem, type Cell, type CellKey, type Level } from "./types";
 
 describe("parseFacetVerdict", () => {
   test("reads a level and a one-line justification", () => {
@@ -137,5 +140,43 @@ describe("no-key degradation stays representable", () => {
     // `deterministic` directly, exactly as if gradeExplainVerdict had never
     // been invoked. Nothing in this module requires a verdict to exist.
     expect(LEVELS.includes(deterministic)).toBe(true);
+  });
+});
+
+// Task 13 fix round 1: anchorLevel replaces the hand-picked 3-bucket self-grade
+// table with the engine's own current belief about the item's (concept, facet)
+// cell — the same discrete statistic (bandLabel) the report itself uses.
+describe("anchorLevel", () => {
+  const item: AssessItem = {
+    id: "l#t", lessonKey: "l", taskId: "t", kind: "explain", facet: "mechanism",
+    band: "surface", concepts: ["tcp-handshake"], weight: 1, estMin: 3,
+  };
+
+  test("falls back to the concept's own prior when no cell exists yet", () => {
+    const anchor = anchorLevel(item, new Map());
+    const expected = bandLabel(emptyCell("tcp-handshake", "mechanism", "surface").posterior).level;
+    expect(anchor).toBe(expected);
+  });
+
+  test("uses the measured cell's own posterior when one exists", () => {
+    const strongCell: Cell = { ...emptyCell("tcp-handshake", "mechanism", "surface"), posterior: [0.02, 0.05, 0.13, 0.80], items: 3 };
+    const cells = new Map<CellKey, Cell>([[cellKey("tcp-handshake", "mechanism"), strongCell]]);
+    expect(anchorLevel(item, cells)).toBe("senior");
+  });
+
+  test("only reads the item's OWN facet's cell — a strong cell on a different facet of the same concept does not leak in", () => {
+    const strongRecognition: Cell = { ...emptyCell("tcp-handshake", "recognition", "surface"), posterior: [0.02, 0.05, 0.13, 0.80], items: 3 };
+    const cells = new Map<CellKey, Cell>([[cellKey("tcp-handshake", "recognition"), strongRecognition]]);
+    // item.facet is "mechanism" — the recognition cell must be ignored, falling back to the prior.
+    const anchor = anchorLevel(item, cells);
+    const expected = bandLabel(emptyCell("tcp-handshake", "mechanism", "surface").posterior).level;
+    expect(anchor).toBe(expected);
+  });
+
+  test("is read-only: does not mutate the cells map it is given", () => {
+    const cells = new Map<CellKey, Cell>([[cellKey("tcp-handshake", "mechanism"), emptyCell("tcp-handshake", "mechanism", "surface")]]);
+    const snapshot = new Map(cells);
+    anchorLevel(item, cells);
+    expect(cells).toEqual(snapshot);
   });
 });

@@ -110,3 +110,29 @@ export function likelihoodVector(item: AssessItem, response: AssessResponse, tar
   // align→0 (cross-facet leakage) makes the response uninformative for that facet.
   return normalize(raw.map((x) => Math.pow(x, align)));
 }
+
+/**
+ * Task 13 fix round 1 (Critical): P(the LLM's clamped verdict | true level) —
+ * an independent second likelihood, multiplied into `applyResponse` alongside
+ * `likelihoodVector` for `explain` items only when the BYOK layer actually
+ * graded one (update.ts). Models the verdict as a direct ordinal observation
+ * on LEVELS: peaked at `verdict`, geometric falloff with ordinal distance.
+ * Deliberately NOT built from pCorrect/GUESS/FACET_ALIGN — those model an
+ * item *outcome* (right/wrong/partial on a specific task), and a level
+ * judgment is a different kind of observation.
+ *
+ * `LLM_VERDICT_FALLOFF` is a new constant, not one of the seven
+ * simulation-tuned ones (DISCRIMINATION, GUESS, FACET_ALIGN, SETTLE_ENTROPY,
+ * MAX_ITEMS_PER_CELL, BAND_PRIOR, FACET_TILT) — none of those move. It cannot
+ * itself be simulation-tuned (the harness has no LLM), so it is set
+ * conservatively: gentler than DISCRIMINATION's effective per-step falloff,
+ * so one LLM opinion nudges a cell rather than dominating one that already
+ * carries real Outcome evidence. The ±1 range this ever gets called with is
+ * enforced upstream by llm-grade.ts's clamp, not by this function.
+ */
+const LLM_VERDICT_FALLOFF = 0.35;
+export function llmVerdictLikelihood(verdict: Level): Posterior {
+  return normalize(
+    LEVELS.map((level) => Math.pow(LLM_VERDICT_FALLOFF, Math.abs(LEVELS.indexOf(level) - LEVELS.indexOf(verdict)))),
+  );
+}
