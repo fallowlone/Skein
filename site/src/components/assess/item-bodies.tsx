@@ -94,7 +94,13 @@ function CommitRevealBody({
 
   const grade = (g: "hit" | "partial" | "miss") => {
     const outcome: Outcome = g === "hit" ? "correct" : g === "partial" ? "partial" : "wrong";
-    onSubmit(outcome, { answerDigest: draft.slice(0, DIGEST_MAX) });
+    // `rawAnswer` carries the FULL, untruncated draft — read only by
+    // ItemView.tsx's explain-item LLM check (its own MAX_INPUT_CHARS bound
+    // applies there), and stripped by ItemView.tsx before the response ever
+    // reaches onAnswer/applyResponse/Evidence. `answerDigest` (240 chars,
+    // DIGEST_MAX) stays the one that gets stored, exactly as before — this
+    // adds a second, transient field, it does not change what gets persisted.
+    onSubmit(outcome, { answerDigest: draft.slice(0, DIGEST_MAX), rawAnswer: draft });
   };
 
   return (

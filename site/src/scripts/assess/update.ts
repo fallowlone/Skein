@@ -29,6 +29,16 @@ export interface ResponseMeta {
    * sets this field, so Task 10's accuracy gates cannot be affected by it.
    */
   llmVerdictLevel?: Level;
+  /**
+   * Task 13 fix round 1: the FULL, untruncated draft an explain item's
+   * self-grade was made against — read only by ItemView.tsx (to send to the
+   * LLM under its own MAX_INPUT_CHARS bound) and deliberately NOT destructured
+   * anywhere below. `applyResponse` only ever stores `digest(meta.answerDigest)`
+   * (240 chars, DIGEST_MAX) into Evidence; this field must never reach it, so
+   * there is intentionally no code path here that reads `meta.rawAnswer` at
+   * all — ItemView.tsx strips it before the response reaches `onAnswer`.
+   */
+  rawAnswer?: string;
 }
 
 /**
