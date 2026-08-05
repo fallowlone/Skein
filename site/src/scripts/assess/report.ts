@@ -49,6 +49,31 @@ function measuredBand(row: ReportRow): { band: BandLabel; levelIndex: number } |
   return { band, levelIndex: LEVELS.indexOf(band.level) };
 }
 
+/**
+ * Ruling 4 (task-13): never degrade silently. True when this session has at
+ * least one `explain` answer that did NOT get an independent LLM check (no
+ * key, a locked key, a failed/unparsable call, or legacy pre-Task-13 evidence
+ * that predates the `llmGraded` field entirely — `e.llmGraded !== true`
+ * catches `false` AND `undefined` alike, deliberately conservative: absence
+ * of proof it was graded is treated the same as proof it was not).
+ * ItemView.tsx's gradeExplainAnswer always sets `llmGraded` explicitly on new
+ * explain evidence, but this function does not assume that — it is exported
+ * and unit-tested (report.test.ts) precisely so a future refactor of
+ * Cell/Evidence/AssessReport cannot silently break the one learner-facing
+ * claim this whole ruling exists to keep honest.
+ *
+ * Computed from the same `cells` the rest of the report reads, not from a
+ * session-level "was a key configured" flag — so it stays honest even in the
+ * rarer case where a key WAS configured but one particular grading call
+ * failed.
+ */
+export function explainUngraded(cells: ReadonlyMap<CellKey, Cell>): boolean {
+  for (const cell of cells.values()) {
+    if (cell.evidence.some((e) => e.kind === "explain" && e.llmGraded !== true)) return true;
+  }
+  return false;
+}
+
 export function buildReport(cells: ReadonlyMap<CellKey, Cell>, opts: ReportOpts): AssessReportModel {
   const rows: ReportRow[] = [];
   const untested: string[] = [];
