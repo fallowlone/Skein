@@ -13,7 +13,9 @@
 // `parseFacetVerdict`'s raw, unclamped level is exported only so
 // llm-grade.test.ts can test the JSON contract in isolation — no engine-adjacent
 // caller (ItemView.tsx, report.ts, update.ts) may import it directly.
-import { LEVELS, type AssessItem, type Level } from "./types";
+import { emptyCell } from "./update";
+import { bandLabel } from "./ordinal";
+import { cellKey, LEVELS, type AssessItem, type Cell, type CellKey, type Level } from "./types";
 
 export interface FacetVerdict {
   level: Level;
@@ -75,6 +77,33 @@ export function clampAgainstDeterministic(deterministic: Level, llm: Level): Lev
   const l = LEVELS.indexOf(llm);
   const clamped = Math.max(d - 1, Math.min(d + 1, l));
   return LEVELS[clamped];
+}
+
+/**
+ * Task 13 fix round 1: the deterministic anchor `gradeExplainVerdict` clamps
+ * against. Replaces the fix-round-0 hand-picked 3-bucket table
+ * (`correct/partial/wrong -> middle/junior/gap`), which only ever reflected
+ * the learner's own self-grade click on THIS item — a coarse proxy for
+ * "deterministic" when the engine already holds a real posterior for this
+ * exact (concept, facet) cell from every prior/propagated response. Using
+ * that posterior instead is more principled and matches what
+ * "deterministic measurement" means everywhere else in this engine: `bandLabel`
+ * is the SAME discrete statistic `conceptVerdict`/the report use to name a
+ * cell's level, so the anchor and the report agree on what "the current
+ * measurement" is. Falls back to the concept's own prior (`emptyCell`, the
+ * same seed `applyResponse` would use for an unseen cell) when nothing has
+ * touched this (concept, facet) yet — still principled, not a guess: it is
+ * exactly what the engine itself believes before any evidence exists.
+ *
+ * Reads `cells` as of BEFORE this item's own response is applied (the caller
+ * passes the pre-answer state) — the anchor must not be circular with the
+ * very response it's meant to check.
+ */
+export function anchorLevel(item: AssessItem, cells: ReadonlyMap<CellKey, Cell>): Level {
+  const conceptId = item.concepts[0] ?? item.lessonKey;
+  const cell = cells.get(cellKey(conceptId, item.facet));
+  const posterior = cell ? cell.posterior : emptyCell(conceptId, item.facet, item.band).posterior;
+  return bandLabel(posterior).level;
 }
 
 /**

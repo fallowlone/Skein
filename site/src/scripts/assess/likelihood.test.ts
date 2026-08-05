@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { likelihoodVector, pCorrect } from "./likelihood";
-import type { AssessItem, AssessResponse, Band, ItemKind } from "./types";
+import { likelihoodVector, llmVerdictLikelihood, pCorrect } from "./likelihood";
+import { LEVELS, type AssessItem, type AssessResponse, type Band, type ItemKind } from "./types";
 
 const item = (over: Partial<AssessItem> = {}): AssessItem => ({
   id: "l#t", lessonKey: "l", taskId: "t", kind: "exec", facet: "production",
@@ -70,5 +70,39 @@ describe("likelihood", () => {
       const v = likelihoodVector(item(), res({ outcome }), "production");
       expect(v.reduce((a, b) => a + b, 0)).toBeCloseTo(1);
     }
+  });
+});
+
+// Task 13 fix round 1 (Critical): the LLM verdict's own likelihood — the
+// factor that lets a clamped Level genuinely move a cell, in both directions.
+describe("llmVerdictLikelihood", () => {
+  test("is a normalised distribution peaked at the verdict, for every level", () => {
+    for (const verdict of LEVELS) {
+      const v = llmVerdictLikelihood(verdict);
+      expect(v.reduce((a, b) => a + b, 0)).toBeCloseTo(1);
+      const peakIndex = v.indexOf(Math.max(...v));
+      expect(LEVELS[peakIndex]).toBe(verdict);
+    }
+  });
+
+  test("mass falls off monotonically with ordinal distance from the verdict", () => {
+    const v = llmVerdictLikelihood("middle");
+    const i = LEVELS.indexOf("middle");
+    // middle (i=2): gap(0) is 2 steps away, junior(1) is 1 step, senior(3) is 1 step.
+    expect(v[i]).toBeGreaterThan(v[i - 1]);
+    expect(v[i]).toBeGreaterThan(v[i + 1]);
+    expect(v[i - 1]).toBeCloseTo(v[i + 1]); // symmetric falloff
+    expect(v[0]).toBeLessThan(v[i - 1]); // gap is 2 steps from middle, junior is 1
+  });
+
+  test("a senior verdict and a middle verdict are genuinely different distributions", () => {
+    // This is the direct regression test for fix round 1's Critical finding:
+    // LEVEL_TO_OUTCOME used to collapse both into Outcome "correct", making
+    // them produce a bit-identical posterior update. They must not anymore.
+    const senior = llmVerdictLikelihood("senior");
+    const middle = llmVerdictLikelihood("middle");
+    expect(senior).not.toEqual(middle);
+    expect(senior[3]).toBeGreaterThan(middle[3]); // senior verdict argues harder for the top level
+    expect(middle[2]).toBeGreaterThan(senior[2]); // middle verdict argues harder for itself
   });
 });

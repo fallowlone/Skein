@@ -293,6 +293,7 @@ export default function AssessFlow({ lang }: { lang: Locale }) {
         onAnswer={(response, meta) => dispatch({ type: "answer", response, meta, atMs: Date.now() })}
         onStop={() => dispatch({ type: "stop", atMs: Date.now() })}
         labelOf={deps.labelOf}
+        cells={state.cells}
       />
     </>
   );

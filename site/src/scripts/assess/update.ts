@@ -1,8 +1,8 @@
 // Bayes update of one cell + ordinal propagation across the concept DAG. Pure.
 import type { ConceptGraph } from "~/scripts/path/graph";
-import { likelihoodVector } from "./likelihood";
+import { likelihoodVector, llmVerdictLikelihood } from "./likelihood";
 import { expectedLevel, normalize, priorFromBand } from "./ordinal";
-import { cellKey, type AssessItem, type AssessResponse, type Band, type Cell, type CellKey, type Facet, type Posterior } from "./types";
+import { cellKey, type AssessItem, type AssessResponse, type Band, type Cell, type CellKey, type Facet, type Level, type Posterior } from "./types";
 
 export function emptyCell(conceptId: string, facet: Facet, band: Band): Cell {
   return { conceptId, facet, posterior: priorFromBand(band, facet), items: 0, evidence: [] };
@@ -16,6 +16,19 @@ export interface ResponseMeta {
   failureNote?: string;
   /** Task 13: threaded straight into Evidence.llmGraded — see its own doc comment. */
   llmGraded?: boolean;
+  /**
+   * Task 13 fix round 1 (Critical): the clamped LLM verdict Level for an
+   * `explain` item's target facet, when the BYOK layer graded one. Multiplied
+   * in as an independent likelihood factor (`llmVerdictLikelihood`) on the
+   * TARGET facet's cell only — never the cross-facet damped ones, and never
+   * touching `likelihoodVector`'s own Outcome-based evidence for the same
+   * cell. Absent (`undefined`) for every other case, including every explain
+   * answer with no key: absence is the no-op default, so the posterior update
+   * below is byte-identical to pre-Task-13 behaviour whenever this is unset
+   * (proved in update.test.ts). The simulation harness (simulate.ts) never
+   * sets this field, so Task 10's accuracy gates cannot be affected by it.
+   */
+  llmVerdictLevel?: Level;
 }
 
 /**
@@ -36,13 +49,24 @@ export function applyResponse(
       const key = cellKey(conceptId, facet);
       const prior = next.get(key) ?? emptyCell(conceptId, facet, bandOf(conceptId));
       const lik = likelihoodVector(item, response, facet);
+      const isTarget = facet === item.facet;
+      // Task 13 fix round 1: a second, independent likelihood factor from an
+      // LLM verdict, multiplied in ONLY on the target facet (isTarget) and
+      // ONLY when one exists. `meta.llmVerdictLevel` is undefined on every
+      // path except a successfully-graded `explain` answer, so this branch is
+      // unreachable for every other item kind, for every no-key explain
+      // answer, and for the entire simulation harness — the multiplication
+      // below is a true no-op (verdictLik === null) in all of those cases.
+      const verdictLik = isTarget && meta.llmVerdictLevel ? llmVerdictLikelihood(meta.llmVerdictLevel) : null;
       // item.weight < 1 (multi-concept attribution or a partly-contaminated item) flattens
       // the evidence the same way cross-facet damping does.
       const w = Math.max(0, Math.min(1, item.weight));
       const posterior = normalize(
-        prior.posterior.map((p, i) => p * Math.pow(lik[i], w)),
+        prior.posterior.map((p, i) => {
+          const base = p * Math.pow(lik[i], w);
+          return verdictLik ? base * Math.pow(verdictLik[i], w) : base;
+        }),
       );
-      const isTarget = facet === item.facet;
       next.set(key, {
         ...prior,
         posterior,

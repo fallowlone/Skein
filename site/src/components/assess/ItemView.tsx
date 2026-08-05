@@ -9,13 +9,13 @@
 // never leaks from one item to the next.
 import { useState } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
-import type { AssessItem, AssessResponse, Level, Outcome } from "~/scripts/assess/types";
+import type { AssessItem, AssessResponse, Cell, CellKey, Level, Outcome } from "~/scripts/assess/types";
 import type { ResponseMeta } from "~/scripts/assess/update";
 import { keyStatus, withKey } from "~/english/byok";
 import { postMessages, type ConverseDeps } from "~/english/byok/converse";
 import { getGradingModel } from "~/english/state";
 import { MAX_INPUT_CHARS } from "~/scripts/practice-grade-llm";
-import { buildAssessRubric, gradeExplainVerdict, llmAvailable } from "~/scripts/assess/llm-grade";
+import { anchorLevel, buildAssessRubric, gradeExplainVerdict, llmAvailable } from "~/scripts/assess/llm-grade";
 import { useItemContent } from "./item-content";
 import { KindMismatch, RecallBody, PredictBody, ExplainBody, ReviewBody } from "./item-bodies";
 import { DebugBody, ExecBody } from "./item-bodies-code";
@@ -29,41 +29,34 @@ type Props = {
   onAnswer: (response: AssessResponse, meta?: ResponseMeta) => void;
   onStop: () => void;
   labelOf: (conceptId: string) => { en: string; ru: string };
+  /** Task 13 fix round 1: the session's cells AS OF BEFORE this item's own
+   *  response — read-only here, used only to derive the LLM clamp's
+   *  deterministic anchor (`anchorLevel`). Never written to; the engine's own
+   *  reducer (session.ts) remains the only writer. */
+  cells: ReadonlyMap<CellKey, Cell>;
 };
-
-type SelfOutcome = "correct" | "partial" | "wrong";
-function isGradable(o: Outcome): o is SelfOutcome {
-  return o !== "dont_know";
-}
-
-// The self-grade (hit/partial/miss) is the only deterministic signal available
-// for an explain item at submit time — an anchor the LLM's opinion is clamped
-// against, never overruled by it (Ruling 2, task-13). "correct" anchors to
-// "middle" rather than "senior": a learner's own self-report that they matched
-// the model answer says nothing about whether they *also* named the tradeoff and
-// the breaking point (the bar for "senior" in ASSESS_RUBRIC_EN/RU) — only an
-// independent check can move a cell there.
-const SELF_GRADE_ANCHOR: Record<SelfOutcome, Level> = { correct: "middle", partial: "junior", wrong: "gap" };
-const LEVEL_TO_OUTCOME: Record<Level, Outcome> = { gap: "wrong", junior: "partial", middle: "correct", senior: "correct" };
 
 /**
  * Task 13's impure half: the network call, the key lookup, and (via
  * postMessages -> fetch) the clock all live here in the island, never in
  * scripts/assess/llm-grade.ts (Ruling 1). Never throws past this point — a
- * missing key, a locked key, or a failed/unparsable call all fall back to the
- * learner's own self-grade rather than losing the answer (Ruling 4/6: the LLM
- * layer stays strictly optional).
+ * missing key, a locked key, or a failed/unparsable call all fall back to
+ * `llmGraded: false` with no verdict, so the caller keeps the learner's own
+ * self-graded Outcome untouched (Ruling 4/6: the LLM layer stays strictly
+ * optional, and now genuinely additive rather than a downgrade-only ratchet —
+ * see llm-grade.ts's `gradeExplainVerdict` for the ±1 clamp and update.ts for
+ * how `verdictLevel` reaches the posterior).
  */
 async function gradeExplainAnswer(
   item: AssessItem,
   lang: Locale,
   answerText: string,
-  selfOutcome: SelfOutcome,
+  deterministicAnchor: Level,
   conceptLabel: { en: string; ru: string },
-): Promise<{ outcome: Outcome; why?: string; llmGraded: boolean }> {
+): Promise<{ verdictLevel?: Level; why?: string; llmGraded: boolean }> {
   const status = await keyStatus();
   if (!llmAvailable(status) || answerText.length > MAX_INPUT_CHARS) {
-    return { outcome: selfOutcome, llmGraded: false };
+    return { llmGraded: false };
   }
   try {
     const rubric = buildAssessRubric(item, conceptLabel);
@@ -81,15 +74,15 @@ async function gradeExplainAnswer(
       deps,
     );
     const raw = (data?.content?.[0]?.text ?? "") as string;
-    const verdict = gradeExplainVerdict(raw, SELF_GRADE_ANCHOR[selfOutcome]);
-    if (!verdict) return { outcome: selfOutcome, llmGraded: false };
-    return { outcome: LEVEL_TO_OUTCOME[verdict.level], why: verdict.why, llmGraded: true };
+    const verdict = gradeExplainVerdict(raw, deterministicAnchor);
+    if (!verdict) return { llmGraded: false };
+    return { verdictLevel: verdict.level, why: verdict.why, llmGraded: true };
   } catch {
-    return { outcome: selfOutcome, llmGraded: false };
+    return { llmGraded: false };
   }
 }
 
-export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onStop, labelOf }: Props) {
+export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onStop, labelOf, cells }: Props) {
   // Captured once at mount — the clock the pure core deliberately does not own.
   const [servedAtMs] = useState(() => Date.now());
   const [grading, setGrading] = useState(false);
@@ -103,22 +96,29 @@ export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onSt
   // baked into item-bodies.tsx's CommitRevealBody (Ruling 4's "deterministic
   // path"): with no key, this is a no-op passthrough to the exact pre-Task-13
   // behaviour. With a key, the learner's own draft (meta.answerDigest) is
-  // checked against ASSESS_RUBRIC_EN/RU and the result is clamped to at most
-  // one level away from the self-grade before it becomes the submitted Outcome.
+  // checked against ASSESS_RUBRIC_EN/RU and the clamped verdict Level rides
+  // along in `meta.llmVerdictLevel`, genuinely moving the target facet's
+  // posterior in update.ts — the self-graded `outcome` itself is never
+  // overwritten by the LLM (fix round 1's Critical fix: previously it was,
+  // which collapsed "middle" and "senior" into the same recorded Outcome and
+  // made the whole layer downgrade-only).
   const submit = (outcome: Outcome, meta?: ResponseMeta) => {
     // Ignore re-entrant submits while a previous explain grading is in flight
     // (the self-grade buttons stay mounted during the async gap) — a double
     // click must not record the answer twice.
     if (grading) return;
     const text = meta?.answerDigest;
-    if (item.kind !== "explain" || !text || !isGradable(outcome)) {
+    if (item.kind !== "explain" || !text || outcome === "dont_know") {
       finalize(outcome, meta);
       return;
     }
     const conceptLabel = labelOf(item.concepts[0] ?? item.lessonKey);
+    const anchor = anchorLevel(item, cells);
     setGrading(true);
-    void gradeExplainAnswer(item, lang, text, outcome, conceptLabel)
-      .then((graded) => finalize(graded.outcome, { ...meta, failureNote: graded.why, llmGraded: graded.llmGraded }))
+    void gradeExplainAnswer(item, lang, text, anchor, conceptLabel)
+      .then((graded) => finalize(outcome, {
+        ...meta, failureNote: graded.why, llmGraded: graded.llmGraded, llmVerdictLevel: graded.verdictLevel,
+      }))
       .finally(() => setGrading(false));
   };
   const dontKnow = () => submit("dont_know");
