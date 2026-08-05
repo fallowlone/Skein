@@ -72,7 +72,7 @@ describe("assess-io round trip", () => {
       blockIndex: 2,
       blockItems: 3,
       blockMinutes: 12,
-      recentKinds: ["predict", "mcq"],
+      recentKinds: ["predict", "recall"],
       startedAtMs: 1000,
       updatedAtMs: 2000,
     };
