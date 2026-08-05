@@ -57,6 +57,16 @@ export interface Evidence {
   answerDigest: string;
   /** Grader-supplied specifics, e.g. "map keyed on target - nums[i] instead of nums[i]". */
   failureNote?: string;
+  /**
+   * Task 13: set only for `explain` evidence. `true` when the BYOK layer graded
+   * this answer (a clamped LLM verdict, per llm-grade.ts); `false` when it fell
+   * back to the learner's own self-grade (no key, a locked key, or the LLM call
+   * failing). `undefined` for every other kind — "not applicable", not "no key".
+   * Never set by the engine itself (update.ts only copies it through) — read by
+   * the report to disclose which mechanism evidence is self-reported vs
+   * independently checked (Ruling 4, task-13-brief.md).
+   */
+  llmGraded?: boolean;
   atMs: number;
 }
 
