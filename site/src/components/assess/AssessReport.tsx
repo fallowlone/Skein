@@ -7,7 +7,7 @@
 import { useState } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
 import type { AssessReportModel, ReportRow } from "~/scripts/assess/report";
-import { toKnowledgeWrites } from "~/scripts/assess/report";
+import { explainUngraded, toKnowledgeWrites } from "~/scripts/assess/report";
 import { toRetestCards } from "~/scripts/assess/retest";
 import type { Cell, CellKey } from "~/scripts/assess/types";
 import { PATTERN_LABELS } from "~/scripts/assess/patterns";
@@ -72,23 +72,6 @@ function ConceptList({ lang, rows, labelOf, emptyKey }: {
       {rows.map((r) => <ConceptRow key={r.conceptId} lang={lang} row={r} labelOf={labelOf} />)}
     </ul>
   );
-}
-
-/**
- * Ruling 4 (task-13): never degrade silently. True when this session has at
- * least one `explain` answer that did NOT get an independent LLM check (no key,
- * a locked key, or a failed/unparsable call — see ItemView.tsx's
- * gradeExplainAnswer, which always sets `llmGraded` explicitly on explain
- * evidence, never leaves it undefined). Computed from the same `cells` the rest
- * of the report reads, not from a session-level "was a key configured" flag —
- * so it stays honest even in the rarer case where a key WAS configured but one
- * particular grading call failed.
- */
-function explainUngraded(cells: ReadonlyMap<CellKey, Cell>): boolean {
-  for (const cell of cells.values()) {
-    if (cell.evidence.some((e) => e.kind === "explain" && e.llmGraded !== true)) return true;
-  }
-  return false;
 }
 
 export default function AssessReport({ lang, model, cells, labelOf, onRestart }: Props) {

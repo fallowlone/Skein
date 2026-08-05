@@ -1,6 +1,6 @@
 // site/src/scripts/assess/report.test.ts
 import { describe, expect, test } from "vitest";
-import { buildReport, toKnowledgeWrites } from "./report";
+import { buildReport, explainUngraded, toKnowledgeWrites } from "./report";
 import { toRetestCards } from "./retest";
 import { emptyCell } from "./update";
 import { expectedLevel } from "./ordinal";
@@ -20,6 +20,58 @@ const measured = (conceptId: string, facet: "recognition" | "mechanism" | "produ
     }],
   },
 ];
+
+// Task 13 fix round 1: an explain-kind cell with a configurable llmGraded
+// value (true / false / omitted entirely, simulating legacy pre-Task-13
+// evidence that predates the field) — for explainUngraded's tests.
+const explainCell = (conceptId: string, llmGraded: boolean | "omit"): [CellKey, Cell] => [
+  cellKey(conceptId, "mechanism"),
+  {
+    ...emptyCell(conceptId, "mechanism", "surface"),
+    items: 1,
+    evidence: [{
+      conceptId, facet: "mechanism", itemId: `${conceptId}#e`, lessonKey: `${conceptId}-lesson`, kind: "explain", band: "surface",
+      response: { outcome: "correct", hintsUsed: 0, elapsedMs: 1 },
+      answerDigest: "…",
+      ...(llmGraded === "omit" ? {} : { llmGraded }),
+      atMs: 1,
+    }],
+  },
+];
+
+describe("explainUngraded", () => {
+  test("false when there is no evidence at all", () => {
+    expect(explainUngraded(new Map())).toBe(false);
+  });
+
+  test("false when every explain answer WAS llm-graded", () => {
+    const cells = new Map([explainCell("promises", true)]);
+    expect(explainUngraded(cells)).toBe(false);
+  });
+
+  test("true when an explain answer was self-graded only (llmGraded: false)", () => {
+    const cells = new Map([explainCell("promises", false)]);
+    expect(explainUngraded(cells)).toBe(true);
+  });
+
+  test("true for legacy pre-Task-13 evidence with no llmGraded field at all — the conservative default is locked in", () => {
+    const cells = new Map([explainCell("promises", "omit")]);
+    expect(explainUngraded(cells)).toBe(true);
+  });
+
+  test("false when the only evidence is non-explain (predict/debug), regardless of llmGraded being absent — not applicable, not a caveat trigger", () => {
+    const cells = new Map([measured("promises", "mechanism", [0.2, 0.3, 0.3, 0.2])]);
+    expect(explainUngraded(cells)).toBe(false);
+  });
+
+  test("one ungraded explain answer among otherwise fully-graded evidence still trips the flag", () => {
+    const cells = new Map([
+      explainCell("promises", true),
+      explainCell("streams", false),
+    ]);
+    expect(explainUngraded(cells)).toBe(true);
+  });
+});
 
 describe("buildReport", () => {
   test("untested concepts are listed separately and never counted as gaps", () => {
