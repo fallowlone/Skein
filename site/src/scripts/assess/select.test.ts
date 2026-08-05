@@ -22,14 +22,14 @@ describe("expectedGain", () => {
   test("an aligned item gains more than a cross-facet one", () => {
     const cell = emptyCell("c", "production", "surface");
     expect(expectedGain(cell, mkItem({ kind: "exec", facet: "production" })))
-      .toBeGreaterThan(expectedGain(cell, mkItem({ kind: "mcq", facet: "recognition" })));
+      .toBeGreaterThan(expectedGain(cell, mkItem({ kind: "recall", facet: "recognition" })));
   });
 });
 
 describe("nextItem", () => {
   const pool = [
     mkItem({ id: "a", facet: "production", kind: "exec" }),
-    mkItem({ id: "b", facet: "recognition", kind: "mcq" }),
+    mkItem({ id: "b", facet: "recognition", kind: "recall" }),
     mkItem({ id: "c2", facet: "mechanism", kind: "predict" }),
   ];
 
@@ -77,7 +77,7 @@ describe("nextItem at scale", () => {
     const CONCEPT_COUNT = 4894;
     const ITEM_COUNT = 6520;
     const FACETS_CYCLE: Facet[] = ["recognition", "mechanism", "production"];
-    const KINDS_CYCLE: ItemKind[] = ["mcq", "predict", "debug", "review", "exec", "explain"];
+    const KINDS_CYCLE: ItemKind[] = ["recall", "predict", "debug", "review", "exec", "explain"];
     const concepts = Array.from({ length: CONCEPT_COUNT }, (_, i) => `concept-${i}`);
 
     const pool: AssessItem[] = Array.from({ length: ITEM_COUNT }, (_, i) => {
