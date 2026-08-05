@@ -9,8 +9,15 @@ export const LEVEL_THETA: Record<Level, number> = { gap: -1.5, junior: -0.5, mid
 /** Item difficulty on the same scale. Mirrors BAND_DIFFICULTY in scripts/path/bayes.ts. */
 const BAND_B: Record<Band, number> = { foundations: -1.0, surface: 0, middle: 0.8, advanced: 1.6 };
 
-/** Guess floor: an MCQ can be right by luck; writing working code cannot. */
-const GUESS: Record<ItemKind, number> = { mcq: 0.25, predict: 0.10, review: 0.15, debug: 0.05, exec: 0.02, explain: 0.05 };
+/**
+ * Guess floor: probability of a correct response with zero ability. Writing working code
+ * cannot happen by luck (0.02); free text checked against an `accept` list is close to it too —
+ * `recall` items are fill-in-the-blank short answers (see content.config.ts's DiagnoseTask,
+ * `grading.mode === "blanks"`), not real multiple-choice, so there is no ~1-in-4 blind-guess
+ * rate to model here. This corpus has no item shape with a discrete option set and a real
+ * chance floor above near-zero.
+ */
+const GUESS: Record<ItemKind, number> = { recall: 0.05, predict: 0.10, review: 0.15, debug: 0.05, exec: 0.02, explain: 0.05 };
 
 /**
  * Curve sharpness. Tuned by the simulation harness (Task 10): with only up to
@@ -24,7 +31,7 @@ const DISCRIMINATION = 3.85;
  * at 0.25 so a cheap item can never certify an expensive skill (spec §4.2a).
  */
 export const FACET_ALIGN: Record<ItemKind, Record<Facet, number>> = {
-  mcq:     { recognition: 1.0, mechanism: 0.20, production: 0.05 },
+  recall:  { recognition: 1.0, mechanism: 0.20, production: 0.05 },
   predict: { recognition: 0.25, mechanism: 1.0, production: 0.15 },
   debug:   { recognition: 0.15, mechanism: 1.0, production: 0.25 },
   review:  { recognition: 0.20, mechanism: 1.0, production: 0.10 },

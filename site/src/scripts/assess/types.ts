@@ -17,7 +17,7 @@ export type Posterior = readonly [number, number, number, number];
 export const FACETS = ["recognition", "mechanism", "production"] as const;
 export type Facet = (typeof FACETS)[number];
 
-export type ItemKind = "mcq" | "predict" | "debug" | "review" | "exec" | "explain";
+export type ItemKind = "recall" | "predict" | "debug" | "review" | "exec" | "explain";
 
 export type Outcome = "correct" | "partial" | "wrong" | "dont_know";
 

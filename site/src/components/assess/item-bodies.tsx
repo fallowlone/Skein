@@ -1,15 +1,17 @@
 // site/src/components/assess/item-bodies.tsx
-// Per-kind item bodies for the text/self-grade family: mcq (fill-the-blanks),
+// Per-kind item bodies for the text/self-grade family: recall (fill-the-blanks),
 // predict, explain, review. Code-execution kinds (debug, exec) live in
 // item-bodies-code.tsx — split so neither file drifts far past ~200 lines.
 //
-// A note on "mcq": item-pool.ts's `kindOf()` (Task 6) names a diagnose task with
-// `grading.mode === "blanks"` as kind "mcq", but the real content is short-answer
-// fill-the-blanks (`Blank[]` with an `accept` list per blank) — nothing in the
-// practice content schema has real multiple-choice `choices[].correct` data (see
-// content.config.ts's DiagnoseTask). graders/index.ts's `gradeMcq(choices, picked)`
-// is therefore unreachable against the real corpus; this file grades every "mcq"
-// item with `gradeBlanks`, which matches what the content actually contains.
+// A note on "recall": the harvester's `kindOf()` names a diagnose task with
+// `grading.mode === "blanks"` as kind "recall" — free-recall short answer
+// (`Blank[]` with an `accept` list per blank), graded against text the learner
+// types, not chosen from options. Nothing in the practice content schema has
+// real multiple-choice `choices[].correct` data (see content.config.ts's
+// DiagnoseTask) — this kind was originally mislabelled "mcq" (Task 12b fixed
+// the mislabel, the guess-floor cost it carried, and deleted the unreachable
+// `gradeMcq`). This file grades every "recall" item with `gradeBlanks`, which
+// matches what the content actually contains.
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import { t } from "~/i18n";
@@ -33,7 +35,7 @@ export function KindMismatch({ lang }: { lang: Locale }) {
   return <p class="assess-mismatch">{t("assess.item.mismatch", lang)}</p>;
 }
 
-export function McqBody({ lang, task, onSubmit }: BodyProps) {
+export function RecallBody({ lang, task, onSubmit }: BodyProps) {
   if (task.type !== "diagnose" || task.grading.mode !== "blanks") return <KindMismatch lang={lang} />;
   const blanks = task.grading.blanks;
   const [answers, setAnswers] = useState<string[]>(() => blanks.map(() => ""));
@@ -80,7 +82,7 @@ export function McqBody({ lang, task, onSubmit }: BodyProps) {
 /** Shared write → reveal → self-grade shell for predict / explain. The learner's
  *  own self-grade (hit/partial/miss) IS the outcome for these kinds — there is no
  *  deterministic grader for free-form recall, matching graders/index.ts, which
- *  only covers mcq/blanks/review/exec. */
+ *  only covers blanks/review/exec. */
 function CommitRevealBody({
   lang, label, prefix, revealHtml, onSubmit,
 }: {

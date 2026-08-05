@@ -74,7 +74,7 @@ describe("propagate", () => {
 
   test("recognition evidence does NOT propagate — knowing a term says nothing about its prerequisites", () => {
     let cells = new Map([[cellKey("async-await", "recognition"), emptyCell("async-await", "recognition", "surface")]]);
-    cells = applyResponse(cells, { ...item, kind: "mcq", facet: "recognition", concepts: ["async-await"] },
+    cells = applyResponse(cells, { ...item, kind: "recall", facet: "recognition", concepts: ["async-await"] },
       { outcome: "correct", hintsUsed: 0, elapsedMs: 5 }, bandOf, 1);
     const after = propagate(cells, graph, "async-await", "recognition", bandOf);
     expect(after.has(cellKey("promises", "recognition"))).toBe(false);
@@ -145,7 +145,7 @@ describe("propagate — multi-hop", () => {
 
   test("recognition still does not propagate at any depth", () => {
     let cells = new Map([[cellKey("async-await", "recognition"), emptyCell("async-await", "recognition", "surface")]]);
-    cells = applyResponse(cells, { ...item, kind: "mcq", facet: "recognition", concepts: ["async-await"] },
+    cells = applyResponse(cells, { ...item, kind: "recall", facet: "recognition", concepts: ["async-await"] },
       { outcome: "correct", hintsUsed: 0, elapsedMs: 5 }, bandOf, 1);
     const after = propagate(cells, chain, "async-await", "recognition", bandOf);
     expect(after.has(cellKey("promises", "recognition"))).toBe(false);

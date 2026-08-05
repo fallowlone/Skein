@@ -12,7 +12,7 @@ import { t, type Locale } from "~/i18n";
 import type { AssessItem, AssessResponse, Outcome } from "~/scripts/assess/types";
 import type { ResponseMeta } from "~/scripts/assess/update";
 import { useItemContent } from "./item-content";
-import { KindMismatch, McqBody, PredictBody, ExplainBody, ReviewBody } from "./item-bodies";
+import { KindMismatch, RecallBody, PredictBody, ExplainBody, ReviewBody } from "./item-bodies";
 import { DebugBody, ExecBody } from "./item-bodies-code";
 import { tt } from "./labels";
 
@@ -51,7 +51,7 @@ export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onSt
         <>
           <p class="assess-item-title">{tt(lang, content.title.en, content.title.ru)}</p>
           <div class="assess-prompt prose assess-prose" dangerouslySetInnerHTML={{ __html: tt(lang, content.prompt.en, content.prompt.ru) }} />
-          {item.kind === "mcq" && <McqBody lang={lang} task={content} onSubmit={submit} />}
+          {item.kind === "recall" && <RecallBody lang={lang} task={content} onSubmit={submit} />}
           {item.kind === "predict" && <PredictBody lang={lang} task={content} onSubmit={submit} />}
           {item.kind === "explain" && <ExplainBody lang={lang} task={content} onSubmit={submit} />}
           {item.kind === "review" && <ReviewBody lang={lang} task={content} onSubmit={submit} />}

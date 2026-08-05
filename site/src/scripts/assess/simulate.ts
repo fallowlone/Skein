@@ -74,7 +74,7 @@ export interface SimResult {
 
 const FACETS: Facet[] = ["recognition", "mechanism", "production"];
 const KINDS: { kind: AssessItem["kind"]; facet: Facet }[] = [
-  { kind: "mcq", facet: "recognition" },
+  { kind: "recall", facet: "recognition" },
   { kind: "predict", facet: "mechanism" },
   { kind: "debug", facet: "mechanism" },
   { kind: "exec", facet: "production" },

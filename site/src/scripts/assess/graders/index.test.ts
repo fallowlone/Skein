@@ -1,26 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { gradeBlanks, gradeExec, gradeMcq, gradeReview } from "./index";
-
-describe("gradeMcq", () => {
-  test("correct choice", () => {
-    expect(gradeMcq([{ correct: true }, {}], 0).outcome).toBe("correct");
-  });
-  test("wrong choice never returns partial — a single choice has no degrees", () => {
-    expect(gradeMcq([{ correct: true }, {}], 1).outcome).toBe("wrong");
-  });
-  test("two choices flagged correct: picking the second is still correct", () => {
-    expect(gradeMcq([{ correct: true }, { correct: true }], 1).outcome).toBe("correct");
-  });
-  test("wrong choice's failure note does not name the correct option", () => {
-    const r = gradeMcq([{ correct: true }, {}], 1);
-    expect(r.failureNote).not.toContain("correct was");
-  });
-  test("no choice flagged correct: grades wrong with an authoring-error note", () => {
-    const r = gradeMcq([{}, {}], 0);
-    expect(r.outcome).toBe("wrong");
-    expect(r.failureNote).toContain("authoring error");
-  });
-});
+import { gradeBlanks, gradeExec, gradeReview } from "./index";
 
 describe("gradeBlanks", () => {
   test("all blanks right is correct", () => {
