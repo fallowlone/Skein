@@ -292,6 +292,7 @@ export default function AssessFlow({ lang }: { lang: Locale }) {
         onHint={() => dispatch({ type: "hint", atMs: Date.now() })}
         onAnswer={(response, meta) => dispatch({ type: "answer", response, meta, atMs: Date.now() })}
         onStop={() => dispatch({ type: "stop", atMs: Date.now() })}
+        labelOf={deps.labelOf}
       />
     </>
   );

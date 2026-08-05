@@ -14,6 +14,8 @@ const digest = (s: string) => (s.length > DIGEST_MAX ? s.slice(0, DIGEST_MAX) + 
 export interface ResponseMeta {
   answerDigest?: string;
   failureNote?: string;
+  /** Task 13: threaded straight into Evidence.llmGraded — see its own doc comment. */
+  llmGraded?: boolean;
 }
 
 /**
@@ -48,7 +50,8 @@ export function applyResponse(
         evidence: isTarget
           ? [...prior.evidence, {
               conceptId, facet, itemId: item.id, lessonKey: item.lessonKey, kind: item.kind, band: item.band,
-              response, answerDigest: digest(meta.answerDigest ?? ""), failureNote: meta.failureNote, atMs,
+              response, answerDigest: digest(meta.answerDigest ?? ""), failureNote: meta.failureNote,
+              llmGraded: meta.llmGraded, atMs,
             }]
           : prior.evidence,
       });

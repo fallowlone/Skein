@@ -33,6 +33,12 @@ const UNTESTED_RENDER_CAP = 300;
 function ConceptRow({ lang, row, labelOf }: { lang: Locale; row: ReportRow; labelOf: Props["labelOf"] }) {
   const label = labelOf(row.conceptId);
   const band = row.verdict.band;
+  // Task 13: the LLM's one-line justification for an explain item it actually
+  // graded — rendered as plain text (never dangerouslySetInnerHTML; Ruling 3,
+  // task-13-brief.md), since it is model output, categorically different from
+  // the authored lesson content the other dangerouslySetInnerHTML calls on this
+  // screen render.
+  const llmNotes = row.evidence.filter((e) => e.kind === "explain" && e.llmGraded && e.failureNote);
   return (
     <li class="ar-row">
       <span class="ar-concept">{tt(lang, label.en, label.ru)}</span>
@@ -48,6 +54,11 @@ function ConceptRow({ lang, row, labelOf }: { lang: Locale; row: ReportRow; labe
       )}
       {band && <span class="ar-confidence">{Math.round(band.confidence * 100)}% {t("assess.report.confidence", lang)}</span>}
       <span class="ar-evidence-count">{t("assess.report.evidenceCount", lang).replace("{n}", String(row.evidence.length))}</span>
+      {llmNotes.length > 0 && (
+        <ul class="ar-llm-notes">
+          {llmNotes.map((e, i) => <li key={i} class="ar-llm-why">{e.failureNote}</li>)}
+        </ul>
+      )}
     </li>
   );
 }
@@ -61,6 +72,23 @@ function ConceptList({ lang, rows, labelOf, emptyKey }: {
       {rows.map((r) => <ConceptRow key={r.conceptId} lang={lang} row={r} labelOf={labelOf} />)}
     </ul>
   );
+}
+
+/**
+ * Ruling 4 (task-13): never degrade silently. True when this session has at
+ * least one `explain` answer that did NOT get an independent LLM check (no key,
+ * a locked key, or a failed/unparsable call — see ItemView.tsx's
+ * gradeExplainAnswer, which always sets `llmGraded` explicitly on explain
+ * evidence, never leaves it undefined). Computed from the same `cells` the rest
+ * of the report reads, not from a session-level "was a key configured" flag —
+ * so it stays honest even in the rarer case where a key WAS configured but one
+ * particular grading call failed.
+ */
+function explainUngraded(cells: ReadonlyMap<CellKey, Cell>): boolean {
+  for (const cell of cells.values()) {
+    if (cell.evidence.some((e) => e.kind === "explain" && e.llmGraded !== true)) return true;
+  }
+  return false;
 }
 
 export default function AssessReport({ lang, model, cells, labelOf, onRestart }: Props) {
@@ -95,6 +123,12 @@ export default function AssessReport({ lang, model, cells, labelOf, onRestart }:
   return (
     <section class="assess-report">
       <h2 class="ar-title">{t("assess.report.title", lang)}</h2>
+
+      {/* Ruling 4: a real, user-visible claim about measurement completeness —
+          an unassessed explanation must never quietly read as a weakness. */}
+      {explainUngraded(cells) && (
+        <p class="ar-llm-note">{t("assess.report.explainUngraded", lang)}</p>
+      )}
 
       <section class="ar-section">
         <h3>{t("assess.report.topGaps", lang)}</h3>
