@@ -176,16 +176,14 @@ describe("no-key degradation stays representable", () => {
 });
 
 // Task 13 fix round 1: anchorLevel replaces the hand-picked 3-bucket self-grade
-// table with the engine's own current belief about the item's (concept, facet)
-// cell — the same discrete statistic (bandLabel) the report itself uses.
+// table with the engine's own current belief about a (concept, facet) cell —
+// the same discrete statistic (bandLabel) the report itself uses.
+// Fix round 2: takes a single conceptId (+ its own facet/band) rather than a
+// whole AssessItem — see the function's own doc comment for why (the
+// Critical finding: a whole-item anchor only ever bounded concepts[0]).
 describe("anchorLevel", () => {
-  const item: AssessItem = {
-    id: "l#t", lessonKey: "l", taskId: "t", kind: "explain", facet: "mechanism",
-    band: "surface", concepts: ["tcp-handshake"], weight: 1, estMin: 3,
-  };
-
   test("falls back to the concept's own prior when no cell exists yet", () => {
-    const anchor = anchorLevel(item, new Map());
+    const anchor = anchorLevel("tcp-handshake", "mechanism", "surface", new Map());
     const expected = bandLabel(emptyCell("tcp-handshake", "mechanism", "surface").posterior).level;
     expect(anchor).toBe(expected);
   });
@@ -193,14 +191,14 @@ describe("anchorLevel", () => {
   test("uses the measured cell's own posterior when one exists", () => {
     const strongCell: Cell = { ...emptyCell("tcp-handshake", "mechanism", "surface"), posterior: [0.02, 0.05, 0.13, 0.80], items: 3 };
     const cells = new Map<CellKey, Cell>([[cellKey("tcp-handshake", "mechanism"), strongCell]]);
-    expect(anchorLevel(item, cells)).toBe("senior");
+    expect(anchorLevel("tcp-handshake", "mechanism", "surface", cells)).toBe("senior");
   });
 
-  test("only reads the item's OWN facet's cell — a strong cell on a different facet of the same concept does not leak in", () => {
+  test("only reads the given facet's cell — a strong cell on a different facet of the same concept does not leak in", () => {
     const strongRecognition: Cell = { ...emptyCell("tcp-handshake", "recognition", "surface"), posterior: [0.02, 0.05, 0.13, 0.80], items: 3 };
     const cells = new Map<CellKey, Cell>([[cellKey("tcp-handshake", "recognition"), strongRecognition]]);
-    // item.facet is "mechanism" — the recognition cell must be ignored, falling back to the prior.
-    const anchor = anchorLevel(item, cells);
+    // Asking for "mechanism" — the recognition cell must be ignored, falling back to the prior.
+    const anchor = anchorLevel("tcp-handshake", "mechanism", "surface", cells);
     const expected = bandLabel(emptyCell("tcp-handshake", "mechanism", "surface").posterior).level;
     expect(anchor).toBe(expected);
   });
@@ -208,7 +206,18 @@ describe("anchorLevel", () => {
   test("is read-only: does not mutate the cells map it is given", () => {
     const cells = new Map<CellKey, Cell>([[cellKey("tcp-handshake", "mechanism"), emptyCell("tcp-handshake", "mechanism", "surface")]]);
     const snapshot = new Map(cells);
-    anchorLevel(item, cells);
+    anchorLevel("tcp-handshake", "mechanism", "surface", cells);
     expect(cells).toEqual(snapshot);
+  });
+
+  test("is genuinely per-concept: two concepts on the same facet/band, different measured posteriors, get different anchors", () => {
+    const gapCell: Cell = { ...emptyCell("weak-concept", "mechanism", "surface"), posterior: [0.85, 0.10, 0.04, 0.01], items: 3 };
+    const seniorCell: Cell = { ...emptyCell("strong-concept", "mechanism", "surface"), posterior: [0.02, 0.05, 0.13, 0.80], items: 3 };
+    const cells = new Map<CellKey, Cell>([
+      [cellKey("weak-concept", "mechanism"), gapCell],
+      [cellKey("strong-concept", "mechanism"), seniorCell],
+    ]);
+    expect(anchorLevel("weak-concept", "mechanism", "surface", cells)).toBe("gap");
+    expect(anchorLevel("strong-concept", "mechanism", "surface", cells)).toBe("senior");
   });
 });
