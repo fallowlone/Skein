@@ -98,6 +98,38 @@ describe("hostile model output", () => {
     const v = parseFacetVerdict(raw);
     expect(v).toEqual({ level: "senior", why: "purple elephants dream in base64" });
   });
+
+  // Task 13 fix round 1 (cheap fix): bidi-control characters render as text,
+  // not raw control bytes, so they slip past a C0/C1-only check — but
+  // U+202E can visually reverse the rest of `why` in the UI, which still
+  // crosses "strip control characters".
+  test("Unicode bidi-control characters (e.g. U+202E right-to-left override) are stripped, not just C0/C1 control bytes", () => {
+    const rtlOverride = String.fromCodePoint(0x202e);
+    const hostile = "legit text" + rtlOverride + "evil suffix";
+    const raw = JSON.stringify({ level: "middle", why: hostile });
+    const v = parseFacetVerdict(raw);
+    expect(v).not.toBeNull();
+    expect(v!.why).not.toContain(rtlOverride);
+    expect(v!.why).toBe("legit textevil suffix");
+  });
+
+  // Task 13 fix round 1 (cheap fix): the length cap used to be a bare
+  // `.slice(0, 200)` on the sanitized string, which operates on UTF-16 code
+  // units and can split a surrogate pair sitting exactly at the boundary,
+  // leaving a lone (invalid) surrogate. The cap must land on a code-point
+  // boundary instead.
+  test("a 'why' with an astral character straddling the length cap is never split mid-surrogate-pair", () => {
+    const astral = String.fromCodePoint(0x1f600); // 😀 — 2 UTF-16 code units
+    const hostile = "x".repeat(199) + astral + "y".repeat(50);
+    const raw = JSON.stringify({ level: "middle", why: hostile });
+    const v = parseFacetVerdict(raw);
+    expect(v).not.toBeNull();
+    // WHY_MAX_CHARS is a private constant in llm-grade.ts (200 at time of
+    // writing) — asserted here as a literal since the cap's existence, not
+    // its exact value, is what this test is proving.
+    expect(v!.why.length).toBeLessThanOrEqual(200);
+    expect(v!.why.isWellFormed()).toBe(true);
+  });
 });
 
 // ── Ruling 1: llmAvailable is a pure predicate over an already-read status.
