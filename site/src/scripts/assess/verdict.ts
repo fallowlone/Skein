@@ -25,13 +25,34 @@ import { FACETS, LEVELS, cellKey, type Cell, type CellKey, type Facet } from "./
  *                                   subCapSettleFraction gate in simulate.test.ts, ~0.60)
  *   gapsWithoutEvidence   0        (gate: == 0, at band: "surface" — see ungrounded-gap.ts for
  *                                   why this does not generalise to every band)
- *   honestMinusGuesser    0.0047   (gate: >= 0 — thin at this seed; a 55-seed sweep (20260731,
- *                                   100+37k for k in 0..39) puts the observed range at
- *                                   0.0047-0.0492, never negative, but with materially less
- *                                   headroom than the pre-fix 0.0421 — an honest guesser now
- *                                   gains almost nothing from guessing on a recall item, so an
- *                                   honest learner's edge over a guesser is thinner everywhere,
- *                                   not just measurement noise at one seed)
+ *   honestMinusGuesser    0.0047   (gate: >= 0, at THIS seed — but this statistic is noisy at
+ *                                   n=200 and this seed reads low; see simulate.test.ts's
+ *                                   `HMG_SEEDS`-averaged gate and the isolation experiment below
+ *                                   for the reading that should actually be trusted)
+ *
+ * honestMinusGuesser fix-round-1 correction (Task 12b review, finding 1): an earlier version of
+ * this comment read the committed seed's 0.0421 -> 0.0047 drop as the fix's effect and called it
+ * "roughly 5x weaker," implying the fix nearly broke the ethical invariant this statistic
+ * guards. That comparison is wrong — it compares one pre-fix draw to one post-fix draw of a
+ * statistic whose own sampling noise at n=200 is comparable in size to the numbers being
+ * compared. Isolated properly (GUESS.recall patched back to 0.25 with everything else at HEAD,
+ * 20 shared seeds, n=200/12-concepts each, measured directly for this fix): old mean 0.0384
+ * (sd 0.0074) vs new mean 0.0347 (sd 0.0117) — the fix's real mean effect is a ~10% relative
+ * decrease, not the ~89% the single-seed comparison implied. The honest new finding is that the
+ * fix roughly doubled this statistic's *variance* at n=200 (sd 0.0074 -> 0.0117): removing the
+ * inflated 0.25 guess credit means a guesser profile gains less from luck, which is a real,
+ * structural, and correct consequence of the fix — but it also means the two profiles'
+ * (honest-beginner vs guesser-beginner) means sit closer together, so the same-size run-to-run
+ * noise now represents a larger fraction of the gap between them. A wider 60-seed sweep at the
+ * current (fixed) GUESS puts the full distribution at mean 0.0358, sd 0.0098, range
+ * [0.0034, 0.0612] — never negative. The committed seed 20260731 reads honestMinusGuesser=0.0047,
+ * z~-3.2 in that distribution (~2nd percentile): a genuine low-tail draw, not the representative
+ * value. Because a single committed-seed reading of *this specific statistic* could not be
+ * trusted either way (it could read positive while the invariant was fine, or read close to
+ * zero by bad luck alone while the invariant held comfortably), `simulate.test.ts`'s gate for it
+ * was changed to average over 12 independent seeds rather than read the committed seed — see the
+ * comment on `HMG_SEEDS` there for the design and its measured sd. The other five gates above are
+ * unaffected by this and still read from the single committed-seed `result`.
  *
  * SETTLE_ENTROPY was left at its original value: at this pool size (4 items per kind per
  * concept) even a noise-free run of five straight "correct" answers for a senior learner still
