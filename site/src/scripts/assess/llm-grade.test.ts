@@ -11,7 +11,6 @@ import {
   ASSESS_RUBRIC_RU,
 } from "./llm-grade";
 import { emptyCell } from "./update";
-import { bandLabel } from "./ordinal";
 import { cellKey, LEVELS, type AssessItem, type Cell, type CellKey, type Level } from "./types";
 
 describe("parseFacetVerdict", () => {
@@ -182,10 +181,21 @@ describe("no-key degradation stays representable", () => {
 // whole AssessItem — see the function's own doc comment for why (the
 // Critical finding: a whole-item anchor only ever bounded concepts[0]).
 describe("anchorLevel", () => {
+  // Fix round 2 (test-quality): pinned to a literal ("junior") rather than
+  // recomputing bandLabel(emptyCell(...)) the way the implementation itself
+  // does — that pattern still catches wrong-argument wiring (a real bug
+  // would fail it), but it cannot catch the prior ITSELF silently changing
+  // (e.g. an edit to BAND_PRIOR.surface or FACET_TILT.mechanism in
+  // ordinal.ts), since the test and the implementation would drift together.
+  // Verified independently: priorFromBand("surface", "mechanism") =
+  // [0.21, 0.31, 0.27, 0.21] (BAND_PRIOR.surface, FACET_TILT.mechanism is
+  // neutral [1,1,1,1] so it does not shift the mode) -> bandLabel's mode is
+  // index 1 (0.31) = "junior".
+  const SURFACE_MECHANISM_PRIOR_LEVEL = "junior";
+
   test("falls back to the concept's own prior when no cell exists yet", () => {
     const anchor = anchorLevel("tcp-handshake", "mechanism", "surface", new Map());
-    const expected = bandLabel(emptyCell("tcp-handshake", "mechanism", "surface").posterior).level;
-    expect(anchor).toBe(expected);
+    expect(anchor).toBe(SURFACE_MECHANISM_PRIOR_LEVEL);
   });
 
   test("uses the measured cell's own posterior when one exists", () => {
@@ -199,8 +209,7 @@ describe("anchorLevel", () => {
     const cells = new Map<CellKey, Cell>([[cellKey("tcp-handshake", "recognition"), strongRecognition]]);
     // Asking for "mechanism" — the recognition cell must be ignored, falling back to the prior.
     const anchor = anchorLevel("tcp-handshake", "mechanism", "surface", cells);
-    const expected = bandLabel(emptyCell("tcp-handshake", "mechanism", "surface").posterior).level;
-    expect(anchor).toBe(expected);
+    expect(anchor).toBe(SURFACE_MECHANISM_PRIOR_LEVEL);
   });
 
   test("is read-only: does not mutate the cells map it is given", () => {
