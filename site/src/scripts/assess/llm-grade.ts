@@ -32,20 +32,45 @@ export interface BiText {
 const WHY_MAX_CHARS = 200;
 
 /**
+ * Task 13 fix round 1 (cheap fix): the original C0/C1 range missed Unicode
+ * bidi-control characters (U+202E RIGHT-TO-LEFT OVERRIDE and its relatives) —
+ * they render as text, not control bytes, so they are spoofing rather than
+ * injection, but they still cross "strip control characters" (Ruling 3):
+ * U+202E in particular can visually reverse or reorder the rest of `why` in
+ * the UI. Checked by numeric code point (not a regex literal) for the same
+ * reason the C0/C1 check below is.
+ */
+function isBidiControl(code: number): boolean {
+  return code === 0x061c // Arabic Letter Mark
+    || code === 0x200e || code === 0x200f // LTR/RTL mark
+    || (code >= 0x202a && code <= 0x202e) // LTR/RTL embedding, pop, LTR/RTL override
+    || (code >= 0x2066 && code <= 0x2069); // isolates + pop directional isolate
+}
+
+/**
  * Ruling 3: the learner's own free text is inside the prompt this replies to, so
  * the model's reply is attacker-influenceable. `why` is free text straight from
- * the model — strip control characters (by numeric code point, not a regex
- * literal, so no raw control bytes ever sit in this source file) and cap its
- * length before it can reach storage or the UI.
+ * the model — strip control characters (C0/C1 by numeric code point, plus
+ * Unicode bidi-control characters, not a regex literal, so no raw control byte
+ * ever sits in this source file) and cap its length before it can reach
+ * storage or the UI.
+ *
+ * The length cap is applied INSIDE this same loop, one whole code point at a
+ * time (never a bare `.slice(0, N)` on the UTF-16 string afterward) so a
+ * surrogate pair straddling the cap is never split into a lone surrogate —
+ * `ch` from `for...of` is always a complete code point (1 or 2 UTF-16 units),
+ * added whole or not at all.
  */
 function sanitizeWhy(raw: string): string {
   let out = "";
   for (const ch of raw) {
     const code = ch.codePointAt(0) ?? 0;
-    const isControl = code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f);
-    if (!isControl) out += ch;
+    const isControl = code <= 0x1f || code === 0x7f || (code >= 0x80 && code <= 0x9f) || isBidiControl(code);
+    if (isControl) continue;
+    if (out.length + ch.length > WHY_MAX_CHARS) break;
+    out += ch;
   }
-  return out.length > WHY_MAX_CHARS ? out.slice(0, WHY_MAX_CHARS) : out;
+  return out;
 }
 
 /**
