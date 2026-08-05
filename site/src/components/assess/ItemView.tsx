@@ -95,29 +95,35 @@ export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onSt
   // explain items get an optional BYOK check on top of the self-grade already
   // baked into item-bodies.tsx's CommitRevealBody (Ruling 4's "deterministic
   // path"): with no key, this is a no-op passthrough to the exact pre-Task-13
-  // behaviour. With a key, the learner's own draft (meta.answerDigest) is
-  // checked against ASSESS_RUBRIC_EN/RU and the clamped verdict Level rides
-  // along in `meta.llmVerdictLevel`, genuinely moving the target facet's
-  // posterior in update.ts — the self-graded `outcome` itself is never
-  // overwritten by the LLM (fix round 1's Critical fix: previously it was,
-  // which collapsed "middle" and "senior" into the same recorded Outcome and
-  // made the whole layer downgrade-only).
+  // behaviour. With a key, the learner's own FULL draft (meta.rawAnswer — the
+  // untruncated text; item-bodies.tsx's DIGEST_MAX=240 truncation of
+  // answerDigest is a report-storage cap, not the LLM's input bound, and must
+  // not also cap what gets graded) is checked against ASSESS_RUBRIC_EN/RU
+  // under gradeExplainAnswer's own MAX_INPUT_CHARS guard, and the clamped
+  // verdict Level rides along in `meta.llmVerdictLevel`, genuinely moving the
+  // target facet's posterior in update.ts — the self-graded `outcome` itself
+  // is never overwritten by the LLM (fix round 1's Critical fix: previously
+  // it was, which collapsed "middle" and "senior" into the same recorded
+  // Outcome and made the whole layer downgrade-only).
   const submit = (outcome: Outcome, meta?: ResponseMeta) => {
     // Ignore re-entrant submits while a previous explain grading is in flight
     // (the self-grade buttons stay mounted during the async gap) — a double
     // click must not record the answer twice.
     if (grading) return;
-    const text = meta?.answerDigest;
-    if (item.kind !== "explain" || !text || outcome === "dont_know") {
-      finalize(outcome, meta);
+    // `rawAnswer` is ItemView-local only — it must never reach
+    // finalize/onAnswer/Evidence (see update.ts's ResponseMeta doc comment),
+    // so it is stripped into `persisted` here, before EITHER branch below.
+    const { rawAnswer, ...persisted } = meta ?? {};
+    if (item.kind !== "explain" || !rawAnswer || outcome === "dont_know") {
+      finalize(outcome, persisted);
       return;
     }
     const conceptLabel = labelOf(item.concepts[0] ?? item.lessonKey);
     const anchor = anchorLevel(item, cells);
     setGrading(true);
-    void gradeExplainAnswer(item, lang, text, anchor, conceptLabel)
+    void gradeExplainAnswer(item, lang, rawAnswer, anchor, conceptLabel)
       .then((graded) => finalize(outcome, {
-        ...meta, failureNote: graded.why, llmGraded: graded.llmGraded, llmVerdictLevel: graded.verdictLevel,
+        ...persisted, failureNote: graded.why, llmGraded: graded.llmGraded, llmVerdictLevel: graded.verdictLevel,
       }))
       .finally(() => setGrading(false));
   };
