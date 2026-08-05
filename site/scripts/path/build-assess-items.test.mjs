@@ -10,6 +10,9 @@ describe("facet mapping", () => {
   test("diagnose+blanks measures recognition", () => {
     expect(facetOf({ type: "diagnose", grading: { mode: "blanks" } })).toBe("recognition");
   });
+  test("diagnose+blanks is a recall item, not an mcq — the content is free-text fill-the-blank, not multiple-choice", () => {
+    expect(kindOf({ type: "diagnose", grading: { mode: "blanks" } })).toBe("recall");
+  });
   test("sandbox measures production", () => {
     expect(facetOf({ type: "sandbox" })).toBe("production");
   });

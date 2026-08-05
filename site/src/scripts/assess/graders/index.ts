@@ -8,14 +8,6 @@ export interface GradeResult {
   failureNote?: string;
 }
 
-export function gradeMcq(choices: readonly { correct?: boolean }[], picked: number): GradeResult {
-  if (choices[picked]?.correct === true) return { outcome: "correct" };
-  if (!choices.some((c) => c.correct === true)) {
-    return { outcome: "wrong", failureNote: "item has no correct choice — authoring error" };
-  }
-  return { outcome: "wrong", failureNote: `picked option ${picked + 1} — not correct` };
-}
-
 export function gradeBlanks(blanks: readonly { accept: string[] }[], answers: readonly string[]): GradeResult {
   const hits = blanks.filter((b, i) => checkBlank(b.accept, answers[i] ?? "")).length;
   if (hits === blanks.length) return { outcome: "correct" };

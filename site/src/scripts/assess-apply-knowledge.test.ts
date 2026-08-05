@@ -29,7 +29,7 @@ function cellWith(conceptId: string, facet: Facet, posterior: Posterior, items: 
     posterior,
     items,
     evidence: Array.from({ length: items }, (_, i) => ({
-      conceptId, facet, itemId: `i${i}`, lessonKey: "databases/01-x/01-y", kind: "mcq" as const, band: "surface" as const,
+      conceptId, facet, itemId: `i${i}`, lessonKey: "databases/01-x/01-y", kind: "recall" as const, band: "surface" as const,
       response: { outcome: "wrong" as const, hintsUsed: 0 as const, elapsedMs: 1 },
       answerDigest: "", atMs: NOW,
     })),

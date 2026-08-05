@@ -38,7 +38,7 @@ export function facetOf(task) {
 export function kindOf(task) {
   switch (task.type) {
     case "diagnose":
-      return task.grading?.mode === "blanks" ? "mcq" : "explain";
+      return task.grading?.mode === "blanks" ? "recall" : "explain";
     case "predict": return "predict";
     case "debug": return "debug";
     case "review": return "review";

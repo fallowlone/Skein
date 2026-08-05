@@ -38,13 +38,13 @@ describe("likelihood", () => {
 
   const BANDS: readonly Band[] = ["foundations", "surface", "middle", "advanced"];
   const HINTS = [0, 1, 2] as const;
-  const KINDS: readonly ItemKind[] = ["mcq", "predict", "debug", "review", "exec", "explain"];
+  const KINDS: readonly ItemKind[] = ["recall", "predict", "debug", "review", "exec", "explain"];
 
   test("dont_know is gentler than wrong and harsher than partial, for every band/hints/kind", () => {
     for (const band of BANDS) {
       for (const hintsUsed of HINTS) {
         for (const kind of KINDS) {
-          const it = item({ kind, band, facet: kind === "mcq" ? "recognition" : "production" });
+          const it = item({ kind, band, facet: kind === "recall" ? "recognition" : "production" });
           const facet = it.facet;
           const correct = llr(likelihoodVector(it, res({ hintsUsed, outcome: "correct" }), facet));
           const partial = llr(likelihoodVector(it, res({ hintsUsed, outcome: "partial" }), facet));
@@ -59,10 +59,10 @@ describe("likelihood", () => {
   });
 
   test("evidence for a non-primary facet is damped and never certifies it", () => {
-    const own = llr(likelihoodVector(item({ kind: "mcq", facet: "recognition" }), res(), "recognition"));
-    const other = llr(likelihoodVector(item({ kind: "mcq", facet: "recognition" }), res(), "production"));
+    const own = llr(likelihoodVector(item({ kind: "recall", facet: "recognition" }), res(), "recognition"));
+    const other = llr(likelihoodVector(item({ kind: "recall", facet: "recognition" }), res(), "production"));
     expect(other).toBeLessThan(own);
-    expect(other).toBeLessThan(1.6); // an MCQ can never argue strongly for production skill
+    expect(other).toBeLessThan(1.6); // a recall item can never argue strongly for production skill
   });
 
   test("every vector is a normalised distribution", () => {
