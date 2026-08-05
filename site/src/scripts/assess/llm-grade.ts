@@ -13,9 +13,8 @@
 // `parseFacetVerdict`'s raw, unclamped level is exported only so
 // llm-grade.test.ts can test the JSON contract in isolation — no engine-adjacent
 // caller (ItemView.tsx, report.ts, update.ts) may import it directly.
-import { emptyCell } from "./update";
-import { bandLabel } from "./ordinal";
-import { cellKey, LEVELS, type AssessItem, type Cell, type CellKey, type Level } from "./types";
+import { bandLabel, priorFromBand } from "./ordinal";
+import { cellKey, LEVELS, type AssessItem, type Band, type Cell, type CellKey, type Facet, type Level } from "./types";
 
 export interface FacetVerdict {
   level: Level;
@@ -115,19 +114,46 @@ export function clampAgainstDeterministic(deterministic: Level, llm: Level): Lev
  * "deterministic measurement" means everywhere else in this engine: `bandLabel`
  * is the SAME discrete statistic `conceptVerdict`/the report use to name a
  * cell's level, so the anchor and the report agree on what "the current
- * measurement" is. Falls back to the concept's own prior (`emptyCell`, the
- * same seed `applyResponse` would use for an unseen cell) when nothing has
+ * measurement" is. Falls back to the concept's own prior (`priorFromBand`,
+ * the exact same posterior `update.ts`'s `emptyCell` seeds an unseen cell
+ * with — duplicated here rather than imported, see below) when nothing has
  * touched this (concept, facet) yet — still principled, not a guess: it is
  * exactly what the engine itself believes before any evidence exists.
  *
+ * Fix round 2 (Critical): takes a single `conceptId` (+ its own `facet`/
+ * `band`), not a whole `AssessItem` — fix round 1's `anchorLevel(item,
+ * cells)` computed the anchor against `item.concepts[0]` ALONE, while
+ * `applyResponse` broadcasts the same verdict likelihood to every concept an
+ * item touches (99.7% of `explain` items span 2+ concepts, some six). A
+ * concept sitting at "gap" could receive a "senior"-shaped likelihood factor
+ * because a DIFFERENT concept on the same item anchored at "middle" — the ±1
+ * bound was proven for concepts[0] and enforced for none of the rest.
+ *
+ * Every concept now gets its OWN anchor and its OWN clamp: ItemView.tsx's
+ * `gradeExplainAnswer` calls `anchorLevel` once per `item.concepts` entry,
+ * then `gradeExplainVerdict(raw, thatConcept'sAnchor)` once per entry too
+ * (the safe, bypass-proof combinator — see its own doc comment; only its
+ * OUTPUT, never `raw` itself, ever leaves that function), producing a
+ * per-concept `Record<conceptId, Level>` that `update.ts`'s `applyResponse`
+ * only ever looks up by conceptId inside its existing per-concept loop —
+ * `update.ts` performs no clamping of its own, it only ever multiplies in a
+ * Level that already passed through `gradeExplainVerdict` for THAT concept.
+ * This keeps the clamp itself inside this file exactly as before (Ruling 2
+ * is untouched: `parseFacetVerdict`'s raw level still never leaves this
+ * module except through `gradeExplainVerdict`), while fixing the boundary
+ * fix round 1 got wrong — one anchor, one clamp, standing in for all of them.
+ *
  * Reads `cells` as of BEFORE this item's own response is applied (the caller
  * passes the pre-answer state) — the anchor must not be circular with the
- * very response it's meant to check.
+ * very response it's meant to check. Calls `priorFromBand` directly (rather
+ * than importing `update.ts`'s `emptyCell`, which does nothing more than
+ * wrap the same call in a `Cell` this function doesn't need) — a small
+ * cleanup, not a cycle-avoidance requirement: `update.ts` imports nothing
+ * from this file.
  */
-export function anchorLevel(item: AssessItem, cells: ReadonlyMap<CellKey, Cell>): Level {
-  const conceptId = item.concepts[0] ?? item.lessonKey;
-  const cell = cells.get(cellKey(conceptId, item.facet));
-  const posterior = cell ? cell.posterior : emptyCell(conceptId, item.facet, item.band).posterior;
+export function anchorLevel(conceptId: string, facet: Facet, band: Band, cells: ReadonlyMap<CellKey, Cell>): Level {
+  const cell = cells.get(cellKey(conceptId, facet));
+  const posterior = cell ? cell.posterior : priorFromBand(band, facet);
   return bandLabel(posterior).level;
 }
 

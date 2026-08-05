@@ -17,18 +17,32 @@ export interface ResponseMeta {
   /** Task 13: threaded straight into Evidence.llmGraded — see its own doc comment. */
   llmGraded?: boolean;
   /**
-   * Task 13 fix round 1 (Critical): the clamped LLM verdict Level for an
-   * `explain` item's target facet, when the BYOK layer graded one. Multiplied
-   * in as an independent likelihood factor (`llmVerdictLikelihood`) on the
-   * TARGET facet's cell only — never the cross-facet damped ones, and never
-   * touching `likelihoodVector`'s own Outcome-based evidence for the same
-   * cell. Absent (`undefined`) for every other case, including every explain
-   * answer with no key: absence is the no-op default, so the posterior update
-   * below is byte-identical to pre-Task-13 behaviour whenever this is unset
-   * (proved in update.test.ts). The simulation harness (simulate.ts) never
-   * sets this field, so Task 10's accuracy gates cannot be affected by it.
+   * Task 13 fix round 1 (Critical), keyed per-concept in fix round 2: clamped
+   * LLM verdict Levels for an `explain` item's target facet, when the BYOK
+   * layer graded one — one entry per `item.concepts` id, each ALREADY
+   * clamped (by `llm-grade.ts`'s `gradeExplainVerdict`) against THAT
+   * concept's own deterministic anchor, never a single shared one.
+   *
+   * Fix round 1 shipped this as a single `Level` and `applyResponse`
+   * multiplied it into every concept's target-facet cell — bounding only
+   * `item.concepts[0]` while broadcasting the same, unbounded-for-them
+   * likelihood factor to the rest (99.7% of `explain` items touch 2+
+   * concepts). This map fixes that: `applyResponse`'s per-concept loop below
+   * looks up `llmVerdictLevels[conceptId]`, never a single item-wide value,
+   * so a cell can only ever move relative to ITS OWN anchor.
+   *
+   * `update.ts` performs no clamping — every value in this map already
+   * passed through `gradeExplainVerdict` before `applyResponse` ever sees it
+   * (Ruling 2's bypass-proof entry point, called once per concept in
+   * ItemView.tsx's `gradeExplainAnswer`).
+   *
+   * Absent (`undefined`), or missing an entry for a given `conceptId`, is the
+   * no-op default for that cell — every other item kind, every explain
+   * answer with no key, and the entire simulation harness (which never
+   * constructs this field at all) leave `applyResponse` byte-identical to
+   * pre-Task-13 behaviour (proved in update.test.ts).
    */
-  llmVerdictLevel?: Level;
+  llmVerdictLevels?: Record<string, Level>;
   /**
    * Task 13 fix round 1: the FULL, untruncated draft an explain item's
    * self-grade was made against — read only by ItemView.tsx (to send to the
@@ -60,14 +74,16 @@ export function applyResponse(
       const prior = next.get(key) ?? emptyCell(conceptId, facet, bandOf(conceptId));
       const lik = likelihoodVector(item, response, facet);
       const isTarget = facet === item.facet;
-      // Task 13 fix round 1: a second, independent likelihood factor from an
-      // LLM verdict, multiplied in ONLY on the target facet (isTarget) and
-      // ONLY when one exists. `meta.llmVerdictLevel` is undefined on every
-      // path except a successfully-graded `explain` answer, so this branch is
-      // unreachable for every other item kind, for every no-key explain
-      // answer, and for the entire simulation harness — the multiplication
-      // below is a true no-op (verdictLik === null) in all of those cases.
-      const verdictLik = isTarget && meta.llmVerdictLevel ? llmVerdictLikelihood(meta.llmVerdictLevel) : null;
+      // Task 13 fix round 2: looked up PER CONCEPT (`llmVerdictLevels[conceptId]`,
+      // not a single item-wide value — fix round 1's Critical finding) and
+      // multiplied in ONLY on the target facet (isTarget) and ONLY when this
+      // concept has its own entry. Undefined on every path except a
+      // successfully-graded `explain` answer, so this branch is unreachable
+      // for every other item kind, for every no-key explain answer, and for
+      // the entire simulation harness — the multiplication below is a true
+      // no-op (verdictLik === null) in all of those cases.
+      const verdictLevel = isTarget ? meta.llmVerdictLevels?.[conceptId] : undefined;
+      const verdictLik = verdictLevel ? llmVerdictLikelihood(verdictLevel) : null;
       // item.weight < 1 (multi-concept attribution or a partly-contaminated item) flattens
       // the evidence the same way cross-facet damping does.
       const w = Math.max(0, Math.min(1, item.weight));
