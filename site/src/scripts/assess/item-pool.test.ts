@@ -7,7 +7,7 @@ const index = {
     band: "surface", concepts: ["promises"], weight: 1, estMin: 5,
   },
   "backend/01-promises/01-intro#t2": {
-    lessonKey: "backend/01-promises/01-intro", taskId: "t2", kind: "mcq", facet: "recognition",
+    lessonKey: "backend/01-promises/01-intro", taskId: "t2", kind: "recall", facet: "recognition",
     band: "surface", concepts: ["promises"], weight: 1, estMin: 3,
   },
 } as const;
