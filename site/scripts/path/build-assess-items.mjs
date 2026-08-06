@@ -74,17 +74,26 @@ export function buildAssessIndex(files, unitConcepts, bandOf, read = (p) => read
       const kind = kindOf(t);
       if (!facet || !kind) continue;
 
-      const explicit = Array.isArray(t.concepts) && t.concepts.length > 0;
-      const concepts = explicit ? t.concepts : unit.teaches;
+      // D1: an item is assess-eligible only if its task declares an explicit
+      // `concepts` field. The old fallback to `unit.teaches` spread one answer
+      // across a median of 25 concepts, leaving the posterior unmoved
+      // (REPLAN-BRIEF C1). Skip entirely rather than infer.
+      if (!Array.isArray(t.concepts) || t.concepts.length === 0) continue;
+      const concepts = t.concepts;
       const id = `${j.lessonKey}#${t.id}`;
       items[id] = {
         lessonKey: j.lessonKey,
         taskId: t.id,
         kind,
         facet,
+        // per-concept band is the per-spec behaviour; for now we stamp the
+        // display-only band from concepts[0] — the real fix (per-concept
+        // banding in likelihood.ts/update.ts/ItemView) is tracked in H2.
         band: bandOf(concepts[0]),
         concepts,
-        weight: explicit ? 1 : 1 / concepts.length,
+        // weight is not a likelihood exponent — see D1 decision. It is kept
+        // here for display/debug. The likelihood path consumes a unit weight.
+        weight: 1,
         estMin: typeof t.estMin === "number" ? t.estMin : 5,
       };
       for (const c of concepts) bump(c, facet);

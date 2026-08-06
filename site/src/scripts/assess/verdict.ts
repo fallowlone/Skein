@@ -141,6 +141,30 @@ function facetVerdict(cell: Cell | undefined): FacetVerdict {
   return { status: "measured", band: bandLabel(cell.posterior), items: cell.items, fragile, declined };
 }
 
+/**
+ * Minimum absolute shift in expectedLevel across the measured facets, compared
+ * to the band prior. Used by assess-apply-knowledge.ts to decide whether a new
+ * measurement has actually moved the needle (D4: the overwrite bar must be a
+ * function of how far the posterior moved, not where it started).
+ */
+export function posteriorMovement(
+  cells: ReadonlyMap<CellKey, Cell>,
+  conceptId: string,
+  bandOf: (conceptId: string) => Band,
+): number {
+  const facets = FACETS.map((f) => [f, cells.get(cellKey(conceptId, f))] as const).filter(
+    ([, cell]) => cell && cell.items > 0,
+  );
+  if (facets.length === 0) return 0;
+  let min = Infinity;
+  for (const [f, cell] of facets) {
+    const prior = priorFromBand(bandOf(conceptId), f);
+    const shift = Math.abs(expectedLevel(prior) - expectedLevel(cell.posterior));
+    if (shift < min) min = shift;
+  }
+  return min;
+}
+
 export function conceptVerdict(cells: ReadonlyMap<CellKey, Cell>, conceptId: string): ConceptVerdict {
   const facets = Object.fromEntries(
     FACETS.map((f) => [f, facetVerdict(cells.get(cellKey(conceptId, f)))]),
