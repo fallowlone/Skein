@@ -8,10 +8,12 @@ import { useState } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
 import type { AssessReportModel, ReportRow } from "~/scripts/assess/report";
 import { explainUngraded, toKnowledgeWrites } from "~/scripts/assess/report";
+// [assess-engine-replan] toKnowledgeWrites import kept; function disabled below
 import { toRetestCards } from "~/scripts/assess/retest";
 import type { Cell, CellKey } from "~/scripts/assess/types";
 import { PATTERN_LABELS } from "~/scripts/assess/patterns";
 import { addCard } from "~/scripts/review-state";
+// [assess-engine-replan] applyKnowledgeWrites import kept; Save action disabled
 import { applyKnowledgeWrites } from "~/scripts/assess-apply-knowledge";
 import { tt, levelLabel } from "./labels";
 
@@ -91,16 +93,13 @@ export default function AssessReport({ lang, model, cells, labelOf, onRestart }:
   // keeps itemId/lessonKey, not the question itself), so the retrieval cue
   // falls back to "concept label (facet)" — an honest cue, not a reconstruction
   // of the original question.
+  // [assess-engine-replan] disabled: evidence model C1-C4, re-plan pending
   const apply = () => {
-    const now = Date.now();
-    const writes = toKnowledgeWrites(cells, now);
-    const n = applyKnowledgeWrites(writes, cells, scopeConcepts);
-    const cards = toRetestCards(cells, lang, now, (conceptId, cell) => {
-      const label = labelOf(conceptId);
-      return `${tt(lang, label.en, label.ru)} (${cell.facet})`;
-    });
-    for (const card of cards) addCard(card);
-    setApplied({ n, m: cards.length });
+    // no-op: Save gated pending assess-engine re-plan
+    void toKnowledgeWrites;
+    void applyKnowledgeWrites;
+    void addCard;
+    void toRetestCards;
   };
 
   return (
@@ -148,7 +147,8 @@ export default function AssessReport({ lang, model, cells, labelOf, onRestart }:
       </section>
 
       <div class="assess-item-controls">
-        <button type="button" class="oa-btn oa-btn-primary" onClick={apply} disabled={!!applied} aria-disabled={!!applied}>
+        {/* [assess-engine-replan] Save disabled pending evidence model re-plan */}
+        <button type="button" class="oa-btn oa-btn-primary" disabled aria-disabled="true">
           {t("assess.report.apply", lang)}
         </button>
         {applied && (
