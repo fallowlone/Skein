@@ -80,6 +80,11 @@ const TaskBase = z.object({
   estMin: z.number().int().positive(),
   title: BiText,
   prompt: BiText,
+  // Concepts this task actually probes, as concepts.json ids. Optional during
+  // the annotation rollout; /assess skips tasks that omit it rather than
+  // inferring from unit.teaches, which spread evidence over up to 81 concepts
+  // and left the posterior unmoved. See REPLAN-BRIEF.md (C1/D1).
+  concepts: z.array(z.string()).min(1).max(4).optional(),
 });
 
 const DiagnoseTask = TaskBase.extend({

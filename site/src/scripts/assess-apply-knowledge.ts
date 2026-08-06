@@ -45,9 +45,10 @@
 //      must not be able to overwrite a `declared` 1.0 or a `diagnostic` 0.9
 //      across all six concepts it happens to touch.
 import type { Cell, CellKey } from "./assess/types";
-import { conceptVerdict } from "./assess/verdict";
+import { conceptVerdict, posteriorMovement } from "./assess/verdict";
 import type { KnowledgeWrite } from "./assess/report";
 import type { Source } from "./path/types";
+import type { Band } from "./assess/types";
 
 const KNOWLEDGE_KEY = "awesome.path-knowledge.v1"; // mirrors path-io.ts's K_KEY
 
@@ -57,13 +58,19 @@ const KNOWLEDGE_KEY = "awesome.path-knowledge.v1"; // mirrors path-io.ts's K_KEY
 const REQUIRES_STRONG_EVIDENCE: ReadonlySet<Source> = new Set(["declared", "diagnostic"]);
 
 /** Minimum total items (across facets) the concept's cells must carry, AND
- *  minimum band confidence (mass on the modal level) the verdict must carry,
- *  before an assess write is allowed to overturn a declared/diagnostic signal.
- *  Both must hold — either alone (many items but a flat, undecided posterior;
- *  or one confident-looking item) is not enough to overturn a deliberate prior
- *  signal. */
+ *  minimum expectedLevel shift (away from the band prior) the posterior must
+ *  have undergone, before an assess write is allowed to overturn a declared/
+ *  diagnostic signal. Both must hold — either alone (many items but a flat,
+ *  undecided posterior; or one confident-looking item) is not enough to
+ *  overturn a deliberate prior signal.
+ *
+ *  D4: band.confidence is mass on the modal level, which at the prior is already
+ *  0.45 (middle/mechanism) to 0.62 (advanced) — the bar clears before any
+ *  evidence exists. Using |Δ expectedLevel| instead ties the bar to actual
+ *  movement, not starting position. 0.5 means the posterior shifted by at
+ *  least half a level on its weakest facet. */
 const MIN_EVIDENCE_ITEMS = 2;
-const MIN_BAND_CONFIDENCE = 0.4;
+const MIN_POSTERIOR_SHIFT = 0.5;
 
 interface StoredMastery {
   confidence: number;
@@ -96,16 +103,22 @@ function readStoredKnowledge(): [string, StoredMastery][] {
 }
 
 /** Whether a new assess write is allowed to land on top of `existing` (undefined
- *  = no prior entry for this concept). Pure — exported for tests. */
+ *  = no prior entry for this concept). Pure — exported for tests.
+ *  `bandOf` is required for the movement check (D4); pass an identity when
+ *  testing in isolation so prior=band prior is used. */
 export function mayOverwrite(
   existing: { source: string } | undefined,
   cells: ReadonlyMap<CellKey, Cell>,
   conceptId: string,
+  bandOf: (conceptId: string) => Band = (_id: string) => "surface" as Band,
 ): boolean {
   if (!existing) return true; // rule 2: nothing there yet
   if (!REQUIRES_STRONG_EVIDENCE.has(existing.source as Source)) return true; // rule 2/3: activity/review/pretest/assess
   const verdict = conceptVerdict(cells, conceptId); // rule 4: earn it
-  return verdict.evidenceCount >= MIN_EVIDENCE_ITEMS && (verdict.band?.confidence ?? 0) >= MIN_BAND_CONFIDENCE;
+  return (
+    verdict.evidenceCount >= MIN_EVIDENCE_ITEMS &&
+    posteriorMovement(cells, conceptId, bandOf) >= MIN_POSTERIOR_SHIFT
+  );
 }
 
 /**
