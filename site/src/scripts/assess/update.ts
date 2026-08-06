@@ -1,3 +1,4 @@
+// [assess-engine-replan] evidence model C1-C4 — module code sound, model gated
 // Bayes update of one cell + ordinal propagation across the concept DAG. Pure.
 import type { ConceptGraph } from "~/scripts/path/graph";
 import { likelihoodVector, llmVerdictLikelihood } from "./likelihood";
