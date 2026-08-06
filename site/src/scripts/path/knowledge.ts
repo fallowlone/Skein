@@ -29,7 +29,7 @@ const FRESH_DAYS = 30, STALE_DAYS = 120;
 const STRONG: Source[] = ["diagnostic", "declared", "assess"];
 // Study-activity must not overwrite review evidence (review > activity). Kept separate from STRONG
 // so applyDiagnostic's propagation and applyPracticeStruggle's erosion guard are unchanged.
-const STUDY_PROTECTED: Source[] = ["diagnostic", "declared", "review", "assess"];
+const STUDY_PROTECTED: Source[] = ["diagnostic", "declared", "review"];
 
 export const emptyState = (): KnowledgeState => new Map();
 
