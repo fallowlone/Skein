@@ -20,60 +20,83 @@ is a spec-level design defect, not an implementation defect. Modules stay.
   real corpus 6520 items have median weight 0.04 and 74% sit below 0.05, so the
   posterior never moves. The update is effectively null.
 - **C2** — the accuracy gate was built on an unreachable corner of the parameter
-  space (weight=1, band='surface', self-generating responses); those parameters
-  occur in 23 of 6520 real items. `DISCRIMINATION = 3.85` was tuned against a
-  gate that could not fail.
+  space (weight=1, band='surface', self-generating); those parameters occur in
+  23 of 6520 real items. `DISCRIMINATION = 3.85` was tuned against a gate that
+  could not fail.
 - **C3** — `"assess"` in `STUDY_PROTECTED` makes false gaps permanent.
 - **C4** — the `mayOverwrite` confidence bar is cleared at the prior, before any
   evidence is seen.
 
-## Decisions already made (D1–D4), not yet implemented
+## Decisions already made (D1–D4), status
 
-- **D1** — require an explicit `concepts` field per task; `build-assess-items.mjs`
-  skips items without one.
+- **D1** — require an explicit `concepts` field per task. **IMPLEMENTED** —
+  schema extended, builder skips unannotated tasks, pilot unit
+  (networking/05-tls-handshake, 25 tasks) annotated. 0/8096 tasks still
+  annotated; annotation project is the gating dependency for shipping.
 - **D2** — rebuild the gate on the real pool with an independent response model
-  and re-derive `DISCRIMINATION`.
-- **D3/D4** — remove `assess` from `STUDY_PROTECTED`; change the overwrite bar to
-  `|Δ expectedLevel| >= τ`.
+  and re-derive `DISCRIMINATION`. **NOT STARTED**.
+- **D3** — remove `"assess"` from `STUDY_PROTECTED`. **IMPLEMENTED** (knowledge.ts).
+- **D4** — change the overwrite bar to `|Δ expectedLevel| >= 0.5` per weakest
+  facet. **IMPLEMENTED** (verdict.ts `posteriorMovement()`, assess-apply-knowledge.ts).
 
-## Gating dependency (the big one)
+## Implemented this session
 
-D1 needs an **annotation project**: **0 of 8096 tasks currently carry explicit
-`concepts`**. Until that lands, the feature cannot measure anything. This is the
-critical path for the whole re-plan.
+- `src/content.config.ts`: `TaskBase.concepts: z.array(z.string()).min(1).max(4).optional()`
+- `scripts/path/build-assess-items.mjs`: skip tasks without explicit `concepts`;
+  weight set to `1` (no dilution)
+- `scripts/verify-task-concepts.mjs` (new): validates every declared concept id
+  against concepts.json and unit scope (teaches ∪ prereqs), reports per-track
+  coverage
+- `package.json`: `"verify:task-concepts"` script
+- `src/scripts/path/knowledge.ts`: `"assess"` removed from `STUDY_PROTECTED`
+- `src/scripts/assess/verdict.ts`: new `posteriorMovement(cells, conceptId, bandOf)`
+- `src/scripts/assess-apply-knowledge.ts`: `mayOverwrite` now uses
+  `MIN_POSTERIOR_SHIFT = 0.5` instead of `MIN_BAND_CONFIDENCE = 0.4`
+- `scripts/path/build-assess-items.test.mjs`: updated for D1 semantics
+- `src/content/practice/networking/05-tls-handshake/01-*.json` (5 files):
+  pilot annotation, 25 tasks, 31 concepts
 
-## Merge gating — IMPLEMENTED, uncommitted
+## Tests
+
+- `bun test src/scripts/assess/` (vitest, 11 files): **133 pass / 1 fail**
+  — the 1 fail is `simulate.test.ts` `honestMinusGuesser` gate timing out at
+  5 s after ~40 s of CPU. Confirmed pre-existing at HEAD (commit 8004f6aeb).
+  All other assess tests pass with and without my changes.
+- `bun test scripts/path/build-assess-items.test.mjs`: **12 pass**
+- `bun scripts/verify-task-concepts.mjs --self-test`: **OK**
+- Full `bun test`: 1544 pass / 455 fail — same pre-existing failures
+  (localStorage polyfill missing for some tests, Playwright-test-injected
+  globals in a unit-test run)
+
+## Merge gating — IMPLEMENTED, uncommitted until D2 ships
 
 Decided 2026-08-05, implemented 2026-08-06. Code lands, surface does not.
-Verified present in the working tree (`git diff --stat`, 6 files):
 
-1. `components/atlas/TopNav.astro` — /assess rail link commented out.
-2. `pages/[lang]/assess.astro` — `getStaticPaths()` returns `[]`.
-3. `components/assess/AssessReport.tsx` — Save action disabled (nothing reaches
-   `applyKnowledgeWrites` / `toRetestCards`).
-4. `scripts/assess/update.ts` + `assess.astro` — signposted.
-5. `e2e/assess.spec.ts` — `test.describe.skip` with a pointer to the brief.
+1. `components/atlas/TopNav.astro` — /assess rail link commented out ✓
+2. `pages/[lang]/assess.astro` — `getStaticPaths()` returns `[]` ✓
+3. `components/assess/AssessReport.tsx` — Save action disabled ✓
+4. `scripts/assess/update.ts` + `assess.astro` — signposted ✓
+5. `e2e/assess.spec.ts` — `test.describe.skip` with a pointer to the brief ✓
 
-Also touched: `scripts/path/knowledge.ts` (1 line — the C3 `STUDY_PROTECTED` fix).
+Not merged yet: `pages/practice/[track]/[unit]/[lesson].json.ts` adds ~1540
+prerendered routes and needs a full CI build to clear.
 
-Nothing is deleted. Constants stay frozen; `verdict.ts`, `likelihood.ts`,
-`ordinal.ts`, `simulate.ts` are zero-diff by design.
+## NOT YET SHIPPED (re-plan remaining)
 
-## Unverified and blocking merge
+- **D2**: rebuild the accuracy gate on the real pool with independent response
+  model + re-derive DISCRIMINATION. This is the core of the re-plan.
+- **H2**: item band comes from `concepts[0]` but is applied to all concepts
+  (62640/158902 concept-slots mis-attributed). D1 mostly dissolves this (only
+  explicit-concept tasks are assess-eligible), but the comment still says
+  `bandOf(concepts[0])` and the per-concept banding plumbing in
+  `likelihood.ts` / `update.ts` / `ItemView.tsx` has not been closed yet.
+- **Merge gating removal**: after D2 ships, un-comment TopNav, restore
+  `getStaticPaths()`, re-enable Save in AssessReport, re-enable e2e.
 
-`pages/practice/[track]/[unit]/[lesson].json.ts` adds **~1540 prerendered routes**
-to a build with a documented Cloudflare timeout at ~5k pages. It is
-`selectOther`-gated so incremental builds are unaffected, but the next **full**
-build is not.
+## Lower-priority items from the memory index
 
-**Action: run a full CI build before merging.** `bun run build` OOMs locally and
-must not be attempted — gate on `bun run test` + `lint:src` + dev-render instead,
-and let CI do the full render.
-
-## Other known open items (from memory index, lower priority)
-
-- SEO 67/100 + Firefox scroll-jank (performance pass 2026-06-16).
-- `client:load` → `client:visible` for RetrievalDrawer / FadedExample.
-- Metrics `/admin` needs operator setup (D1 + ADMIN_TOKEN).
-- GitHub auth needs operator setup (GITHUB_CLIENT_ID / SECRET).
-- PlacementMeter reads base `content.graph`, not `effectiveContent` (LOW debt).
+- SEO 67/100 + Firefox scroll-jank (performance pass 2026-06-16)
+- `client:load` → `client:visible` for RetrievalDrawer / FadedExample
+- Metrics `/admin` needs operator setup (D1 + ADMIN_TOKEN)
+- GitHub auth needs operator setup (GITHUB_CLIENT_ID / SECRET)
+- PlacementMeter reads base `content.graph`, not `effectiveContent` (LOW debt)
