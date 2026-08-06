@@ -29,6 +29,11 @@ const FRESH_DAYS = 30, STALE_DAYS = 120;
 const STRONG: Source[] = ["diagnostic", "declared", "assess"];
 // Study-activity must not overwrite review evidence (review > activity). Kept separate from STRONG
 // so applyDiagnostic's propagation and applyPracticeStruggle's erosion guard are unchanged.
+//
+// NOTE: "assess" is intentionally absent. With D1's explicit-concepts grounding the evidence
+// model (REPLAN-BRIEF C1-C3), a genuine assess result is now trustworthy enough to stand on
+// its own without this extra protection; the reverse — an incidental review or activity writing
+// on top of a deliberate assessment — is what this guard prevents.
 const STUDY_PROTECTED: Source[] = ["diagnostic", "declared", "review"];
 
 export const emptyState = (): KnowledgeState => new Map();
