@@ -31,7 +31,7 @@ describe("mergeDrill", () => {
 describe("mergeReview", () => {
   const card = (over: Partial<Card>): Card => ({
     cardKey: "k", lessonKey: "l", source: "practice", index: 0, front: "f", back: "b", lang: "en",
-    sched: { reps: 0, intervalDays: 0, ease: 2.5 } as Card["sched"],
+    sched: { reps: 0, interval: 0, ease: 2.5, lapses: 0 } satisfies Card["sched"],
     dueAt: 0, addedAt: 1, lastReviewedAt: null, ...over,
   });
   it("the more recently reviewed copy owns the schedule", () => {

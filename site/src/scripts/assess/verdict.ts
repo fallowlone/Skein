@@ -1,7 +1,7 @@
 // site/src/scripts/assess/verdict.ts
 // Cells → a per-concept verdict. Pure.
-import { bandLabel, entropyOrd, expectedLevel, type BandLabel } from "./ordinal";
-import { FACETS, LEVELS, cellKey, type Cell, type CellKey, type Facet } from "./types";
+import { bandLabel, entropyOrd, expectedLevel, priorFromBand, type BandLabel } from "./ordinal";
+import { FACETS, LEVELS, cellKey, type Band, type Cell, type CellKey, type Facet } from "./types";
 
 /**
  * Simulation harness results (Task 10, `simulate.test.ts`, seed 20260731, 200 learners ×
@@ -159,7 +159,7 @@ export function posteriorMovement(
   let min = Infinity;
   for (const [f, cell] of facets) {
     const prior = priorFromBand(bandOf(conceptId), f);
-    const shift = Math.abs(expectedLevel(prior) - expectedLevel(cell.posterior));
+    const shift = Math.abs(expectedLevel(prior) - expectedLevel(cell!.posterior));
     if (shift < min) min = shift;
   }
   return min;
