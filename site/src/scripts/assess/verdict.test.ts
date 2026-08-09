@@ -8,7 +8,7 @@ import { cellKey, type Cell, type CellKey, type Facet, type Posterior } from "./
 const cellWith = (facet: Facet, posterior: Posterior, items = 2): Cell => ({
   ...emptyCell("c", facet, "surface"), posterior, items,
   evidence: Array.from({ length: items }, (_, i) => ({
-    conceptId: "c", facet, itemId: `i${i}`, kind: "exec" as const, band: "surface" as const,
+    conceptId: "c", facet, itemId: `i${i}`, lessonKey: "", kind: "exec" as const, band: "surface" as const,
     response: { outcome: "correct" as const, hintsUsed: 0 as const, elapsedMs: 1 },
     answerDigest: "", atMs: i,
   })),
