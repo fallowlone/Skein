@@ -48,7 +48,7 @@ export function bandLabel(p: Posterior): BandLabel {
 // DISCRIMINATION was sharpened enough to clear the band-recovery gate — see the note atop
 // verdict.ts. Gap mass stays above `foundations` (0.20) and well below `middle` (0.45), so
 // the harder-band-more-gap ordering the rest of the table encodes still holds.
-const BAND_PRIOR: Record<Band, Posterior> = {
+export const BAND_PRIOR: Record<Band, Posterior> = {
   foundations: [0.20, 0.35, 0.30, 0.15],
   surface:     [0.21, 0.31, 0.27, 0.21],
   middle:      [0.45, 0.30, 0.18, 0.07],
@@ -62,7 +62,7 @@ const BAND_PRIOR: Record<Band, Posterior> = {
 // stronger at production than mechanism (the "production-not-mechanism" profile) could not
 // be told apart from one who is not — see the note atop verdict.ts. Production still starts
 // strictly below recognition for the same band (ordinal.test.ts asserts this).
-const FACET_TILT: Record<Facet, Posterior> = {
+export const FACET_TILT: Record<Facet, Posterior> = {
   recognition: [0.8, 1.1, 1.1, 1.0],
   mechanism:   [1.0, 1.0, 1.0, 1.0],
   production:  [1.05, 1.0, 0.95, 0.9],
