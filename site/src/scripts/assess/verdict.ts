@@ -1,6 +1,6 @@
 // site/src/scripts/assess/verdict.ts
 // Cells → a per-concept verdict. Pure.
-import { bandLabel, entropyOrd, expectedLevel, priorFromBand, type BandLabel } from "./ordinal";
+import { bandLabel, entropyOrd, expectedLevel, normalize, type BandLabel, BAND_PRIOR, FACET_TILT } from "./ordinal";
 import { FACETS, LEVELS, cellKey, type Band, type Cell, type CellKey, type Facet } from "./types";
 
 /**
@@ -158,7 +158,10 @@ export function posteriorMovement(
   if (facets.length === 0) return 0;
   let min = Infinity;
   for (const [f, cell] of facets) {
-    const prior = priorFromBand(bandOf(conceptId), f);
+    // Inline priorFromBand to avoid circular-dep runtime error (verdict ↔ ordinal via types).
+    const base = BAND_PRIOR[bandOf(conceptId)];
+    const tilt = FACET_TILT[f];
+    const prior = normalize([base[0] * tilt[0], base[1] * tilt[1], base[2] * tilt[2], base[3] * tilt[3]]);
     const shift = Math.abs(expectedLevel(prior) - expectedLevel(cell!.posterior));
     if (shift < min) min = shift;
   }
