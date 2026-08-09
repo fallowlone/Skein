@@ -38,7 +38,7 @@ export interface AssessItem {
   facet: Facet;
   band: Band;
   /** Concepts this item speaks to. Multi-concept attribution is handled by `weight`. */
-  concepts: string[];
+  concepts: readonly string[];
   /** 1 / number-of-attributed-concepts, times any contamination discount. */
   weight: number;
   estMin: number;
