@@ -80,20 +80,18 @@ export function buildAssessIndex(files, unitConcepts, bandOf, read = (p) => read
       // (REPLAN-BRIEF C1). Skip entirely rather than infer.
       if (!Array.isArray(t.concepts) || t.concepts.length === 0) continue;
       const concepts = t.concepts;
+      // Weight is no longer an exponent; the likelihood path consumes unity.
+      // D1: Explicit, per-concept attribution mandatory.
+      const weight = 1.0;
       const id = `${j.lessonKey}#${t.id}`;
       items[id] = {
         lessonKey: j.lessonKey,
         taskId: t.id,
         kind,
         facet,
-        // per-concept band is the per-spec behaviour; for now we stamp the
-        // display-only band from concepts[0] — the real fix (per-concept
-        // banding in likelihood.ts/update.ts/ItemView) is tracked in H2.
-        band: bandOf(concepts[0]),
+        band: bandOf(concepts[0]), // Placeholder - H2 tracked
         concepts,
-        // weight is not a likelihood exponent — see D1 decision. It is kept
-        // here for display/debug. The likelihood path consumes a unit weight.
-        weight: 1,
+        weight,
         estMin: typeof t.estMin === "number" ? t.estMin : 5,
       };
       for (const c of concepts) bump(c, facet);
