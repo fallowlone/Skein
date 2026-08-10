@@ -73,32 +73,41 @@ export function applyResponse(
     for (const facet of ["recognition", "mechanism", "production"] as const) {
       const key = cellKey(conceptId, facet);
       const prior = next.get(key) ?? emptyCell(conceptId, facet, bandOf(conceptId));
+
+      // D1/D4: Empty guard. An item is assess-eligible only if its task declares an explicit
+      // `concepts` field (ItemPool filter). Even then, if we have no evidence yet,
+      // an update that results in a posterior that has not measurably moved from
+      // its prior is equivalent to `untested`, not `measured` (C1, D4).
       const lik = likelihoodVector(item, response, facet);
       const isTarget = facet === item.facet;
-      // Task 13 fix round 2: looked up PER CONCEPT (`llmVerdictLevels[conceptId]`,
-      // not a single item-wide value — fix round 1's Critical finding) and
-      // multiplied in ONLY on the target facet (isTarget) and ONLY when this
-      // concept has its own entry. Undefined on every path except a
-      // successfully-graded `explain` answer, so this branch is unreachable
-      // for every other item kind, for every no-key explain answer, and for
-      // the entire simulation harness — the multiplication below is a true
-      // no-op (verdictLik === null) in all of those cases.
+
       const verdictLevel = isTarget ? meta.llmVerdictLevels?.[conceptId] : undefined;
       const verdictLik = verdictLevel ? llmVerdictLikelihood(verdictLevel) : null;
-      // item.weight < 1 (multi-concept attribution or a partly-contaminated item) flattens
-      // the evidence the same way cross-facet damping does.
       const w = Math.max(0, Math.min(1, item.weight));
+
       const posterior = normalize(
         prior.posterior.map((p, i) => {
           const base = p * Math.pow(lik[i], w);
           return verdictLik ? base * Math.pow(verdictLik[i], w) : base;
         }),
       );
+
+      // C1: If the posterior has not measurably moved from the prior (movement
+      // < threshold), treat `items` as 0 so it stays `untested` instead of
+      // being incorrectly reported as `measured` (false gap).
+      // movement is imported from verdict.ts, but `prior` here is the *actual prior*
+      // (as it stood in the cell before update).
+      // Verdict.posteriorMovement does: shift = |expectedLevel(prior) - expectedLevel(cell!.posterior)|.
+      // We need that here.
+      const movement = Math.abs(expectedLevel(prior.posterior) - expectedLevel(posterior));
+      const threshold = 0.05; // Re-plan brief D4 threshold
+      const hasMoved = movement >= threshold;
+
       next.set(key, {
         ...prior,
         posterior,
-        items: prior.items + (isTarget ? 1 : 0),
-        evidence: isTarget
+        items: prior.items + (isTarget && hasMoved ? 1 : 0),
+        evidence: isTarget && hasMoved
           ? [...prior.evidence, {
               conceptId, facet, itemId: item.id, lessonKey: item.lessonKey, kind: item.kind, band: item.band,
               response, answerDigest: digest(meta.answerDigest ?? ""), failureNote: meta.failureNote,

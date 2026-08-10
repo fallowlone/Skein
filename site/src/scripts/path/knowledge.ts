@@ -34,7 +34,7 @@ const STRONG: Source[] = ["diagnostic", "declared", "assess"];
 // model (REPLAN-BRIEF C1-C3), a genuine assess result is now trustworthy enough to stand on
 // its own without this extra protection; the reverse — an incidental review or activity writing
 // on top of a deliberate assessment — is what this guard prevents.
-const STUDY_PROTECTED: Source[] = ["diagnostic", "declared", "assess", "review"];
+const STUDY_PROTECTED: Source[] = ["diagnostic", "declared", "review"];
 
 export const emptyState = (): KnowledgeState => new Map();
 
