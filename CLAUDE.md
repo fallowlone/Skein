@@ -115,8 +115,8 @@ a learning track parallel to, and isolated from, the 16-pillar fullstack program
   with `tracks.json` and `units.json` as the track/unit data files.
 - **Lesson format is linear** (Hook → Goal → Explanation → Visual → WorkedExample →
   Practice → Check → Recap), with optional collapsible `<Inset>` blocks — the
-  inverse of the tiered fullstack piece.
-- **Routing:** `/learn/<track>/<lesson>`.
+  inverse of the single-level fullstack topic lesson.
+- **Routing:** `/learn/<track>/<unit>/<lesson>`.
 - **Linter:** the foundations rules in `src/lint/rules/lessons.ts` run in the same
   build pass; lesson pages have a hydration cap of 5 and require ≥4 practice
   problems and ≥1 visual.
@@ -152,7 +152,7 @@ bun install
 bun run build   # Runs Astro build + linter
 ```
 
-Expected: 301 pages, lint clean.
+Expected: lint clean (`dist/lint-report.json`). The full build renders several thousand pages; use `bun run build:incremental` for a fast local loop.
 
 **Runnable code samples:** lesson code that should actually execute is opt-in.
 Tag a fenced block with `run` in its info string and `bun run verify:samples`
