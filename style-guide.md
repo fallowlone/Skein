@@ -228,7 +228,7 @@ model is retired; `site/src/content/book/` is empty). Components live under
 
 ### Authoring rules
 1. Frontmatter (`site/src/content.config.ts`, `lessons` collection) has no `depth` field. Relevant fields for authoring: `sources` (array of URLs, `min(1)` — required), `level` (`zero`/`junior`/`middle`/`senior`, optional), `lessonType` (`concept`/`coding`/`topic`, optional), `concepts`, `prereqs`, `mathPrereqs`, `deepensInto`, `spiral` (all string arrays, default `[]`).
-2. Hydration cap = 8 `<astro-island>` elements per lesson page (linter-enforced in `site/src/lint/rules/hydration-budget.ts`, counted on the built `dist/<lang>/learn/<track>/<unit>/<lesson>/index.html` route only — hub/nav pages like home, track overview, and projects are exempt since they legitimately render one island per listed item).
+2. Hydration cap = 5 `<astro-island>` elements per lesson page **excluding** the `PracticeSection` orchestrator (linter-enforced in `site/src/lint/rules/lessons.ts`); `PracticeSection` itself is capped separately at 1 per page (`site/src/lint/rules/practice.ts`). A looser raw ceiling of 8 total `<astro-island>` tags also applies (`site/src/lint/rules/hydration-budget.ts`) but rarely binds once the two caps above are respected. Hub/nav pages (home, track overview, projects) are exempt from the raw ceiling since they legitimately render one island per listed item.
 3. EN and RU lessons share the same `slug`; bilingual or refuse.
 4. RU bodies use canonical translations from `site/src/i18n/glossary.json`. Extend the glossary alphabetically when new terms appear.
 5. Text budgets (`site/src/lint/rules/text-budgets.ts`): Crux ≤140, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240.
