@@ -155,54 +155,81 @@ When the user provides the real asset, drop it into `assets/icons/bytebytego-log
 
 ## Curriculum site component vocabulary
 
-Components live under `site/src/components/`. Each has one responsibility.
+The live content model is track → unit → lesson (the older three-tier pillar
+model is retired; `site/src/content/book/` is empty). Components live under
+`site/src/components/`; page-chrome layouts live one level up, under
+`site/src/layouts/`. Each component has one responsibility.
 
-### Layout
-- `Topic.astro` — outer page chrome (head, title, font, body chrome, lang switch slot, sources footer, spaced-revisit banner).
-- `Chapter.astro` — wraps `Topic`; adds sidebar (sticky chapter TOC) + main article slot.
+### Layout (`site/src/layouts/`)
+- `Atlas.astro` — homepage/track-hub chrome: inlines critical CSS (tokens +
+  chrome) so first paint needs no stylesheet round-trip, then loads the full
+  sheet async; wraps `TopNav`. Used by home, `/projects`, `/assess`, and the
+  track index/lab pages.
+- `Topic.astro` — general app-page chrome (global CSS, `TopNav`, `SiteFooter`,
+  `SourcesFooter`, `ThemeBoot`, `Toast`, `KeyboardShortcuts`,
+  `SpacedRevisitBanner`, SEO head). Used by most utility/account pages
+  (settings, profile, roadmap, review, calibrate, English hub, etc.).
+- `Lesson.astro` — wraps `Topic`; adds the lesson-specific chrome (`Topbar`,
+  `AltitudeGauge`, `LessonPlate`, `RightRail`, `ConnectedLessons`,
+  `NextLessonCard`) around the lesson article route.
 
-### Brand
+### Brand (`site/src/components/brand/`)
 - `TitleBar.astro` — sticky header with logo wedge, headline, named `aside` slot.
-- `LangSwitch.astro` — small toggle between EN and RU; resolves twin URL via `swapLocale()`.
-- `SourcesFooter.astro` — footer that lists external sources for ready pieces.
+- `LangSwitch.astro` — toggle between EN and RU; resolves the twin URL via `swapLocale()`.
+- `SourcesFooter.astro` — footer listing external sources for a ready lesson.
+- `SiteFooter.astro` — global site footer.
+- `SeoHead.astro` — shared `<head>` block (title, description, canonical, Open Graph, Twitter card, en/ru hreflang); used by both `Topic` and `Atlas`.
+- `StreakBadge.tsx` — ambient daily-habit indicator, reads `userState`.
+- `ThemeBoot.astro` — sets theme/density attributes before first paint (reads `awesome.theme` / `awesome.density` from `localStorage`) to avoid a flash.
+- `ThemeToggle.astro` — light/dark toggle.
+- `Toast.astro` — global toast container, mounted once in `Topic.astro`; triggered via a `toast` `CustomEvent`.
 
-### Prose primitives
+### Prose primitives (`site/src/components/prose/`)
 - `Crux.astro` — ≤140-char opening question, lilac panel.
 - `Callout.astro`, `KeyTakeaway.astro`, `Sidenote.astro`, `Term.astro` — inline emphasis primitives.
 - `SpiralCue.astro` — chip linking to a thread page; threads: encapsulation, multiplexing, statefulness, latency.
 
-### Layout primitives (panels and cards)
+### Layout primitives (`site/src/components/layout/`)
 - `Stage.astro`, `Pill.astro`, `StepBadge.astro` — ByteByteGo-style stage panel and numbered steps.
 - `Card.astro` — generic bordered card; variants default/yellow/highlight.
 - `Misconception.astro` — red-bordered alert card; body ≤320 chars.
 - `NumbersCard.astro` — table of label/value pairs.
-- `PrereqBadge.tsx` — green/amber pill showing N/M prerequisites complete.
 
-### Diagram primitives (vanilla TS islands)
-- `Connector.astro`, `Node.astro`, `Pulse.astro`, `Reveal.astro`, `PacketDot.astro`, `CountUp.astro`, `TypingText.astro` — small visual components, no Preact dependency.
+(`PrereqBadge.tsx` lives in `pedagogy/`, not here — see Pedagogy widgets.)
 
-### Pedagogy widgets (Preact islands)
-- `Pretest.tsx` — 3-question diagnostic, sets default `tier`.
-- `TierAccordion.tsx` — three pills (junior/middle/senior), default-open per `userState.tier`.
-- `FadedExample.tsx` — 3-step worked-example stepper (Renkl/Shin fading).
+### Diagram primitives (`site/src/components/diagram/`, vanilla TS/no Preact)
+- `Connector.astro`, `Node.astro`, `Pulse.astro`, `Reveal.astro`, `PacketDot.astro`, `CountUp.astro`, `TypingText.astro` — small visual primitives.
+- `DiagramFrame.astro`, `SequenceDiagram.astro`, `StackDiagram.astro`, `FlowDiagram.astro`, `EditorialDiagram.astro`, `Infographic.astro` — structural diagram shells; `flow-layout.ts` is the shared layout-computation logic behind `FlowDiagram`.
+- None of the `.astro`/`.ts` diagram components import Preact — the only Preact import in this directory is in `editorial-diagram.test.tsx` (a test using `preact-render-to-string` to render for assertions), so the "no client-side framework" framing still holds for the shipped components.
+
+### Pedagogy widgets (`site/src/components/pedagogy/`, Preact islands unless noted)
+- `Pretest.tsx` — diagnostic that sets the learner's initial rank/tier.
+- `FadedExample.tsx` — worked-example stepper (Renkl/Shin fading).
 - `RetrievalDrawer.tsx` — open-recall textareas with reveal-answer buttons.
 - `ReactiveDiagram.tsx` — slider→compute→render shell (Distill-style).
 - `Sequencer.tsx` — play/pause/step timeline with `data-active-step` for sibling SVG actors.
-- `Sandbox.tsx` — chapter-final widget chrome; chapter-specific sandboxes under `pedagogy/sandboxes/`.
-  - `sandboxes/RequestBudgetSandbox.tsx` — Chapter 01 capstone interactive.
+- `Sandbox.tsx` — chrome for a parametric interactive exercise; `sandboxes/` holds the concrete implementations (`RequestBudgetSandbox.tsx`, `DBLeverSandbox.tsx`), named in `parametric-registry.ts` and referenced by a practice task's `parametric.component` field.
 - `PersonaTag.astro` — Bea/Rex/Rita/Sven/Cara/Otto/Patty cast tag.
-- `ProgressMeter.tsx` — ring + bar variants; reads `userState.history`.
-- `SpacedRevisitBanner.tsx` — sticky strip; surfaces pieces due for retrieval.
+- `ProgressMeter.tsx` — ring + bar progress variants; reads `userState.history`.
+- `SpacedRevisitBanner.tsx` — sticky strip surfacing lessons due for retrieval.
 - `SettingsDrawer.tsx` — tier/motion/reset/retake controls.
+- `PrereqBadge.tsx` — green/amber pill showing N/M prerequisites complete.
+- `Quiz.astro`, `RFCQuiz.astro` — multiple-choice exercise widgets (the latter RFC-citation flavored).
+- `DesignPrompt.astro`, `DebugLog.astro`, `DragOrder.astro`, `MetaphorComplete.astro`, `NumberDrill.astro`, `TraceScenario.astro`, `TradeoffMatrix.astro`, `AnimationStep.astro`, `ProjectBrief.astro` — additional Astro-shell practice-task widget types (open-response design prompt, incident/debug log, ordering drill, fill-in-the-metaphor, numeric drill, step-trace scenario, tradeoff comparison table, animation step marker, project brief).
+- `PracticeSection.tsx` — the practice-task renderer/grader that lazily mounts the right widget per task type and runs self-grading (`checkBlank`, exec checks).
+- `CodeDrawer.tsx` / `JsSandbox.tsx` / `SqlSandbox.tsx` — docked code-editor workspace (CodeMirror 6, lazy-loaded on open) for JS and SQL practice tasks.
+- `GradeWithAi.tsx` — opt-in "Grade with AI (BYOK)" control for design/incident/self-diagnose tasks.
+- `ReviewSession.tsx` — the spaced-repetition "due today" review island (SM-2 grading: again/hard/good/easy).
 
 ### Navigation
-- `PillarGrid.astro` — 16-card grid on home pages.
-- `ChapterSidebar.astro` + `ChapterSidebarTOC.tsx` — chapter index with visited checkmarks.
+- `site/src/components/nav/`: `GlobalSearch.astro` (lazy-loads `/search-index.json` on first open), `KeyboardShortcuts.astro` (shortcut cheat-sheet overlay), `PersonaLegend.astro` (persona-cast legend, reads `personas.json`).
+- `site/src/components/atlas/`: `TopNav.astro` (sticky top bar — search, theme toggle, streak badge, account menu, lang switch), `World.astro` (parallax/orbit backdrop layer), `TopicHeader.astro` (track header), `UnitMarker.astro` / `LessonRow.astro` (unit and lesson rows on the track map), `HomeResume.astro` / `ResumeCTA.astro` (resume-where-you-left-off chrome), `Altimeter.astro` / `Summit.astro` / `Meridian.astro` (progress/milestone/decorative-divider visuals).
+- `site/src/components/lesson/`: the linear lesson skeleton — `Hook.astro`, `Goal.astro`, `Explanation.astro`, `WorkedExample.astro`, `Trace.astro`, `Code.astro`, `Complexity.astro`, `ApplyThis.astro`, `Check.astro`, `Recap.astro`, `Step.astro`, `Inset.astro` (collapsible why/practice/mistake/edgecase block) — plus chrome (`Topbar.astro`, `AltitudeGauge.astro`, `LessonPlate.astro`, `RightRail.astro`), cross-linking (`PrereqLinks.astro` renders "Before this lesson" from `prereqs`/`mathPrereqs`; `NextLessonCard.astro` renders the next/prior lesson from unit order; `ConnectedLessons.astro` surfaces `deepensInto`/`appearsAgainIn` spiral connections), and `LessonQuestion.tsx` (reader question submission island).
 
 ### Authoring rules
-1. Every piece declares `depth: { mechanism, tradeoff, failure_mode, numbers }` in frontmatter — each id must resolve to a DOM element on the page.
-2. Hydration cap = 5 islands per piece page (linter-enforced). 3 in-content + 2 baseline (`SpacedRevisitBanner` + `ChapterSidebarTOC`) is the typical budget.
-3. EN and RU pieces share the same `slug`; bilingual or refuse.
+1. Frontmatter (`site/src/content.config.ts`, `lessons` collection) has no `depth` field. Relevant fields for authoring: `sources` (array of URLs, `min(1)` — required), `level` (`zero`/`junior`/`middle`/`senior`, optional), `lessonType` (`concept`/`coding`/`topic`, optional), `concepts`, `prereqs`, `mathPrereqs`, `deepensInto`, `spiral` (all string arrays, default `[]`).
+2. Hydration cap = 8 `<astro-island>` elements per lesson page (linter-enforced in `site/src/lint/rules/hydration-budget.ts`, counted on the built `dist/<lang>/learn/<track>/<unit>/<lesson>/index.html` route only — hub/nav pages like home, track overview, and projects are exempt since they legitimately render one island per listed item).
+3. EN and RU lessons share the same `slug`; bilingual or refuse.
 4. RU bodies use canonical translations from `site/src/i18n/glossary.json`. Extend the glossary alphabetically when new terms appear.
-5. Text budgets: Crux ≤140, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240.
-6. Cross-link prereqs at the top, "next piece" at the bottom.
+5. Text budgets (`site/src/lint/rules/text-budgets.ts`): Crux ≤140, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240.
+6. Cross-link prerequisites at the top via `prereqs`/`mathPrereqs` (rendered by `PrereqLinks.astro`); the next lesson is resolved by unit order and rendered at the bottom by `NextLessonCard.astro`.
