@@ -145,20 +145,23 @@ describe("applyKnowledgeWrites", () => {
     }
   });
 
-  it("an assess gap survives a subsequent study touch with its source intact (integration with knowledge.ts)", () => {
+  // C3 (REPLAN-BRIEF.md): STUDY_PROTECTED no longer includes "assess" — a
+  // permanently-stuck false gap (only fixable by re-running /assess or
+  // /calibrate) was worse than letting genuine higher study evidence raise it.
+  it("an assess gap is raised by a subsequent study touch that exceeds it (integration with knowledge.ts)", () => {
     const n = applyKnowledgeWrites([write("indexing", 0.1)], weakCell("indexing"), ["indexing"]);
     expect(n).toBe(1);
 
     // Load the written state into a KnowledgeState the way path-io.ts would,
     // then run the SAME activity-evidence function real lesson-touch/practice
-    // triggers, and confirm it neither raises nor relabels the assess entry.
+    // triggers, and confirm it raises and relabels the assess entry.
     const stored = readStored();
     let knowledge: KnowledgeState = new Map(
       [...stored.entries()].map(([id, m]) => [id, { confidence: m.confidence, source: m.source as never, lastAt: m.lastAt }]),
     );
-    knowledge = applyStudyEvidence(knowledge, ["indexing"], 1, 1, 0.35, 0.4, NOW); // would set 0.75
-    expect(knowledge.get("indexing")!.confidence).toBeCloseTo(0.1, 5);
-    expect(knowledge.get("indexing")!.source).toBe("assess");
+    knowledge = applyStudyEvidence(knowledge, ["indexing"], 1, 1, 0.35, 0.4, NOW); // sets 0.75
+    expect(knowledge.get("indexing")!.confidence).toBeCloseTo(0.75, 5);
+    expect(knowledge.get("indexing")!.source).toBe("activity");
   });
 
   it("no-op on an empty write list", () => {

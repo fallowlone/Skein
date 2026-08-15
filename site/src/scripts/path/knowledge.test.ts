@@ -179,13 +179,21 @@ describe("applyStudyEvidence review protection", () => {
     expect(s.get("indexing")!.source).toBe("review");
   });
 
-  // C1/C2 (task-12-report.md): the bug this closes — touching one practice task
-  // in a lesson must not erase a /assess gap for that lesson's concepts, and
-  // must never restamp its source to "activity".
-  it("does not override or relabel an 'assess'-sourced concept", () => {
+  // C3 (REPLAN-BRIEF.md): keeping "assess" in STUDY_PROTECTED made a false
+  // gap permanent — decay only lowers it further, and the only exits were a
+  // fresh /assess or /calibrate. "assess" stays in STRONG (never eroded by
+  // struggle/review), but genuine higher study evidence may now raise it.
+  it("raises an 'assess'-sourced gap when study evidence exceeds it", () => {
     const s0 = new Map([["indexing", { confidence: 0.1, source: "assess" as const, lastAt: NOW }]]);
-    const s = applyStudyEvidence(s0, ["indexing"], 1, 1, 0.35, 0.4, NOW); // study would set 0.75
-    expect(masteryOf(s, "indexing")).toBeCloseTo(0.1, 5); // assess gap survives
-    expect(s.get("indexing")!.source).toBe("assess");     // and is never restamped "activity"
+    const s = applyStudyEvidence(s0, ["indexing"], 1, 1, 0.35, 0.4, NOW); // study sets 0.75
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.75, 5);
+    expect(s.get("indexing")!.source).toBe("activity");
+  });
+
+  it("never lowers an 'assess'-sourced concept via study evidence", () => {
+    const s0 = new Map([["indexing", { confidence: 0.9, source: "assess" as const, lastAt: NOW }]]);
+    const s = applyStudyEvidence(s0, ["indexing"], 1, 1, 0.35, 0.4, NOW); // study would set 0.75, below 0.9
+    expect(masteryOf(s, "indexing")).toBeCloseTo(0.9, 5);
+    expect(s.get("indexing")!.source).toBe("assess");
   });
 });
