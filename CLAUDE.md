@@ -4,16 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Purpose
 
-**Curriculum site** — `site/` (Astro 5 + Preact + Tailwind + i18n). 16 pillars × ~8 pieces × 2 langs = 256 piece slots. Chapter 01 (Networking) is fully authored EN+RU. Subsequent chapters land via `/infographic` invocations. Pedagogy widgets shipped: Pretest, TierAccordion, FadedExample, RetrievalDrawer, ReactiveDiagram, Sequencer, PersonaTag, SpiralCue, PrereqBadge, SpacedRevisitBanner, SettingsDrawer, Sandbox. Build-time linter enforces 9 rules (text budgets, depth checkpoints, hydration cap on piece pages, i18n parity + glossary, sources required, etc.).
+**Curriculum site** — `site/` (Astro 5 + Preact + Tailwind + i18n). Live corpus (`site/src/content/tracks.json` + `units.json`): 44 tracks, 440 units. `networking` was the original flagship track and remains fully authored EN+RU (13 units, 125/125 lessons on disk); by now nearly every track has complete lesson content end-to-end — EN and RU lesson-file counts match exactly (2264/2264) across all 44 tracks. New or revised units land via `/infographic <track>/<unit>` invocations. Pedagogy widgets shipped (`site/src/components/pedagogy/`, `site/src/components/prose/`): Pretest, FadedExample, RetrievalDrawer, ReactiveDiagram, Sequencer, PersonaTag, SpiralCue, PrereqBadge, SpacedRevisitBanner, SettingsDrawer, Sandbox, plus newer additions (Quiz, ProgressMeter, PracticeSection, ReviewSession, GradeWithAi, JsSandbox, SqlSandbox, and more). The build-time linter (`site/src/lint/rules/*.ts`) enforces structural and bilingual rules — text budgets, hydration caps on lesson pages, i18n parity + glossary, sources required, and more.
 
-**Domain lock**: every piece in this repo is about fullstack engineering (frontend, backend, databases, infra, distributed systems, security, performance, observability, AI integration, engineering practice). Off-domain topics are out of scope and the `/infographic` command will refuse them.
+**Domain lock**: every lesson in this repo is about fullstack engineering (frontend, backend, databases, infra, distributed systems, security, performance, observability, AI integration, engineering practice). Off-domain topics are out of scope and the `/infographic` command will refuse them.
 
-**Depth bar**: middle+ / senior fullstack engineer. See `curriculum.md` for the competency map and forbidden simplifications. Every piece must meet this bar — if a draft reads like documentation, it's too shallow. If it reads like a war-story postmortem, it's right.
+**Depth bar**: middle+ / senior fullstack engineer. See `curriculum.md` for the competency map and forbidden simplifications. Every unit's lessons must meet this bar — if a draft reads like documentation, it's too shallow. If it reads like a war-story postmortem, it's right.
 
-**Three-tier hierarchy** (see `curriculum.md`):
-- **Piece** — narrow topic ("TCP handshake", "JWT pitfalls") → 1 MDX file under `site/src/content/book/{en,ru}/<pillar>/<NN>-<piece>/`.
-- **Chapter** — one pillar, ~8 pieces, learning path → folder under `site/src/content/book/`.
-- **Topic** — 16 pillars, role-shaped ("Become senior fullstack") → full site with chapters 01–16, chapter 01 authored, rest via `/infographic` commands.
+**Authoring model**: track → unit → lesson (no chapter/piece/topic tier). `/infographic <track>/<unit>` authors one unit; each lesson lands at `site/src/content/lessons/{en,ru}/<track>/<unit>/<lesson>/index.mdx`, bilingual EN+RU or the command refuses. See `curriculum.md`'s `## Authoring model` section for the full definition.
 
 ## Directory layout
 
