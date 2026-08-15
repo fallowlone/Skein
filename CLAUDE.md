@@ -132,16 +132,16 @@ its own domain (mathematics and algorithms).
 
 ## Skills (when to invoke)
 
-- `superpowers:brainstorming` — required before designing a new piece concept (depth, pedagogy, composition).
-- `superpowers:writing-plans` — when the piece needs a structured implementation plan.
+- `superpowers:brainstorming` — required before designing new unit/lesson content (depth, pedagogy, composition).
+- `superpowers:writing-plans` — when unit/lesson content needs a structured implementation plan.
 - `superpowers:executing-plans` — when executing a written plan with review checkpoints.
-- `superpowers:subagent-driven-development` — when a piece has independent sub-tasks (research, auth EN, RU translation, etc.).
+- `superpowers:subagent-driven-development` — when a unit has independent sub-tasks (research, auth EN, RU translation, etc.).
 - `design-system` — auditing visual consistency, reviewing styling changes.
-- `frontend-patterns` — when a piece focuses on frontend architecture.
-- `data-scraper-agent` — building a recurring scraper for piece data.
+- `frontend-patterns` — when a unit focuses on frontend architecture.
+- `data-scraper-agent` — building a recurring scraper for unit/lesson data.
 - `documentation-lookup` — wrapper around Context7.
-- `seo` — when publishing a piece or chapter as a public web page.
-- `video-editing` / `ui-demo` — when animating or demoing a piece.
+- `seo` — when publishing unit/lesson content or tracks as a public web page.
+- `video-editing` / `ui-demo` — when animating or demoing unit/lesson content.
 
 ## Build and deploy
 
@@ -182,7 +182,7 @@ before the build, so a sample that crashes on its runtime blocks the deploy.
 - Always check for existing patterns before introducing new ones.
 - Prefer `bun` for Node projects (yarn as fallback).
 - Before finishing any task: check types, lint, no console.log left in production code.
-- Run the site build (`bun run build` in `site/`) if you touch any piece content.
+- Run the site build (`bun run build` in `site/`) if you touch any lesson content.
 - If you add or edit a `run`-tagged code sample, run `bun run verify:samples` (in `site/`).
 
 ## References
