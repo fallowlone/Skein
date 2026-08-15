@@ -1,4 +1,4 @@
-> **Site mirror**: this file is the source of truth for chapter outlines and the depth bar. `site/src/content/chapters.json` mirrors the chapter listing; update both together. The full bilingual site lives at `site/`. To author a piece, run `/infographic <pillar>/<NN-chapter>/<NN-piece>` (see `.claude/commands/infographic.md`).
+> **Site mirror**: this file is the source of truth for the depth bar and the pillar must-cover map. The track/unit listing itself lives in `site/src/content/tracks.json` + `site/src/content/units.json` — update those when adding or renaming a pillar/unit, this file when the depth bar or must-cover coverage changes. The full bilingual site lives at `site/`. To author a unit's lessons, run `/infographic <track>/<unit>` (see `.claude/commands/infographic.md`); absolute-beginner foundations content (math, algorithms, Base CS) is authored separately via `/teach <track>/<NN-unit>/<NN-lesson>`.
 
 # Fullstack Curriculum — Middle+ / Senior Bar
 
@@ -87,80 +87,42 @@ Must-cover: prompt design + caching, function/tool calling, RAG architecture (ch
 
 Must-cover: TDD vs example-based vs property-based testing, contract testing, code review heuristics, trunk-based vs gitflow, feature flags, A/B & shadow traffic, postmortem culture, on-call ergonomics, incident severities, runbooks.
 
-## Three-tier scoping
+## Authoring model
 
-Every request maps to one of three tiers. The tier decides what files and how many infographics get produced.
+Every request maps to one **unit** inside one **track**. There is no
+chapter/piece/topic tier above the unit — `site/src/content/tracks.json`
+lists the tracks, `site/src/content/units.json` lists each track's units,
+and each unit's `lessons` array lists its lesson slugs in junior→senior
+order.
 
-### Tier 1 — Piece (1 infographic)
+- **Track** — one pillar or specialization (e.g. `networking`, `sql-postgres`,
+  `security-offensive`). Matches a `curriculum.md` pillar 1:1 for the 16
+  core pillars below; see "Beyond the 16 core pillars" for the rest.
+- **Unit** — the addressable authoring target. Run `/infographic
+  <track>/<unit>` (see `.claude/commands/infographic.md`) to author one.
+  Covers one coherent sub-topic of the track (e.g. `03-tcp-handshake`
+  inside `networking`).
+- **Lesson** — the smallest content file. A unit typically splits into
+  3–7 lessons banded by level: one `junior` intro, 1–2 `middle` mechanism
+  lessons, 1–2 `senior` internals/edge-case lessons. Lives at
+  `site/src/content/lessons/{en,ru}/<track>/<unit>/<lesson>/index.mdx`.
+  Every lesson is bilingual (EN+RU) or the command refuses.
 
-- Lives inside one pillar's sub-area.
-- Has a single primary mechanism to explain.
-- Examples: "HTTP/2 multiplexing", "JWT pitfalls", "Postgres BRIN indexes", "React fiber reconciler", "Token bucket rate limiting".
-- Pipeline writes: `infographics/<slug>/spec.md`, `data.json`, `infographic.svg`. No MAP/INDEX.
+Foundations content (math, algorithms, Base CS) is a separate track
+group authored via `/teach <track>/<NN-unit>/<NN-lesson>`
+(`.claude/commands/teach.md`), not `/infographic` — see "Beyond the 16
+core pillars" below.
 
-### Tier 2 — Chapter (series, 3–12 pieces)
+### Forbidden splitting mistakes
 
-- Covers one whole pillar or a multi-mechanism feature.
-- Examples: "How HTTPS works" (~4–6), "How the internet works" (~8–10), "PostgreSQL internals" (~8–10), "OAuth 2.1 in depth" (~5).
-- Pipeline writes: `infographics/<chapter-slug>/INDEX.md` + numbered piece dirs.
-- Final piece is always **"putting it together"** — system-diagram tying pieces back.
-- Cap **12 pieces per chapter** to protect context + quality.
-
-### Tier 3 — Topic (mega, hierarchical)
-
-- Spans 2+ pillars or a whole role like "senior fullstack".
-- Examples: "Become senior fullstack", "End-to-end web request", "Modern data platform", "Production-grade Next.js".
-- Pipeline writes:
-  - `infographics/<topic-slug>/MAP.md` — master plan listing chapters (no piece-level detail).
-  - Auto-runs chapter 01 fully (so the user gets immediate value).
-  - Emits a list of continuation commands `/infographic <topic-slug>/<NN-chapter-slug>` for the remaining chapters.
-- A mega-topic ends with a master synthesis chapter — `NN-putting-it-together/` whose pieces tie the entire topic together (still subject to the per-chapter 12-piece cap).
-
-### Classification heuristic (used by /infographic)
-
-1. Map the topic onto `curriculum.md` pillars.
-2. If touches **1 sub-area** of 1 pillar with one mechanism → **piece**.
-3. If touches **1 pillar** as a whole, OR a feature with 3+ mechanisms → **chapter**.
-4. If touches **2+ pillars** with depth across each, OR is role-shaped ("become X", "production-grade X") → **topic**.
-
-If the input is `<topic-slug>/<NN-chapter-slug>` (path-shaped), treat as **chapter** and skip classification.
-
-If the input is `<topic-slug>/<NN-chapter-slug>/<NN-piece-slug>`, treat as **piece** and skip classification.
-
-### MAP.md format (topic tier)
-
-```markdown
-# <Topic Title>
-
-**Tier**: topic
-**Audience**: middle+/senior fullstack engineer
-**Pillars covered**: <pillar names>
-
-## Chapters
-
-| # | Slug | Title | Pillar | Why it's here |
-|---|------|-------|--------|---------------|
-| 01 | <chapter-slug> | ... | <pillar> | ... |
-| 02 | ... | | | |
-| ... | | | | |
-| NN | putting-it-together | ... | synthesis | Ties the whole topic. |
-
-## How to continue
-
-The first chapter has been rendered. To render the rest, run each on its own:
-
-\`\`\`
-/infographic <topic-slug>/02-<chapter-slug>
-/infographic <topic-slug>/03-<chapter-slug>
-...
-\`\`\`
-```
-
-### Forbidden upsizing / downsizing
-
-- Don't promote a narrow piece into a chapter to look impressive. If one diagram can carry it, ship one diagram.
-- Don't compress a real mega-topic into a single chapter — flat 12 pieces lose structure. Use the hierarchy.
-- Each tier must end with its own synthesis: piece doesn't need one, chapter ends with "putting it together", topic ends with a synthesis chapter.
+- Don't cram a unit that actually needs 3+ distinct mechanisms into one
+  lesson — split by level band, not by cramming.
+- Don't split a single mechanism across lessons just to pad the count —
+  if one lesson can carry it, ship one lesson.
+- Don't skip a level band a unit's topic genuinely needs (e.g. shipping
+  only `junior`+`middle` when the topic has real senior-level failure
+  modes) — the depth bar above applies per lesson, not just to the unit
+  as a whole.
 
 ## Forbidden simplifications
 
