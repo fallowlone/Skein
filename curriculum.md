@@ -87,6 +87,40 @@ Must-cover: prompt design + caching, function/tool calling, RAG architecture (ch
 
 Must-cover: TDD vs example-based vs property-based testing, contract testing, code review heuristics, trunk-based vs gitflow, feature flags, A/B & shadow traffic, postmortem culture, on-call ergonomics, incident severities, runbooks.
 
+### Beyond the 16 core pillars
+
+The 16 pillars above are the depth-calibration map for `/infographic`.
+`site/src/content/tracks.json` also carries tracks these pillars don't
+map to — they don't get their own must-cover bullets here because they
+either sit below this file's depth bar (foundations) or extend a single
+pillar into stack-specific depth (specialized) rather than adding a new
+domain:
+
+- **Foundations** (absolute-beginner, authored via `/teach`, not
+  `/infographic` — out of scope for the depth bar above): `math`,
+  `algorithms`, `base-cs`, `logic`.
+- **Specialized / stack-specific deep-dives** (authored via
+  `/infographic`, must-cover content lives in the unit's own research
+  step rather than in this file), grouped by the pillar each one extends:
+  - Databases: `sql-postgres`.
+  - Browser & Frontend Runtime / Frontend Architecture: `js-engine`,
+    `typescript`, `react`, `react-patterns`, `nextjs`.
+  - Backend Architecture: `node`, `nest`, `go`.
+  - Security: `security-foundations`, `security-offensive`,
+    `security-defensive`, `security-cloud`.
+  - Deployment & Infra: `aws`, `docker`, `ci-cd`.
+  - Engineering Practice: `code-patterns`, `architecture-patterns`.
+  - Not tied to a single pillar: `python` (a language track adjacent to
+    Backend Architecture and Frontend Architecture rather than owned by
+    either), `cli`/`linux`/`git` (tooling foundations that underpin every
+    pillar rather than deepening one), and `system-design`/
+    `system-design-cases` (applied synthesis across multiple pillars at
+    once).
+
+If a specialized track's must-cover content needs the same explicit
+calibration the 16 core pillars get, promote it to its own numbered
+pillar above instead of growing this list indefinitely.
+
 ## Authoring model
 
 Every request maps to one **unit** inside one **track**. There is no
