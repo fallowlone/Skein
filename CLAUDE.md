@@ -19,39 +19,49 @@ site/                                        Astro 5 curriculum site (canonical 
   astro.config.mjs
   package.json
   src/
+    content.config.ts                        Collections: tracks, units, lessons, practice, projects, drill, lab
     content/
-      config.ts                              Collections: pillars, chapters, pieces
-      pillars/01-networking.json … 16-engineering-practice.json
-      chapters/01-networking.json … 16-engineering-practice.json
-      book/
-        en/<pillar>/<NN-piece>/index.mdx     EN pieces
-        ru/<pillar>/<NN-piece>/index.mdx     RU pieces
+      tracks.json                            44 tracks (slug, order, title, blurb, color)
+      units.json                             440 units (slug, track, order, title, crux, lessons[])
+      personas.json                          Reader-persona metadata (imported directly, not a collection)
+      lessons/{en,ru}/<track>/<unit>/<lesson>/index.mdx   EN+RU lesson MDX
+      practice/<track>/*.json                Practice task sets (bilingual, per lesson)
+      projects/<slug>.json                   Guided project briefs + rubrics
+      drill/<track>/*.json                   Algorithm-drill problem banks
+      lab/<track>/*.json                     Mastery Lab tiered task sets (warmup/build/diagnose/capstone)
+      interview/                             Empty — interview pages read the `practice` collection + src/data/interview-questions.json instead
+      path/*.json                            Learning-path engine data (concepts, goals, diagnostics, edges) — read directly, not a collection
     pages/
       index.astro                            Redirect to /en/
-      [lang]/index.astro                     PillarGrid (16-card home)
-      [lang]/[pillar]/index.astro            ChapterOverview + Sidebar
-      [lang]/[pillar]/[piece].astro          Article reader
-      [lang]/about.astro, settings.astro
+      [lang]/index.astro                     Atlas homepage — track-band grid + "continue learning" resume strip
+      [lang]/learn/index.astro               Track index
+      [lang]/learn/[track]/index.astro       Track overview + unit list
+      [lang]/learn/[track]/[unit]/[lesson].astro   Lesson article reader
+      [lang]/learn/[track]/lab.astro         Mastery Lab
+      [lang]/about.astro, settings.astro, assess.astro, interview.astro, projects.astro, …   (dozens more: assess/english/interview/projects/etc., not enumerated)
     layouts/
-      Topic.astro                            Outer chrome (head, title, lang switch, sources footer)
-      Chapter.astro                          Sidebar + main article
+      Atlas.astro                            Homepage chrome (inlined critical CSS, TopNav, SEO)
+      Topic.astro                            Outer page chrome (nav, sources footer, SEO/CSP, spaced-revisit banner)
+      Lesson.astro                           Lesson article layout (Topbar, AltitudeGauge, LessonPlate, RightRail, NextLessonCard)
     components/
-      brand/           TitleBar.astro, LangSwitch.astro, SourcesFooter.astro
+      brand/           TitleBar.astro, LangSwitch.astro, SourcesFooter.astro, SeoHead.astro, ThemeToggle.astro
       prose/           Crux.astro, KeyTakeaway.astro, Callout.astro, Term.astro, SpiralCue.astro
       layout/          Card.astro, Misconception.astro, NumbersCard.astro, Pill.astro, StepBadge.astro
-      diagram/         Connector.astro, Node.astro, Pulse.astro, Reveal.astro, PacketDot.astro, CountUp.astro, TypingText.astro
-      pedagogy/        Pretest.tsx, TierAccordion.tsx, FadedExample.tsx, RetrievalDrawer.tsx, ReactiveDiagram.tsx, Sequencer.tsx, Sandbox.tsx, ProgressMeter.tsx, SpacedRevisitBanner.tsx, SettingsDrawer.tsx, PersonaTag.astro
-      nav/             PillarGrid.astro, ChapterSidebar.astro, ChapterSidebarTOC.tsx
+      diagram/         Connector.astro, Node.astro, Pulse.astro, Reveal.astro, PacketDot.astro, CountUp.astro, FlowDiagram.astro
+      pedagogy/        Pretest.tsx, FadedExample.tsx, RetrievalDrawer.tsx, ReactiveDiagram.tsx, Sequencer.tsx, Sandbox.tsx, ProgressMeter.tsx, SpacedRevisitBanner.tsx, SettingsDrawer.tsx, PersonaTag.astro
+      nav/             GlobalSearch.astro, KeyboardShortcuts.astro, PersonaLegend.astro
+      atlas/           TopNav.astro, HomeResume.astro, World.astro, Altimeter.astro, Summit.astro — homepage/global nav chrome
+      lesson/          Hook.astro, Explanation.astro, Recap.astro, Topbar.astro, LessonPlate.astro — lesson-article building blocks
     i18n/
       ui.json                                UI labels (EN, RU)
       glossary.json                          Technical terms locked per locale
     scripts/
       user-state.ts, tier-router.ts, gsap-setup.ts, motion-flag.ts
   dist/                                      Built static output (generated, never edit)
-  scripts/svg-to-png.sh                      SVG → PNG exporter (legacy, for reference assets)
+  scripts/                                   Build tooling (bun scripts — lint-src.mjs, incremental-build.mjs, gen-infographics.mjs, audits)
 
-docs/superpowers/                            Plans + specs (P0–P3 phases)
-curriculum.md                                Fullstack depth bar + 16 pillars + 3-tier scoping (source of truth)
+docs/superpowers/                            Plans + specs
+curriculum.md                                Fullstack depth bar + authoring model (source of truth)
 style-guide.md                               ByteByteGo visual rules + component vocabulary
 CLAUDE.md                                    This file
 .claude/commands/infographic.md              `/infographic` command definition (site pipeline)
