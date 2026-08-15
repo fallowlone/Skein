@@ -70,31 +70,31 @@ CLAUDE.md                                    This file
 infographics/, assets/exports/, drafts/, figma/   Old SVG+PNG infographics workflow (kept for historical reference)
 ```
 
-## Primary command: `/infographic <pillar>/<NN-chapter>/<NN-piece>`
+## Primary command: `/infographic <track>/<unit>`
 
-Author a single piece (stub → draft → ready) for the curriculum site's bilingual pipeline. Every piece is en English + Russian or the command refuses.
+Author a unit's lessons (stub → draft → ready) for the curriculum site's bilingual pipeline. Every lesson is EN + Russian or the command refuses.
 
 Input form:
 ```
-/infographic networking/01-networking/03-tcp-handshake
-/infographic databases/04-databases/07-postgres-mvcc
-/infographic security/10-security/05-csrf-modern
+/infographic networking/03-tcp-handshake
+/infographic databases/04-mvcc-isolation
+/infographic security/04-csrf
 ```
 
-Pipeline (per piece, codified in `.claude/commands/infographic.md`):
+Pipeline (per unit, codified in `.claude/commands/infographic.md`):
 
-1. **Verify piece stub exists** — check `site/src/content/book/en/<pillar>/<NN-piece>/index.mdx`.
-2. **Research** — WebSearch + Context7 (≥3 queries, middle+/senior depth: mechanism, tradeoff, failure mode, numbers).
-3. **Author EN MDX** — frontmatter + body following the template structure: Crux → mechanism → tradeoff → failure mode → numbers → KeyTakeaway → RetrievalDrawer → SpiralCue.
-4. **Translate to RU** — using `site/src/i18n/glossary.json`, add new terms alphabetically.
-5. **Verify linter passes** — `bun run build` in `site/`, check `dist/lint-report.json`.
-6. **Visual check** — open both EN and RU in a browser, verify rendering and interactivity.
-7. **Commit** — `git commit -m "content(<pillar>): <NN-piece> EN+RU ready"`.
+1. **Verify unit exists** — check the track/unit slugs against `tracks.json` and `units.json`.
+2. **Plan the lesson inventory** — split the unit into 3–7 lessons across junior/middle/senior level bands.
+3. **Research** — WebSearch + Context7 (≥3 queries, middle+/senior depth: mechanism, tradeoff, failure mode, numbers).
+4. **Author EN lessons** — copy `site/scaffolds/topic-lesson.mdx`, fill frontmatter + Hook → Crux → Explanation → KeyTakeaway → RetrievalDrawer → Recap for each lesson.
+5. **Translate to RU** — using `site/src/i18n/glossary.json`, add new terms alphabetically.
+6. **Verify build passes** — `bun run build` in `site/`, check `dist/lint-report.json`; then visual-check both locales.
+7. **Commit** — `git commit -m "content(<track>): <unit> EN+RU ready"`.
 
 The command enforces:
 - Bilingual or refuse.
-- Text budgets (Crux ≤140, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240).
-- Hydration cap = 5 islands per page (TierAccordion + FadedExample + RetrievalDrawer + 2 baseline).
+- Text budgets: Crux ≤140 chars, KeyTakeaway ≤220 chars, Misconception ≤320 chars, Card annotation ≤240 chars.
+- Hydration cap = 5 islands per lesson.
 - Status flow: stub → draft (optional) → ready.
 - Component imports use the `~/` alias (`~` → `site/src/`); no `..` relative segments.
 
@@ -187,11 +187,11 @@ before the build, so a sample that crashes on its runtime blocks the deploy.
 
 ## References
 
-- `curriculum.md` — source of truth for depth bar, 16 pillars, forbidden simplifications.
+- `curriculum.md` — source of truth for depth bar, pillar map, authoring model, forbidden simplifications.
 - `style-guide.md` — ByteByteGo visual rules + component vocabulary.
 - `docs/superpowers/specs/2026-05-12-fullstack-curriculum-site-design.md` — architecture spec.
 - `docs/superpowers/plans/2026-05-12-fullstack-curriculum-site.md` — implementation plan (P2 pattern).
-- `site/src/content/book/en/networking/03-tcp-handshake/index.mdx` — template piece (import paths, frontmatter, component usage).
+- `site/src/content/lessons/en/networking/03-tcp-handshake/01-the-three-way-handshake/index.mdx` — template lesson (import paths, frontmatter, component usage).
 
 ## Working style
 
