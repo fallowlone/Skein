@@ -25,7 +25,7 @@ site/                                        Astro 5 curriculum site (canonical 
       units.json                             440 units (slug, track, order, title, crux, lessons[])
       personas.json                          Reader-persona metadata (imported directly, not a collection)
       lessons/{en,ru}/<track>/<unit>/<lesson>/index.mdx   EN+RU lesson MDX
-      practice/<track>/*.json                Practice task sets (bilingual, per lesson)
+      practice/<track>/<unit>/*.json         Practice task sets (bilingual, per lesson)
       projects/<slug>.json                   Guided project briefs + rubrics
       drill/<track>/*.json                   Algorithm-drill problem banks
       lab/<track>/*.json                     Mastery Lab tiered task sets (warmup/build/diagnose/capstone)
