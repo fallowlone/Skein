@@ -1,8 +1,13 @@
 // site/src/components/interview/InterviewQABank.tsx
-// Browsable Q&A bank + drill mode for interview prep questions.
+// Browsable interview-question bank with progressive, lesson-style answers.
 import { useState, useMemo } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
-import type { InterviewQData } from "~/types/interview";
+import type { InterviewLevel, InterviewQData } from "~/types/interview";
+import {
+  buildInterviewAnswerLevels,
+  INTERVIEW_LEVELS,
+  parseInterviewAnswer,
+} from "~/scripts/interview/interview-answers";
 
 type Props = {
   lang: Locale;
@@ -10,178 +15,142 @@ type Props = {
   data: InterviewQData;
 };
 
-type DrillState = {
-  category: string;
-  questionIdx: number;
-  answered: boolean;
-};
+type InterviewQuestion = InterviewQData[string]["questions"][number];
+
+function InterviewQuestionItem({
+  cat,
+  question,
+  index,
+  level,
+  lang,
+}: {
+  cat: string;
+  question: InterviewQuestion;
+  index: number;
+  level: InterviewLevel;
+  lang: Locale;
+}) {
+  const [open, setOpen] = useState(false);
+  const answer = buildInterviewAnswerLevels(question.answer)[level];
+
+  return (
+    <details class="iq-item" onToggle={(event) => setOpen((event.currentTarget as HTMLDetailsElement).open)}>
+      <summary class="iq-summary">
+        <span class="iq-number">{index + 1}</span>
+        <span class="iq-cat-badge">{cat}</span>
+        <span class="iq-q-title">{question.title}</span>
+      </summary>
+      {open && (
+        <div class="iq-answer">
+          <p class="iq-answer-level">
+            {t("interviewQA.answer", lang)} · {t(`interviewQA.level.${level}`, lang)}
+          </p>
+          <div class="iq-answer-body">
+            {parseInterviewAnswer(answer).map((block, blockIndex) => {
+              if (block.kind === "rule") return <hr class="iq-answer-rule" key={blockIndex} />;
+              if (block.kind === "heading") return <h3 key={blockIndex}>{block.text}</h3>;
+              if (block.kind === "code") {
+                return (
+                  <div class="iq-code-block" key={blockIndex}>
+                    <div class="iq-code-head">
+                      <span>{block.language}</span>
+                      <span>code</span>
+                    </div>
+                    <pre class="iq-answer-code" data-language={block.language}>
+                      <code>{block.text}</code>
+                    </pre>
+                  </div>
+                );
+              }
+              return <p key={blockIndex}>{block.text}</p>;
+            })}
+          </div>
+        </div>
+      )}
+    </details>
+  );
+}
 
 export default function InterviewQABank({ lang, categories, data }: Props) {
-  const [mode, setMode] = useState<"browse" | "drill">("browse");
   const [activeCategory, setActiveCategory] = useState("all");
   const [search, setSearch] = useState("");
-  const [drill, setDrill] = useState<DrillState>({
-    category: categories[0] ?? "",
-    questionIdx: 0,
-    answered: false,
-  });
+  const [level, setLevel] = useState<InterviewLevel>("middle");
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
-    const result: Array<{ cat: string; question: { title: string; slug: string; answer: string; url: string } }> = [];
+    const result: Array<{ cat: string; question: InterviewQData[string]["questions"][number] }> = [];
     for (const cat of categories) {
       if (activeCategory !== "all" && cat !== activeCategory) continue;
       for (const qn of data[cat].questions) {
-        if (q && !qn.title.toLowerCase().includes(q) && !qn.answer.toLowerCase().includes(q)) continue;
+        if (q && !qn.title.toLowerCase().includes(q)) continue;
         result.push({ cat, question: qn });
       }
     }
     return result;
   }, [categories, data, activeCategory, search]);
 
-  const drillQuestion = useMemo(() => {
-    if (!data[drill.category]) return null;
-    const q = data[drill.category].questions[drill.questionIdx];
-    return q ?? null;
-  }, [data, drill.category, drill.questionIdx]);
-
-  const drillTotal = data[drill.category]?.questions.length ?? 0;
-
-  function next() {
-    if (!data[drill.category]) return;
-    const nextIdx = (drill.questionIdx + 1) % drillTotal;
-    setDrill({ ...drill, questionIdx: nextIdx, answered: false });
-  }
-
-  function prev() {
-    if (!data[drill.category]) return;
-    const prevIdx = (drill.questionIdx - 1 + drillTotal) % drillTotal;
-    setDrill({ ...drill, questionIdx: prevIdx, answered: false });
-  }
-
   const totalQ = Object.values(data).reduce((s, c) => s + c.questions.length, 0);
 
   return (
     <div class="iq-bank">
-      {/* Mode toggle */}
-      <div class="iq-tabs mb-6">
-        <button
-          type="button"
-          class={`iq-tab ${mode === "browse" ? "on" : ""}`}
-          onClick={() => setMode("browse")}
-        >
-          {t("interviewQA.browse", lang)}
-        </button>
-        <button
-          type="button"
-          class={`iq-tab ${mode === "drill" ? "on" : ""}`}
-          onClick={() => setMode("drill")}
-        >
-          {t("interviewQA.drill", lang)}
-        </button>
+      <div class="iq-filter">
+        <div class="iq-cats">
+          <button
+            type="button"
+            class={`iq-cat ${activeCategory === "all" ? "on" : ""}`}
+            onClick={() => setActiveCategory("all")}
+          >
+            {t("interviewQA.all", lang)} ({totalQ})
+          </button>
+          {categories.map((cat) => (
+            <button
+              type="button"
+              class={`iq-cat ${activeCategory === cat ? "on" : ""}`}
+              onClick={() => setActiveCategory(cat)}
+            >
+              {cat} ({data[cat].questions.length})
+            </button>
+          ))}
+        </div>
+        <input
+          type="search"
+          class="iq-search"
+          placeholder={t("interviewQA.search", lang)}
+          value={search}
+          onInput={(e) => setSearch((e.target as HTMLInputElement).value)}
+        />
       </div>
 
-      {mode === "browse" && (
-        <div class="iq-browse">
-          {/* Category filter + search */}
-          <div class="iq-filter">
-            <div class="iq-cats">
-              <button
-                type="button"
-                class={`iq-cat ${activeCategory === "all" ? "on" : ""}`}
-                onClick={() => setActiveCategory("all")}
-              >
-                {t("interviewQA.all", lang)} ({totalQ})
-              </button>
-              {categories.map((cat) => (
-                <button
-                  type="button"
-                  class={`iq-cat ${activeCategory === cat ? "on" : ""}`}
-                  onClick={() => setActiveCategory(cat)}
-                >
-                  {cat} ({data[cat].questions.length})
-                </button>
-              ))}
-            </div>
-            <input
-              type="search"
-              class="iq-search"
-              placeholder={t("interviewQA.search", lang)}
-              value={search}
-              onInput={(e) => setSearch((e.target as HTMLInputElement).value)}
+      <div class="iq-levels" role="tablist" aria-label={t("interviewQA.levels", lang)}>
+        {INTERVIEW_LEVELS.map((answerLevel) => (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={level === answerLevel}
+            class={`iq-level ${level === answerLevel ? "on" : ""}`}
+            onClick={() => setLevel(answerLevel)}
+          >
+            {t(`interviewQA.level.${answerLevel}`, lang)}
+          </button>
+        ))}
+      </div>
+
+      <div class="iq-list" aria-label={t("interviewQA.title", lang)}>
+        {filtered.length === 0 ? (
+          <p class="text-muted">{t("interviewQA.empty", lang)}</p>
+        ) : (
+          filtered.map(({ cat, question }, index) => (
+            <InterviewQuestionItem
+              key={question.slug}
+              cat={cat}
+              question={question}
+              index={index}
+              level={level}
+              lang={lang}
             />
-          </div>
-
-          {/* Question list */}
-          <div class="iq-list">
-            {filtered.length === 0 ? (
-              <p class="text-muted">{t("interviewQA.empty", lang)}</p>
-            ) : (
-              filtered.map(({ cat, question }) => (
-                <details class="iq-item" key={question.slug}>
-                  <summary class="iq-summary">
-                    <span class="iq-cat-badge">{cat}</span>
-                    <span class="iq-q-title">{question.title}</span>
-                  </summary>
-                  <div class="iq-answer">
-                    <div class="iq-answer-body" innerHTML={question.answer} />
-                    <a class="iq-source" href={question.url} target="_blank" rel="noopener noreferrer">
-                      {t("interviewQA.source", lang)} →
-                    </a>
-                  </div>
-                </details>
-              ))
-            )}
-          </div>
-        </div>
-      )}
-
-      {mode === "drill" && drillQuestion && (
-        <div class="iq-drill">
-          <div class="iq-drill-header">
-            <span class="iq-cat-badge">{drill.category}</span>
-            <span class="iq-drill-count">
-              {drill.questionIdx + 1} / {drillTotal}
-            </span>
-          </div>
-          <div class="iq-drill-question">{drillQuestion.title}</div>
-          <div class="iq-drill-answer">
-            {drill.answered ? (
-              <div class="iq-answer-body" innerHTML={drillQuestion.answer} />
-            ) : (
-              <button
-                type="button"
-                class="iq-reveal"
-                onClick={() => setDrill({ ...drill, answered: true })}
-              >
-                {t("interviewQA.showAnswer", lang)}
-              </button>
-            )}
-          </div>
-          <div class="iq-drill-footer">
-            <button type="button" class="iq-nav-btn" onClick={prev} disabled={drill.questionIdx === 0}>
-              {t("interviewQA.prev", lang)}
-            </button>
-            <select
-              class="iq-cat-select"
-              value={drill.category}
-              onInput={(e) => {
-                const cat = (e.target as HTMLSelectElement).value;
-                setDrill({ category: cat, questionIdx: 0, answered: false });
-              }}
-            >
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-            <button type="button" class="iq-nav-btn" onClick={next}>
-              {t("interviewQA.next", lang)}
-            </button>
-          </div>
-        </div>
-      )}
+          ))
+        )}
+      </div>
     </div>
   );
 }
