@@ -7,6 +7,8 @@ export interface InterviewQuestion {
   answer: string;
 }
 
+export type InterviewLevel = "junior" | "middle" | "senior";
+
 export interface InterviewCategory {
   name: string;
   url: string;
