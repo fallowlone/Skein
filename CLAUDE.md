@@ -189,8 +189,8 @@ before the build, so a sample that crashes on its runtime blocks the deploy.
 
 - `curriculum.md` — source of truth for depth bar, pillar map, authoring model, forbidden simplifications.
 - `style-guide.md` — ByteByteGo visual rules + component vocabulary.
-- `docs/superpowers/specs/2026-05-12-fullstack-curriculum-site-design.md` — architecture spec.
-- `docs/superpowers/plans/2026-05-12-fullstack-curriculum-site.md` — implementation plan (P2 pattern).
+- `docs/superpowers/specs/2026-05-12-fullstack-curriculum-site-design.md` — original design spec (superseded by track/unit/lesson model; see banner).
+- `docs/superpowers/plans/2026-05-12-fullstack-curriculum-site.md` — original implementation plan (superseded by track/unit/lesson model; see banner).
 - `site/src/content/lessons/en/networking/03-tcp-handshake/01-the-three-way-handshake/index.mdx` — template lesson (import paths, frontmatter, component usage).
 
 ## Working style
