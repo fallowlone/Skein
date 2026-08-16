@@ -8,6 +8,19 @@
 
 ---
 
+> **⚠️ Superseded — historical design record, not current architecture.**
+> This spec describes the original 16-pillar / chapter / piece three-tier
+> content model (`pillars.json` + `chapters.json` + `site/src/content/book/`
+> collections, `/infographic <pillar>/<NN-chapter>/<NN-piece>` command form).
+> That model was retired starting with commit `80f024601`
+> (`2026-05-21`, "chore(migration): retire book/pillars/chapters
+> collections") in favor of the live track → unit → lesson model. This
+> document is kept as a historical record of the original design decision —
+> its body below is unmodified since 2026-05-12 and should not be read as
+> describing the current site. For current architecture, see `curriculum.md`'s
+> `## Authoring model` section and root `CLAUDE.md`'s `## Purpose` /
+> `## Directory layout` sections.
+
 ## 1. Goal
 
 Ship a bilingual, free, static educational site that delivers **middle+ / senior fullstack** theoretical knowledge across all 16 pillars from `curriculum.md`. The site treats every pillar as a chapter under one Tier-3 Topic ("Senior Fullstack Curriculum"). Pedagogy follows the synthesis in the compass artifact: expertise-reversal-aware tier disclosure, faded worked examples, retrieval practice, spiral re-entry, system-paced animations, reactive diagrams, persona mnemonics, sandbox closures.

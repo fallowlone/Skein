@@ -22,6 +22,19 @@
 
 ---
 
+> **⚠️ Superseded — historical implementation plan, not current architecture.**
+> This plan describes the original engineering work to build the now-retired
+> 16-pillar / chapter / piece three-tier content model (`pillars.json` +
+> `chapters.json` + `site/src/content/book/` collections, `/infographic
+> <pillar>/<NN-chapter>/<NN-piece>` command form). That model was retired
+> starting with commit `80f024601` (`2026-05-21`, "chore(migration): retire
+> book/pillars/chapters collections") in favor of the live track → unit →
+> lesson model. This document is kept as a historical record of the original
+> implementation strategy — its body below is unmodified since 2026-05-12 and
+> should not be read as describing the current site's engineering process. For
+> current architecture, see `curriculum.md`'s `## Authoring model` section and
+> root `CLAUDE.md`'s `## Purpose` / `## Directory layout` sections.
+
 ## Phase P0 — Foundation + skeleton
 
 ### Task P0.1: Install Preact, @preact/signals, Vitest, Playwright
