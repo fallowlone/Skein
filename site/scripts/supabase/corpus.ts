@@ -220,6 +220,7 @@ export function lessonRow(raw: string, rel: string, hash: string): CourseRow {
     level: typeof data.level === "string" ? data.level : null,
     meta,
     body,
+    body_text: mdxToProse(body),
     body_hash: sha256(body),
     content_hash: hash,
   };

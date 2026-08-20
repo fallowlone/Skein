@@ -171,6 +171,27 @@ describe("lessonRow", () => {
     expect(r.meta).toMatchObject({ sources: ["https://example.com/array"] });
     expect(r.meta).not.toHaveProperty("concepts");
   });
+
+  it("carries a prose-only body_text alongside the raw body", async () => {
+    const raw = await readFile(
+      join(site, "src/content/lessons/en", "algorithms/02-arrays-strings/01/index.mdx"),
+      "utf8",
+    );
+    const r = lessonRow(raw, en, "H").row as Record<string, unknown>;
+    expect(r.body).toContain("# Body");          // raw body keeps markdown
+    expect(r.body_text).toBe("Body Hello world."); // prose is stripped
+    expect(typeof r.body_text).toBe("string");
+  });
+
+  it("body_hash still hashes the RAW body, not the prose", async () => {
+    const raw = await readFile(
+      join(site, "src/content/lessons/en", "algorithms/02-arrays-strings/01/index.mdx"),
+      "utf8",
+    );
+    const r = lessonRow(raw, en, "H").row as Record<string, unknown>;
+    expect(r.body_hash).toBe(sha256(r.body as string));
+    expect(r.body_hash).not.toBe(sha256(r.body_text as string));
+  });
 });
 
 describe("multi-entry rows + ledger keys", () => {
