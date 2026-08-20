@@ -1,0 +1,153 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- awesome-everything — Supabase content database (Phase 1 mirror)
+-- Docs: docs/2026-08-20-supabase-content-migration.md
+-- Setup: docs/operator-setup-supabase.md
+--
+-- Apply via the Dashboard SQL editor, or:
+--   supabase link --project-ref <ref>
+--   supabase db push
+--
+-- After applying, expose the `curriculum` schema to the API (Dashboard → API →
+-- Exposed schemas, or run the `pgrst` statements at the bottom) so PostgREST
+-- (and supabase-js) can serve it.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+create schema if not exists curriculum;
+
+-- Tracks — one row per entry in site/src/content/tracks.json (44 rows).
+create table if not exists curriculum.tracks (
+  slug          text primary key,
+  data          jsonb not null,
+  content_hash  text not null,
+  updated_at    timestamptz not null default now()
+);
+
+-- Units — one row per entry in site/src/content/units.json (440 rows).
+create table if not exists curriculum.units (
+  track         text not null,
+  slug          text not null,
+  data          jsonb not null,
+  content_hash  text not null,
+  updated_at    timestamptz not null default now(),
+  primary key (track, slug)
+);
+
+-- Lessons — one row per lesson MDX/MD file (EN + RU, ~4.5k rows).
+-- `meta` holds the cross-page frontmatter (prereqs, deepensInto, spiral,
+-- mathPrereqs, concepts, sources). `body` is the MDX body (frontmatter split
+-- off), hashed separately so incremental syncs never touch unchanged blobs.
+create table if not exists curriculum.lessons (
+  lang          text not null check (lang in ('en','ru')),
+  track         text not null,
+  unit          text not null,
+  slug          text not null,
+  order_no      integer,
+  title         text not null default '',
+  summary       text not null default '',
+  est_min       integer,
+  status        text not null default 'stub',          -- stub | draft | ready
+  lesson_type   text,                                  -- concept | coding | topic
+  level         text,                                  -- zero | junior | middle | senior
+  meta          jsonb not null default '{}'::jsonb,
+  body          text not null,
+  body_hash     text not null,
+  content_hash  text not null,
+  updated_at    timestamptz not null default now(),
+  primary key (lang, track, unit, slug)
+);
+create index if not exists lessons_track_idx on curriculum.lessons (track);
+create index if not exists lessons_unit_idx  on curriculum.lessons (track, unit);
+create index if not exists lessons_updated   on curriculum.lessons (updated_at desc);
+
+-- Practice — one row per practice JSON file (1,540 rows).
+create table if not exists curriculum.practice (
+  lesson_key    text primary key,                       -- "<track>/<unit>/<slug>"
+  track         text not null,
+  data          jsonb not null,                         -- { lessonKey, track, tasks[] }
+  content_hash  text not null,
+  updated_at    timestamptz not null default now()
+);
+
+-- Projects / drill / lab — single row per file.
+create table if not exists curriculum.projects (
+  slug          text primary key,
+  data          jsonb not null,
+  content_hash  text not null,
+  updated_at    timestamptz not null default now()
+);
+
+create table if not exists curriculum.drill (
+  track         text not null,
+  unit          text not null,
+  data          jsonb not null,
+  content_hash  text not null,
+  updated_at    timestamptz not null default now(),
+  primary key (track, unit)
+);
+
+create table if not exists curriculum.lab (
+  track         text not null,
+  tier          text not null,                                 -- warmup | build | diagnose | capstone
+  data          jsonb not null,
+  content_hash  text not null,
+  updated_at    timestamptz not null default now(),
+  primary key (track, tier)
+);
+
+-- Sync ledger — mirror-only: the sync tool (site/scripts/supabase/sync-content.mjs)
+-- owns this table. ledger_key is the row's primary key for single-file kinds and
+-- "<kind>#<pk>" for multi-entry files (tracks/units).
+create table if not exists curriculum.sync_log (
+  ledger_key    text primary key,
+  kind          text not null,                          -- tracks|units|lessons|practice|projects|drill|lab
+  content_hash  text not null,
+  synced_at     timestamptz not null default now()
+);
+
+-- Row-level security: content is public read; writes flow through the
+-- service-role key (the sync tool). sync_log stays private (no read policy).
+alter table curriculum.tracks    enable row level security;
+alter table curriculum.units     enable row level security;
+alter table curriculum.lessons   enable row level security;
+alter table curriculum.practice  enable row level security;
+alter table curriculum.projects  enable row level security;
+alter table curriculum.drill     enable row level security;
+alter table curriculum.lab       enable row level security;
+alter table curriculum.sync_log  enable row level security;
+
+create policy tracks_read   on curriculum.tracks   for select using (true);
+create policy units_read    on curriculum.units    for select using (true);
+create policy lessons_read  on curriculum.lessons  for select using (true);
+create policy practice_read on curriculum.practice for select using (true);
+create policy projects_read on curriculum.projects for select using (true);
+create policy drill_read    on curriculum.drill    for select using (true);
+create policy lab_read      on curriculum.lab      for select using (true);
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Grants. A custom schema does NOT inherit the auto-grants Supabase applies to
+-- `public`, so without this block every API call fails with
+-- "permission denied for schema curriculum" even once the schema is exposed.
+--
+-- Deliberately narrower than the stock Supabase snippet: the public API roles
+-- get SELECT only, so the publishable key can never write. RLS (above) gates
+-- which rows they see; these grants gate what they could ever do.
+-- ─────────────────────────────────────────────────────────────────────────────
+grant usage on schema curriculum to anon, authenticated, service_role;
+
+grant select on all tables in schema curriculum to anon, authenticated;
+alter default privileges for role postgres in schema curriculum
+  grant select on tables to anon, authenticated;
+
+-- The sync tool authenticates with the secret key (→ service_role) and writes.
+grant all on all tables in schema curriculum to service_role;
+alter default privileges for role postgres in schema curriculum
+  grant all on tables to service_role;
+
+-- The ledger is mirror-internal: no public read, belt-and-braces with its
+-- policy-free RLS.
+revoke select on curriculum.sync_log from anon, authenticated;
+
+-- Expose the schema to PostgREST so supabase-js / REST can address it.
+-- (Equivalent to Dashboard → API → Exposed schemas → curriculum.)
+alter role authenticator set pgrst.db_schemas to 'public, curriculum';
+notify pgrst, 'reload config';
