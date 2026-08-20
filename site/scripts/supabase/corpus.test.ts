@@ -19,6 +19,7 @@ import {
   parseFrontmatter,
   ledgerKeyKind,
   chunkByBytes,
+  mdxToProse,
   type CourseRow,
 } from "./corpus";
 
@@ -320,5 +321,58 @@ describe("chunkByBytes", () => {
     const rows = Array.from({ length: 25 }, (_, i) => ({ i }));
     const batches = chunkByBytes(rows, 10_000_000, 10);
     expect(batches.map((b) => b.length)).toEqual([10, 10, 5]);
+  });
+});
+
+describe("mdxToProse", () => {
+  it("drops fenced code blocks entirely", () => {
+    const out = mdxToProse("Before\n\n```js\nconst syn = 1;\n```\n\nAfter");
+    expect(out).toBe("Before After");
+    expect(out).not.toContain("const");
+  });
+
+  it("keeps inline code tokens — engineers search for identifiers", () => {
+    expect(mdxToProse("Send a `SYN` packet")).toBe("Send a SYN packet");
+  });
+
+  it("drops JSX tags but keeps their text children", () => {
+    expect(mdxToProse('A <Term k="tcp">handshake</Term> here')).toBe("A handshake here");
+  });
+
+  it("drops import and export lines", () => {
+    expect(mdxToProse('import X from "~/y";\n\nReal prose.')).toBe("Real prose.");
+    expect(mdxToProse("export const a = 1;\n\nReal prose.")).toBe("Real prose.");
+  });
+
+  it("keeps link text and drops the URL", () => {
+    expect(mdxToProse("See [the RFC](https://example.com/rfc793) now")).toBe("See the RFC now");
+  });
+
+  it("strips heading, emphasis and blockquote syntax", () => {
+    expect(mdxToProse("## Title\n\n**bold** and _thin_\n\n> quoted")).toBe("Title bold and thin quoted");
+  });
+
+  it("drops JSX expression braces", () => {
+    expect(mdxToProse("Value {someExpr} here")).toBe("Value here");
+  });
+
+  it("collapses whitespace and trims", () => {
+    expect(mdxToProse("a\n\n\n   b\t\tc  ")).toBe("a b c");
+  });
+
+  it("returns empty string for empty input", () => {
+    expect(mdxToProse("")).toBe("");
+  });
+
+  it("preserves Cyrillic prose unchanged", () => {
+    expect(mdxToProse("Это **рукопожатие** TCP")).toBe("Это рукопожатие TCP");
+  });
+
+  it("keeps snake_case identifiers intact", () => {
+    expect(mdxToProse("Set `max_rows` and db_schemas now")).toBe("Set max_rows and db_schemas now");
+  });
+
+  it("still strips underscore emphasis at word boundaries", () => {
+    expect(mdxToProse("a _stressed_ word")).toBe("a stressed word");
   });
 });
