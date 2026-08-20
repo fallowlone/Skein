@@ -123,6 +123,33 @@ create policy projects_read on curriculum.projects for select using (true);
 create policy drill_read    on curriculum.drill    for select using (true);
 create policy lab_read      on curriculum.lab      for select using (true);
 
+-- ── Full-text search (Phase 2) ───────────────────────────────────────────────
+-- body_text is prose extracted from the MDX by the sync (scripts/supabase/
+-- corpus.ts mdxToProse) — indexing raw MDX would match component names.
+alter table curriculum.lessons
+  add column if not exists body_text text not null default '';
+
+-- Per-row language selection is the point: Russian rows get the Russian
+-- stemmer, so "рукопожатия" matches "рукопожатие". The two-argument
+-- to_tsvector(regconfig, text) form is immutable, which a generated column
+-- requires; the one-argument form is not and cannot be used here.
+alter table curriculum.lessons
+  add column if not exists search_vector tsvector
+  generated always as (
+    setweight(to_tsvector(case lang when 'ru' then 'russian'::regconfig
+                                    else 'english'::regconfig end,
+                          coalesce(title, '')), 'A') ||
+    setweight(to_tsvector(case lang when 'ru' then 'russian'::regconfig
+                                    else 'english'::regconfig end,
+                          coalesce(summary, '')), 'B') ||
+    setweight(to_tsvector(case lang when 'ru' then 'russian'::regconfig
+                                    else 'english'::regconfig end,
+                          coalesce(body_text, '')), 'C')
+  ) stored;
+
+create index if not exists lessons_search_idx
+  on curriculum.lessons using gin (search_vector);
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Grants. A custom schema does NOT inherit the auto-grants Supabase applies to
 -- `public`, so without this block every API call fails with
