@@ -134,6 +134,52 @@ export function parseFrontmatter(raw: string): {
   };
 }
 
+// ── MDX → prose (search indexing) ───────────────────────────────────────────
+
+const FENCED_CODE = /```[\s\S]*?```/g;
+const HTML_COMMENT = /<!--[\s\S]*?-->/g;
+const IMPORT_EXPORT = /^[ \t]*(?:import|export)\s[^\n]*$/gm;
+const MD_IMAGE = /!\[[^\]]*\]\([^)]*\)/g;
+const MD_LINK = /\[([^\]]*)\]\([^)]*\)/g;
+const JSX_TAG = /<\/?[A-Za-z][\w.]*(?:\s[^>]*?)?\/?>/g;
+const JSX_EXPR = /\{[^{}]*\}/g;
+const INLINE_CODE = /`([^`]+)`/g;
+const MD_HEADING = /^[ \t]*#{1,6}[ \t]+/gm;
+const BLOCKQUOTE = /^[ \t]*>[ \t]?/gm;
+const MD_STAR_TILDE = /[*~]{1,3}/g;
+// Underscore emphasis only at a non-word boundary, so snake_case identifiers survive.
+const MD_UNDERSCORE = /(?<!\w)_{1,3}(?=\S)|(?<=\S)_{1,3}(?!\w)/g;
+
+/**
+ * Reduce an MDX body to plain prose for full-text indexing.
+ *
+ * Deliberately lossy and approximate: the output is only ever tokenized by
+ * Postgres, never displayed. Order matters — fenced code goes first so its
+ * contents cannot be re-matched by the inline-code or JSX rules, and images
+ * precede links because `![]()` is a superset of `[]()`.
+ *
+ * Whole code BLOCKS are dropped (tokenizing them floods the index with
+ * language keywords) while INLINE code is kept (identifiers like `SYN` are
+ * exactly what an engineer searches for).
+ */
+export function mdxToProse(body: string): string {
+  return body
+    .replace(FENCED_CODE, " ")
+    .replace(HTML_COMMENT, " ")
+    .replace(IMPORT_EXPORT, " ")
+    .replace(MD_IMAGE, " ")
+    .replace(MD_LINK, "$1")
+    .replace(JSX_TAG, " ")
+    .replace(JSX_EXPR, " ")
+    .replace(INLINE_CODE, "$1")
+    .replace(MD_HEADING, " ")
+    .replace(BLOCKQUOTE, " ")
+    .replace(MD_STAR_TILDE, "")
+    .replace(MD_UNDERSCORE, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // ── Row builders ────────────────────────────────────────────────────────────
 
 const LESSON_META_FIELDS = [
