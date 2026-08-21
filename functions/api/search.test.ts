@@ -99,18 +99,25 @@ describe("GET /api/search", () => {
     expect((await res.json() as any).results).toEqual([]);
   });
 
-  it("still serves the search when the rate limiter's KV throws — fails open rather than 500ing", async () => {
+  it("429s and never touches the database when the rate limiter's KV throws — fails closed, not open", async () => {
+    // A throwing put() is exactly what Workers KV does when a single key is
+    // written more than ~1/sec — i.e. this is the abuse case, not incidental
+    // infra noise, so it must deny the request rather than let it through.
     const throwingKv = {
       get: async () => { throw new Error("KV outage"); },
       put: async () => { throw new Error("KV outage"); },
       delete: async () => {},
     };
-    globalThis.fetch = (async () => new Response(JSON.stringify([
-      { slug: "01-the-three-way-handshake", track: "networking", unit: "03-tcp-handshake",
-        title: "The three-way handshake", summary: "s", snippet: "a packet", rank: 0.9 },
-    ]), { status: 200 })) as any;
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response(JSON.stringify([
+        { slug: "01-the-three-way-handshake", track: "networking", unit: "03-tcp-handshake",
+          title: "The three-way handshake", summary: "s", snippet: "a packet", rank: 0.9 },
+      ]), { status: 200 });
+    }) as any;
     const res = await onRequestGet(ctx("https://x/api/search?q=handshake&lang=en", env({ SESSIONS: throwingKv })));
-    expect(res.status).toBe(200);
-    expect((await res.json() as any).results).toHaveLength(1);
+    expect(res.status).toBe(429);
+    expect(called).toBe(false);
   });
 });
