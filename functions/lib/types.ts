@@ -10,6 +10,8 @@ export interface Env {
   COOKIE_NAME?: string; // defaults to "session" in dev, "__Host-session" in prod
   ADMIN_TOKEN?: string; // gates /api/admin/*; unset = admin endpoints disabled (503)
   CF_PAGES?: string;    // system var Cloudflare Pages always sets ("1"); used to force Secure cookies
+  SUPABASE_URL?: string;        // content mirror; unset = deep search disabled
+  SUPABASE_SECRET_KEY?: string; // service_role key; server-side only, never shipped
 }
 
 export interface UserRow {
