@@ -115,6 +115,17 @@ alter table curriculum.drill     enable row level security;
 alter table curriculum.lab       enable row level security;
 alter table curriculum.sync_log  enable row level security;
 
+-- Postgres has no `create policy if not exists`, so re-running this script would
+-- fail here with "policy already exists". Drop-then-create keeps the whole file
+-- safely re-runnable, which is what the header promises.
+drop policy if exists tracks_read   on curriculum.tracks;
+drop policy if exists units_read    on curriculum.units;
+drop policy if exists lessons_read  on curriculum.lessons;
+drop policy if exists practice_read on curriculum.practice;
+drop policy if exists projects_read on curriculum.projects;
+drop policy if exists drill_read    on curriculum.drill;
+drop policy if exists lab_read      on curriculum.lab;
+
 create policy tracks_read   on curriculum.tracks   for select using (true);
 create policy units_read    on curriculum.units    for select using (true);
 create policy lessons_read  on curriculum.lessons  for select using (true);
