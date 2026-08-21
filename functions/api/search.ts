@@ -69,7 +69,7 @@ export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) =>
     return json({ results: [] });
   }
 
-  const results: SearchHit[] = (rows ?? []).map((r) => ({
+  const results: SearchHit[] = (Array.isArray(rows) ? rows : []).map((r) => ({
     slug: r.slug, track: r.track, unit: r.unit, title: r.title,
     href: `/${v.lang}/learn/${r.track}/${r.unit}/${r.slug}/`,
     snippet: r.snippet ?? "",
