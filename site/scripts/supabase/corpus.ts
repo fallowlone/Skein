@@ -160,18 +160,40 @@ const MD_UNDERSCORE = /(?<!\w)_{1,3}(?=\S)|(?<=\S)_{1,3}(?!\w)/g;
  *
  * Whole code BLOCKS are dropped (tokenizing them floods the index with
  * language keywords) while INLINE code is kept (identifiers like `SYN` are
- * exactly what an engineer searches for).
+ * exactly what an engineer searches for) — including a backticked tag like
+ * `` `<Sequencer>` ``, which is a component name an engineer searches for,
+ * not markup. JSX_TAG's regex can't tell the difference on its own (it just
+ * matches `<...>`, backticks or not), so inline-code spans are pulled out
+ * into placeholders BEFORE JSX_TAG/JSX_EXPR run and spliced back in
+ * (unwrapped, backticks removed) afterward — a real JSX tag like
+ * `<Term k="tcp">` never enters a placeholder (no backticks around it), so
+ * it is still stripped as markup while its text child survives untouched.
+ *
+ * The placeholder is wrapped in NUL (built via String.fromCharCode, never
+ * typed as a literal byte in source) so it can never collide with real
+ * prose — unlike a plain space-delimited number, which a port or RFC number
+ * in ordinary text could accidentally match.
  */
+const PLACEHOLDER = String.fromCharCode(0);
+const CODE_PLACEHOLDER = new RegExp(`${PLACEHOLDER}(\\d+)${PLACEHOLDER}`, "g");
+
 export function mdxToProse(body: string): string {
-  return body
+  const codeSpans: string[] = [];
+  const withPlaceholders = body
     .replace(FENCED_CODE, " ")
     .replace(HTML_COMMENT, " ")
     .replace(IMPORT_EXPORT, " ")
     .replace(MD_IMAGE, " ")
     .replace(MD_LINK, "$1")
+    .replace(INLINE_CODE, (_match, code: string) => {
+      codeSpans.push(code);
+      return `${PLACEHOLDER}${codeSpans.length - 1}${PLACEHOLDER}`;
+    })
     .replace(JSX_TAG, " ")
-    .replace(JSX_EXPR, " ")
-    .replace(INLINE_CODE, "$1")
+    .replace(JSX_EXPR, " ");
+
+  return withPlaceholders
+    .replace(CODE_PLACEHOLDER, (_match, i: string) => codeSpans[Number(i)])
     .replace(MD_HEADING, " ")
     .replace(BLOCKQUOTE, " ")
     .replace(MD_STAR_TILDE, "")
