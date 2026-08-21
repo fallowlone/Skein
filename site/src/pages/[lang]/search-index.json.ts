@@ -32,7 +32,6 @@ export const GET: APIRoute = async ({ params }) => {
     pillar: e.data.track,
     pillarColor: trackColorBySlug[e.data.track] ?? "lilac",
     title: e.data.title,
-    summary: e.data.summary,
     href: `/${lang}/learn/${e.data.track}/${e.data.unit}/${e.data.slug}/`,
   }));
 
