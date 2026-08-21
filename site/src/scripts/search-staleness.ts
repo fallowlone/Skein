@@ -37,3 +37,24 @@ export function shouldScheduleDeep(query: string, localMatchCount: number): bool
   void localMatchCount; // intentionally ignored — see doc comment above
   return query.trim().length > 0;
 }
+
+/**
+ * Whether a settled deep-search request — success or thrown network error —
+ * is still the one whose result belongs on screen: it must be the most
+ * recent in-flight request (per the staleness guard's `accept()` verdict)
+ * AND the user must still be looking at the query it was issued for.
+ *
+ * A thrown fetch (offline, DNS failure, aborted connection) is gated by
+ * this exact same check before deciding to deliver an empty result set —
+ * it must NOT be dropped unconditionally just because it failed. Doing so
+ * left the zero-local-results "Searching lesson text…" placeholder stuck
+ * on screen forever, with nothing left to clear it: a broken UI, not a
+ * degraded one.
+ */
+export function isDeepResponseCurrent(
+  seqAccepted: boolean,
+  currentInputValue: string,
+  requestedQuery: string,
+): boolean {
+  return seqAccepted && currentInputValue.trim().toLowerCase() === requestedQuery;
+}
