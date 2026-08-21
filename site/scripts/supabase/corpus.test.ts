@@ -396,4 +396,17 @@ describe("mdxToProse", () => {
   it("still strips underscore emphasis at word boundaries", () => {
     expect(mdxToProse("a _stressed_ word")).toBe("a stressed word");
   });
+
+  it("keeps a backticked tag as a literal search token — it's an identifier, not markup", () => {
+    expect(mdxToProse("Use the `<Sequencer>` component")).toBe("Use the <Sequencer> component");
+  });
+
+  it("still drops a real (non-backticked) JSX tag while keeping its text child, alongside a backticked one", () => {
+    expect(mdxToProse('See `<Sequencer>` and <Term k="tcp">handshake</Term> both'))
+      .toBe("See <Sequencer> and handshake both");
+  });
+
+  it("does not let a plain number in prose collide with the inline-code placeholder", () => {
+    expect(mdxToProse("Send a `SYN` packet, port 443 stays put")).toBe("Send a SYN packet, port 443 stays put");
+  });
 });

@@ -39,11 +39,26 @@ export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) =>
   if (!v.ok) return error(400, v.reason);
 
   const ip = ctx.request.headers.get("CF-Connecting-IP") ?? "unknown";
-  const rl = await rateLimit({
-    kv: ctx.env.SESSIONS, ip, bucket: "search",
-    limit: RATE_LIMIT, windowSec: RATE_WINDOW,
-  });
-  if (!rl.ok) return error(429, "rate_limited");
+  // A KV outage must not become an uncaught throw here: it would propagate
+  // past this handler into the global middleware's catch-all (_middleware.ts),
+  // which turns any unhandled throw into a 500 — contradicting this
+  // endpoint's "degrade, never break" contract (never a 4xx/5xx for anything
+  // but a bad query). Fail OPEN: serve the search rather than block it. This
+  // is a read-only endpoint with no state to protect, so briefly losing
+  // rate-limiting during a KV outage is a smaller risk than turning a read
+  // endpoint into a 500; a write endpoint would reasonably choose the
+  // opposite (fail closed) since abuse protection is the point there.
+  let rateLimited = false;
+  try {
+    const rl = await rateLimit({
+      kv: ctx.env.SESSIONS, ip, bucket: "search",
+      limit: RATE_LIMIT, windowSec: RATE_WINDOW,
+    });
+    rateLimited = !rl.ok;
+  } catch {
+    rateLimited = false;
+  }
+  if (rateLimited) return error(429, "rate_limited");
 
   // Unconfigured mirror is not an error: local search still works, and a
   // preview deployment without secrets should serve a working page.
@@ -62,6 +77,7 @@ export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) =>
         authorization: `Bearer ${key}`,
       },
       body: JSON.stringify({ q: v.q, lang_code: v.lang, max_results: MAX_RESULTS }),
+      signal: AbortSignal.timeout(3000),   // a hung RPC must not hang the request
     });
     if (!res.ok) return json({ results: [] });   // degrade, never break
     rows = (await res.json()) as Row[];

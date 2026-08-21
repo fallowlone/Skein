@@ -30,6 +30,13 @@ describe("deep-search scheduling gate", () => {
     expect(shouldScheduleDeep("", 0)).toBe(false);
     expect(shouldScheduleDeep("   ", 3)).toBe(false);
   });
+  it("does not schedule for a single-character query — the endpoint requires >= 2 chars and would 400", () => {
+    expect(shouldScheduleDeep("a", 0)).toBe(false);
+    expect(shouldScheduleDeep(" a ", 0)).toBe(false);
+  });
+  it("schedules once the query reaches the endpoint's 2-character minimum", () => {
+    expect(shouldScheduleDeep("ab", 0)).toBe(true);
+  });
 });
 
 describe("deep-search failed-request delivery (catch-handler regression)", () => {
