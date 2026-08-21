@@ -69,6 +69,13 @@ describe("GET /api/search", () => {
     expect((await res.json() as any).results).toEqual([]);
   });
 
+  it("returns an empty result set when the database returns 200 with a non-array body", async () => {
+    globalThis.fetch = (async () => new Response(JSON.stringify({ error: "unexpected shape" }), { status: 200 })) as any;
+    const res = await onRequestGet(ctx("https://x/api/search?q=handshake&lang=en"));
+    expect(res.status).toBe(200);
+    expect((await res.json() as any).results).toEqual([]);
+  });
+
   it("returns an empty result set when the mirror is not configured", async () => {
     const res = await onRequestGet(ctx("https://x/api/search?q=handshake&lang=en",
       env({ SUPABASE_URL: undefined, SUPABASE_SECRET_KEY: undefined })));
