@@ -41,14 +41,29 @@ export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) =>
   const ip = ctx.request.headers.get("CF-Connecting-IP") ?? "unknown";
   // A KV outage must not become an uncaught throw here: it would propagate
   // past this handler into the global middleware's catch-all (_middleware.ts),
-  // which turns any unhandled throw into a 500 — contradicting this
-  // endpoint's "degrade, never break" contract (never a 4xx/5xx for anything
-  // but a bad query). Fail OPEN: serve the search rather than block it. This
-  // is a read-only endpoint with no state to protect, so briefly losing
-  // rate-limiting during a KV outage is a smaller risk than turning a read
-  // endpoint into a 500; a write endpoint would reasonably choose the
-  // opposite (fail closed) since abuse protection is the point there.
-  let rateLimited = false;
+  // which turns any unhandled throw into a 500. We still catch it, but the
+  // catch now fails CLOSED (rate-limited), not open.
+  //
+  // Why fail-closed here specifically: rateLimit() does a `kv.put` on
+  // `rl:search:<ip>` on every single request, and Workers KV caps writes to
+  // a single key at roughly 1/sec, throwing on the overage. So the one thing
+  // that lands in this catch is an IP sending more than ~1 req/sec — that's
+  // the abuse signal this limiter exists to catch, not unrelated infra
+  // noise. Fail-open would mean the busier an attacker gets, the more
+  // reliably their traffic sails through untracked, straight to Postgres, on
+  // an unauthenticated public endpoint — the limiter would vanish under
+  // exactly the load it's meant to cap.
+  //
+  // The cost is asymmetric in the other direction: this is a read-only
+  // enhancement layered over a client that keeps its own local search index
+  // and already treats any non-ok response as "no deep results," silently
+  // rendering local-only results. So a spurious 429 during genuine KV
+  // trouble costs the user a shallower search, not a broken page — while
+  // fail-open costs unbounded database load. That asymmetry (cheap to deny,
+  // expensive to allow) is why this path picks the opposite default from the
+  // Postgres RPC fetch below, which degrades to empty results on failure: a
+  // fetch failure there is ordinary infra flakiness, not a signal of abuse.
+  let rateLimited: boolean;
   try {
     const rl = await rateLimit({
       kv: ctx.env.SESSIONS, ip, bucket: "search",
@@ -56,7 +71,7 @@ export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) =>
     });
     rateLimited = !rl.ok;
   } catch {
-    rateLimited = false;
+    rateLimited = true;
   }
   if (rateLimited) return error(429, "rate_limited");
 
