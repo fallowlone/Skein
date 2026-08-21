@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createStalenessGuard, shouldScheduleDeep } from "../../scripts/search-staleness";
+import { createStalenessGuard, shouldScheduleDeep, isDeepResponseCurrent } from "../../scripts/search-staleness";
 
 describe("deep-search staleness guard", () => {
   it("ignores an earlier response that lands after a later one", () => {
@@ -29,5 +29,32 @@ describe("deep-search scheduling gate", () => {
   it("does not schedule for an empty query", () => {
     expect(shouldScheduleDeep("", 0)).toBe(false);
     expect(shouldScheduleDeep("   ", 3)).toBe(false);
+  });
+});
+
+describe("deep-search failed-request delivery (catch-handler regression)", () => {
+  // GlobalSearch.astro's catch handler is:
+  //   if (!isDeepResponseCurrent(deepGuard.accept(seq), input!.value, query)) return;
+  //   onResults([]);
+  // A thrown fetch (offline, DNS failure, aborted connection) must still
+  // reach `onResults([])` when it is current — an earlier version of this
+  // code dropped it unconditionally on any error, which left the
+  // zero-local-results "Searching lesson text…" placeholder stuck on
+  // screen forever with nothing left to clear it.
+  it("is current when the guard accepts it and the input still matches the query", () => {
+    expect(isDeepResponseCurrent(true, "рукопожатия", "рукопожатия")).toBe(true);
+  });
+  it("is NOT current once a later request has superseded it, even if the input still matches", () => {
+    // This is the regression case: a failed request must still be dropped
+    // (not delivered) once the staleness guard says it's stale — so a
+    // fix for the "stuck placeholder" bug must not swing to the opposite
+    // failure of injecting stale results into a newer query's UI.
+    expect(isDeepResponseCurrent(false, "рукопожатия", "рукопожатия")).toBe(false);
+  });
+  it("is NOT current once the user has changed the query, even if the guard still accepts it", () => {
+    expect(isDeepResponseCurrent(true, "networking", "рукопожатия")).toBe(false);
+  });
+  it("is case- and whitespace-insensitive on the input side, matching how render() derives its query", () => {
+    expect(isDeepResponseCurrent(true, "  Networking  ", "networking")).toBe(true);
   });
 });
