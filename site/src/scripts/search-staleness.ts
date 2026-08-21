@@ -35,7 +35,11 @@ export function createStalenessGuard() {
  */
 export function shouldScheduleDeep(query: string, localMatchCount: number): boolean {
   void localMatchCount; // intentionally ignored — see doc comment above
-  return query.trim().length > 0;
+  // The endpoint itself refuses anything shorter than 2 characters
+  // (functions/api/search.ts MIN_Q), so a 1-character query is a guaranteed
+  // 400 — gate here too, or the first keystroke of every search fires a
+  // doomed round trip.
+  return query.trim().length >= 2;
 }
 
 /**

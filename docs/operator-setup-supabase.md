@@ -1,10 +1,12 @@
 # Operator setup — Supabase content mirror
 
 One-time setup so `bun run sync:supabase` and `bun run verify:supabase-parity`
-can reach a database. Nothing in the site build depends on this: Phase 1 is a
-**push-only mirror**, and the site still renders entirely from
-`site/src/content/**`. If these steps are skipped, the CI mirror steps no-op and
-everything else is unaffected.
+can reach a database. Nothing in the site **build** depends on this: lessons
+still render entirely from `site/src/content/**`. But skipping setup is no
+longer consequence-free — as of the Phase 2 deep-search endpoint
+(`/api/search`), skipping the steps below leaves the CI mirror steps
+no-op-ing (harmless) **and** disables deep search in production, silently
+(see [§7](#7-pages-runtime-secrets-required-for-deep-search) below).
 
 ## 1. Create the project
 
@@ -51,6 +53,18 @@ Add repository secrets `SUPABASE_URL` and `SUPABASE_SECRET_KEY`
 the two mirror steps, which run only on `main` and are `continue-on-error: true`
 — a mirror problem must never block a content deploy.
 
+These are **CI-only** secrets — they feed the sync step in the deploy workflow.
+They are separate from the Pages runtime secrets in [§7](#7-pages-runtime-secrets-required-for-deep-search)
+below, which feed the deployed `/api/search` Worker itself. Setting one pair
+and not the other is a common half-done setup: CI syncs happily while the live
+endpoint keeps returning empty results.
+
+The sync always mirrors whichever working tree it runs from — including
+uncommitted changes. Running it from a dirty checkout publishes what's on
+disk, not what's committed. (This already caused a false parity-drift alarm
+during development: a sync run against local edits, then a parity check run
+against a clean checkout.)
+
 ## 6. First sync
 
 ```bash
@@ -65,7 +79,41 @@ The first full sync pushes every lesson body, so expect it to take a while and
 to move real bandwidth. Later runs diff against `curriculum.sync_log` and touch
 only what changed.
 
-## Verifying it worked
+## 7. Pages runtime secrets (required for deep search)
+
+`functions/api/search.ts` reads `SUPABASE_URL` and `SUPABASE_SECRET_KEY` from
+`ctx.env` at request time — this is a **separate** credential path from the CI
+secrets in [§5](#5-ci-credentials), which only feed the sync step. Nothing sets
+these for the deployed Worker automatically, and there is nothing in
+`wrangler.toml` that could: `[vars]` there is public and committed, and this is
+a write-capable secret key, so it must never go there.
+
+Set both as Pages secrets instead of `[vars]`:
+
+```bash
+bunx wrangler pages secret put SUPABASE_URL           # or a plain (non-secret) var — it's not sensitive on its own
+bunx wrangler pages secret put SUPABASE_SECRET_KEY
+```
+
+This targets the **Production** environment. Cloudflare Pages keeps Production
+and Preview secrets separate, and the CLI does not populate both — so also add
+both under Pages project → **Settings → Environment variables → Preview**, or
+preview deploys will keep silently serving local-search-only results forever.
+Confirm both environments have real values before relying on preview search.
+
+### Verifying it worked
+
+```bash
+curl 'https://<site>/api/search?q=tcp&lang=en'
+```
+
+Expect a non-empty `results` array. **An empty array is the failure signal** —
+by design, this endpoint degrades silently (never a 4xx/5xx) when the mirror is
+unreachable or unconfigured, so there is no log line or error to alert you.
+An empty array here means the secrets above are missing or wrong on whichever
+environment (Production/Preview) you just tested — there is no other symptom.
+
+## Verifying the sync worked
 
 ```sql
 select count(*) from curriculum.lessons;   -- expect 4528
@@ -78,4 +126,5 @@ select count(*) from curriculum.sync_log;  -- expect 6618
 
 The mirror holds no data that does not already exist in git, so a compromised
 secret key is a write/exposure problem, not a data-loss one. Rotate in
-Dashboard → API → Secret keys, then update `site/.env.local` and the CI secret.
+Dashboard → API → Secret keys, then update `site/.env.local`, the CI secret,
+and both Pages runtime secrets (Production and Preview — see §7).

@@ -153,6 +153,17 @@ create index if not exists lessons_search_idx
 -- Ranked full-text search over mirrored lessons. Lives in SQL because
 -- PostgREST cannot ORDER BY ts_rank or produce ts_headline snippets.
 -- `stable`, read-only, and callable only by service_role (the /api/search proxy).
+--
+-- Ranking and the LIMIT happen in the `ranked` CTE; ts_headline is computed
+-- only in the outer SELECT, over the (at most 50) surviving rows. Doing the
+-- headline in the same query as ORDER BY rank / LIMIT would build a snippet
+-- for every matching row before the limit discards most of them — on a broad
+-- query this means re-parsing a large share of the corpus's prose per
+-- request on an unauthenticated endpoint.
+--
+-- search_path is pinned (Supabase linter: function_search_path_mutable) so
+-- this can't be redirected by a caller's session search_path; every table
+-- reference below is schema-qualified regardless.
 create or replace function curriculum.search_lessons(
   q            text,
   lang_code    text,
@@ -163,29 +174,40 @@ returns table (
 )
 language sql
 stable
+set search_path = pg_catalog, curriculum
 as $$
   with cfg as (
     select case lang_code when 'ru' then 'russian'::regconfig
                           else 'english'::regconfig end as c
   ), query as (
     select websearch_to_tsquery((select c from cfg), q) as tsq
+  ), ranked as (
+    select
+      l.slug, l.track, l.unit, l.title, l.summary, l.body_text,
+      ts_rank(l.search_vector, (select tsq from query)) as rank
+    from curriculum.lessons l
+    where l.lang = lang_code
+      and l.status = 'ready'
+      and l.search_vector @@ (select tsq from query)
+    order by rank desc, l.track, l.slug
+    limit least(greatest(coalesce(max_results, 20), 1), 50)
   )
   select
-    l.slug, l.track, l.unit, l.title, l.summary,
+    r.slug, r.track, r.unit, r.title, r.summary,
     ts_headline(
       (select c from cfg),
-      l.body_text,
+      r.body_text,
       (select tsq from query),
       'StartSel=<mark>,StopSel=</mark>,MaxWords=30,MinWords=12,MaxFragments=1,FragmentDelimiter= … '
     ) as snippet,
-    ts_rank(l.search_vector, (select tsq from query)) as rank
-  from curriculum.lessons l
-  where l.lang = lang_code
-    and l.status = 'ready'
-    and l.search_vector @@ (select tsq from query)
-  order by rank desc, l.track, l.slug
-  limit least(greatest(coalesce(max_results, 20), 1), 50);
+    r.rank
+  from ranked r
+  order by r.rank desc, r.track, r.slug;
 $$;
+
+-- Belt-and-braces against a slow query holding a connection open: even with
+-- the LIMIT pushed into the `ranked` CTE, cap how long a single call may run.
+alter function curriculum.search_lessons(text, text, int) set statement_timeout = '3s';
 
 revoke all on function curriculum.search_lessons(text, text, int) from public, anon, authenticated;
 grant execute on function curriculum.search_lessons(text, text, int) to service_role;
