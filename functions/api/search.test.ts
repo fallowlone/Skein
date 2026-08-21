@@ -91,4 +91,26 @@ describe("GET /api/search", () => {
     const res = await onRequestGet(c());
     expect(res.status).toBe(429);
   });
+
+  it("returns an empty result set when the RPC fetch throws — an aborted timeout must degrade, not break", async () => {
+    globalThis.fetch = (async () => { throw new Error("aborted"); }) as any;
+    const res = await onRequestGet(ctx("https://x/api/search?q=handshake&lang=en"));
+    expect(res.status).toBe(200);
+    expect((await res.json() as any).results).toEqual([]);
+  });
+
+  it("still serves the search when the rate limiter's KV throws — fails open rather than 500ing", async () => {
+    const throwingKv = {
+      get: async () => { throw new Error("KV outage"); },
+      put: async () => { throw new Error("KV outage"); },
+      delete: async () => {},
+    };
+    globalThis.fetch = (async () => new Response(JSON.stringify([
+      { slug: "01-the-three-way-handshake", track: "networking", unit: "03-tcp-handshake",
+        title: "The three-way handshake", summary: "s", snippet: "a packet", rank: 0.9 },
+    ]), { status: 200 })) as any;
+    const res = await onRequestGet(ctx("https://x/api/search?q=handshake&lang=en", env({ SESSIONS: throwingKv })));
+    expect(res.status).toBe(200);
+    expect((await res.json() as any).results).toHaveLength(1);
+  });
 });

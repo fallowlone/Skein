@@ -1,8 +1,8 @@
 # Supabase content migration
 
 Status: **Phase 1 (mirror) live and verified** against project `zdtfehtbjcesuyawksgm`
-on 2026-08-20. **Phase 2 direction decided** (runtime reads for dynamic surfaces
-only, see below); not yet implemented.
+on 2026-08-20. **Phase 2 implemented**: the `/api/search` deep-search endpoint
+reads live from Postgres (runtime reads for dynamic surfaces only, see below).
 
 ## Why
 
@@ -91,7 +91,7 @@ content read allowed, write **denied at the grant layer** (not merely by RLS),
 `sync_log` read denied. The write refusal therefore survives a future
 mis-written RLS policy — which matters because that key ships in browser bundles.
 
-## Phase 2 — read path (decided, not started)
+## Phase 2 — read path (decided, implemented)
 
 Astro builds statically, so "the site reads from the DB" can mean several very
 different things.
