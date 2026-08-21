@@ -216,9 +216,14 @@ as $$
   order by r.rank desc, r.track, r.slug;
 $$;
 
--- Belt-and-braces against a slow query holding a connection open: even with
--- the LIMIT pushed into the `ranked` CTE, cap how long a single call may run.
-alter function curriculum.search_lessons(text, text, int) set statement_timeout = '3s';
+-- NOTE: a per-FUNCTION statement_timeout does NOT work here. `alter function
+-- ... set statement_timeout` applies the GUC on function ENTRY, by which point
+-- the enclosing statement's timer is already armed — so it cannot cap that
+-- call. Bound this at the ROLE level instead, where it is applied at session
+-- start: `alter role service_role set statement_timeout = '10s'`. On Supabase,
+-- anon (3s) and authenticated (8s) already carry one; service_role does not.
+-- User-facing latency is separately bounded by AbortSignal.timeout(3000) in
+-- functions/api/search.ts.
 
 revoke all on function curriculum.search_lessons(text, text, int) from public, anon, authenticated;
 grant execute on function curriculum.search_lessons(text, text, int) to service_role;
