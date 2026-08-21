@@ -150,6 +150,46 @@ alter table curriculum.lessons
 create index if not exists lessons_search_idx
   on curriculum.lessons using gin (search_vector);
 
+-- Ranked full-text search over mirrored lessons. Lives in SQL because
+-- PostgREST cannot ORDER BY ts_rank or produce ts_headline snippets.
+-- `stable`, read-only, and callable only by service_role (the /api/search proxy).
+create or replace function curriculum.search_lessons(
+  q            text,
+  lang_code    text,
+  max_results  int default 20
+)
+returns table (
+  slug text, track text, unit text, title text, summary text, snippet text, rank real
+)
+language sql
+stable
+as $$
+  with cfg as (
+    select case lang_code when 'ru' then 'russian'::regconfig
+                          else 'english'::regconfig end as c
+  ), query as (
+    select websearch_to_tsquery((select c from cfg), q) as tsq
+  )
+  select
+    l.slug, l.track, l.unit, l.title, l.summary,
+    ts_headline(
+      (select c from cfg),
+      l.body_text,
+      (select tsq from query),
+      'StartSel=<mark>,StopSel=</mark>,MaxWords=30,MinWords=12,MaxFragments=1,FragmentDelimiter= … '
+    ) as snippet,
+    ts_rank(l.search_vector, (select tsq from query)) as rank
+  from curriculum.lessons l
+  where l.lang = lang_code
+    and l.status = 'ready'
+    and l.search_vector @@ (select tsq from query)
+  order by rank desc, l.track, l.slug
+  limit least(greatest(coalesce(max_results, 20), 1), 50);
+$$;
+
+revoke all on function curriculum.search_lessons(text, text, int) from public, anon, authenticated;
+grant execute on function curriculum.search_lessons(text, text, int) to service_role;
+
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Grants. A custom schema does NOT inherit the auto-grants Supabase applies to
 -- `public`, so without this block every API call fails with
