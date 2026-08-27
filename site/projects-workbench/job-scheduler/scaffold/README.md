@@ -25,3 +25,17 @@ The suite encodes the failures that make schedulers infamous:
 Green suite = the core is correct. Then take it to Postgres on the project page:
 the due-time index, `SKIP LOCKED` claims, a heartbeat that extends real leases,
 priority and fairness under load, and the poison-pill incident.
+
+---
+
+Product milestones — see the project page for the full 5–6-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Frame the queue: data model, due-time index, durable enqueue** (`frame-and-durable-enqueue`)
+2. **At-least-once: claim, visibility timeout, heartbeat** (`at-least-once-visibility`)
+3. **Retries: exponential backoff, jitter, dead-letter queue** (`retries-backoff-dlq`)
+4. **Cron and delayed jobs: schedule, clock skew, double-fire** (`cron-delayed-clock`)
+5. **Exactly-once effect: dedup store, transactional handlers** (`idempotency-exactly-once-effect`)
+6. **Scale and survive: priority, fairness, observe, poison-pill incident** (`scale-observe-incident`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

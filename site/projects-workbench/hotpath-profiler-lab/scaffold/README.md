@@ -20,3 +20,16 @@ judgement rather than arithmetic:
 Green suite = you can measure honestly. Then do the lab on the project page: profile a
 real hot path, find the allocation or the layout thrash, fix it, and prove the fix
 with the same numbers you just learned to trust.
+
+---
+
+Product milestones — see the project page for the full 5–5-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **A slow baseline you can measure** (`baseline-and-harness`)
+2. **Profile until you can name the problem** (`profile-the-hotpath`)
+3. **Make the call sites monomorphic** (`monomorphize`)
+4. **Cut the allocations in the loop** (`cut-allocations`)
+5. **Prove the win, then defend it** (`prove-the-win`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

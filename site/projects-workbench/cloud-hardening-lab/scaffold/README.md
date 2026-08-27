@@ -28,3 +28,17 @@ The suite enforces the rules that separate hardening from a screenshot:
 
 Green suite = the report is honest and complete. It cannot verify your account —
 only that you measured, changed something specific, and can prove it.
+
+---
+
+Product milestones — see the project page for the full 5–6-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Measure what you actually have** (`baseline-posture`)
+2. **Scope IAM to least privilege** (`tighten-iam`)
+3. **Close the open paths** (`network-lockdown`)
+4. **Get secrets out of plaintext** (`secrets-and-kms`)
+5. **Make the account auditable** (`audit-logging`)
+6. **Stop the next misconfiguration before it ships** (`policy-as-code`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

@@ -28,3 +28,16 @@ RESETS a list — the usual way a hardening line gets silently undone.
 Green suite = the unit is defensible. Then do the parts a file cannot prove on the
 project page: install it, watch `systemctl status` and `journalctl -u`, trip the
 memory cap on purpose, and verify graceful reload.
+
+---
+
+Product milestones — see the project page for the full 5–5-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **A daemon that behaves** (`daemon-that-behaves`)
+2. **Wrap it in a unit** (`unit-file`)
+3. **Logs you can actually read** (`logs-in-journald`)
+4. **Budget, health, and graceful reload** (`limits-health-reload`)
+5. **Box it in and put it on a clock** (`sandbox-and-timer`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+
