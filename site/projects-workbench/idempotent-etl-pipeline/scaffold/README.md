@@ -21,3 +21,16 @@ re-runs safe in production —
 Green suite = the core is correct. Then take it to a real warehouse on the project
 page: staging tables, a MERGE/upsert statement, durable watermark state, and the
 backfill runbook.
+
+---
+
+Product milestones — see the project page for the full 5–5-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Ingest a source as a batch** (`batch-ingest`)
+2. **Make the load idempotent** (`idempotent-load`)
+3. **Go incremental with a watermark** (`incremental-watermark`)
+4. **Gate the load with quality checks** (`data-quality-gates`)
+5. **Backfill and late-arriving data** (`backfill-and-late-data`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

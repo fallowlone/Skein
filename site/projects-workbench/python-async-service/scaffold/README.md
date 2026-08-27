@@ -22,3 +22,19 @@ Green suite = the concurrency core is correct. Then build the service on the pro
 page: the FastAPI intake with Pydantic bounds, per-stage timeouts wired to a request
 budget, pyproject + lockfile, a container that handles PID 1 signals, structured
 logs with a request id, and the event-loop-starvation post-mortem.
+
+---
+
+Product milestones — see the project page for the full 5–8-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Frame the service: load shape, SLOs, async non-goals** (`frame`)
+2. **Build the ASGI intake with Pydantic validation** (`asgi-intake`)
+3. **Build the async pipeline with structured concurrency** (`async-pipeline`)
+4. **Make it cancellation-correct: timeouts and shielding** (`cancellation-timeouts`)
+5. **Package it: pyproject, entry points, lockfile** (`package`)
+6. **Containerize it: lean image, PID 1, signal handling** (`containerize`)
+7. **Make it legible: structured logging and config** (`observe`)
+8. **Survive event-loop starvation, then write the post-mortem** (`incident-postmortem`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

@@ -28,3 +28,17 @@ applies from a clean account, that remote state and locking work, that the app b
 behind the load balancer and can reach the database, and that a destroy/apply cycle
 reproduces the environment. Do those with the real account — this suite only
 guarantees you will not page yourself over a public database.
+
+---
+
+Product milestones — see the project page for the full 5–6-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Lay the network** (`network-foundation`)
+2. **Make the stack re-runnable** (`iac-skeleton`)
+3. **Compute behind a load balancer** (`compute-behind-alb`)
+4. **Managed database and object storage** (`managed-data-and-objects`)
+5. **Least-privilege IAM and outputs** (`least-privilege-iam-and-outputs`)
+6. **Ship it for real: blue/green, cost, or serverless** (`harden-or-go-serverless`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

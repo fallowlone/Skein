@@ -30,3 +30,16 @@ The checks are the failures that turn microservices into a distributed monolith:
 
 Green suite = the architecture survives a review. Building it is the rest of the
 project.
+
+---
+
+Product milestones — see the project page for the full 5–5-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Map the bounded contexts and establish ubiquitous language** (`bounded-contexts-and-ubiquitous-language`)
+2. **Choose a structural style for each bounded context** (`structural-style-per-context`)
+3. **Decide the read/write and event strategy** (`read-write-and-event-strategy`)
+4. **Choose a decomposition and avoid the distributed monolith** (`decomposition-avoid-distributed-monolith`)
+5. **Justify with ADRs and a fitness function** (`adrs-and-fitness-functions`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

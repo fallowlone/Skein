@@ -19,3 +19,16 @@ Green suite = the sync core is right. Then build the app around it on the projec
 page: IndexedDB persistence, the service worker (stale-while-revalidate shell,
 cache-first assets), Background Sync registration, and a UI that stays honest about
 what has not synced yet.
+
+---
+
+Product milestones — see the project page for the full 5-step product brief:
+
+1. **Local-first write queue (IndexedDB)** (`indexeddb-queue`)
+2. **Service-worker caching (SWR vs cache-first)** (`service-worker-caching`)
+3. **Sync with LWW on reconnect** (`sync-and-conflicts`)
+4. **Optimistic UI and sync status** (`optimistic-ui-and-status`)
+5. **Observe sync and work an incident** (`observe-and-incident`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar.
+

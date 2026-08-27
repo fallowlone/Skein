@@ -29,3 +29,17 @@ The checks are the ways a design document actually fails:
   you learn about from users.
 
 Green suite = the dossier is defensible in a design review.
+
+---
+
+Product milestones — see the project page for the full 5–6-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Scope it before you size it** (`scope-and-requirements`)
+2. **Do the arithmetic out loud** (`capacity-model`)
+3. **Pick the data model the access pattern demands** (`data-model-and-api`)
+4. **Find the one thing that breaks first** (`bottleneck-and-fix`)
+5. **Map how it fails and how it grows** (`failure-and-scaling`)
+6. **Write the tradeoffs down and defend them** (`tradeoff-ledger-and-defense`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

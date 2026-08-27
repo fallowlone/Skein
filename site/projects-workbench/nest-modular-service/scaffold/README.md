@@ -23,3 +23,17 @@ provides, which is the part that bites in review:
 Green suite = the model is right. Then build the service on the project page: real
 modules and DI, DTO validation, guards and interceptors wired both globally and
 per-route, an exception filter, and the config module with typed environment access.
+
+---
+
+Product milestones — see the project page for the full 5–6-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Carve the modules** (`modules-and-boundaries`)
+2. **Validate at the edge** (`validate-at-the-edge`)
+3. **Own the cross-cutting concerns** (`guards-and-interceptors`)
+4. **Configuration you can't typo** (`typed-config`)
+5. **Boot the whole thing in tests** (`e2e-suite`)
+6. **Senior stretch: a queue and a log you can trust** (`queue-and-logs`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

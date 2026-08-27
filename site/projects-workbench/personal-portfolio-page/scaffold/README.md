@@ -25,3 +25,16 @@ Every failing check is something a visitor would hit, not a style opinion:
 
 The grader reads source; it cannot tell you the page looks good. That part is yours —
 open it in a browser at 360px and at laptop width, and tab through it start to finish.
+
+---
+
+Product milestones — see the project page for the full 5-step product brief:
+
+1. **Structure it in HTML** (`structure-it`)
+2. **Style it with CSS** (`style-it`)
+3. **Make it work on a phone** (`make-it-responsive`)
+4. **Bring it to life with JavaScript** (`add-interactivity`)
+5. **Deploy and measure** (`deploy-and-measure`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar.
+
