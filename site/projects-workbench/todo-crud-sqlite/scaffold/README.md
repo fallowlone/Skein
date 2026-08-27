@@ -18,3 +18,16 @@ Use parameterized queries (`?` placeholders). The DB file must survive a restart
 Delete `todos.db`, restart, GET /todos should be 200 with [].
 
 The store exports `createStore(dbPath)` and `handle(req)` — see `src/todos.ts` for the stub.
+
+---
+
+Product milestones — see the project page for the full 5-step product brief:
+
+1. **Schema and migration** (`schema-and-migration`)
+2. **Create and list todos** (`create-and-list`)
+3. **Read, update, delete one todo** (`read-update-delete`)
+4. **Prove persistence** (`persistence-and-restart`)
+5. **Validation budget and errors** (`validation-and-error-budget`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar.
+
