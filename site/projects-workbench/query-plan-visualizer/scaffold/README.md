@@ -15,3 +15,16 @@ in the tree rather than at the root.
 Green suite = the analysis core is correct. Then build the UI on the project
 page: the collapsible tree, per-node planned-vs-actual badges, and the
 highlighted worst node.
+
+---
+
+Product milestones — see the project page for the full 5-step product brief:
+
+1. **Parse EXPLAIN JSON to a tree** (`parse-plan-tree`)
+2. **Per-node timing and row estimates** (`render-actual-vs-planned`)
+3. **Surface the worst node without false alarms** (`highlight-worst-node`)
+4. **Spill detection and work_mem reasoning** (`spill-and-work-mem`)
+5. **Diff two plans and observe an incident** (`diff-and-observe`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar.
+

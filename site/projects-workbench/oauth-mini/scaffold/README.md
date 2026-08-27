@@ -17,3 +17,17 @@ Green suite = the core is correct. Then go to the project page and push to the
 senior bar: real HTTP endpoints, asymmetric-signed JWTs with `kid` rotation,
 consent UI, introspection/revocation endpoints, and the threat model with the
 telemetry to act on it.
+
+---
+
+Product milestones — see the project page for the full 6-step product brief:
+
+1. **Build the authorization endpoint and PKCE start** (`authorize-and-pkce`)
+2. **Token endpoint: sign access and refresh tokens** (`token-endpoint`)
+3. **Wire the client: callback, state, redirect validation** (`client-integration`)
+4. **Scopes, consent, and introspection/revocation** (`scopes-consent-introspection`)
+5. **Refresh rotation and session security** (`refresh-rotation-session`)
+6. **Threat model, observe, and work a token-leak incident** (`threat-model-observe-incident`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar.
+

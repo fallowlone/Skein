@@ -24,3 +24,17 @@ headers.
 Green suite = the document is honest. The hardening itself still has to exist — run
 ZAP against the app, rotate the credential you found, and confirm each control from
 the outside.
+
+---
+
+Product milestones — see the project page for the full 5–6-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Draw the attack tree** (`attack-tree`)
+2. **Fix who-you-are and what-you-may-do** (`fix-authn-authz`)
+3. **Get secrets out of the code** (`fix-secrets`)
+4. **Headers at the edge, validation at the door** (`fix-headers-validation`)
+5. **Map every fix to its threat** (`threat-to-fix-writeup`)
+6. **Make the pipeline catch regressions** (`ci-security-checks`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

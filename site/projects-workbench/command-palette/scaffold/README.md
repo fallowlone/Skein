@@ -16,3 +16,16 @@ both ends and no out-of-range or NaN selected when the items list is empty.
 When the suite is green, read the project page's rubric and push to the senior
 bar: debounce re-ranking on each keystroke, keep the scoring function pure and
 separately testable, and consider virtualizing a long command list.
+
+---
+
+Product milestones — see the project page for the full 5-step product brief:
+
+1. **Registry + keyboard control** (`registry-and-keyboard`)
+2. **Fuzzy ranking (pure scoring function)** (`fuzzy-ranking`)
+3. **Async sources with debounce + cancellation** (`async-sources`)
+4. **Nested scoping with breadcrumbs** (`scoping-and-navigation`)
+5. **Accessibility + virtualized performance** (`a11y-and-performance`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar.
+

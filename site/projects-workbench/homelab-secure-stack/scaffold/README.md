@@ -27,3 +27,16 @@ patch** — the camera, the TV, the bulb. So:
 
 Green suite = the design is defensible. Then build it: apply the VLANs and rules, try
 to reach the LAN from the IoT network and fail, and actually restore a file.
+
+---
+
+Product milestones — see the project page for the full 5–5-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Compose the VPN-gated stack** (`compose-the-vpn-gated-stack`)
+2. **Lock the network: kill-switch, split-tunnel, and ufw rings** (`lock-the-network`)
+3. **Harden the host: SSH, fail2ban, and automatic patches** (`harden-the-host`)
+4. **Remote access without a public surface** (`remote-without-public-surface`)
+5. **Rotating, age-encrypted off-site backup** (`rotating-encrypted-backup`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

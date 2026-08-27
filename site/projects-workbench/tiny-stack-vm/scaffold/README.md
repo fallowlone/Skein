@@ -14,3 +14,17 @@ second pass.
 
 When the suite is green, push to the senior bar: add a `MEM` store/load,
 typed values, a disassembler, or a REPL.
+
+---
+
+Product milestones — see the project page for the full 5–6-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Design the instruction set** (`design-the-isa`)
+2. **The interpreter loop** (`fetch-decode-execute`)
+3. **Assembler with labels** (`assembler-and-labels`)
+4. **Branches and loops** (`jumps-and-control-flow`)
+5. **Functions with real frames** (`call-ret-frames`)
+6. **A flat addressable heap** (`addressable-heap`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

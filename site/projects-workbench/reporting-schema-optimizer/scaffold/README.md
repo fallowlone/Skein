@@ -24,3 +24,16 @@ about the discipline not to make things worse:
 Green suite = the reasoning is right. Then take it to a real warehouse on the project
 page: EXPLAIN the actual workload, apply the changes, and measure the write cost you
 just bought alongside the read win.
+
+---
+
+Product milestones — see the project page for the full 5–5-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Model the reporting domain** (`model-the-domain`)
+2. **Write the slow reports first** (`write-the-slow-reports`)
+3. **Read the plan, find the pain** (`read-the-plan`)
+4. **Index, materialize, and prove it** (`index-and-materialize`)
+5. **Guard against the regression** (`guard-against-regressions`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

@@ -29,3 +29,16 @@ a re-verification date.
 The scope matcher is deliberately conservative (exact host, `*.domain`, or a /24):
 a grader that guessed wider than your authorisation would be the exact mistake this
 project exists to prevent.
+
+---
+
+Product milestones — see the project page for the full 5–5-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Sign your own rules of engagement** (`scope-and-stand-up`)
+2. **Map what's actually there** (`recon-the-target`)
+3. **Find one real bug and name it** (`find-and-classify`)
+4. **Turn the bug into proof** (`prove-the-exploit`)
+5. **Fix it, then catch it next time** (`remediate-and-detect`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+

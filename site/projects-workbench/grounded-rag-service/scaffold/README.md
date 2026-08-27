@@ -22,3 +22,17 @@ a RAG service trustworthy, and it is all deterministic:
 Green suite = the grounding core is right. Then build the service on the project page:
 the embedding store, hybrid retrieval and reranking, the prompt that carries citations
 through, and an eval set that measures groundedness rather than vibes.
+
+---
+
+Product milestones — see the project page for the full 5–6-step product brief (mechanism → tradeoff → failure mode → numbers):
+
+1. **Chunk and embed the corpus** (`chunk-and-embed`)
+2. **Store vectors and retrieve top-k** (`store-and-retrieve`)
+3. **Ground the answer with citations** (`ground-with-citations`)
+4. **Score faithfulness with an eval set** (`eval-faithfulness`)
+5. **Add hybrid retrieval** (`hybrid-retrieval`)
+6. **Guard against unsupported claims and observe** (`guardrail-and-observe`)
+
+When the suite is green, read the project's `rubric` and `reference` on the site and push to the senior bar — the README checks the core, the project page checks the product.
+
