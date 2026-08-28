@@ -76,6 +76,7 @@ function PlacementMachine({ lang }: { lang: Locale }) {
   const self = useRef<Record<string, SelfPlace> | null>(null);
   const deps = useRef<RunnerDeps | null>(null);
   const st = useRef<RunnerState | null>(null);
+  const observed = useRef<Set<string>>(new Set());
   const [cur, setCur] = useState<Cursor | null>(null);
 
   const familyOf = (id: string): string => {
@@ -111,6 +112,7 @@ function PlacementMachine({ lang }: { lang: Locale }) {
     const d = buildDeps(cand, express);
     deps.current = d;
     st.current = initState(d, seedPriors(cand, sel));
+    observed.current = new Set();
     advanceTo(nextConcept(d, st.current));
   };
 
@@ -119,6 +121,7 @@ function PlacementMachine({ lang }: { lang: Locale }) {
     const s = st.current!;
     const p0 = s.priors.get(concept) ?? 0.5;
     const p1 = posterior(p0, r, itemIrt(concept, item as any));
+    observed.current.add(concept);
     let priorsAfter = new Map(s.priors);
     priorsAfter.set(concept, p1);
     if (p1 >= PASS || p1 <= FAIL) priorsAfter = propagatePriors(priorsAfter, content.graph, concept, p1, r);
@@ -127,7 +130,7 @@ function PlacementMachine({ lang }: { lang: Locale }) {
   };
 
   const finish = () => {
-    writePlacementPosteriors(st.current!.priors, Date.now());
+    writePlacementPosteriors(st.current!.priors, observed.current, Date.now());
     setPhase("result");
   };
 

@@ -4,7 +4,7 @@ import { CONCEPTS } from "./__fixtures__/mini-graph";
 import { buildConceptGraph } from "./graph";
 import {
   emptyState, masteryOf, isKnown, applyDiagnostic, applyStudyEvidence, applySelfDeclare, decay,
-  applyPracticeStruggle, PROP_UP_FACTOR, applyReviewEvidence,
+  applyPracticeStruggle, PROP_UP_FACTOR, applyReviewEvidence, applyDiagnosticBatch,
 } from "./knowledge";
 
 const g = buildConceptGraph(CONCEPTS);
@@ -78,6 +78,32 @@ describe("knowledge", () => {
     const s = applySelfDeclare(emptyState(), "mvcc", true, NOW); // confidence 1, source declared
     const stale = decay(s, g, NOW + 200 * 86_400_000, 0.85);
     expect(masteryOf(stale, "mvcc")).toBeCloseTo(0.85, 5);       // declared=1 fades to floor
+  });
+
+  it("keeps confidence finite and bounded for malformed diagnostic and decay input", () => {
+    const diagnosed = applyDiagnostic(emptyState(), g, "indexing", Number.NaN, NOW);
+    expect(masteryOf(diagnosed, "indexing")).toBe(0);
+    const corrupt = new Map([["mvcc", { confidence: 9, source: "activity" as const, lastAt: Number.NaN }]]);
+    const safe = decay(corrupt, g, NOW, 0.3);
+    expect(masteryOf(safe, "mvcc")).toBe(1);
+    expect(Number.isFinite(safe.get("mvcc")!.lastAt)).toBe(true);
+  });
+});
+
+describe("applyDiagnosticBatch", () => {
+  it("preserves every direct observation regardless of insertion order", () => {
+    const first = applyDiagnosticBatch(emptyState(), g, new Map([["tcp-handshake", 0.1], ["tls", 0.95]]), NOW);
+    const reversed = applyDiagnosticBatch(emptyState(), g, new Map([["tls", 0.95], ["tcp-handshake", 0.1]]), NOW);
+    expect(masteryOf(first, "tcp-handshake")).toBeCloseTo(0.1, 5);
+    expect(masteryOf(first, "tls")).toBeCloseTo(0.95, 5);
+    expect(first).toEqual(reversed);
+  });
+
+  it("propagates observations but does nothing when no concept was actually measured", () => {
+    const base = applySelfDeclare(emptyState(), "indexing", true, NOW - 1);
+    expect(applyDiagnosticBatch(base, g, new Map(), NOW)).toBe(base);
+    const next = applyDiagnosticBatch(emptyState(), g, new Map([["replication", 0.9]]), NOW);
+    expect(masteryOf(next, "mvcc")).toBeGreaterThan(0.6);
   });
 });
 

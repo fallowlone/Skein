@@ -36,6 +36,25 @@ describe("state-io", () => {
     expect(r.ok).toBe(false);
   });
 
+  it.each([
+    { confidence: 2, source: "diagnostic", lastAt: 1 },
+    { confidence: -0.1, source: "diagnostic", lastAt: 1 },
+    { confidence: 0.5, source: "invented", lastAt: 1 },
+    { confidence: 0.5, source: "diagnostic", lastAt: -1 },
+  ])("rejects unsafe mastery records: $source/$confidence/$lastAt", (mastery) => {
+    expect(parseStateBundle(JSON.stringify({ version: STATE_BUNDLE_VERSION, pathKnowledge: [["x", mastery]] })).ok).toBe(false);
+  });
+
+  it("rejects duplicate concept ids instead of silently taking the last value", () => {
+    const mastery = { confidence: 0.5, source: "diagnostic", lastAt: 1 };
+    expect(parseStateBundle(JSON.stringify({ version: STATE_BUNDLE_VERSION, pathKnowledge: [["x", mastery], ["x", mastery]] })).ok).toBe(false);
+  });
+
+  it("rejects malformed config and override collections", () => {
+    expect(parseStateBundle(JSON.stringify({ version: STATE_BUNDLE_VERSION, pathConfig: { goals: "all" } })).ok).toBe(false);
+    expect(parseStateBundle(JSON.stringify({ version: STATE_BUNDLE_VERSION, pathOverrides: { addEdges: [{ concept: 1, requires: "b" }] } })).ok).toBe(false);
+  });
+
   it("tolerates a missing section", () => {
     const r = parseStateBundle(JSON.stringify({ version: STATE_BUNDLE_VERSION, pathOverrides: { addEdges: [], removeEdges: [] } }));
     expect(r.ok).toBe(true);
