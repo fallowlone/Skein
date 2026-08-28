@@ -20,7 +20,7 @@ import { dueBefore, recordReview, allCards, type Card } from "~/scripts/review-s
 import { unitStruggleFractions } from "./practice-signal";
 import { buildDoNow, type DoNowItem } from "./do-now";
 import diagnosticsBundle from "~/content/path/diagnostics-bundle.json";
-import { buildConceptGraph } from "./graph";
+import { buildConceptGraph, induceUnitGraph } from "./graph";
 import { userState, importUserState } from "~/scripts/user-state";
 import { pretestQuestions, advancedQuestions } from "~/scripts/pretest-questions";
 import { seedFromPretest } from "./pretest-seed";
@@ -63,12 +63,37 @@ export function tierOf(cfg: PathConfig): Tier {
   return typeof cfg.depthTier === "string" ? cfg.depthTier : "middle";
 }
 
-export function applyViewOrder(steps: PathStep[], order: string[]): PathStep[] {
+export function applyViewOrder(
+  steps: PathStep[], order: string[], prereqUnits?: Map<string, string[]>,
+): PathStep[] {
   if (!order.length) return steps;
   const rank = new Map(order.map((u, i) => [u, i]));
-  const pinned = steps.filter((s) => rank.has(s.unit)).sort((a, b) => rank.get(a.unit)! - rank.get(b.unit)!);
-  const rest = steps.filter((s) => !rank.has(s.unit));
-  return [...pinned, ...rest];
+  if (!prereqUnits) {
+    const pinned = steps.filter((s) => rank.has(s.unit)).sort((a, b) => rank.get(a.unit)! - rank.get(b.unit)!);
+    const rest = steps.filter((s) => !rank.has(s.unit));
+    return [...pinned, ...rest];
+  }
+
+  // User pins are preferences, never permission to violate the learning DAG. Re-run a stable
+  // priority-constrained topological emission: among READY steps prefer pinned order, then the
+  // planner's original order. Dependencies outside this path are already known and impose no wait.
+  const remaining = steps.map((step, original) => ({ step, original }));
+  const pathUnits = new Set(steps.map((s) => s.unit));
+  const emitted = new Set<string>();
+  const out: PathStep[] = [];
+  while (remaining.length) {
+    const ready = remaining.filter(({ step }) =>
+      (prereqUnits.get(step.unit) ?? []).every((dep) => !pathUnits.has(dep) || emitted.has(dep)));
+    const pool = ready.length ? ready : remaining; // graph validation normally makes fallback unreachable
+    pool.sort((a, b) =>
+      (rank.get(a.step.unit) ?? Number.MAX_SAFE_INTEGER) - (rank.get(b.step.unit) ?? Number.MAX_SAFE_INTEGER) ||
+      a.original - b.original);
+    const chosen = pool[0];
+    out.push(chosen.step);
+    emitted.add(chosen.step.unit);
+    remaining.splice(remaining.indexOf(chosen), 1);
+  }
+  return out;
 }
 
 export function togglePin(order: string[], unit: string): string[] {
@@ -144,7 +169,7 @@ export function deserializeKnowledge(arr: [string, ConceptMastery][]): Knowledge
 // ── (Task 2 appends the content bundle + signals + mutations below this line) ──
 import { buildPath } from "./planner";
 import { schedulePlan, studyDays, availableMinutes } from "./schedule";
-import { emptyState, applySelfDeclare, applyDiagnostic, applyStudyEvidence, applyPracticeStruggle, decay } from "./knowledge";
+import { emptyState, applySelfDeclare, applyDiagnostic, applyDiagnosticBatch, applyStudyEvidence, applyPracticeStruggle, decay } from "./knowledge";
 import { mergeConfig, clampConfig, coldStartConfig } from "./config";
 import type { DeadlineConfig } from "./types";
 import { tierEffort } from "./tier-effort";
@@ -560,7 +585,8 @@ export function computePath(): { path: Path; schedule?: Schedule; droppedLocal: 
     state: effectiveKnowledge(), goals: goalObjs, config: cfg,
     content: { concepts: eff, units: effUnits, goalById }, srsDue: [], now, trackOrder, marketDemand,
   });
-  const path: Path = { steps: applyViewOrder(raw.steps, cfg.view.order) };
+  const unitDeps = induceUnitGraph(effUnits, effectiveGraph());
+  const path: Path = { steps: applyViewOrder(raw.steps, cfg.view.order, unitDeps) };
   const schedule = cfg.deadline ? schedulePlan(path, cfg.deadline, now, tierOf(cfg)) : undefined;
   return { path, schedule, droppedLocal };
 }
@@ -776,13 +802,15 @@ export function seedPriors(conceptIds: string[], selfByFamily: Record<string, Se
 // Note: propagation thresholds intentionally differ between the in-flight Bayes model
 // (bayes.PASS=0.7 / FAIL=0.3) and this committed write-back (applyDiagnostic's PASS_HIGH=0.6 /
 // FAIL_LOW=0.4) — the write-back deliberately follows the legacy calibrate contract.
-export function writePlacementPosteriors(posteriors: Map<string, number>, now: number): void {
-  let next = knowledge.value;
-  for (const [id, p] of posteriors) {
-    const { confidence } = collapse(p);
-    next = applyDiagnostic(next, graph, id, confidence, now);
+export function writePlacementPosteriors(
+  posteriors: Map<string, number>, observed: Iterable<string>, now: number,
+): void {
+  const measured = new Map<string, number>();
+  for (const id of observed) {
+    const p = posteriors.get(id);
+    if (p !== undefined) measured.set(id, collapse(p).confidence);
   }
-  knowledge.value = next;
+  knowledge.value = applyDiagnosticBatch(knowledge.value, graph, measured, now);
 }
 
 // ── deadline read-models for the UI (pace + optimization suggestions) ──────────

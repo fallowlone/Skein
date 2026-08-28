@@ -4,7 +4,7 @@ import type { ConceptGraph } from "./graph";
 import { ancestors, descendants } from "./graph";
 
 const DAY = 86_400_000;
-const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+const clamp01 = (x: number) => Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0;
 
 export const PROP_UP_FACTOR = 0.8; // share of a passed concept's confidence granted to prereqs
 export const PASS_HIGH = 0.6;      // >= => "passed", propagate up-closure lift
@@ -60,16 +60,54 @@ function setMastery(state: KnowledgeState, id: string, m: ConceptMastery): Knowl
 export function applyDiagnostic(
   state: KnowledgeState, g: ConceptGraph, concept: string, correctFrac: number, now: number,
 ): KnowledgeState {
-  let next = setMastery(state, concept, { confidence: clamp01(correctFrac), source: "diagnostic", lastAt: now });
-  if (correctFrac >= PASS_HIGH) {
-    const lift = correctFrac * PROP_UP_FACTOR;
+  const score = clamp01(correctFrac);
+  let next = setMastery(state, concept, { confidence: score, source: "diagnostic", lastAt: now });
+  if (score >= PASS_HIGH) {
+    const lift = score * PROP_UP_FACTOR;
     for (const a of ancestors(g, concept)) {
       if (masteryOf(next, a) < lift) next = setMastery(next, a, { confidence: lift, source: "diagnostic", lastAt: now });
     }
-  } else if (correctFrac < FAIL_LOW) {
+  } else if (score < FAIL_LOW) {
     for (const d of descendants(g, concept)) {
-      if (masteryOf(next, d) > correctFrac) next = setMastery(next, d, { confidence: clamp01(correctFrac), source: "diagnostic", lastAt: now });
+      if (masteryOf(next, d) > score) next = setMastery(next, d, { confidence: score, source: "diagnostic", lastAt: now });
     }
+  }
+  return next;
+}
+
+// Commit a placement run atomically. Only concepts that received an answer are direct diagnostic
+// evidence; untouched self-placement priors must never be persisted as if they were measured.
+// Direct observations always win over graph inference, making the result independent of Map order.
+export function applyDiagnosticBatch(
+  state: KnowledgeState, g: ConceptGraph, observations: Map<string, number>, now: number,
+): KnowledgeState {
+  if (!observations.size) return state;
+  const direct = new Set(observations.keys());
+  let next = new Map(state);
+  for (const [id, raw] of observations) {
+    next.set(id, { confidence: clamp01(raw), source: "diagnostic", lastAt: now });
+  }
+
+  const lifts = new Map<string, number>();
+  const lowers = new Map<string, number>();
+  for (const [id, raw] of observations) {
+    const score = clamp01(raw);
+    if (score >= PASS_HIGH) {
+      const lift = score * PROP_UP_FACTOR;
+      for (const a of ancestors(g, id)) if (!direct.has(a)) lifts.set(a, Math.max(lifts.get(a) ?? 0, lift));
+    } else if (score < FAIL_LOW) {
+      for (const d of descendants(g, id)) if (!direct.has(d)) lowers.set(d, Math.min(lowers.get(d) ?? 1, score));
+    }
+  }
+
+  for (const id of new Set([...lifts.keys(), ...lowers.keys()])) {
+    const current = masteryOf(next, id);
+    const lower = lowers.get(id);
+    const lift = lifts.get(id);
+    // Contradictory inferred evidence is handled conservatively: a failed prerequisite prevents
+    // a simultaneous inferred lift from hiding the gap. A future direct probe can resolve it.
+    const target = lower !== undefined ? Math.min(current, lower) : Math.max(current, lift ?? current);
+    if (target !== current) next.set(id, { confidence: target, source: "diagnostic", lastAt: now });
   }
   return next;
 }
@@ -154,12 +192,15 @@ export function applySelfDeclare(state: KnowledgeState, concept: string, known: 
 export function decay(state: KnowledgeState, _g: ConceptGraph, now: number, floor: number): KnowledgeState {
   const next = new Map<string, ConceptMastery>();
   for (const [id, m] of state) {
-    const days = (now - m.lastAt) / DAY;
+    const lastAt = Number.isFinite(m.lastAt) ? m.lastAt : now;
+    const days = Math.max(0, (now - lastAt) / DAY);
     let factor = 1;
     if (days >= STALE_DAYS) factor = 0;
     else if (days > FRESH_DAYS) factor = 1 - (days - FRESH_DAYS) / (STALE_DAYS - FRESH_DAYS);
-    const confidence = floor + (m.confidence - floor) * factor;
-    next.set(id, { ...m, confidence: m.confidence <= floor ? m.confidence : confidence });
+    const safeFloor = clamp01(floor);
+    const base = clamp01(m.confidence);
+    const confidence = safeFloor + (base - safeFloor) * factor;
+    next.set(id, { ...m, lastAt, confidence: base <= safeFloor ? base : clamp01(confidence) });
   }
   return next;
 }

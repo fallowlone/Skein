@@ -14,7 +14,8 @@ export interface Irt {
   c: number;
 }
 
-const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
+const clamp01 = (x: number) => Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0.5;
+const logistic = (x: number): number => 1 / (1 + Math.exp(-x));
 
 // Prior P(known) by self-placement × concept band. One source of truth.
 const PRIOR: Record<SelfPlace, Record<Band, number>> = {
@@ -31,34 +32,50 @@ export function fallbackIrt(band: Band, type: "mcq" | "blanks", choices: number)
   return { b: BAND_DIFFICULTY[band], a: 1.0, c };
 }
 
-// slip = chance a knower fails an item; shrinks with discrimination a.
-const slip = (a: number): number => clamp01(0.12 / Math.max(0.5, a)); // slip ceiling ~0.12 at a=1; halves at a=2. Empirically calibrated.
-const PDK_KNOWN = 0.04;   // knower rarely says "don't know"
-const PDK_UNKNOWN = 0.55; // non-knower often says "don't know" rather than guessing
+// Two-point 3PL observation model. The latent binary states are represented by ability points
+// θ=+3 (knows the concept) and θ=-2 (does not). Unlike the previous slip-only approximation,
+// this actually uses authored item difficulty `b`: a correct answer to a hard item is stronger
+// evidence than a correct answer to an easy one, while missing an easy item is stronger negative
+// evidence. The three response probabilities sum to one for each latent state.
+const THETA_KNOWN = 3;
+const THETA_UNKNOWN = -2;
+const PDK_KNOWN = 0.04;   // share of a knower's non-correct outcomes reported as "don't know"
+const PDK_UNKNOWN = 0.55; // non-knowers often abstain rather than guess
 
-// P(response | state). dont_know deliberately has NO guess floor c.
+function correctChance(theta: number, irt: Irt): number {
+  const a = Number.isFinite(irt.a) && irt.a > 0 ? irt.a : 1;
+  const b = Number.isFinite(irt.b) ? irt.b : 0;
+  const c = Number.isFinite(irt.c) ? Math.min(0.99, Math.max(0, irt.c)) : 0.05;
+  return c + (1 - c) * logistic(a * (theta - b));
+}
+
 export function likelihood(r: Response, irt: Irt): { known: number; unknown: number } {
-  const s = slip(irt.a);
-  const c = clamp01(irt.c);
-  if (r === "correct") return { known: 1 - s, unknown: c };
-  if (r === "dont_know") return { known: s * PDK_KNOWN, unknown: (1 - c) * PDK_UNKNOWN };
-  return { known: s * (1 - PDK_KNOWN), unknown: (1 - c) * (1 - PDK_UNKNOWN) }; // wrong
+  const pk = correctChance(THETA_KNOWN, irt);
+  const pu = correctChance(THETA_UNKNOWN, irt);
+  if (r === "correct") return { known: pk, unknown: pu };
+  if (r === "dont_know") return { known: (1 - pk) * PDK_KNOWN, unknown: (1 - pu) * PDK_UNKNOWN };
+  return { known: (1 - pk) * (1 - PDK_KNOWN), unknown: (1 - pu) * (1 - PDK_UNKNOWN) };
 }
 
 // Bayes step: posterior P(known | response).
 export function posterior(prior: number, r: Response, irt: Irt): number {
+  const p0 = clamp01(prior);
   const L = likelihood(r, irt);
-  const num = L.known * prior;
-  const den = num + L.unknown * (1 - prior);
-  return den <= 0 ? prior : clamp01(num / den);
+  const num = L.known * p0;
+  const den = num + L.unknown * (1 - p0);
+  return den <= 0 || !Number.isFinite(den) ? p0 : clamp01(num / den);
 }
 
-export const variance = (p: number): number => p * (1 - p);
+export const variance = (p: number): number => {
+  const safe = clamp01(p);
+  return safe * (1 - safe);
+};
 
 // Binary entropy in bits. 0 at p∈{0,1}, 1 at p=0.5.
 export function entropy(p: number): number {
-  if (p <= 0 || p >= 1) return 0;
-  return -(p * Math.log2(p) + (1 - p) * Math.log2(1 - p));
+  const safe = clamp01(p);
+  if (safe <= 0 || safe >= 1) return 0;
+  return -(safe * Math.log2(safe) + (1 - safe) * Math.log2(1 - safe));
 }
 
 // Expected entropy reduction from answering one item at this prior.
@@ -90,7 +107,9 @@ const DK_CASCADE_DAMP = 0.5; // dont_know down-cascade is half-strength vs wrong
 export function resolveIrt(
   authored: Irt | undefined, band: Band, type: "mcq" | "blanks", choices: number,
 ): Irt {
-  return authored ?? fallbackIrt(band, type, choices);
+  if (authored && Number.isFinite(authored.b) && Number.isFinite(authored.a) && authored.a > 0 &&
+      Number.isFinite(authored.c) && authored.c >= 0 && authored.c < 1) return authored;
+  return fallbackIrt(band, type, choices);
 }
 
 // Returns a NEW prior map with unobserved ancestors/descendants nudged after a focal update.
