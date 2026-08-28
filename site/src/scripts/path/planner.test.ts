@@ -183,4 +183,28 @@ describe("buildPath — triage value", () => {
     const leaf = path.steps.find((s) => s.unit === "networking/03-leaf")!;
     expect(hub.value!).toBeGreaterThan(leaf.value!);
   });
+
+  it("uses fresh demand to break ties only among prerequisite-ready units", () => {
+    const concepts = [
+      { id: "a", label: { en: "A", ru: "A" }, track: "networking", band: "middle", requires: [] },
+      { id: "b", label: { en: "B", ru: "B" }, track: "databases", band: "middle", requires: [] },
+    ] as any;
+    const units = [
+      { unit: "networking/a", track: "networking", teaches: ["a"], requires: [], estMin: 10 },
+      { unit: "databases/b", track: "databases", teaches: ["b"], requires: [], estMin: 10 },
+    ] as any;
+    const goal = { id: "market", label: { en: "", ru: "" }, target: { concepts: ["a", "b"] }, trackWeights: {} } as any;
+    const now = Date.parse("2026-08-28T00:00:00.000Z");
+    const path = buildPath({
+      state: emptyState(), goals: [goal], config: cfg({ breadthVsDepth: 1, pace: { stepsAhead: 2, srsAggressiveness: 0 } }),
+      content: { concepts, units, goalById: new Map([[goal.id, goal]]) }, srsDue: [], now,
+      trackOrder: new Map([["networking", 1], ["databases", 2]]),
+      marketDemand: {
+        schemaVersion: 1, generatedAt: new Date(now).toISOString(), windowDays: 30, sampleSize: 40,
+        sources: [{ id: "one", label: "One", jobs: 20 }, { id: "two", label: "Two", jobs: 20 }],
+        tracks: { databases: { score: 1, mentions: 20, confidence: 1 } }, concepts: {},
+      },
+    });
+    expect(path.steps.map((step) => step.unit)).toEqual(["databases/b", "networking/a"]);
+  });
 });
