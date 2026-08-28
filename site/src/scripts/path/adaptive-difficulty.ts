@@ -16,9 +16,11 @@ export interface TaskAttempt {
   lastAt: number;
 }
 
-// A passed stretch implies more mastery than a passed recall, so attempts are weighted by tier
-// when aggregated into a single proxy mastery. Unknown tiers fall to the middle.
-const TIER_WEIGHT: Record<string, number> = { recall: 0.34, apply: 0.66, stretch: 1 };
+// A task tier is a ceiling on what success demonstrates: acing recall is useful evidence, but it
+// must not instantly classify the learner as stretch-ready. Unknown tiers fall to the middle.
+const TIER_CEILING: Record<string, number> = { recall: 0.34, apply: 0.66, stretch: 1 };
+const MAX_ATTEMPT_WEIGHT = 5;
+const RECENT_RESULT_WEIGHT = 0.25;
 
 export interface LessonMastery {
   mastery: number; // [0,1] tier-weighted pass rate over attempted tasks
@@ -35,14 +37,21 @@ export function lessonMastery(
   let evidence = 0;
   for (const t of tasks) {
     const a = attempts[t.id];
-    if (!a || a.attempts === 0) continue;
+    if (!a || !Number.isFinite(a.attempts) || a.attempts <= 0) continue;
     evidence++;
-    const w = TIER_WEIGHT[t.difficulty] ?? 0.5;
-    const passed = a.passes > 0 ? 1 : 0;
-    num += w * passed;
-    den += w;
+    const total = Math.max(1, Math.round(a.attempts));
+    const passes = Math.min(total, Math.max(0, Number.isFinite(a.passes) ? Math.round(a.passes) : 0));
+    // Beta(1,1) smoothing prevents one lucky answer from producing 100% mastery. The latest
+    // outcome gets a modest recency weight, so repeated new failures can reverse stale success.
+    const historical = (passes + 1) / (total + 2);
+    const recent = a.lastResult === "pass" ? 1 : 0;
+    const success = historical * (1 - RECENT_RESULT_WEIGHT) + recent * RECENT_RESULT_WEIGHT;
+    const reliability = Math.min(MAX_ATTEMPT_WEIGHT, total);
+    const ceiling = TIER_CEILING[t.difficulty] ?? 0.5;
+    num += ceiling * success * reliability;
+    den += reliability;
   }
-  return { mastery: den > 0 ? num / den : 0, evidence };
+  return { mastery: den > 0 ? Math.min(1, Math.max(0, num / den)) : 0, evidence };
 }
 
 export interface NextRec {
@@ -64,7 +73,7 @@ export function recommendNext(
   status: Record<string, string>,
   attempts: Record<string, TaskAttempt>,
   threshold: number,
-  minEvidence = 1,
+  minEvidence = 2,
 ): NextRec {
   const open = tasks.filter((t) => status[t.id] !== "done");
   if (!open.length) return { taskId: null, tier: null, reason: "complete" };

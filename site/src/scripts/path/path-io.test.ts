@@ -40,6 +40,17 @@ describe("path-io pure helpers", () => {
     expect(applyViewOrder(steps, []).map((s) => s.unit)).toEqual(["n/01", "n/02"]);
   });
 
+  it("treats pins as preferences without moving a unit before its prerequisite", () => {
+    const steps = [step("n/base"), step("n/mid"), step("n/leaf"), step("db/free", "databases")];
+    const deps = new Map([
+      ["n/base", []], ["n/mid", ["n/base"]], ["n/leaf", ["n/mid"]], ["db/free", []],
+    ]);
+    const out = applyViewOrder(steps, ["n/leaf", "db/free"], deps).map((s) => s.unit);
+    expect(out.indexOf("n/base")).toBeLessThan(out.indexOf("n/mid"));
+    expect(out.indexOf("n/mid")).toBeLessThan(out.indexOf("n/leaf"));
+    expect(out[0]).toBe("db/free"); // independent pin still takes effect
+  });
+
   it("togglePin adds then removes a unit", () => {
     expect(togglePin([], "u1")).toEqual(["u1"]);
     expect(togglePin(["u1"], "u1")).toEqual([]);
