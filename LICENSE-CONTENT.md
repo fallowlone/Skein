@@ -13,7 +13,7 @@ You are free to:
 
 Under the following terms:
 
-- **Attribution** — you must give appropriate credit ("open atlas",
+- **Attribution** — you must give appropriate credit ("Learnvane",
   https://fallowlone.com), provide a link to the license, and indicate if
   changes were made.
 - **ShareAlike** — if you remix, transform, or build upon the material, you

@@ -13,6 +13,7 @@ import goalsJson from "~/content/path/goals.json";
 import diagnosticsIndex from "~/content/path/diagnostics-index.json";
 import unitsJson from "~/content/units.json";
 import tracksJson from "~/content/tracks.json";
+import marketDemandJson from "~/content/path/market-demand.json";
 import { masteryOf, applyReviewEvidence } from "./knowledge";
 import { recordAttempt, type AttemptRec } from "~/scripts/practice-state";
 import { dueBefore, recordReview, allCards, type Card } from "~/scripts/review-state";
@@ -46,6 +47,7 @@ import { applyOverridesFull, mergeOverrides, loosenUnitEdges } from "./overrides
 import { serializeStateBundle, parseStateBundle } from "./state-io";
 import { resolveIrt, priorFor, collapse, type SelfPlace, type Irt } from "./bayes";
 import type { Band } from "./types";
+import type { MarketDemandSnapshot } from "./market-demand";
 import { rankWeakSpots, type WeakSpot } from "./weak-spots";
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────────────────
@@ -159,6 +161,7 @@ export type StoredPathConfig = PathConfig & { view: PathView };
 const concepts = conceptsJson as Concept[];
 const units = unitsFromMap(unitConceptsJson as any);
 const goals = goalsJson as Goal[];
+const marketDemand = marketDemandJson as MarketDemandSnapshot;
 const goalById = new Map(goals.map((g) => [g.id, g]));
 const conceptById = new Map(concepts.map((c) => [c.id, c]));
 const diagnosedConcepts = new Set(diagnosticsIndex as string[]);
@@ -175,7 +178,7 @@ const graph = buildConceptGraph(concepts);
 // *called* by the `knowledge` signal init further down, so `graph` is always initialized first.
 const diagnostics = diagnosticsBundle as Record<string, { concept: string; items: DiagItem[] }>;
 
-export const content = { concepts, units, goals, goalById, conceptById, diagnosedConcepts, quickCheckUnits, unitTitleById, trackOrder, diagnostics, graph, taughtConcepts };
+export const content = { concepts, units, goals, goalById, conceptById, diagnosedConcepts, quickCheckUnits, unitTitleById, trackOrder, diagnostics, graph, taughtConcepts, marketDemand };
 
 // ── persistence (versioned, mirrors user-state.ts) ─────────────────────────────
 import { signal, effect } from "@preact/signals";
@@ -555,7 +558,7 @@ export function computePath(): { path: Path; schedule?: Schedule; droppedLocal: 
   const { concepts: eff, units: effUnits, droppedLocal } = effectiveContent();
   const raw = buildPath({
     state: effectiveKnowledge(), goals: goalObjs, config: cfg,
-    content: { concepts: eff, units: effUnits, goalById }, srsDue: [], now, trackOrder,
+    content: { concepts: eff, units: effUnits, goalById }, srsDue: [], now, trackOrder, marketDemand,
   });
   const path: Path = { steps: applyViewOrder(raw.steps, cfg.view.order) };
   const schedule = cfg.deadline ? schedulePlan(path, cfg.deadline, now, tierOf(cfg)) : undefined;
@@ -568,7 +571,7 @@ function buildInputFor(cfg: StoredPathConfig) {
   const goalObjs = cfg.goals.map((g) => goalById.get(g.id)).filter(Boolean) as Goal[];
   return {
     state: effectiveKnowledge(), goals: goalObjs, config: cfg,
-    content: { concepts: eff, units: effUnits, goalById }, srsDue: [], now: Date.now(), trackOrder,
+    content: { concepts: eff, units: effUnits, goalById }, srsDue: [], now: Date.now(), trackOrder, marketDemand,
   };
 }
 

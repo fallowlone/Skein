@@ -5,6 +5,7 @@ import { topoSort, ancestors, descendants, buildConceptGraph, induceUnitGraph, v
 import { isKnown } from "./knowledge";
 import { normalizeRanks, goalWeightFactor } from "./goal-rank";
 import { resolveGoalTargets, targetFrontier } from "./goal-resolve";
+import { marketFactorForUnit, type MarketDemandSnapshot } from "./market-demand";
 
 export { resolveGoalTargets, targetFrontier } from "./goal-resolve";
 
@@ -61,6 +62,7 @@ export function conceptsToUnits(missing: string[], units: UnitConcepts[]): UnitC
 export interface OrderCtx {
   config: PathConfig; state: KnowledgeState; graph: ConceptGraph; units: UnitConcepts[];
   goals: Goal[]; concepts: Concept[]; trackOrder: Map<string, number>;
+  marketDemand?: MarketDemandSnapshot; now?: number;
 }
 
 // Exported for unit tests. `ranks` maps goalId → normalized rank (1 = most important);
@@ -81,7 +83,10 @@ export function orderUnits(units: UnitConcepts[], ctx: OrderCtx): UnitConcepts[]
   // de-prioritised rather than silently boosted to the top.
   const bandOf = (u: UnitConcepts): Band => byId.get(u.teaches[0])?.band ?? "foundations";
   const ranks = new Map(normalizeRanks(ctx.config.goals).map((r) => [r.id, r.rank]));
-  const value = (u: UnitConcepts) => goalTrackWeight(u.track, ctx.goals, ranks) * SENIOR_WEIGHT[bandOf(u)];
+  const value = (u: UnitConcepts) =>
+    goalTrackWeight(u.track, ctx.goals, ranks) *
+    SENIOR_WEIGHT[bandOf(u)] *
+    marketFactorForUnit(u, ctx.marketDemand, ctx.now ?? Date.now());
   const to = (u: UnitConcepts) => ctx.trackOrder.get(u.track) ?? 99;
   const depthMode = ctx.config.breadthVsDepth < 0.5;
 
@@ -103,16 +108,16 @@ export function orderUnits(units: UnitConcepts[], ctx: OrderCtx): UnitConcepts[]
     let chosen: UnitConcepts;
     if (depthMode) {
       // depth: finish lower-order tracks first, then by unit slug (authoring/prereq order).
-      chosen = pool.slice().sort((a, b) => to(a) - to(b) || a.unit.localeCompare(b.unit))[0];
+      chosen = pool.slice().sort((a, b) => to(a) - to(b) || value(b) - value(a) || a.unit.localeCompare(b.unit))[0];
     } else {
       // breadth: spread across tracks — prefer the track with the fewest units emitted so far,
-      // then track order, then higher value, then unit slug.
+      // then higher goal + market value, then authored track order, then unit slug.
       const counts = new Map<string, number>();
       for (const u of out) counts.set(u.track, (counts.get(u.track) ?? 0) + 1);
       chosen = pool.slice().sort((a, b) =>
         (counts.get(a.track) ?? 0) - (counts.get(b.track) ?? 0) ||
-        to(a) - to(b) ||
         value(b) - value(a) ||
+        to(a) - to(b) ||
         a.unit.localeCompare(b.unit),
       )[0];
     }
@@ -141,10 +146,11 @@ export interface BuildInput {
   state: KnowledgeState; goals: Goal[]; config: PathConfig;
   content: { concepts: Concept[]; units: UnitConcepts[]; goalById: Map<string, Goal> };
   srsDue: PathStep[]; now: number; trackOrder: Map<string, number>;
+  marketDemand?: MarketDemandSnapshot;
 }
 
 export function buildPath(input: BuildInput): Path {
-  const { state, goals, config, content, srsDue, trackOrder } = input;
+  const { state, goals, config, content, srsDue, trackOrder, marketDemand } = input;
   const graph = buildConceptGraph(content.concepts);
   const acyclic = validateAcyclic(graph);
   if (!acyclic.ok) throw new Error(`path: concept graph has a cycle (${acyclic.cycle?.join(", ")})`);
@@ -154,7 +160,9 @@ export function buildPath(input: BuildInput): Path {
   const missing = missingConcepts(frontier, state, graph, config.weights.masteryThreshold);
   const missingSet = new Set(missing);
   const units = conceptsToUnits(missing, content.units);
-  const ordered = orderUnits(units, { config, state, graph, units: content.units, goals, concepts: content.concepts, trackOrder });
+  const ordered = orderUnits(units, {
+    config, state, graph, units: content.units, goals, concepts: content.concepts, trackOrder, marketDemand, now: input.now,
+  });
 
   const ranks = new Map(normalizeRanks(config.goals).map((r) => [r.id, r.rank]));
   const learn: PathStep[] = ordered.map((u) => {
@@ -171,7 +179,8 @@ export function buildPath(input: BuildInput): Path {
     const band = byId.get(u.teaches[0])?.band ?? "foundations";
     const down = new Set<string>();
     for (const c of unlocks) for (const d of descendants(graph, c)) if (missingSet.has(d)) down.add(d);
-    const value = goalTrackWeight(u.track, goals, ranks) * SENIOR_WEIGHT[band] * (1 + Math.log2(1 + down.size));
+    const value = goalTrackWeight(u.track, goals, ranks) * SENIOR_WEIGHT[band] *
+      (1 + Math.log2(1 + down.size)) * marketFactorForUnit(u, marketDemand, input.now);
     return { unit: u.unit, track: u.track, unlocks, reason: `Unlocks ${labels}`, kind: "learn", estMin, value };
   });
 
