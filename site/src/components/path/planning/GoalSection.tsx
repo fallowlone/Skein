@@ -3,7 +3,7 @@
 // the most time), a derived plan-time split bar, and a live rank panel under each active card.
 // A collapsible "refine" block holds custom concept targets + excluded tracks
 // (formerly the GoalPicker modal — now inline, single source).
-// Premium re-skin per the Open Atlas "Goal Configurator" design: every derived value
+// Premium re-skin per the Learnvane "Goal Configurator" design: every derived value
 // (rank, %, meta counts, split segments) is recomputed from state, never stored.
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";

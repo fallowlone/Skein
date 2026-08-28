@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🗺️ open atlas
+# 🗺️ Learnvane
 
 ### One connected atlas for becoming a senior fullstack engineer — bilingual (EN / RU), free, and open.
 
@@ -27,15 +27,15 @@ From counting and propositional logic all the way up to distributed systems, sys
 
 <br/>
 
-<img src="docs/screenshots/home.png" alt="open atlas — home" width="100%"/>
+<img src="docs/screenshots/home.png" alt="Learnvane — home" width="100%"/>
 
 </div>
 
 ---
 
-## ✨ Why open atlas
+## ✨ Why Learnvane
 
-Most courses are a flat list of videos. **open atlas is a graph.** ~4,800 concepts are connected by prerequisite edges across 38 tracks, so the site can answer the question a real learner actually has — *"given what I know and where I want to go, what do I study next, and in what order?"* — and then schedule it against a deadline, drill it with graded practice, and bring it back for review before you forget it.
+Most courses are a flat list of videos. **Learnvane is a graph.** ~4,800 concepts are connected by prerequisite edges across 38 tracks, so the site can answer the question a real learner actually has — *"given what I know and where I want to go, what do I study next, and in what order?"* — and then schedule it against a deadline, drill it with graded practice, and bring it back for review before you forget it.
 
 Everything is authored to a **middle+/senior depth bar**: mechanism → tradeoff → failure mode → real numbers. If a lesson reads like documentation, it's too shallow.
 
@@ -131,6 +131,12 @@ flowchart LR
 ```
 
 Mastery **decays** as a non-persisted read-model, so concepts you haven't touched quietly re-enter your path — no manual bookkeeping. Retrieval grades and practice outcomes both flow into the same mastery signal that the path engine plans against.
+
+### Market-demand signal
+
+The path engine also consumes a dated, auditable snapshot of skill mentions from public job-board APIs (Remotive, Arbeitnow, HeadHunter, plus optional Adzuna credentials). Run `bun run path:update-market` in `site/` to refresh it.
+
+This signal is intentionally **advisory, not authoritative**: it can add at most 25% to the rank of a unit whose prerequisites are already satisfied. Learner goals, mastery gaps, and the prerequisite graph always win. Snapshots expire after 45 days, failed sources are skipped without replacing the last good snapshot, duplicate/stale vacancies are removed, and two-source corroboration is required for full confidence. This avoids turning short-lived hiring noise into curriculum churn or relying on brittle scraping of LinkedIn/Indeed pages.
 
 ---
 
