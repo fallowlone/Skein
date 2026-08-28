@@ -27,21 +27,25 @@ describe("lessonMastery", () => {
     expect(m.mastery).toBeGreaterThan(0);
   });
 
-  it("weights a passed stretch higher than a passed recall", () => {
-    const recallOnly = lessonMastery(tasks, { r1: att(1, 1) }).mastery;
-    const stretchOnly = lessonMastery(tasks, { s1: att(1, 1) }).mastery;
-    // both are full pass rates, but tier weighting normalises to 1.0 for a single passed task
-    expect(recallOnly).toBeCloseTo(1, 5);
-    expect(stretchOnly).toBeCloseTo(1, 5);
-    // mixed: a failed stretch drags weighted mastery down more than a failed recall would
-    const failStretch = lessonMastery(tasks, { r1: att(1, 1), s1: att(1, 0) }).mastery;
-    const failRecall = lessonMastery(tasks, { s1: att(1, 1), r1: att(1, 0) }).mastery;
-    expect(failStretch).toBeLessThan(failRecall);
+  it("treats task difficulty as a mastery ceiling", () => {
+    const recallOnly = lessonMastery(tasks, { r1: att(3, 3) }).mastery;
+    const applyOnly = lessonMastery(tasks, { a1: att(3, 3) }).mastery;
+    const stretchOnly = lessonMastery(tasks, { s1: att(3, 3) }).mastery;
+    expect(recallOnly).toBeLessThan(applyOnly);
+    expect(applyOnly).toBeLessThan(stretchOnly);
+  });
+
+  it("uses all attempts and the latest result instead of permanent ever-passed mastery", () => {
+    const stable = lessonMastery(tasks, { a1: { ...att(5, 5), lastResult: "pass" } }).mastery;
+    const regressed = lessonMastery(tasks, { a1: { ...att(10, 1), lastResult: "fail" } }).mastery;
+    expect(regressed).toBeLessThan(stable);
+    expect(regressed).toBeLessThan(T * 0.5);
   });
 
   it("a failing learner yields low mastery", () => {
     const m = lessonMastery(tasks, { r1: att(3, 0), a1: att(2, 0) });
-    expect(m.mastery).toBe(0);
+    expect(m.mastery).toBeGreaterThan(0); // smoothed: never claims impossible certainty
+    expect(m.mastery).toBeLessThan(T * 0.5);
     expect(m.evidence).toBe(2);
   });
 });
@@ -66,25 +70,30 @@ describe("recommendNext", () => {
     expect(rec.reason).toBe("complete");
   });
 
-  it("recommends a harder tier for a learner acing recall", () => {
-    // passed recall ⇒ mastery 1.0 ⇒ stretch tier
+  it("does not jump from one lucky recall answer directly to stretch", () => {
     const rec = recommendNext(tasks, {}, { r1: att(1, 1) }, T);
+    expect(rec.reason).toBe("default"); // default evidence gate is deliberately two distinct tasks
+    expect(rec.taskId).toBe("r1");
+  });
+
+  it("moves to apply after consistent evidence across multiple tasks", () => {
+    const rec = recommendNext(tasks, {}, { r1: att(4, 4), a1: att(4, 3) }, T);
     expect(rec.reason).toBe("performance");
-    expect(rec.tier).toBe("stretch");
-    expect(rec.taskId).toBe("s1");
+    expect(rec.tier).toBe("apply");
+    expect(rec.taskId).toBe("a1");
   });
 
   it("keeps a struggling learner on the easiest open tier", () => {
     // failing apply ⇒ mastery 0 ⇒ recall tier
-    const rec = recommendNext(tasks, {}, { a1: att(3, 0) }, T);
+    const rec = recommendNext(tasks, {}, { a1: att(3, 0), s1: att(2, 0) }, T);
     expect(rec.reason).toBe("performance");
     expect(rec.tier).toBe("recall");
     expect(rec.taskId).toBe("r1");
   });
 
   it("when the matched tier task is done, recommendTask falls to the next open tier", () => {
-    // mastery 1.0 wants stretch, but stretch is done ⇒ next open by tier order
-    const rec = recommendNext(tasks, { s1: "done" }, { r1: att(1, 1) }, T);
+    // strong multi-task mastery wants stretch, but stretch is done ⇒ next open by tier order
+    const rec = recommendNext(tasks, { s1: "done" }, { a1: att(5, 5), s1: att(5, 5) }, T);
     expect(rec.reason).toBe("performance");
     expect(rec.taskId).not.toBe("s1");
     expect(["r1", "a1"]).toContain(rec.taskId);

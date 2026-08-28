@@ -42,6 +42,21 @@ describe("likelihood + posterior", () => {
     const highGuess = likelihood("dont_know", { b: 0, a: 1, c: 0.5 });
     expect(lowGuess.unknown).toBeGreaterThan(highGuess.unknown);
   });
+  it("uses authored difficulty: correct on a hard item is stronger evidence", () => {
+    const easy = posterior(0.5, "correct", { b: -2, a: 1.5, c: 0.2 });
+    const hard = posterior(0.5, "correct", { b: 2, a: 1.5, c: 0.2 });
+    expect(hard).toBeGreaterThan(easy);
+  });
+  it("keeps posteriors finite and bounded for adversarial numeric input", () => {
+    for (const prior of [-10, 0, 0.5, 1, 10, Number.NaN]) {
+      for (const response of ["correct", "wrong", "dont_know"] as const) {
+        const p = posterior(prior, response, { b: Number.NaN, a: -1, c: 4 });
+        expect(Number.isFinite(p)).toBe(true);
+        expect(p).toBeGreaterThanOrEqual(0);
+        expect(p).toBeLessThanOrEqual(1);
+      }
+    }
+  });
 });
 
 describe("entropy + info gain", () => {
@@ -100,5 +115,9 @@ describe("resolveIrt", () => {
     const irt = resolveIrt(undefined, "foundations", "mcq", 5);
     expect(irt.c).toBeCloseTo(0.2, 5);
     expect(irt.a).toBe(1.0);
+  });
+  it("falls back when authored parameters are non-finite or out of range", () => {
+    expect(resolveIrt({ b: Number.NaN, a: 0, c: 2 }, "surface", "mcq", 4))
+      .toEqual(fallbackIrt("surface", "mcq", 4));
   });
 });
