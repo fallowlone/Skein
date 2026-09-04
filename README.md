@@ -297,8 +297,8 @@ Historical `infographics/`, `assets/exports/`, `drafts/`, and `figma/` directori
 ### Install and run
 
 ```bash
-git clone https://github.com/fallowlone/awesome-everything.git
-cd awesome-everything
+git clone https://github.com/fallowlone/skein.git
+cd skein
 
 bun install
 cd site
