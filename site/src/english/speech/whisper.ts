@@ -2,7 +2,7 @@ import type { RecognitionResult } from "~/english/types";
 import type { SpeechRecognizer } from "./recognizer";
 
 const MODEL_ID = "whisper-tiny.en";
-const CACHE_FLAG = "awesome.whisper.ready";
+const CACHE_FLAG = "skein.whisper.ready";
 
 export type DownloadState = { status: "idle" | "downloading" | "ready" | "error"; pct: number };
 type ProgressEvent = { status: "progress" | "done" | "initiate" | "ready"; file: string; progress?: number };

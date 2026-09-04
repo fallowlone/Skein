@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- awesome-everything — Supabase content database (Phase 1 mirror)
+-- Skein — Supabase content database (Phase 1 mirror)
 -- Docs: docs/2026-08-20-supabase-content-migration.md
 -- Setup: docs/operator-setup-supabase.md
 --

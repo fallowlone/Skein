@@ -12,7 +12,7 @@ export function needsRevisit(e: DrillEntry, now: number): boolean {
   return now - e.at >= REVISIT_DAYS * 86_400_000;
 }
 
-const KEY = "awesome.drill.v1";
+const KEY = "skein.drill.v1";
 type Store = Record<string, DrillEntry>;
 
 export type DrillStore = Store;

@@ -16,10 +16,22 @@ read `item.band`. `assess-apply-knowledge.ts` already has a defensive guard (rul
 `MIN_EVIDENCE_ITEMS`/`MIN_BAND_CONFIDENCE`) written specifically to blunt the symptom, confirming
 the author was aware of the fallout but hadn't fixed the root cause.
 
-Per-concept band data already exists and is threaded through the app as a `bandOf(conceptId)`
-callback (built once in `AssessFlow.tsx`, from `concepts.json`, passed into `update.ts`,
-`select.ts`, etc.) — the fix is to make every consumer use that per-concept lookup instead of the
-single `item.band` field, not to invent new data.
+- Per-concept band data already exists and is threaded through the app as a `bandOf(conceptId)`
+  callback (built once in `AssessFlow.tsx`, from `concepts.json`, passed into `update.ts`,
+  `select.ts`, etc.) — the fix is to make every consumer use that per-concept lookup instead of the
+  single `item.band` field, not to invent new data.
+
+## Status
+
+Implemented 2026-08-19:
+
+- `likelihoodVector` takes the concept's band explicitly.
+- `update.ts` uses that band for both posterior math and evidence stamping.
+- `select.ts` passes the candidate concept's band into expected-gain scoring.
+- `ItemView.tsx` receives `bandOf` and anchors each LLM clamp to that concept's band.
+- Regression tests cover explicit-band likelihoods, selection, and per-concept evidence stamps.
+
+The broader assessment page remains intentionally gated until the separate D2 calibration redesign ships.
 
 ## Root cause (one origin, four propagation sites)
 

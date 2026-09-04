@@ -23,7 +23,7 @@ type LessonEntry = {
     prereqs?: string[];
     deepensInto?: string[];
     spiral?: string[];
-    title?: string;
+    title: string;
   };
 };
 

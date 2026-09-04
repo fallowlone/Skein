@@ -5,7 +5,7 @@ import { signal, effect } from "@preact/signals";
 
 export type Register = "engineering" | "everyday";
 
-const KEY = "awesome.english.register.v1";
+const KEY = "skein.english.register.v1";
 
 function load(): Register {
   if (typeof localStorage === "undefined") return "engineering";

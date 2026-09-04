@@ -1,16 +1,16 @@
 <div align="center">
 
-<img src="site/public/favicon.svg" width="88" height="88" alt="Learnvane logo" />
+<img src="site/public/favicon.svg" width="88" height="88" alt="Skein logo" />
 
-# Learnvane
+# Skein
 
 ### A connected learning atlas for becoming a senior fullstack engineer
 
 **44 tracks · 440 units · 2,264 lessons in each language · 5,035 concepts · EN/RU parity**
 
-Learnvane turns a large engineering curriculum into a personal route: it measures what you know, respects prerequisite dependencies, schedules practice and review, and recommends the next highest-value step toward your goal.
+Skein turns a large engineering curriculum into a personal route: it measures what you know, respects prerequisite dependencies, schedules practice and review, and recommends the next highest-value step toward your goal.
 
-[![Live](https://img.shields.io/badge/Open-Learnvane-2ea44f?style=for-the-badge)](https://fallowlone.com)
+[![Live](https://img.shields.io/badge/Open-Skein-2ea44f?style=for-the-badge)](https://fallowlone.com)
 [![Code license](https://img.shields.io/badge/Code-MIT-2563eb?style=for-the-badge)](./LICENSE)
 [![Content license](https://img.shields.io/badge/Content-CC_BY--SA_4.0-64748b?style=for-the-badge)](./LICENSE-CONTENT.md)
 
@@ -25,16 +25,16 @@ Learnvane turns a large engineering curriculum into a personal route: it measure
 <br />
 
 <a href="https://fallowlone.com/en/">
-  <img src="docs/screenshots/home.png" alt="Learnvane learning atlas home page" width="100%" />
+  <img src="docs/screenshots/home.png" alt="Skein learning atlas home page" width="100%" />
 </a>
 
 </div>
 
 ---
 
-## What Learnvane is
+## What Skein is
 
-Most courses are ordered playlists. Learnvane is a **dependency graph with a feedback loop**.
+Most courses are ordered playlists. Skein is a **dependency graph with a feedback loop**.
 
 Every lesson belongs to a track and unit, teaches explicit concepts, and is connected to prerequisites. The Learn Engine combines this graph with diagnostics, graded practice, review history, learner goals, available time, and a deliberately weak market-demand signal. The result is not a generic roadmap; it is a route that changes as the learner changes.
 
@@ -66,7 +66,7 @@ Counts above are derived from the repository content at the current revision. En
       <p align="center"><strong>Personal roadmap</strong><br />Prerequisite-aware planning, calibration, deadlines, and adaptive ordering.</p>
     </td>
     <td width="50%" valign="top">
-      <a href="docs/screenshots/lesson.png"><img src="docs/screenshots/lesson.png" alt="Learnvane lesson page" /></a>
+      <a href="docs/screenshots/lesson.png"><img src="docs/screenshots/lesson.png" alt="Skein lesson page" /></a>
       <p align="center"><strong>Deep lessons</strong><br />Explanations, visuals, retrieval prompts, practice, prerequisites, and progress.</p>
     </td>
   </tr>
@@ -76,7 +76,7 @@ Counts above are derived from the repository content at the current revision. En
       <p align="center"><strong>English for Engineers</strong><br />Reading, grammar, writing, speaking, vocabulary, and FSRS review.</p>
     </td>
     <td width="50%" valign="top">
-      <a href="docs/screenshots/home-dark.png"><img src="docs/screenshots/home-dark.png" alt="Learnvane atlas in dark theme" /></a>
+      <a href="docs/screenshots/home-dark.png"><img src="docs/screenshots/home-dark.png" alt="Skein atlas in dark theme" /></a>
       <p align="center"><strong>Accessible atlas</strong><br />Bilingual navigation, responsive layouts, and persistent light/dark themes.</p>
     </td>
   </tr>
@@ -106,7 +106,7 @@ The latest repository changes focus on making personalization more useful and mo
 - **Hardened knowledge model** — direct measurements are committed atomically, invalid persisted data is rejected or normalized, contradictory inferred evidence is handled conservatively, and stale confidence decays without mutating stored truth.
 - **Adaptive calibration** — difficulty and Bayesian updates are guarded by stronger invariants and explicit tests.
 - **Algorithm Workspace** — bilingual interactive coding practice now includes a problem bank, execution harness, hints, session state, mastery metrics, and a post-session debrief.
-- **Learnvane identity** — product naming and visual identity are consistent across navigation, account, path, legal, and error surfaces.
+- **Skein identity** — product naming and visual identity are consistent across navigation, account, path, legal, and error surfaces.
 
 ---
 
@@ -146,7 +146,7 @@ Market data cannot introduce a unit with unmet prerequisites. Snapshots expire a
 
 ## Architecture
 
-Learnvane is **static-first**. Thousands of bilingual pages are rendered ahead of time; interactive features are isolated Preact islands; only stateful operations use the edge layer.
+Skein is **static-first**. Thousands of bilingual pages are rendered ahead of time; interactive features are isolated Preact islands; only stateful operations use the edge layer.
 
 ```mermaid
 flowchart TB

@@ -33,7 +33,7 @@ export async function exchangeCodeForUser(
     headers: {
       Authorization: `Bearer ${tokenJson.access_token}`,
       accept: "application/vnd.github+json",
-      "user-agent": "awesome-everything",
+      "user-agent": "skein",
     },
   });
   if (!userRes.ok) throw new Error("github_user_fetch_failed");

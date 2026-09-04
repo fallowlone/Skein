@@ -72,13 +72,14 @@ export function applyResponse(
   for (const conceptId of item.concepts) {
     for (const facet of ["recognition", "mechanism", "production"] as const) {
       const key = cellKey(conceptId, facet);
-      const prior = next.get(key) ?? emptyCell(conceptId, facet, bandOf(conceptId));
+      const conceptBand = bandOf(conceptId);
+      const prior = next.get(key) ?? emptyCell(conceptId, facet, conceptBand);
 
       // D1/D4: Empty guard. An item is assess-eligible only if its task declares an explicit
       // `concepts` field (ItemPool filter). Even then, if we have no evidence yet,
       // an update that results in a posterior that has not measurably moved from
       // its prior is equivalent to `untested`, not `measured` (C1, D4).
-      const lik = likelihoodVector(item, response, facet);
+      const lik = likelihoodVector(item, response, facet, conceptBand);
       const isTarget = facet === item.facet;
 
       const verdictLevel = isTarget ? meta.llmVerdictLevels?.[conceptId] : undefined;
@@ -109,7 +110,7 @@ export function applyResponse(
         items: prior.items + (isTarget && hasMoved ? 1 : 0),
         evidence: isTarget && hasMoved
           ? [...prior.evidence, {
-              conceptId, facet, itemId: item.id, lessonKey: item.lessonKey, kind: item.kind, band: item.band,
+              conceptId, facet, itemId: item.id, lessonKey: item.lessonKey, kind: item.kind, band: conceptBand,
               response, answerDigest: digest(meta.answerDigest ?? ""), failureNote: meta.failureNote,
               llmGraded: meta.llmGraded, atMs,
             }]
