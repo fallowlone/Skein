@@ -55,17 +55,24 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
   }, [idx]);
 
   if (!view.length) {
-    return <p class="re-lead">{t("interview.empty", lang)}</p>;
+    return <p class="my-10 text-muted text-sm">{t("interview.empty", lang)}</p>;
   }
 
   if (idx >= view.length) {
     const score = Math.round(readinessScore(outcomes));
     return (
-      <section class="iv-done">
-        <div class="meta mb-2">{t("interview.title", lang)}</div>
-        <p class="iv-score">{t("interview.readiness", lang)}: {score}%</p>
-        <p class="text-muted text-xs">{t("interview.doneHint", lang)}</p>
-        <a class="re-cta" href={`/${lang}/roadmap/`}>{t("interview.reviewCta", lang)}</a>
+      <section class="my-10">
+        <div class="rounded-[var(--r-lg)] border-[0.5px] border-hairline-2 bg-card shadow-soft p-6 sm:p-7">
+          <div class="meta mb-2">{t("interview.title", lang)}</div>
+          <p class="font-mono text-[28px] font-bold text-ink mb-1">{t("interview.readiness", lang)}: {score}%</p>
+          <p class="text-muted text-xs mb-4">{t("interview.doneHint", lang)}</p>
+          <a
+            class="inline-block font-mono text-[12px] tracking-[0.03em] text-accent no-underline border-b-[0.5px] border-accent hover:opacity-80"
+            href={`/${lang}/roadmap/`}
+          >
+            {t("interview.reviewCta", lang)}
+          </a>
+        </div>
       </section>
     );
   }
@@ -85,27 +92,46 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
   const counter = t("interview.task", lang).replace("{n}", String(idx + 1)).replace("{total}", String(view.length));
 
   return (
-    <section class="iv-task">
-      <div class="meta mb-1">{counter}</div>
-      <h2 class="iv-prompt">{task.title[lang]}</h2>
-      <p class="iv-body">{task.prompt[lang]}</p>
-      {task.type === "design" && <p class="iv-constraints">{task.constraints[lang]}</p>}
-      <GradeWithAi lang={lang} task={task} />
-      <fieldset class="iv-assess">
-        <legend>{t("interview.selfAssess", lang)}</legend>
-        {PICKS.map((o) => (
-          <button
-            type="button"
-            key={o}
-            class={`iv-pick ${pick === o ? "on" : ""}`}
-            aria-pressed={pick === o}
-            onClick={() => setPick(o)}
-          >
-            {t(`interview.${o}`, lang)}
-          </button>
-        ))}
-      </fieldset>
-      <button type="button" class="iv-next" disabled={!pick} onClick={next}>{t("interview.next", lang)}</button>
+    <section class="my-10">
+      <div class="rounded-[var(--r-lg)] border-[0.5px] border-hairline-2 bg-card shadow-soft p-6 sm:p-7">
+        <header class="flex items-center justify-between mb-4">
+          <span class="meta">{counter}</span>
+        </header>
+        <h2 class="font-display text-[19px] sm:text-[21px] font-semibold leading-snug text-ink mb-2">{task.title[lang]}</h2>
+        <p class="text-[15px] leading-relaxed text-ink-2 mb-3">{task.prompt[lang]}</p>
+        {task.type === "design" && (
+          <p class="rounded-[var(--r-md)] border-l-2 border-accent bg-paper-2 pl-4 pr-3 py-3 text-[14px] leading-relaxed text-ink-2 mb-4">
+            {task.constraints[lang]}
+          </p>
+        )}
+        <div class="mb-5">
+          <GradeWithAi lang={lang} task={task} />
+        </div>
+        <div class="mb-6">
+          <div class="meta mb-2">{t("interview.selfAssess", lang)}</div>
+          <div class="flex flex-wrap gap-2" role="group" aria-label={t("interview.selfAssess", lang)}>
+            {PICKS.map((o) => (
+              <button
+                type="button"
+                key={o}
+                class={`oa-btn oa-btn-secondary h-9 px-3 font-mono text-[12px] ${pick === o ? "!border-accent !text-accent" : ""}`}
+                aria-pressed={pick === o}
+                onClick={() => setPick(o)}
+              >
+                {t(`interview.${o}`, lang)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <button
+          type="button"
+          class="oa-btn oa-btn-primary h-9 px-4 font-mono text-[12px] disabled:opacity-40 disabled:pointer-events-none"
+          disabled={!pick}
+          onClick={next}
+        >
+          {t("interview.next", lang)}
+        </button>
+      </div>
     </section>
   );
 }
