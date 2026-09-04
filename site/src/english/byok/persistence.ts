@@ -26,7 +26,7 @@ export function memoryPersistence(): Persistence {
   };
 }
 
-const DB_NAME = "awesome.english.byok"; // separate DB; never part of user-state sync
+const DB_NAME = "skein.english.byok"; // separate DB; never part of user-state sync
 const STORE = "key";
 const RECORD_ID = "current";
 

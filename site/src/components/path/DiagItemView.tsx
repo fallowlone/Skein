@@ -1,4 +1,4 @@
-// Single diagnostic item rendered as the Learnvane question card (q-card). One MCQ or one
+// Single diagnostic item rendered as the Skein question card (q-card). One MCQ or one
 // free-text blank. Select-then-submit: picking an option / "I don't know" / typing only arms the
 // answer; it is sent on Next (a real third "dont_know" answer, never scored wrong). The parent
 // controls identity via `key`, so a fresh item resets local state. Shared by DiagnosticRunner

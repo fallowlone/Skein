@@ -2,7 +2,7 @@
 // Isolated, local-only equipped-title choice — NOT part of the synced userState schema.
 import { signal } from "@preact/signals";
 
-export const EQUIP_KEY = "awesome.equipped-title";
+export const EQUIP_KEY = "skein.equipped-title";
 
 function load(): string | null {
   if (typeof window === "undefined") return null;
