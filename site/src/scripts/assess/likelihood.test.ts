@@ -23,16 +23,16 @@ describe("likelihood", () => {
   });
 
   test("each hint weakens the evidence a correct answer carries", () => {
-    const none = llr(likelihoodVector(item(), res({ hintsUsed: 0 }), "production"));
-    const one = llr(likelihoodVector(item(), res({ hintsUsed: 1 }), "production"));
-    const two = llr(likelihoodVector(item(), res({ hintsUsed: 2 }), "production"));
+    const none = llr(likelihoodVector(item(), res({ hintsUsed: 0 }), "production", "surface"));
+    const one = llr(likelihoodVector(item(), res({ hintsUsed: 1 }), "production", "surface"));
+    const two = llr(likelihoodVector(item(), res({ hintsUsed: 2 }), "production", "surface"));
     expect(one).toBeLessThan(none);
     expect(two).toBeLessThan(one);
   });
 
   test("hints never make a correct answer worse than a wrong one", () => {
-    const hinted = llr(likelihoodVector(item(), res({ hintsUsed: 2 }), "production"));
-    const wrong = llr(likelihoodVector(item(), res({ outcome: "wrong" }), "production"));
+    const hinted = llr(likelihoodVector(item(), res({ hintsUsed: 2 }), "production", "surface"));
+    const wrong = llr(likelihoodVector(item(), res({ outcome: "wrong" }), "production", "surface"));
     expect(hinted).toBeGreaterThan(wrong);
   });
 
@@ -46,10 +46,10 @@ describe("likelihood", () => {
         for (const kind of KINDS) {
           const it = item({ kind, band, facet: kind === "recall" ? "recognition" : "production" });
           const facet = it.facet;
-          const correct = llr(likelihoodVector(it, res({ hintsUsed, outcome: "correct" }), facet));
-          const partial = llr(likelihoodVector(it, res({ hintsUsed, outcome: "partial" }), facet));
-          const dk = llr(likelihoodVector(it, res({ hintsUsed, outcome: "dont_know" }), facet));
-          const wrong = llr(likelihoodVector(it, res({ hintsUsed, outcome: "wrong" }), facet));
+          const correct = llr(likelihoodVector(it, res({ hintsUsed, outcome: "correct" }), facet, it.band));
+          const partial = llr(likelihoodVector(it, res({ hintsUsed, outcome: "partial" }), facet, it.band));
+          const dk = llr(likelihoodVector(it, res({ hintsUsed, outcome: "dont_know" }), facet, it.band));
+          const wrong = llr(likelihoodVector(it, res({ hintsUsed, outcome: "wrong" }), facet, it.band));
           expect(correct, `${band}/${kind}/${hintsUsed}h correct vs partial`).toBeGreaterThan(partial);
           expect(partial, `${band}/${kind}/${hintsUsed}h partial vs dont_know`).toBeGreaterThan(dk);
           expect(dk, `${band}/${kind}/${hintsUsed}h dont_know vs wrong`).toBeGreaterThan(wrong);
@@ -59,15 +59,22 @@ describe("likelihood", () => {
   });
 
   test("evidence for a non-primary facet is damped and never certifies it", () => {
-    const own = llr(likelihoodVector(item({ kind: "recall", facet: "recognition" }), res(), "recognition"));
-    const other = llr(likelihoodVector(item({ kind: "recall", facet: "recognition" }), res(), "production"));
+    const own = llr(likelihoodVector(item({ kind: "recall", facet: "recognition" }), res(), "recognition", "surface"));
+    const other = llr(likelihoodVector(item({ kind: "recall", facet: "recognition" }), res(), "production", "surface"));
     expect(other).toBeLessThan(own);
     expect(other).toBeLessThan(1.6); // a recall item can never argue strongly for production skill
   });
 
+  test("uses the explicit concept band, not the item's display band", () => {
+    const it = item({ band: "advanced" });
+    const easyBand = likelihoodVector(it, res(), "production", "foundations");
+    const hardBand = likelihoodVector(it, res(), "production", "advanced");
+    expect(easyBand).not.toEqual(hardBand);
+  });
+
   test("every vector is a normalised distribution", () => {
     for (const outcome of ["correct", "partial", "wrong", "dont_know"] as const) {
-      const v = likelihoodVector(item(), res({ outcome }), "production");
+      const v = likelihoodVector(item(), res({ outcome }), "production", "surface");
       expect(v.reduce((a, b) => a + b, 0)).toBeCloseTo(1);
     }
   });

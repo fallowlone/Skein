@@ -21,7 +21,7 @@ const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" 
   <!-- accent rule, top-left brand bar -->
   <rect x="90" y="96" width="10" height="120" fill="${ink}"/>
   <text x="124" y="150" font-family="Georgia, 'Times New Roman', serif" font-size="34" fill="${muted}" letter-spacing="1">CURRICULUM · fallowlone.com</text>
-  <text x="120" y="300" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="118" fill="${ink}">Awesome Everything</text>
+  <text x="120" y="300" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="118" fill="${ink}">Skein</text>
   <text x="124" y="372" font-family="Georgia, 'Times New Roman', serif" font-size="44" fill="${accent}">Senior fullstack, learned to depth.</text>
   <line x1="124" y1="430" x2="1080" y2="430" stroke="${hair}" stroke-width="2"/>
   <text x="124" y="492" font-family="-apple-system, Helvetica, Arial, sans-serif" font-size="30" fill="${muted}">16 pillars · adaptive path · spaced-repetition review · mock interviews</text>

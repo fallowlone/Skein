@@ -18,12 +18,12 @@ describe("pickRecognizer", () => {
   it("prefers whisper when its recognizer is available", () => {
     const whisper = { id: "whisper", available: () => true } as any;
     const web = { id: "webspeech", available: () => true } as any;
-    expect(pickRecognizer({ whisper, web, prefer: "auto" }).id).toBe("whisper");
+    expect(pickRecognizer({ whisper, web, prefer: "auto" })?.id).toBe("whisper");
   });
   it("falls back to web speech when whisper not downloaded", () => {
     const whisper = { id: "whisper", available: () => false } as any;
     const web = { id: "webspeech", available: () => true } as any;
-    expect(pickRecognizer({ whisper, web, prefer: "auto" }).id).toBe("webspeech");
+    expect(pickRecognizer({ whisper, web, prefer: "auto" })?.id).toBe("webspeech");
   });
   it("returns null when nothing is available", () => {
     const whisper = { id: "whisper", available: () => false } as any;
@@ -33,6 +33,6 @@ describe("pickRecognizer", () => {
   it("honors an explicit preference", () => {
     const whisper = { id: "whisper", available: () => true } as any;
     const web = { id: "webspeech", available: () => true } as any;
-    expect(pickRecognizer({ whisper, web, prefer: "webspeech" }).id).toBe("webspeech");
+    expect(pickRecognizer({ whisper, web, prefer: "webspeech" })?.id).toBe("webspeech");
   });
 });

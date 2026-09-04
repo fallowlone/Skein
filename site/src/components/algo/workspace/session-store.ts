@@ -3,7 +3,7 @@ import type { Attempt, PersistedSession, Scheme, SolveMode } from "./types";
 const MAX_ATTEMPTS = 8;
 
 function keyFor(problemId: string): string {
-  return `awesome.algo-workspace.${problemId}.v1`;
+  return `skein.algo-workspace.${problemId}.v1`;
 }
 
 function isSolveMode(v: unknown): v is SolveMode {

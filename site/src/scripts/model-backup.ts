@@ -6,7 +6,7 @@ export interface StorageLike {
   setItem(key: string, value: string): void;
 }
 
-const APP_PREFIXES = ["awesome.", "atlas."];
+const APP_PREFIXES = ["skein.", "awesome.", "atlas."];
 const BACKUP_VERSION = 1;
 
 function isAppKey(k: string): boolean {

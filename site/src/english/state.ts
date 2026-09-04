@@ -15,7 +15,7 @@ import { migrateGrammarMastery, gradeGrammar, type GrammarMastery } from "./gram
 
 export type GrammarGoal = { targetCefr: Cefr; deadlineMs: number; perWeekdayHours: number[]; tzOffsetMin: number };
 
-const KEY = "awesome.english.v2"; // v2: scheduler-backed (v1 Leitner is discarded)
+const KEY = "skein.english.v2"; // v2: scheduler-backed (v1 Leitner is discarded)
 const scheduler = fsrsScheduler();
 
 /** A card whose next interval is at least this many days counts as "known". */
