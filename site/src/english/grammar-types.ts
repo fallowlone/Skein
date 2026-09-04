@@ -54,6 +54,11 @@ export type TopicGenSpec = {
   templates: Template[];
   features: string[];
   contexts?: TaggedContext[]; // tagged-context items for selection-grammar topics
+  // Import-time metadata retained by some generated topic files. The practice
+  // engine does not consume either field, but preserving them keeps the source
+  // authoring trail intact and lets the corpus type-check.
+  contextsMeta?: unknown[];
+  contexts_note?: string;
 };
 
 export type GrammarLesson = {

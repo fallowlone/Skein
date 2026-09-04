@@ -1,4 +1,4 @@
-export const MOTION_KEY = "awesome.motion";
+export const MOTION_KEY = "skein.motion";
 
 export function motionEnabled(): boolean {
   if (typeof window === "undefined") return false;

@@ -11,12 +11,12 @@ const OUTCOMES: Outcome[] = ["correct", "partial", "wrong", "dont_know"];
  * Expected reduction in entropy from asking this item about this cell:
  *   H(prior) − Σ_outcome P(outcome) · H(posterior | outcome)
  */
-export function expectedGain(cell: Cell, item: AssessItem): number {
+export function expectedGain(cell: Cell, item: AssessItem, band: Band): number {
   const prior = cell.posterior;
   const before = entropyOrd(prior);
   let after = 0;
   for (const outcome of OUTCOMES) {
-    const lik = likelihoodVector(item, { outcome, hintsUsed: 0, elapsedMs: 0 }, cell.facet);
+    const lik = likelihoodVector(item, { outcome, hintsUsed: 0, elapsedMs: 0 }, cell.facet, band);
     const joint = prior.map((p, i) => p * lik[i]);
     const pOutcome = joint.reduce((a, b) => a + b, 0);
     if (pOutcome <= 0) continue;
@@ -80,7 +80,7 @@ export function nextItem({ index, cells, candidates, bandOf, askedIds, recentKin
         if (askedIds.has(item.id)) continue;
         if (kindBlocked(recentKinds, item.kind)) continue;
 
-        const score = (expectedGain(cell, item) * item.weight) / Math.max(1, item.estMin);
+        const score = (expectedGain(cell, item, bandOf(conceptId)) * item.weight) / Math.max(1, item.estMin);
         if (!best || score > best.score) best = { item, score };
       }
     }

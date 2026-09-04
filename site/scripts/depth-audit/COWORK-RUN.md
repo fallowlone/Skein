@@ -11,7 +11,7 @@ audit to emit `docs/audit/depth-scores.json` + `docs/audit/depth-report.md`. Ret
 three files.
 
 ## Setup (no `bun install` needed — the scripts are stdlib-only, run under `bun`)
-1. Clone the **private** GitHub repo `fallowlone/awesome-everything` (use the connected
+1. Clone the **private** GitHub repo `fallowlone/skein` (use the connected
    GitHub access), checkout branch **`feat/senior-plus-campaign`**. All commands below run
    from the `site/` directory.
 2. Prereq: this repo uses `bun`. If `bun` is not available:

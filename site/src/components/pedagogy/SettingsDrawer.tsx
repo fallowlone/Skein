@@ -78,7 +78,7 @@ export default function SettingsDrawer({ lang }: Props) {
     setTheme(next);
     document.documentElement.setAttribute("data-theme", next);
     try {
-      localStorage.setItem("awesome.theme", next);
+      localStorage.setItem("skein.theme", next);
     } catch {}
     window.dispatchEvent(new CustomEvent("toast", { detail: { msg: `theme: ${next}`, kind: "info" } }));
   }
@@ -87,7 +87,7 @@ export default function SettingsDrawer({ lang }: Props) {
     setDensity(next);
     document.documentElement.setAttribute("data-density", next);
     try {
-      localStorage.setItem("awesome.density", next);
+      localStorage.setItem("skein.density", next);
     } catch {}
     window.dispatchEvent(new CustomEvent("toast", { detail: { msg: `density: ${next}`, kind: "info" } }));
   }
@@ -98,7 +98,7 @@ export default function SettingsDrawer({ lang }: Props) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `awesome-progress-${todayISO()}.json`;
+    a.download = `skein-progress-${todayISO()}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };

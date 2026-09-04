@@ -1,32 +1,67 @@
 // verify:anim — every grammar topic must resolve to an archetype generator that emits
-// valid, slot-filled, deterministic Bodymovin. Mirrors audit-grammar.ts / verify-grammar.ts:
-// it must NOT import the corpus barrel (import.meta.glob throws under bun), so it loads topic
-// modules by readdir + dynamic import and reads mod.topic.
+// a valid, slot-filled, deterministic editorial Scene. Mirrors audit-grammar.ts /
+// verify-grammar.ts: it must NOT import the corpus barrel (import.meta.glob throws
+// under bun), so it loads topic modules by readdir + dynamic import and reads mod.topic.
 import { readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { GrammarTopic } from "~/english/grammar-types";
-import type { LottieDoc } from "~/english/animations/lottie-types";
+import type { Pt, Prim, Scene } from "~/english/animations/editorial/scene-types";
 import { resolveAnimation } from "~/english/animations/archetype-map";
 
-const GRAMMAR_DIR = resolve(import.meta.dir, "../../src/english/data/grammar");
+const GRAMMAR_DIR = fileURLToPath(new URL("../../src/english/data/grammar", import.meta.url));
 
 type Problem = { id: string; archetype: string; issues: string[] };
 
-function structurallyValid(d: LottieDoc): string[] {
+const finite = (n: number): boolean => Number.isFinite(n);
+const validPoint = (p: Pt): boolean => finite(p.x) && finite(p.y);
+const nonEmpty = (s: string | undefined): boolean => typeof s === "string" && s.trim().length > 0;
+
+function primIssues(p: Prim & { order?: number }, index: number): string[] {
+  const at = `prim ${index} (${p.k})`;
   const issues: string[] = [];
-  if (d.v !== "5.7.0") issues.push("bad version");
-  if (!(d.op > d.ip)) issues.push("op<=ip");
-  if (!(d.w > 0 && d.h > 0)) issues.push("zero size");
-  if (!Array.isArray(d.layers) || d.layers.length === 0) issues.push("no layers");
-  if (d.layers?.some((l) => !(l.op > l.ip))) issues.push("layer op<=ip");
-  const emptyText = d.layers?.filter((l) => l.ty === 5 && !l.t?.d.k[0]?.s.t.trim()).length ?? 0;
-  if (emptyText > 0) issues.push(`${emptyText} empty text layer(s)`);
-  try {
-    JSON.parse(JSON.stringify(d));
-  } catch {
-    issues.push("not JSON-serializable");
+  if (p.order !== undefined && (!Number.isInteger(p.order) || p.order < 0)) issues.push(`${at}: bad order`);
+
+  switch (p.k) {
+    case "axis":
+      if (!finite(p.x0) || !finite(p.x1) || !finite(p.y) || p.x1 <= p.x0) issues.push(`${at}: bad geometry`);
+      break;
+    case "arc":
+    case "arrow":
+      if (!validPoint(p.from) || !validPoint(p.to)) issues.push(`${at}: bad endpoints`);
+      if (p.k === "arc" && !finite(p.lift)) issues.push(`${at}: bad lift`);
+      break;
+    case "node":
+    case "pulse":
+      if (!finite(p.x) || !finite(p.y)) issues.push(`${at}: bad position`);
+      if (p.k === "pulse" && !(p.w > 0)) issues.push(`${at}: bad width`);
+      if (p.k === "node" && p.d !== undefined && !(p.d > 0)) issues.push(`${at}: bad diameter`);
+      break;
+    case "dropLine":
+    case "divider":
+      if (!finite(p.x) || !finite(p.y0) || !finite(p.y1) || p.y1 <= p.y0) issues.push(`${at}: bad geometry`);
+      break;
+    case "tick":
+      if (!finite(p.x) || !finite(p.y)) issues.push(`${at}: bad position`);
+      if (p.label !== undefined && !nonEmpty(p.label)) issues.push(`${at}: empty tick label`);
+      break;
+    case "genre":
+    case "formula":
+    case "label":
+    case "hero":
+    case "caption":
+    case "chip":
+      if (!finite(p.x) || !finite(p.y)) issues.push(`${at}: bad position`);
+      if (!nonEmpty(p.text)) issues.push(`${at}: empty text`);
+      if (p.k === "chip" && p.w !== undefined && !(p.w > 0)) issues.push(`${at}: bad width`);
+      break;
   }
   return issues;
+}
+
+function structurallyValid(scene: Scene): string[] {
+  if (!Array.isArray(scene.prims) || scene.prims.length === 0) return ["no primitives"];
+  return scene.prims.flatMap(primIssues);
 }
 
 async function loadTopics(): Promise<GrammarTopic[]> {
@@ -48,28 +83,33 @@ async function main(): Promise<void> {
   const byArchetype = new Map<string, number>();
 
   for (const t of topics) {
-    const r = resolveAnimation(t);
-    if (!r) {
-      problems.push({ id: t.id, archetype: t.archetype, issues: ["unmapped archetype"] });
-      continue;
+    for (const lang of ["en", "ru"] as const) {
+      const r = resolveAnimation(t, lang);
+      if (!r) {
+        problems.push({ id: `${t.id}:${lang}`, archetype: t.archetype, issues: ["unmapped archetype"] });
+        continue;
+      }
+      byArchetype.set(r.archetype, (byArchetype.get(r.archetype) ?? 0) + 1);
+      const first = r.scene();
+      const issues = structurallyValid(first);
+      if (JSON.stringify(first) !== JSON.stringify(r.scene())) issues.push("non-deterministic");
+      if (issues.length) problems.push({ id: `${t.id}:${lang}`, archetype: r.archetype, issues });
     }
-    byArchetype.set(r.archetype, (byArchetype.get(r.archetype) ?? 0) + 1);
-    const first = r.doc();
-    const issues = structurallyValid(first);
-    if (JSON.stringify(first) !== JSON.stringify(r.doc())) issues.push("non-deterministic");
-    if (issues.length) problems.push({ id: t.id, archetype: r.archetype, issues });
   }
 
-  console.log(`grammar-anim: ${topics.length} topics`);
+  console.log(`grammar-anim: ${topics.length} topics × en/ru`);
   for (const [a, n] of [...byArchetype.entries()].sort((x, y) => y[1] - x[1]))
     console.log(`  ${a}: ${n}`);
   if (problems.length) {
-    console.error(`\n${problems.length} problem topic(s):`);
+    console.error(`\n${problems.length} problem topic rendering(s):`);
     for (const p of problems) console.error(`  ${p.id} [${p.archetype}] — ${p.issues.join("; ")}`);
-    if (gate) process.exit(1);
+    if (gate) process.exitCode = 1;
   } else {
     console.log("all topics resolve to a valid, deterministic animation ✓");
   }
 }
 
-main();
+main().catch((e) => {
+  console.error(e);
+  process.exitCode = 1;
+});

@@ -9,7 +9,7 @@
 // never leaks from one item to the next.
 import { useState } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
-import type { AssessItem, AssessResponse, Cell, CellKey, Level, Outcome } from "~/scripts/assess/types";
+import type { AssessItem, AssessResponse, Band, Cell, CellKey, Level, Outcome } from "~/scripts/assess/types";
 import type { ResponseMeta } from "~/scripts/assess/update";
 import { keyStatus, withKey } from "~/english/byok";
 import { postMessages, type ConverseDeps } from "~/english/byok/converse";
@@ -36,6 +36,8 @@ type Props = {
    *  Never written to; the engine's own reducer (session.ts) remains the
    *  only writer. */
   cells: ReadonlyMap<CellKey, Cell>;
+  /** Per-concept difficulty lookup from the concept catalogue. Never use item.band for scoring. */
+  bandOf: (conceptId: string) => Band;
 };
 
 /**
@@ -64,6 +66,7 @@ async function gradeExplainAnswer(
   lang: Locale,
   answerText: string,
   cells: ReadonlyMap<CellKey, Cell>,
+  bandOf: (conceptId: string) => Band,
   conceptLabel: { en: string; ru: string },
 ): Promise<{ verdictLevels?: Record<string, Level>; why?: string; llmGraded: boolean }> {
   const status = await keyStatus();
@@ -89,7 +92,7 @@ async function gradeExplainAnswer(
     const verdictLevels: Record<string, Level> = {};
     let why: string | undefined;
     for (const conceptId of item.concepts) {
-      const anchor = anchorLevel(conceptId, item.facet, item.band, cells);
+      const anchor = anchorLevel(conceptId, item.facet, bandOf(conceptId), cells);
       const verdict = gradeExplainVerdict(raw, anchor);
       if (!verdict) continue; // parsing failed — identical outcome for every concept, see loop below
       verdictLevels[conceptId] = verdict.level;
@@ -106,7 +109,7 @@ async function gradeExplainAnswer(
   }
 }
 
-export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onStop, labelOf, cells }: Props) {
+export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onStop, labelOf, cells, bandOf }: Props) {
   // Captured once at mount — the clock the pure core deliberately does not own.
   const [servedAtMs] = useState(() => Date.now());
   const [grading, setGrading] = useState(false);
@@ -147,7 +150,7 @@ export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onSt
     }
     const conceptLabel = labelOf(item.concepts[0] ?? item.lessonKey);
     setGrading(true);
-    void gradeExplainAnswer(item, lang, rawAnswer, cells, conceptLabel)
+    void gradeExplainAnswer(item, lang, rawAnswer, cells, bandOf, conceptLabel)
       .then((graded) => finalize(outcome, {
         ...persisted, failureNote: graded.why, llmGraded: graded.llmGraded, llmVerdictLevels: graded.verdictLevels,
       }))

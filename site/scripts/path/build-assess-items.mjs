@@ -89,7 +89,7 @@ export function buildAssessIndex(files, unitConcepts, bandOf, read = (p) => read
         taskId: t.id,
         kind,
         facet,
-        band: bandOf(concepts[0]), // Placeholder - H2 tracked
+        band: bandOf(concepts[0]), // Display/debug only — scoring and evidence use bandOf(conceptId).
         concepts,
         weight,
         estMin: typeof t.estMin === "number" ? t.estMin : 5,

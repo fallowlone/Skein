@@ -1,5 +1,5 @@
 // src/components/path/AimStage.tsx
-// Stage 1 of probabilistic placement (Learnvane design): pick a goal + a coarse per-family
+// Stage 1 of probabilistic placement (Skein design): pick a goal + a coarse per-family
 // self-mark. The self-placement seeds Bayesian priors (seedPriors) and prunes "never" families
 // from the deep run; the goal is written through setGoals so the resulting path targets it.
 import { useState } from "preact/hooks";

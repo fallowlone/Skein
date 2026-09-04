@@ -69,7 +69,7 @@ export function serializeCookie(name: string, value: string, opts: CookieOpts = 
  * every Lighthouse run). The HttpOnly session cookie remains the only thing the
  * server trusts. Set on login, cleared on logout / account deletion.
  */
-export const AUTH_HINT_COOKIE = "awesome.auth";
+export const AUTH_HINT_COOKIE = "skein.auth";
 
 export function authHintCookie(present: boolean, secure: boolean): string {
   return serializeCookie(AUTH_HINT_COOKIE, present ? "1" : "", {

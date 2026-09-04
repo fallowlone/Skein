@@ -6,8 +6,8 @@ const scenario: Scenario = {
   id: "code-review", level: "B1", role: "a senior engineer reviewing your PR",
   goal: "defend your design choices", opening: "Thanks for the PR. Why a queue here?", titleRu: "Код-ревью",
 };
-function deps(fetchImpl: any): ConverseDeps {
-  return { fetch: fetchImpl, withKey: async (fn: any) => fn("sk-ant-test"), model: "claude-haiku-4-5" };
+function deps(fetchImpl: any, model: ConverseDeps["model"] = "claude-haiku-4-5"): ConverseDeps {
+  return { fetch: fetchImpl as typeof fetch, withKey: async (fn: any) => fn("sk-ant-test"), model };
 }
 
 describe("converseWithClient", () => {
@@ -51,7 +51,7 @@ describe("endReviewWithClient", () => {
     });
     const r = await endReviewWithClient(
       [{ role: "assistant", text: "hi" }, { role: "user", text: "hello" }],
-      { fetch: fetchImpl, withKey: async (fn: any) => fn("k"), model: "claude-sonnet-4-6" },
+      deps(fetchImpl, "claude-sonnet-4-6"),
     );
     expect(r.scoreBand).toBe("B2");
     expect(body.model).toBe("claude-sonnet-4-6");

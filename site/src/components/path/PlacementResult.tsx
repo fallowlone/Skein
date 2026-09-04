@@ -1,5 +1,5 @@
 // src/components/path/PlacementResult.tsx
-// Stage 4 of probabilistic placement (Learnvane design): the result report. Per-area mean-posterior
+// Stage 4 of probabilistic placement (Skein design): the result report. Per-area mean-posterior
 // bars as disclosure accordions (drill-down to a sorted concept list, each tagged known/shaky/unknown
 // via collapse — colour + glyph + label, never colour alone), plus strongest/biggest-gap rankings.
 // Pure presentation over the final priors Map — no I/O, no client: directive (child of the

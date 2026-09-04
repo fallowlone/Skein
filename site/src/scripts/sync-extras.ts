@@ -10,8 +10,8 @@ import type { Card } from "./review-state";
 import { REVIEW_KEY } from "./review-state";
 
 const PRACTICE_PREFIX = "atlas.practice.";
-const CAPSTONE_PREFIX = "awesome.capstone.";
-const DRILL_KEY = "awesome.drill.v1";
+const CAPSTONE_PREFIX = "skein.capstone.";
+const DRILL_KEY = "skein.drill.v1";
 
 // A push must never be rejected wholesale (server caps the blob at 256 KB).
 // Review cards carry full front/back text and dominate the size — when the

@@ -3,7 +3,7 @@
  * or failing backend can never break the page. No PII — a random client id only.
  */
 
-const ID_KEY = "awesome.metrics.id";
+const ID_KEY = "skein.metrics.id";
 const ENDPOINT = "/api/events";
 const FLUSH_AT = 10;
 

@@ -50,7 +50,7 @@ type Deps = ScopeDeps & ItemDeps;
 // Ruling 3 says not to do. mergeConfig/resolveGoalTargets below are path-io.ts's
 // OWN dependencies (config.ts, goal-resolve.ts) and are type-only-light enough
 // to import directly (see task-12-report.md for what was checked).
-const PATH_CONFIG_KEY = "awesome.path-config.v1";
+const PATH_CONFIG_KEY = "skein.path-config.v1";
 
 /**
  * Ruling 4: the learner's active goal(s), read the same way path-io.ts's
@@ -294,6 +294,7 @@ export default function AssessFlow({ lang }: { lang: Locale }) {
         onStop={() => dispatch({ type: "stop", atMs: Date.now() })}
         labelOf={deps.labelOf}
         cells={state.cells}
+        bandOf={deps.bandOf}
       />
     </>
   );

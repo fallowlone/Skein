@@ -1,5 +1,5 @@
 // src/components/english/SpeakExercise.tsx
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { gradeSpeech } from "~/english/byok/speech";
 import { hasKey } from "~/english/byok";
 import { speak } from "~/english/speech/tts";
@@ -15,8 +15,8 @@ const TASKS: OutputTask[] = [
 ];
 
 const COPY = {
-  en: { rec: "Record", stop: "Stop & transcribe", grade: "Get feedback", grading: "Grading…", next: "Next prompt", needKey: "Add an API key (Output tab) for AI feedback.", transcript: "Transcript (edit if needed)", band: "Level" },
-  ru: { rec: "Запись", stop: "Стоп и расшифровать", grade: "Получить разбор", grading: "Оцениваю…", next: "Следующий", needKey: "Добавь API-ключ (вкладка Письмо) для разбора.", transcript: "Транскрипт (поправь при необходимости)", band: "Уровень" },
+  en: { rec: "Record", stop: "Stop & transcribe", grade: "Get feedback", grading: "Grading…", next: "Next prompt", needKey: "Add an API key (Output tab) for AI feedback.", checkingKey: "Checking API key…", failed: "Feedback failed. Try again.", transcript: "Transcript (edit if needed)", band: "Level" },
+  ru: { rec: "Запись", stop: "Стоп и расшифровать", grade: "Получить разбор", grading: "Оцениваю…", next: "Следующий", needKey: "Добавь API-ключ (вкладка Письмо) для разбора.", checkingKey: "Проверяю API-ключ…", failed: "Не удалось получить разбор. Попробуй ещё раз.", transcript: "Транскрипт (поправь при необходимости)", band: "Уровень" },
 };
 
 export default function SpeakExercise({ lang, recognizer }: { lang: Locale; recognizer: SpeechRecognizer }) {
@@ -26,13 +26,26 @@ export default function SpeakExercise({ lang, recognizer }: { lang: Locale; reco
   const [text, setText] = useState("");
   const [grading, setGrading] = useState(false);
   const [result, setResult] = useState<GradingResult | null>(null);
+  const [keyOn, setKeyOn] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const task = TASKS[i];
 
-  const start = async () => { setResult(null); setText(""); setBusy(true); try { await recognizer.start(); } catch { setBusy(false); } };
-  const stop = async () => { const r = await recognizer.stop(); setText(r.transcript); setBusy(false); };
+  useEffect(() => {
+    let alive = true;
+    hasKey()
+      .then((v) => { if (alive) setKeyOn(v); })
+      .catch(() => { if (alive) setKeyOn(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const start = async () => { setResult(null); setError(null); setText(""); setBusy(true); try { await recognizer.start(); } catch { setBusy(false); } };
+  const stop = async () => { try { const r = await recognizer.stop(); setText(r.transcript); } finally { setBusy(false); } };
   const grade = async () => {
     setGrading(true);
-    try { setResult(await gradeSpeech(task, text, "claude-haiku-4-5")); } finally { setGrading(false); }
+    setError(null);
+    try { setResult(await gradeSpeech(task, text, "claude-haiku-4-5")); }
+    catch { setError(L.failed); }
+    finally { setGrading(false); }
   };
 
   return (
@@ -48,9 +61,12 @@ export default function SpeakExercise({ lang, recognizer }: { lang: Locale; reco
         <>
           <div class="meta mb-1">{L.transcript}</div>
           <textarea class="w-full border border-rule rounded p-2 text-[14px] mb-2" rows={3} value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} />
-          {hasKey()
-            ? <button class="oa-btn oa-btn-primary oa-btn-sm" disabled={grading || !text.trim()} onClick={grade}>{grading ? L.grading : L.grade}</button>
-            : <p class="ex-note">{L.needKey}</p>}
+          {keyOn === null
+            ? <p class="ex-note">{L.checkingKey}</p>
+            : keyOn
+              ? <button class="oa-btn oa-btn-primary oa-btn-sm" disabled={grading || !text.trim()} onClick={grade}>{grading ? L.grading : L.grade}</button>
+              : <p class="ex-note">{L.needKey}</p>}
+          {error && <p class="ex-note" role="alert">{error}</p>}
         </>
       )}
       {result && (
