@@ -16,13 +16,13 @@ describe("expectedGain", () => {
     const flat = emptyCell("c", "production", "surface");
     const sharp = { ...flat, posterior: [0.01, 0.02, 0.95, 0.02] as const };
     const item = mkItem({});
-    expect(expectedGain(flat, item)).toBeGreaterThan(expectedGain(sharp, item));
+    expect(expectedGain(flat, item, "surface")).toBeGreaterThan(expectedGain(sharp, item, "surface"));
   });
 
   test("an aligned item gains more than a cross-facet one", () => {
     const cell = emptyCell("c", "production", "surface");
-    expect(expectedGain(cell, mkItem({ kind: "exec", facet: "production" })))
-      .toBeGreaterThan(expectedGain(cell, mkItem({ kind: "recall", facet: "recognition" })));
+    expect(expectedGain(cell, mkItem({ kind: "exec", facet: "production" }), "surface"))
+      .toBeGreaterThan(expectedGain(cell, mkItem({ kind: "recall", facet: "recognition" }), "surface"));
   });
 });
 
@@ -32,6 +32,12 @@ describe("nextItem", () => {
     mkItem({ id: "b", facet: "recognition", kind: "recall" }),
     mkItem({ id: "c2", facet: "mechanism", kind: "predict" }),
   ];
+
+  test("scores the item against the candidate concept's own band", () => {
+    const cell = emptyCell("advanced-concept", "production", "advanced");
+    const item = mkItem({ band: "surface", kind: "exec", facet: "production" });
+    expect(expectedGain(cell, item, "advanced")).not.toBe(expectedGain(cell, item, "surface"));
+  });
 
   test("returns null when every candidate cell is settled", () => {
     const cells = new Map<CellKey, Cell>();

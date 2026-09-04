@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach } from "vitest";
+import { describe, expect, test, beforeEach, vi } from "vitest";
 import { userState, recordVisit, setTier, recordRetrieval, dismissRevisit, resetAll } from "./user-state";
 
 describe("user-state", () => {
@@ -45,9 +45,21 @@ describe("user-state", () => {
 
   test("persists to localStorage", () => {
     setTier("senior", true);
-    const raw = localStorage.getItem("awesome.user-state.v1");
+    const raw = localStorage.getItem("skein.user-state.v1");
     expect(raw).toBeTruthy();
     expect(JSON.parse(raw!).tier).toBe("senior");
+  });
+
+  test("a storage write failure does not break the in-memory update", () => {
+    const spy = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+      throw new DOMException("quota exceeded", "QuotaExceededError");
+    });
+    try {
+      expect(() => setTier("senior", true)).not.toThrow();
+      expect(userState.value.tier).toBe("senior");
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test("dismissRevisit writes timestamp", () => {
@@ -61,6 +73,6 @@ describe("user-state", () => {
     resetAll();
     expect(userState.value.tier).toBe("middle");
     expect(userState.value.history).toEqual({});
-    expect(localStorage.getItem("awesome.user-state.v1")).toBeNull();
+    expect(localStorage.getItem("skein.user-state.v1")).toBeNull();
   });
 });

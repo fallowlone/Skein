@@ -1,5 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import { lazy, Suspense } from "preact/compat";
+import type { FunctionComponent } from "preact";
 import type { Locale } from "~/i18n";
 import type { PracticeTaskData } from "~/content.config";
 import { checkBlank } from "~/scripts/practice-grade";
@@ -30,7 +31,8 @@ const JsSandbox = lazy(() => import("./JsSandbox"));
 const GradeWithAi = lazy(() => import("./GradeWithAi"));
 
 // name → lazy parametric component (must match PARAMETRIC_COMPONENT_NAMES)
-const PARAMETRIC: Record<string, ReturnType<typeof lazy>> = {
+type ParametricProps = { lang: Locale };
+const PARAMETRIC: Record<string, FunctionComponent<ParametricProps>> = {
   DBLeverSandbox: lazy(() => import("./sandboxes/DBLeverSandbox")),
   RequestBudgetSandbox: lazy(() => import("./sandboxes/RequestBudgetSandbox")),
 };

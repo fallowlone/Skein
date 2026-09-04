@@ -21,8 +21,15 @@ const HEADINGS = new Set([
   "Guards", "Resolvers", "Nested routes", "Error handling", "Performance",
 ]);
 
+// Marks a standalone "}" token so the closing-brace formatting below only ever
+// splits a real block-closing brace onto its own line, never a "}" that's already
+// part of a formatted fragment (e.g. the "}}" in an Angular `{{ count }}` binding
+// embedded inside a template-literal token).
+const CLOSE_BRACE_MARK = "CLOSE_BRACE";
+
 function cleanCode(tokens: string[]): string {
   return tokens
+    .map((token) => (token === "}" ? CLOSE_BRACE_MARK : token))
     .join(" ")
     .replace(/\s+([,;:\]})])/g, "$1")
     .replace(/([([{])\s+/g, "$1")
@@ -30,7 +37,8 @@ function cleanCode(tokens: string[]): string {
     .replace(/<\s+/g, "<")
     .replace(/\s+>/g, ">")
     .replace(/\s*;\s*/g, ";\n")
-    .replace(/\s*}\s*/g, "\n}\n")
+    .split(new RegExp(`\\s*${CLOSE_BRACE_MARK}\\s*`))
+    .join("\n}\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
@@ -85,13 +93,27 @@ export function parseInterviewAnswer(answer: string): InterviewAnswerBlock[] {
       const language = block;
       i += 2;
       const tokens: string[] = [];
+      // Track brace depth so the snippet stops at the end of the declaration it
+      // opened (e.g. a class/function body), instead of bleeding into the prose
+      // that follows it in the source — that prose is itself chopped into short
+      // blocks by inline code spans, so it can otherwise pass for more code.
+      let depth = 0;
+      let sawDeclaration = false;
       while (i < rawBlocks.length) {
         const next = rawBlocks[i];
         if (next === "#" || HEADINGS.has(next) || next.startsWith("Mistake ")) break;
         if (CODE_LANGUAGES.has(next) && rawBlocks[i + 1] === "Copy" && tokens.length) break;
-        if (tokens.length > 4 && (looksLikeProse(next) || startsProse(next))) break;
+        if (depth === 0 && tokens.length > 4 && (looksLikeProse(next) || startsProse(next))) break;
         tokens.push(next);
         i += 1;
+        if (next === "class" || next === "function") sawDeclaration = true;
+        const opens = (next.match(/{/g) || []).length;
+        const closes = (next.match(/}/g) || []).length;
+        depth += opens - closes;
+        if (sawDeclaration && closes > 0 && depth <= 0) {
+          depth = 0;
+          break;
+        }
         if (tokens.length > 4 && /[;}\])]$/.test(next) && looksLikeProse(rawBlocks[i] ?? "")) break;
       }
       blocks.push({ kind: "code", language, text: cleanCode(tokens) });

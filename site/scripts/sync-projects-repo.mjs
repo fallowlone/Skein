@@ -19,14 +19,14 @@ import { join, dirname } from "node:path";
 const WB = new URL("../projects-workbench/", import.meta.url).pathname;
 const META = new URL("../src/content/projects/", import.meta.url).pathname;
 const SITE = "https://fallowlone.com";
-const REPO = "fallowlone/awesome-everything-projects";
+const REPO = "fallowlone/skein-projects";
 
 const outArg = process.argv.indexOf("--out");
 const OUT = outArg !== -1
   ? (process.argv[outArg + 1].startsWith("/")
       ? process.argv[outArg + 1]
       : join(process.cwd(), process.argv[outArg + 1]))
-  : new URL("../../../awesome-everything-projects/", import.meta.url).pathname;
+  : new URL("../../../skein-projects/", import.meta.url).pathname;
 
 const write = (rel, body) => {
   const p = join(OUT, rel);
@@ -170,7 +170,7 @@ for (const [src, dst] of [["LICENSE", "LICENSE"], ["LICENSE-CONTENT.md", "LICENS
 write(".gitignore", ["node_modules/", "__pycache__/", "*.pyc", ".DS_Store", "dist/", ".idea/", ".vscode/"].join("\n") + "\n");
 
 write("package.json", JSON.stringify({
-  name: "awesome-everything-projects",
+  name: "skein-projects",
   private: true,
   type: "module",
   scripts: {
@@ -184,7 +184,7 @@ const table = index.map((p) =>
   `| [${tx(p.title, "en")}](projects/${p.slug}/) | \`${p.slug}\` | ${p.stack} | ${p.difficulty ?? "—"} | ${p.estDays ?? "—"} |`,
 ).join("\n");
 
-write("README.md", `# awesome-everything — projects
+write("README.md", `# skein — projects
 
 ${index.length} standalone engineering projects. Each one is a failing test suite plus a
 stubbed implementation: make the suite green, then push past it using the rubric in the

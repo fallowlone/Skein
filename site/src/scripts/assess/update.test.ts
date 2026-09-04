@@ -48,6 +48,15 @@ describe("applyResponse", () => {
     expect(after.has(cellKey("event-loop", "production"))).toBe(true);
   });
 
+  test("stamps each concept's evidence with that concept's band", () => {
+    const mixedBandOf = (id: string): Band => id === "advanced-concept" ? "advanced" : "surface";
+    const multi = { ...item, band: "surface" as const, concepts: ["promises", "advanced-concept"] };
+    const after = applyResponse(new Map(), multi, { outcome: "correct", hintsUsed: 0, elapsedMs: 10 }, mixedBandOf, 1);
+
+    expect(after.get(cellKey("promises", "production"))?.evidence[0]?.band).toBe("surface");
+    expect(after.get(cellKey("advanced-concept", "production"))?.evidence[0]?.band).toBe("advanced");
+  });
+
   test("a half-weight item moves the posterior less than a full-weight one", () => {
     const full = applyResponse(seed(), item, { outcome: "correct", hintsUsed: 0, elapsedMs: 10 }, bandOf, 1);
     const half = applyResponse(seed(), { ...item, weight: 0.5 }, { outcome: "correct", hintsUsed: 0, elapsedMs: 10 }, bandOf, 1);

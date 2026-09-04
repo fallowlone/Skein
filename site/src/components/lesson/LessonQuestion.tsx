@@ -1,7 +1,7 @@
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 
-const ID_KEY = "awesome.metrics.id";
+const ID_KEY = "skein.metrics.id";
 const MAX_CHARS = 2000;
 
 const tt = (lang: Locale, en: string, ru: string) => (lang === "en" ? en : ru);

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 
-const TOKEN_KEY = "awesome.admin.token";
+const TOKEN_KEY = "skein.admin.token";
 
 interface LessonRow {
   lesson: string;

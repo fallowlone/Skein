@@ -50,7 +50,7 @@ import type { KnowledgeWrite } from "./assess/report";
 import type { Source } from "./path/types";
 import type { Band } from "./assess/types";
 
-const KNOWLEDGE_KEY = "awesome.path-knowledge.v1"; // mirrors path-io.ts's K_KEY
+const KNOWLEDGE_KEY = "skein.path-knowledge.v1"; // mirrors path-io.ts's K_KEY
 
 /** Sources strong enough that a new assess write must earn its way past them
  *  rather than overwrite on sight. NOT "assess" itself — a repeat assess run on

@@ -11,7 +11,7 @@ import { emptyCell } from "./assess/update";
 import { cellKey, type Cell, type CellKey, type Facet, type Posterior } from "./assess/types";
 import type { KnowledgeWrite } from "./assess/report";
 
-const KEY = "awesome.path-knowledge.v1";
+const KEY = "skein.path-knowledge.v1";
 const NOW = 1_000_000_000_000;
 
 function seedStored(entries: [string, { confidence: number; source: string; lastAt: number }][]): void {

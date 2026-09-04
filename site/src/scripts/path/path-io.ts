@@ -207,9 +207,9 @@ export const content = { concepts, units, goals, goalById, conceptById, diagnose
 
 // ── persistence (versioned, mirrors user-state.ts) ─────────────────────────────
 import { signal, effect } from "@preact/signals";
-const K_KEY = "awesome.path-knowledge.v1";
-const C_KEY = "awesome.path-config.v1";
-const O_KEY = "awesome.path-overrides.v1";
+const K_KEY = "skein.path-knowledge.v1";
+const C_KEY = "skein.path-config.v1";
+const O_KEY = "skein.path-overrides.v1";
 function loadOverrides(): Overrides {
   const base: Overrides = { addEdges: [], removeEdges: [], retag: [] };
   if (typeof window === "undefined") return base;
@@ -699,7 +699,7 @@ export function exportState(now: number): void {
   const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = `awesome-path-state-${now}.json`;
+  a.href = url; a.download = `skein-path-state-${now}.json`;
   a.click();
   URL.revokeObjectURL(url);
 }

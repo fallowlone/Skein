@@ -101,10 +101,10 @@ function rawLikelihood(outcome: AssessResponse["outcome"], p: number): number {
  */
 const DK_ATTENUATION = 0.6;
 
-export function likelihoodVector(item: AssessItem, response: AssessResponse, targetFacet: Facet): Posterior {
+export function likelihoodVector(item: AssessItem, response: AssessResponse, targetFacet: Facet, band: Band): Posterior {
   const align = FACET_ALIGN[item.kind][targetFacet];
   const raw = LEVELS.map((level) =>
-    rawLikelihood(response.outcome, pCorrect(level, item.band, response.hintsUsed, item.kind)),
+    rawLikelihood(response.outcome, pCorrect(level, band, response.hintsUsed, item.kind)),
   );
   // Flatten toward uniform by raising to a power ≤ 1: align=1 keeps the evidence intact,
   // align→0 (cross-facet leakage) makes the response uninformative for that facet.

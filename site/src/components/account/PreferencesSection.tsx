@@ -1,8 +1,8 @@
 // src/components/account/PreferencesSection.tsx
 // 05 · PREFERENCES — local-only settings, reusing the exact setter behaviour from
 // SettingsDrawer / user-state:
-//   Theme    → data-theme attr + localStorage["awesome.theme"]
-//   Density  → data-density attr + localStorage["awesome.density"]
+//   Theme    → data-theme attr + localStorage["skein.theme"]
+//   Density  → data-density attr + localStorage["skein.density"]
 //   Motion   → setMotion(v)              (userState.motion: on | off | auto)
 //   Depth    → setTier(tier, true)       (userState.tier)
 //   Language → link to the same route under the other locale
@@ -60,12 +60,12 @@ export default function PreferencesSection({ lang }: { lang: Locale }) {
   function applyTheme(next: Theme) {
     setThemeState(next);
     document.documentElement.setAttribute("data-theme", next);
-    try { localStorage.setItem("awesome.theme", next); } catch {}
+    try { localStorage.setItem("skein.theme", next); } catch {}
   }
   function applyDensity(next: Density) {
     setDensityState(next);
     document.documentElement.setAttribute("data-density", next);
-    try { localStorage.setItem("awesome.density", next); } catch {}
+    try { localStorage.setItem("skein.density", next); } catch {}
   }
 
   // Same route under the other locale (swap the leading /{lang}/ segment).

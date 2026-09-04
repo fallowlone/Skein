@@ -8,7 +8,7 @@ import { mergeProgress, fetchMe, fetchServerProgress, pushProgress } from "./acc
 import { collectExtras, mergeExtras, applyExtras, type SyncedExtras } from "./sync-extras";
 import { updateStreak, todayISO } from "./progression/streak";
 
-const KEY = "awesome.user-state.v1";
+const KEY = "skein.user-state.v1";
 
 export type UserState = {
   tier: Tier;
@@ -64,7 +64,11 @@ function load(): UserState {
 
 function save(s: UserState) {
   if (typeof window === "undefined") return;
-  localStorage.setItem(KEY, JSON.stringify(s));
+  try {
+    localStorage.setItem(KEY, JSON.stringify(s));
+  } catch {
+    /* private browsing / blocked storage / quota — progress still works in memory */
+  }
 }
 
 export const userState = signal<UserState>(load());
@@ -200,7 +204,9 @@ export function setRoadmapDismissal(track: string) {
 
 export function resetAll() {
   userState.value = defaults;
-  if (typeof window !== "undefined") localStorage.removeItem(KEY);
+  if (typeof window !== "undefined") {
+    try { localStorage.removeItem(KEY); } catch { /* blocked storage — in-memory reset still applies */ }
+  }
 }
 
 /** Replace local state from an imported bundle (StateIO). Merges onto defaults so a partial/old

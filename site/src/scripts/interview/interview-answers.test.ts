@@ -99,4 +99,65 @@ describe("interview answer levels", () => {
       "Transport = Unix socket (/var/run/docker.sock) by default.",
     ]);
   });
+
+  test("stops a code block at the end of its class body instead of swallowing the following prose", () => {
+    const blocks = parseInterviewAnswer([
+      "Change detection walks the tree.",
+      "#",
+      "Quick example",
+      "typescript",
+      "Copy",
+      "import",
+      "{",
+      "Component",
+      "}",
+      "from",
+      "'@angular/core'",
+      ";",
+      "export",
+      "class",
+      "CounterComponent",
+      "{",
+      "count",
+      "=",
+      "0",
+      ";",
+      "}",
+      "Click fires a DOM event. Zone.js intercepts it and schedules",
+      "ApplicationRef.tick()",
+      ", which walks the tree from root. Angular finds",
+      "{{ count }}",
+      "changed from 0",
+      "to 1",
+      "and patches the DOM. That is the whole cycle.",
+    ].join("\n\n"));
+
+    const code = blocks.find((block) => block.kind === "code");
+    expect(code?.text).not.toMatch(/Click fires/);
+    expect(code?.text.trim().endsWith("}")).toBe(true);
+
+    const prose = blocks.filter((block) => block.kind === "paragraph").map((block) => block.text).join(" ");
+    expect(prose).toMatch(/Click fires a DOM event/);
+  });
+
+  test("keeps a template-literal's own `{{ }}` binding intact instead of shredding it into stray braces", () => {
+    const blocks = parseInterviewAnswer([
+      "Quick example",
+      "typescript",
+      "Copy",
+      "export",
+      "class",
+      "Widget",
+      "{",
+      "template",
+      "=",
+      "'<button (click)=\"count++\">{{ count }}</button>'",
+      ";",
+      "}",
+    ].join("\n\n"));
+
+    const code = blocks.find((block) => block.kind === "code");
+    expect(code?.text).toContain("{{count}}</button>");
+    expect(code?.text).not.toMatch(/\}\n\n\}/);
+  });
 });

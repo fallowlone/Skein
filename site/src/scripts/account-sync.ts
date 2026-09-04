@@ -76,7 +76,7 @@ export async function fetchMe(): Promise<{
   // carry no session, so /api/me would only ever answer {authenticated:false}.
   // Skip the request entirely unless the readable hint cookie set at login is
   // present — keeps /api/me off the page's initial network path for guests.
-  if (typeof document !== "undefined" && !/(?:^|;\s*)awesome\.auth=1(?:;|$)/.test(document.cookie)) {
+  if (typeof document !== "undefined" && !/(?:^|;\s*)skein.auth=1(?:;|$)/.test(document.cookie)) {
     return null;
   }
   try {

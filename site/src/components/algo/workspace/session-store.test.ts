@@ -29,13 +29,13 @@ describe("session-store", () => {
   });
 
   test("falls back to defaults on a corrupted record instead of throwing", () => {
-    window.localStorage.setItem("awesome.algo-workspace.3sum.v1", "{not json");
+    window.localStorage.setItem("skein.algo-workspace.3sum.v1", "{not json");
     expect(loadSession("3sum")).toBeNull();
   });
 
   test("ignores an unrecognized mode/scheme value rather than trusting hand-edited storage", () => {
     window.localStorage.setItem(
-      "awesome.algo-workspace.3sum.v1",
+      "skein.algo-workspace.3sum.v1",
       JSON.stringify({ code: "x", mode: "bogus", scheme: "bogus", attempts: [] }),
     );
     const loaded = loadSession("3sum");

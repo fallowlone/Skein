@@ -4,7 +4,7 @@
 // source of truth for the project-path UI; UserState.capstones is the sync-forward
 // mirror. See docs/superpowers/plans/2026-06-05-guided-capstone-path.md.
 
-const keyFor = (slug: string) => `awesome.capstone.${slug}`;
+const keyFor = (slug: string) => `skein.capstone.${slug}`;
 
 export function readCapstone(slug: string): Record<string, boolean> {
   try {
