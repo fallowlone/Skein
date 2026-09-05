@@ -2,10 +2,11 @@
 // "Am I ready?" — one island that surfaces every measurement the adaptive engine takes of the
 // learner: live rank (high-water), the senior-by-date forecast, weak spots, and interview
 // readiness. Pure presentation over currentReadiness(); reuses the tested selectors verbatim.
-import { useEffect } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
-import { currentReadiness, content } from "~/scripts/path/path-io";
+import { currentReadiness, content, config } from "~/scripts/path/path-io";
 import { ratingToRank } from "~/scripts/progression/ranks";
+import { barRatingForGoal } from "~/scripts/progression/effective-rating";
 import unitsJson from "~/content/units.json";
 
 type UnitMeta = { track: string; slug: string; firstLesson?: string };
@@ -20,14 +21,6 @@ function startHref(lang: Locale, unitId: string): string {
   return m?.firstLesson ? `/${lang}/learn/${m.track}/${m.slug}/${m.firstLesson}` : `/${lang}/`;
 }
 
-function fmtDate(ms: number, lang: Locale): string {
-  return new Date(ms).toLocaleDateString(lang === "ru" ? "ru-RU" : "en-US", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
 export default function ReadinessDashboard({ lang }: { lang: Locale }) {
   useEffect(() => {
     document.getElementById("readiness-fallback")?.remove();
@@ -35,7 +28,6 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
 
   const r = currentReadiness();
   const rank = ratingToRank(r.displayRating);
-  const barLabel = ratingToRank(r.barRating).label[lang];
 
   // What the rank MEANS: the market gloss on anchor ranks (e.g. "≈ junior baseline"), else the
   // tier band so every rank reads as junior / middle / senior. Plus the 0–1000 scale + goal target.
@@ -46,13 +38,6 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
   };
   const meaning = rank.market?.[lang] ?? tierBand[rank.contentTier]?.[lang] ?? "";
   const scaleHint = lang === "ru" ? `шкала 0–1000 · цель ${r.barRating}` : `0–1000 scale · goal ${r.barRating}`;
-
-  const deltaText = (d: number) =>
-    d > 0
-      ? t("readiness.behind", lang).replace("{d}", String(d))
-      : d < 0
-        ? t("readiness.ahead", lang).replace("{d}", String(-d))
-        : t("readiness.onTime", lang);
 
   const weak = r.weakSpots.map((w) => ({
     key: w.unitId,
@@ -101,32 +86,10 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
         )}
       </section>
 
-      <section class="rd-card rd-forecast">
-        <span class="rd-head">{t("readiness.forecast", lang)}</span>
-        {r.forecast == null ? (
-          <p class="rd-muted">{t("readiness.forecastNoData", lang)}</p>
-        ) : r.forecast.reached ? (
-          <p class="rd-strong">{t("readiness.forecastReached", lang).replace("{bar}", barLabel)}</p>
-        ) : r.forecast.projectedMs != null ? (
-          <p>
-            {t("readiness.forecastBy", lang)
-              .replace("{bar}", barLabel)
-              .replace("{date}", fmtDate(r.forecast.projectedMs, lang))
-              .replace("{delta}", deltaText(r.forecast.daysAheadBehind))}
-          </p>
-        ) : r.forecast.plan && r.deadlineMs != null ? (
-          // Deadline set but no study history yet → answer from the plan feasibility (the same
-          // verdict the deadline tool shows) instead of the misleading "set a deadline" copy.
-          <p class={r.forecast.plan.fits ? "rd-strong" : undefined}>
-            {t(r.forecast.plan.fits ? "readiness.forecastPlanFits" : "readiness.forecastPlanOver", lang)
-              .replace("{bar}", barLabel)
-              .replace("{date}", fmtDate(r.deadlineMs, lang))
-              .replace("{h}", String(Math.max(0, Math.round(r.forecast.plan.deltaMin / 60))))}
-          </p>
-        ) : (
-          <p class="rd-muted">{t("readiness.forecastNoData", lang)}</p>
-        )}
-      </section>
+      {/* Forecast Builder — the forecast placeholder becomes an interactive
+          mini-builder (target + deadline) that previews a locked projection
+          timeline; the full forecast + weekly plan is the Pro unlock. */}
+      <ForecastBuilderCard lang={lang} displayRating={r.displayRating} />
 
       <section class="rd-card rd-weak">
         <span class="rd-head">{t("readiness.weak", lang)}</span>
@@ -164,5 +127,94 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
       </section>
       </div>
     </>
+  );
+}
+
+// ── Forecast Builder ──────────────────────────────────────────────────────────
+// Interactive mini-builder: target goal + deadline feed a locked projection
+// timeline (six monthly ticks). The full forecast + weekly plan stays behind
+// the Pro CTA — the chart is a teaser, not the instrument. Real signals seed
+// it: the active goal, a stored deadline, and the live display rating.
+function ForecastBuilderCard({ lang, displayRating }: { lang: Locale; displayRating: number }) {
+  const cfg = config.value; // subscribe — prefills the builder from the real plan
+  const [target, setTarget] = useState(cfg.goals[0]?.id ?? "senior-fullstack");
+  const [deadline, setDeadline] = useState(
+    cfg.deadline?.targetDateMs ? new Date(cfg.deadline.targetDateMs).toISOString().slice(0, 10) : "",
+  );
+
+  const goalRating = Math.max(1, barRatingForGoal(target));
+  const curPct = Math.min(100, Math.max(0, (displayRating / goalRating) * 100));
+
+  // Six monthly ticks from the current month (the locked preview window).
+  const now = new Date();
+  const months = Array.from({ length: 6 }, (_, i) => new Date(now.getFullYear(), now.getMonth() + i, 1));
+  const monthLabel = (d: Date) =>
+    d.toLocaleDateString(lang === "ru" ? "ru-RU" : "en-US", { month: "short" }).replace(".", "");
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Deadline position on the timeline, clamped into the preview window.
+  let dlIdx = -1;
+  if (deadline) {
+    const d = new Date(`${deadline}T00:00:00`);
+    const m = (d.getFullYear() - now.getFullYear()) * 12 + (d.getMonth() - now.getMonth());
+    dlIdx = Math.min(5, Math.max(1, m));
+  }
+
+  // Projected readiness at each tick: a linear climb from the current level to
+  // the goal bar. Deliberately simple — the honest curve is the Pro unlock.
+  const vals = months.map((_, i) => curPct + ((100 - curPct) * i) / 5);
+  const W = 340, H = 150, padL = 42, padR = 10, padT = 12, padB = 20;
+  const x = (i: number) => padL + (i * (W - padL - padR)) / 5;
+  const y = (pct: number) => padT + (1 - pct / 100) * (H - padT - padB);
+  const solid = vals.slice(0, 2).map((v, i) => `${x(i)},${y(v)}`).join(" ");
+  const dashed = vals.slice(1).map((v, i) => `${x(i + 1)},${y(v)}`).join(" ");
+  const midPct = Math.round(vals[dlIdx >= 0 ? dlIdx : 2]);
+
+  return (
+    <section class="rd-card rd-forecast">
+      <span class="rd-head-row">
+        <span class="rd-head">{t("readiness.forecast", lang)}</span>
+        <span class="rd-pro">PRO</span>
+      </span>
+      <p class="rd-fb-hint">{t("readiness.forecastNoData", lang)}</p>
+      <div class="rd-fb-form">
+        <label class="rd-fb-field">
+          <span class="rd-fb-label">{t("readiness.forecastTarget", lang)}</span>
+          <select value={target} onChange={(e) => setTarget(e.currentTarget.value)}>
+            {content.goals.map((g) => (
+              <option key={g.id} value={g.id}>{g.label[lang]}</option>
+            ))}
+          </select>
+        </label>
+        <label class="rd-fb-field">
+          <span class="rd-fb-label">{t("readiness.forecastDeadline", lang)}</span>
+          <input type="date" value={deadline} min={today} onChange={(e) => setDeadline(e.currentTarget.value)} />
+        </label>
+      </div>
+      <span class="rd-head-row rd-fb-chart-head">
+        <span class="rd-fb-label">{t("readiness.forecastProjected", lang)}</span>
+        <span class="rd-pro">PRO</span>
+      </span>
+      <svg class="rd-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={t("readiness.forecastProjected", lang)}>
+        <text x={padL - 6} y={y(0) + 3} class="rd-chart-y" text-anchor="end">0%</text>
+        <text x={padL - 6} y={y(midPct) + 3} class="rd-chart-y" text-anchor="end">{midPct}%</text>
+        <text x={padL - 6} y={y(100) + 3} class="rd-chart-y" text-anchor="end">100%</text>
+        <line x1={padL} y1={y(0)} x2={W - padR} y2={y(0)} class="rd-chart-axis" />
+        {dlIdx >= 0 && <line x1={x(dlIdx)} y1={padT} x2={x(dlIdx)} y2={y(0)} class="rd-chart-deadline" />}
+        <polyline points={solid} class="rd-chart-solid" />
+        <polyline points={dashed} class="rd-chart-dashed" />
+        {vals.map((v, i) => (
+          <circle key={i} cx={x(i)} cy={y(v)} r={2.6} class="rd-chart-dot" />
+        ))}
+        {months.map((d, i) => (
+          <text key={i} x={x(i)} y={H - 4} class="rd-chart-x" text-anchor="middle">{monthLabel(d)}</text>
+        ))}
+      </svg>
+      <p class="rd-fb-unlock">{t("readiness.forecastUnlock", lang)}</p>
+      <a class="rd-fb-primary" href={`/${lang}/account`}>
+        {t("readiness.forecastBuildCta", lang)} <span class="rd-pro-chip">PRO</span>
+      </a>
+      <a class="rd-fb-secondary" href={`/${lang}/interview/`}>{t("readiness.forecastMockCta", lang)}</a>
+    </section>
   );
 }
