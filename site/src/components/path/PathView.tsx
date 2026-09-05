@@ -21,6 +21,7 @@ import NextPath from "./planning/NextPath";
 import DeadlineSection from "./planning/DeadlineSection";
 import AdvancedKnobs from "./planning/AdvancedKnobs";
 import TodayFocus from "./planning/TodayFocus";
+import SeniorityReceipt from "./planning/SeniorityReceipt";
 import PathConfigDrawer from "./PathConfigDrawer";
 import UnitProbe from "./UnitProbe";
 import PlacementMeter from "./planning/PlacementMeter";
@@ -80,6 +81,11 @@ export default function PathView({ lang }: { lang: Locale }) {
   const xp = currentXp();
   const lvl = levelFromXp(xp);
   const doneSteps = completedStepCount(k, content.units, cfg.weights.masteryThreshold);
+  // Receipt view: calibration ran (knowledge is non-empty) but no step is completed
+  // yet — the just-calibrated moment. The Seniority Receipt replaces the cold-start
+  // banner, and the config sections stay tucked in the collapsed inset (same
+  // progressive disclosure as cold-start) until the learner starts working the plan.
+  const showReceipt = !isColdStart && doneSteps === 0;
   const intoPct = lvl.intoLevel + lvl.toNext > 0
     ? Math.round((lvl.intoLevel / (lvl.intoLevel + lvl.toNext)) * 100)
     : 0;
@@ -178,7 +184,7 @@ export default function PathView({ lang }: { lang: Locale }) {
         <span class="xs-steps">{t.steps}: {doneSteps} <b>+{doneSteps * PATH_STEP_BONUS} {t.xp}</b></span>
       </div>
 
-      {/* Cold-start banner */}
+      {/* Cold-start banner / Seniority Receipt (just-calibrated, nothing done yet) */}
       {isColdStart && (
         <section class="banner cold">
           <h2>{t.coldTitle}</h2>
@@ -186,6 +192,7 @@ export default function PathView({ lang }: { lang: Locale }) {
           <a class="btn btn-primary btn-sm" href={`/${lang}/calibrate`}><span>{t.coldCta}</span><span class="arrow">→</span></a>
         </section>
       )}
+      {showReceipt && <SeniorityReceipt lang={lang} />}
 
       {/* droppedLocal warning */}
       {droppedLocal && <p class="banner dropped">{t.droppedNote}</p>}
@@ -193,11 +200,11 @@ export default function PathView({ lang }: { lang: Locale }) {
       {/* TODAY focus */}
       <TodayFocus lang={lang} />
 
-      {/* Planning sections. At cold-start the student sees only the banner above;
-          everything else is progressive-disclosure inside a collapsed inset so the
-          single "Calibrate" CTA is the obvious next move. With a plan, sections
-          render flat as before. */}
-      {isColdStart ? (
+      {/* Planning sections. At cold-start or in the receipt view the student sees
+          only the banner/receipt above; everything else is progressive-disclosure
+          inside a collapsed inset so the next move stays obvious. With a plan in
+          progress, sections render flat as before. */}
+      {isColdStart || showReceipt ? (
         <details class="screen-section inset cold-more">
           <summary>
             <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6" /></svg>
