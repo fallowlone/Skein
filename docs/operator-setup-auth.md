@@ -102,7 +102,7 @@ secrets/vars come from a **`.dev.vars`** file at the repo root (gitignored):
 GITHUB_CLIENT_ID=<local oauth app client id>
 GITHUB_CLIENT_SECRET=<local oauth app client secret>
 SESSION_SECRET=<any long random string>
-TERMS_VERSION=2026-05-29
+TERMS_VERSION=2026-09-06
 ```
 For a full local OAuth round-trip, register a SECOND GitHub OAuth App whose
 callback is `http://localhost:8788/api/auth/callback` and put its id/secret in

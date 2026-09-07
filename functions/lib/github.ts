@@ -2,14 +2,23 @@ import type { GithubUser } from "./db";
 
 interface GithubUserPayload { id: number; login: string; avatar_url: string | null; }
 
+export interface GithubViewerSponsorship {
+  sponsorshipId: string;
+  tierId: string;
+  tierName: string;
+  monthlyPriceCents: number;
+  isOneTime: boolean;
+  privacyLevel: "PUBLIC" | "PRIVATE";
+}
+
 export function mapGithubUser(p: GithubUserPayload): GithubUser {
   return { id: p.id, login: p.login, avatar_url: p.avatar_url ?? null };
 }
 
-export async function exchangeCodeForUser(
+export async function exchangeCodeForUserWithToken(
   code: string,
   creds: { clientId: string; clientSecret: string },
-): Promise<GithubUser> {
+): Promise<{ user: GithubUser; accessToken: string }> {
   const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
@@ -38,7 +47,72 @@ export async function exchangeCodeForUser(
   });
   if (!userRes.ok) throw new Error("github_user_fetch_failed");
   const payload = (await userRes.json()) as GithubUserPayload;
-  return mapGithubUser(payload);
+  return { user: mapGithubUser(payload), accessToken: tokenJson.access_token };
+}
+
+export async function exchangeCodeForUser(
+  code: string,
+  creds: { clientId: string; clientSecret: string },
+): Promise<GithubUser> {
+  return (await exchangeCodeForUserWithToken(code, creds)).user;
+}
+
+const VIEWER_SPONSORSHIP_QUERY = `
+query SkeinViewerSponsorship($login: String!) {
+  user(login: $login) {
+    sponsorshipForViewerAsSponsor(activeOnly: true) {
+      id
+      privacyLevel
+      tier { id name monthlyPriceInCents isOneTime }
+    }
+  }
+  organization(login: $login) {
+    sponsorshipForViewerAsSponsor(activeOnly: true) {
+      id
+      privacyLevel
+      tier { id name monthlyPriceInCents isOneTime }
+    }
+  }
+}`;
+
+export async function fetchViewerSponsorship(
+  accessToken: string,
+  sponsorableLogin: string,
+): Promise<GithubViewerSponsorship | null> {
+  const r = await fetch("https://api.github.com/graphql", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      accept: "application/vnd.github+json",
+      "content-type": "application/json",
+      "user-agent": "skein",
+    },
+    body: JSON.stringify({ query: VIEWER_SPONSORSHIP_QUERY, variables: { login: sponsorableLogin } }),
+  });
+  if (!r.ok) throw new Error(`github_sponsorship_fetch_failed: http_${r.status}`);
+  const body = await r.json().catch(() => ({})) as any;
+  if (Array.isArray(body.errors) && body.errors.length > 0) throw new Error("github_sponsorship_fetch_failed: graphql");
+  const sponsorship = body.data?.user?.sponsorshipForViewerAsSponsor
+    ?? body.data?.organization?.sponsorshipForViewerAsSponsor
+    ?? null;
+  if (!sponsorship) return null;
+  const tier = sponsorship.tier;
+  if (
+    typeof sponsorship.id !== "string" || !sponsorship.id ||
+    (sponsorship.privacyLevel !== "PUBLIC" && sponsorship.privacyLevel !== "PRIVATE") ||
+    !tier || typeof tier.id !== "string" || !tier.id ||
+    typeof tier.name !== "string" || !tier.name ||
+    !Number.isSafeInteger(tier.monthlyPriceInCents) || tier.monthlyPriceInCents < 0 ||
+    typeof tier.isOneTime !== "boolean"
+  ) throw new Error("github_sponsorship_fetch_failed: bad_payload");
+  return {
+    sponsorshipId: sponsorship.id,
+    tierId: tier.id,
+    tierName: tier.name,
+    monthlyPriceCents: tier.monthlyPriceInCents,
+    isOneTime: tier.isOneTime,
+    privacyLevel: sponsorship.privacyLevel,
+  };
 }
 
 /** Build the GitHub authorize URL. */

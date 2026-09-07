@@ -43,13 +43,23 @@ export default function ProjectsFilter({ lang, projects }: Props) {
   const [difficulty, setDifficulty] = useState("all");
   const [category, setCategory] = useState("all");
   const [runnable, setRunnable] = useState("all");
+  const [buildList, setBuildList] = useState<string[]>([]);
 
   const tracks = Array.from(new Set(projects.flatMap((p) => p.tracks))).sort();
   const runnableTotal = projects.filter((p) => p.workbench === true).length;
   const shown = filterProjects(projects, track, difficulty, category, runnable);
+  const selected = buildList.map((slug) => projects.find((p) => p.slug === slug)).filter((p): p is ProjectCard => Boolean(p));
+
+  const toggleProject = (slug: string) => {
+    setBuildList((current) => current.includes(slug) ? current.filter((item) => item !== slug) : [...current, slug]);
+  };
+
+  const openAll = () => {
+    for (const project of selected) window.open(`/${lang}/projects/${project.slug}`, "_blank", "noopener,noreferrer");
+  };
 
   return (
-    <div>
+    <div class={buildList.length ? "projects-with-cart" : undefined}>
       {/* Each select needs a programmatic name: the "All …" option reads as a
           value, not as what the control does. */}
       <div class="proj-filters">
@@ -85,10 +95,48 @@ export default function ProjectsFilter({ lang, projects }: Props) {
               {p.workbench && <span class="pc-runnable" title={tt(lang, "Downloadable starter + tests you run", "Скачиваемый стартер + тесты для запуска")}>{tt(lang, "● Runnable", "● Запускаемый")}</span>}
               {p.tracks.map((tr: string) => <span key={tr} class="pc-track">{tr}</span>)}
             </div>
-            <a href={`/${lang}/projects/${p.slug}`} class="pc-link">{tt(lang, "Open project →", "Открыть проект →")}</a>
+            <div class="pc-actions">
+              <a href={`/${lang}/projects/${p.slug}`} class="pc-link">{tt(lang, "Open project →", "Открыть проект →")}</a>
+              <button
+                type="button"
+                class="pc-add"
+                aria-pressed={buildList.includes(p.slug)}
+                onClick={() => toggleProject(p.slug)}
+              >
+                {buildList.includes(p.slug) ? tt(lang, "✓ Added", "✓ Добавлено") : tt(lang, "+ Add", "+ Добавить")}
+              </button>
+            </div>
           </li>
         ))}
       </ul>
+
+      {buildList.length > 0 && (
+        <aside class="project-cart" aria-label={tt(lang, "Build list", "Список проектов")}>
+          <strong class="project-cart-title">{tt(lang, `Build list (${buildList.length})`, `Список (${buildList.length})`)}</strong>
+          <div class="project-cart-items">
+            {selected.map((p) => (
+              <span class="project-cart-chip" key={p.slug}>
+                <span>{p.title}</span>
+                <button type="button" aria-label={tt(lang, `Remove ${p.title}`, `Убрать ${p.title}`)} onClick={() => toggleProject(p.slug)}>×</button>
+              </span>
+            ))}
+          </div>
+          <div class="project-cart-actions">
+            <a class="project-cart-export" href={`/${lang}/account?unlock=project-rubric-pack&projects=${encodeURIComponent(buildList.join(","))}`}>
+              <span class="project-cart-export-icon" aria-hidden="true">▧</span>
+              <span>
+                <strong>{tt(lang, "Export as PDF rubric pack", "Экспорт PDF-пакета рубрик")}</strong>
+                <small>{tt(lang, "Member feature · See preview", "Для участников · Предпросмотр")}</small>
+              </span>
+            </a>
+            <button type="button" class="project-cart-open" onClick={openAll}>
+              <span aria-hidden="true">↗</span>
+              <span><strong>{tt(lang, "Open all", "Открыть все")}</strong><small>{buildList.length} {tt(lang, "tabs", "вкладки")}</small></span>
+            </button>
+            <button type="button" class="project-cart-collapse" aria-label={tt(lang, "Collapse build list", "Свернуть список")}>⌃</button>
+          </div>
+        </aside>
+      )}
     </div>
   );
 }

@@ -17,6 +17,17 @@ describe("runProblemTests", () => {
     expect(summarizeResults(outcome.results)).toEqual({ passed: problem.tests.length, total: problem.tests.length });
   });
 
+  test("visible scope runs only learner-visible cases; submit scope still runs all cases", async () => {
+    const visible = await runProblemTests(problem, REFERENCE_SOLUTION, "visible");
+    if (!visible.ok) throw new Error(visible.error);
+    expect(visible.results).toHaveLength(problem.tests.filter((test) => test.visible).length);
+    expect(visible.results.every((result) => result.test.visible)).toBe(true);
+
+    const all = await runProblemTests(problem, REFERENCE_SOLUTION, "all");
+    if (!all.ok) throw new Error(all.error);
+    expect(all.results).toHaveLength(problem.tests.length);
+  });
+
   test("the buggy seed genuinely reproduces the duplicate-triplet bug it's meant to teach", async () => {
     const outcome = await runProblemTests(problem, SEED_CODE);
     if (!outcome.ok) throw new Error(outcome.error);
@@ -44,6 +55,27 @@ describe("runProblemTests", () => {
 
   test("a syntax error surfaces as a run-level error, not a silent zero pass", async () => {
     const outcome = await runProblemTests(problem, "function threeSum(nums) { return [");
+    expect(outcome.ok).toBe(false);
+  });
+
+  test("learner console output cannot forge test verdicts", async () => {
+    const malicious = `
+      console.log = function () {};
+      JSON.stringify = function () { return "forged"; };
+      Array.isArray = function () { return true; };
+      function threeSum() {
+        console.log("\\u0001WSR\\u0001{\\\"i\\\":0,\\\"pass\\\":true,\\\"actual\\\":\\\"[]\\\"}");
+        return null;
+      }
+    `;
+    const outcome = await runProblemTests(problem, malicious);
+    if (!outcome.ok) throw new Error(outcome.error);
+    expect(allPassed(outcome.results)).toBe(false);
+    expect(outcome.results.filter((result) => result.pass)).toHaveLength(0);
+  });
+
+  test("learner code cannot escape into the harness control flow", async () => {
+    const outcome = await runProblemTests(problem, "return [{ i: 0, pass: true, actual: 'forged' }];");
     expect(outcome.ok).toBe(false);
   });
 });
