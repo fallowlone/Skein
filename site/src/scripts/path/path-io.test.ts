@@ -9,7 +9,7 @@ import {
   tierOf, unitPracticeFractions, conceptsUpToBand,
   isColdStartView,
   readAttemptsAll, dueReviews, recordPracticeOutcome, computeDoNow,
-  unitReviewHealth,
+  unitReviewHealth, knowledge, currentConceptMasteryLevel, setConceptMasteryLevel, advanceConceptMastery,
 } from "./path-io";
 import { cardsFromRetrieval } from "../review-harvest";
 import { DEFAULT_CONFIG } from "./config";
@@ -81,6 +81,25 @@ describe("path-io pure helpers", () => {
     const arr = serializeKnowledge(s);
     expect(arr).toEqual([["a", { confidence: 1, source: "declared", lastAt: 123 }]]);
     expect(deserializeKnowledge(arr).get("a")).toEqual({ confidence: 1, source: "declared", lastAt: 123 });
+  });
+
+  it("writes lesson self-assessment through the canonical path knowledge", () => {
+    const previous = knowledge.value;
+    const concept = content.concepts[0].id;
+    try {
+      knowledge.value = new Map();
+      expect(setConceptMasteryLevel(concept, "application")).toBe(true);
+      expect(knowledge.value.get(concept)).toMatchObject({ confidence: 0.7, source: "declared" });
+      expect(JSON.parse(localStorage.getItem("skein.path-knowledge.v1")!)).toContainEqual([
+        concept,
+        expect.objectContaining({ confidence: 0.7, source: "declared" }),
+      ]);
+      expect(currentConceptMasteryLevel(concept)).toBe("application");
+      expect(advanceConceptMastery(concept)).toBe("explanation");
+      expect(knowledge.value.get(concept)?.confidence).toBe(0.85);
+    } finally {
+      knowledge.value = previous;
+    }
   });
 });
 

@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeEach, vi } from "vitest";
-import { userState, recordVisit, setTier, recordRetrieval, dismissRevisit, resetAll } from "./user-state";
+import { userState, recordVisit, recordTutorOutcome, setTier, recordRetrieval, dismissRevisit, resetAll } from "./user-state";
 
 describe("user-state", () => {
   beforeEach(() => {
@@ -32,6 +32,19 @@ describe("user-state", () => {
     recordVisit("tcp-handshake", "senior");
     expect(userState.value.history["tcp-handshake"].tiersOpened.sort())
       .toEqual(["middle", "senior"]);
+  });
+
+  test("tutor outcomes are bounded history and do not alter mastery", () => {
+    recordTutorOutcome({ lessonKey: "js/01-basics/01-intro", mode: "hint", question: "q", concepts: ["scope"] });
+    expect(userState.value.tutorHistory?.at(-1)).toMatchObject({ lessonKey: "js/01-basics/01-intro", mode: "hint", concepts: ["scope"] });
+    expect((userState.value as any).conceptMastery).toBeUndefined();
+    expect(JSON.parse(localStorage.getItem("skein.user-state.v1")!).tutorHistory).toHaveLength(1);
+  });
+
+  test("keeps only the latest 50 tutor outcomes", () => {
+    for (let i = 0; i < 51; i++) recordTutorOutcome({ lessonKey: "lesson", mode: "hint", question: String(i), concepts: [] });
+    expect(userState.value.tutorHistory).toHaveLength(50);
+    expect(userState.value.tutorHistory?.[0].question).toBe("1");
   });
 
   test("recordRetrieval marks attempted and bumps count", () => {

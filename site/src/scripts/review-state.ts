@@ -14,6 +14,9 @@ export interface CardSeed {
   lessonKey: string;
   source: CardSource;
   index: number;
+  // Optional direct knowledge links. Older cards and non-path cards remain valid;
+  // path review can progressively become concept-specific when content provides them.
+  conceptIds?: string[];
   front: string;
   back: string;
   lang: "en" | "ru";
@@ -70,7 +73,14 @@ export function addCard(seed: CardSeed, now = Date.now()): void {
   const s = read();
   const existing = s[seed.cardKey];
   if (existing) {
-    s[seed.cardKey] = { ...existing, front: seed.front, back: seed.back, lang: seed.lang, lessonKey: seed.lessonKey };
+    s[seed.cardKey] = {
+      ...existing,
+      front: seed.front,
+      back: seed.back,
+      lang: seed.lang,
+      lessonKey: seed.lessonKey,
+      ...(seed.conceptIds ? { conceptIds: seed.conceptIds } : {}),
+    };
   } else {
     const sched = freshSched();
     s[seed.cardKey] = { ...seed, sched, dueAt: dueAtFrom(now, sched), addedAt: now, lastReviewedAt: null };

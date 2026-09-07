@@ -61,6 +61,11 @@ export const MIN_COMMIT_CHARS = 12;
 
 export type SelfGrade = "hit" | "partial" | "miss" | "skipped";
 
+export type SelfGradeRecord = {
+  grade: SelfGrade;
+  lastAt: number;
+};
+
 export function isCommitted(text: string): boolean {
   return (text ?? "").trim().length >= MIN_COMMIT_CHARS;
 }
@@ -93,19 +98,37 @@ export function writeResponse(lessonKey: string, taskId: string, text: string): 
 
 const gradesKeyFor = (lessonKey: string) => `atlas.practice-selfgrade.${lessonKey}`;
 
-export function readSelfGrades(lessonKey: string): Record<string, SelfGrade> {
+const isSelfGrade = (value: unknown): value is SelfGrade =>
+  value === "hit" || value === "partial" || value === "miss" || value === "skipped";
+
+export function readSelfGradeRecords(lessonKey: string): Record<string, SelfGradeRecord> {
   try {
     const raw = localStorage.getItem(gradesKeyFor(lessonKey));
-    return raw ? (JSON.parse(raw) as Record<string, SelfGrade>) : {};
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const records: Record<string, SelfGradeRecord> = {};
+    for (const [taskId, value] of Object.entries(parsed)) {
+      if (isSelfGrade(value)) {
+        records[taskId] = { grade: value, lastAt: 0 };
+      } else if (value && typeof value === "object" && "grade" in value && isSelfGrade(value.grade)) {
+        const lastAt = "lastAt" in value && typeof value.lastAt === "number" && Number.isFinite(value.lastAt) && value.lastAt >= 0 ? value.lastAt : 0;
+        records[taskId] = { grade: value.grade, lastAt };
+      }
+    }
+    return records;
   } catch {
     return {};
   }
 }
 
-export function setSelfGrade(lessonKey: string, taskId: string, grade: SelfGrade): void {
+export function readSelfGrades(lessonKey: string): Record<string, SelfGrade> {
+  return Object.fromEntries(Object.entries(readSelfGradeRecords(lessonKey)).map(([taskId, record]) => [taskId, record.grade]));
+}
+
+export function setSelfGrade(lessonKey: string, taskId: string, grade: SelfGrade, now = Date.now()): void {
   try {
-    const cur = readSelfGrades(lessonKey);
-    cur[taskId] = grade;
+    const cur = readSelfGradeRecords(lessonKey);
+    cur[taskId] = { grade, lastAt: now };
     localStorage.setItem(gradesKeyFor(lessonKey), JSON.stringify(cur));
   } catch {
     /* private browsing, storage full — non-fatal */

@@ -57,6 +57,8 @@ export function mergeProgress(local: UserState, server: UserState): UserState {
     manualTierFlips: Math.max(local.manualTierFlips ?? 0, server.manualTierFlips ?? 0),
     history: mergeHistory(server.history, local.history),
     retrieval: mergeStampedMap(server.retrieval, local.retrieval),
+    tutorHistory: [...(server.tutorHistory ?? []), ...(local.tutorHistory ?? [])]
+      .sort((a, b) => a.answeredAt - b.answeredAt).slice(-50),
     dismissedRevisit: { ...server.dismissedRevisit, ...local.dismissedRevisit },
     // milestone done anywhere stays done — a fresh device's empty mirror must
     // not clobber the server's record (local would otherwise win the spread)
