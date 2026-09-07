@@ -21,7 +21,7 @@ type Bi = { en: string; ru: string };
 // bare author id, so existing schedules survive) while `lessonKey` is the canonical
 // "<track>/<unit>/<slug>" join key (injected by the remark plugin) that unitReviewHealth
 // buckets on. They differ on purpose — see path-io.ts unitReviewHealth.
-export type RetrievalQ = { id?: string; q: unknown; a?: unknown; answer?: unknown };
+export type RetrievalQ = { id?: string; q: unknown; a?: unknown; answer?: unknown; conceptIds?: string[] };
 export type PracticeTaskLite = { id: string; title: Bi; prompt: Bi };
 
 export function cardsFromRetrieval(cardSlug: string, lessonKey: string, lang: Lang, questions: RetrievalQ[]): CardSeed[] {
@@ -35,6 +35,7 @@ export function cardsFromRetrieval(cardSlug: string, lessonKey: string, lang: La
         lessonKey,
         source: "retrieval" as const,
         index,
+        ...(q.conceptIds?.length ? { conceptIds: q.conceptIds } : {}),
         front: trunc(front),
         back: trunc(back),
         lang,
