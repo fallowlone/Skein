@@ -7,6 +7,7 @@ import {
   readResponses,
   writeResponse,
   readSelfGrades,
+  readSelfGradeRecords,
   setSelfGrade,
   isCommitted,
   MIN_COMMIT_CHARS,
@@ -121,6 +122,17 @@ describe("practice-state self-grade store", () => {
     setSelfGrade("a/b/c", "t1", "miss");
     setSelfGrade("a/b/c", "t1", "partial");
     expect(readSelfGrades("a/b/c").t1).toBe("partial");
+  });
+  test("timestamps new grades and gives legacy grades a recency fallback", () => {
+    localStorage.setItem("atlas.practice-selfgrade.a/b/c", JSON.stringify({ legacy: "miss" }));
+
+    setSelfGrade("a/b/c", "current", "partial", 1234);
+
+    expect(readSelfGradeRecords("a/b/c")).toEqual({
+      legacy: { grade: "miss", lastAt: 0 },
+      current: { grade: "partial", lastAt: 1234 },
+    });
+    expect(readSelfGrades("a/b/c")).toEqual({ legacy: "miss", current: "partial" });
   });
   test("grades are scoped per lessonKey", () => {
     setSelfGrade("a/b/c", "t1", "hit");

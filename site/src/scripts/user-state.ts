@@ -35,6 +35,7 @@ export type UserState = {
   // Per-capstone milestone completion (sync-forward mirror of capstone-state.ts,
   // which owns the live UI source of truth). projectSlug → milestoneId → done.
   capstones?: Record<string, Record<string, boolean>>;
+  tutorHistory?: Array<{ lessonKey: string; mode: string; question: string; answeredAt: number; concepts: string[] }>;
 };
 
 const defaults: UserState = {
@@ -48,6 +49,7 @@ const defaults: UserState = {
   retrievalRatings: {},
   dismissedRevisit: {},
   manualTierFlips: 0,
+  tutorHistory: [],
 };
 
 function load(): UserState {
@@ -124,6 +126,11 @@ export function setTier(tier: Tier, manual: boolean) {
 
 export function setLang(lang: Lang) {
   userState.value = { ...userState.value, lang };
+}
+
+export function recordTutorOutcome(outcome: Omit<NonNullable<UserState["tutorHistory"]>[number], "answeredAt">): void {
+  const history = [...(userState.value.tutorHistory ?? []), { ...outcome, answeredAt: Date.now() }].slice(-50);
+  userState.value = { ...userState.value, tutorHistory: history };
 }
 
 export function setMotion(m: UserState["motion"]) {
