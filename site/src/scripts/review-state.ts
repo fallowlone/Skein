@@ -24,6 +24,7 @@ export interface Card extends CardSeed {
   dueAt: number; // epoch ms
   addedAt: number;
   lastReviewedAt: number | null;
+  lastGrade?: Grade;
 }
 
 type Store = Record<string, Card>;
@@ -85,7 +86,7 @@ export function recordReview(cardKey: string, grade: Grade, now = Date.now()): v
   const elapsedDays = c.lastReviewedAt ? Math.max(0, (now - c.lastReviewedAt) / 86_400_000) : undefined;
   const sched = schedule(c.sched, grade, { elapsedDays });
   // Seed the due-time fuzz with the cardKey so same-day cohorts spread out deterministically.
-  s[cardKey] = { ...c, sched, dueAt: dueAtFrom(now, sched, cardKey), lastReviewedAt: now };
+  s[cardKey] = { ...c, sched, dueAt: dueAtFrom(now, sched, cardKey), lastReviewedAt: now, lastGrade: grade };
   write(s);
 }
 
