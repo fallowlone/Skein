@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import { recordRetrieval, dismissRevisit } from "~/scripts/user-state";
+import { recordRetrieval, recordRetrievalRating, dismissRevisit } from "~/scripts/user-state";
 import { cardsFromRetrieval } from "~/scripts/review-harvest";
 import { addCard, recordReview } from "~/scripts/review-state";
 import type { Grade } from "~/scripts/progression/srs";
@@ -130,6 +130,7 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
                                 type="button"
                                 onClick={() => {
                                   setGraded({ ...graded, [key]: grade });
+                                  recordRetrievalRating(slug, grade);
                                   // Positional card key — matches cardsFromRetrieval's `${slug}::retrieval::${index}`.
                                   // Not q.id (the React key); a JSX-bodied question has no seeded card and
                                   // recordReview no-ops safely on the missing key.
