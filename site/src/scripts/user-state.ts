@@ -23,6 +23,10 @@ export type UserState = {
     faded?: Record<string, true>;
   }>;
   retrieval: Record<string, { attempted: boolean; lastAt: number; attempts: number }>;
+  // Retrieval confidence is learner evidence that can later seed FSRS/concept
+  // mastery updates. Kept separate from review-state because it describes the
+  // learner's self-rating, not the scheduler state.
+  retrievalRatings?: Record<string, { grade: "again" | "hard" | "good" | "easy"; lastAt: number; attempts: number }>;
   dismissedRevisit: Record<string, number>;
   manualTierFlips: number;
   // Optional: lets the roadmap avoid re-nagging a just-dismissed recommendation.
@@ -41,6 +45,7 @@ const defaults: UserState = {
   progression: { xp: 0, level: 1, achievements: {}, streak: { lastActiveDay: "", count: 0, best: 0, freezes: 0 }, titles: [] },
   history: {},
   retrieval: {},
+  retrievalRatings: {},
   dismissedRevisit: {},
   manualTierFlips: 0,
 };
@@ -165,6 +170,21 @@ export function recordRetrieval(slug: string) {
         attempted: true,
         lastAt: Date.now(),
         attempts: (r?.attempts ?? 0) + 1,
+      },
+    },
+  };
+}
+
+export function recordRetrievalRating(slug: string, grade: "again" | "hard" | "good" | "easy") {
+  const current = userState.value.retrievalRatings?.[slug];
+  userState.value = {
+    ...userState.value,
+    retrievalRatings: {
+      ...(userState.value.retrievalRatings ?? {}),
+      [slug]: {
+        grade,
+        lastAt: Date.now(),
+        attempts: (current?.attempts ?? 0) + 1,
       },
     },
   };
