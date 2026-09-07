@@ -412,7 +412,7 @@ export function unitReviewHealth(cards: Card[], now: number): Map<string, number
     if (seg.length < 2) continue;
     const unitId = `${seg[0]}/${seg[1]}`;
     reviewed.set(unitId, (reviewed.get(unitId) ?? 0) + 1);
-    const isHealthy = c.sched.reps >= 2 && c.dueAt > now && c.sched.lapses === 0;
+    const isHealthy = c.sched.reps >= 2 && c.dueAt > now && c.sched.lapses === 0 && c.lastGrade !== "again";
     if (isHealthy) healthy.set(unitId, (healthy.get(unitId) ?? 0) + 1);
   }
   const out = new Map<string, number>();
@@ -1025,4 +1025,3 @@ export function currentReadiness(): Readiness {
     evidence: typeof window === "undefined" ? null : currentEvidenceProgress(),
   };
 }
-
