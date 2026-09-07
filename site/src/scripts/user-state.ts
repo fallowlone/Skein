@@ -234,14 +234,32 @@ export async function activateSyncIfSignedIn(): Promise<void> {
   if (!me || !me.termsAccepted) { syncActive = false; return; }
 
   const server = await fetchServerProgress();
+  const local = userState.value;
+  const localHasProgress = local.pretest !== null
+    || local.progression.xp > 0
+    || local.progression.streak.count > 0
+    || Object.keys(local.history).length > 0
+    || Object.keys(local.retrieval).length > 0;
+  const serverHasProgress = server
+    ? server.pretest !== null
+      || server.progression.xp > 0
+      || server.progression.streak.count > 0
+      || Object.keys(server.history).length > 0
+      || Object.keys(server.retrieval).length > 0
+    : false;
+  const keepLocalGuestProgress = localHasProgress && !serverHasProgress
+    && window.confirm("Save this device's learning progress to your account?");
   // The server blob carries an `extras` sidecar (practice/drill/review/capstone
   // stores that live outside UserState). Strip it before the UserState merge,
   // merge it per-entry against the local stores, and write the union back.
   const serverExtras = (server as (UserState & { extras?: Partial<SyncedExtras> }) | null)?.extras;
-  if (server) {
+  if (server && !keepLocalGuestProgress) {
     const { extras: _ignored, ...serverState } = server as UserState & { extras?: Partial<SyncedExtras> };
     userState.value = mergeProgress(userState.value, serverState as UserState);
     save(userState.value);
+  }
+  if (keepLocalGuestProgress) {
+    await pushProgress({ ...local, extras: collectExtras() });
   }
   const mergedExtras = mergeExtras(collectExtras(), serverExtras);
   applyExtras(mergedExtras);
