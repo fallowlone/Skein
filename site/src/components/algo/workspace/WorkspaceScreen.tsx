@@ -26,8 +26,9 @@ type Props = {
   attempts: Attempt[]; onRestore: (a: Attempt) => void; onSaveAttempt: () => void;
   storageOk: boolean;
 
-  running: boolean; onRunTests: () => void;
+  running: boolean; runningAction: "run" | "submit" | null; onRunTests: () => void;
   testResults: TestRunResult[] | null;
+  runError: string | null;
   submitted: boolean; onSubmit: () => void;
 };
 
@@ -37,7 +38,7 @@ export default function WorkspaceScreen(props: Props) {
   const { lang, labels, problem, mode, onModeChange, choice, onChoice, committed, onSeal,
     code, onCodeChange, scheme, onScheme, elapsedSeconds, mastery, masteryDelta,
     railTab, onRailTab, hintsOpen, onReveal, attempts, onRestore, onSaveAttempt, storageOk,
-    running, onRunTests, testResults, submitted, onSubmit } = props;
+    running, runningAction, onRunTests, testResults, runError, submitted, onSubmit } = props;
   const l = labels.workspace;
 
   const shownSeconds = mode === "interview" ? Math.max(0, 1200 - elapsedSeconds) : elapsedSeconds;
@@ -52,8 +53,8 @@ export default function WorkspaceScreen(props: Props) {
   const visibleTests = testResults?.filter((r) => r.test.visible) ?? [];
 
   return (
-    <div style="display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr) 300px;align-items:start;min-height:calc(100vh - 56px);min-width:1180px">
-      <ProblemPanel lang={lang} labels={labels} problem={problem} />
+    <div class="algorithm-workspace-grid" style="display:grid;grid-template-columns:minmax(0,420px) minmax(0,1fr) 300px;align-items:start;min-height:calc(100vh - 56px);min-width:0">
+      <ProblemPanel lang={lang} labels={labels} problem={problem} submitted={submitted} />
 
       <section style="min-width:0;display:flex;flex-direction:column">
         <div style="display:flex;align-items:center;gap:20px;padding:0 24px;height:52px;border-bottom:0.5px solid var(--rule)">
@@ -84,6 +85,7 @@ export default function WorkspaceScreen(props: Props) {
                 <button
                   key={m}
                   type="button"
+                  aria-pressed={mode === m}
                   onClick={() => onModeChange(m)}
                   style={`appearance:none;cursor:pointer;display:flex;flex-direction:column;gap:8px;align-items:flex-start;text-align:left;padding:16px;background:${mode === m ? "var(--accent-ghost)" : "transparent"};border:0;border-right:${i < 2 ? "0.5px solid var(--rule)" : "0"};transition:background 120ms var(--ease)`}
                 >
@@ -105,6 +107,7 @@ export default function WorkspaceScreen(props: Props) {
                 <button
                   key={c.big}
                   type="button"
+                  aria-pressed={choice === c.big}
                   onClick={() => onChoice(c.big)}
                   style={`appearance:none;cursor:pointer;display:flex;flex-direction:column;gap:8px;align-items:flex-start;text-align:left;padding:20px 16px;background:${choice === c.big ? "var(--accent-ghost)" : "transparent"};border:0;border-right:${i < 3 ? "0.5px solid var(--rule)" : "0"};box-shadow:${choice === c.big ? "inset 0 2px 0 var(--accent)" : "none"};transition:background 120ms var(--ease)`}
                 >
@@ -152,6 +155,7 @@ export default function WorkspaceScreen(props: Props) {
                     key={s}
                     type="button"
                     title={labels.schemes[s].title}
+                    aria-pressed={scheme === s}
                     onClick={() => onScheme(s)}
                     style={`appearance:none;cursor:pointer;font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:1px;border:0.5px solid ${scheme === s ? "var(--ink)" : "var(--rule)"};background:${scheme === s ? "var(--ink)" : "transparent"};color:${scheme === s ? "var(--paper)" : "var(--muted)"};transition:border-color 120ms var(--ease)`}
                   >
@@ -174,31 +178,35 @@ export default function WorkspaceScreen(props: Props) {
                 type="button"
                 onClick={onRunTests}
                 disabled={running}
-                style="appearance:none;cursor:pointer;background:transparent;border:0.5px solid var(--rule-strong);color:var(--ink);font-size:13.5px;font-weight:500;padding:9px 16px;border-radius:1px;transition:border-color 120ms var(--ease),background 120ms var(--ease)"
+                style={`appearance:none;cursor:${running ? "wait" : "pointer"};background:transparent;border:0.5px solid var(--rule-strong);color:var(--ink);font-size:13.5px;font-weight:500;padding:9px 16px;border-radius:1px;transition:border-color 120ms var(--ease),background 120ms var(--ease);opacity:${running ? ".65" : "1"}`}
               >
                 {l.runTests}
               </button>
               <button
                 type="button"
                 onClick={onSubmit}
-                style="appearance:none;cursor:pointer;background:var(--ink);border:0.5px solid var(--ink);color:var(--paper);font-size:13.5px;font-weight:500;padding:9px 16px;border-radius:1px;transition:opacity 120ms var(--ease)"
+                disabled={running}
+                style={`appearance:none;cursor:${running ? "wait" : "pointer"};background:var(--ink);border:0.5px solid var(--ink);color:var(--paper);font-size:13.5px;font-weight:500;padding:9px 16px;border-radius:1px;transition:opacity 120ms var(--ease);opacity:${running ? ".65" : "1"}`}
               >
                 {l.submit}
               </button>
               <button
                 type="button"
                 onClick={onSaveAttempt}
-                style="appearance:none;cursor:pointer;background:transparent;border:0.5px solid var(--rule);color:var(--ink-2);display:inline-flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;padding:8px 11px;border-radius:1px;transition:border-color 120ms var(--ease),color 120ms var(--ease)"
+                disabled={running}
+                style={`appearance:none;cursor:${running ? "wait" : "pointer"};background:transparent;border:0.5px solid var(--rule);color:var(--ink-2);display:inline-flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;padding:8px 11px;border-radius:1px;transition:border-color 120ms var(--ease),color 120ms var(--ease);opacity:${running ? ".55" : "1"}`}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><path d="M5 4h11l3 3v13H5z" /><path d="M8.5 4v5h7" /><path d="M8.5 20v-6h7v6" /></svg>
                 {l.saveAttempt}
               </button>
-              <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);letter-spacing:0.04em">
-                {running ? "…" : testResults ? `${passed} of ${total} pass` : l.runHintIdle}
+              <span aria-live="polite" style={`font-family:var(--font-mono);font-size:10.5px;color:${runError ? "var(--danger)" : "var(--muted)"};letter-spacing:0.04em`}>
+                {running
+                  ? (runningAction === "submit" ? l.submitting : l.runningTests)
+                  : runError ?? (testResults ? `${passed} of ${total} pass` : l.runHintIdle)}
               </span>
             </div>
 
-            <div style="padding:20px 24px 40px;min-width:0">
+            <div aria-busy={running} style="padding:20px 24px 40px;min-width:0">
               <div style="display:flex;align-items:baseline;gap:14px;padding-bottom:10px;border-bottom:0.5px solid var(--rule-strong)">
                 <span style={monoLabelInk}>{l.testsHeading}</span>
                 <span style={`font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.06em;color:${testResults && passed < total ? "var(--danger)" : "var(--muted)"}`}>
@@ -247,6 +255,7 @@ export default function WorkspaceScreen(props: Props) {
         onRailTab={onRailTab}
         hintsOpen={hintsOpen}
         onReveal={onReveal}
+        running={running}
         mastery={mastery}
         masteryDelta={masteryDelta}
         interviewMode={mode === "interview"}

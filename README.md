@@ -355,6 +355,9 @@ See the operator guides before configuring real credentials:
 - [`docs/operator-setup-deploy.md`](./docs/operator-setup-deploy.md)
 - [`docs/operator-setup-supabase.md`](./docs/operator-setup-supabase.md)
 
+The Coach billing/provider setup (GitHub Sponsors + managed Anthropic) is documented in
+[`docs/operator-setup-deploy.md`](./docs/operator-setup-deploy.md#skein-coach-github-sponsors--managed-ai).
+
 Never commit secrets. GitHub OAuth secrets, session secrets, Cloudflare tokens, and Supabase keys belong in their respective secret stores.
 
 ---

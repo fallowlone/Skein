@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { nextStatus, needsRevisit, type DrillStatus } from "./drill-state";
+import { loadStore, nextStatus, needsRevisit } from "./drill-state";
 
 describe("drill-state", () => {
   it("cycles unattempted → attempted → solved → unattempted", () => {
@@ -18,5 +18,18 @@ describe("drill-state", () => {
     const now = 1_000_000_000_000;
     expect(needsRevisit({ status: "unattempted", at: 0 }, now)).toBe(false);
     expect(needsRevisit({ status: "attempted", at: 0 }, now)).toBe(false);
+  });
+
+  it("drops malformed persisted entries while preserving valid progress", () => {
+    localStorage.setItem("skein.drill.v1", JSON.stringify({
+      valid: { status: "solved", at: 123, noHint: true, unit: "02-arrays-strings" },
+      badStatus: { status: "bogus", at: 123 },
+      badTime: { status: "attempted", at: "yesterday" },
+      badNoHint: { status: "solved", at: 123, noHint: "yes" },
+    }));
+
+    expect(loadStore()).toEqual({
+      valid: { status: "solved", at: 123, noHint: true, unit: "02-arrays-strings" },
+    });
   });
 });

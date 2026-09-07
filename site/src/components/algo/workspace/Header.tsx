@@ -8,14 +8,14 @@ const SCREENS: Screen[] = ["workspace", "debrief", "metrics", "bank"];
 
 export default function Header({ labels, screen, onNavigate, onReset }: Props) {
   return (
-    <header style="position:sticky;top:0;z-index:20;background:var(--paper);border-bottom:0.5px solid var(--rule-strong);display:flex;align-items:center;gap:24px;padding:0 32px;height:56px;min-width:1180px;box-sizing:border-box;white-space:nowrap">
+    <header class="algorithm-workspace-tabs" style="position:sticky;top:0;z-index:20;background:var(--paper);border-bottom:0.5px solid var(--rule-strong);display:flex;align-items:center;gap:24px;padding:0 32px;height:56px;min-width:0;box-sizing:border-box;white-space:nowrap">
       <span style="display:flex;align-items:baseline;gap:10px">
         <span style="font-family:var(--font-display);font-size:18px;font-weight:560;letter-spacing:-0.02em">{labels.brand}</span>
         <span style="font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--muted)">{labels.kicker}</span>
       </span>
-      <nav style="display:flex;gap:2px;margin-left:16px;flex:none">
+      <nav aria-label={labels.brand} style="display:flex;gap:2px;margin-left:16px;flex:none">
         {SCREENS.map((s) => (
-          <button key={s} type="button" onClick={() => onNavigate(s)} style={navStyle(screen === s)}>
+          <button id={`algorithm-nav-${s}`} key={s} type="button" aria-current={screen === s ? "page" : undefined} onClick={() => onNavigate(s)} style={navStyle(screen === s)}>
             {labels.nav[s]}
           </button>
         ))}
