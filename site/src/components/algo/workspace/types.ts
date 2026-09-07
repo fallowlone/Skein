@@ -61,8 +61,18 @@ export type Attempt = {
   code: string;
   lines: number;
   chars: number;
+  /** Unix timestamp for persisted ordering/display. Older saved attempts may not have it. */
+  createdAt?: number;
+  /** Real elapsed session time when the attempt was captured. */
+  elapsedSeconds?: number;
+  /** Hint rungs already spent when the attempt was captured. */
+  hintsOpen?: number;
+  /** True when this entry came from Submit rather than the explicit Save attempt action. */
+  submitted?: boolean;
   /** Absent when the attempt was saved without ever running the tests. */
   testsSummary?: { passed: number; total: number };
+  /** Real failing cases captured from the runner, bounded by the problem test count. */
+  failures?: { args: string; actual: string }[];
 };
 
 export type PersistedSession = {
@@ -70,6 +80,11 @@ export type PersistedSession = {
   mode: SolveMode;
   scheme: Scheme;
   attempts: Attempt[];
+  choice?: string | null;
+  committed?: string | null;
+  elapsedSeconds?: number;
+  sealedAtSeconds?: number;
+  hintsOpen?: number;
 };
 
 export type TestRunResult = {

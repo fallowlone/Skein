@@ -1,7 +1,8 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env } from "../../lib/types";
-import { exchangeCodeForUser } from "../../lib/github";
+import { exchangeCodeForUserWithToken, fetchViewerSponsorship } from "../../lib/github";
 import { upsertUserFromGithub } from "../../lib/db";
+import { coachConfig, reconcileGithubSponsorOnLogin, reconcileVerifiedGithubSponsorOnLogin } from "../../lib/coach";
 import { createSession } from "../../lib/session";
 import { parseCookies, verifyValue, signValue, serializeCookie, authHintCookie, isSecureRequest } from "../../lib/cookies";
 
@@ -22,10 +23,29 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
 
   let user;
   try {
-    const gh = await exchangeCodeForUser(code, {
+    const { user: gh, accessToken } = await exchangeCodeForUserWithToken(code, {
       clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET,
     });
     user = await upsertUserFromGithub(env.DB, gh);
+    const cfg = coachConfig(env);
+    try {
+      if (cfg.billingConfigured && cfg.sponsorableLogin) {
+        // Verify the viewer's own sponsorship while the OAuth token is already
+        // in memory. The token is never persisted; this also lets private
+        // sponsors claim Coach without making their sponsorship public.
+        const live = await fetchViewerSponsorship(accessToken, cfg.sponsorableLogin);
+        await reconcileVerifiedGithubSponsorOnLogin(env.DB, gh.id, user.id, cfg, live);
+      } else {
+        await reconcileGithubSponsorOnLogin(env.DB, gh.id, user.id, cfg);
+      }
+    } catch (err) {
+      // Monetization reconciliation must never make free account login unavailable.
+      // Fall back to webhook state for identifiable sponsors; private sponsors
+      // simply retry OAuth verification on a later login.
+      try { await reconcileGithubSponsorOnLogin(env.DB, gh.id, user.id, cfg); }
+      catch { /* the free login must still succeed */ }
+      console.error("coach sponsorship reconcile failed:", err);
+    }
   } catch (err) {
     // Keep the full cause in the log (visible via `wrangler pages deployment tail`)
     // but return a generic body — no failure detail (e.g. the GitHub error code)

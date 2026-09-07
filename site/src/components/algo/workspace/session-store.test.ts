@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, test } from "vitest";
-import { loadSession, saveSession, withNewAttempt } from "./session-store";
+import {
+  appendAttemptHistory,
+  loadAttemptHistory,
+  loadSession,
+  saveSession,
+  withNewAttempt,
+} from "./session-store";
 import type { Attempt, PersistedSession } from "./types";
 
 const SESSION: PersistedSession = {
@@ -23,6 +29,19 @@ describe("session-store", () => {
     expect(loadSession("3sum")).toEqual(SESSION);
   });
 
+  test("round-trips active scoring state needed to resume a session safely", () => {
+    const active: PersistedSession = {
+      ...SESSION,
+      choice: "O(n²)",
+      committed: "O(n²)",
+      elapsedSeconds: 37,
+      sealedAtSeconds: 4,
+      hintsOpen: 1,
+    };
+    saveSession("3sum", active);
+    expect(loadSession("3sum")).toEqual(active);
+  });
+
   test("keys sessions per problem id — one problem's save does not leak into another's", () => {
     saveSession("3sum", SESSION);
     expect(loadSession("two-sum")).toBeNull();
@@ -41,6 +60,24 @@ describe("session-store", () => {
     const loaded = loadSession("3sum");
     expect(loaded?.mode).toBe("timed");
     expect(loaded?.scheme).toBe("ink");
+  });
+
+  test("drops attempts with malformed optional persisted fields while preserving legacy entries", () => {
+    const legacy: Attempt = { atLabel: "00:10", mode: "timed", mastery: 94, code: "x", lines: 1, chars: 1 };
+    const malformed = { ...legacy, testsSummary: { passed: 4, total: 3 } };
+    window.localStorage.setItem(
+      "skein.algo-workspace.3sum.v1",
+      JSON.stringify({ ...SESSION, attempts: [legacy, malformed] }),
+    );
+    expect(loadSession("3sum")?.attempts).toEqual([legacy]);
+  });
+
+  test("persistent attempt history is separate from the current session", () => {
+    const attempt: Attempt = { atLabel: "00:10", mode: "timed", mastery: 94, code: "x", lines: 1, chars: 1 };
+    expect(appendAttemptHistory("3sum", attempt)).toBe(true);
+    saveSession("3sum", { ...SESSION, attempts: [] });
+    expect(loadSession("3sum")?.attempts).toEqual([]);
+    expect(loadAttemptHistory("3sum")).toEqual([attempt]);
   });
 });
 

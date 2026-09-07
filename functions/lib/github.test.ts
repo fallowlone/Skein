@@ -1,6 +1,6 @@
 // functions/lib/github.test.ts
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { exchangeCodeForUser, mapGithubUser } from "./github";
+import { exchangeCodeForUser, exchangeCodeForUserWithToken, fetchViewerSponsorship, mapGithubUser } from "./github";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -23,6 +23,50 @@ describe("github", () => {
     expect(JSON.stringify(fetchMock.mock.calls[0][1].body)).toContain("the-code");
     // second call carries the bearer token
     expect((fetchMock.mock.calls[1][1].headers as any).Authorization).toBe("Bearer tok");
+  });
+
+  it("can return the short-lived OAuth token to the callback without persisting it", async () => {
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "temporary-token" })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 9, login: "u", avatar_url: null }))));
+    await expect(exchangeCodeForUserWithToken("the-code", { clientId: "cid", clientSecret: "sec" }))
+      .resolves.toEqual({ user: { id: 9, login: "u", avatar_url: null }, accessToken: "temporary-token" });
+  });
+
+  it("verifies the viewer's own private sponsorship without repository access", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: {
+        user: {
+          sponsorshipForViewerAsSponsor: {
+            id: "S_PRIVATE",
+            privacyLevel: "PRIVATE",
+            tier: { id: "TIER_COACH", name: "Coach", monthlyPriceInCents: 900, isOneTime: false },
+          },
+        },
+        organization: null,
+      },
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(fetchViewerSponsorship("temporary-token", "skein-owner")).resolves.toEqual({
+      sponsorshipId: "S_PRIVATE",
+      tierId: "TIER_COACH",
+      tierName: "Coach",
+      monthlyPriceCents: 900,
+      isOneTime: false,
+      privacyLevel: "PRIVATE",
+    });
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect((init.headers as any).Authorization).toBe("Bearer temporary-token");
+    expect(String(init.body)).toContain("sponsorshipForViewerAsSponsor");
+    expect(String(init.body)).toContain("skein-owner");
+  });
+
+  it("returns null when the current viewer has no active sponsorship", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      data: { user: { sponsorshipForViewerAsSponsor: null }, organization: null },
+    }))));
+    await expect(fetchViewerSponsorship("temporary-token", "skein-owner")).resolves.toBeNull();
   });
 
   it("throws when github returns no access_token", async () => {

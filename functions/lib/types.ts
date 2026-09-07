@@ -12,6 +12,12 @@ export interface Env {
   CF_PAGES?: string;    // system var Cloudflare Pages always sets ("1"); used to force Secure cookies
   SUPABASE_URL?: string;        // content mirror; unset = deep search disabled
   SUPABASE_SECRET_KEY?: string; // service_role key; server-side only, never shipped
+  GITHUB_SPONSORS_URL?: string;
+  GITHUB_SPONSORS_WEBHOOK_SECRET?: string;
+  GITHUB_SPONSORS_COACH_TIER_IDS?: string;
+  ANTHROPIC_API_KEY?: string;
+  ANTHROPIC_MODEL?: string;
+  COACH_AI_MONTHLY_REQUESTS?: string;
 }
 
 export interface UserRow {
