@@ -1,6 +1,6 @@
 import type { Bi, WorkspaceProblem } from "./types";
 
-// Everything below is authored content specific to this one fully-wired demo
+// Everything below is authored content specific to this fully-wired workspace
 // problem: the statement, worked example, seed code, test suite, and reference
 // solutions. Title, difficulty, pattern, target minutes, companies, and the hint
 // ladder come from the real drill bank (src/content/drill) instead — see

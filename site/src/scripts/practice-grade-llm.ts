@@ -73,6 +73,13 @@ type Lang = "en" | "ru";
 type Bi = { en: string; ru: string };
 type Step = { label: Bi; prompt: Bi; reveal: Bi };
 
+export type PracticeGradeContext = {
+  task: string;
+  constraints: string;
+  rubric: string[];
+  modelAnswer: string;
+};
+
 const SYSTEM = `You are a senior fullstack engineer grading a junior/mid engineer's answer to a practice task.
 You are given the TASK, its RUBRIC (the criteria a correct answer must meet), an optional MODEL answer the task ships, and the LEARNER RESPONSE.
 Grade the LEARNER RESPONSE against the RUBRIC only. Be exact and senior: reward correct judgment, name what is wrong, and — most importantly — name what a senior engineer would ALSO have caught that the learner did not (a missed failure mode, an overlooked tradeoff, an operational/security/scaling concern), mapped to the rubric.
@@ -89,26 +96,42 @@ export function gradableTask(task: PracticeTaskData): boolean {
 }
 
 /** Map a gradable task + the learner's answer into the shared TASK/RUBRIC/MODEL contract. */
-export function buildUserBlock(task: PracticeTaskData, lang: Lang, text: string): string {
-  const lines: string[] = [];
+export function buildGradeContext(task: PracticeTaskData, lang: Lang): PracticeGradeContext {
   if (task.type === "design") {
-    lines.push(`TASK: ${task.prompt[lang]}`);
-    lines.push(`CONSTRAINTS: ${task.constraints[lang]}`);
-    lines.push(`RUBRIC: ${task.rubric.map((r: Bi) => r[lang]).join("; ")}`);
-    lines.push(`MODEL: ${task.model[lang]}`);
+    return {
+      task: task.prompt[lang],
+      constraints: task.constraints[lang],
+      rubric: task.rubric.map((r: Bi) => r[lang]),
+      modelAnswer: task.model[lang],
+    };
   } else if (task.type === "incident") {
-    lines.push(`TASK: ${task.prompt[lang]}`);
-    lines.push(`STEPS: ${task.steps.map((s: Step) => s.prompt[lang]).join(" | ")}`);
-    lines.push(`RUBRIC: ${task.steps.map((s: Step) => s.label[lang]).join("; ")}`);
-    lines.push(`MODEL: ${task.steps.map((s: Step) => s.reveal[lang]).join("\n")}`);
+    return {
+      task: `${task.prompt[lang]}\nSteps: ${task.steps.map((s: Step) => s.prompt[lang]).join(" | ")}`,
+      constraints: "",
+      rubric: task.steps.map((s: Step) => s.label[lang]),
+      modelAnswer: task.steps.map((s: Step) => s.reveal[lang]).join("\n"),
+    };
   } else if (task.type === "diagnose" && task.grading.mode === "self") {
-    lines.push(`TASK: ${task.prompt[lang]}`);
-    if (task.evidence) lines.push(`EVIDENCE: ${task.evidence[lang]}`);
-    lines.push(`RUBRIC: ${task.grading.rubric.map((r: Bi) => r[lang]).join("; ")}`);
-    lines.push(`MODEL: ${task.grading.model[lang]}`);
+    return {
+      task: task.evidence ? `${task.prompt[lang]}\nEVIDENCE: ${task.evidence[lang]}` : task.prompt[lang],
+      constraints: "",
+      rubric: task.grading.rubric.map((r: Bi) => r[lang]),
+      modelAnswer: task.grading.model[lang],
+    };
   } else {
     throw new Error(`task type ${task.type} is not gradable`);
   }
+}
+
+/** Map a gradable task + the learner's answer into the shared TASK/RUBRIC/MODEL contract. */
+export function buildUserBlock(task: PracticeTaskData, lang: Lang, text: string): string {
+  const ctx = buildGradeContext(task, lang);
+  const lines = [
+    `TASK: ${ctx.task}`,
+    ctx.constraints ? `CONSTRAINTS: ${ctx.constraints}` : "",
+    `RUBRIC: ${ctx.rubric.join("; ")}`,
+    ctx.modelAnswer ? `MODEL: ${ctx.modelAnswer}` : "",
+  ].filter(Boolean);
   return `${lines.join("\n")}\n\nLEARNER RESPONSE:\n${text}`;
 }
 

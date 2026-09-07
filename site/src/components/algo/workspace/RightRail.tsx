@@ -12,6 +12,7 @@ type Props = {
   onRailTab: (t: RailTab) => void;
   hintsOpen: number;
   onReveal: (rung: number) => void;
+  running: boolean;
   mastery: number;
   masteryDelta: number;
   interviewMode: boolean;
@@ -35,7 +36,7 @@ function markColor(mark: string): string {
 
 export default function RightRail(props: Props) {
   const { lang, labels, problem, railTab, onRailTab, hintsOpen, onReveal, mastery, masteryDelta,
-    interviewMode, attempts, onRestore, storageOk, submitted } = props;
+    running, interviewMode, attempts, onRestore, storageOk, submitted } = props;
   const l = labels.rail;
   const factor = interviewMode ? 2 : 1;
   const roles = labels.rungRoles;
@@ -43,14 +44,35 @@ export default function RightRail(props: Props) {
   return (
     <aside style="border-left:0.5px solid var(--rule);align-self:stretch;min-height:calc(100vh - 56px)">
       <div style="position:sticky;top:56px;padding:24px 20px;display:flex;flex-direction:column;gap:0">
-        <div style="display:flex;gap:2px;border-bottom:0.5px solid var(--rule-strong)">
+        <div role="tablist" aria-label={lang === "ru" ? "Панель решения" : "Solve rail"} style="display:flex;gap:2px;border-bottom:0.5px solid var(--rule-strong)">
           {TABS.map((t) => (
-            <button key={t} type="button" onClick={() => onRailTab(t)} style={tabStyle(railTab === t)}>{l[t]}</button>
+            <button
+              key={t}
+              id={`solve-rail-tab-${t}`}
+              type="button"
+              role="tab"
+              aria-selected={railTab === t}
+              aria-controls={`solve-rail-panel-${t}`}
+              tabIndex={railTab === t ? 0 : -1}
+              onClick={() => onRailTab(t)}
+              onKeyDown={(event) => {
+                if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+                event.preventDefault();
+                const tabs = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? []);
+                const index = tabs.indexOf(event.currentTarget);
+                const nextIndex = event.key === "Home" ? 0
+                  : event.key === "End" ? tabs.length - 1
+                    : event.key === "ArrowRight" ? (index + 1) % tabs.length
+                      : (index - 1 + tabs.length) % tabs.length;
+                tabs[nextIndex]?.focus();
+                tabs[nextIndex]?.click();
+              }}
+              style={tabStyle(railTab === t)}
+            >{l[t]}</button>
           ))}
         </div>
 
-        {railTab === "hints" && (
-          <div>
+        <div id="solve-rail-panel-hints" role="tabpanel" aria-labelledby="solve-rail-tab-hints" hidden={railTab !== "hints"}>
             <div style="display:flex;align-items:baseline;justify-content:space-between;padding:14px 0 12px;border-bottom:0.5px solid var(--hairline)">
               <span style={monoLabel}>{interviewMode ? l.ladderNoteInterview : l.ladderNote}</span>
               <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);font-variant-numeric:tabular-nums">{l.spentOf(hintsOpen)}</span>
@@ -84,9 +106,9 @@ export default function RightRail(props: Props) {
                       </div>
                       <button
                         type="button"
-                        disabled={!next}
+                        disabled={!next || running}
                         onClick={() => onReveal(i)}
-                        style={`appearance:none;margin-top:12px;width:100%;cursor:${next ? "pointer" : "not-allowed"};background:transparent;border:0.5px solid ${next ? "var(--rule-strong)" : "var(--rule)"};color:${next ? "var(--ink)" : "var(--muted)"};font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;padding:8px 10px;border-radius:1px;transition:border-color 120ms var(--ease),background 120ms var(--ease)`}
+                        style={`appearance:none;margin-top:12px;width:100%;cursor:${running ? "wait" : next ? "pointer" : "not-allowed"};background:transparent;border:0.5px solid ${next ? "var(--rule-strong)" : "var(--rule)"};color:${next ? "var(--ink)" : "var(--muted)"};font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;padding:8px 10px;border-radius:1px;transition:border-color 120ms var(--ease),background 120ms var(--ease);opacity:${running ? ".6" : "1"}`}
                       >
                         {next ? l.reveal(i + 1) : l.lockedReveal(hintsOpen + 1)}
                       </button>
@@ -97,11 +119,9 @@ export default function RightRail(props: Props) {
             })}
 
             <p style="margin:16px 0 0;font-family:var(--font-mono);font-size:9.5px;line-height:1.7;letter-spacing:0.04em;color:var(--muted);text-transform:uppercase">{l.footnote}</p>
-          </div>
-        )}
+        </div>
 
-        {railTab === "attempts" && (
-          <div style="padding-top:16px">
+        <div id="solve-rail-panel-attempts" role="tabpanel" aria-labelledby="solve-rail-tab-attempts" hidden={railTab !== "attempts"} style="padding-top:16px">
             {attempts.length === 0 && (
               <p style="margin:0;font-size:13px;line-height:1.6;color:var(--muted);text-wrap:pretty">{l.noAttempts}</p>
             )}
@@ -118,6 +138,7 @@ export default function RightRail(props: Props) {
                   <span style="font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted)">{a.mode}</span>
                   <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--muted)">·</span>
                   <span style="font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted)">{l.mastery} {a.mastery}</span>
+                  {typeof a.hintsOpen === "number" && <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--muted)">· {a.hintsOpen} hints</span>}
                   <span style="flex:1" />
                   <button
                     type="button"
@@ -127,17 +148,25 @@ export default function RightRail(props: Props) {
                     {l.restore}
                   </button>
                 </div>
-                <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums">{a.lines} lines · {a.chars} chars</div>
+                <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums">
+                  {a.lines} lines · {a.chars} chars
+                  {a.createdAt ? ` · ${new Date(a.createdAt).toLocaleTimeString(lang === "ru" ? "ru-RU" : "en-US", { hour: "2-digit", minute: "2-digit" })}` : ""}
+                </div>
+                {a.failures && a.failures.length > 0 && (
+                  <div style="border-left:2px solid var(--danger);padding-left:9px">
+                    <code style="display:block;font-family:var(--font-mono);font-size:9.5px;color:var(--muted);overflow-wrap:anywhere">{a.failures[0].args}</code>
+                    <code style="display:block;margin-top:3px;font-family:var(--font-mono);font-size:9.5px;color:var(--danger);overflow-wrap:anywhere">{a.failures[0].actual}</code>
+                  </div>
+                )}
+                <pre style="margin:0;max-height:92px;overflow:auto;background:var(--code-bg);border:0.5px solid var(--rule);padding:8px;font-family:var(--font-mono);font-size:9.5px;line-height:1.45;color:var(--code-ink)"><code>{a.code}</code></pre>
               </div>
             ))}
             <p style="margin:14px 0 0;font-family:var(--font-mono);font-size:9px;letter-spacing:0.06em;line-height:1.7;text-transform:uppercase;color:var(--muted)">
               {storageOk ? l.storageOk : l.storageBad}
             </p>
-          </div>
-        )}
+        </div>
 
-        {railTab === "solutions" && (
-          <div style="padding-top:16px">
+        <div id="solve-rail-panel-solutions" role="tabpanel" aria-labelledby="solve-rail-tab-solutions" hidden={railTab !== "solutions"} style="padding-top:16px">
             {!submitted && (
               <div style="display:flex;flex-direction:column;gap:12px">
                 <div style="display:flex;align-items:center;gap:9px">
@@ -164,8 +193,7 @@ export default function RightRail(props: Props) {
             {submitted && (
               <p style="margin:14px 0 0;font-family:var(--font-mono);font-size:9px;letter-spacing:0.06em;line-height:1.7;text-transform:uppercase;color:var(--muted)">{l.solutionsOpenNote}</p>
             )}
-          </div>
-        )}
+        </div>
       </div>
     </aside>
   );

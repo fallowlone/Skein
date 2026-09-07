@@ -17,19 +17,39 @@ type Store = Record<string, DrillEntry>;
 
 export type DrillStore = Store;
 
+function isDrillEntry(value: unknown): value is DrillEntry {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entry = value as Record<string, unknown>;
+  return (entry.status === "unattempted" || entry.status === "attempted" || entry.status === "solved")
+    && typeof entry.at === "number"
+    && Number.isFinite(entry.at)
+    && (entry.noHint === undefined || typeof entry.noHint === "boolean")
+    && (entry.unit === undefined || typeof entry.unit === "string");
+}
+
 export function loadStore(): Store {
   if (typeof window === "undefined") return {};
   try {
     const v = JSON.parse(localStorage.getItem(KEY) ?? "{}");
     // guard against valid-JSON-wrong-shape (legacy/corrupted/hand-edited values)
-    return v && typeof v === "object" && !Array.isArray(v) ? (v as Store) : {};
+    if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+    const store: Store = {};
+    for (const [id, entry] of Object.entries(v)) {
+      if (isDrillEntry(entry)) store[id] = entry;
+    }
+    return store;
   } catch {
     return {};
   }
 }
-export function saveEntry(id: string, status: DrillStatus, now: number, noHint?: boolean, unit?: string): void {
-  if (typeof window === "undefined") return;
+export function saveEntry(id: string, status: DrillStatus, now: number, noHint?: boolean, unit?: string): boolean {
+  if (typeof window === "undefined") return false;
   const store = loadStore();
   store[id] = { status, at: now, noHint: noHint ?? store[id]?.noHint, unit: unit ?? store[id]?.unit };
-  try { localStorage.setItem(KEY, JSON.stringify(store)); } catch { /* ignore */ }
+  try {
+    localStorage.setItem(KEY, JSON.stringify(store));
+    return true;
+  } catch {
+    return false;
+  }
 }

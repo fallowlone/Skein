@@ -38,6 +38,14 @@ render_with_inkscape() {
 }
 
 render_with_chrome() {
+  # GUI app binaries cannot register with macOS LaunchServices from the Codex
+  # seatbelt sandbox. Starting Chrome/Brave directly there aborts in HIServices
+  # (_RegisterApplication / TransformProcessType) and leaves a macOS crash report.
+  # Let non-browser renderers handle agent runs instead.
+  if [[ -n "${CODEX_SANDBOX:-}" ]]; then
+    return 1
+  fi
+
   # Try common Chrome/Chromium binaries on macOS.
   local chrome=""
   for candidate in \
@@ -93,10 +101,10 @@ if command -v rsvg-convert >/dev/null; then
 elif command -v inkscape >/dev/null; then
   echo "rendering with inkscape → $OUTPUT"
   render_with_inkscape
-elif render_with_chrome; then
-  echo "rendered with headless Chrome → $OUTPUT"
 elif command -v qlmanage >/dev/null && render_with_qlmanage; then
   echo "rendered with qlmanage (fallback, lower quality) → $OUTPUT"
+elif render_with_chrome; then
+  echo "rendered with headless Chrome → $OUTPUT"
 else
   echo "error: no SVG renderer available. Install one: brew install librsvg" >&2
   exit 1

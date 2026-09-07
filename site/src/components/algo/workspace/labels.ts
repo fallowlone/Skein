@@ -30,8 +30,11 @@ export const L = {
       completionsPrompt: "completions · type two characters",
       runTests: "Run tests", submit: "Submit", saveAttempt: "Save attempt",
       runHintIdle: "Nothing has run yet.",
+      runningTests: "Running tests…",
+      submitting: "Submitting…",
+      staleRun: "Code changed while tests were running. Run again.",
       testsHeading: "Tests",
-      hiddenCasesNote: (n: number) => `${n} hidden case${n === 1 ? "" : "s"} run on submit`,
+      hiddenCasesNote: (n: number) => `${n} submit-only case${n === 1 ? "" : "s"}`,
       expected: "expected", actual: "actual",
       genericDiagnosis: (expected: string, actual: string) => `Expected ${expected}, got ${actual}.`,
     },
@@ -45,7 +48,7 @@ export const L = {
       lockedReveal: (n: number) => `Locked — spend rung ${n} first`,
       footnote: "unaided solve banks the full 100. every rung is a real cost.",
       noAttempts:
-        "Nothing saved yet. Save attempt keeps the current buffer, the clock, the mastery left and the test result — so you can come back after a rewrite and compare, or resume this problem on another machine.",
+        "Nothing saved yet. Save attempt keeps the current buffer, elapsed time, mastery and test result in this browser so you can compare after a rewrite or reload.",
       restore: "Restore",
       notRun: "not run",
       testsPassedOf: (passed: number, total: number) => `${passed} of ${total} passed`,
@@ -112,19 +115,8 @@ export const L = {
     },
 
     metrics: {
-      sampleNote: "sample session data, not measured",
-      headline: "You solve hash-map problems unaided. You still miss base cases.",
       views: { patterns: "Patterns", habits: "Habits", pace: "Pace" },
       pattern: "pattern", easy: "easy", medium: "medium", hard: "hard", solved: "solved",
-      masteryScaleNote: "0 → 100 · decays ~4 pts/week without recall",
-      due: "due — recall window passed",
-      hintDependence: "Hint dependence", falling: "falling",
-      hintDependenceBody: "Average rungs spent per problem, by week. Falling is the only trend that matters here.",
-      whyFailed: "Why submissions failed", failuresCount: (n: number) => `${n} failures`,
-      whyFailedBody: "Classified from the first failing case of each submission.",
-      whyFailedFoot: "Missing base case is a third of everything and has not moved in eleven weeks — the one number on this page that is not improving.",
-      timeVsTarget: "Time to solve vs target", timeVsTargetNote: "last 22 problems · dashed line is the bank's target minutes",
-      medianSolve: "median solve", underTarget: "under target", vsFirstWeeks: "vs first four weeks", unaidedRow: "unaided in a row",
     },
 
     bank: {
@@ -165,8 +157,11 @@ export const L = {
       completionsPrompt: "автодополнение · введи два символа",
       runTests: "Запустить тесты", submit: "Отправить", saveAttempt: "Сохранить попытку",
       runHintIdle: "Пока ничего не запускалось.",
+      runningTests: "Тесты выполняются…",
+      submitting: "Отправка…",
+      staleRun: "Код изменился во время тестов. Запусти их снова.",
       testsHeading: "Тесты",
-      hiddenCasesNote: (n: number) => `${n} скрытых кейсов запустятся при отправке`,
+      hiddenCasesNote: (n: number) => `${n} кейсов только для отправки`,
       expected: "ожидалось", actual: "получено",
       genericDiagnosis: (expected: string, actual: string) => `Ожидалось ${expected}, получено ${actual}.`,
     },
@@ -180,7 +175,7 @@ export const L = {
       lockedReveal: (n: number) => `Заблокировано — сначала потрать ступень ${n}`,
       footnote: "решение без подсказок даёт полные 100. каждая ступень — реальная цена.",
       noAttempts:
-        "Пока ничего не сохранено. «Сохранить попытку» запоминает текущий код, время, оставшееся мастерство и результат тестов — можно вернуться после переписывания и сравнить, или продолжить на другой машине.",
+        "Пока ничего не сохранено. «Сохранить попытку» сохраняет текущий код, прошедшее время, мастерство и результат тестов в этом браузере — можно сравнить после переписывания или перезагрузки.",
       restore: "Восстановить",
       notRun: "не запускалось",
       testsPassedOf: (passed: number, total: number) => `пройдено ${passed} из ${total}`,
@@ -247,19 +242,8 @@ export const L = {
     },
 
     metrics: {
-      sampleNote: "демонстрационные данные, не измерено",
-      headline: "Задачи на хеш-таблицы ты решаешь без подсказок. Базовые случаи всё ещё пропускаешь.",
       views: { patterns: "Паттерны", habits: "Привычки", pace: "Темп" },
       pattern: "паттерн", easy: "лёгкая", medium: "средняя", hard: "сложная", solved: "решено",
-      masteryScaleNote: "0 → 100 · падает на ~4 балла в неделю без повторения",
-      due: "пора повторить — окно вышло",
-      hintDependence: "Зависимость от подсказок", falling: "падает",
-      hintDependenceBody: "Среднее число потраченных ступеней на задачу по неделям. Здесь важно только падение.",
-      whyFailed: "Почему отправки проваливались", failuresCount: (n: number) => `${n} провалов`,
-      whyFailedBody: "Классифицировано по первому провалившемуся кейсу каждой отправки.",
-      whyFailedFoot: "Пропущенный базовый случай — треть всех провалов, и цифра не двигалась одиннадцать недель. Единственное число на странице, которое не улучшается.",
-      timeVsTarget: "Время решения против цели", timeVsTargetNote: "последние 22 задачи · пунктир — целевое время банка",
-      medianSolve: "медианное решение", underTarget: "уложились в цель", vsFirstWeeks: "к первым четырём неделям", unaidedRow: "подряд без подсказок",
     },
 
     bank: {

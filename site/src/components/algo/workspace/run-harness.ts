@@ -5,51 +5,50 @@
 import { runJs } from "~/scripts/run-js";
 import type { TestRunResult, WorkspaceProblem, WorkspaceTest } from "./types";
 
-const RESULT_PREFIX = "WSR";
 const RUN_TIMEOUT_MS = 2500;
 
 type RawResult = { i: number; actual: string; pass: boolean };
 
-function canonSnippet(): string {
+function buildHarness(problem: WorkspaceProblem, tests: WorkspaceTest[]): string {
+  const cases = tests.map((t, i) => ({ i, args: t.args, expected: t.expected, compare: t.compare }));
   return `
-    function __wsCanon(v, mode) {
-      if (mode === "unordered-triplets" && Array.isArray(v)) {
-        var rows = v.map(function (row) {
-          return Array.isArray(row) ? row.slice().sort(function (a, b) { return a - b; }) : row;
-        });
-        rows.sort(function (a, b) {
-          var ak = JSON.stringify(a), bk = JSON.stringify(b);
-          return ak < bk ? -1 : ak > bk ? 1 : 0;
-        });
-        return rows;
-      }
-      return v;
-    }
-  `;
-}
-
-function buildHarness(problem: WorkspaceProblem): string {
-  const cases = problem.tests.map((t, i) => ({ i, args: t.args, expected: t.expected, compare: t.compare }));
-  return `
-${canonSnippet()}
 (function () {
+  function __wsCanon(v, mode) {
+    if (mode !== "unordered-triplets") return v;
+    if (!Array.isArray(v)) return { __wsInvalid: true };
+    var rows = [];
+    for (var r = 0; r < v.length; r++) {
+      var row = v[r];
+      if (!Array.isArray(row)) return { __wsInvalid: true };
+      var copy = row.slice();
+      copy.sort(function (a, b) { return a - b; });
+      rows.push(copy);
+    }
+    rows.sort(function (a, b) {
+      var ak = JSON.stringify(a), bk = JSON.stringify(b);
+      return ak < bk ? -1 : ak > bk ? 1 : 0;
+    });
+    return rows;
+  }
   var __wsCases = ${JSON.stringify(cases)};
+  var __wsResults = [];
   for (var __i = 0; __i < __wsCases.length; __i++) {
     var c = __wsCases[__i];
     var out = { i: c.i, pass: false, actual: "" };
     try {
       var args = JSON.parse(c.args);
-      var raw = ${problem.functionName}.apply(null, args);
+      var raw = Function.prototype.apply.call(${problem.functionName}, null, args);
       var got = __wsCanon(raw, c.compare);
       var want = __wsCanon(c.expected, c.compare);
       out.actual = raw === undefined ? "undefined" : JSON.stringify(raw);
       out.pass = JSON.stringify(got) === JSON.stringify(want);
     } catch (e) {
-      out.actual = "threw: " + (e && e.message ? e.message : String(e));
+      out.actual = "threw: " + (e && e.message ? e.message : "error");
       out.pass = false;
     }
-    console.log(${JSON.stringify(RESULT_PREFIX)} + JSON.stringify(out));
+    __wsResults.push(out);
   }
+  return __wsResults;
 })();
 `;
 }
@@ -59,27 +58,29 @@ export type RunOutcome =
   | { ok: false; error: string };
 
 /** Runs `userCode` (expected to define `problem.functionName`) against every test case. */
-export async function runProblemTests(problem: WorkspaceProblem, userCode: string): Promise<RunOutcome> {
+export async function runProblemTests(
+  problem: WorkspaceProblem,
+  userCode: string,
+  scope: "visible" | "all" = "all",
+): Promise<RunOutcome> {
+  const tests = scope === "visible" ? problem.tests.filter((test) => test.visible) : problem.tests;
   const started = typeof performance !== "undefined" ? performance.now() : Date.now();
-  // `runJs(code, setup)` evaluates `setup` first, then `code` — so the learner's
-  // solution (setup) is defined before the harness (code) calls into it.
-  const outcome = await runJs(buildHarness(problem), userCode, RUN_TIMEOUT_MS);
+  const outcome = await runJs(buildHarness(problem, tests), userCode, RUN_TIMEOUT_MS, { hardenedSetup: true });
   const totalMs = (typeof performance !== "undefined" ? performance.now() : Date.now()) - started;
 
   if (outcome.error) return { ok: false, error: outcome.error };
 
   const raw = new Map<number, RawResult>();
-  for (const line of outcome.stdout.split("\n")) {
-    if (!line.startsWith(RESULT_PREFIX)) continue;
-    try {
-      const parsed = JSON.parse(line.slice(RESULT_PREFIX.length)) as RawResult;
-      raw.set(parsed.i, parsed);
-    } catch {
-      // malformed result line — treated as a missing case below
+  if (Array.isArray(outcome.value)) {
+    for (const item of outcome.value) {
+      if (!item || typeof item !== "object") continue;
+      const parsed = item as Partial<RawResult>;
+      if (typeof parsed.i !== "number" || typeof parsed.pass !== "boolean" || typeof parsed.actual !== "string") continue;
+      raw.set(parsed.i, { i: parsed.i, pass: parsed.pass, actual: parsed.actual });
     }
   }
 
-  const results: TestRunResult[] = problem.tests.map((test, i) => {
+  const results: TestRunResult[] = tests.map((test, i) => {
     const found = raw.get(i);
     return {
       test,

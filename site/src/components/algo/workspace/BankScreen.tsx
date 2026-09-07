@@ -32,6 +32,17 @@ function difficultyLabel(labels: Labels, d: string): string {
   return labels.metrics[d as "easy" | "medium" | "hard"] ?? d;
 }
 
+function RowContent({ p, labels }: { p: BankRow; labels: Labels }) {
+  return <>
+    <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums">{p.leetcodeId}</span>
+    <span style="font-family:var(--font-display);font-size:18px;font-weight:500;line-height:1.24;color:var(--ink);min-width:0;text-wrap:pretty">{p.title}</span>
+    <span style="font-family:var(--font-mono);font-size:11px;color:var(--ink-2)">{p.pattern}</span>
+    <span style={`font-family:var(--font-mono);font-size:11px;color:${diffColor(p.difficulty)}`}>{p.difficulty}</span>
+    <span style={`font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;color:${statusColor(p.status)}`}>{statusLabel(labels, p.status)}</span>
+    <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums">{p.targetMinutes} min</span>
+  </>;
+}
+
 export default function BankScreen({ labels, rows, patterns, companies, filters, onFilters, onOpenWorkspace }: Props) {
   const l = labels.bank;
   const shown = rows.filter((p) =>
@@ -74,30 +85,37 @@ export default function BankScreen({ labels, rows, patterns, companies, filters,
         ))}
       </div>
 
-      <div style="display:grid;grid-template-columns:36px minmax(0,1fr) 150px 92px 108px 76px;gap:16px;align-items:baseline;padding:12px 0;border-bottom:0.5px solid var(--rule-strong)">
-        <span style={monoLabel}>{l.cols.lc}</span>
-        <span style={monoLabelInk}>{l.cols.problem}</span>
-        <span style={monoLabel}>{l.cols.pattern}</span>
-        <span style={monoLabel}>{l.cols.difficulty}</span>
-        <span style={monoLabel}>{l.cols.status}</span>
-        <span style={`${monoLabel};text-align:right`}>{l.cols.target}</span>
-      </div>
+      <div style="overflow-x:auto;overscroll-behavior-x:contain">
+        <div style="min-width:574px">
+          <div style="display:grid;grid-template-columns:36px minmax(0,1fr) 150px 92px 108px 76px;gap:16px;align-items:baseline;padding:12px 0;border-bottom:0.5px solid var(--rule-strong)">
+            <span style={monoLabel}>{l.cols.lc}</span>
+            <span style={monoLabelInk}>{l.cols.problem}</span>
+            <span style={monoLabel}>{l.cols.pattern}</span>
+            <span style={monoLabel}>{l.cols.difficulty}</span>
+            <span style={monoLabel}>{l.cols.status}</span>
+            <span style={`${monoLabel};text-align:right`}>{l.cols.target}</span>
+          </div>
 
-      {shown.map((p) => (
-        <a
-          key={p.id}
-          href={p.isWorkspaceProblem ? undefined : p.href}
-          onClick={p.isWorkspaceProblem ? (e) => { e.preventDefault(); onOpenWorkspace(p.id); } : undefined}
-          style="display:grid;grid-template-columns:36px minmax(0,1fr) 150px 92px 108px 76px;gap:16px;align-items:baseline;padding:13px 0;border-bottom:0.5px solid var(--hairline);cursor:pointer;transition:background 120ms var(--ease)"
-        >
-          <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums">{p.leetcodeId}</span>
-          <span style="font-family:var(--font-display);font-size:18px;font-weight:500;line-height:1.24;color:var(--ink);min-width:0;text-wrap:pretty">{p.title}</span>
-          <span style="font-family:var(--font-mono);font-size:11px;color:var(--ink-2)">{p.pattern}</span>
-          <span style={`font-family:var(--font-mono);font-size:11px;color:${diffColor(p.difficulty)}`}>{p.difficulty}</span>
-          <span style={`font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;color:${statusColor(p.status)}`}>{statusLabel(labels, p.status)}</span>
-          <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);text-align:right;font-variant-numeric:tabular-nums">{p.targetMinutes} min</span>
-        </a>
-      ))}
+          {shown.map((p) => p.isWorkspaceProblem ? (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => onOpenWorkspace(p.id)}
+              style="appearance:none;width:100%;display:grid;grid-template-columns:36px minmax(0,1fr) 150px 92px 108px 76px;gap:16px;align-items:baseline;padding:13px 0;border:0;border-bottom:0.5px solid var(--hairline);background:transparent;text-align:left;color:inherit;cursor:pointer;transition:background 120ms var(--ease)"
+            >
+              <RowContent p={p} labels={labels} />
+            </button>
+          ) : (
+            <a
+              key={p.id}
+              href={p.href}
+              style="display:grid;grid-template-columns:36px minmax(0,1fr) 150px 92px 108px 76px;gap:16px;align-items:baseline;padding:13px 0;border-bottom:0.5px solid var(--hairline);cursor:pointer;transition:background 120ms var(--ease)"
+            >
+              <RowContent p={p} labels={labels} />
+            </a>
+          ))}
+        </div>
+      </div>
 
       <div style="display:flex;align-items:baseline;gap:12px;margin-top:16px">
         <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);letter-spacing:0.04em">{l.count(shown.length, rows.length)}</span>
