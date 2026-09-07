@@ -264,6 +264,43 @@ export const knowledge = signal<KnowledgeState>(loadKnowledge());
 export const config = signal<StoredPathConfig>(loadConfig());
 export const overrides = signal<Overrides>(loadOverrides());
 
+// Lesson self-assessment feeds the same concept model used by planning. The path
+// engine owns both the stage vocabulary and its confidence mapping.
+export const CONCEPT_MASTERY_LEVELS = ["exposure", "understanding", "application", "explanation", "debugging"] as const;
+export type ConceptMasteryLevel = typeof CONCEPT_MASTERY_LEVELS[number];
+const CONCEPT_LEVEL_CONFIDENCE: Record<ConceptMasteryLevel, number> = {
+  exposure: 0.2,
+  understanding: 0.45,
+  application: 0.7,
+  explanation: 0.85,
+  debugging: 0.95,
+};
+
+export function currentConceptMasteryLevel(concept: string): ConceptMasteryLevel {
+  const confidence = masteryOf(effectiveKnowledge(), concept);
+  return [...CONCEPT_MASTERY_LEVELS].reverse().find((level) => confidence >= CONCEPT_LEVEL_CONFIDENCE[level]) ?? "exposure";
+}
+
+export function setConceptMasteryLevel(concept: string, level: ConceptMasteryLevel): boolean {
+  const confidence = CONCEPT_LEVEL_CONFIDENCE[level];
+  if (!conceptById.has(concept) || confidence === undefined) return false;
+  knowledge.value = new Map(knowledge.value).set(concept, {
+    confidence,
+    source: "declared",
+    lastAt: Date.now(),
+  });
+  return true;
+}
+
+export function advanceConceptMastery(concept: string): ConceptMasteryLevel | null {
+  if (!conceptById.has(concept)) return null;
+  const current = currentConceptMasteryLevel(concept);
+  const index = CONCEPT_MASTERY_LEVELS.indexOf(current);
+  const next = CONCEPT_MASTERY_LEVELS[Math.min(index + 1, CONCEPT_MASTERY_LEVELS.length - 1)];
+  setConceptMasteryLevel(concept, next);
+  return next;
+}
+
 if (typeof window !== "undefined") {
   effect(() => { try { localStorage.setItem(K_KEY, JSON.stringify(serializeKnowledge(knowledge.value))); } catch {} });
   effect(() => { try { localStorage.setItem(C_KEY, JSON.stringify(config.value)); } catch {} });
@@ -420,15 +457,38 @@ export function unitReviewHealth(cards: Card[], now: number): Map<string, number
   return out;
 }
 
+// Concept-level review signal for cards that carry explicit concept links. Kept
+// separate from unitReviewHealth so legacy cards continue using the conservative
+// unit aggregation until content is annotated.
+export function conceptReviewHealth(cards: Card[], now: number): Map<string, number> {
+  const reviewed = new Map<string, number>();
+  const healthy = new Map<string, number>();
+  for (const c of cards) {
+    if (c.lastReviewedAt == null || !c.conceptIds?.length) continue;
+    const ok = c.sched.reps >= 2 && c.dueAt > now && c.sched.lapses === 0 && c.lastGrade !== "again";
+    for (const id of c.conceptIds) {
+      reviewed.set(id, (reviewed.get(id) ?? 0) + 1);
+      if (ok) healthy.set(id, (healthy.get(id) ?? 0) + 1);
+    }
+  }
+  const out = new Map<string, number>();
+  for (const [id, total] of reviewed) out.set(id, (healthy.get(id) ?? 0) / total);
+  return out;
+}
+
 // Fold per-unit review health into concept confidence. Mirror of refreshStudyEvidence: keeps the
 // knowledge reference when nothing changes (no persist churn on every load). SSR-safe.
 export function refreshReviewEvidence(): void {
   if (typeof window === "undefined") return;
   const now = Date.now();
+  const conceptHealth = conceptReviewHealth(allCards(), now);
   const health = unitReviewHealth(allCards(), now);
-  if (!health.size) return;
+  if (!health.size && !conceptHealth.size) return;
   const floor = config.value.weights.decayFloor;
   let next = knowledge.value;
+  for (const [concept, healthFrac] of conceptHealth) {
+    next = applyReviewEvidence(next, [concept], healthFrac, REVIEW_EVIDENCE_WEIGHT, floor, now);
+  }
   for (const [unitId, healthFrac] of health) {
     const taught = teachesByUnit.get(unitId);
     if (taught) next = applyReviewEvidence(next, taught, healthFrac, REVIEW_EVIDENCE_WEIGHT, floor, now);
