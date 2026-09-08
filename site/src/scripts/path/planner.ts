@@ -2,7 +2,7 @@
 import type { Concept, Goal, KnowledgeState, PathConfig, UnitConcepts, Path, PathStep, Band, Track } from "./types";
 import type { ConceptGraph } from "./graph";
 import { topoSort, ancestors, descendants, buildConceptGraph, induceUnitGraph, validateAcyclic } from "./graph";
-import { isKnown } from "./knowledge";
+import { canSkipConcept } from "./knowledge";
 import { normalizeRanks, goalWeightFactor } from "./goal-rank";
 import { resolveGoalTargets, targetFrontier } from "./goal-resolve";
 import { marketFactorForUnit, type MarketDemandSnapshot } from "./market-demand";
@@ -14,16 +14,15 @@ export { resolveGoalTargets, targetFrontier } from "./goal-resolve";
 // retired competency.ts weighting.)
 const SENIOR_WEIGHT: Record<Band, number> = { middle: 1.0, surface: 0.9, advanced: 0.8, foundations: 0.4 };
 
-// Topo-ordered closure of every target concept the learner does not yet know.
-// Note: a target already KNOWN is dropped outright — its own prereqs are NOT pulled in (only
-// unknown targets expand ancestors). applyDiagnostic propagates mastery down to prereqs, but
-// applySelfDeclare/applyStudyEvidence do not, so declaring a deep concept known implies its chain.
+// Topo-ordered closure of targets not covered by measured evidence or an explicit manual skip.
+// Activity alone never removes a concept. A skipped target is dropped outright, so its prereqs
+// are not pulled in; applySelfDeclare refuses to hide an existing measured gap.
 export function missingConcepts(frontier: string[], state: KnowledgeState, g: ConceptGraph, threshold: number): string[] {
   const needed = new Set<string>();
   for (const f of frontier) {
-    if (!isKnown(state, f, threshold)) {
+    if (!canSkipConcept(state, f, threshold)) {
       needed.add(f);
-      for (const a of ancestors(g, f)) if (!isKnown(state, a, threshold)) needed.add(a);
+      for (const a of ancestors(g, f)) if (!canSkipConcept(state, a, threshold)) needed.add(a);
     }
   }
   return topoSort(g).filter((id) => needed.has(id));

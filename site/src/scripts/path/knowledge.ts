@@ -38,11 +38,25 @@ const STUDY_PROTECTED: Source[] = ["diagnostic", "declared", "review"];
 
 export const emptyState = (): KnowledgeState => new Map();
 
+const INDEPENDENT_SOURCES: Source[] = ["pretest", "diagnostic", "assess"];
+const MEASURED_SOURCES: Source[] = [...INDEPENDENT_SOURCES, "review"];
+
+export const isIndependentSource = (source: Source): boolean => INDEPENDENT_SOURCES.includes(source);
+
 export function masteryOf(state: KnowledgeState, concept: string): number {
   return state.get(concept)?.confidence ?? 0;
 }
-export const isKnown = (state: KnowledgeState, concept: string, threshold: number): boolean =>
-  masteryOf(state, concept) >= threshold;
+export const isKnown = (state: KnowledgeState, concept: string, threshold: number): boolean => {
+  const mastery = state.get(concept);
+  return !!mastery && isIndependentSource(mastery.source) && mastery.confidence >= threshold;
+};
+
+// A manual declaration remains a navigation preference, but never becomes independent mastery.
+export const canSkipConcept = (state: KnowledgeState, concept: string, threshold: number): boolean => {
+  const mastery = state.get(concept);
+  return !!mastery && (mastery.source === "declared" || isIndependentSource(mastery.source)) &&
+    mastery.confidence >= threshold;
+};
 
 function setMastery(state: KnowledgeState, id: string, m: ConceptMastery): KnowledgeState {
   const next = new Map(state);
@@ -112,11 +126,10 @@ export function applyDiagnosticBatch(
   return next;
 }
 
-// Reading + graded-practice evidence for a unit's taught concepts. `touchedFrac` = share of the
+// Reading + practice-activity evidence for a unit's taught concepts. `touchedFrac` = share of the
 // unit's lessons with any practice interaction, `doneFrac` = share with ≥1 task completed.
-// Target = wLessons*touchedFrac + wPractice*doneFrac: with the default weights (0.35/0.4),
-// reading alone stays below masteryThreshold (shaky), reading + passing practice crosses it —
-// graded practice is objective enough to retire a unit from the path without a quick-check.
+// Target = wLessons*touchedFrac + wPractice*doneFrac. This may show study progress, but the
+// activity source is deliberately excluded from independent mastery and planner skipping.
 export function applyStudyEvidence(
   state: KnowledgeState, taught: string[], touchedFrac: number, doneFrac: number,
   wLessons: number, wPractice: number, now: number,
@@ -163,11 +176,21 @@ export function applyPracticeStruggle(
 // `floor` — event-driven forgetting evidence, distinct from decay()'s age-driven read-model.
 export function applyReviewEvidence(
   state: KnowledgeState, taught: string[], healthFrac: number, weight: number, floor: number, now: number,
+  metadata?: { conceptLinked?: boolean; delayed?: boolean; failed?: boolean },
 ): KnowledgeState {
   let next = state;
   const target = clamp01(clamp01(healthFrac) * weight);
   for (const c of taught) {
     const cur = next.get(c);
+    const correctiveFailure = cur?.source === "diagnostic" && now > cur.lastAt &&
+      metadata?.conceptLinked === true && metadata.delayed === true && metadata.failed === true;
+    if (correctiveFailure) {
+      const lowered = Math.max(clamp01(floor), target);
+      if (lowered < cur.confidence) {
+        next = setMastery(next, c, { confidence: lowered, source: "review", lastAt: now });
+      }
+      continue;
+    }
     if (cur && STRONG.includes(cur.source)) continue;            // diagnostic/declared are immune
     const m = masteryOf(next, c);
     if (target > m) {
@@ -183,6 +206,8 @@ export function applyReviewEvidence(
 }
 
 export function applySelfDeclare(state: KnowledgeState, concept: string, known: boolean, now: number): KnowledgeState {
+  const current = state.get(concept);
+  if (current && MEASURED_SOURCES.includes(current.source)) return state;
   return setMastery(state, concept, { confidence: known ? 1 : 0, source: "declared", lastAt: now });
 }
 

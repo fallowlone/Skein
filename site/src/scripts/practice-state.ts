@@ -1,5 +1,20 @@
 export type TaskStatus = "seen" | "attempted" | "done";
 
+export const PRACTICE_COMPETENCIES = ["recall", "explain", "predict", "produce", "debug", "discriminate", "transfer"] as const;
+export type PracticeCompetency = typeof PRACTICE_COMPETENCIES[number];
+export type PracticeMode = "closed-book" | "docs" | "ai";
+export type PracticeEvaluator = "exec" | "self" | "ai";
+
+export interface PracticeEvidence {
+  version?: number;
+  concepts?: string[];
+  competency?: PracticeCompetency;
+  mode: PracticeMode;
+  hints: number;
+  evaluator: PracticeEvaluator;
+  independent: boolean;
+}
+
 const keyFor = (lessonKey: string) => `atlas.practice.${lessonKey}`;
 
 export function readProgress(lessonKey: string): Record<string, TaskStatus> {
@@ -11,9 +26,11 @@ export function readProgress(lessonKey: string): Record<string, TaskStatus> {
   }
 }
 
-export function setTaskStatus(lessonKey: string, taskId: string, status: TaskStatus): void {
+export function setTaskStatus(lessonKey: string, taskId: string, status: TaskStatus, allowDowngrade = false): void {
   try {
     const cur = readProgress(lessonKey);
+    const rank: Record<TaskStatus, number> = { seen: 0, attempted: 1, done: 2 };
+    if (!allowDowngrade && cur[taskId] && rank[cur[taskId]] > rank[status]) return;
     cur[taskId] = status;
     localStorage.setItem(keyFor(lessonKey), JSON.stringify(cur));
   } catch {
@@ -25,7 +42,7 @@ export function setTaskStatus(lessonKey: string, taskId: string, status: TaskSta
 // Keyed independently so the existing status store is untouched: this records *how* a task
 // went (counts + last result), feeding the downward practice-struggle knowledge signal and the
 // fail→resurface SRS loop. See docs/superpowers/plans/2026-06-14-adaptive-path-engine.md §A.
-export interface AttemptRec {
+export interface AttemptRec extends Partial<PracticeEvidence> {
   attempts: number;
   passes: number;
   lastResult: "pass" | "fail";
@@ -96,6 +113,16 @@ export function writeResponse(lessonKey: string, taskId: string, text: string): 
   }
 }
 
+export function deleteResponse(lessonKey: string, taskId: string): void {
+  try {
+    const cur = readResponses(lessonKey);
+    delete cur[taskId];
+    localStorage.setItem(responsesKeyFor(lessonKey), JSON.stringify(cur));
+  } catch {
+    /* private browsing, storage full — non-fatal */
+  }
+}
+
 const gradesKeyFor = (lessonKey: string) => `atlas.practice-selfgrade.${lessonKey}`;
 
 const isSelfGrade = (value: unknown): value is SelfGrade =>
@@ -135,13 +162,30 @@ export function setSelfGrade(lessonKey: string, taskId: string, grade: SelfGrade
   }
 }
 
-export function recordAttempt(lessonKey: string, taskId: string, passed: boolean, now = Date.now()): void {
+export function recordAttempt(
+  lessonKey: string,
+  taskId: string,
+  passed: boolean,
+  now = Date.now(),
+  evidence?: PracticeEvidence,
+  correctLatest = false,
+): void {
   try {
     const cur = readAttempts(lessonKey);
     const prev = cur[taskId] ?? { attempts: 0, passes: 0, lastResult: "fail", lastAt: 0 };
+    const correction = correctLatest && prev.attempts > 0;
+    const normalizedEvidence = evidence ? {
+      ...evidence,
+      concepts: evidence.concepts ? [...evidence.concepts] : undefined,
+      independent: evidence.independent && evidence.evaluator === "exec" && evidence.mode !== "ai" && evidence.hints === 0,
+    } : {};
     cur[taskId] = {
-      attempts: prev.attempts + 1,
-      passes: prev.passes + (passed ? 1 : 0),
+      ...prev,
+      ...normalizedEvidence,
+      attempts: prev.attempts + (correction ? 0 : 1),
+      passes: correction
+        ? Math.max(0, prev.passes - (prev.lastResult === "pass" ? 1 : 0) + (passed ? 1 : 0))
+        : prev.passes + (passed ? 1 : 0),
       lastResult: passed ? "pass" : "fail",
       lastAt: now,
     };

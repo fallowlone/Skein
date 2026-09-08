@@ -11,6 +11,7 @@ export type CardSource = "retrieval" | "practice" | "assess";
 
 export interface CardSeed {
   cardKey: string;
+  legacyCardKey?: string;
   lessonKey: string;
   source: CardSource;
   index: number;
@@ -20,6 +21,20 @@ export interface CardSeed {
   front: string;
   back: string;
   lang: "en" | "ru";
+  answerMode?: "inline" | "original-task";
+  taskId?: string;
+}
+
+export interface ReviewEvidence {
+  eventId: string;
+  basis: "self-report" | "exec";
+  attempt: "answered" | "skipped";
+  support: "independent" | "none" | "assisted";
+  timing: "same-pass" | "immediate" | "delayed";
+  attemptedAt: number | null;
+  revealedAt: number;
+  reviewedAt: number;
+  delayMs: number;
 }
 
 export interface Card extends CardSeed {
@@ -28,6 +43,7 @@ export interface Card extends CardSeed {
   addedAt: number;
   lastReviewedAt: number | null;
   lastGrade?: Grade;
+  lastEvidence?: ReviewEvidence;
 }
 
 type Store = Record<string, Card>;
@@ -70,34 +86,43 @@ function write(s: Store): void {
 
 /** Idempotent on cardKey: an existing card keeps its schedule; content fields and the derived lessonKey refresh. */
 export function addCard(seed: CardSeed, now = Date.now()): void {
+  const at = Number.isFinite(now) && now > 100_000_000_000 ? now : Date.now();
   const s = read();
-  const existing = s[seed.cardKey];
+  const legacy = seed.legacyCardKey && seed.legacyCardKey !== seed.cardKey ? s[seed.legacyCardKey] : undefined;
+  const existing = s[seed.cardKey] ?? legacy;
   if (existing) {
     s[seed.cardKey] = {
       ...existing,
+      ...seed,
+      cardKey: seed.cardKey,
       front: seed.front,
       back: seed.back,
       lang: seed.lang,
       lessonKey: seed.lessonKey,
       ...(seed.conceptIds ? { conceptIds: seed.conceptIds } : {}),
     };
+    if (legacy && seed.legacyCardKey) delete s[seed.legacyCardKey];
   } else {
     const sched = freshSched();
-    s[seed.cardKey] = { ...seed, sched, dueAt: dueAtFrom(now, sched), addedAt: now, lastReviewedAt: null };
+    s[seed.cardKey] = { ...seed, sched, dueAt: dueAtFrom(at, sched), addedAt: at, lastReviewedAt: null };
   }
   write(s);
 }
 
-export function recordReview(cardKey: string, grade: Grade, now = Date.now()): void {
+export function recordReview(cardKey: string, grade: Grade, when: number | ReviewEvidence = Date.now()): boolean {
   const s = read();
   const c = s[cardKey];
-  if (!c) return;
+  if (!c) return false;
+  const evidence = typeof when === "object" ? when : undefined;
+  if (evidence && c.lastEvidence?.eventId === evidence.eventId) return false;
+  const now = evidence?.reviewedAt ?? when as number;
   // Days the card actually survived since its last review — drives the late-success interval bonus.
   const elapsedDays = c.lastReviewedAt ? Math.max(0, (now - c.lastReviewedAt) / 86_400_000) : undefined;
   const sched = schedule(c.sched, grade, { elapsedDays });
   // Seed the due-time fuzz with the cardKey so same-day cohorts spread out deterministically.
-  s[cardKey] = { ...c, sched, dueAt: dueAtFrom(now, sched, cardKey), lastReviewedAt: now, lastGrade: grade };
+  s[cardKey] = { ...c, sched, dueAt: dueAtFrom(now, sched, cardKey), lastReviewedAt: now, lastGrade: grade, ...(evidence ? { lastEvidence: evidence } : {}) };
   write(s);
+  return true;
 }
 
 export function allCards(): Card[] {

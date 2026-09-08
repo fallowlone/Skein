@@ -3,7 +3,7 @@ import { completedStepCount, pathStepBonusXp, PATH_STEP_BONUS } from "./path-xp"
 import type { KnowledgeState, UnitConcepts, ConceptMastery } from "~/scripts/path/types";
 
 const known = (ids: string[]): KnowledgeState =>
-  new Map(ids.map((id) => [id, { confidence: 1, source: "declared", lastAt: 0 } as ConceptMastery]));
+  new Map(ids.map((id) => [id, { confidence: 1, source: "diagnostic", lastAt: 0 } as ConceptMastery]));
 
 const U = (unit: string, teaches: string[]): UnitConcepts =>
   ({ unit, track: "networking" as UnitConcepts["track"], teaches, requires: [], estMin: 10 });
@@ -21,7 +21,7 @@ describe("path-xp", () => {
     expect(completedStepCount(known(["x", "y", "z"]), UNITS, 0.6)).toBe(2); // a/01 + a/02, not a/03
   });
   it("respects the threshold", () => {
-    const weak: KnowledgeState = new Map([["z", { confidence: 0.4, source: "activity", lastAt: 0 }]]);
+    const weak: KnowledgeState = new Map([["z", { confidence: 0.4, source: "diagnostic", lastAt: 0 }]]);
     expect(completedStepCount(weak, [U("a/02", ["z"])], 0.6)).toBe(0);
     expect(completedStepCount(weak, [U("a/02", ["z"])], 0.3)).toBe(1);
   });

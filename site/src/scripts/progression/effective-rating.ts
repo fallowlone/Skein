@@ -1,4 +1,5 @@
 import type { KnowledgeState } from "~/scripts/path/types";
+import { isIndependentSource } from "~/scripts/path/knowledge";
 
 /** Coverage of the goal frontier mapped onto the 0–1000 rating scale.
  *  coverage = mean clamped confidence over the frontier; missing concepts ⇒ 0.
@@ -13,7 +14,7 @@ export function studyRating(
   let sum = 0;
   for (const id of frontier) {
     const m = knowledge.get(id);
-    sum += m ? Math.max(0, Math.min(1, m.confidence)) : 0;
+    sum += m && isIndependentSource(m.source) ? Math.max(0, Math.min(1, m.confidence)) : 0;
   }
   const coverage = sum / frontier.size;
   return Math.round(floorRating + (barRating - floorRating) * coverage);
@@ -69,7 +70,7 @@ export function evidenceProgress(
   let proven = 0;
   for (const id of frontier) {
     const m = knowledge.get(id);
-    if (m && m.confidence >= tau) proven++;
+    if (m && isIndependentSource(m.source) && m.confidence >= tau) proven++;
   }
   return { proven, needed: minEvidence, met: proven >= minEvidence };
 }
