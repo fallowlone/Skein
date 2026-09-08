@@ -97,8 +97,8 @@ the signed payload hash so changing only the delivery header cannot replay a cap
 Required billing configuration:
 
 ```text
-GITHUB_SPONSORS_URL=https://github.com/sponsors/<login>
-GITHUB_SPONSORS_COACH_TIER_IDS=<tier-node-id>[,<tier-node-id>...]
+GITHUB_SPONSORS_URL=https://github.com/sponsors/fallowlone
+GITHUB_SPONSORS_COACH_TIER_IDS=ST_kwDOBmwyvM4ACf5e
 GITHUB_SPONSORS_WEBHOOK_SECRET=<secret>
 ```
 
@@ -125,6 +125,22 @@ bunx wrangler pages secret put GITHUB_SPONSORS_WEBHOOK_SECRET
 `GITHUB_SPONSORS_URL` and `GITHUB_SPONSORS_COACH_TIER_IDS` are non-secret configuration and may be
 set as Pages environment variables (or committed under `[vars]` once the production values are
 stable).
+
+To inspect the recipient's published and unpublished tiers before changing the whitelist, use the
+GitHub CLI with an account that can administer the Sponsors listing:
+
+```bash
+gh api graphql \
+  -f login=fallowlone \
+  -f query='query($login: String!) { user(login: $login) { sponsorsListing { tiers(first: 100, includeUnpublished: true) { nodes { id name monthlyPriceInCents isOneTime } } } } }'
+```
+
+The returned `id` is the value used in `GITHUB_SPONSORS_COACH_TIER_IDS`; do not authorize by tier
+name or price. If an existing OAuth session was created before `read:user` was granted, start a new
+login at `/api/auth/login?lang=en&returnTo=coach` (or `lang=ru`) and approve the refreshed scope,
+then use Settings → Coach → Recheck. The app already requests `read:user`; this reauthentication is
+needed when the old provider token has no such grant. A missing or revoked token must follow the
+same reauthentication path.
 
 ### 3. Configure managed Anthropic
 
