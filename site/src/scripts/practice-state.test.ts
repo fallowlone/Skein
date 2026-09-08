@@ -12,6 +12,8 @@ import {
   isCommitted,
   MIN_COMMIT_CHARS,
   selfGradeToPass,
+  deleteResponse,
+  type PracticeEvidence,
 } from "./practice-state";
 
 beforeEach(() => localStorage.clear());
@@ -28,6 +30,16 @@ describe("practice-state", () => {
     setTaskStatus("a/b/c", "t1", "seen");
     setTaskStatus("a/b/c", "t2", "attempted");
     expect(readProgress("a/b/c")).toEqual({ t1: "seen", t2: "attempted" });
+  });
+  test("opening an already completed task cannot downgrade it", () => {
+    setTaskStatus("a/b/c", "t1", "done");
+    setTaskStatus("a/b/c", "t1", "seen");
+    expect(readProgress("a/b/c").t1).toBe("done");
+  });
+  test("an explicit grade correction can downgrade completion", () => {
+    setTaskStatus("a/b/c", "t1", "done");
+    setTaskStatus("a/b/c", "t1", "attempted", true);
+    expect(readProgress("a/b/c").t1).toBe("attempted");
   });
   test("progress is scoped per lessonKey", () => {
     setTaskStatus("a/b/c", "t1", "done");
@@ -68,6 +80,55 @@ describe("practice-state attempts store", () => {
     expect(readProgress("a/b/c")).toEqual({ t1: "done" });
     expect(readAttempts("a/b/c").t1.lastResult).toBe("fail");
   });
+  test("reads legacy attempts without inventing evidence metadata", () => {
+    localStorage.setItem("atlas.practice-attempts.a/b/c", JSON.stringify({
+      t1: { attempts: 1, passes: 1, lastResult: "pass", lastAt: 1000 },
+    }));
+    expect(readAttempts("a/b/c").t1).toEqual({ attempts: 1, passes: 1, lastResult: "pass", lastAt: 1000 });
+  });
+  test("records compact evidence metadata without copying the response", () => {
+    const evidence: PracticeEvidence = {
+      version: 2,
+      concepts: ["event-loop", "microtasks"],
+      competency: "debug",
+      mode: "closed-book",
+      hints: 0,
+      evaluator: "exec",
+      independent: true,
+    };
+    writeResponse("a/b/c", "t1", "private learner response");
+    recordAttempt("a/b/c", "t1", true, 1234, evidence);
+
+    const attempt = readAttempts("a/b/c").t1;
+    expect(attempt).toMatchObject({ ...evidence, attempts: 1, passes: 1, lastAt: 1234 });
+    expect(JSON.stringify(attempt)).not.toContain("private learner response");
+  });
+  test("self and AI grades, AI mode, and hints can never claim independent verification", () => {
+    const base = { mode: "closed-book", hints: 0, independent: true } as const;
+    recordAttempt("a/b/c", "self", true, 1, { ...base, evaluator: "self" });
+    recordAttempt("a/b/c", "ai-grade", true, 2, { ...base, evaluator: "ai" });
+    recordAttempt("a/b/c", "ai-mode", true, 3, { ...base, mode: "ai", evaluator: "exec" });
+    recordAttempt("a/b/c", "hinted", true, 4, { ...base, hints: 1, evaluator: "exec" });
+
+    const attempts = readAttempts("a/b/c");
+    expect(attempts.self.independent).toBe(false);
+    expect(attempts["ai-grade"].independent).toBe(false);
+    expect(attempts["ai-mode"].independent).toBe(false);
+    expect(attempts.hinted.independent).toBe(false);
+  });
+  test("correcting the latest grade updates counts instead of farming attempts", () => {
+    const evidence = { mode: "closed-book", hints: 0, evaluator: "self", independent: false } as const;
+    recordAttempt("a/b/c", "t1", true, 1000, evidence);
+    recordAttempt("a/b/c", "t1", false, 2000, evidence, true);
+    recordAttempt("a/b/c", "t1", false, 3000, evidence, true);
+
+    expect(readAttempts("a/b/c").t1).toMatchObject({
+      attempts: 1,
+      passes: 0,
+      lastResult: "fail",
+      lastAt: 3000,
+    });
+  });
 });
 
 // ── committed responses: the learner's own answer, written BEFORE the model answer ──
@@ -87,6 +148,12 @@ describe("practice-state responses store", () => {
     writeResponse("a/b/c", "t1", "first");
     writeResponse("a/b/c", "t1", "second");
     expect(readResponses("a/b/c").t1).toBe("second");
+  });
+  test("deleteResponse removes only the selected response", () => {
+    writeResponse("a/b/c", "t1::expected", "expected value");
+    writeResponse("a/b/c", "t1::actual", "actual value");
+    deleteResponse("a/b/c", "t1::expected");
+    expect(readResponses("a/b/c")).toEqual({ "t1::actual": "actual value" });
   });
   test("responses are scoped per lessonKey", () => {
     writeResponse("a/b/c", "t1", "x");

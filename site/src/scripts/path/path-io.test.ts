@@ -4,7 +4,7 @@ import {
   togglePin, moveInOrder,
   content, computePath, config,
   nextCalibrationProbe, unitProbeConcepts,
-  overrides, loosenUnit, clearOverrides, importState,
+  overrides, loosenUnit, clearOverrides, exportState, importState,
   searchConcepts, reorderList,
   tierOf, unitPracticeFractions, conceptsUpToBand,
   isColdStartView,
@@ -83,20 +83,20 @@ describe("path-io pure helpers", () => {
     expect(deserializeKnowledge(arr).get("a")).toEqual({ confidence: 1, source: "declared", lastAt: 123 });
   });
 
-  it("writes lesson self-assessment through the canonical path knowledge", () => {
+  it("keeps lesson self-declaration read-only and reports only measured or unknown", () => {
     const previous = knowledge.value;
     const concept = content.concepts[0].id;
     try {
       knowledge.value = new Map();
-      expect(setConceptMasteryLevel(concept, "application")).toBe(true);
-      expect(knowledge.value.get(concept)).toMatchObject({ confidence: 0.7, source: "declared" });
-      expect(JSON.parse(localStorage.getItem("skein.path-knowledge.v1")!)).toContainEqual([
-        concept,
-        expect.objectContaining({ confidence: 0.7, source: "declared" }),
-      ]);
-      expect(currentConceptMasteryLevel(concept)).toBe("application");
-      expect(advanceConceptMastery(concept)).toBe("explanation");
-      expect(knowledge.value.get(concept)?.confidence).toBe(0.85);
+      expect(currentConceptMasteryLevel(concept)).toBe("unknown");
+      expect(setConceptMasteryLevel(concept, "measured")).toBe(false);
+      expect(advanceConceptMastery(concept)).toBeNull();
+      expect(knowledge.value.has(concept)).toBe(false);
+
+      knowledge.value = new Map([[concept, { confidence: 0.8, source: "activity", lastAt: Date.now() }]]);
+      expect(currentConceptMasteryLevel(concept)).toBe("unknown");
+      knowledge.value = new Map([[concept, { confidence: 0.8, source: "diagnostic", lastAt: Date.now() }]]);
+      expect(currentConceptMasteryLevel(concept)).toBe("measured");
     } finally {
       knowledge.value = previous;
     }
@@ -165,6 +165,37 @@ describe("path-io overrides + state-io", () => {
     const r = importState("{ not json");
     expect(r.ok).toBe(false);
     expect(overrides.value.removeEdges).toEqual([]);
+  });
+  it("exports the shared full local snapshot instead of only four path stores", async () => {
+    localStorage.setItem("atlas.practice-responses.go/01/lesson", JSON.stringify({ task: "answer" }));
+    localStorage.setItem("atlas.review.v1", "{}");
+    localStorage.setItem("skein.english.v2", JSON.stringify({ words: {}, hoursLog: [] }));
+    let downloaded: Blob | undefined;
+    const create = URL.createObjectURL;
+    const revoke = URL.revokeObjectURL;
+    const click = HTMLAnchorElement.prototype.click;
+    try {
+      Object.defineProperty(URL, "createObjectURL", { configurable: true, value: (blob: Blob) => { downloaded = blob; return "blob:path-backup"; } });
+      Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: () => {} });
+      HTMLAnchorElement.prototype.click = () => {};
+      exportState(123);
+      const text = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(downloaded!);
+      });
+      const backup = JSON.parse(text);
+      expect(backup.version).toBe(2);
+      expect(backup.exportedAt).toBe(123);
+      expect(backup.data["atlas.practice-responses.go/01/lesson"]).toBe(JSON.stringify({ task: "answer" }));
+      expect(backup.data["atlas.review.v1"]).toBe("{}");
+      expect(backup.data["skein.english.v2"]).toBe(JSON.stringify({ words: {}, hoursLog: [] }));
+    } finally {
+      Object.defineProperty(URL, "createObjectURL", { configurable: true, value: create });
+      Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: revoke });
+      HTMLAnchorElement.prototype.click = click;
+    }
   });
 });
 

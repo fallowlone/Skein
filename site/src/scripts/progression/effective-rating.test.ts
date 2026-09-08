@@ -9,7 +9,7 @@ import { evidenceProgress } from "./effective-rating";
 
 // Build a KnowledgeState from { conceptId: confidence } pairs.
 const K = (pairs: Record<string, number>): KnowledgeState =>
-  new Map(Object.entries(pairs).map(([id, confidence]) => [id, { confidence, source: "activity" as const, lastAt: 0 }]));
+  new Map(Object.entries(pairs).map(([id, confidence]) => [id, { confidence, source: "diagnostic" as const, lastAt: 0 }]));
 
 describe("studyRating", () => {
   it("full coverage of the frontier reaches the bar rating", () => {
@@ -26,6 +26,16 @@ describe("studyRating", () => {
   it("clamps per-concept confidence to [0,1]", () => {
     const frontier = new Set(["a"]);
     expect(studyRating(frontier, K({ a: 5 }), 600)).toBe(600); // clamped to 1
+  });
+  it("does not turn activity, self-declaration or review self-report into rating evidence", () => {
+    const frontier = new Set(["a", "b", "c", "d"]);
+    const knowledge: KnowledgeState = new Map([
+      ["a", { confidence: 1, source: "diagnostic", lastAt: 0 }],
+      ["b", { confidence: 1, source: "activity", lastAt: 0 }],
+      ["c", { confidence: 1, source: "declared", lastAt: 0 }],
+      ["d", { confidence: 1, source: "review", lastAt: 0 }],
+    ]);
+    expect(studyRating(frontier, knowledge, 600)).toBe(150);
   });
 });
 
@@ -71,7 +81,7 @@ describe("barRatingForGoal", () => {
 
 describe("hasEnoughEvidence", () => {
   const K = (pairs: Record<string, number>): KnowledgeState =>
-    new Map(Object.entries(pairs).map(([id, confidence]) => [id, { confidence, source: "activity" as const, lastAt: 0 }]));
+    new Map(Object.entries(pairs).map(([id, confidence]) => [id, { confidence, source: "diagnostic" as const, lastAt: 0 }]));
   it("false when fewer than minEvidence concepts clear tau", () => {
     expect(hasEnoughEvidence(new Set(["a", "b", "c"]), K({ a: 0.9, b: 0.9 }), 0.6, 5)).toBe(false);
   });
@@ -164,5 +174,16 @@ describe("evidenceProgress", () => {
     const e = evidenceProgress(new Set(), K({}), 0.6, 5);
     expect(e.proven).toBe(0);
     expect(e.met).toBe(false);
+  });
+  it("counts only independently measured sources as proven", () => {
+    const knowledge: KnowledgeState = new Map([
+      ["a", { confidence: 0.9, source: "pretest", lastAt: 0 }],
+      ["b", { confidence: 0.9, source: "diagnostic", lastAt: 0 }],
+      ["c", { confidence: 0.9, source: "assess", lastAt: 0 }],
+      ["d", { confidence: 0.9, source: "activity", lastAt: 0 }],
+      ["e", { confidence: 0.9, source: "declared", lastAt: 0 }],
+      ["f", { confidence: 0.9, source: "review", lastAt: 0 }],
+    ]);
+    expect(evidenceProgress(big, knowledge, 0.6, 3)).toEqual({ proven: 3, needed: 3, met: true });
   });
 });

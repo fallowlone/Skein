@@ -1,6 +1,10 @@
 // site/src/scripts/account-sync.test.ts
-import { describe, it, expect } from "vitest";
-import { mergeProgress } from "./account-sync";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { mergeProgress, pushProgress } from "./account-sync";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("mergeProgress", () => {
   it("takes the per-lesson entry with the larger lastAt", () => {
@@ -114,5 +118,33 @@ describe("mergeProgress", () => {
     expect(p.peakRating).toBeUndefined();        // must stay absent, not become 0 (would corrupt rank display)
     expect(p.interviewReadiness).toBeUndefined();
     expect(p.interviewRounds).toBeUndefined();
+  });
+
+  it("omits private tutor questions from outgoing sync without mutating the local state", async () => {
+    const fetchMock = vi.fn(async (_input?: RequestInfo | URL, _init?: RequestInit) => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const state = {
+      history: {},
+      retrieval: {},
+      tutorHistory: [{ lessonKey: "js/closures", mode: "hint", question: "my private code", answeredAt: 5, concepts: ["scope"] }],
+      extras: { practiceResponses: { "js/closures": { task: "local backup" } } },
+    } as any;
+
+    expect(await pushProgress(state)).toBe(true);
+
+    const request = fetchMock.mock.calls[0][1] as RequestInit;
+    const outgoing = JSON.parse(request.body as string);
+    expect(outgoing.tutorHistory).toBeUndefined();
+    expect(outgoing.extras).toEqual(state.extras);
+    expect(state.tutorHistory[0].question).toBe("my private code");
+  });
+
+  it("keeps local and legacy server tutor history during merge", () => {
+    const localEntry = { lessonKey: "local", mode: "hint", question: "local question", answeredAt: 20, concepts: [] };
+    const serverEntry = { lessonKey: "server", mode: "socratic", question: "server question", answeredAt: 10, concepts: [] };
+    const local = { history: {}, retrieval: {}, tutorHistory: [localEntry] } as any;
+    const server = { history: {}, retrieval: {}, tutorHistory: [serverEntry] } as any;
+
+    expect(mergeProgress(local, server).tutorHistory).toEqual([serverEntry, localEntry]);
   });
 });

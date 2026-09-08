@@ -15,7 +15,7 @@ import unitsJson from "~/content/units.json";
 import tracksJson from "~/content/tracks.json";
 import marketDemandJson from "~/content/path/market-demand.json";
 import { masteryOf, applyReviewEvidence } from "./knowledge";
-import { recordAttempt, type AttemptRec } from "~/scripts/practice-state";
+import { recordAttempt, type AttemptRec, type PracticeEvidence } from "~/scripts/practice-state";
 import { dueBefore, recordReview, allCards, type Card } from "~/scripts/review-state";
 import { unitStruggleFractions } from "./practice-signal";
 import { buildDoNow, type DoNowItem } from "./do-now";
@@ -44,7 +44,8 @@ import { calibrationFreshness, type CalibrationFreshness } from "~/scripts/progr
 import committedOverrides from "~/content/path/concept-overrides.json";
 import type { Overrides } from "./graph";
 import { applyOverridesFull, mergeOverrides, loosenUnitEdges } from "./overrides";
-import { serializeStateBundle, parseStateBundle } from "./state-io";
+import { parseStateBundle } from "./state-io";
+import { exportModel } from "~/scripts/model-backup";
 import { resolveIrt, priorFor, collapse, type SelfPlace, type Irt } from "./bayes";
 import type { Band } from "./types";
 import type { MarketDemandSnapshot } from "./market-demand";
@@ -264,41 +265,21 @@ export const knowledge = signal<KnowledgeState>(loadKnowledge());
 export const config = signal<StoredPathConfig>(loadConfig());
 export const overrides = signal<Overrides>(loadOverrides());
 
-// Lesson self-assessment feeds the same concept model used by planning. The path
-// engine owns both the stage vocabulary and its confidence mapping.
-export const CONCEPT_MASTERY_LEVELS = ["exposure", "understanding", "application", "explanation", "debugging"] as const;
+// Lesson chrome reports whether evidence exists; it cannot mint skill levels from clicks.
+export const CONCEPT_MASTERY_LEVELS = ["unknown", "measured"] as const;
 export type ConceptMasteryLevel = typeof CONCEPT_MASTERY_LEVELS[number];
-const CONCEPT_LEVEL_CONFIDENCE: Record<ConceptMasteryLevel, number> = {
-  exposure: 0.2,
-  understanding: 0.45,
-  application: 0.7,
-  explanation: 0.85,
-  debugging: 0.95,
-};
 
 export function currentConceptMasteryLevel(concept: string): ConceptMasteryLevel {
-  const confidence = masteryOf(effectiveKnowledge(), concept);
-  return [...CONCEPT_MASTERY_LEVELS].reverse().find((level) => confidence >= CONCEPT_LEVEL_CONFIDENCE[level]) ?? "exposure";
+  const mastery = effectiveKnowledge().get(concept);
+  return mastery && ["pretest", "diagnostic", "assess"].includes(mastery.source) ? "measured" : "unknown";
 }
 
-export function setConceptMasteryLevel(concept: string, level: ConceptMasteryLevel): boolean {
-  const confidence = CONCEPT_LEVEL_CONFIDENCE[level];
-  if (!conceptById.has(concept) || confidence === undefined) return false;
-  knowledge.value = new Map(knowledge.value).set(concept, {
-    confidence,
-    source: "declared",
-    lastAt: Date.now(),
-  });
-  return true;
+export function setConceptMasteryLevel(_concept: string, _level: ConceptMasteryLevel): boolean {
+  return false;
 }
 
-export function advanceConceptMastery(concept: string): ConceptMasteryLevel | null {
-  if (!conceptById.has(concept)) return null;
-  const current = currentConceptMasteryLevel(concept);
-  const index = CONCEPT_MASTERY_LEVELS.indexOf(current);
-  const next = CONCEPT_MASTERY_LEVELS[Math.min(index + 1, CONCEPT_MASTERY_LEVELS.length - 1)];
-  setConceptMasteryLevel(concept, next);
-  return next;
+export function advanceConceptMastery(_concept: string): null {
+  return null;
 }
 
 if (typeof window !== "undefined") {
@@ -445,6 +426,8 @@ export function unitReviewHealth(cards: Card[], now: number): Map<string, number
   const healthy = new Map<string, number>();
   for (const c of cards) {
     if (c.lastReviewedAt == null) continue;
+    if (c.lastEvidence?.basis === "self-report" && c.lastGrade !== "again") continue;
+    if (c.lastEvidence?.basis === "self-report" && c.lastGrade === "again" && c.lastEvidence.timing !== "delayed") continue;
     const seg = c.lessonKey.split("/");
     if (seg.length < 2) continue;
     const unitId = `${seg[0]}/${seg[1]}`;
@@ -465,6 +448,8 @@ export function conceptReviewHealth(cards: Card[], now: number): Map<string, num
   const healthy = new Map<string, number>();
   for (const c of cards) {
     if (c.lastReviewedAt == null || !c.conceptIds?.length) continue;
+    if (c.lastEvidence?.basis === "self-report" && c.lastGrade !== "again") continue;
+    if (c.lastEvidence?.basis === "self-report" && c.lastGrade === "again" && c.lastEvidence.timing !== "delayed") continue;
     const ok = c.sched.reps >= 2 && c.dueAt > now && c.sched.lapses === 0 && c.lastGrade !== "again";
     for (const id of c.conceptIds) {
       reviewed.set(id, (reviewed.get(id) ?? 0) + 1);
@@ -544,9 +529,15 @@ export function dueReviews(now = Date.now()): { cardKey: string; lessonKey: stri
 
 // Record a graded practice outcome: always log the attempt; on a fail, advance the task's SRS
 // card (grade "again" → interval 0) so the flunked task resurfaces due-soon. SSR-safe.
-export function recordPracticeOutcome(lessonKey: string, taskId: string, passed: boolean): void {
+export function recordPracticeOutcome(
+  lessonKey: string,
+  taskId: string,
+  passed: boolean,
+  evidence?: PracticeEvidence,
+  correctLatest = false,
+): void {
   if (typeof window === "undefined") return;
-  recordAttempt(lessonKey, taskId, passed);
+  recordAttempt(lessonKey, taskId, passed, Date.now(), evidence, correctLatest);
   if (!passed) recordReview(`${lessonKey}::practice::${taskId}`, "again");
 }
 
@@ -751,12 +742,8 @@ export function clearOverrides(): void {
 export function conceptExists(id: string): boolean { return conceptById.has(id); }
 
 export function exportState(now: number): void {
-  const bundle = serializeStateBundle(
-    { knowledge: knowledge.value, config: config.value, overrides: overrides.value, userState: userState.value },
-    now,
-  );
   if (typeof window === "undefined") return;
-  const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+  const blob = new Blob([exportModel(localStorage, now)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = `skein-path-state-${now}.json`;
