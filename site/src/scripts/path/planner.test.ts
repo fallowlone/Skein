@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { CONCEPTS, UNITS, GOALS, TRACK_ORDER } from "./__fixtures__/mini-graph";
 import { buildConceptGraph } from "./graph";
 import { DEFAULT_CONFIG } from "./config";
-import { emptyState, applyDiagnostic, applySelfDeclare } from "./knowledge";
+import { emptyState, applyDiagnostic, applySelfDeclare, applyStudyEvidence } from "./knowledge";
 import {
   resolveGoalTargets, targetFrontier, missingConcepts, conceptsToUnits, orderUnits, buildPath,
   goalTrackWeight,
@@ -41,6 +41,20 @@ describe("planner", () => {
     const s = applyDiagnostic(emptyState(), g, "indexing", 1, 0); // lifts relational-model too
     const m = missingConcepts(["mvcc"], s, g, 0.6);
     expect(m).toEqual(["mvcc"]);
+  });
+
+  it("does not skip a concept from reading and activity alone", () => {
+    const s = applyStudyEvidence(emptyState(), ["mvcc"], 1, 1, 0.35, 0.4, 0);
+    expect(missingConcepts(["mvcc"], s, g, 0.6)).toEqual(["relational-model", "indexing", "mvcc"]);
+  });
+
+  it("preserves an explicit manual skip unless a measured gap already exists", () => {
+    const skipped = applySelfDeclare(emptyState(), "mvcc", true, 0);
+    expect(missingConcepts(["mvcc"], skipped, g, 0.6)).toEqual([]);
+
+    const gap = applyDiagnostic(emptyState(), g, "mvcc", 0.2, 0);
+    const refusedSkip = applySelfDeclare(gap, "mvcc", true, 1);
+    expect(missingConcepts(["mvcc"], refusedSkip, g, 0.6)).toEqual(["relational-model", "indexing", "mvcc"]);
   });
 
   it("orderUnits puts prereq-ready units first; depth mode groups by track order", () => {

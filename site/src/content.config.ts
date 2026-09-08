@@ -2,6 +2,7 @@ import { defineCollection } from "astro:content";
 import { z } from "astro/zod";
 import { glob, file } from "astro/loaders";
 import { TRACKS } from "./types";
+import { PRACTICE_COMPETENCIES } from "./scripts/practice-state";
 
 const Lang = z.enum(["en", "ru"]);
 const Status = z.enum(["stub", "draft", "ready"]);
@@ -64,6 +65,7 @@ const lessons = defineCollection({
 // ── Practice layer ──────────────────────────────────────────────────────────
 const BiText = Bi; // { en: min1, ru: min1 } — markdown allowed
 const Difficulty = z.enum(["recall", "apply", "stretch"]);
+const PracticeCompetency = z.enum(PRACTICE_COMPETENCIES);
 
 const Blank = z.object({
   id: z.string(),
@@ -81,6 +83,8 @@ const TaskBase = z.object({
   estMin: z.number().int().positive(),
   title: BiText,
   prompt: BiText,
+  version: z.number().int().positive().default(1),
+  competency: PracticeCompetency.optional(),
   // Concepts this task actually probes, as concepts.json ids. Optional during
   // the annotation rollout; /assess skips tasks that omit it rather than
   // inferring from unit.teaches, which spread evidence over up to 81 concepts

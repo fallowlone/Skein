@@ -68,6 +68,72 @@ function isOverrides(v: unknown): v is Overrides {
     (v.retag === undefined || Array.isArray(v.retag));
 }
 
+function parseObject(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value);
+    return isObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Validate the fields current consumers depend on while allowing unknown future evidence fields. */
+export function validateLearningStorageEntry(key: string, value: string): string | null {
+  if (key.startsWith("atlas.practice-attempts.")) {
+    const parsed = parseObject(value);
+    if (!parsed) return `Malformed ${key}`;
+    for (const record of Object.values(parsed)) {
+      if (!isObject(record)) return `Malformed ${key}`;
+      if (!Number.isInteger(record.attempts) || (record.attempts as number) < 0) return `Malformed ${key}`;
+      if (!Number.isInteger(record.passes) || (record.passes as number) < 0 || (record.passes as number) > (record.attempts as number)) return `Malformed ${key}`;
+      if (record.lastResult !== "pass" && record.lastResult !== "fail") return `Malformed ${key}`;
+      if (!Number.isFinite(record.lastAt) || (record.lastAt as number) < 0) return `Malformed ${key}`;
+    }
+    return null;
+  }
+  if (key.startsWith("atlas.practice-responses.")) {
+    const parsed = parseObject(value);
+    return parsed && Object.values(parsed).every((v) => typeof v === "string") ? null : `Malformed ${key}`;
+  }
+  if (key.startsWith("atlas.practice.")) {
+    const parsed = parseObject(value);
+    const statuses = new Set(["seen", "attempted", "done"]);
+    return parsed && Object.values(parsed).every((v) => typeof v === "string" && statuses.has(v)) ? null : `Malformed ${key}`;
+  }
+  if (key.startsWith("atlas.practice-selfgrade.")) {
+    const parsed = parseObject(value);
+    if (!parsed) return `Malformed ${key}`;
+    const grades = new Set(["hit", "partial", "miss", "skipped"]);
+    for (const v of Object.values(parsed)) {
+      if (typeof v === "string") { if (!grades.has(v)) return `Malformed ${key}`; continue; }
+      if (!isObject(v) || typeof v.grade !== "string" || !grades.has(v.grade) || !Number.isFinite(v.lastAt) || (v.lastAt as number) < 0) return `Malformed ${key}`;
+    }
+    return null;
+  }
+  if (key === "atlas.review.v1") {
+    const parsed = parseObject(value);
+    if (!parsed) return `Malformed ${key}`;
+    for (const card of Object.values(parsed)) {
+      if (!isObject(card) || typeof card.lessonKey !== "string" || !card.lessonKey || !Number.isFinite(card.dueAt)) return `Malformed ${key}`;
+    }
+    return null;
+  }
+  if (key === "skein.path-knowledge.v1") {
+    try { return isKnowledgeArray(JSON.parse(value)) ? null : `Malformed ${key}`; } catch { return `Malformed ${key}`; }
+  }
+  if (key === "skein.path-config.v1") {
+    try { return isConfig(JSON.parse(value)) ? null : `Malformed ${key}`; } catch { return `Malformed ${key}`; }
+  }
+  if (key === "skein.path-overrides.v1") {
+    try { return isOverrides(JSON.parse(value)) ? null : `Malformed ${key}`; } catch { return `Malformed ${key}`; }
+  }
+  if (key === "skein.english.register.v1") return value === "engineering" || value === "everyday" ? null : `Invalid ${key}`;
+  if (key === "skein.user-state.v1" || key === "skein.english.v2" || key === "atlas.assess.v1") {
+    return parseObject(value) ? null : `Malformed ${key}`;
+  }
+  return null;
+}
+
 export function parseStateBundle(
   text: string,
 ): { ok: true; bundle: StateBundle } | { ok: false; error: string } {

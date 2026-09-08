@@ -24,6 +24,7 @@ const base: CoachStatus = {
 let host: HTMLDivElement;
 
 beforeEach(() => {
+  localStorage.clear();
   host = document.createElement("div");
   document.body.appendChild(host);
   mocks.fetchCoachStatus.mockReset();
@@ -34,6 +35,7 @@ beforeEach(() => {
 afterEach(() => {
   render(null, host);
   host.remove();
+  vi.restoreAllMocks();
 });
 
 function mount(status = base, lang: "en" | "ru" = "en") {
@@ -151,5 +153,52 @@ describe("Settings Coach billing states", () => {
     pending[0]({ ...base, entitlements: { coach: false }, billing: { ...base.billing, verification: "unavailable" } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(host.textContent).toContain("Coach active");
+  });
+});
+
+describe("Settings local backup", () => {
+  it("round-trips the real export/import UI without exporting credentials", async () => {
+    localStorage.setItem("skein.user-state.v1", JSON.stringify({ tier: "senior", futureEvidence: { score: 7 } }));
+    localStorage.setItem("atlas.practice-responses.go/01/lesson", JSON.stringify({ task: "my answer 👩🏽‍💻" }));
+    localStorage.setItem("skein.english.v2", JSON.stringify({ words: {}, hoursLog: [], futureEvidence: [1, 2] }));
+    localStorage.setItem("skein.admin.token", "admin-secret");
+    localStorage.setItem("skein.english.byok", "api-secret");
+
+    let downloaded: Blob | undefined;
+    Object.defineProperty(URL, "createObjectURL", {
+      configurable: true,
+      value: vi.fn((blob: Blob) => { downloaded = blob; return "blob:backup"; }),
+    });
+    Object.defineProperty(URL, "revokeObjectURL", { configurable: true, value: vi.fn() });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    mount();
+
+    (Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.includes("Export progress")) as HTMLButtonElement).click();
+    expect(downloaded).toBeDefined();
+    const exported = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(downloaded!);
+    });
+    expect(JSON.parse(exported).data["skein.admin.token"]).toBeUndefined();
+    expect(JSON.parse(exported).data["skein.english.byok"]).toBeUndefined();
+
+    localStorage.clear();
+    const importedToast = new Promise<CustomEvent>((resolve) => {
+      window.addEventListener("toast", (event) => resolve(event as CustomEvent), { once: true });
+    });
+    vi.spyOn(globalThis, "setTimeout").mockImplementation(() => 0 as unknown as ReturnType<typeof setTimeout>);
+    const input = host.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File([exported], "progress.json", { type: "application/json" })] });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const toast = await importedToast;
+    expect(toast.detail.kind).toBe("ok");
+    expect(JSON.parse(localStorage.getItem("skein.user-state.v1")!)).toMatchObject({ tier: "senior", futureEvidence: { score: 7 } });
+    expect(JSON.parse(localStorage.getItem("atlas.practice-responses.go/01/lesson")!)).toEqual({ task: "my answer 👩🏽‍💻" });
+    expect(JSON.parse(localStorage.getItem("skein.english.v2")!)).toMatchObject({ futureEvidence: [1, 2] });
+    expect(localStorage.getItem("skein.admin.token")).toBeNull();
+    expect(localStorage.getItem("skein.english.byok")).toBeNull();
   });
 });

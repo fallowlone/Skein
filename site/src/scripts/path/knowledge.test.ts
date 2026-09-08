@@ -3,7 +3,7 @@ import { describe, it, expect } from "vitest";
 import { CONCEPTS } from "./__fixtures__/mini-graph";
 import { buildConceptGraph } from "./graph";
 import {
-  emptyState, masteryOf, isKnown, applyDiagnostic, applyStudyEvidence, applySelfDeclare, decay,
+  emptyState, masteryOf, isKnown, canSkipConcept, applyDiagnostic, applyStudyEvidence, applySelfDeclare, decay,
   applyPracticeStruggle, PROP_UP_FACTOR, applyReviewEvidence, applyDiagnosticBatch,
 } from "./knowledge";
 
@@ -46,11 +46,21 @@ describe("knowledge", () => {
     expect(masteryOf(s2, "mvcc")).toBeCloseTo(0.75, 5);            // never lowered
   });
 
-  it("applySelfDeclare marks known/unknown", () => {
+  it("keeps a self-declaration out of independent mastery while preserving explicit skip preference", () => {
     const s = applySelfDeclare(emptyState(), "mvcc", true, NOW);
-    expect(isKnown(s, "mvcc", 0.6)).toBe(true);
+    expect(isKnown(s, "mvcc", 0.6)).toBe(false);
+    expect(canSkipConcept(s, "mvcc", 0.6)).toBe(true);
     const s2 = applySelfDeclare(s, "mvcc", false, NOW);
     expect(isKnown(s2, "mvcc", 0.6)).toBe(false);
+    expect(canSkipConcept(s2, "mvcc", 0.6)).toBe(false);
+  });
+
+  it("does not let a self-declaration hide a measured gap", () => {
+    const measured = applyDiagnostic(emptyState(), g, "mvcc", 0.2, NOW);
+    const declared = applySelfDeclare(measured, "mvcc", true, NOW + 1);
+    expect(declared).toBe(measured);
+    expect(declared.get("mvcc")).toEqual({ confidence: 0.2, source: "diagnostic", lastAt: NOW });
+    expect(canSkipConcept(declared, "mvcc", 0.6)).toBe(false);
   });
 
   it("decay erodes stale confidence toward the floor, fresh is untouched", () => {
@@ -175,6 +185,38 @@ describe("applyReviewEvidence", () => {
     s = applyReviewEvidence(s, ["indexing"], 1, 0.7, 0.3, NOW);
     expect(masteryOf(s, "indexing")).toBeCloseTo(0.9, 5); // unchanged
     expect(s.get("indexing")!.source).toBe("diagnostic");
+  });
+
+  it("lets a later delayed concept-linked failure lower an older diagnostic", () => {
+    const diagnosed = applyDiagnostic(emptyState(), g, "indexing", 0.9, NOW);
+    const reviewed = applyReviewEvidence(
+      diagnosed,
+      ["indexing"],
+      0,
+      0.7,
+      0.3,
+      NOW + 14 * 86_400_000,
+      { conceptLinked: true, delayed: true, failed: true },
+    );
+    expect(reviewed.get("indexing")).toEqual({
+      confidence: 0.3,
+      source: "review",
+      lastAt: NOW + 14 * 86_400_000,
+    });
+  });
+
+  it("does not revise a diagnostic without later delayed concept-linked failure metadata", () => {
+    const diagnosed = applyDiagnostic(emptyState(), g, "indexing", 0.9, NOW);
+    const reviewed = applyReviewEvidence(
+      diagnosed,
+      ["indexing"],
+      0,
+      0.7,
+      0.3,
+      NOW + 14 * 86_400_000,
+      { conceptLinked: true, delayed: false, failed: true },
+    );
+    expect(reviewed).toBe(diagnosed);
   });
 
   // C1/C2: review-card health (an inferred, per-unit signal) must not overwrite
