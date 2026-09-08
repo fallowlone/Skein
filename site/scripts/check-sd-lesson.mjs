@@ -57,7 +57,7 @@ for (const lang of ["en", "ru"]) {
 
       const summary = src.match(/^summary:\s*"([\s\S]*?)"\s*$/m)?.[1];
       if (!summary) errs.push("missing summary");
-      else if (summary.length > 280) errs.push(`summary ${summary.length}>280`);
+      else if (summary.length > 320) errs.push(`summary ${summary.length}>320`);
 
       for (const [tag, bud] of Object.entries(BUDGETS)) {
         const t = tagText(src, tag);

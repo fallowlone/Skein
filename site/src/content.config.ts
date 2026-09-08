@@ -47,7 +47,7 @@ const lessons = defineCollection({
     unit: z.string().regex(SlugRe),
     order: z.number().int().positive(),
     title: z.string().min(1).max(120),
-    summary: z.string().min(1).max(280),
+    summary: z.string().min(1).max(320),
     estMin: z.number().int().positive(),
     status: Status.default("stub"),
     lessonType: z.enum(["concept", "coding", "topic"]).optional(),
