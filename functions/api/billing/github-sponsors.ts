@@ -3,10 +3,10 @@ import type { Env, RequestData } from "../../lib/types";
 import {
   getGithubSponsorship,
   getUserByGithubId,
+  grantEntitlementIfSponsorshipActive,
   hasBillingDelivery,
   recordBillingDelivery,
   revokeEntitlementIfSource,
-  setEntitlement,
   upsertGithubSponsorship,
 } from "../../lib/db";
 import {
@@ -130,6 +130,8 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   const now = Date.now();
 
   let storedTier = currentTier;
+  const previousTier = action === "tier_changed" ? parseTier(payload.changes?.tier?.from) : null;
+  if (action === "tier_changed" && !previousTier) return error(400, "bad_sponsorship");
   if (existing && (action === "edited" || action === "pending_cancellation" || action === "pending_tier_change")) {
     storedTier = {
       tierId: existing.tierId,
@@ -156,6 +158,8 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
     privacyLevel,
     status: action,
     updatedAt: now,
+    expectedTierId: previousTier?.tierId,
+    expectedIsOneTime: previousTier?.isOneTime,
   });
 
   if (userId != null) {
@@ -169,8 +173,9 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
     } else if (action === "created" || action === "tier_changed" || action === "edited") {
       const qualifies = coachTierQualifies({ node_id: storedTier.tierId, is_one_time: storedTier.isOneTime }, cfg);
       if (qualifies) {
-        await setEntitlement(
-          ctx.env.DB, userId, COACH_ENTITLEMENT, true, "github-sponsors", sponsorshipId, now,
+        await grantEntitlementIfSponsorshipActive(
+          ctx.env.DB, userId, COACH_ENTITLEMENT, "github-sponsors", sponsorshipId,
+          storedTier.tierId, storedTier.isOneTime, now,
         );
       } else {
         await revokeEntitlementIfSource(

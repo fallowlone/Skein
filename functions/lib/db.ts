@@ -63,6 +63,24 @@ export async function getEntitlement(db: D1Database, userId: number, entitlement
   return row?.active === 1;
 }
 
+export interface EntitlementState { active: boolean; source: string; sourceRef: string | null; verifiedAt: number | null; }
+
+export async function getEntitlementState(db: D1Database, userId: number, entitlement: string): Promise<EntitlementState | null> {
+  const row = await db.prepare("SELECT active, source, source_ref, verified_at FROM entitlements WHERE user_id = ? AND entitlement = ?")
+    .bind(userId, entitlement).first<{ active: number; source: string; source_ref: string | null; verified_at: number | null }>();
+  return row ? { active: row.active === 1, source: row.source, sourceRef: row.source_ref, verifiedAt: row.verified_at ?? null } : null;
+}
+
+export async function markEntitlementVerified(
+  db: D1Database, userId: number, entitlement: string, verifiedAt: number, source: string, sourceRef: string | null,
+): Promise<boolean> {
+  const result = await db.prepare(
+    "UPDATE entitlements SET verified_at = ? WHERE user_id = ? AND entitlement = ? AND source = ? " +
+    "AND (source_ref = ? OR (source_ref IS NULL AND ? IS NULL))",
+  ).bind(verifiedAt, userId, entitlement, source, sourceRef, sourceRef).run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
 export async function setEntitlement(
   db: D1Database,
   userId: number,
@@ -71,14 +89,32 @@ export async function setEntitlement(
   source: string,
   sourceRef: string | null,
   now: number,
+  verifiedAt: number | null = null,
 ): Promise<void> {
   await db.prepare(
-    "INSERT INTO entitlements (user_id, entitlement, active, source, source_ref, granted_at, updated_at) " +
-    "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, entitlement) DO UPDATE SET " +
+    "INSERT INTO entitlements (user_id, entitlement, active, source, source_ref, granted_at, updated_at, verified_at) " +
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id, entitlement) DO UPDATE SET " +
     "active = excluded.active, source = excluded.source, source_ref = excluded.source_ref, " +
     "granted_at = CASE WHEN excluded.active = 1 AND entitlements.active = 0 THEN excluded.granted_at ELSE entitlements.granted_at END, " +
-    "updated_at = excluded.updated_at",
-  ).bind(userId, entitlement, active ? 1 : 0, source, sourceRef, active ? now : null, now).run();
+    "updated_at = excluded.updated_at, verified_at = excluded.verified_at",
+  ).bind(userId, entitlement, active ? 1 : 0, source, sourceRef, active ? now : null, now, verifiedAt).run();
+}
+
+/** Grant only while the provider row is currently live; the SELECT and upsert are one SQLite statement. */
+export async function grantEntitlementIfSponsorshipActive(
+  db: D1Database, userId: number, entitlement: string, source: string, sponsorshipId: string,
+  tierId: string, isOneTime: boolean, now: number,
+): Promise<boolean> {
+  const result = await db.prepare(
+    "INSERT INTO entitlements (user_id, entitlement, active, source, source_ref, granted_at, updated_at, verified_at) " +
+    "SELECT ?, ?, 1, ?, sponsorship_id, ?, ?, NULL FROM github_sponsorships " +
+    "WHERE sponsorship_id = ? AND user_id = ? AND status <> 'cancelled' AND tier_id = ? AND is_one_time = ? " +
+    "ON CONFLICT(user_id, entitlement) DO UPDATE SET active = 1, source = excluded.source, " +
+    "source_ref = excluded.source_ref, granted_at = CASE WHEN entitlements.active = 0 THEN excluded.granted_at ELSE entitlements.granted_at END, " +
+    "updated_at = excluded.updated_at, verified_at = NULL " +
+    "WHERE entitlements.active = 0 OR entitlements.source = excluded.source",
+  ).bind(userId, entitlement, source, now, now, sponsorshipId, userId, tierId, isOneTime ? 1 : 0).run();
+  return (result.meta.changes ?? 0) > 0;
 }
 
 export async function revokeEntitlementIfSource(
@@ -90,7 +126,7 @@ export async function revokeEntitlementIfSource(
   now: number,
 ): Promise<boolean> {
   const result = await db.prepare(
-    "UPDATE entitlements SET active = 0, granted_at = NULL, updated_at = ? " +
+    "UPDATE entitlements SET active = 0, granted_at = NULL, updated_at = ?, verified_at = NULL " +
     "WHERE user_id = ? AND entitlement = ? AND source = ? AND source_ref = ? AND active = 1",
   ).bind(now, userId, entitlement, source, sourceRef).run();
   return (result.meta.changes ?? 0) > 0;
@@ -159,6 +195,8 @@ export async function upsertGithubSponsorship(
     privacyLevel: string;
     status: string;
     updatedAt: number;
+    expectedTierId?: string | null;
+    expectedIsOneTime?: boolean | null;
   },
 ): Promise<void> {
   await db.prepare(
@@ -167,10 +205,16 @@ export async function upsertGithubSponsorship(
     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(sponsorship_id) DO UPDATE SET " +
     "github_sponsor_id = excluded.github_sponsor_id, user_id = excluded.user_id, tier_id = excluded.tier_id, " +
     "tier_name = excluded.tier_name, monthly_price_cents = excluded.monthly_price_cents, is_one_time = excluded.is_one_time, " +
-    "privacy_level = excluded.privacy_level, status = excluded.status, updated_at = excluded.updated_at",
+    "privacy_level = excluded.privacy_level, status = excluded.status, updated_at = excluded.updated_at " +
+    "WHERE (github_sponsorships.status <> 'cancelled' OR excluded.status = 'cancelled') " +
+    "AND (? IS NULL OR github_sponsorships.tier_id = ?) " +
+    "AND (? IS NULL OR github_sponsorships.is_one_time = ?)",
   ).bind(
     row.sponsorshipId, row.githubSponsorId, row.userId, row.tierId, row.tierName,
     row.monthlyPriceCents, row.isOneTime ? 1 : 0, row.privacyLevel, row.status, row.updatedAt,
+    row.expectedTierId ?? null, row.expectedTierId ?? null,
+    row.expectedIsOneTime == null ? null : (row.expectedIsOneTime ? 1 : 0),
+    row.expectedIsOneTime == null ? null : (row.expectedIsOneTime ? 1 : 0),
   ).run();
 }
 

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "vitest";
-import { render } from "preact-render-to-string";
+import { render } from "preact";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import ProjectsFilter, { filterProjects, type ProjectCard } from "./ProjectsFilter";
 
 // The island takes a locale-resolved projection, not the raw content entry —
@@ -19,9 +19,36 @@ describe("filterProjects", () => {
 });
 
 describe("ProjectsFilter render", () => {
+  let host: HTMLDivElement;
+
+  beforeEach(() => {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+  });
+
+  afterEach(() => {
+    render(null, host);
+    host.remove();
+  });
+
   test("renders every project title", () => {
-    const html = render(<ProjectsFilter lang="en" projects={all} />);
-    expect(html).toContain(">a<");
-    expect(html).toContain(">b<");
+    render(<ProjectsFilter lang="en" projects={all} />, host);
+    expect(host.textContent).toContain("a");
+    expect(host.textContent).toContain("b");
+  });
+
+  test("keeps project selection and sends the legacy upgrade CTA to Coach", async () => {
+    render(<ProjectsFilter lang="en" projects={all} />, host);
+    const add = Array.from(host.querySelectorAll("button")).find((button) => button.textContent?.includes("+ Add"));
+    expect(add).toBeTruthy();
+    (add as HTMLButtonElement).click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(host.textContent).toContain("Build list (1)");
+    const cta = host.querySelector(".project-cart-export") as HTMLAnchorElement;
+    expect(cta.href).toBe("http://localhost:3000/en/settings#coach-plan");
+    expect(cta.textContent).toContain("Unlock Coach");
+    expect(cta.textContent).not.toContain("rubric");
+    expect(cta.textContent).not.toContain("PDF");
   });
 });

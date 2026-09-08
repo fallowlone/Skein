@@ -7,8 +7,40 @@ import {
   reconcileVerifiedGithubSponsorOnLogin,
   verifyGithubWebhookSignature,
 } from "./coach";
-import { getEntitlement, getGithubSponsorshipUserId, setEntitlement, upsertGithubSponsorship, upsertUserFromGithub } from "./db";
+import { getEntitlement, getGithubSponsorshipUserId, revokeEntitlementIfSource, setEntitlement, upsertGithubSponsorship, upsertUserFromGithub } from "./db";
 import { FakeD1 } from "../test/fakes";
+
+function cancellationAfterRead(db: FakeD1, readKind: "by-sponsor" | "by-id", sponsorshipId: string, userId: number) {
+  let cancelled = false;
+  return {
+    prepare(sql: string) {
+      const inner = db.prepare(sql);
+      const intercepted = readKind === "by-sponsor"
+        ? sql.startsWith("SELECT sponsorship_id") && sql.includes("WHERE github_sponsor_id")
+        : sql.startsWith("SELECT sponsorship_id") && sql.includes("WHERE sponsorship_id");
+      return {
+        bind(...args: unknown[]) {
+          const bound = inner.bind(...args);
+          return {
+            async first<T>() {
+              const result = await bound.first<T>();
+              if (intercepted && !cancelled) {
+                cancelled = true;
+                await upsertGithubSponsorship(db as any, {
+                  sponsorshipId, githubSponsorId: 999, userId, tierId: "TIER_COACH", tierName: "Coach",
+                  monthlyPriceCents: 900, isOneTime: false, privacyLevel: "PUBLIC", status: "cancelled", updatedAt: 99,
+                });
+                await revokeEntitlementIfSource(db as any, userId, "coach", "github-sponsors", sponsorshipId, 99);
+              }
+              return result;
+            },
+            run: () => bound.run(),
+          };
+        },
+      };
+    },
+  };
+}
 
 describe("coach config", () => {
   it("accepts only an exact GitHub Sponsors account URL", () => {
@@ -96,6 +128,18 @@ describe("coach config", () => {
     expect(await getEntitlement(db as any, user.id, "coach")).toBe(true);
   });
 
+  it("does not resurrect a sponsorship cancelled after the pre-login read", async () => {
+    const db = new FakeD1();
+    const user = await upsertUserFromGithub(db as any, { id: 999, login: "octocat", avatar_url: null });
+    await upsertGithubSponsorship(db as any, {
+      sponsorshipId: "S_RACE_PRELOGIN", githubSponsorId: 999, userId: user.id, tierId: "TIER_COACH",
+      tierName: "Coach", monthlyPriceCents: 900, isOneTime: false, privacyLevel: "PUBLIC", status: "created", updatedAt: 1,
+    });
+    await reconcileGithubSponsorOnLogin(cancellationAfterRead(db, "by-sponsor", "S_RACE_PRELOGIN", user.id) as any, 999, user.id, coachConfig({ GITHUB_SPONSORS_COACH_TIER_IDS: "TIER_COACH" } as any), 2);
+    expect(db.sponsorships.get("S_RACE_PRELOGIN")?.status).toBe("cancelled");
+    expect(await getEntitlement(db as any, user.id, "coach")).toBe(false);
+  });
+
   it("grants a private verified sponsorship without requiring public visibility", async () => {
     const db = new FakeD1();
     const user = await upsertUserFromGithub(db as any, { id: 999, login: "octocat", avatar_url: null });
@@ -113,6 +157,22 @@ describe("coach config", () => {
     expect(await getGithubSponsorshipUserId(db as any, "S_PRIVATE")).toBe(user.id);
     expect(await getEntitlement(db as any, user.id, "coach")).toBe(true);
     expect(db.sponsorships.get("S_PRIVATE")?.privacy_level).toBe("PRIVATE");
+  });
+
+  it("does not resurrect a sponsorship cancelled after the verified read", async () => {
+    const db = new FakeD1();
+    const user = await upsertUserFromGithub(db as any, { id: 999, login: "octocat", avatar_url: null });
+    await upsertGithubSponsorship(db as any, {
+      sponsorshipId: "S_RACE_VERIFIED", githubSponsorId: 999, userId: user.id, tierId: "TIER_COACH",
+      tierName: "Coach", monthlyPriceCents: 900, isOneTime: false, privacyLevel: "PUBLIC", status: "created", updatedAt: 1,
+    });
+    await reconcileVerifiedGithubSponsorOnLogin(
+      cancellationAfterRead(db, "by-id", "S_RACE_VERIFIED", user.id) as any,
+      999, user.id, coachConfig({ GITHUB_SPONSORS_COACH_TIER_IDS: "TIER_COACH" } as any),
+      { sponsorshipId: "S_RACE_VERIFIED", tierId: "TIER_COACH", tierName: "Coach", monthlyPriceCents: 900, isOneTime: false, privacyLevel: "PUBLIC" }, 2,
+    );
+    expect(db.sponsorships.get("S_RACE_VERIFIED")?.status).toBe("cancelled");
+    expect(await getEntitlement(db as any, user.id, "coach")).toBe(false);
   });
 
   it("revokes its own stale sponsorship when OAuth verifies there is no active sponsorship", async () => {

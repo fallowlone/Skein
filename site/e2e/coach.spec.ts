@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 type CoachStatus = {
   authenticated: boolean;
   entitlements: { coach: boolean };
-  billing: { configured: boolean; sponsorUrl: string | null; provider: "github-sponsors" | null };
+  billing: { configured: boolean; sponsorUrl: string | null; provider: "github-sponsors" | null; verification: "verified" | "unavailable" | "reauth_required" | "not_checked" };
   managedAi: {
     available: boolean;
     limit: number;
@@ -17,7 +17,7 @@ type CoachStatus = {
 const freeStatus: CoachStatus = {
   authenticated: true,
   entitlements: { coach: false },
-  billing: { configured: false, sponsorUrl: null, provider: null },
+    billing: { configured: false, sponsorUrl: null, provider: null, verification: "not_checked" },
   managedAi: {
     available: true,
     limit: 30,
@@ -57,6 +57,7 @@ test("Configured Free user gets one real GitHub Sponsors upgrade path", async ({
       configured: true,
       sponsorUrl: "https://github.com/sponsors/skein-owner",
       provider: "github-sponsors",
+      verification: "verified",
     },
   });
 
@@ -74,13 +75,14 @@ test("Configured billing never sells Coach while managed AI is unavailable", asy
       configured: true,
       sponsorUrl: "https://github.com/sponsors/skein-owner",
       provider: "github-sponsors",
+      verification: "not_checked",
     },
     managedAi: { ...freeStatus.managedAi, available: false },
   });
 
   await page.goto("/en/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Coach signup paused")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open account" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Sign in with GitHub" })).toHaveAttribute("href", "/api/auth/login?lang=en&returnTo=coach");
   await expect(page.getByRole("link", { name: "Continue on GitHub Sponsors" })).toHaveCount(0);
 });
 
@@ -92,6 +94,7 @@ test("Paid entitlement renders active managed-AI quota instead of an upgrade CTA
       configured: true,
       sponsorUrl: "https://github.com/sponsors/skein-owner",
       provider: "github-sponsors",
+      verification: "verified",
     },
     managedAi: { ...freeStatus.managedAi, used: 7, remaining: 23 },
   });

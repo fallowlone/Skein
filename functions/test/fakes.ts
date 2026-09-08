@@ -31,7 +31,7 @@ interface FakeUser {
 export class FakeD1 {
   users: FakeUser[] = [];
   progress = new Map<number, { data: string; updated_at: number }>();
-  entitlements = new Map<string, { active: number; source: string; source_ref: string | null; granted_at: number | null; updated_at: number }>();
+  entitlements = new Map<string, { active: number; source: string; source_ref: string | null; granted_at: number | null; updated_at: number; verified_at: number | null }>();
   sponsorships = new Map<string, {
     github_sponsor_id: number | null;
     user_id: number | null;
@@ -71,6 +71,14 @@ class FakeStmt {
     if (this.sql.startsWith("SELECT active FROM entitlements WHERE user_id")) {
       const e = this.db.entitlements.get(`${this.args[0]}:${this.args[1]}`);
       return (e ? { active: e.active } : null) as T | null;
+    }
+    if (this.sql.startsWith("SELECT active, source, source_ref, verified_at FROM entitlements WHERE user_id")) {
+      const e = this.db.entitlements.get(`${this.args[0]}:${this.args[1]}`);
+      return (e ? { active: e.active, source: e.source, source_ref: e.source_ref, verified_at: e.verified_at } : null) as T | null;
+    }
+    if (this.sql.startsWith("SELECT github_id FROM users WHERE id")) {
+      const u = this.db.users.find(x => x.id === this.args[0]);
+      return (u ? { github_id: u.github_id } : null) as T | null;
     }
     if (this.sql.startsWith("SELECT user_id FROM github_sponsorships WHERE sponsorship_id")) {
       const s = this.db.sponsorships.get(this.args[0] as string);
@@ -144,7 +152,7 @@ class FakeStmt {
       this.db.progress.set(user_id, { data, updated_at });
       return { success: true, meta: { last_row_id: 0, changes: 1 } };
     }
-    if (this.sql.startsWith("INSERT INTO entitlements")) {
+    if (this.sql.startsWith("INSERT INTO entitlements") && !this.sql.includes("SELECT ?, ?, 1, ?, sponsorship_id")) {
       const [userId, entitlement, active, source, sourceRef, grantedAt, updatedAt] = this.args as any[];
       const key = `${userId}:${entitlement}`;
       const prev = this.db.entitlements.get(key);
@@ -154,6 +162,28 @@ class FakeStmt {
         source_ref: sourceRef,
         granted_at: active === 1 && prev?.active !== 1 ? grantedAt : (prev?.granted_at ?? grantedAt),
         updated_at: updatedAt,
+        verified_at: (this.args[7] as number | null) ?? null,
+      });
+      return { success: true, meta: { last_row_id: 0, changes: 1 } };
+    }
+    if (this.sql.startsWith("INSERT INTO entitlements") && this.sql.includes("SELECT ?, ?, 1, ?, sponsorship_id")) {
+      const [userId, entitlement, source, grantedAt, updatedAt, sponsorshipId, _userId, tierId, isOneTime] = this.args as [number, string, string, number, number, string, number, string, number];
+      const sponsorship = this.db.sponsorships.get(sponsorshipId);
+      if (!sponsorship || sponsorship.user_id !== userId || sponsorship.status === "cancelled" || sponsorship.tier_id !== tierId || sponsorship.is_one_time !== isOneTime) {
+        return { success: true, meta: { last_row_id: 0, changes: 0 } };
+      }
+      const key = `${userId}:${entitlement}`;
+      const prev = this.db.entitlements.get(key);
+      if (prev && prev.active === 1 && prev.source !== source) {
+        return { success: true, meta: { last_row_id: 0, changes: 0 } };
+      }
+      this.db.entitlements.set(key, {
+        active: 1,
+        source,
+        source_ref: sponsorshipId,
+        granted_at: prev?.active === 1 ? prev.granted_at : grantedAt,
+        updated_at: updatedAt,
+        verified_at: null,
       });
       return { success: true, meta: { last_row_id: 0, changes: 1 } };
     }
@@ -164,8 +194,15 @@ class FakeStmt {
       if (!current || current.active !== 1 || current.source !== source || current.source_ref !== sourceRef) {
         return { success: true, meta: { last_row_id: 0, changes: 0 } };
       }
-      this.db.entitlements.set(key, { ...current, active: 0, granted_at: null, updated_at: updatedAt });
+      this.db.entitlements.set(key, { ...current, active: 0, granted_at: null, updated_at: updatedAt, verified_at: null });
       return { success: true, meta: { last_row_id: 0, changes: 1 } };
+    }
+    if (this.sql.startsWith("UPDATE entitlements SET verified_at")) {
+      const [verifiedAt, userId, entitlement, source, sourceRef, nullSourceRef] = this.args as [number, number, string, string, string | null, string | null];
+      const current = this.db.entitlements.get(`${userId}:${entitlement}`);
+      const matches = current && current.source === source && (current.source_ref === sourceRef || (current.source_ref === null && nullSourceRef === null));
+      if (matches) current.verified_at = verifiedAt;
+      return { success: true, meta: { last_row_id: 0, changes: matches ? 1 : 0 } };
     }
     if (this.sql.startsWith("INSERT OR IGNORE INTO billing_deliveries")) {
       const [id, payloadHash] = this.args as [string, string];
@@ -177,7 +214,14 @@ class FakeStmt {
       return { success: true, meta: { last_row_id: 0, changes: 1 } };
     }
     if (this.sql.startsWith("INSERT INTO github_sponsorships")) {
-      const [sponsorshipId, githubSponsorId, userId, tierId, tierName, monthlyPriceCents, isOneTime, privacyLevel, status, updatedAt] = this.args as any[];
+      const [sponsorshipId, githubSponsorId, userId, tierId, tierName, monthlyPriceCents, isOneTime, privacyLevel, status, updatedAt, expectedTierId, _expectedTierId, expectedIsOneTime, _expectedIsOneTime] = this.args as any[];
+      const previous = this.db.sponsorships.get(sponsorshipId);
+      if (previous?.status === "cancelled" && status !== "cancelled") {
+        return { success: true, meta: { last_row_id: 0, changes: 0 } };
+      }
+      if (previous && expectedTierId != null && (previous.tier_id !== expectedTierId || previous.is_one_time !== expectedIsOneTime)) {
+        return { success: true, meta: { last_row_id: 0, changes: 0 } };
+      }
       this.db.sponsorships.set(sponsorshipId, {
         github_sponsor_id: githubSponsorId,
         user_id: userId,
