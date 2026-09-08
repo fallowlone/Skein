@@ -1,9 +1,10 @@
-import { useEffect, useState } from "preact/hooks";
+import { useLayoutEffect, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { recordRetrieval, recordRetrievalRating, dismissRevisit } from "~/scripts/user-state";
 import { cardsFromRetrieval } from "~/scripts/review-harvest";
-import { addCard, recordReview } from "~/scripts/review-state";
+import { addCard, recordReview, type ReviewEvidence } from "~/scripts/review-state";
 import type { Grade } from "~/scripts/progression/srs";
+import { isCommitted, readResponses, writeResponse } from "~/scripts/practice-state";
 import { t, type Locale } from "~/i18n";
 
 // Tolerant reader: lesson MDX passes `{ q, a }` (no per-question `id`), while the
@@ -53,16 +54,49 @@ const labels = {
 
 export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questions }: Props) {
   const slug = pieceSlug ?? id ?? "";
+  const storageLessonKey = lessonKey ?? slug;
+  const storedResponses = readResponses(storageLessonKey);
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
   const [graded, setGraded] = useState<Record<string, Grade>>({});
+  const [drafts, setDrafts] = useState<Record<number, string>>(() => Object.fromEntries(
+    questions.map((_, i) => [i, storedResponses[`retrieval::${i}`] ?? ""]),
+  ));
+  const [attemptedAt, setAttemptedAt] = useState<Record<number, number>>({});
+  const [reviewEvents, setReviewEvents] = useState<Record<string, Omit<ReviewEvidence, "reviewedAt" | "delayMs">>>({});
   const [completed, setCompleted] = useState(false);
   const l = labels[lang];
 
   // Lazy-seed spaced-repetition cards on first visit (string-valued Q/A only).
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (typeof window === "undefined") return;
-    cardsFromRetrieval(slug, lessonKey ?? slug, lang, questions).forEach(addCard);
+    cardsFromRetrieval(slug, storageLessonKey, lang, questions).forEach((card) => addCard(card));
   }, []);
+
+  const persistDraft = (index: number, text: string) => {
+    if (!attemptedAt[index] && text.trim()) setAttemptedAt((current) => ({ ...current, [index]: Date.now() }));
+    setDrafts((current) => ({ ...current, [index]: text }));
+    writeResponse(storageLessonKey, `retrieval::${index}`, text);
+  };
+
+  const revealQuestion = (key: string, index: number, skipped: boolean) => {
+    const now = Date.now();
+    const evidence: Omit<ReviewEvidence, "reviewedAt" | "delayMs"> = {
+      eventId: `${storageLessonKey}::retrieval::${index}:${now}`,
+      basis: "self-report",
+      attempt: skipped ? "skipped" : "answered",
+      support: skipped ? "none" : "independent",
+      timing: "same-pass",
+      attemptedAt: skipped ? null : (attemptedAt[index] ?? now),
+      revealedAt: now,
+    };
+    setReviewEvents((current) => ({ ...current, [key]: evidence }));
+    setRevealed((current) => ({ ...current, [key]: true }));
+    recordRetrieval(slug);
+    if (skipped) {
+      const accepted = recordReview(`${storageLessonKey}::retrieval::${index}`, "again", { ...evidence, reviewedAt: now, delayMs: 0 });
+      if (accepted) setGraded((current) => ({ ...current, [key]: "again" }));
+    }
+  };
 
   return (
     <section class="my-10 hr-top hr-bot py-6">
@@ -102,23 +136,29 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
                     rows={2}
                     placeholder={l.write}
                     aria-labelledby={`${key}-prompt`}
+                    value={drafts[i] ?? ""}
+                    readOnly={isOpen}
+                    onInput={(e) => persistDraft(i, (e.target as HTMLTextAreaElement).value)}
                   />
                   <div class="flex items-center gap-3 mt-2">
                     {!isOpen ? (
-                      <button
-                        type="button"
-                        class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
-                        onClick={() => {
-                          setRevealed({ ...revealed, [key]: true });
-                          recordRetrieval(slug);
-                        }}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                          <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/>
-                          <circle cx="12" cy="12" r="3"/>
-                        </svg>
-                        {l.reveal}
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
+                          disabled={!isCommitted(drafts[i] ?? "")}
+                          onClick={() => revealQuestion(key, i, false)}
+                        >
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                          </svg>
+                          {l.reveal}
+                        </button>
+                        <button type="button" class="text-xs text-muted underline" onClick={() => revealQuestion(key, i, true)}>
+                          {lang === "ru" ? "Пропустить" : "Skip"}
+                        </button>
+                      </>
                     ) : (
                       <>
                         <div class="flex items-center gap-1">
@@ -128,13 +168,15 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
                               <button
                                 key={grade}
                                 type="button"
+                                disabled={graded[key] !== undefined}
                                 onClick={() => {
-                                  setGraded({ ...graded, [key]: grade });
-                                  recordRetrievalRating(slug, grade);
-                                  // Positional card key — matches cardsFromRetrieval's `${slug}::retrieval::${index}`.
-                                  // Not q.id (the React key); a JSX-bodied question has no seeded card and
-                                  // recordReview no-ops safely on the missing key.
-                                  recordReview(`${slug}::retrieval::${i}`, grade);
+                                  const event = reviewEvents[key];
+                                  if (!event || graded[key] !== undefined) return;
+                                  const now = Date.now();
+                                  if (recordReview(`${storageLessonKey}::retrieval::${i}`, grade, { ...event, reviewedAt: now, delayMs: 0 })) {
+                                    setGraded((current) => ({ ...current, [key]: grade }));
+                                    recordRetrievalRating(slug, grade);
+                                  }
                                 }}
                                 class={`px-2 h-6 font-mono text-[11px] border rounded-[1px] transition-colors ${active ? "bg-ink text-paper border-ink" : "bg-transparent text-muted border-rule-strong hover:border-ink"}`}
                                 aria-label={`grade ${grade}`}

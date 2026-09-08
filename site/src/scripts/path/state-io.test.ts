@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { serializeStateBundle, parseStateBundle, STATE_BUNDLE_VERSION } from "./state-io";
+import { serializeStateBundle, parseStateBundle, STATE_BUNDLE_VERSION, validateLearningStorageEntry } from "./state-io";
 
 const parts = {
   knowledge: new Map([["tcp-handshake", { confidence: 1, source: "diagnostic" as const, lastAt: 5 }]]),
@@ -58,5 +58,23 @@ describe("state-io", () => {
   it("tolerates a missing section", () => {
     const r = parseStateBundle(JSON.stringify({ version: STATE_BUNDLE_VERSION, pathOverrides: { addEdges: [], removeEdges: [] } }));
     expect(r.ok).toBe(true);
+  });
+
+  it("validates known consumers while retaining unknown evidence fields", () => {
+    const value = JSON.stringify({
+      task: { attempts: 2, passes: 1, lastResult: "pass", lastAt: 10, evidenceV2: { model: "opaque" } },
+    });
+    expect(validateLearningStorageEntry("atlas.practice-attempts.a/b/c", value)).toBeNull();
+  });
+
+  it.each([
+    ["atlas.practice.a/b/c", JSON.stringify({ task: "invented" })],
+    ["atlas.practice-responses.a/b/c", JSON.stringify({ task: 42 })],
+    ["atlas.review.v1", JSON.stringify({ card: { lessonKey: 5, dueAt: 1 } })],
+    ["skein.path-knowledge.v1", JSON.stringify([["x", { confidence: 5, source: "activity", lastAt: 1 }]])],
+    ["skein.path-overrides.v1", JSON.stringify({ addEdges: [{ concept: "x", requires: 2 }] })],
+    ["skein.english.register.v1", "formal"],
+  ])("rejects malformed %s consumer data", (key, value) => {
+    expect(validateLearningStorageEntry(key, value)).toMatch(/malformed|invalid/i);
   });
 });

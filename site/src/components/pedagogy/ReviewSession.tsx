@@ -2,11 +2,12 @@
 // The "due today" spaced-repetition island: snapshots the due queue at mount,
 // walks one card at a time, reveals the answer, and grades again|hard|good|easy,
 // writing the next interval back via the SM-2 store. Pure client state (no SSR).
-import { useEffect, useRef, useState } from "preact/hooks";
+import { useEffect, useLayoutEffect, useRef, useState } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
-import { dueBefore, recordReview, allCards, type Card } from "~/scripts/review-state";
+import { dueBefore, recordReview, allCards, type Card, type ReviewEvidence } from "~/scripts/review-state";
 import { recordActiveDay } from "~/scripts/user-state";
 import type { Grade } from "~/scripts/progression/srs";
+import { isCommitted, readResponses, writeResponse } from "~/scripts/practice-state";
 
 const GRADES: Grade[] = ["again", "hard", "good", "easy"];
 const GRADE_CLS: Record<Grade, string> = {
@@ -37,6 +38,9 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
   const [totalDue, setTotalDue] = useState(0);
   const [idx, setIdx] = useState(0);
   const [revealed, setRevealed] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [attemptedAt, setAttemptedAt] = useState<number | null>(null);
+  const [reviewEvent, setReviewEvent] = useState<Omit<ReviewEvidence, "reviewedAt" | "delayMs"> | null>(null);
   const [reviewed, setReviewed] = useState(0);
   // Cards graded in THIS sitting. Excluded from later batches + the "remaining" count so a lapsed
   // ("again", interval 0 → due immediately) card can't re-enter the queue and make Continue loop
@@ -45,7 +49,7 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
 
   // Snapshot the due list once at mount, capped. Also clear the SSR fallback the page renders while
   // this client:only island boots.
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.getElementById("review-fallback")?.remove();
     loadBatch();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- loadBatch is a hoisted declaration; intentional mount-only fire
@@ -68,10 +72,44 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
 
   const card = queue[idx];
 
-  function grade(g: Grade) {
+  useLayoutEffect(() => {
     if (!card) return;
+    setDraft(readResponses(card.lessonKey)[`review::${card.cardKey}`] ?? "");
+    setAttemptedAt(null);
+    setReviewEvent(null);
+    setRevealed(false);
+  }, [card?.cardKey]);
+
+  function makeReviewEvent(skipped: boolean): Omit<ReviewEvidence, "reviewedAt" | "delayMs"> | null {
+    if (!card) return null;
+    const now = Date.now();
+    const delayMs = Math.max(0, now - (card.lastReviewedAt ?? card.addedAt));
+    return {
+      eventId: `${card.cardKey}:${now}`,
+      basis: "self-report",
+      attempt: skipped ? "skipped" : "answered",
+      support: skipped ? "none" : "independent",
+      timing: delayMs > 0 ? "delayed" : "immediate",
+      attemptedAt: skipped ? null : (attemptedAt ?? now),
+      revealedAt: now,
+    };
+  }
+
+  function revealAnswer(skipped = false) {
+    const event = makeReviewEvent(skipped);
+    if (!event || (!skipped && !isCommitted(draft))) return;
+    setReviewEvent(event);
+    setRevealed(true);
+    if (skipped) grade("again", event);
+  }
+
+  function grade(g: Grade, event = reviewEvent) {
+    if (!card || !event) return;
+    const now = Date.now();
+    const delayMs = Math.max(0, now - (card.lastReviewedAt ?? card.addedAt));
+    const evidence: ReviewEvidence = { ...event, reviewedAt: now, delayMs };
+    if (!recordReview(card.cardKey, g, evidence)) return;
     if (reviewed === 0) recordActiveDay(); // review feeds the existing streak
-    recordReview(card.cardKey, g);
     gradedThisSession.current.add(card.cardKey);
     setReviewed((n) => n + 1);
     setRevealed(false);
@@ -88,7 +126,7 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
       // let a focused control handle its own keys (buttons activate on Space/Enter natively)
       if (tag && /^(input|textarea|select|button)$/i.test(tag)) return;
       if (!revealed) {
-        if (e.key === " " || e.key === "Enter") { e.preventDefault(); setRevealed(true); }
+        if ((e.key === " " || e.key === "Enter") && isCommitted(draft)) { e.preventDefault(); revealAnswer(false); }
         return;
       }
       const i = ["1", "2", "3", "4"].indexOf(e.key);
@@ -99,7 +137,7 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
     // grade is a hoisted function declaration; its closure over card/reviewed is recaptured on every
     // re-bind because idx+queue are deps, so no stale capture is possible — the disable is safe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revealed, idx, queue]);
+  }, [revealed, idx, queue, draft, reviewEvent]);
 
   if (queue.length === 0) {
     return (
@@ -131,6 +169,7 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
   }
 
   const progress = Math.round((idx / queue.length) * 100);
+  const originalTask = card.answerMode === "original-task";
 
   return (
     <section class="my-10">
@@ -149,10 +188,32 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
 
         <div class="font-display text-[19px] sm:text-[21px] font-semibold leading-snug text-ink mb-6">{card.front}</div>
 
-        {!revealed ? (
-          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={() => setRevealed(true)}>
-            {t("review.showAnswer", lang)} <span class="opacity-50 font-mono">␣</span>
-          </button>
+        {originalTask ? (
+          <a class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" href={`/${lang}/learn/${card.lessonKey}/`}>
+            {lang === "ru" ? "Открыть исходное задание" : "Open original task"}
+          </a>
+        ) : !revealed ? (
+          <>
+            <textarea
+              class="mb-3 w-full min-h-[72px] rounded-[var(--r-sm)] border border-hairline-2 bg-card px-3 py-2 text-sm text-ink"
+              value={draft}
+              placeholder={lang === "ru" ? "Ответь по памяти…" : "Answer from memory…"}
+              onInput={(e) => {
+                const value = (e.target as HTMLTextAreaElement).value;
+                if (attemptedAt == null && value.trim()) setAttemptedAt(Date.now());
+                setDraft(value);
+                writeResponse(card.lessonKey, `review::${card.cardKey}`, value);
+              }}
+            />
+            <div class="flex flex-wrap gap-3">
+              <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" disabled={!isCommitted(draft)} onClick={() => revealAnswer(false)}>
+                {t("review.showAnswer", lang)} <span class="opacity-50 font-mono">␣</span>
+              </button>
+              <button type="button" class="text-xs text-muted underline" onClick={() => revealAnswer(true)}>
+                {lang === "ru" ? "Пропустить" : "Skip"}
+              </button>
+            </div>
+          </>
         ) : (
           <>
             <div class="rounded-[var(--r-md)] border-l-2 border-accent bg-paper-2 pl-4 pr-3 py-3 text-[14px] leading-relaxed text-ink-2 mb-6 animate-reveal-up">
@@ -164,10 +225,11 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
                 <button
                   key={g}
                   type="button"
+                  aria-keyshortcuts={String(i + 1)}
                   onClick={() => grade(g)}
                   class={`px-3 h-8 font-mono text-[11px] border rounded-[var(--r-sm)] bg-transparent transition-colors ${GRADE_CLS[g]}`}
                 >
-                  <span class="opacity-50 mr-1">{i + 1}</span>{t(`review.${g}`, lang)}
+                  {t(`review.${g}`, lang)}
                 </button>
               ))}
             </div>

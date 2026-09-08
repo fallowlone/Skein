@@ -38,4 +38,26 @@ describe("unitReviewHealth", () => {
     const h = unitReviewHealth([card("x/y/z", { lapses: 1 })], NOW);
     expect(h.get("x/y")).toBe(0);
   });
+
+  it("does not treat a successful review self-grade as independent mastery evidence", () => {
+    const c = card("networking/03-tcp/lesson-a", {});
+    c.lastGrade = "good";
+    c.lastEvidence = {
+      eventId: "review-1", basis: "self-report", attempt: "answered", support: "independent",
+      timing: "delayed", attemptedAt: NOW - 10_000, revealedAt: NOW - 5_000,
+      reviewedAt: NOW, delayMs: DAY,
+    };
+    expect(unitReviewHealth([c], NOW).has("networking/03-tcp")).toBe(false);
+  });
+
+  it("keeps a delayed self-reported failure as negative review evidence", () => {
+    const c = card("networking/03-tcp/lesson-a", { lapses: 1 });
+    c.lastGrade = "again";
+    c.lastEvidence = {
+      eventId: "review-2", basis: "self-report", attempt: "answered", support: "independent",
+      timing: "delayed", attemptedAt: NOW - 10_000, revealedAt: NOW - 5_000,
+      reviewedAt: NOW, delayMs: 7 * DAY,
+    };
+    expect(unitReviewHealth([c], NOW).get("networking/03-tcp")).toBe(0);
+  });
 });

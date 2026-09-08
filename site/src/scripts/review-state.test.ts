@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach } from "vitest";
-import { addCard, recordReview, dueBefore, allCards, dueCount, REVIEW_KEY } from "./review-state";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { addCard, recordReview, dueBefore, allCards, dueCount, REVIEW_KEY, type ReviewEvidence } from "./review-state";
 
 const DAY = 86_400_000;
 const card = {
@@ -14,6 +14,7 @@ const card = {
 
 describe("review-state store", () => {
   beforeEach(() => localStorage.removeItem(REVIEW_KEY));
+  afterEach(() => vi.restoreAllMocks());
 
   it("addCard is idempotent on cardKey (re-seed never duplicates or resets schedule)", () => {
     addCard(card);
@@ -88,5 +89,63 @@ describe("review-state store", () => {
     expect(after.dueAt).toBe(before.dueAt);                            // schedule untouched
     expect(after.sched).toEqual(before.sched);
     expect(after.lastReviewedAt).toBe(before.lastReviewedAt);
+  });
+
+  it("migrates a bare-slug card to its canonical identity without losing its schedule", () => {
+    const oldKey = "07-stability-retrieval::retrieval::0";
+    const newKey = "databases/03-execution-plans/07-plan-stability::retrieval::0";
+    addCard({ ...card, cardKey: oldKey, lessonKey: "07-stability-retrieval" });
+    recordReview(oldKey, "good", Date.parse("2026-06-05T00:00:00Z"));
+    const before = allCards()[0];
+
+    addCard({
+      ...card,
+      cardKey: newKey,
+      legacyCardKey: oldKey,
+      lessonKey: "databases/03-execution-plans/07-plan-stability",
+    });
+
+    expect(allCards()).toHaveLength(1);
+    expect(allCards()[0]).toMatchObject({ cardKey: newKey, lessonKey: "databases/03-execution-plans/07-plan-stability" });
+    expect(allCards()[0].sched).toEqual(before.sched);
+    expect(allCards()[0].lastReviewedAt).toBe(before.lastReviewedAt);
+  });
+
+  it("records compact evidence and schedules the same event only once", () => {
+    const now = Date.parse("2026-06-05T00:00:00Z");
+    const evidence: ReviewEvidence = {
+      eventId: "session-1:card-1",
+      basis: "self-report",
+      attempt: "answered",
+      support: "independent",
+      timing: "delayed",
+      attemptedAt: now - 20_000,
+      revealedAt: now - 10_000,
+      reviewedAt: now,
+      delayMs: DAY,
+    };
+    addCard(card, now - DAY);
+
+    expect(recordReview(card.cardKey, "good", evidence)).toBe(true);
+    const once = allCards()[0];
+    expect(recordReview(card.cardKey, "again", { ...evidence, reviewedAt: now + 1_000 })).toBe(false);
+    const twice = allCards()[0];
+
+    expect(twice.sched).toEqual(once.sched);
+    expect(twice.dueAt).toBe(once.dueAt);
+    expect(twice.lastGrade).toBe("good");
+    expect(twice.lastEvidence).toEqual(evidence);
+    expect(JSON.stringify(twice)).not.toContain("learner answer");
+  });
+
+  it("does not mistake Array.forEach's index for the seed time", () => {
+    const now = Date.parse("2026-06-05T12:34:56Z");
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    [
+      { ...card, cardKey: "first", lessonKey: "track/unit/first" },
+      { ...card, cardKey: "second", lessonKey: "track/unit/second" },
+    ].forEach(addCard);
+
+    expect(allCards().map((c) => c.addedAt)).toEqual([now, now]);
   });
 });

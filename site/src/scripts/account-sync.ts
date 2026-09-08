@@ -103,10 +103,11 @@ export async function fetchServerProgress(): Promise<UserState | null> {
 
 export async function pushProgress(state: UserState & { extras?: unknown }): Promise<boolean> {
   try {
+    const { tutorHistory: _privateTutorHistory, ...outgoing } = state;
     const r = await fetch("/api/progress", {
       method: "PUT", credentials: "same-origin",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(state),
+      body: JSON.stringify(outgoing),
     });
     return r.ok;
   } catch { return false; }

@@ -49,5 +49,8 @@
 Выполнено локально: PID 56269 из lock отсутствует (`ps` вернул 1 без строки
 процесса); три файла сохранены с проверкой хеша в
 `/private/tmp/skein-public-cleanup-20260908/` и удалены из рабочего дерева.
-Добавлено точное ignore-правило lock. Коммит и проверка нового CI ещё не выполнены.
-API baseline: 99 Vitest tests и пять SQLite integration scenarios прошли.
+Добавлено точное ignore-правило lock. Очистка зафиксирована отдельным коммитом
+`829a1a5ff` (`chore(repo): remove unused local databases and stale task lock`).
+Свежий CI после публикации учебных изменений остаётся финальной проверкой
+сборки/deployment. API baseline повторно подтверждён: 99 Vitest tests и пять
+SQLite integration scenarios прошли.

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "preact/hooks";
+import { useLayoutEffect, useState } from "preact/hooks";
 import { lazy, Suspense } from "preact/compat";
 import type { FunctionComponent } from "preact";
 import type { Locale } from "~/i18n";
@@ -10,17 +10,20 @@ import {
   readAttempts,
   readResponses,
   writeResponse,
+  deleteResponse,
   readSelfGrades,
   setSelfGrade,
   isCommitted,
   selfGradeToPass,
+  type PracticeEvaluator,
+  type PracticeEvidence,
+  type PracticeMode,
   type SelfGrade,
 } from "~/scripts/practice-state";
 import { recommendNext } from "~/scripts/path/adaptive-difficulty";
 import { recordPracticeResult } from "~/scripts/metrics";
 import { recordPracticeOutcome } from "~/scripts/path/path-io";
 import { runDebug, type DebugRunResult } from "~/scripts/debug-runner";
-import type { ExecCheck } from "~/scripts/practice-grade";
 import { cardsFromPractice } from "~/scripts/review-harvest";
 import { addCard } from "~/scripts/review-state";
 
@@ -56,6 +59,35 @@ export function orderTasks<T extends { difficulty: string }>(tasks: T[]): T[] {
     .sort((a, b) => difficultyRank(a[0].difficulty) - difficultyRank(b[0].difficulty) || a[1] - b[1])
     .map(([t]) => t);
 }
+
+const COMPETENCY_BY_TYPE: Record<PracticeTaskData["type"], PracticeEvidence["competency"]> = {
+  predict: "predict",
+  diagnose: "explain",
+  fix: "produce",
+  sandbox: "produce",
+  incident: "debug",
+  design: "transfer",
+  review: "discriminate",
+  debug: "debug",
+};
+
+export function practiceEvidence(
+  task: PracticeTaskData,
+  mode: PracticeMode,
+  evaluator: PracticeEvaluator,
+  hints: number,
+  independentlyVerified: boolean,
+): PracticeEvidence {
+  return {
+    version: task.version ?? 1,
+    ...(task.concepts?.length ? { concepts: task.concepts } : {}),
+    competency: task.competency ?? COMPETENCY_BY_TYPE[task.type],
+    mode,
+    hints,
+    evaluator,
+    independent: independentlyVerified && evaluator === "exec" && mode !== "ai" && hints === 0,
+  };
+}
 const TIER_LABEL: Record<string, { en: string; ru: string }> = {
   recall: { en: "Recall", ru: "Вспомнить" },
   apply: { en: "Apply", ru: "Применить" },
@@ -81,9 +113,9 @@ const SEVERITY_LABEL: Record<string, { en: string; ru: string }> = {
 export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
   const ordered = orderTasks(tasks);
   // Lazy-seed spaced-repetition cards from this lesson's practice on first visit.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (typeof window === "undefined") return;
-    cardsFromPractice(lessonKey, lang, tasks).forEach(addCard);
+    cardsFromPractice(lessonKey, lang, tasks).forEach((card) => addCard(card));
   }, []);
   const [tick, setTick] = useState(0);
   const bump = () => setTick((t) => t + 1);
@@ -124,6 +156,11 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
 
 function TaskCard({ lang, lessonKey, task, recommended, adaptive, onChange }: { lang: Locale; lessonKey: string; task: PracticeTaskData; recommended?: boolean; adaptive?: boolean; onChange?: () => void }) {
   const [open, setOpen] = useState(false);
+  const modeKey = `${task.id}::mode`;
+  const [mode, setMode] = useState<PracticeMode>(() => {
+    const stored = readResponses(lessonKey)[modeKey];
+    return stored === "docs" || stored === "ai" ? stored : "closed-book";
+  });
   const onOpen = () => {
     setOpen((v) => {
       if (!v) { setTaskStatus(lessonKey, task.id, "seen"); onChange?.(); }
@@ -155,30 +192,48 @@ function TaskCard({ lang, lessonKey, task, recommended, adaptive, onChange }: { 
         <div class="mt-4">
           {hint && <p class="text-xs text-muted italic mb-3">{tt(lang, hint.en, hint.ru)}</p>}
           <div class="prose max-w-none text-sm mb-4" dangerouslySetInnerHTML={{ __html: tt(lang, task.prompt.en, task.prompt.ru) }} />
-          <TaskBody lang={lang} lessonKey={lessonKey} task={task} onChange={onChange} />
+          <label class="block text-[10px] font-mono uppercase tracking-wide text-muted mb-1" for={`${task.id}-mode`}>
+            {tt(lang, "Working mode", "Режим выполнения")}
+          </label>
+          <select
+            id={`${task.id}-mode`}
+            class="text-sm px-2 py-1.5 mb-1 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 bg-card text-ink"
+            value={mode}
+            onChange={(e) => {
+              const next = (e.target as HTMLSelectElement).value as PracticeMode;
+              setMode(next);
+              writeResponse(lessonKey, modeKey, next);
+            }}
+          >
+            <option value="closed-book">{tt(lang, "Closed book", "Без справочных материалов")}</option>
+            <option value="docs">{tt(lang, "Documentation allowed", "С документацией")}</option>
+            <option value="ai">{tt(lang, "AI assisted", "С AI")}</option>
+          </select>
+          <p class="text-xs text-muted mb-4">{tt(lang, "Choose honestly; the browser does not monitor your tools.", "Выбери честно; браузер не отслеживает твои инструменты.")}</p>
+          <TaskBody lang={lang} lessonKey={lessonKey} task={task} mode={mode} onChange={onChange} />
         </div>
       )}
     </div>
   );
 }
 
-function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey: string; task: PracticeTaskData; onChange?: () => void }) {
+function TaskBody({ lang, lessonKey, task, mode, onChange }: { lang: Locale; lessonKey: string; task: PracticeTaskData; mode: PracticeMode; onChange?: () => void }) {
   switch (task.type) {
     case "predict":
-      return <CommitReveal lang={lang} lessonKey={lessonKey} taskId={task.id} taskType="predict" body={tt(lang, task.reveal.en, task.reveal.ru)} pre={tt(lang, task.scenario.en, task.scenario.ru)} onChange={onChange} />;
+      return <CommitReveal lang={lang} lessonKey={lessonKey} task={task} mode={mode} taskType="predict" body={tt(lang, task.reveal.en, task.reveal.ru)} pre={tt(lang, task.scenario.en, task.scenario.ru)} onChange={onChange} />;
     case "design":
       return (
         <div>
           <Constraints lang={lang} text={tt(lang, task.constraints.en, task.constraints.ru)} />
           <Rubric lang={lang} lessonKey={lessonKey} taskId={task.id} items={task.rubric.map((r) => tt(lang, r.en, r.ru))} />
-          <CommitReveal lang={lang} lessonKey={lessonKey} taskId={task.id} taskType="design" body={tt(lang, task.model.en, task.model.ru)} onChange={onChange} />
+          <CommitReveal lang={lang} lessonKey={lessonKey} task={task} mode={mode} taskType="design" body={tt(lang, task.model.en, task.model.ru)} onChange={onChange} />
           <Suspense fallback={null}><GradeWithAi lang={lang} task={task} /></Suspense>
         </div>
       );
     case "incident":
       return (
         <div>
-          <Incident lang={lang} lessonKey={lessonKey} taskId={task.id} steps={task.steps.map((s) => ({ label: tt(lang, s.label.en, s.label.ru), prompt: tt(lang, s.prompt.en, s.prompt.ru), reveal: tt(lang, s.reveal.en, s.reveal.ru) }))} onChange={onChange} />
+          <Incident lang={lang} lessonKey={lessonKey} task={task} steps={task.steps.map((s) => ({ label: tt(lang, s.label.en, s.label.ru), prompt: tt(lang, s.prompt.en, s.prompt.ru), reveal: tt(lang, s.reveal.en, s.reveal.ru) }))} onChange={onChange} />
           <Suspense fallback={null}><GradeWithAi lang={lang} task={task} /></Suspense>
         </div>
       );
@@ -193,7 +248,7 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
         <div>
           {task.evidence && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{tt(lang, task.evidence.en, task.evidence.ru)}</pre>}
           <Rubric lang={lang} lessonKey={lessonKey} taskId={task.id} items={task.grading.rubric.map((r) => tt(lang, r.en, r.ru))} />
-          <CommitReveal lang={lang} lessonKey={lessonKey} taskId={task.id} taskType="diagnose" body={tt(lang, task.grading.model.en, task.grading.model.ru)} onChange={onChange} />
+          <CommitReveal lang={lang} lessonKey={lessonKey} task={task} mode={mode} taskType="diagnose" body={tt(lang, task.grading.model.en, task.grading.model.ru)} onChange={onChange} />
           <Suspense fallback={null}><GradeWithAi lang={lang} task={task} /></Suspense>
         </div>
       );
@@ -203,13 +258,13 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
           <div>
             {task.starter && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{task.starter}</pre>}
             <Rubric lang={lang} lessonKey={lessonKey} taskId={task.id} items={task.grading.rubric.map((r) => tt(lang, r.en, r.ru))} />
-            <CommitReveal lang={lang} lessonKey={lessonKey} taskId={task.id} taskType="fix" body={tt(lang, task.grading.model.en, task.grading.model.ru)} onChange={onChange} />
+            <CommitReveal lang={lang} lessonKey={lessonKey} task={task} mode={mode} taskType="fix" body={tt(lang, task.grading.model.en, task.grading.model.ru)} onChange={onChange} />
           </div>
         );
       }
       {
         const done = () => { setTaskStatus(lessonKey, task.id, "done"); onChange?.(); };
-        const common = { lang, setup: task.grading.setup, check: task.grading.check, onResult: (ok: boolean) => { recordPracticeResult(lessonKey, task.id, "fix", ok); recordPracticeOutcome(lessonKey, task.id, ok); if (ok) done(); } };
+        const common = { lang, setup: task.grading.setup, check: task.grading.check, onResult: (ok: boolean) => { recordPracticeResult(lessonKey, task.id, "fix", ok); recordPracticeOutcome(lessonKey, task.id, ok, practiceEvidence(task, mode, "exec", 0, true)); if (ok) done(); } };
         return (
           <div>
             {task.starter && <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{task.starter}</pre>}
@@ -231,35 +286,46 @@ function TaskBody({ lang, lessonKey, task, onChange }: { lang: Locale; lessonKey
       }
       if (task.runtime === "sql") {
         return <Suspense fallback={<Loading lang={lang} />}>
-          <SqlSandbox lang={lang} setup={task.setup} initialSql={task.initialCode ?? ""} check={task.expected} onResult={(ok) => { recordPracticeResult(lessonKey, task.id, "sandbox", ok); recordPracticeOutcome(lessonKey, task.id, ok); if (ok) done(); }} />
+          <SqlSandbox lang={lang} setup={task.setup} initialSql={task.initialCode ?? ""} check={task.expected} onResult={(ok) => { recordPracticeResult(lessonKey, task.id, "sandbox", ok); recordPracticeOutcome(lessonKey, task.id, ok, practiceEvidence(task, mode, "exec", 0, true)); if (ok) done(); }} />
         </Suspense>;
       }
       return <Suspense fallback={<Loading lang={lang} />}>
-        <JsSandbox lang={lang} setup={task.setup} initialCode={task.initialCode ?? ""} check={task.expected} onResult={(ok) => { recordPracticeResult(lessonKey, task.id, "sandbox", ok); recordPracticeOutcome(lessonKey, task.id, ok); if (ok) done(); }} />
+        <JsSandbox lang={lang} setup={task.setup} initialCode={task.initialCode ?? ""} check={task.expected} onResult={(ok) => { recordPracticeResult(lessonKey, task.id, "sandbox", ok); recordPracticeOutcome(lessonKey, task.id, ok, practiceEvidence(task, mode, "exec", 0, true)); if (ok) done(); }} />
       </Suspense>;
     }
     case "review":
-      return <ReviewBody lang={lang} lessonKey={lessonKey} taskId={task.id} diff={task.diff} findings={task.findings} decoys={task.decoys} onChange={onChange} />;
+      return <ReviewBody lang={lang} lessonKey={lessonKey} task={task} onChange={onChange} />;
     case "debug":
-      return <DebugBody lang={lang} lessonKey={lessonKey} taskId={task.id} starter={task.starter} setup={task.setup} verify={task.verify} check={task.check} evidence={task.evidence} hints={task.hints} reveal={task.reveal} onChange={onChange} />;
+      return <DebugBody lang={lang} lessonKey={lessonKey} task={task} mode={mode} onChange={onChange} />;
     default:
       return null;
   }
 }
 
-function DebugBody({ lang, lessonKey, taskId, starter, setup, verify, check, evidence, hints, reveal, onChange }: {
-  lang: Locale; lessonKey: string; taskId: string;
-  starter: string; setup?: string; verify: string; check: ExecCheck;
-  evidence: { en: string; ru: string };
-  hints: { en: string; ru: string }[];
-  reveal: { en: string; ru: string };
+function DebugBody({ lang, lessonKey, task, mode, onChange }: {
+  lang: Locale;
+  lessonKey: string;
+  task: Extract<PracticeTaskData, { type: "debug" }>;
+  mode: PracticeMode;
   onChange?: () => void;
 }) {
+  const { id: taskId, starter, setup, verify, check, evidence, hints, reveal } = task;
+  const stored = readResponses(lessonKey);
   const [code, setCode] = useState(starter);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<DebugRunResult | null>(null);
-  const [hintIdx, setHintIdx] = useState(0);
+  const [hintIdx, setHintIdx] = useState(() => Math.min(hints.length, Math.max(0, Number(stored[`${taskId}::hints`] ?? 0) || 0)));
   const [showSolution, setShowSolution] = useState(false);
+  const reflectionFields = [
+    ["expected", tt(lang, "Expected", "Ожидание")],
+    ["actual", tt(lang, "Actual", "Факт")],
+    ["hypothesis", tt(lang, "Hypothesis", "Гипотеза")],
+    ["experiment", tt(lang, "Experiment", "Проверка")],
+    ["conclusion", tt(lang, "Conclusion", "Вывод")],
+  ] as const;
+  const [reflection, setReflection] = useState<Record<string, string>>(() => Object.fromEntries(
+    reflectionFields.map(([key]) => [key, stored[`${taskId}::${key}`] ?? ""]),
+  ));
 
   const run = async () => {
     setBusy(true);
@@ -267,7 +333,12 @@ function DebugBody({ lang, lessonKey, taskId, starter, setup, verify, check, evi
       const r = await runDebug({ setup, learnerCode: code, verify, check });
       setResult(r);
       recordPracticeResult(lessonKey, taskId, "debug", r.status === "pass");
-      recordPracticeOutcome(lessonKey, taskId, r.status === "pass");
+      recordPracticeOutcome(
+        lessonKey,
+        taskId,
+        r.status === "pass",
+        practiceEvidence(task, mode, "exec", hintIdx + (showSolution ? 1 : 0), true),
+      );
       if (r.status === "pass") { setTaskStatus(lessonKey, taskId, "done"); onChange?.(); }
     } finally {
       setBusy(false);
@@ -278,6 +349,33 @@ function DebugBody({ lang, lessonKey, taskId, starter, setup, verify, check, evi
     <div>
       <div class="text-[10px] font-mono uppercase tracking-wide text-muted mb-1">{tt(lang, "Evidence", "Что наблюдаем")}</div>
       <pre class="text-xs bg-card-2 border-[0.5px] border-hairline p-3 rounded-[var(--r-sm)] mb-3 overflow-x-auto">{tt(lang, evidence.en, evidence.ru)}</pre>
+      <div class="grid gap-2 mb-3 sm:grid-cols-2">
+        {reflectionFields.map(([key, label]) => (
+          <label key={key} class="text-[10px] font-mono uppercase tracking-wide text-muted">
+            {label}
+            <textarea
+              class="mt-1 block w-full min-h-[58px] text-xs font-sans normal-case tracking-normal p-2 rounded-[var(--r-sm)] border border-hairline-2 bg-card text-ink"
+              aria-label={label}
+              value={reflection[key] ?? ""}
+              onInput={(e) => {
+                const value = (e.target as HTMLTextAreaElement).value;
+                setReflection((current) => ({ ...current, [key]: value }));
+                writeResponse(lessonKey, `${taskId}::${key}`, value);
+              }}
+            />
+          </label>
+        ))}
+      </div>
+      <button
+        type="button"
+        class="text-xs text-muted underline mb-3"
+        onClick={() => {
+          for (const [key] of reflectionFields) deleteResponse(lessonKey, `${taskId}::${key}`);
+          setReflection(Object.fromEntries(reflectionFields.map(([key]) => [key, ""])));
+        }}
+      >
+        {tt(lang, "Delete debugging notes", "Удалить заметки отладки")}
+      </button>
       <textarea
         class="font-mono w-full text-xs p-2 rounded-[var(--r-sm)] border border-hairline-2 bg-[var(--code-bg)] text-[var(--code-ink)] min-h-[120px]"
         value={code}
@@ -289,12 +387,22 @@ function DebugBody({ lang, lessonKey, taskId, starter, setup, verify, check, evi
         </button>
         {hintIdx < hints.length && (
           <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm"
-            onClick={() => { if (hintIdx === 0) { setTaskStatus(lessonKey, taskId, "attempted"); onChange?.(); } setHintIdx((i) => i + 1); }}>
+            onClick={() => {
+              const next = hintIdx + 1;
+              setTaskStatus(lessonKey, taskId, "attempted");
+              setHintIdx(next);
+              writeResponse(lessonKey, `${taskId}::hints`, String(next));
+              onChange?.();
+            }}>
             {tt(lang, "Hint", "Подсказка")}
           </button>
         )}
         {!showSolution && (
-          <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-xs text-muted" onClick={() => setShowSolution(true)}>
+          <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-xs text-muted" onClick={() => {
+            setShowSolution(true);
+            setTaskStatus(lessonKey, taskId, "attempted");
+            onChange?.();
+          }}>
             {tt(lang, "Show solution", "Показать решение")}
           </button>
         )}
@@ -319,13 +427,13 @@ function DebugBody({ lang, lessonKey, taskId, starter, setup, verify, check, evi
   );
 }
 
-function ReviewBody({ lang, lessonKey, taskId, diff, findings, decoys, onChange }: {
-  lang: Locale; lessonKey: string; taskId: string;
-  diff: { lang: string; code: string };
-  findings: { id: string; label: { en: string; ru: string }; severity: string; explanation: { en: string; ru: string }; planted: true }[];
-  decoys?: { id: string; label: { en: string; ru: string }; explanation: { en: string; ru: string } }[];
+function ReviewBody({ lang, lessonKey, task, onChange }: {
+  lang: Locale;
+  lessonKey: string;
+  task: Extract<PracticeTaskData, { type: "review" }>;
   onChange?: () => void;
 }) {
+  const { id: taskId, diff, findings, decoys } = task;
   const [shown, setShown] = useState(false);
   const dims: { key: string; en: string; ru: string }[] = [
     { key: "bug", en: "a bug", ru: "баг" },
@@ -347,7 +455,7 @@ function ReviewBody({ lang, lessonKey, taskId, diff, findings, decoys, onChange 
       </ul>
       {!shown ? (
         <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm"
-          onClick={() => { setShown(true); setTaskStatus(lessonKey, taskId, "done"); onChange?.(); }}>
+          onClick={() => { setShown(true); setTaskStatus(lessonKey, taskId, "attempted"); onChange?.(); }}>
           {tt(lang, "Reveal findings", "Показать находки")}
         </button>
       ) : (
@@ -391,15 +499,17 @@ function ReviewBody({ lang, lessonKey, taskId, diff, findings, decoys, onChange 
  * first-class option — an admitted "I did not know" is real signal, whereas
  * forcing keystrokes to unlock the answer just teaches people to type junk.
  */
-function CommitReveal({ lang, lessonKey, taskId, body, pre, taskType, onChange }: {
+function CommitReveal({ lang, lessonKey, task, mode, body, pre, taskType, onChange }: {
   lang: Locale;
   lessonKey: string;
-  taskId: string;
+  task: PracticeTaskData;
+  mode: PracticeMode;
   body: string;
   pre?: string;
   taskType: string;
   onChange?: () => void;
 }) {
+  const taskId = task.id;
   const [draft, setDraft] = useState(() => readResponses(lessonKey)[taskId] ?? "");
   const [shown, setShown] = useState(false);
   const [skipped, setSkipped] = useState(false);
@@ -425,7 +535,7 @@ function CommitReveal({ lang, lessonKey, taskId, body, pre, taskType, onChange }
     setSelfGrade(lessonKey, taskId, g);
     const passed = selfGradeToPass(g);
     recordPracticeResult(lessonKey, taskId, taskType, passed);
-    recordPracticeOutcome(lessonKey, taskId, passed);
+    recordPracticeOutcome(lessonKey, taskId, passed, practiceEvidence(task, mode, "self", 0, false), true);
     setTaskStatus(lessonKey, taskId, passed ? "done" : "attempted");
     onChange?.();
   };
@@ -619,11 +729,12 @@ function Blanks({ lang, lessonKey, taskId, evidence, blanks, onChange }: {
   );
 }
 
-function Incident({ lang, lessonKey, taskId, steps, onChange }: {
-  lang: Locale; lessonKey: string; taskId: string;
+function Incident({ lang, lessonKey, task, steps, onChange }: {
+  lang: Locale; lessonKey: string; task: Extract<PracticeTaskData, { type: "incident" }>;
   steps: { label: string; prompt: string; reveal: string }[];
   onChange?: () => void;
 }) {
+  const taskId = task.id;
   // An incident walkthrough is only training if each step is answered before it is
   // opened; a bare "Reveal" per step turned the whole thing into reading. Each step
   // now gates on a written answer (with an honest skip), and the task counts as done
@@ -650,13 +761,7 @@ function Incident({ lang, lessonKey, taskId, steps, onChange }: {
     const nextSkipped = viaSkip ? { ...skippedSteps, [i]: true } : skippedSteps;
     setRevealed(nextRevealed);
     setSkippedSteps(nextSkipped);
-    const allOpen = steps.every((_, j) => nextRevealed[j]);
-    const answeredAll = allOpen && steps.every((_, j) => !nextSkipped[j]);
-    if (allOpen) {
-      recordPracticeResult(lessonKey, taskId, "incident", answeredAll);
-      recordPracticeOutcome(lessonKey, taskId, answeredAll);
-    }
-    setTaskStatus(lessonKey, taskId, answeredAll ? "done" : "attempted");
+    setTaskStatus(lessonKey, taskId, "attempted");
     onChange?.();
   };
 
