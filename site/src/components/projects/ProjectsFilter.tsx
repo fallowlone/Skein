@@ -122,11 +122,11 @@ export default function ProjectsFilter({ lang, projects }: Props) {
             ))}
           </div>
           <div class="project-cart-actions">
-            <a class="project-cart-export" href={`/${lang}/account?unlock=project-rubric-pack&projects=${encodeURIComponent(buildList.join(","))}`}>
-              <span class="project-cart-export-icon" aria-hidden="true">▧</span>
+            <a class="project-cart-export" href={`/${lang}/settings#coach-plan`}>
+              <span class="project-cart-export-icon" aria-hidden="true">↗</span>
               <span>
-                <strong>{tt(lang, "Export as PDF rubric pack", "Экспорт PDF-пакета рубрик")}</strong>
-                <small>{tt(lang, "Member feature · See preview", "Для участников · Предпросмотр")}</small>
+                <strong>{tt(lang, "Unlock Coach", "Открыть Coach")}</strong>
+                <small>{tt(lang, "Managed AI reviews · See offer", "Managed AI-разборы · Подробнее")}</small>
               </span>
             </a>
             <button type="button" class="project-cart-open" onClick={openAll}>

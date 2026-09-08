@@ -1,6 +1,6 @@
 // functions/lib/session.test.ts
 import { describe, it, expect } from "vitest";
-import { createSession, resolveSession, destroySession, destroyAllSessions } from "./session";
+import { createSession, resolveSession, resolveSessionRecord, destroySession, destroyAllSessions } from "./session";
 import { FakeKV } from "../test/fakes";
 
 describe("session", () => {
@@ -9,6 +9,19 @@ describe("session", () => {
     const sid = await createSession(kv, 42);
     expect(typeof sid).toBe("string");
     expect(await resolveSession(kv, sid)).toBe(42);
+  });
+
+  it("keeps the OAuth token server-side in the session record", async () => {
+    const kv = new FakeKV() as any;
+    const sid = await createSession(kv, 42, "oauth-token");
+    expect(await resolveSessionRecord(kv, sid)).toMatchObject({ userId: 42, githubAccessToken: "oauth-token" });
+  });
+
+  it("encrypts the OAuth token in KV when a session secret is supplied", async () => {
+    const kv = new FakeKV() as any;
+    const sid = await createSession(kv, 42, "oauth-token", "session-secret");
+    expect(await kv.get(`session:${sid}`)).not.toContain("oauth-token");
+    await expect(resolveSessionRecord(kv, sid, "session-secret")).resolves.toMatchObject({ githubAccessToken: "oauth-token" });
   });
 
   it("returns null for an unknown session", async () => {
