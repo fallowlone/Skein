@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env, RequestData } from "./lib/types";
-import { resolveSession } from "./lib/session";
+import { resolveSessionRecord } from "./lib/session";
 import { parseCookies, verifyValue } from "./lib/cookies";
 import { rateLimit } from "./lib/ratelimit";
 import { withSecurityHeaders, error } from "./lib/response";
@@ -21,7 +21,11 @@ export const onRequest: PagesFunction<Env, any, RequestData> = async (ctx) => {
     const signed = cookies[cookieName(env)];
     if (signed) {
       const sid = await verifyValue(signed, env.SESSION_SECRET);
-      if (sid) data.userId = await resolveSession(env.SESSIONS, sid);
+      if (sid) {
+        const session = await resolveSessionRecord(env.SESSIONS, sid, env.SESSION_SECRET);
+        data.userId = session?.userId ?? null;
+        data.githubAccessToken = session?.githubAccessToken;
+      }
     }
 
     // Rate-limit mutating API calls per IP

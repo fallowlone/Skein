@@ -83,4 +83,9 @@ describe("github", () => {
     await expect(exchangeCodeForUser("x", { clientId: "c", clientSecret: "s" }))
       .rejects.toThrow("github_token_exchange_failed");
   });
+
+  it("classifies an invalid sponsorship token as reauthentication", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("unauthorized", { status: 401 })));
+    await expect(fetchViewerSponsorship("revoked-token", "skein-owner")).rejects.toThrow("github_reauth_required");
+  });
 });

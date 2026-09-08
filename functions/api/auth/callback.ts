@@ -18,20 +18,24 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
   const signedState = cookies["oauth_state"];
   const verified = signedState ? await verifyValue(signedState, env.SESSION_SECRET) : null;
   if (!code || !state || !verified) return new Response("Bad request", { status: 400 });
-  const [expectedState, lang] = verified.split("|");
+  const [expectedState, lang, returnTo] = verified.split("|");
   if (state !== expectedState) return new Response("State mismatch", { status: 400 });
 
   let user;
+  let accessToken = "";
   try {
-    const { user: gh, accessToken } = await exchangeCodeForUserWithToken(code, {
+    const exchanged = await exchangeCodeForUserWithToken(code, {
       clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET,
     });
+    const { user: gh } = exchanged;
+    accessToken = exchanged.accessToken;
     user = await upsertUserFromGithub(env.DB, gh);
     const cfg = coachConfig(env);
     try {
       if (cfg.billingConfigured && cfg.sponsorableLogin) {
         // Verify the viewer's own sponsorship while the OAuth token is already
-        // in memory. The token is never persisted; this also lets private
+        // in memory. The token is later kept encrypted in the server-side
+        // session; this also lets private
         // sponsors claim Coach without making their sponsorship public.
         const live = await fetchViewerSponsorship(accessToken, cfg.sponsorableLogin);
         await reconcileVerifiedGithubSponsorOnLogin(env.DB, gh.id, user.id, cfg, live);
@@ -54,7 +58,7 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
     return new Response("Auth failed", { status: 502 });
   }
 
-  const sid = await createSession(env.SESSIONS, user.id);
+  const sid = await createSession(env.SESSIONS, user.id, accessToken, env.SESSION_SECRET);
   const signedSid = await signValue(sid, env.SESSION_SECRET);
 
   const secure = isSecureRequest(url, env);
@@ -66,6 +70,8 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
   headers.append("Set-Cookie", authHintCookie(true, secure));
   // clear the state cookie (Secure mirrors the set path so a prefixed clear cookie isn't rejected)
   headers.append("Set-Cookie", serializeCookie("oauth_state", "", { httpOnly: true, secure, maxAge: 0 }));
-  headers.set("Location", `/${lang === "ru" ? "ru" : "en"}/account`);
+  headers.set("Location", returnTo === "coach"
+    ? `/${lang === "ru" ? "ru" : "en"}/settings#coach-plan`
+    : `/${lang === "ru" ? "ru" : "en"}/account`);
   return new Response(null, { status: 302, headers });
 };

@@ -67,14 +67,16 @@ new signups are also paused when managed Anthropic is unavailable.
 
 ### 1. Apply the entitlement schema
 
-Run the Coach migration against the same D1 bound as `DB`:
+Run the Coach migrations against the same D1 bound as `DB`:
 
 ```bash
 bunx wrangler d1 execute DB --remote --file functions/migrations/0003_coach_entitlements.sql
+bunx wrangler d1 execute DB --remote --file functions/migrations/0004_coach_verification.sql
 ```
 
-For local Pages Functions development, apply the same file with `--local` after the existing
-auth/metrics migrations.
+For local Pages Functions development, apply both files with `--local` after the existing
+auth/metrics migrations. `0004` adds `entitlements.verified_at`; it records the last successful
+live Sponsors verification and is separate from webhook `updated_at`.
 
 ### 2. Configure GitHub Sponsors
 
@@ -102,9 +104,17 @@ GITHUB_SPONSORS_WEBHOOK_SECRET=<secret>
 
 `GITHUB_SPONSORS_COACH_TIER_IDS` uses immutable GitHub tier `node_id` values; tier names and
 prices are intentionally not used for authorization. Only identifiable personal GitHub sponsors
-can be matched automatically. The product tells users to use the same personal GitHub account and
-a public recurring sponsorship. Sponsorships created before first Skein login are reconciled on
-the next GitHub login.
+can be matched automatically. Private viewer sponsorships are supported by OAuth reconciliation;
+`sponsorEntity` being unavailable in a private response is not treated as a different account.
+The webhook tier payload shape follows the upstream Octokit schema for `SponsorshipTier`, including
+`changes.tier.from.node_id` and `changes.tier.from.is_one_time` ([schema](https://raw.githubusercontent.com/octokit/webhooks/main/payload-types/schema.d.ts)).
+Sponsorships created before first Skein login are reconciled on the next login or manual recheck.
+
+OAuth sessions retain the provider token only inside the encrypted KV session for at most the
+existing 30-day session lifetime. Verification freshness is bounded to five minutes. A missed
+webhook can therefore leave access stale for at most five minutes after the next request that
+reaches the entitlement or paid endpoint; provider outages fail closed and surface an unavailable
+verification state. A revoked or missing token requires reauthentication.
 
 Store the webhook secret as a Pages secret:
 
@@ -154,6 +164,7 @@ After deploy, verify these states before publishing the Sponsors tier broadly:
 
 ## Notes
 
+- Backend verification is run by CI with `cd functions && bun run test`; this runs the Vitest suite and the real SQLite billing race regression (`bun lib/db.sqlite.integration.ts`). Run `bun run typecheck` from `functions/` alongside it for the Functions typecheck.
 - The deploy command runs from the **repo root** so wrangler bundles the root `functions/`
   directory (Cloudflare requires Wrangler, not dashboard drag-and-drop, to compile Functions).
 - Per-PR preview deploys (a perk of the old Git integration) are not reproduced here; add a
