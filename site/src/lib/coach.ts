@@ -5,8 +5,23 @@ import { buildGradeContext, type PracticeCritique } from "~/scripts/practice-gra
 export interface CoachStatus {
   authenticated: boolean;
   entitlements: { coach: boolean };
-  billing: { configured: boolean; sponsorUrl: string | null; provider: "github-sponsors" | null };
+  billing: {
+    configured: boolean;
+    sponsorUrl: string | null;
+    provider: "github-sponsors" | null;
+    verification?: "verified" | "unavailable" | "reauth_required" | "not_checked";
+  };
   managedAi: { available: boolean; limit: number; used: number; remaining: number; period: string; resetsAt: string };
+}
+
+export async function recheckCoachStatus(fetcher: typeof fetch = fetch): Promise<CoachStatus> {
+  const r = await fetcher("/api/entitlements", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+  });
+  if (!r.ok) throw new Error("coach_recheck_failed");
+  return await r.json() as CoachStatus;
 }
 
 export async function fetchCoachStatus(fetcher: typeof fetch = fetch): Promise<CoachStatus> {
@@ -32,4 +47,3 @@ export async function gradePracticeManaged(
   if (!r.ok) throw new Error(typeof body.error === "string" ? body.error : "coach_grade_failed");
   return body;
 }
-

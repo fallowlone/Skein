@@ -34,4 +34,5 @@ export interface UserRow {
 /** Data attached by _middleware to the request via context.data */
 export interface RequestData extends Record<string, unknown> {
   userId: number | null;
+  githubAccessToken?: string;
 }

@@ -1,11 +1,11 @@
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { userState, setTier, setMotion, resetAll, setPretest } from "~/scripts/user-state";
 import { todayISO } from "~/scripts/progression/streak";
 import { exportModel, importModel } from "~/scripts/model-backup";
 import { type Locale } from "~/i18n";
 import type { Tier } from "~/types";
-import { fetchCoachStatus, type CoachStatus } from "~/lib/coach";
+import { fetchCoachStatus, recheckCoachStatus, type CoachStatus } from "~/lib/coach";
 
 type Props = { lang: Locale };
 
@@ -278,6 +278,10 @@ export default function SettingsDrawer({ lang }: Props) {
 function CoachPlanCard({ lang }: { lang: Locale }) {
   const [status, setStatus] = useState<CoachStatus | null>(null);
   const [failed, setFailed] = useState(false);
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckError, setRecheckError] = useState(false);
+  const [verificationUnknown, setVerificationUnknown] = useState(false);
+  const recheckSequence = useRef(0);
 
   useEffect(() => {
     let live = true;
@@ -289,6 +293,25 @@ function CoachPlanCard({ lang }: { lang: Locale }) {
 
   const tt = (en: string, ru: string) => lang === "en" ? en : ru;
   const coach = status?.entitlements.coach === true;
+  const verification = status?.billing.verification;
+
+  async function recheck() {
+    const sequence = ++recheckSequence.current;
+    setRechecking(true);
+    setRecheckError(false);
+    setVerificationUnknown(true);
+    try {
+      const next = await recheckCoachStatus();
+      if (sequence === recheckSequence.current) {
+        setStatus(next);
+        setVerificationUnknown(false);
+      }
+    } catch {
+      if (sequence === recheckSequence.current) setRecheckError(true);
+    } finally {
+      if (sequence === recheckSequence.current) setRechecking(false);
+    }
+  }
 
   return (
     <section class="rounded-[7px] border border-rule-strong px-5 py-[18px]">
@@ -315,7 +338,16 @@ function CoachPlanCard({ lang }: { lang: Locale }) {
             <p class="m-0 text-[12px] text-muted">{tt("Coach status is unavailable right now.", "Статус Coach сейчас недоступен.")}</p>
           ) : !status ? (
             <p class="m-0 text-[12px] text-muted">{tt("Loading Coach status…", "Загружаю статус Coach…")}</p>
-          ) : coach ? (
+          ) : verificationUnknown ? (
+            <>
+              <div class="font-display text-[17px] font-semibold text-ink">{tt("Sponsorship status unavailable", "Статус sponsorship недоступен")}</div>
+              <p class="mt-2 mb-3 text-[12px] text-muted" role="status">{rechecking ? tt("Checking your sponsorship status…", "Проверяю статус sponsorship…") : tt("We could not verify your sponsorship right now. Your Coach status is unknown.", "Сейчас не удалось проверить sponsorship. Статус Coach неизвестен.")}</p>
+              {recheckError && <p class="mt-2 mb-3 text-[12px] text-warn" role="alert">{tt("We could not verify your sponsorship. Try again later.", "Не удалось проверить sponsorship. Попробуйте позже.")}</p>}
+              <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
+                {rechecking ? tt("Checking sponsorship…", "Проверяю sponsorship…") : tt("Check sponsorship", "Проверить sponsorship")}
+              </button>
+            </>
+          ) : coach && verification !== "unavailable" && verification !== "reauth_required" ? (
             <>
               <div class="font-display text-[17px] font-semibold text-ink">{tt("Coach active", "Coach активен")}</div>
               <div class="mt-2 text-[12px] text-muted">
@@ -327,6 +359,9 @@ function CoachPlanCard({ lang }: { lang: Locale }) {
               {!status.managedAi.available && (
                 <div class="mt-2 text-[12px] text-warn">{tt("Managed AI is temporarily unavailable; BYOK still works.", "Managed AI временно недоступен; BYOK продолжает работать.")}</div>
               )}
+              <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm mt-3" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
+                {rechecking ? tt("Checking sponsorship…", "Проверяю sponsorship…") : tt("Refresh sponsorship status", "Обновить статус sponsorship")}
+              </button>
             </>
           ) : !status.managedAi.available ? (
             <>
@@ -337,18 +372,37 @@ function CoachPlanCard({ lang }: { lang: Locale }) {
             <>
               <div class="font-display text-[17px] font-semibold text-ink">{tt("Coach requires a Skein account", "Для Coach нужен аккаунт Skein")}</div>
               <p class="mt-2 mb-3 text-[12px] leading-[1.5] text-muted">{tt("Sign in with GitHub first so a sponsorship can be matched to your Skein account.", "Сначала войдите через GitHub, чтобы sponsorship можно было связать с аккаунтом Skein.")}</p>
-              <a class="oa-btn oa-btn-primary oa-btn-sm" href={`/${lang}/account`}>{tt("Open account", "Открыть аккаунт")}</a>
+              <a class="oa-btn oa-btn-primary oa-btn-sm" href={`/api/auth/login?lang=${lang}&returnTo=coach`}>{tt("Sign in with GitHub", "Войти через GitHub")}</a>
+            </>
+          ) : status.billing.verification === "reauth_required" ? (
+            <>
+              <div class="font-display text-[17px] font-semibold text-ink">{tt("Sign in again to verify Coach", "Войдите снова, чтобы проверить Coach")}</div>
+              <p class="mt-2 mb-3 text-[12px] leading-[1.5] text-muted">{tt("Your GitHub session needs to be refreshed before sponsorship can be checked.", "Сессию GitHub нужно обновить, прежде чем проверять sponsorship.")}</p>
+              <a class="oa-btn oa-btn-primary oa-btn-sm" href={`/api/auth/login?lang=${lang}&returnTo=coach`}>{tt("Sign in with GitHub", "Войти через GitHub")}</a>
+            </>
+          ) : status.billing.verification === "unavailable" ? (
+            <>
+              <div class="font-display text-[17px] font-semibold text-ink">{tt("Sponsorship status unavailable", "Статус sponsorship недоступен")}</div>
+              <p class="mt-2 mb-3 text-[12px] leading-[1.5] text-muted" role="status">{tt("We could not verify your sponsorship right now. Your Coach status was not changed.", "Сейчас не удалось проверить sponsorship. Статус Coach не изменён.")}</p>
+              <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
+                {rechecking ? tt("Checking sponsorship…", "Проверяю sponsorship…") : tt("Check sponsorship", "Проверить sponsorship")}
+              </button>
             </>
           ) : status.billing.configured && status.billing.sponsorUrl && status.managedAi.available ? (
             <>
               <div class="font-display text-[17px] font-semibold text-ink">{tt("Unlock Coach", "Открыть Coach")}</div>
               <p class="mt-2 mb-3 text-[12px] leading-[1.5] text-muted">
                 {tt(
-                  `${status.managedAi.limit} managed AI reviews per month. Automatic unlock requires a public recurring sponsorship from this same personal GitHub account.`,
-                  `${status.managedAi.limit} managed AI-разборов в месяц. Для автоматического доступа нужен публичный recurring sponsorship с этого же личного GitHub-аккаунта.`,
+                  `${status.managedAi.limit} managed AI reviews per month. Automatic unlock checks for an active recurring sponsorship from this same personal GitHub account.`,
+                  `${status.managedAi.limit} managed AI-разборов в месяц. Для автоматического доступа проверяется активный recurring sponsorship с этого же личного GitHub-аккаунта.`,
                 )}
               </p>
+              <p class="mt-2 mb-3 text-[12px] leading-[1.5] text-muted">{tt("After sponsoring, return here and check your sponsorship status.", "После sponsorship вернитесь сюда и проверьте его статус.")}</p>
+              {recheckError && <p class="mt-2 mb-3 text-[12px] text-warn" role="alert">{tt("We could not verify your sponsorship. Try again later.", "Не удалось проверить sponsorship. Попробуйте позже.")}</p>}
               <a class="oa-btn oa-btn-primary oa-btn-sm" href={status.billing.sponsorUrl} target="_blank" rel="noreferrer">{tt("Continue on GitHub Sponsors", "Перейти в GitHub Sponsors")}</a>
+              <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm mt-2" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
+                {rechecking ? tt("Checking sponsorship…", "Проверяю sponsorship…") : tt("Check sponsorship", "Проверить sponsorship")}
+              </button>
             </>
           ) : (
             <>

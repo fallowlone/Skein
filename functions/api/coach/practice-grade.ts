@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env, RequestData } from "../../lib/types";
-import { getEntitlement, getUserById, releaseAiUse, reserveAiUse } from "../../lib/db";
-import { COACH_AI_FEATURE, COACH_ENTITLEMENT, coachConfig, readBodyBounded, utcMonthPeriod } from "../../lib/coach";
+import { getUserById, releaseAiUse, reserveAiUse } from "../../lib/db";
+import { COACH_AI_FEATURE, coachConfig, readBodyBounded, resolveCoachAccess, utcMonthPeriod } from "../../lib/coach";
 import { termsCurrent } from "../../lib/db";
 import { error, json } from "../../lib/response";
 
@@ -124,7 +124,10 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   if (!userId) return error(401, "unauthenticated");
   const user = await getUserById(ctx.env.DB, userId);
   if (!user || !termsCurrent(user, ctx.env)) return error(403, "terms_required");
-  if (!await getEntitlement(ctx.env.DB, userId, COACH_ENTITLEMENT)) return error(403, "coach_required");
+  const access = await resolveCoachAccess(ctx.env.DB, coachConfig(ctx.env), userId, ctx.data.githubAccessToken);
+  if (access.state === "unavailable") return error(503, "coach_verification_unavailable");
+  if (access.state === "reauth_required") return error(403, "coach_reauth_required");
+  if (!access.coach) return error(403, "coach_required");
 
   const cfg = coachConfig(ctx.env);
   if (!cfg.managedAiAvailable) return error(503, "managed_ai_unavailable");

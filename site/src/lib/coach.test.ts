@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PracticeTaskData } from "~/content.config";
-import { fetchCoachStatus, gradePracticeManaged } from "./coach";
+import { fetchCoachStatus, gradePracticeManaged, recheckCoachStatus } from "./coach";
 
 const task = {
   id: "d1", type: "design", difficulty: "apply", estMin: 8,
@@ -47,6 +47,17 @@ describe("coach client", () => {
       response: "my answer",
     });
     expect(JSON.stringify(sent)).not.toContain("apiKey");
+  });
+
+  it("rechecks entitlement through the POST contract", async () => {
+    const payload = { ...({ authenticated: true, entitlements: { coach: true }, billing: { configured: true, sponsorUrl: "https://github.com/sponsors/example", provider: "github-sponsors" } as const }), managedAi: { available: true, limit: 30, used: 0, remaining: 30, period: "2026-09", resetsAt: "2026-10-01T00:00:00.000Z" } };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(payload), { status: 200 })) as any;
+    await expect(recheckCoachStatus(fetcher)).resolves.toEqual(payload);
+    expect(fetcher).toHaveBeenCalledWith("/api/entitlements", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+    });
   });
 
   it("propagates server feature-gate errors without inventing a checkout", async () => {

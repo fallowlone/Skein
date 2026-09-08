@@ -89,6 +89,8 @@ export async function fetchViewerSponsorship(
     },
     body: JSON.stringify({ query: VIEWER_SPONSORSHIP_QUERY, variables: { login: sponsorableLogin } }),
   });
+  if (r.status === 401) throw new Error("github_reauth_required");
+  if (r.status === 403) throw new Error(`github_sponsorship_fetch_failed: http_${r.status}`);
   if (!r.ok) throw new Error(`github_sponsorship_fetch_failed: http_${r.status}`);
   const body = await r.json().catch(() => ({})) as any;
   if (Array.isArray(body.errors) && body.errors.length > 0) throw new Error("github_sponsorship_fetch_failed: graphql");
