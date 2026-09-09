@@ -9,7 +9,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 const ROOT = "src/content/lessons";
-const BUDGETS = { Crux: 140, KeyTakeaway: 220 };
+const BUDGETS = { Crux: 180, KeyTakeaway: 220 };
 const INSET_KINDS = new Set(["why", "practice", "mistake", "edgecase"]);
 const filter = process.argv[2];
 
