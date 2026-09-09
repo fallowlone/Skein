@@ -26,7 +26,7 @@
  *   bun scripts/run-code-samples.mjs --self-test        # prove the runner works
  * Exits non-zero if any runnable block fails its expectation.
  */
-import { readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -70,6 +70,7 @@ function parseMeta(meta) {
 
 function collectRunnable() {
   const langDir = join(LESSONS_DIR, LANG);
+  if (!existsSync(langDir)) return [];
   const blocks = [];
   for (const file of walk(langDir)) {
     if (FILTER && !file.includes(FILTER)) continue;
