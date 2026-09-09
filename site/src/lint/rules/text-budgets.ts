@@ -1,5 +1,5 @@
 const BUDGETS: Record<string, number> = {
-  crux: 140,
+  crux: 180,
   "key-takeaway": 220,
   misconception: 320,
   annot: 240,
