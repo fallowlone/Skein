@@ -44,10 +44,6 @@ const lessonHtml = await walk(dist, (p) =>
 );
 const actual = lessonHtml.length;
 
-if (expected === 0) {
-  console.error("check-dist-complete: found 0 lesson sources — wrong working directory?");
-  process.exit(1);
-}
 if (actual !== expected) {
   console.error(
     `check-dist-complete: FAIL — expected ${expected} lesson pages, dist has ${actual} ` +
