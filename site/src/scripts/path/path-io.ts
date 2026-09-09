@@ -17,7 +17,7 @@ import marketDemandJson from "~/content/path/market-demand.json";
 import { masteryOf, applyReviewEvidence } from "./knowledge";
 import { recordAttempt, type AttemptRec, type PracticeEvidence } from "~/scripts/practice-state";
 import { dueBefore, recordReview, allCards, type Card } from "~/scripts/review-state";
-import { unitStruggleFractions } from "./practice-signal";
+import { conceptStruggleFractions, unitStruggleFractions } from "./practice-signal";
 import { buildDoNow, type DoNowItem } from "./do-now";
 import diagnosticsBundle from "~/content/path/diagnostics-bundle.json";
 import { buildConceptGraph, induceUnitGraph } from "./graph";
@@ -49,7 +49,7 @@ import { exportModel } from "~/scripts/model-backup";
 import { resolveIrt, priorFor, collapse, type SelfPlace, type Irt } from "./bayes";
 import type { Band } from "./types";
 import type { MarketDemandSnapshot } from "./market-demand";
-import { rankWeakSpots, type WeakSpot } from "./weak-spots";
+import { rankWeakSpots, remediationScope, type WeakSpot } from "./weak-spots";
 
 // ── pure helpers (unit-tested) ─────────────────────────────────────────────────
 export function unitsFromMap(map: Record<string, { teaches: string[]; requires: string[]; estMin: number }>): UnitConcepts[] {
@@ -392,12 +392,18 @@ export function readAttemptsAll(): Map<string, Record<string, AttemptRec>> {
 // confidence (applyPracticeStruggle guards diagnostic/declared), bounded by decayFloor, and
 // keeps the signal reference when nothing lowers — so running on every load causes no churn.
 export function refreshPracticeSignal(): void {
-  const fractions = unitStruggleFractions(readAttemptsAll(), unitLessonCounts);
-  if (!fractions.size) return;
+  const attempts = readAttemptsAll();
+  const byConcept = conceptStruggleFractions(attempts);
+  const byUnit = unitStruggleFractions(attempts, unitLessonCounts, { includeConceptLinked: false });
+  if (!byConcept.size && !byUnit.size) return;
   const floor = config.value.weights.decayFloor;
   const now = Date.now();
   let next = knowledge.value;
-  for (const [unitId, f] of fractions) {
+  for (const [concept, f] of byConcept) {
+    if (f.struggleFrac <= 0) continue;
+    next = applyPracticeStruggle(next, [concept], f.struggleFrac, floor, PRACTICE_STRUGGLE_WEIGHT, now);
+  }
+  for (const [unitId, f] of byUnit) {
     if (f.struggleFrac <= 0) continue;
     const taught = teachesByUnit.get(unitId);
     if (taught) next = applyPracticeStruggle(next, taught, f.struggleFrac, floor, PRACTICE_STRUGGLE_WEIGHT, now);
@@ -982,13 +988,16 @@ export function currentWeakSpots(): WeakSpot[] {
     const fallback = goalById.get("senior-fullstack");
     if (fallback) goalObjs.push(fallback);
   }
-  const frontier = new Set(targetFrontier(goalObjs, cfg, concepts));
+  const { concepts: eff } = effectiveContent();
+  const frontier = remediationScope(targetFrontier(goalObjs, cfg, eff), effectiveGraph());
+  const attempts = readAttemptsAll();
   return rankWeakSpots({
     frontier,
     knowledge: effectiveKnowledge(), // subscribes to knowledge via decay(knowledge.value, …)
     masteryThreshold: cfg.weights.masteryThreshold,
     teachesByUnit,
-    struggleByUnit: unitStruggleFractions(readAttemptsAll(), unitLessonCounts),
+    struggleByUnit: unitStruggleFractions(attempts, unitLessonCounts, { includeConceptLinked: false }),
+    struggleByConcept: conceptStruggleFractions(attempts),
     healthByUnit: unitReviewHealth(allCards(), Date.now()),
   });
 }

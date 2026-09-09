@@ -1,6 +1,6 @@
 // site/src/scripts/path/practice-signal.test.ts
 import { describe, it, expect } from "vitest";
-import { unitStruggleFractions, type AttemptRec } from "./practice-signal";
+import { conceptStruggleFractions, unitStruggleFractions, type AttemptRec } from "./practice-signal";
 
 const rec = (attempts: number, passes: number, lastResult: "pass" | "fail"): AttemptRec =>
   ({ attempts, passes, lastResult, lastAt: 0 });
@@ -51,5 +51,32 @@ describe("unitStruggleFractions", () => {
     ]);
     const f = unitStruggleFractions(attempts, small);
     expect(f.get("go/02-slices")).toEqual({ doneFrac: 0, struggleFrac: 1 });
+  });
+
+  it("can exclude concept-linked tasks so annotated evidence does not smear across a whole unit", () => {
+    const attempts = new Map<string, Record<string, AttemptRec>>([
+      ["go/02-slices/01-intro", {
+        precise: { ...rec(1, 0, "fail"), concepts: ["slice-capacity"] },
+        legacy: rec(1, 0, "fail"),
+      }],
+    ]);
+    const f = unitStruggleFractions(attempts, counts, { includeConceptLinked: false });
+    expect(f.get("go/02-slices")).toEqual({ doneFrac: 0, struggleFrac: 0.5 });
+  });
+});
+
+describe("conceptStruggleFractions", () => {
+  it("uses only explicit concept links and keeps pass/fail evidence at concept granularity", () => {
+    const attempts = new Map<string, Record<string, AttemptRec>>([
+      ["networking/05-tls-handshake/02-the-1rtt-handshake", {
+        failed: { ...rec(1, 0, "fail"), concepts: ["clienthello", "key-share"] },
+        passed: { ...rec(1, 1, "pass"), concepts: ["clienthello"] },
+        legacy: rec(2, 0, "fail"),
+      }],
+    ]);
+    const f = conceptStruggleFractions(attempts);
+    expect(f.get("clienthello")).toEqual({ doneFrac: 0.5, struggleFrac: 0.5 });
+    expect(f.get("key-share")).toEqual({ doneFrac: 0, struggleFrac: 1 });
+    expect(f.size).toBe(2);
   });
 });
