@@ -472,13 +472,33 @@ export function conceptReviewHealth(cards: Card[], now: number): Map<string, num
 export function refreshReviewEvidence(): void {
   if (typeof window === "undefined") return;
   const now = Date.now();
-  const conceptHealth = conceptReviewHealth(allCards(), now);
-  const health = unitReviewHealth(allCards(), now);
+  const cards = allCards();
+  const conceptHealth = conceptReviewHealth(cards, now);
+  const health = unitReviewHealth(cards, now);
   if (!health.size && !conceptHealth.size) return;
+  const delayedFailedConcepts = new Set<string>();
+  for (const card of cards) {
+    if (
+      card.lastGrade !== "again" ||
+      card.lastEvidence?.timing !== "delayed" ||
+      card.lastEvidence.attempt !== "answered" ||
+      !card.conceptIds?.length
+    ) continue;
+    for (const concept of card.conceptIds) delayedFailedConcepts.add(concept);
+  }
   const floor = config.value.weights.decayFloor;
   let next = knowledge.value;
   for (const [concept, healthFrac] of conceptHealth) {
-    next = applyReviewEvidence(next, [concept], healthFrac, REVIEW_EVIDENCE_WEIGHT, floor, now);
+    const delayedFailure = delayedFailedConcepts.has(concept);
+    next = applyReviewEvidence(
+      next,
+      [concept],
+      healthFrac,
+      REVIEW_EVIDENCE_WEIGHT,
+      floor,
+      now,
+      delayedFailure ? { conceptLinked: true, delayed: true, failed: true } : undefined,
+    );
   }
   for (const [unitId, healthFrac] of health) {
     const taught = teachesByUnit.get(unitId);
