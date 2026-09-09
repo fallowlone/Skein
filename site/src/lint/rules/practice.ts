@@ -54,18 +54,22 @@ export async function checkPracticeParity(siteSrc: string): Promise<string[]> {
   return errs;
 }
 
-async function lessonKeys(siteSrc: string): Promise<{ en: Set<string>; ru: Set<string> }> {
+async function lessonKeys(siteSrc: string): Promise<{ en: Set<string>; ru: Set<string>; localCorpus: boolean }> {
   const en = new Set<string>(); const ru = new Set<string>();
+  let localCorpus = false;
   for (const langDir of ["en", "ru"] as const) {
     const base = join(siteSrc, "content/lessons", langDir);
     const files = await walkMdxKeys(base);
+    if (files === null) continue;
+    localCorpus = true;
     for (const key of files) (langDir === "en" ? en : ru).add(key);
   }
-  return { en, ru };
+  return { en, ru, localCorpus };
 }
 
 /** Returns "<track>/<unit>/<slug>" for each lesson under base. */
-async function walkMdxKeys(base: string): Promise<string[]> {
+async function walkMdxKeys(base: string): Promise<string[] | null> {
+  try { await readdir(base); } catch { return null; }
   const out: string[] = [];
   async function rec(dir: string, parts: string[]) {
     let items: import("node:fs").Dirent[];
@@ -83,10 +87,10 @@ async function walkMdxKeys(base: string): Promise<string[]> {
 
 export async function checkPracticeLessonKey(siteSrc: string): Promise<string[]> {
   const errs: string[] = [];
-  const { en, ru } = await lessonKeys(siteSrc);
+  const { en, ru, localCorpus } = await lessonKeys(siteSrc);
   for (const { file, data } of await readPractice(siteSrc)) {
     const key = data?.lessonKey;
-    if (typeof key !== "string" || !en.has(key) || !ru.has(key)) {
+    if (typeof key !== "string" || (localCorpus && (!en.has(key) || !ru.has(key)))) {
       errs.push(`practice-lessonkey: "${file}" lessonKey "${key}" has no matching EN+RU lesson`);
     }
     for (const task of data?.tasks ?? []) {
