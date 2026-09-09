@@ -185,7 +185,7 @@ model is retired; `site/src/content/book/` is empty). Components live under
 - `Toast.astro` — global toast container, mounted once in `Topic.astro`; triggered via a `toast` `CustomEvent`.
 
 ### Prose primitives (`site/src/components/prose/`)
-- `Crux.astro` — ≤140-char opening question, lilac panel.
+- `Crux.astro` — ≤180-char opening question, lilac panel.
 - `Callout.astro`, `KeyTakeaway.astro`, `Sidenote.astro`, `Term.astro` — inline emphasis primitives.
 - `SpiralCue.astro` — chip linking to a thread page; threads: encapsulation, multiplexing, statefulness, latency.
 
@@ -231,5 +231,5 @@ model is retired; `site/src/content/book/` is empty). Components live under
 2. Hydration cap = 5 `<astro-island>` elements per lesson page **excluding** the `PracticeSection` orchestrator (linter-enforced in `site/src/lint/rules/lessons.ts`); `PracticeSection` itself is capped separately at 1 per page (`site/src/lint/rules/practice.ts`). A looser raw ceiling of 8 total `<astro-island>` tags also applies (`site/src/lint/rules/hydration-budget.ts`) but rarely binds once the two caps above are respected. Hub/nav pages (home, track overview, projects) are exempt from the raw ceiling since they legitimately render one island per listed item.
 3. EN and RU lessons share the same `slug`; bilingual or refuse.
 4. RU bodies use canonical translations from `site/src/i18n/glossary.json`. Extend the glossary alphabetically when new terms appear.
-5. Text budgets (`site/src/lint/rules/text-budgets.ts`): Crux ≤140, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240.
+5. Text budgets (`site/src/lint/rules/text-budgets.ts`): Crux ≤180, KeyTakeaway ≤220, Misconception ≤320, Card annot ≤240.
 6. Cross-link prerequisites at the top via `prereqs`/`mathPrereqs` (rendered by `PrereqLinks.astro`); the next lesson is resolved by unit order and rendered at the bottom by `NextLessonCard.astro`.
