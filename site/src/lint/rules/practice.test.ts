@@ -82,9 +82,16 @@ describe("checkPracticeParity", () => {
 describe("checkPracticeLessonKey", () => {
   test("flags a lessonKey with no matching lesson", async () => {
     await withRoot(async (root) => {
+      await lesson(root, "en", "other/unit/lesson");
       await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "databases", tasks: [goodTask] });
       const errs = await checkPracticeLessonKey(root);
       expect(errs.some((e) => /a\/b\/c/.test(e))).toBe(true);
+    });
+  });
+  test("skips lesson existence validation when the local lesson corpus is externalized", async () => {
+    await withRoot(async (root) => {
+      await practiceFile(root, "a/b/c.json", { lessonKey: "a/b/c", track: "databases", tasks: [goodTask] });
+      expect(await checkPracticeLessonKey(root)).toEqual([]);
     });
   });
   test("passes when both EN and RU lessons exist", async () => {
