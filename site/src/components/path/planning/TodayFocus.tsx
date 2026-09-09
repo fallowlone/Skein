@@ -135,8 +135,13 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
     return [{ key: s.unit, href, title: content.unitTitleById.get(s.unit)?.[lang] ?? s.unit, reason: t.lessonReason }];
   });
   const weakRows = currentWeakSpots()
-    .map((w) => ({ key: w.unitId, href: startHref(lang, w.unitId), title: content.unitTitleById.get(w.unitId)?.[lang] ?? w.unitId }))
-    .filter((r) => r.href) as { key: string; href: string; title: string }[];
+    .map((w) => ({
+      key: w.unitId,
+      href: startHref(lang, w.unitId),
+      title: content.unitTitleById.get(w.unitId)?.[lang] ?? w.unitId,
+      concept: w.conceptId ? content.conceptById.get(w.conceptId)?.label[lang] : undefined,
+    }))
+    .filter((r) => r.href) as { key: string; href: string; title: string; concept?: string }[];
   const hasDoNow = reviewRows.length > 0 || taskRows.length > 0 || leadRows.length > 0;
 
   // Weak-spots section renders independently of hasDoNow: failure evidence on frontier units
@@ -149,7 +154,9 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
           <li key={`w:${r.key}`} class="dn-row">
             <a class="dn-link" href={r.href}>
               <span class="dn-title">{r.title}</span>
-              <span class="dn-reason">{lang === "ru" ? "тут стабильно ошибаешься" : "you keep missing this"}</span>
+              <span class="dn-reason">{r.concept
+                ? (lang === "ru" ? `ошибка указывает на: ${r.concept}` : `failure points to: ${r.concept}`)
+                : (lang === "ru" ? "тут стабильно ошибаешься" : "you keep missing this")}</span>
             </a>
           </li>
         ))}
