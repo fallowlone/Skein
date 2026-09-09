@@ -10,6 +10,8 @@
  *
  * Env: SUPABASE_URL + SUPABASE_SECRET_KEY (real env or site/.env.local).
  */
+import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { materialize, KINDS, type CorpusKind, pkToLedgerKey } from "./corpus.ts";
@@ -25,6 +27,10 @@ import {
 
 const SITE_ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
 
+function allowRemoteExtras(kind: CorpusKind, lessonsExternalized: boolean): boolean {
+  return kind === "lessons" && lessonsExternalized;
+}
+
 function sampleValue(): number {
   const i = process.argv.indexOf("--sample");
   if (i < 0) return 0;
@@ -34,10 +40,18 @@ function sampleValue(): number {
 
 async function main(): Promise<void> {
   const sample = sampleValue();
+  if (process.argv.includes("--self-test")) {
+    assert.equal(allowRemoteExtras("lessons", true), true);
+    assert.equal(allowRemoteExtras("lessons", false), false);
+    assert.equal(allowRemoteExtras("practice", true), false);
+    console.log("[parity] self-test: OK");
+    return;
+  }
   if (process.argv.includes("--help") || process.argv.includes("-h")) {
     console.log(
       "verify-parity: compare local corpus hashes against the Supabase curriculum tables.\n" +
         "  --sample N   check only the first N local rows per table (CI smoke)\n" +
+        "  --self-test  verify externalized-lesson parity policy\n" +
         "  --help       this help",
     );
     return;
@@ -55,7 +69,8 @@ async function main(): Promise<void> {
   const client = makeClient(url, key);
 
   const rows = await materialize(SITE_ROOT);
-    const localByKind = new Map<CorpusKind, Map<string, string>>();
+  const lessonsExternalized = !existsSync(resolve(SITE_ROOT, "src/content/lessons"));
+  const localByKind = new Map<CorpusKind, Map<string, string>>();
   for (const k of KINDS) localByKind.set(k, new Map());
   for (const r of rows) localByKind.get(r.kind)!.set(r.ledgerKey, r.hash);
 
@@ -92,8 +107,10 @@ async function main(): Promise<void> {
       if (rh !== localRows.get(k)) drift += 1;
     }
     let extra = 0;
-    for (const k of remote.keys()) {
-      if (!localRows.has(k)) extra += 1;
+    if (!allowRemoteExtras(kind, lessonsExternalized)) {
+      for (const k of remote.keys()) {
+        if (!localRows.has(k)) extra += 1;
+      }
     }
     const note = sample > 0 ? ` (of ${localRows.size} local)` : "";
     console.log(
