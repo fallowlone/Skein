@@ -15,6 +15,7 @@ import {
   setSelfGrade,
   isCommitted,
   selfGradeToPass,
+  type AttemptRec,
   type PracticeEvaluator,
   type PracticeEvidence,
   type PracticeMode,
@@ -25,7 +26,7 @@ import { recordPracticeResult } from "~/scripts/metrics";
 import { recordPracticeOutcome } from "~/scripts/path/path-io";
 import { runDebug, type DebugRunResult } from "~/scripts/debug-runner";
 import { cardsFromPractice } from "~/scripts/review-harvest";
-import { addCard } from "~/scripts/review-state";
+import { addCard, allCards, type Card } from "~/scripts/review-state";
 
 const SqlSandbox = lazy(() => import("./SqlSandbox"));
 const JsSandbox = lazy(() => import("./JsSandbox"));
@@ -88,6 +89,35 @@ export function practiceEvidence(
     independent: independentlyVerified && evaluator === "exec" && mode !== "ai" && hints === 0,
   };
 }
+
+export type PracticeAchievement = {
+  completion: "none" | "self-reported" | "assisted" | "independent";
+  retained: "self-report" | "exec" | null;
+  transferred: boolean;
+};
+
+/** Honest derived progress from existing attempt + review events. No new persisted mastery flag. */
+export function practiceAchievement(attempt?: AttemptRec, reviewCard?: Card): PracticeAchievement {
+  if (!attempt || attempt.lastResult !== "pass") {
+    return { completion: "none", retained: null, transferred: false };
+  }
+  const independent = attempt.independent === true;
+  const completion = independent
+    ? "independent"
+    : attempt.evaluator === "self"
+      ? "self-reported"
+      : "assisted";
+  const review = reviewCard?.lastEvidence;
+  const retained = independent && reviewCard?.lastGrade !== "again" && review?.timing === "delayed" &&
+    review.attempt === "answered" && review.support === "independent" && review.reviewedAt > attempt.lastAt
+    ? review.basis
+    : null;
+  return {
+    completion,
+    retained,
+    transferred: independent && attempt.competency === "transfer",
+  };
+}
 const TIER_LABEL: Record<string, { en: string; ru: string }> = {
   recall: { en: "Recall", ru: "Вспомнить" },
   apply: { en: "Apply", ru: "Применить" },
@@ -121,6 +151,12 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
   const bump = () => setTick((t) => t + 1);
   void tick; // tick only forces a re-render; readProgress is re-read each render
   const p = readProgress(lessonKey);
+  const attempts = readAttempts(lessonKey);
+  const reviewCards = new Map(
+    allCards()
+      .filter((card) => card.lessonKey === lessonKey && card.source === "practice" && card.taskId)
+      .map((card) => [card.taskId!, card]),
+  );
   const done = ordered.filter((t) => p[t.id] === "done").length;
   // Adaptive "do this next" cue. We deliberately avoid importing the path graph / decayed knowledge
   // here (it would bloat every lesson bundle). Instead we use the cheapest, most direct assessment
@@ -146,7 +182,15 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
       <ol class="space-y-4">
         {ordered.map((task) => (
           <li key={task.id}>
-            <TaskCard lang={lang} lessonKey={lessonKey} task={task} recommended={task.id === recommendedId} adaptive={task.id === recommendedId && rec.reason === "performance"} onChange={bump} />
+            <TaskCard
+              lang={lang}
+              lessonKey={lessonKey}
+              task={task}
+              achievement={practiceAchievement(attempts[task.id], reviewCards.get(task.id))}
+              recommended={task.id === recommendedId}
+              adaptive={task.id === recommendedId && rec.reason === "performance"}
+              onChange={bump}
+            />
           </li>
         ))}
       </ol>
@@ -154,7 +198,7 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
   );
 }
 
-function TaskCard({ lang, lessonKey, task, recommended, adaptive, onChange }: { lang: Locale; lessonKey: string; task: PracticeTaskData; recommended?: boolean; adaptive?: boolean; onChange?: () => void }) {
+function TaskCard({ lang, lessonKey, task, achievement, recommended, adaptive, onChange }: { lang: Locale; lessonKey: string; task: PracticeTaskData; achievement: PracticeAchievement; recommended?: boolean; adaptive?: boolean; onChange?: () => void }) {
   const [open, setOpen] = useState(false);
   const modeKey = `${task.id}::mode`;
   const [mode, setMode] = useState<PracticeMode>(() => {
@@ -184,6 +228,17 @@ function TaskCard({ lang, lessonKey, task, recommended, adaptive, onChange }: { 
           )}
         </span>
         <span class="flex items-center gap-2 shrink-0">
+          {achievement.completion === "self-reported" && <span class="text-[10px] font-mono uppercase tracking-wide text-muted">{tt(lang, "Self-graded", "Самооценка")}</span>}
+          {achievement.completion === "assisted" && <span class="text-[10px] font-mono uppercase tracking-wide text-muted">{tt(lang, "With help", "С помощью")}</span>}
+          {achievement.completion === "independent" && <span class="text-[10px] font-mono uppercase tracking-wide text-ok">{tt(lang, "Independent", "Самостоятельно")}</span>}
+          {achievement.retained && (
+            <span class="text-[10px] font-mono uppercase tracking-wide text-ok">
+              {achievement.retained === "exec"
+                ? tt(lang, "Retained", "Сохранено")
+                : tt(lang, "Retained · self-check", "Сохранено · самопроверка")}
+            </span>
+          )}
+          {achievement.transferred && <span class="text-[10px] font-mono uppercase tracking-wide text-ok">{tt(lang, "Transfer", "Перенос")}</span>}
           <span class="text-[10px] font-mono uppercase tracking-wide px-2 py-0.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 text-muted">{tt(lang, (TIER_LABEL[task.difficulty]?.en ?? task.difficulty), (TIER_LABEL[task.difficulty]?.ru ?? task.difficulty))}</span>
           <span class="text-xs font-mono text-muted">{task.estMin} min</span>
         </span>
