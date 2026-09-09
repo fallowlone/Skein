@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   unitsFromMap, applyViewOrder, masteryByTrack, serializeKnowledge, deserializeKnowledge,
   togglePin, moveInOrder,
@@ -9,7 +9,7 @@ import {
   tierOf, unitPracticeFractions, conceptsUpToBand,
   isColdStartView,
   readAttemptsAll, dueReviews, recordPracticeOutcome, computeDoNow,
-  unitReviewHealth, knowledge, currentConceptMasteryLevel, setConceptMasteryLevel, advanceConceptMastery,
+  unitReviewHealth, refreshReviewEvidence, knowledge, currentConceptMasteryLevel, setConceptMasteryLevel, advanceConceptMastery,
 } from "./path-io";
 import { cardsFromRetrieval } from "../review-harvest";
 import { DEFAULT_CONFIG } from "./config";
@@ -355,6 +355,58 @@ describe("dueReviews", () => {
     addCard(seed, now);
     recordReview(seed.cardKey, "good", now); // pushed ~1 day out
     expect(dueReviews(now + 1).map((c) => c.cardKey)).not.toContain(seed.cardKey);
+  });
+});
+
+describe("refreshReviewEvidence", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("lets a delayed concept-linked failure revise an older diagnostic", () => {
+    const previous = knowledge.value;
+    const now = 1_800_000_000_000;
+    const day = 86_400_000;
+    const unit = content.units.find((u) => u.teaches.length > 0)!;
+    const concept = unit.teaches[0];
+    const lessonKey = `${unit.unit}/review-probe`;
+    const cardKey = `${lessonKey}::practice::probe`;
+
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    try {
+      knowledge.value = new Map([[
+        concept,
+        { confidence: 0.9, source: "diagnostic", lastAt: now - 14 * day },
+      ]]);
+      addCard({
+        cardKey,
+        lessonKey,
+        source: "practice",
+        index: 0,
+        conceptIds: [concept],
+        front: "probe",
+        back: "answer",
+        lang: "en",
+      }, now - 14 * day);
+      recordReview(cardKey, "again", {
+        eventId: "delayed-failure",
+        basis: "self-report",
+        attempt: "answered",
+        support: "independent",
+        timing: "delayed",
+        attemptedAt: now - 2_000,
+        revealedAt: now - 1_000,
+        reviewedAt: now,
+        delayMs: 14 * day,
+      });
+
+      refreshReviewEvidence();
+
+      expect(knowledge.value.get(concept)?.source).toBe("review");
+      expect(knowledge.value.get(concept)?.confidence).toBeLessThan(0.6);
+    } finally {
+      knowledge.value = previous;
+      vi.useRealTimers();
+    }
   });
 });
 

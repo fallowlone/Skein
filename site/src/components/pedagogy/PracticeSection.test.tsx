@@ -4,19 +4,21 @@ import { render } from "preact-render-to-string";
 
 const mocks = vi.hoisted(() => ({
   addCard: vi.fn(),
+  allCards: vi.fn(() => []),
   recordPracticeOutcome: vi.fn(),
   recordPracticeResult: vi.fn(),
   runDebug: vi.fn(),
 }));
 
-vi.mock("~/scripts/review-state", () => ({ addCard: mocks.addCard }));
+vi.mock("~/scripts/review-state", () => ({ addCard: mocks.addCard, allCards: mocks.allCards }));
 vi.mock("~/scripts/path/path-io", () => ({ recordPracticeOutcome: mocks.recordPracticeOutcome }));
 vi.mock("~/scripts/metrics", () => ({ recordPracticeResult: mocks.recordPracticeResult }));
 vi.mock("~/scripts/debug-runner", () => ({ runDebug: mocks.runDebug }));
 import PracticeSection from "./PracticeSection";
-import { difficultyRank, orderTasks, practiceEvidence } from "./PracticeSection";
+import { difficultyRank, orderTasks, practiceAchievement, practiceEvidence } from "./PracticeSection";
 import type { PracticeTaskData } from "~/content.config";
 import { readProgress, readResponses, setTaskStatus } from "~/scripts/practice-state";
+import type { Card } from "~/scripts/review-state";
 
 const predict: PracticeTaskData = {
   id: "p1", type: "predict", difficulty: "recall", estMin: 3, version: 2,
@@ -40,6 +42,7 @@ beforeEach(() => {
   host = document.createElement("div");
   document.body.appendChild(host);
   Object.values(mocks).forEach((mock) => mock.mockReset());
+  mocks.allCards.mockReturnValue([]);
 });
 
 afterEach(() => {
@@ -100,6 +103,49 @@ describe("practice evidence", () => {
       hints: 0,
       evaluator: "exec",
       independent: true,
+    });
+  });
+
+  test("keeps independent transfer distinct from ordinary production evidence", () => {
+    const transferTask = {
+      id: "transfer-1", type: "sandbox", difficulty: "stretch", estMin: 5,
+      competency: "transfer", concepts: ["queueMicrotask"],
+      title: { en: "Transfer", ru: "Перенос" }, prompt: { en: "Port it", ru: "Перенеси" },
+      runtime: "js", initialCode: "", expected: { kind: "stdout-equals", value: "ok" },
+    } as PracticeTaskData;
+
+    expect(practiceEvidence(transferTask, "docs", "exec", 0, true)).toMatchObject({
+      competency: "transfer",
+      evaluator: "exec",
+      independent: true,
+      mode: "docs",
+    });
+  });
+
+  test("derives assisted, independent, retained and transferred states without persisting new flags", () => {
+    const base = { attempts: 1, passes: 1, lastResult: "pass" as const, lastAt: 10 };
+    expect(practiceAchievement({ ...base, evaluator: "self", independent: false })).toEqual({
+      completion: "self-reported", retained: null, transferred: false,
+    });
+
+    const transfer = { ...base, evaluator: "exec" as const, mode: "docs" as const, hints: 0, independent: true, competency: "transfer" as const };
+    expect(practiceAchievement(transfer)).toEqual({
+      completion: "independent", retained: null, transferred: true,
+    });
+
+    const delayedCard = {
+      lastGrade: "good",
+      lastEvidence: {
+        eventId: "r1", basis: "self-report", attempt: "answered", support: "independent",
+        timing: "delayed", attemptedAt: 11, revealedAt: 12, reviewedAt: 13, delayMs: 86_400_000,
+      },
+    } as Card;
+    expect(practiceAchievement(transfer, delayedCard)).toEqual({
+      completion: "independent", retained: "self-report", transferred: true,
+    });
+
+    expect(practiceAchievement({ ...transfer, lastResult: "fail" }, delayedCard)).toEqual({
+      completion: "none", retained: null, transferred: false,
     });
   });
 
