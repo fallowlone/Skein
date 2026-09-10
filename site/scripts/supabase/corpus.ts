@@ -19,7 +19,10 @@ export type CorpusKind =
   | "practice"
   | "projects"
   | "drill"
-  | "lab";
+  | "lab"
+  | "concepts"
+  | "unit_concepts"
+  | "lesson_graph";
 
 export const KINDS: readonly CorpusKind[] = [
   "tracks",
@@ -29,6 +32,9 @@ export const KINDS: readonly CorpusKind[] = [
   "projects",
   "drill",
   "lab",
+  "concepts",
+  "unit_concepts",
+  "lesson_graph",
 ];
 
 export interface CorpusFile {
@@ -41,6 +47,10 @@ export interface CorpusFile {
 
 export interface CourseRow {
   kind: CorpusKind;
+  /** Local source path used by publish-only transforms; never sent to Supabase. */
+  sourceRel?: string;
+  /** Original file hash when publish transforms replace `hash` with a derived release hash. */
+  sourceHash?: string;
   /**
    * Stable key recorded in the sync ledger; equals the table's primary key for
    * single-entry files and "<kind>#<pk>" for multi-entry JSON files
@@ -70,6 +80,9 @@ export function classify(rel: string): CorpusKind | null {
   if (rel.startsWith("src/content/projects/") && rel.endsWith(".json")) return "projects";
   if (rel.startsWith("src/content/drill/") && rel.endsWith(".json")) return "drill";
   if (rel.startsWith("src/content/lab/") && rel.endsWith(".json")) return "lab";
+  if (rel === "src/content/path/concepts.json") return "concepts";
+  if (rel === "src/content/path/unit-concepts.json") return "unit_concepts";
+  if (rel === "src/content/path/lesson-graph.json") return "lesson_graph";
   return null;
 }
 
@@ -246,8 +259,10 @@ export function lessonRow(raw: string, rel: string, hash: string): CourseRow {
     body_hash: sha256(body),
     content_hash: hash,
   };
-    return {
+  return {
     kind: "lessons",
+    sourceRel: rel,
+    sourceHash: hash,
     ledgerKey: `lessons#${lang}/${track}/${unit}/${slug}`,
     hash,
     row,
@@ -337,6 +352,72 @@ export function labRow(raw: string, rel: string, hash: string): CourseRow {
   };
 }
 
+/** curriculum.concepts rows from the canonical concept registry. */
+export function conceptRows(raw: string, rel: string): CourseRow[] {
+  const arr = JSON.parse(raw) as Array<Record<string, unknown>>;
+  if (!Array.isArray(arr)) throw new Error(`${rel}: expected a top-level JSON array`);
+  const seen = new Set<string>();
+  return arr.map((entry) => {
+    const id = typeof entry.id === "string" ? entry.id : "";
+    if (!id) throw new Error(`${rel}: concept missing id`);
+    if (seen.has(id)) throw new Error(`${rel}: duplicate concept id: ${id}`);
+    seen.add(id);
+    const rowHash = sha256(JSON.stringify(entry));
+    return {
+      kind: "concepts",
+      ledgerKey: `concepts#${id}`,
+      hash: rowHash,
+      row: { id, data: entry, content_hash: rowHash },
+    };
+  });
+}
+
+/** curriculum.unit_concepts rows from the materialized unit concept index. */
+export function unitConceptRows(raw: string, rel: string): CourseRow[] {
+  const obj = JSON.parse(raw) as Record<string, unknown>;
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+    throw new Error(`${rel}: expected a top-level JSON object`);
+  }
+  return Object.entries(obj).sort(([a], [b]) => a.localeCompare(b)).map(([unitKey, data]) => {
+    if (unitKey.split("/").length !== 2) throw new Error(`${rel}: invalid unit key: ${unitKey}`);
+    const rowHash = sha256(JSON.stringify(data));
+    return {
+      kind: "unit_concepts",
+      ledgerKey: `unit_concepts#${unitKey}`,
+      hash: rowHash,
+      row: { unit_key: unitKey, data, content_hash: rowHash },
+    };
+  });
+}
+
+/** curriculum.lesson_graph rows from the materialized language-independent lesson graph. */
+export function lessonGraphRows(raw: string, rel: string): CourseRow[] {
+  const obj = JSON.parse(raw) as Record<string, unknown>;
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+    throw new Error(`${rel}: expected a top-level JSON object`);
+  }
+  return Object.entries(obj).sort(([a], [b]) => a.localeCompare(b)).map(([lessonKey, data]) => {
+    const parts = lessonKey.split("/");
+    if (parts.length !== 3 || parts.some((part) => !part)) {
+      throw new Error(`${rel}: invalid lesson key: ${lessonKey}`);
+    }
+    const rowHash = sha256(JSON.stringify(data));
+    return {
+      kind: "lesson_graph",
+      ledgerKey: `lesson_graph#${lessonKey}`,
+      hash: rowHash,
+      row: {
+        lesson_key: lessonKey,
+        track: parts[0],
+        unit: parts[1],
+        slug: parts[2],
+        data,
+        content_hash: rowHash,
+      },
+    };
+  });
+}
+
 /** Build every row a corpus file maps to (1 row/file, except tracks/units). */
 export function rowFor(file: CorpusFile, raw: string): CourseRow[] {
   switch (file.kind) {
@@ -354,6 +435,12 @@ export function rowFor(file: CorpusFile, raw: string): CourseRow[] {
       return [drillRow(raw, file.rel, file.hash)];
     case "lab":
       return [labRow(raw, file.rel, file.hash)];
+    case "concepts":
+      return conceptRows(raw, file.rel);
+    case "unit_concepts":
+      return unitConceptRows(raw, file.rel);
+    case "lesson_graph":
+      return lessonGraphRows(raw, file.rel);
   }
 }
 
@@ -482,6 +569,12 @@ export function ledgerKeyToPk(kind: CorpusKind, ledgerKey: string): Record<strin
       const [track, tier] = key.split("/");
       return { track, tier };
     }
+    case "concepts":
+      return { id: key };
+    case "unit_concepts":
+      return { unit_key: key };
+    case "lesson_graph":
+      return { lesson_key: key };
   }
 }
 
@@ -502,5 +595,11 @@ export function pkToLedgerKey(kind: CorpusKind, cols: Record<string, unknown>): 
       return `drill#${cols.track}/${cols.unit}`;
     case "lab":
       return `lab#${cols.track}/${cols.tier}`;
+    case "concepts":
+      return `concepts#${cols.id}`;
+    case "unit_concepts":
+      return `unit_concepts#${cols.unit_key}`;
+    case "lesson_graph":
+      return `lesson_graph#${cols.lesson_key}`;
   }
 }

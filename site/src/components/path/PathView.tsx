@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/path/PathView.tsx
 // The single Planning-screen island. Plain Preact composition — NO client:* here;
 // roadmap.astro mounts this once. Sections (re-skin of docs/redesign/v2 Planning.html):
@@ -166,9 +167,9 @@ export default function PathView({ lang }: { lang: Locale }) {
         </div>
         <div class="reset-block">
           <p class="rb-desc">{t.resetDesc}</p>
-          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm rb-btn" onClick={onResetAll}>
+          <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm rb-btn" onClick={onResetAll}>
             {t.resetCta}
-          </button>
+          </ShadcnButton>
         </div>
       </section>
     </>

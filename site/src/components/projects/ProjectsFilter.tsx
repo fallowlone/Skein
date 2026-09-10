@@ -1,3 +1,5 @@
+import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 
@@ -63,22 +65,22 @@ export default function ProjectsFilter({ lang, projects }: Props) {
       {/* Each select needs a programmatic name: the "All …" option reads as a
           value, not as what the control does. */}
       <div class="proj-filters">
-        <select class="proj-select" aria-label={tt(lang, "Category", "Категория")} value={category} onChange={(e) => setCategory((e.target as HTMLSelectElement).value)}>
+        <ShadcnNativeSelect class="proj-select" aria-label={tt(lang, "Category", "Категория")} value={category} onChange={(e) => setCategory((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All categories", "Все категории")}</option>
           {[["frontend","Frontend"],["backend","Backend"],["fullstack","Fullstack"],["infra","Infra"],["data","Data"],["systems","Systems"],["security","Security"],["algorithms","Algorithms"]].map(([v,l]) => <option value={v} key={v}>{l}</option>)}
-        </select>
-        <select class="proj-select" aria-label={tt(lang, "Track", "Трек")} value={track} onChange={(e) => setTrack((e.target as HTMLSelectElement).value)}>
+        </ShadcnNativeSelect>
+        <ShadcnNativeSelect class="proj-select" aria-label={tt(lang, "Track", "Трек")} value={track} onChange={(e) => setTrack((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All tracks", "Все треки")}</option>
           {tracks.map((tr) => <option value={tr} key={tr}>{tr}</option>)}
-        </select>
-        <select class="proj-select" aria-label={tt(lang, "Level", "Уровень")} value={difficulty} onChange={(e) => setDifficulty((e.target as HTMLSelectElement).value)}>
+        </ShadcnNativeSelect>
+        <ShadcnNativeSelect class="proj-select" aria-label={tt(lang, "Level", "Уровень")} value={difficulty} onChange={(e) => setDifficulty((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All levels", "Все уровни")}</option>
           {["starter", "intermediate", "advanced"].map((d) => <option value={d} key={d}>{d}</option>)}
-        </select>
-        <select class="proj-select" aria-label={tt(lang, "Kind", "Вид")} value={runnable} onChange={(e) => setRunnable((e.target as HTMLSelectElement).value)}>
+        </ShadcnNativeSelect>
+        <ShadcnNativeSelect class="proj-select" aria-label={tt(lang, "Kind", "Вид")} value={runnable} onChange={(e) => setRunnable((e.target as HTMLSelectElement).value)}>
           <option value="all">{tt(lang, "All projects", "Все проекты")}</option>
           <option value="runnable">{tt(lang, "Runnable only", "Только запускаемые")}</option>
-        </select>
+        </ShadcnNativeSelect>
       </div>
       <p class="proj-count">
         {tt(lang, `${shown.length} shown · ${runnableTotal} runnable starters`, `Показано: ${shown.length} · запускаемых стартеров: ${runnableTotal}`)}
@@ -97,14 +99,14 @@ export default function ProjectsFilter({ lang, projects }: Props) {
             </div>
             <div class="pc-actions">
               <a href={`/${lang}/projects/${p.slug}`} class="pc-link">{tt(lang, "Open project →", "Открыть проект →")}</a>
-              <button
+              <ShadcnButton
                 type="button"
                 class="pc-add"
                 aria-pressed={buildList.includes(p.slug)}
                 onClick={() => toggleProject(p.slug)}
               >
                 {buildList.includes(p.slug) ? tt(lang, "✓ Added", "✓ Добавлено") : tt(lang, "+ Add", "+ Добавить")}
-              </button>
+              </ShadcnButton>
             </div>
           </li>
         ))}
@@ -117,7 +119,7 @@ export default function ProjectsFilter({ lang, projects }: Props) {
             {selected.map((p) => (
               <span class="project-cart-chip" key={p.slug}>
                 <span>{p.title}</span>
-                <button type="button" aria-label={tt(lang, `Remove ${p.title}`, `Убрать ${p.title}`)} onClick={() => toggleProject(p.slug)}>×</button>
+                <ShadcnButton type="button" aria-label={tt(lang, `Remove ${p.title}`, `Убрать ${p.title}`)} onClick={() => toggleProject(p.slug)}>×</ShadcnButton>
               </span>
             ))}
           </div>
@@ -129,11 +131,11 @@ export default function ProjectsFilter({ lang, projects }: Props) {
                 <small>{tt(lang, "Managed AI reviews · See offer", "Managed AI-разборы · Подробнее")}</small>
               </span>
             </a>
-            <button type="button" class="project-cart-open" onClick={openAll}>
+            <ShadcnButton type="button" class="project-cart-open" onClick={openAll}>
               <span aria-hidden="true">↗</span>
               <span><strong>{tt(lang, "Open all", "Открыть все")}</strong><small>{buildList.length} {tt(lang, "tabs", "вкладки")}</small></span>
-            </button>
-            <button type="button" class="project-cart-collapse" aria-label={tt(lang, "Collapse build list", "Свернуть список")}>⌃</button>
+            </ShadcnButton>
+            <ShadcnButton type="button" class="project-cart-collapse" aria-label={tt(lang, "Collapse build list", "Свернуть список")}>⌃</ShadcnButton>
           </div>
         </aside>
       )}

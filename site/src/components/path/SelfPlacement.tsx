@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/path/SelfPlacement.tsx
 // Per-track self-placement grid: pick "how far you already are" per track; each pick batch-
 // declares the track's concepts up to that band (declared source — diagnostics still override).
@@ -48,14 +49,14 @@ export default function SelfPlacement({ lang }: { lang: Locale }) {
                 <span class="sp-track">{track}</span>
                 <div class="seg sp-levels" role="group" aria-label={track}>
                   {LEVELS.map((lv) => (
-                    <button
+                    <ShadcnButton
                       key={lv}
                       type="button"
                       aria-pressed={(picked[track] ?? "none") === lv}
                       onClick={() => pick(track, lv)}
                     >
                       {t.levels[lv]}
-                    </button>
+                    </ShadcnButton>
                   ))}
                 </div>
               </div>

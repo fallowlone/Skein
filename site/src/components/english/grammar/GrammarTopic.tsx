@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // GrammarTopic — the study screen for one topic, per CEFR level. RU teaching
 // prose is primary (gold); the topic animation sits up top as a framed plate.
 // "Practise this topic" swaps in the embedded GrammarPractice runner.
@@ -98,7 +99,7 @@ export default function GrammarTopic({ lang, topic, familyTitle, related, crossS
               {topic.levels.map((lv) => {
                 const locked = isLevelLocked(lv, band);
                 return (
-                  <button
+                  <ShadcnButton
                     key={lv}
                     type="button"
                     class={locked ? "locked" : ""}
@@ -112,7 +113,7 @@ export default function GrammarTopic({ lang, topic, familyTitle, related, crossS
                         <rect x="5" y="11" width="14" height="9" rx="1.5" /><path d="M8 11V7.5a4 4 0 018 0V11" />
                       </svg>
                     )}
-                  </button>
+                  </ShadcnButton>
                 );
               })}
             </div>
@@ -216,9 +217,9 @@ export default function GrammarTopic({ lang, topic, familyTitle, related, crossS
                 <span class="kicker">{gt("practice_this", lang)}</span>
                 <span class="pca-num">100+ <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: 400, color: "var(--muted)" }}>{gt("items_ready", lang)}</span></span>
                 {lesson?.tip && <span class="pca-line">{lesson.tip[lang]}</span>}
-                <button type="button" class="btn btn-primary" style={{ justifyContent: "center" }} onClick={() => setView("practice")}>
+                <ShadcnButton type="button" class="btn btn-primary" style={{ justifyContent: "center" }} onClick={() => setView("practice")}>
                   <span>{gt("practice_this", lang)}</span><span class="arrow">→</span>
-                </button>
+                </ShadcnButton>
               </div>
             )}
 

@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Input as ShadcnInput } from "~/components/ui/input";
 // src/components/path/planning/GoalSection.tsx
 // 01 · GOAL — preset goals as toggle cards with a clear rank (1 = most important; rank 1 gets
 // the most time), a derived plan-time split bar, and a live rank panel under each active card.
@@ -178,20 +180,20 @@ export default function GoalSection({ lang }: { lang: Locale }) {
           const recommended = g.id === COLD_START_GOAL_ID;
           return (
             <div key={g.id} class={`goal-cell${on ? " is-active" : ""}`}>
-              <button type="button" class="goal-card" aria-pressed={on} aria-label={g.label[lang]} onClick={() => toggle(g.id)}>
+              <ShadcnButton type="button" class="goal-card" aria-pressed={on} aria-label={g.label[lang]} onClick={() => toggle(g.id)}>
                 {on && <span class="gc-prio" title={`priority ${rank}`}>{rank}</span>}
                 <span class="gc-title-row">
                   <span class="gc-name">{g.label[lang]}</span>
                   {recommended && <span class="gc-rec">{t.recommended}</span>}
                 </span>
                 <span class="gc-meta">{goalMeta(lang, g)}</span>
-              </button>
+              </ShadcnButton>
               {on && (
                 <div class="rank-panel">
                   <span class="rp-share">{t.rankSym}{rank} · <b>~{shareOf(rank!)}%</b> {t.ofPlan}</span>
                   <span class="rp-ctrl">
-                    <button type="button" class="rp-btn" aria-label={t.up} disabled={rank === 1} onClick={() => move(g.id, "up")}>↑</button>
-                    <button type="button" class="rp-btn" aria-label={t.down} disabled={rank === n} onClick={() => move(g.id, "down")}>↓</button>
+                    <ShadcnButton type="button" class="rp-btn" aria-label={t.up} disabled={rank === 1} onClick={() => move(g.id, "up")}>↑</ShadcnButton>
+                    <ShadcnButton type="button" class="rp-btn" aria-label={t.down} disabled={rank === n} onClick={() => move(g.id, "down")}>↓</ShadcnButton>
                   </span>
                 </div>
               )}
@@ -202,10 +204,10 @@ export default function GoalSection({ lang }: { lang: Locale }) {
 
       {/* ── refine / custom goals ── */}
       <div class="refine">
-        <button type="button" class="refine-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <ShadcnButton type="button" class="refine-toggle" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
           <span class="rt-label">{open ? t.hide : t.refine}</span>
           <span class="rt-icon" aria-hidden="true">⌄</span>
-        </button>
+        </ShadcnButton>
 
         {open && (
           <div class="refine-panel">
@@ -214,7 +216,7 @@ export default function GoalSection({ lang }: { lang: Locale }) {
               <div class="cg-field">
                 <div class="cmdk cg-search">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></svg>
-                  <input
+                  <ShadcnInput
                     type="text" autocomplete="off" aria-label={t.search} placeholder={t.search}
                     value={q}
                     onInput={(e) => { setQ((e.target as HTMLInputElement).value); setCursor(-1); }}
@@ -228,7 +230,7 @@ export default function GoalSection({ lang }: { lang: Locale }) {
                       <div class="cg-empty">{t.noMatch} “{q.trim()}”</div>
                     ) : (
                       results.map((c, i) => (
-                        <button
+                        <ShadcnButton
                           key={c.id} type="button"
                           class={`cg-result${i === cursor ? " is-cursor" : ""}`}
                           onMouseEnter={() => setCursor(i)}
@@ -237,7 +239,7 @@ export default function GoalSection({ lang }: { lang: Locale }) {
                           <span class="cr-name">{c.label[lang]}</span>
                           <span class="cr-dom">{c.track}</span>
                           <span class="cr-add" aria-hidden="true">＋</span>
-                        </button>
+                        </ShadcnButton>
                       ))
                     )}
                   </div>
@@ -252,7 +254,7 @@ export default function GoalSection({ lang }: { lang: Locale }) {
                     return (
                       <span key={id} class="cg-chip">
                         {name}
-                        <button type="button" class="cc-x" aria-label={t.remove(name)} onClick={() => toggleCustomTarget(id)}>×</button>
+                        <ShadcnButton type="button" class="cc-x" aria-label={t.remove(name)} onClick={() => toggleCustomTarget(id)}>×</ShadcnButton>
                       </span>
                     );
                   })
@@ -266,7 +268,7 @@ export default function GoalSection({ lang }: { lang: Locale }) {
                 {tracks.map((tr) => {
                   const off = cfg.excludedTracks.includes(tr);
                   return (
-                    <button key={tr} type="button" class="track-chip" aria-pressed={off} onClick={() => toggleExcludedTrack(tr)}>{tr}</button>
+                    <ShadcnButton key={tr} type="button" class="track-chip" aria-pressed={off} onClick={() => toggleExcludedTrack(tr)}>{tr}</ShadcnButton>
                   );
                 })}
               </div>

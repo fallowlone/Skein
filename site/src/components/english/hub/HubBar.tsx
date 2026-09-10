@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // Hub bar — kicker + title + sub-lead, the register toggle (same engine, two registers), a CEFR
 // chip (band from placement, within-band progress derived from live coverage), and the streak chip.
 // Plain Preact, rendered inside HubLanding (NOT its own island). Reads the signals it depends on in
@@ -87,14 +88,14 @@ export default function HubBar({ lang }: { lang: Locale }) {
           </span>
           <div class="seg" id="register-seg" role="group" aria-label={L.regGroup}>
             {(["engineering", "everyday"] as Register[]).map((r) => (
-              <button
+              <ShadcnButton
                 key={r}
                 type="button"
                 aria-pressed={reg === r}
                 onClick={() => setRegister(r)}
               >
                 {r === "engineering" ? L.engineering : L.everyday}
-              </button>
+              </ShadcnButton>
             ))}
           </div>
         </div>

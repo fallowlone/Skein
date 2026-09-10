@@ -25,6 +25,7 @@ export interface DoNowInput {
   unitLessons: Map<string, string[]>;          // unitId → ordered lesson keys
   lessonStatus: (lessonKey: string) => Record<string, string>; // taskId → "seen"|"attempted"|"done"
   mastery: (conceptOrUnit: string) => number;  // caller resolves a unit to its first-concept mastery
+  lessonGraphScore?: (lessonKey: string) => { mastery: number; prereqMastery: number };
   threshold: number;                           // "known" cutoff (drives the difficulty tier)
   dueReviewKeys: { cardKey: string; lessonKey: string }[];
   tasksByLesson: (lessonKey: string) => { id: string; difficulty: string }[];
@@ -58,26 +59,53 @@ export function buildDoNow(input: DoNowInput): DoNowItem[] {
   }
 
   // 2. The next unfinished task in the first `maxUnits` lead units, at the adaptive tier.
+  // When the lesson graph is available, prefer lessons whose prerequisite concepts are ready,
+  // then the least-mastered ready lesson. This lets diagnostics skip material already proven while
+  // keeping weak prerequisite lessons ahead of advanced ones. Original lesson order breaks ties.
   for (const lead of input.leadUnits.slice(0, Math.max(0, input.maxUnits))) {
     const unit = unitOf(lead);
     const lessons = input.unitLessons.get(unit) ?? [];
-    const mastery = input.mastery(unit);
-    for (const lessonKey of lessons) {
+    const candidates: {
+      lessonKey: string;
+      task: { id: string; difficulty: string };
+      mastery: number;
+      prereqMastery: number;
+      order: number;
+    }[] = [];
+    for (let order = 0; order < lessons.length; order++) {
+      const lessonKey = lessons[order];
       const tasks = input.tasksByLesson(lessonKey);
       if (!tasks.length) continue;
       const status = input.lessonStatus(lessonKey);
+      const graphScore = input.lessonGraphScore?.(lessonKey);
+      const mastery = graphScore?.mastery ?? input.mastery(unit);
       const next = recommendTask(tasks, mastery, input.threshold, status);
       if (!next) continue; // every task in this lesson is done — try the next lesson
-      items.push({
-        kind: "task",
-        unit,
-        lesson: lessonKey,
-        taskId: next.id,
-        difficulty: next.difficulty,
-        reason: "next-task",
+      candidates.push({
+        lessonKey,
+        task: next,
+        mastery,
+        prereqMastery: graphScore?.prereqMastery ?? 1,
+        order,
       });
-      break; // one action per lead unit
     }
+    if (!candidates.length) continue;
+
+    const ready = candidates.filter((c) => c.prereqMastery >= input.threshold);
+    const pool = ready.length ? ready : candidates;
+    pool.sort((a, b) =>
+      (ready.length ? a.mastery - b.mastery : b.prereqMastery - a.prereqMastery) ||
+      a.order - b.order,
+    );
+    const chosen = pool[0];
+    items.push({
+      kind: "task",
+      unit,
+      lesson: chosen.lessonKey,
+      taskId: chosen.task.id,
+      difficulty: chosen.task.difficulty,
+      reason: "next-task",
+    });
   }
 
   return items;

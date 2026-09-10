@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 
@@ -32,30 +33,30 @@ export default function Sequencer({ id, steps, loop = false, lang = "en", childr
     >
       <div class="relative">{children}</div>
       <div class="mt-4 flex items-center gap-3">
-        <button
+        <ShadcnButton
           type="button"
           class="oa-btn oa-btn-ghost oa-btn-sm"
           onClick={() => setActive(Math.max(0, active - 1))}
           aria-label={lang === "en" ? "Previous step" : "Предыдущий шаг"}
         >
           ‹
-        </button>
-        <button
+        </ShadcnButton>
+        <ShadcnButton
           type="button"
           class="oa-btn oa-btn-primary oa-btn-sm"
           onClick={() => setPlaying(!playing)}
           aria-label={playing ? "Pause" : "Play"}
         >
           {playing ? "⏸" : "▶"}
-        </button>
-        <button
+        </ShadcnButton>
+        <ShadcnButton
           type="button"
           class="oa-btn oa-btn-ghost oa-btn-sm"
           onClick={() => setActive(Math.min(steps.length - 1, active + 1))}
           aria-label={lang === "en" ? "Next step" : "Следующий шаг"}
         >
           ›
-        </button>
+        </ShadcnButton>
         <span class="text-xs font-mono text-muted">
           {active + 1}/{steps.length} · {steps[active].label}
         </span>
