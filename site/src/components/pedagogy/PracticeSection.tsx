@@ -1,3 +1,7 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
+import { Input as ShadcnInput } from "~/components/ui/input";
 import { useLayoutEffect, useState } from "preact/hooks";
 import { lazy, Suspense } from "preact/compat";
 import type { FunctionComponent } from "preact";
@@ -214,7 +218,7 @@ function TaskCard({ lang, lessonKey, task, achievement, recommended, adaptive, o
   const hint = TYPE_HINT[task.type];
   return (
     <div data-practice-task={task.id} class="rounded-[var(--r-md)] border-[0.5px] border-hairline-2 bg-card p-5">
-      <button type="button" onClick={onOpen} class="w-full flex items-center justify-between gap-3 text-left">
+      <ShadcnButton type="button" onClick={onOpen} class="w-full flex items-center justify-between gap-3 text-left">
         <span class="flex items-center gap-2 min-w-0">
           <span class="font-medium text-ink">{tt(lang, task.title.en, task.title.ru)}</span>
           {recommended && (
@@ -242,7 +246,7 @@ function TaskCard({ lang, lessonKey, task, achievement, recommended, adaptive, o
           <span class="text-[10px] font-mono uppercase tracking-wide px-2 py-0.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 text-muted">{tt(lang, (TIER_LABEL[task.difficulty]?.en ?? task.difficulty), (TIER_LABEL[task.difficulty]?.ru ?? task.difficulty))}</span>
           <span class="text-xs font-mono text-muted">{task.estMin} min</span>
         </span>
-      </button>
+      </ShadcnButton>
       {open && (
         <div class="mt-4">
           {hint && <p class="text-xs text-muted italic mb-3">{tt(lang, hint.en, hint.ru)}</p>}
@@ -250,7 +254,7 @@ function TaskCard({ lang, lessonKey, task, achievement, recommended, adaptive, o
           <label class="block text-[10px] font-mono uppercase tracking-wide text-muted mb-1" for={`${task.id}-mode`}>
             {tt(lang, "Working mode", "Режим выполнения")}
           </label>
-          <select
+          <ShadcnNativeSelect
             id={`${task.id}-mode`}
             class="text-sm px-2 py-1.5 mb-1 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 bg-card text-ink"
             value={mode}
@@ -263,7 +267,7 @@ function TaskCard({ lang, lessonKey, task, achievement, recommended, adaptive, o
             <option value="closed-book">{tt(lang, "Closed book", "Без справочных материалов")}</option>
             <option value="docs">{tt(lang, "Documentation allowed", "С документацией")}</option>
             <option value="ai">{tt(lang, "AI assisted", "С AI")}</option>
-          </select>
+          </ShadcnNativeSelect>
           <p class="text-xs text-muted mb-4">{tt(lang, "Choose honestly; the browser does not monitor your tools.", "Выбери честно; браузер не отслеживает твои инструменты.")}</p>
           <TaskBody lang={lang} lessonKey={lessonKey} task={task} mode={mode} onChange={onChange} />
         </div>
@@ -408,7 +412,7 @@ function DebugBody({ lang, lessonKey, task, mode, onChange }: {
         {reflectionFields.map(([key, label]) => (
           <label key={key} class="text-[10px] font-mono uppercase tracking-wide text-muted">
             {label}
-            <textarea
+            <ShadcnTextarea
               class="mt-1 block w-full min-h-[58px] text-xs font-sans normal-case tracking-normal p-2 rounded-[var(--r-sm)] border border-hairline-2 bg-card text-ink"
               aria-label={label}
               value={reflection[key] ?? ""}
@@ -421,7 +425,7 @@ function DebugBody({ lang, lessonKey, task, mode, onChange }: {
           </label>
         ))}
       </div>
-      <button
+      <ShadcnButton
         type="button"
         class="text-xs text-muted underline mb-3"
         onClick={() => {
@@ -430,18 +434,18 @@ function DebugBody({ lang, lessonKey, task, mode, onChange }: {
         }}
       >
         {tt(lang, "Delete debugging notes", "Удалить заметки отладки")}
-      </button>
-      <textarea
+      </ShadcnButton>
+      <ShadcnTextarea
         class="font-mono w-full text-xs p-2 rounded-[var(--r-sm)] border border-hairline-2 bg-[var(--code-bg)] text-[var(--code-ink)] min-h-[120px]"
         value={code}
         onInput={(e) => setCode((e.target as HTMLTextAreaElement).value)}
       />
       <div class="flex items-center gap-2 mt-2">
-        <button type="button" disabled={busy} class="oa-btn oa-btn-primary oa-btn-sm disabled:opacity-50" onClick={run}>
+        <ShadcnButton type="button" disabled={busy} class="oa-btn oa-btn-primary oa-btn-sm disabled:opacity-50" onClick={run}>
           {busy ? tt(lang, "Running…", "Выполняю…") : tt(lang, "Run", "Запустить")}
-        </button>
+        </ShadcnButton>
         {hintIdx < hints.length && (
-          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm"
+          <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm"
             onClick={() => {
               const next = hintIdx + 1;
               setTaskStatus(lessonKey, taskId, "attempted");
@@ -450,16 +454,16 @@ function DebugBody({ lang, lessonKey, task, mode, onChange }: {
               onChange?.();
             }}>
             {tt(lang, "Hint", "Подсказка")}
-          </button>
+          </ShadcnButton>
         )}
         {!showSolution && (
-          <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-xs text-muted" onClick={() => {
+          <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-xs text-muted" onClick={() => {
             setShowSolution(true);
             setTaskStatus(lessonKey, taskId, "attempted");
             onChange?.();
           }}>
             {tt(lang, "Show solution", "Показать решение")}
-          </button>
+          </ShadcnButton>
         )}
       </div>
 
@@ -504,15 +508,15 @@ function ReviewBody({ lang, lessonKey, task, onChange }: {
       <ul class="space-y-1 mb-4">
         {dims.map((d) => (
           <li key={d.key} class="flex items-start gap-2 text-sm">
-            <input type="checkbox" class="mt-1" /> <span>{tt(lang, d.en, d.ru)}</span>
+            <ShadcnInput type="checkbox" class="mt-1" /> <span>{tt(lang, d.en, d.ru)}</span>
           </li>
         ))}
       </ul>
       {!shown ? (
-        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm"
+        <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm"
           onClick={() => { setShown(true); setTaskStatus(lessonKey, taskId, "attempted"); onChange?.(); }}>
           {tt(lang, "Reveal findings", "Показать находки")}
-        </button>
+        </ShadcnButton>
       ) : (
         <div class="mt-2 flex flex-col gap-3">
           {findings.map((f) => (
@@ -602,7 +606,7 @@ function CommitReveal({ lang, lessonKey, task, mode, body, pre, taskType, onChan
       <label class="block text-[10px] font-mono uppercase tracking-wide text-muted mb-1" for={`commit-${taskId}`}>
         {tt(lang, "Your answer — write it before revealing", "Твой ответ — запиши до раскрытия")}
       </label>
-      <textarea
+      <ShadcnTextarea
         id={`commit-${taskId}`}
         class="w-full text-sm p-3 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 bg-card text-ink min-h-[84px] resize-y"
         value={draft}
@@ -613,7 +617,7 @@ function CommitReveal({ lang, lessonKey, task, mode, body, pre, taskType, onChan
 
       {!shown && (
         <div class="flex flex-wrap items-center gap-3 mt-2">
-          <button
+          <ShadcnButton
             type="button"
             class="oa-btn oa-btn-primary oa-btn-sm"
             disabled={!committed}
@@ -621,10 +625,10 @@ function CommitReveal({ lang, lessonKey, task, mode, body, pre, taskType, onChan
             onClick={() => reveal(false)}
           >
             {tt(lang, "Compare with the model answer", "Сравнить с эталоном")}
-          </button>
-          <button type="button" class="text-xs text-muted underline" onClick={() => reveal(true)}>
+          </ShadcnButton>
+          <ShadcnButton type="button" class="text-xs text-muted underline" onClick={() => reveal(true)}>
             {tt(lang, "I don't know — show it", "Не знаю — показать")}
-          </button>
+          </ShadcnButton>
           {!committed && (
             <span class="text-xs text-muted">
               {tt(lang, "Write a sentence to unlock.", "Напиши хотя бы фразу, чтобы открыть.")}
@@ -653,7 +657,7 @@ function CommitReveal({ lang, lessonKey, task, mode, body, pre, taskType, onChan
                   ["partial", tt(lang, "Partly", "Частично")],
                   ["miss", tt(lang, "Missed it", "Не попал")],
                 ] as const).map(([g, label]) => (
-                  <button
+                  <ShadcnButton
                     key={g}
                     type="button"
                     class={`oa-btn oa-btn-sm ${grade === g ? "oa-btn-primary" : "oa-btn-secondary"}`}
@@ -661,7 +665,7 @@ function CommitReveal({ lang, lessonKey, task, mode, body, pre, taskType, onChan
                     onClick={() => applyGrade(g)}
                   >
                     {label}
-                  </button>
+                  </ShadcnButton>
                 ))}
               </div>
             )}
@@ -720,7 +724,7 @@ function Rubric({ lang, lessonKey, taskId, items }: { lang: Locale; lessonKey: s
       <ul class="space-y-1">
         {items.map((it, i) => (
           <li key={i} class="flex items-start gap-2 text-sm">
-            <input
+            <ShadcnInput
               type="checkbox"
               class="mt-1"
               id={`${taskId}-rubric-${i}`}
@@ -764,7 +768,7 @@ function Blanks({ lang, lessonKey, taskId, evidence, blanks, onChange }: {
           <li key={b.id}>
             {b.hint && <label class="block text-sm text-ink-2 mb-1">{b.hint}</label>}
             <div class="flex items-center">
-              <input class="font-mono w-full max-w-md px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
+              <ShadcnInput class="font-mono w-full max-w-md px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
                 placeholder={tt(lang, "one word or number", "одно слово или число")}
                 value={values[b.id] ?? ""}
                 onInput={(e) => setValues({ ...values, [b.id]: (e.target as HTMLInputElement).value })} />
@@ -777,9 +781,9 @@ function Blanks({ lang, lessonKey, taskId, evidence, blanks, onChange }: {
           </li>
         ))}
       </ul>
-      <button type="button" class="oa-btn oa-btn-primary oa-btn-sm mt-3" onClick={submit}>
+      <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm mt-3" onClick={submit}>
         {tt(lang, "Check", "Проверить")}
-      </button>
+      </ShadcnButton>
     </div>
   );
 }
@@ -828,7 +832,7 @@ function Incident({ lang, lessonKey, task, steps, onChange }: {
           <div class="prose max-w-none text-sm mb-2" dangerouslySetInnerHTML={{ __html: s.prompt }} />
           {!revealed[i] ? (
             <div>
-              <textarea
+              <ShadcnTextarea
                 class="w-full text-sm p-2.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 bg-card text-ink min-h-[60px] resize-y"
                 value={drafts[i] ?? ""}
                 aria-label={tt(lang, "Your answer for this step", "Твой ответ на этот шаг")}
@@ -836,7 +840,7 @@ function Incident({ lang, lessonKey, task, steps, onChange }: {
                 onInput={(e) => setDraft(i, (e.target as HTMLTextAreaElement).value)}
               />
               <div class="flex flex-wrap items-center gap-3 mt-1.5">
-                <button
+                <ShadcnButton
                   type="button"
                   class="oa-btn oa-btn-secondary oa-btn-sm"
                   disabled={!isCommitted(drafts[i] ?? "")}
@@ -844,10 +848,10 @@ function Incident({ lang, lessonKey, task, steps, onChange }: {
                   onClick={() => open(i, false)}
                 >
                   {tt(lang, "Compare this step", "Сравнить шаг")}
-                </button>
-                <button type="button" class="text-xs text-muted underline" onClick={() => open(i, true)}>
+                </ShadcnButton>
+                <ShadcnButton type="button" class="text-xs text-muted underline" onClick={() => open(i, true)}>
                   {tt(lang, "Skip", "Пропустить")}
-                </button>
+                </ShadcnButton>
               </div>
             </div>
           ) : (

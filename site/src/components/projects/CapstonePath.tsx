@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Input as ShadcnInput } from "~/components/ui/input";
 // site/src/components/projects/CapstonePath.tsx
 // Guided capstone path: staged milestones with persistent per-milestone completion,
 // a progress bar, a self-checklist definition-of-done, and links to the lessons that
@@ -44,13 +46,13 @@ export default function CapstonePath({ lang, slug, milestones }: { lang: Locale;
                   <span class="cap-no">{String(i + 1).padStart(2, "0")}</span>
                   <span class="cap-mtitle">{tt(lang, m.title.en, m.title.ru)}</span>
                 </div>
-                <button
+                <ShadcnButton
                   type="button"
                   class={`oa-btn oa-btn-sm ${isDone ? "oa-btn-secondary" : "oa-btn-primary"}`}
                   onClick={() => { setMilestoneDone(slug, m.id, !isDone); bump(); }}
                 >
                   {isDone ? tt(lang, "✓ Done", "✓ Готово") : tt(lang, "Mark done", "Отметить готовым")}
-                </button>
+                </ShadcnButton>
               </div>
 
               {(m.goal.en || m.goal.ru) && <p class="cap-goal">{tt(lang, m.goal.en, m.goal.ru)}</p>}
@@ -61,7 +63,7 @@ export default function CapstonePath({ lang, slug, milestones }: { lang: Locale;
                   <ul class="cap-dod-list">
                     {m.definitionOfDone.map((d, j) => (
                       <li key={j}>
-                        <input type="checkbox" /> <span>{tt(lang, d.en, d.ru)}</span>
+                        <ShadcnInput type="checkbox" /> <span>{tt(lang, d.en, d.ru)}</span>
                       </li>
                     ))}
                   </ul>

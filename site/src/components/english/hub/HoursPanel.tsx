@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // Input-hours panel — the methodology's primary metric, with one-tap quick-log for EXTERNAL
 // input (YouTube/podcasts/reading outside the site). Plain Preact inside HubLanding; styled with
 // the english-hub.css editorial vocabulary, not utility classes.
@@ -68,15 +69,15 @@ export default function HoursPanel({ lang }: { lang: Locale }) {
         <div class="hours-log">
           <span class="hl-label">{L.add}</span>
           {[15, 30, 60].map((m) => (
-            <button key={m} type="button" class="btn btn-ext btn-sm"
+            <ShadcnButton key={m} type="button" class="btn btn-ext btn-sm"
               onClick={() => logMinutes("input-active", m, "external")}>
               +{m}′ {L.active}
-            </button>
+            </ShadcnButton>
           ))}
-          <button type="button" class="btn btn-ext btn-sm"
+          <ShadcnButton type="button" class="btn btn-ext btn-sm"
             onClick={() => logMinutes("input-passive", 30, "external")}>
             +30′ {L.passive}
-          </button>
+          </ShadcnButton>
         </div>
       </div>
     </section>

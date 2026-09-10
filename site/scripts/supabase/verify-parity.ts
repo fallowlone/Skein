@@ -10,9 +10,11 @@
  *
  * Env: SUPABASE_URL + SUPABASE_SECRET_KEY (real env or site/.env.local).
  */
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { materialize, KINDS, type CorpusKind, pkToLedgerKey } from "./corpus.ts";
+import { KINDS, type CorpusKind, pkToLedgerKey } from "./corpus.ts";
+import { materializePublishedCorpus } from "./publish-corpus.ts";
 import {
   TABLE_COLUMNS,
   loadEnv,
@@ -24,6 +26,12 @@ import {
 } from "./supabase.ts";
 
 const SITE_ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
+
+// Externalized-corpus policy: when the lesson corpus lives outside this repo,
+// remote `lessons` extras are allowed (the repo does not own the full set).
+function allowRemoteExtras(kind: CorpusKind, lessonsExternalized: boolean): boolean {
+  return kind === "lessons" && lessonsExternalized;
+}
 
 function sampleValue(): number {
   const i = process.argv.indexOf("--sample");
@@ -54,8 +62,13 @@ async function main(): Promise<void> {
   }
   const client = makeClient(url, key);
 
-  const rows = await materialize(SITE_ROOT);
-    const localByKind = new Map<CorpusKind, Map<string, string>>();
+  const lessonsExternalized = !existsSync(resolve(SITE_ROOT, "src/content/lessons"));
+  const { rows, render } = await materializePublishedCorpus(SITE_ROOT);
+  console.log(
+    `[parity] lesson render trees: ${render.lessons} lessons, ` +
+      `${render.cacheHits} cache hits, ${render.cacheMisses} compiled`,
+  );
+  const localByKind = new Map<CorpusKind, Map<string, string>>();
   for (const k of KINDS) localByKind.set(k, new Map());
   for (const r of rows) localByKind.get(r.kind)!.set(r.ledgerKey, r.hash);
 
@@ -92,8 +105,10 @@ async function main(): Promise<void> {
       if (rh !== localRows.get(k)) drift += 1;
     }
     let extra = 0;
-    for (const k of remote.keys()) {
-      if (!localRows.has(k)) extra += 1;
+    if (!allowRemoteExtras(kind, lessonsExternalized)) {
+      for (const k of remote.keys()) {
+        if (!localRows.has(k)) extra += 1;
+      }
     }
     const note = sample > 0 ? ` (of ${localRows.size} local)` : "";
     console.log(

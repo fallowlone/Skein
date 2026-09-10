@@ -1,3 +1,4 @@
+import { Input as ShadcnInput } from "~/components/ui/input";
 import { useState } from "preact/hooks";
 import Sandbox from "../Sandbox";
 
@@ -121,7 +122,7 @@ export default function DBLeverSandbox({ lang }: Props) {
             <span class="text-sm font-medium">
               {t("Row count", "Размер таблицы")}: 10^{rowsLog} ≈ {Math.pow(10, rowsLog).toLocaleString()}
             </span>
-            <input
+            <ShadcnInput
               type="range"
               min={3}
               max={9}
@@ -136,7 +137,7 @@ export default function DBLeverSandbox({ lang }: Props) {
             <legend class="text-sm font-medium">{t("Workload", "Нагрузка")}</legend>
             {(["read-heavy", "write-heavy", "mixed"] as Workload[]).map((w) => (
               <label class="block text-sm">
-                <input
+                <ShadcnInput
                   type="radio"
                   name="workload"
                   value={w}
@@ -152,7 +153,7 @@ export default function DBLeverSandbox({ lang }: Props) {
             <legend class="text-sm font-medium">{t("Tenancy", "Tenancy")}</legend>
             {(["single", "multi"] as Tenancy[]).map((tt) => (
               <label class="block text-sm">
-                <input
+                <ShadcnInput
                   type="radio"
                   name="tenancy"
                   value={tt}
@@ -170,7 +171,7 @@ export default function DBLeverSandbox({ lang }: Props) {
               ["slow-query", "lock-wait", "bloat", "connection-storm", "hot-shard"] as Symptom[]
             ).map((s) => (
               <label class="block text-sm">
-                <input
+                <ShadcnInput
                   type="radio"
                   name="symptom"
                   value={s}

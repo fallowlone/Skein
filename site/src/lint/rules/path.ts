@@ -23,6 +23,10 @@ export interface PathConceptLike {
   track: string;
   band: string;
   requires: string[];
+  // Registry-only concept authored solely on quiz/project/drill surfaces: by
+  // design outside the planner (units teach only NN-* lessons), so the hard
+  // reachability gate exempts it.
+  assessmentOnly?: boolean;
 }
 export interface PathUnitLike { teaches: string[]; requires: string[]; estMin: number }
 export interface PathGoalLike {
@@ -124,8 +128,10 @@ export function validatePathData(data: PathData): string[] {
     if (!(Number.isFinite(u.estMin) && u.estMin > 0)) push(`unit "${uid}" has invalid estMin ${u.estMin}`);
   }
   let orphans = 0;
-  for (const id of ids) if (!taught.has(id)) {
-    if (orphans++ < 15) push(`concept "${id}" is taught by no unit`);
+  for (const c of concepts) {
+    if (c.assessmentOnly) continue; // assessment surface; outside the planner by design
+    if (taught.has(c.id)) continue;
+    if (orphans++ < 15) push(`concept "${c.id}" is taught by no unit`);
   }
   if (orphans > 15) push(`…and ${orphans - 15} more untaught concepts`);
 
