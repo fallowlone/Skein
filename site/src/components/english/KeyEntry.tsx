@@ -1,3 +1,5 @@
+import { Input as ShadcnInput } from "~/components/ui/input";
+import { Button as ShadcnButton } from "~/components/ui/button";
 // site/src/components/english/KeyEntry.tsx
 import { useState, useEffect } from "preact/hooks";
 import { keyStatus, setKey, unlock, clearKey, type KeyStatus } from "~/english/byok";
@@ -58,33 +60,33 @@ export default function KeyEntry({ lang, onChange }: Props) {
         <div class="flex flex-col gap-2 mb-4">
           <div class="text-[13px] text-ink">{L.locked}</div>
           <div class="flex gap-2">
-            <input type="password" value={unlockPass} placeholder={L.passPh} onInput={(e) => setUnlockPass((e.target as HTMLInputElement).value)}
+            <ShadcnInput type="password" value={unlockPass} placeholder={L.passPh} onInput={(e) => setUnlockPass((e.target as HTMLInputElement).value)}
               class="flex-1 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] text-ink focus:border-accent" />
-            <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy} onClick={doUnlock}>{L.unlock}</button>
+            <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy} onClick={doUnlock}>{L.unlock}</ShadcnButton>
           </div>
         </div>
       ) : status === "none" ? (
         <div class="flex flex-col gap-3 mb-4">
-          <input type="password" autocomplete="off" value={apiKey} placeholder={L.keyPh} onInput={(e) => setApiKey((e.target as HTMLInputElement).value)}
+          <ShadcnInput type="password" autocomplete="off" value={apiKey} placeholder={L.keyPh} onInput={(e) => setApiKey((e.target as HTMLInputElement).value)}
             class="bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] text-ink font-mono focus:border-accent" />
           <div class="flex gap-2">
             {(["device", "passphrase"] as const).map((m) => (
-              <button key={m} type="button" onClick={() => setMode(m)}
+              <ShadcnButton key={m} type="button" onClick={() => setMode(m)}
                 class={`font-mono text-[11px] uppercase px-3 py-1.5 border rounded-[2px] cursor-pointer ${mode === m ? "bg-ink text-paper border-ink" : "bg-transparent text-muted border-rule"}`}>
                 {m === "device" ? L.device : L.passphrase}
-              </button>
+              </ShadcnButton>
             ))}
           </div>
           {mode === "passphrase" ? (
-            <input type="password" value={pass} placeholder={L.passPh} onInput={(e) => setPass((e.target as HTMLInputElement).value)}
+            <ShadcnInput type="password" value={pass} placeholder={L.passPh} onInput={(e) => setPass((e.target as HTMLInputElement).value)}
               class="bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] text-ink focus:border-accent" />
           ) : null}
-          <button type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" disabled={busy || apiKey.trim().length === 0 || (mode === "passphrase" && pass.length === 0)} onClick={save}>{L.save}</button>
+          <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" disabled={busy || apiKey.trim().length === 0 || (mode === "passphrase" && pass.length === 0)} onClick={save}>{L.save}</ShadcnButton>
         </div>
       ) : (
         <div class="flex items-center gap-3 mb-4">
           <span class="text-[13px] text-ink">✓ {L.saved}</span>
-          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={remove}>{L.remove}</button>
+          <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={remove}>{L.remove}</ShadcnButton>
         </div>
       )}
 
@@ -92,10 +94,10 @@ export default function KeyEntry({ lang, onChange }: Props) {
         <div class="text-[12px] text-muted mb-2">{L.model}</div>
         <div class="flex gap-2">
           {(["claude-haiku-4-5", "claude-sonnet-4-6"] as const).map((m) => (
-            <button key={m} type="button" onClick={() => pickModel(m)}
+            <ShadcnButton key={m} type="button" onClick={() => pickModel(m)}
               class={`font-mono text-[11px] px-3 py-1.5 border rounded-[2px] cursor-pointer ${model === m ? "bg-ink text-paper border-ink" : "bg-transparent text-muted border-rule"}`}>
               {m === "claude-haiku-4-5" ? "Haiku" : "Sonnet"}
-            </button>
+            </ShadcnButton>
           ))}
         </div>
       </div>

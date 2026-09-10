@@ -62,6 +62,29 @@ describe("buildDoNow", () => {
     expect(goTask?.taskId).toBe("r2");
   });
 
+  it("uses graph readiness and lesson mastery instead of blindly taking the first unfinished lesson", () => {
+    const items = buildDoNow(baseInput({
+      leadUnits: ["go/01-basics"],
+      lessonGraphScore: (lessonKey) => lessonKey.endsWith("01-intro")
+        ? { mastery: 0.9, prereqMastery: 1 }
+        : { mastery: 0.2, prereqMastery: 1 },
+    }));
+    const goTask = items.find((i) => i.kind === "task" && i.unit === "go/01-basics");
+    expect(goTask?.lesson).toBe("go/01-basics/02-vars");
+    expect(goTask?.taskId).toBe("r2");
+  });
+
+  it("does not jump to a weak advanced lesson while its graph prerequisites are unready", () => {
+    const items = buildDoNow(baseInput({
+      leadUnits: ["go/01-basics"],
+      lessonGraphScore: (lessonKey) => lessonKey.endsWith("01-intro")
+        ? { mastery: 0.4, prereqMastery: 1 }
+        : { mastery: 0.1, prereqMastery: 0.2 },
+    }));
+    const goTask = items.find((i) => i.kind === "task" && i.unit === "go/01-basics");
+    expect(goTask?.lesson).toBe("go/01-basics/01-intro");
+  });
+
   it("emits no task for a unit whose lessons are all complete", () => {
     const items = buildDoNow(baseInput({
       leadUnits: ["go/01-basics"],

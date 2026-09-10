@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/path/planning/UnitRow.tsx
 // One dependency-ordered unit in the Next-path list. Re-skin of PathCard — every
 // affordance preserved: I-know-this / skip / pin / move up·down / loosen /
@@ -105,13 +106,13 @@ export default function UnitRow(p: UnitRowProps) {
           )}
         </div>
         <div class="u-actions">
-          <button type="button" class="u-act" onClick={p.onKnow}>{t.iKnow}</button>
-          <button type="button" class="u-act" onClick={p.onSkip}>{t.skip}</button>
-          <button type="button" class={`u-act${pinned ? " is-on" : ""}`} aria-pressed={pinned} onClick={p.onPin}>{pinned ? t.pinned : t.pin}</button>
-          <button type="button" class="u-act" aria-label={`${t.up}`} onClick={() => p.onMove("up")}>{t.up}</button>
-          <button type="button" class="u-act" aria-label={`${t.down}`} onClick={() => p.onMove("down")}>{t.down}</button>
-          <button type="button" class="u-act" onClick={p.onLoosen} title="not a prerequisite">{t.loosen}</button>
-          {hasQuickCheck && <button type="button" class="u-act quick" onClick={p.onQuickCheck}>✓ {t.quick}</button>}
+          <ShadcnButton type="button" class="u-act" onClick={p.onKnow}>{t.iKnow}</ShadcnButton>
+          <ShadcnButton type="button" class="u-act" onClick={p.onSkip}>{t.skip}</ShadcnButton>
+          <ShadcnButton type="button" class={`u-act${pinned ? " is-on" : ""}`} aria-pressed={pinned} onClick={p.onPin}>{pinned ? t.pinned : t.pin}</ShadcnButton>
+          <ShadcnButton type="button" class="u-act" aria-label={`${t.up}`} onClick={() => p.onMove("up")}>{t.up}</ShadcnButton>
+          <ShadcnButton type="button" class="u-act" aria-label={`${t.down}`} onClick={() => p.onMove("down")}>{t.down}</ShadcnButton>
+          <ShadcnButton type="button" class="u-act" onClick={p.onLoosen} title="not a prerequisite">{t.loosen}</ShadcnButton>
+          {hasQuickCheck && <ShadcnButton type="button" class="u-act quick" onClick={p.onQuickCheck}>✓ {t.quick}</ShadcnButton>}
         </div>
       </div>
       {ready && startHref ? (

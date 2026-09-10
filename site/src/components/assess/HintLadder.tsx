@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // site/src/components/assess/HintLadder.tsx
 // Up to two hints. Presentational only: `onHint` dispatches session.ts's "hint"
 // action, which is what actually bumps `state.hintsUsed` (and — via likelihood.ts
@@ -23,9 +24,9 @@ export default function HintLadder({ lang, hints, hintsUsed, onHint }: Props) {
   return (
     <div class="assess-hints">
       {hintsUsed < cap && (
-        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={onHint}>
+        <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={onHint}>
           {t("assess.item.hint", lang)} ({hintsUsed}/{cap})
-        </button>
+        </ShadcnButton>
       )}
       {revealed.length > 0 && (
         <ul class="assess-hint-list">

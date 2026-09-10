@@ -1,3 +1,6 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
+import { Input as ShadcnInput } from "~/components/ui/input";
 // src/components/english/grammar/GrammarPlanner.tsx
 import { useMemo, useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
@@ -57,7 +60,7 @@ function PlanView({ lang, topics, coverage, goal }: PlanViewProps) {
       <div class={"gplan-fc " + forecast.verdict}>
         <span class="gplan-fc-verdict">{gt(verdictKey, lang)}</span>
         <span class="gplan-fc-count">{forecast.countdownDays} {gt("fc_countdown", lang)}</span>
-        <button type="button" class="btn ghost btn-sm" onClick={() => clearGrammarGoal()}>{gt("goal_change", lang)}</button>
+        <ShadcnButton type="button" class="btn ghost btn-sm" onClick={() => clearGrammarGoal()}>{gt("goal_change", lang)}</ShadcnButton>
       </div>
 
       <section class="gplan-today">
@@ -105,19 +108,19 @@ function GoalSetter({ lang }: { lang: Locale }) {
     <div class="gplan-goalset">
       <h2>{gt("goal_title", lang)}</h2>
       <label>{gt("goal_target", lang)}
-        <select value={target} onChange={(e) => setTarget((e.target as HTMLSelectElement).value as Cefr)}>
+        <ShadcnNativeSelect value={target} onChange={(e) => setTarget((e.target as HTMLSelectElement).value as Cefr)}>
           {TARGETS.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
+        </ShadcnNativeSelect>
       </label>
       <label>{gt("goal_deadline", lang)}
-        <input type="number" min={1} max={104} value={weeks}
+        <ShadcnInput type="number" min={1} max={104} value={weeks}
           onInput={(e) => setWeeks(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} />
       </label>
       <label>{gt("goal_hours", lang)}
-        <input type="number" min={0} max={12} step={0.5} value={hours}
+        <ShadcnInput type="number" min={0} max={12} step={0.5} value={hours}
           onInput={(e) => setHours(Math.max(0, Number((e.target as HTMLInputElement).value) || 0))} />
       </label>
-      <button type="button" class="btn" onClick={save}>{gt("goal_save", lang)}</button>
+      <ShadcnButton type="button" class="btn" onClick={save}>{gt("goal_save", lang)}</ShadcnButton>
     </div>
   );
 }

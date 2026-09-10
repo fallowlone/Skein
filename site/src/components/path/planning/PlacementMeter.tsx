@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/path/planning/PlacementMeter.tsx
 // Visualises how much of the active goal frontier is measured / declared /
 // propagated / guessed. Surfaces SelfPlacement so the learner can declare the
@@ -108,14 +109,14 @@ export default function PlacementMeter({ lang }: { lang: Locale }) {
       {showDeclare && (
         <div class="pm-declare">
           <p class="pm-declare-hint">{t.declareHint}</p>
-          <button
+          <ShadcnButton
             type="button"
             class="btn btn-sm"
             onClick={() => setDeclareOpen((o) => !o)}
             aria-expanded={declareOpen}
           >
             {t.declareCta}
-          </button>
+          </ShadcnButton>
           {declareOpen && (
             <div class="pm-declare-panel">
               <SelfPlacement lang={lang} />

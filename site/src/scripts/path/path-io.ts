@@ -574,6 +574,7 @@ export function recordPracticeOutcome(
 // task row when the UI supplies real tasks; reviews always surface regardless.
 export function computeDoNow(opts?: {
   tasksByLesson?: (lessonKey: string) => { id: string; difficulty: string }[];
+  lessonGraph?: Record<string, { concepts: string[]; prereqConcepts: string[] }>;
   maxUnits?: number;
   path?: Path; // pass an already-computed path to avoid a second (expensive) set-cover build per render
 }): DoNowItem[] {
@@ -584,11 +585,25 @@ export function computeDoNow(opts?: {
     const first = teachesByUnit.get(unitId)?.[0];
     return first ? masteryOf(eff, first) : 0;
   };
+  const lessonGraphScore = opts?.lessonGraph
+    ? (lessonKey: string): { mastery: number; prereqMastery: number } => {
+        const node = opts.lessonGraph?.[lessonKey];
+        const unitId = lessonKey.split("/").slice(0, 2).join("/");
+        const lessonMastery = node?.concepts.length
+          ? Math.min(...node.concepts.map((id) => masteryOf(eff, id)))
+          : masteryOfUnit(unitId);
+        const prereqMastery = node?.prereqConcepts.length
+          ? Math.min(...node.prereqConcepts.map((id) => masteryOf(eff, id)))
+          : 1;
+        return { mastery: lessonMastery, prereqMastery };
+      }
+    : undefined;
   return buildDoNow({
     leadUnits: path.steps,
     unitLessons: unitLessonKeys,
     lessonStatus: (lessonKey) => readPracticeProgress().get(lessonKey) ?? {},
     mastery: masteryOfUnit,
+    lessonGraphScore,
     threshold: config.value.weights.masteryThreshold,
     dueReviewKeys: dueReviews(),
     tasksByLesson: opts?.tasksByLesson ?? (() => []),

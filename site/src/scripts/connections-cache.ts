@@ -11,6 +11,7 @@ import {
   type LessonDescriptor,
   type ConnectionMap,
 } from "./connections-index";
+import lessonGraph from "~/content/path/lesson-graph.json";
 
 type LessonEntry = {
   data: {
@@ -47,6 +48,12 @@ export function getConnectionMap(
       spiral: e.data.spiral ?? [],
     }));
   connectionCache = resolveConnections(descriptors);
+  const graph = lessonGraph as Record<string, { related?: string[] }>;
+  for (const [id, connections] of Object.entries(connectionCache)) {
+    const related = graph[id]?.related ?? [];
+    if (!related.length) continue;
+    connections.appearsAgainIn = [...new Set([...connections.appearsAgainIn, ...related])];
+  }
   return connectionCache;
 }
 

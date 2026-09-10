@@ -1,3 +1,4 @@
+import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
 // src/components/english/grammar/GrammarHome.tsx
 // Parent tab shell: Plan (default) | Browse. One hydrated island; GrammarAtlas
 // renders as a non-hydrated child so the grammar page stays within the island cap.
@@ -18,10 +19,12 @@ export default function GrammarHome({ lang, topics, coverage }: Props) {
   const [tab, setTab] = useState<Tab>("plan");
   return (
     <div>
-      <div class="ghome-tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={tab === "plan"} class={"btn " + (tab === "plan" ? "" : "ghost")} onClick={() => setTab("plan")}>{gt("plan_tab", lang)}</button>
-        <button type="button" role="tab" aria-selected={tab === "browse"} class={"btn " + (tab === "browse" ? "" : "ghost")} onClick={() => setTab("browse")}>{gt("browse_tab", lang)}</button>
-      </div>
+      <Tabs value={tab} onValueChange={(value: Tab) => setTab(value)}>
+        <TabsList class="ghome-tabs">
+          <TabsTrigger value="plan" class={"btn " + (tab === "plan" ? "" : "ghost")}>{gt("plan_tab", lang)}</TabsTrigger>
+          <TabsTrigger value="browse" class={"btn " + (tab === "browse" ? "" : "ghost")}>{gt("browse_tab", lang)}</TabsTrigger>
+        </TabsList>
+      </Tabs>
       {tab === "plan"
         ? <GrammarPlanner lang={lang} topics={topics} coverage={coverage} />
         : <GrammarAtlas lang={lang} topics={topics} />}

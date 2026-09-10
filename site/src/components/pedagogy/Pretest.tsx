@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { useState, useEffect } from "preact/hooks";
 import { userState, setPretestResult, recordActiveDay } from "~/scripts/user-state";
 import { pretestQuestions, advancedQuestions, type PretestQuestion } from "~/scripts/pretest-questions";
@@ -77,9 +78,9 @@ export default function Pretest({ lang }: Props) {
           <p class="text-[14px] text-ink-2 leading-relaxed mt-2 mb-4">
             {lang === "en" ? "A standard round places you. Top scorers unlock a deeper round to earn the upper ranks."
               : "Стандартный раунд определяет уровень. Лучшие открывают углублённый раунд и зарабатывают верхние ранги."}</p>
-          <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => { setStage(1); setStep(0); setA1([]); setA2([]); setPhase("stage1"); }}>
+          <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => { setStage(1); setStep(0); setA1([]); setA2([]); setPhase("stage1"); }}>
             {lang === "en" ? "Begin" : "Начать"}
-          </button>
+          </ShadcnButton>
         </div>
       </aside>
     );
@@ -95,11 +96,11 @@ export default function Pretest({ lang }: Props) {
             ? "Take the advanced round to resolve your exact rank — Staff and above can only be earned here."
             : "Пройди углублённый раунд, чтобы определить точный ранг — Staff и выше зарабатываются только здесь."}</p>
           <div class="flex gap-2.5">
-            <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => { setStage(2); setStep(0); setPhase("stage2"); }}>
-              {lang === "en" ? "Advanced round" : "Углублённый раунд"}</button>
-            <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={() => {
+            <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => { setStage(2); setStep(0); setPhase("stage2"); }}>
+              {lang === "en" ? "Advanced round" : "Углублённый раунд"}</ShadcnButton>
+            <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={() => {
               const s1 = scoreStage(a1, pretestQuestions) / maxScore(pretestQuestions); finalize(s1, a1);
-            }}>{lang === "en" ? "Skip (cap at middle)" : "Пропустить (потолок — middle)"}</button>
+            }}>{lang === "en" ? "Skip (cap at middle)" : "Пропустить (потолок — middle)"}</ShadcnButton>
           </div>
         </div>
       </aside>
@@ -112,17 +113,17 @@ export default function Pretest({ lang }: Props) {
       <aside class={wrapClass}>
         <div class={headerClass}>
           <span class="meta">{stage === 1 ? (lang === "en" ? "standard" : "стандарт") : (lang === "en" ? "advanced" : "углублённый")} · {step + 1}/{bank.length}</span>
-          <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-muted text-[11px]" onClick={restart}>{lang === "en" ? "restart" : "заново"}</button>
+          <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-muted text-[11px]" onClick={restart}>{lang === "en" ? "restart" : "заново"}</ShadcnButton>
         </div>
         <div class="h-[2px] bg-rule relative"><div class="absolute inset-0 bg-ink" style={`width:${((step + 1) / bank.length) * 100}%`} /></div>
         <div class="px-6 pt-5 pb-6">
           <h3 class="font-display text-[19px] font-semibold leading-[1.25] m-0 text-ink mb-4">{q.prompt[lang]}</h3>
           <ul class="flex flex-col gap-2">
             {q.choices.map((c, i) => (
-              <li><button type="button" onClick={() => answer(i)}
+              <li><ShadcnButton type="button" onClick={() => answer(i)}
                 class="flex items-start gap-3 w-full text-left bg-transparent border border-rule-strong rounded-[1px] px-3 py-2.5 text-[13px] text-ink hover:border-ink hover:bg-card-2 transition-colors">
                 <span class="font-mono text-[11px] text-muted mt-[2px] w-4 shrink-0">{String.fromCharCode(65 + i)}</span>
-                <span>{c.label[lang]}</span></button></li>
+                <span>{c.label[lang]}</span></ShadcnButton></li>
             ))}
           </ul>
         </div>
@@ -138,7 +139,7 @@ export default function Pretest({ lang }: Props) {
       <div class="px-6 pt-5 pb-6">
         <RankUpReveal rating={result.rating} rankId={result.rank} confidence={result.confidence} lang={lang} />
         <div class="flex items-center gap-2.5 mt-4">
-          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={restart}>{lang === "en" ? "Re-climb" : "Переиграть"}</button>
+          <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={restart}>{lang === "en" ? "Re-climb" : "Переиграть"}</ShadcnButton>
           <a class="oa-btn oa-btn-ghost oa-btn-sm text-[12px]" href={`/${lang}/profile`}>{lang === "en" ? "View profile" : "Профиль"}</a>
         </div>
       </div>

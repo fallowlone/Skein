@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/path/CalibrationFlow.tsx
 // Probabilistic placement orchestrator (4 stages: Aim → Mode → Deep run → Result).
 //
@@ -147,21 +148,21 @@ function PlacementMachine({ lang }: { lang: Locale }) {
             <h3>{t.depthTitle}</h3>
           </div>
           <div class="depth-grid">
-            <button class="depth-card is-rec" type="button" onClick={() => startDeep(true)}>
+            <ShadcnButton class="depth-card is-rec" type="button" onClick={() => startDeep(true)}>
               <span class="dc-pick">{t.rec}</span>
               <span class="dc-kick"><span class="dc-tag">{t.expressTag}</span><span class="dc-time">{t.expressTime}</span></span>
               <span class="dc-title">{t.expressTag}</span>
               <span class="dc-blurb">{t.expressBlurb}</span>
               <span class="dc-gauge"><span class="dc-bar"><i style="width:30%" /></span><span class="dc-est">{t.expressEst}</span></span>
               <span class="dc-cta"><span class="btn btn-primary" role="presentation"><span>{t.expressCta}</span><span class="arrow">→</span></span></span>
-            </button>
-            <button class="depth-card" type="button" onClick={() => startDeep(false)}>
+            </ShadcnButton>
+            <ShadcnButton class="depth-card" type="button" onClick={() => startDeep(false)}>
               <span class="dc-kick"><span class="dc-tag">{t.fullTag}</span><span class="dc-time">{t.fullTime}</span></span>
               <span class="dc-title">{t.fullTag}</span>
               <span class="dc-blurb">{t.fullBlurb}</span>
               <span class="dc-gauge"><span class="dc-bar"><i style="width:92%" /></span><span class="dc-est">{t.fullEst}</span></span>
               <span class="dc-cta"><span class="btn btn-secondary" role="presentation">{t.fullCta}</span></span>
-            </button>
+            </ShadcnButton>
           </div>
           <div class="depth-foot"><a class="pt-skip" href={roadmap}>{t.skip}</a></div>
         </div>
