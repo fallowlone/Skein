@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
 // site/src/components/pedagogy/GradeWithAi.tsx
 // Opt-in AI grading for design / incident / diagnose(self) practice tasks.
 // BYOK stays free; entitled Coach users can use the server-managed provider.
@@ -102,13 +104,13 @@ export default function GradeWithAi({ lang, task }: { lang: Locale; task: Practi
 
   if (!open) {
     return (
-      <button
+      <ShadcnButton
         type="button"
         class="oa-btn oa-btn-secondary oa-btn-sm mt-3"
         onClick={() => void openPanel()}
       >
         {tt(lang, "Grade with AI", "Оценить с ИИ")}
-      </button>
+      </ShadcnButton>
     );
   }
 
@@ -124,7 +126,7 @@ export default function GradeWithAi({ lang, task }: { lang: Locale; task: Practi
           "AI-оценка необязательна: используйте свой Anthropic API-ключ бесплатно или Coach для managed AI. При отправке этот ответ, текущее задание и контекст rubric/model answer передаются Anthropic; остальная история прогресса не отправляется.",
         )}
       </p>
-      <textarea
+      <ShadcnTextarea
         value={text}
         maxLength={MAX_INPUT_CHARS}
         rows={6}
@@ -134,14 +136,14 @@ export default function GradeWithAi({ lang, task }: { lang: Locale; task: Practi
         class="w-full bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-sm text-ink mb-2 focus:border-accent"
       />
       <div class="flex items-center gap-3">
-        <button
+        <ShadcnButton
           type="button"
           class="oa-btn oa-btn-primary oa-btn-sm"
           disabled={busy || text.trim().length === 0}
           onClick={submit}
         >
           {busy ? tt(lang, "Grading…", "Оцениваю…") : tt(lang, "Grade my answer", "Оценить ответ")}
-        </button>
+        </ShadcnButton>
         <span class="text-xs text-muted tabular-nums">{text.length}/{MAX_INPUT_CHARS}</span>
       </div>
 

@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
 // src/components/english/SpeakExercise.tsx
 import { useEffect, useState } from "preact/hooks";
 import { gradeSpeech } from "~/english/byok/speech";
@@ -53,18 +55,18 @@ export default function SpeakExercise({ lang, recognizer }: { lang: Locale; reco
       <p class="q">{task.prompt.en}</p>
       <div class="flex gap-2 mb-3">
         {!busy
-          ? <button class="oa-btn oa-btn-primary oa-btn-sm" onClick={start}>{L.rec}</button>
-          : <button class="oa-btn oa-btn-primary oa-btn-sm" onClick={stop}>{L.stop}</button>}
-        <button class="oa-btn oa-btn-ghost oa-btn-sm" onClick={() => { setI((n) => (n + 1) % TASKS.length); setText(""); setResult(null); }}>{L.next}</button>
+          ? <ShadcnButton class="oa-btn oa-btn-primary oa-btn-sm" onClick={start}>{L.rec}</ShadcnButton>
+          : <ShadcnButton class="oa-btn oa-btn-primary oa-btn-sm" onClick={stop}>{L.stop}</ShadcnButton>}
+        <ShadcnButton class="oa-btn oa-btn-ghost oa-btn-sm" onClick={() => { setI((n) => (n + 1) % TASKS.length); setText(""); setResult(null); }}>{L.next}</ShadcnButton>
       </div>
       {text && (
         <>
           <div class="meta mb-1">{L.transcript}</div>
-          <textarea class="w-full border border-rule rounded p-2 text-[14px] mb-2" rows={3} value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} />
+          <ShadcnTextarea class="w-full border border-rule rounded p-2 text-[14px] mb-2" rows={3} value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} />
           {keyOn === null
             ? <p class="ex-note">{L.checkingKey}</p>
             : keyOn
-              ? <button class="oa-btn oa-btn-primary oa-btn-sm" disabled={grading || !text.trim()} onClick={grade}>{grading ? L.grading : L.grade}</button>
+              ? <ShadcnButton class="oa-btn oa-btn-primary oa-btn-sm" disabled={grading || !text.trim()} onClick={grade}>{grading ? L.grading : L.grade}</ShadcnButton>
               : <p class="ex-note">{L.needKey}</p>}
           {error && <p class="ex-note" role="alert">{error}</p>}
         </>
@@ -76,7 +78,7 @@ export default function SpeakExercise({ lang, recognizer }: { lang: Locale; reco
             <p class="text-[13px] m-0"><s class="text-danger">{c.before}</s> → <b>{c.after}</b> <span class="text-muted">({c.why})</span></p>
           ))}
           {result.betterVersion && (
-            <button class="oa-btn oa-btn-ghost oa-btn-sm mt-2" onClick={() => speak(result.betterVersion, { rate: 0.95 })}>▶ {result.betterVersion}</button>
+            <ShadcnButton class="oa-btn oa-btn-ghost oa-btn-sm mt-2" onClick={() => speak(result.betterVersion, { rate: 0.95 })}>▶ {result.betterVersion}</ShadcnButton>
           )}
         </div>
       )}

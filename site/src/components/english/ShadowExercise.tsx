@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/english/ShadowExercise.tsx
 import { useMemo, useState } from "preact/hooks";
 import { speak } from "~/english/speech/tts";
@@ -43,11 +44,11 @@ export default function ShadowExercise({ lang, recognizer }: { lang: Locale; rec
     <div data-shadow class="quiz">
       <p class="q">{target}</p>
       <div class="flex gap-2 mb-3">
-        <button class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => speak(target, { rate: 0.9 })}>{L.play}</button>
+        <ShadcnButton class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => speak(target, { rate: 0.9 })}>{L.play}</ShadcnButton>
         {!busy
-          ? <button class="oa-btn oa-btn-primary oa-btn-sm" onClick={record}>{L.rec}</button>
-          : <button class="oa-btn oa-btn-primary oa-btn-sm" onClick={finish}>{L.stop}</button>}
-        <button class="oa-btn oa-btn-ghost oa-btn-sm" onClick={() => { setResult(null); setI((n) => (n + 1) % sentences.length); }}>{L.next}</button>
+          ? <ShadcnButton class="oa-btn oa-btn-primary oa-btn-sm" onClick={record}>{L.rec}</ShadcnButton>
+          : <ShadcnButton class="oa-btn oa-btn-primary oa-btn-sm" onClick={finish}>{L.stop}</ShadcnButton>}
+        <ShadcnButton class="oa-btn oa-btn-ghost oa-btn-sm" onClick={() => { setResult(null); setI((n) => (n + 1) % sentences.length); }}>{L.next}</ShadcnButton>
       </div>
       {result && (
         <div>

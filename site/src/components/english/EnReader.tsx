@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Input as ShadcnInput } from "~/components/ui/input";
 import { useMemo, useState, useEffect, useRef } from "preact/hooks";
 import type { ReadingUnit, VocabWord } from "~/english/types";
 import {
@@ -119,7 +121,7 @@ export default function EnReader({ unit, lang, onComplete }: Props) {
 
       <div class="flex gap-1 mb-6">
         {(["read", "review", "check"] as const).map((tt) => (
-          <button
+          <ShadcnButton
             key={tt}
             type="button"
             onClick={() => setTab(tt)}
@@ -130,7 +132,7 @@ export default function EnReader({ unit, lang, onComplete }: Props) {
             }`}
           >
             {tt === "read" ? l.read : tt === "review" ? l.review : l.check}
-          </button>
+          </ShadcnButton>
         ))}
       </div>
 
@@ -210,13 +212,13 @@ function PassageBlock({
   return (
     <div>
       <p class="text-[16px] leading-relaxed text-ink m-0">{en}</p>
-      <button
+      <ShadcnButton
         type="button"
         onClick={toggleRu}
         class="mt-2 text-[12px] font-mono text-muted hover:text-ink underline underline-offset-2 cursor-pointer bg-transparent border-0 p-0"
       >
         {showRu ? l.hideRu : l.showRu}
-      </button>
+      </ShadcnButton>
       {showRu ? <p class="mt-2 text-[14px] leading-relaxed text-muted m-0">{ru}</p> : null}
 
       {words.length ? (
@@ -226,14 +228,14 @@ function PassageBlock({
             {words.map((w) => {
               const status = (englishState.value, statusOf(w.id));
               return (
-                <button
+                <ShadcnButton
                   key={w.id}
                   type="button"
                   onClick={() => tapWord(w.id)}
                   class={`text-[13px] font-mono px-2 py-1 border rounded-[2px] cursor-pointer transition-colors ${chipClass(status, open === w.id)}`}
                 >
                   {w.w}
-                </button>
+                </ShadcnButton>
               );
             })}
           </div>
@@ -275,20 +277,20 @@ function WordCard({
       <div class="text-[13px] text-muted mt-1">{word.gloss}</div>
       {word.example ? <div class="text-[13px] text-ink italic mt-2">“{word.example}”</div> : null}
       <div class="flex gap-2 mt-3">
-        <button
+        <ShadcnButton
           type="button"
           onClick={() => { gradeWord(word.id, "good", now()); onDone(); }}
           class="font-mono text-[11px] uppercase tracking-[0.04em] px-3 py-1.5 border border-ink bg-ink text-paper rounded-[2px] cursor-pointer"
         >
           {l.gotIt}
-        </button>
-        <button
+        </ShadcnButton>
+        <ShadcnButton
           type="button"
           onClick={() => { gradeWord(word.id, "again", now()); onDone(); }}
           class="font-mono text-[11px] uppercase tracking-[0.04em] px-3 py-1.5 border border-rule-strong text-ink rounded-[2px] cursor-pointer hover:bg-card"
         >
           {l.learning}
-        </button>
+        </ShadcnButton>
       </div>
     </div>
   );
@@ -357,7 +359,7 @@ function ReviewTab({
         <div class="text-[13px] text-muted">{card.gloss}</div>
 
         <label class="text-[12px] font-mono text-muted mt-2">{l.typePrompt}</label>
-        <input
+        <ShadcnInput
           type="text"
           value={val}
           disabled={graded !== null}
@@ -380,31 +382,31 @@ function ReviewTab({
 
       {graded === null ? (
         <div class="flex justify-center mt-4">
-          <button
+          <ShadcnButton
             type="button"
             onClick={submit}
             class="font-mono text-[11px] uppercase tracking-[0.04em] px-4 py-2 border border-ink bg-ink text-paper rounded-[2px] cursor-pointer"
           >
             {l.submit}
-          </button>
+          </ShadcnButton>
         </div>
       ) : (
         <div class="flex gap-2 mt-4 justify-center">
-          <button
+          <ShadcnButton
             type="button"
             onClick={() => next()}
             class="font-mono text-[11px] uppercase tracking-[0.04em] px-4 py-2 border border-ink bg-ink text-paper rounded-[2px] cursor-pointer"
           >
             {l.gotIt}
-          </button>
+          </ShadcnButton>
           {graded === false ? (
-            <button
+            <ShadcnButton
               type="button"
               onClick={() => next(true)}
               class="font-mono text-[11px] uppercase tracking-[0.04em] px-4 py-2 border border-rule-strong text-ink rounded-[2px] cursor-pointer hover:bg-card"
             >
               {l.iWasRight}
-            </button>
+            </ShadcnButton>
           ) : null}
         </div>
       )}
@@ -467,7 +469,7 @@ function CheckTab({
                   else if (locked && isPicked && !isAnswer) cls = "border-rule-strong text-muted line-through";
                   else if (locked) cls = "border-rule text-muted";
                   return (
-                    <button
+                    <ShadcnButton
                       key={oi}
                       type="button"
                       disabled={locked}
@@ -475,7 +477,7 @@ function CheckTab({
                       class={`text-left text-[14px] px-3 py-2 border rounded-[2px] transition-colors ${locked ? "" : "cursor-pointer"} ${cls}`}
                     >
                       {opt[lang]}
-                    </button>
+                    </ShadcnButton>
                   );
                 })}
               </div>
@@ -489,13 +491,13 @@ function CheckTab({
 
       {allDone ? (
         <div class="flex justify-center mt-7">
-          <button
+          <ShadcnButton
             type="button"
             onClick={reset}
             class="font-mono text-[11px] uppercase tracking-[0.04em] px-4 py-2 border border-rule-strong text-ink rounded-[2px] cursor-pointer hover:bg-card"
           >
             {l.checkRetry}
-          </button>
+          </ShadcnButton>
         </div>
       ) : null}
     </div>

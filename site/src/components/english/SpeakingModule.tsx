@@ -1,3 +1,6 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
+import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
 // src/components/english/SpeakingModule.tsx
 import { useState, useRef, useEffect } from "preact/hooks";
 import { WebSpeechRecognizer, webSpeechAvailable, type SpeechRecognizer } from "~/english/speech/recognizer";
@@ -61,24 +64,26 @@ export default function SpeakingModule({ lang }: { lang: Locale }) {
 
   return (
     <div data-speaking class="max-w-[680px] mx-auto">
-      <div class="seg mb-4" role="tablist">
-        {(["shadow", "speak", "talk"] as Mode[]).map((m) => (
-          <button role="tab" aria-pressed={mode === m} onClick={() => setMode(m)}>{L[m]}</button>
-        ))}
-      </div>
+      <Tabs value={mode} onValueChange={(value: Mode) => setMode(value)}>
+        <TabsList class="seg mb-4">
+          {(["shadow", "speak", "talk"] as Mode[]).map((m) => (
+            <TabsTrigger value={m}>{L[m]}</TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       <div class="flex items-center gap-3 mb-2 text-[12px]">
         <span class="meta">{L.engine}</span>
-        <select class="oa-btn oa-btn-secondary oa-btn-sm" value={prefer} onChange={(e) => setPrefer((e.target as HTMLSelectElement).value as Prefer)}>
+        <ShadcnNativeSelect class="oa-btn oa-btn-secondary oa-btn-sm" value={prefer} onChange={(e) => setPrefer((e.target as HTMLSelectElement).value as Prefer)}>
           <option value="auto">{L.auto}</option>
           <option value="webspeech" disabled={!webSpeechAvailable()}>{L.web}</option>
           <option value="whisper" disabled={dl.status !== "ready"}>{L.whisper}</option>
-        </select>
+        </ShadcnNativeSelect>
         {dl.status === "ready"
           ? <span class="badge ok">{L.ready}</span>
-          : <button class="oa-btn oa-btn-ghost oa-btn-sm" onClick={onDownload} disabled={dl.status === "downloading"}>
+          : <ShadcnButton class="oa-btn oa-btn-ghost oa-btn-sm" onClick={onDownload} disabled={dl.status === "downloading"}>
               {dl.status === "downloading" ? `${L.downloading} ${dl.pct}%` : L.download}
-            </button>}
+            </ShadcnButton>}
       </div>
       {privacyNote ? <p class="meta-lc mb-4">{privacyNote}</p> : null}
 
