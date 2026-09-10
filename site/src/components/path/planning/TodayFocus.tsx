@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/path/planning/TodayFocus.tsx
 // Top-of-screen focus: what to do TODAY. Deadline set → today's schedule row; otherwise the
 // next path step. When behind/over, surfaces the single best catch-up action inline.
@@ -66,6 +67,7 @@ const tierReason = (lang: Locale, d?: string): string =>
   d && TIER_REASON[d] ? TIER_REASON[d][lang] : lang === "ru" ? "Следующая задача" : "Next task";
 
 type LessonTaskIndex = Record<string, { id: string; difficulty: string }[]>;
+type LessonGraphIndex = Record<string, { concepts: string[]; prereqConcepts: string[] }>;
 
 export default function TodayFocus({ lang }: { lang: Locale }) {
   const t = L[lang];
@@ -73,6 +75,7 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
   // main planning bundle). Until it loads, the "do now" list shows unit-level "start" rows; once
   // loaded, lead units upgrade to the specific next task at the learner's adaptive tier.
   const [taskIndex, setTaskIndex] = useState<LessonTaskIndex | null>(null);
+  const [lessonGraph, setLessonGraph] = useState<LessonGraphIndex | null>(null);
   useEffect(() => {
     let alive = true;
     // Relative path (not the ~ alias) so the dynamic import resolves identically in dev, build, and test.
@@ -81,6 +84,11 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
       .catch((e) => {
         // index is an enhancement — failure just leaves the baseline rows; surface it in dev only
         if (import.meta.env.DEV) console.warn("[TodayFocus] lesson-tasks.json failed to load; do-now task rows disabled:", e);
+      });
+    import("../../../content/path/lesson-graph.json")
+      .then((m) => { if (alive) setLessonGraph(m.default as LessonGraphIndex); })
+      .catch((e) => {
+        if (import.meta.env.DEV) console.warn("[TodayFocus] lesson-graph.json failed to load; do-now falls back to unit order:", e);
       });
     return () => { alive = false; };
   }, []);
@@ -117,7 +125,7 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
   // recommendTask at the learner's tier). Only the `task` kind, only once the lazy index has loaded;
   // each upgrades a lead unit's generic "start" row into the exact next task at its difficulty tier.
   const doNowTasks = taskIndex
-    ? computeDoNow({ tasksByLesson: (lk) => taskIndex[lk] ?? [], maxUnits: 3, path }).filter((i) => i.kind === "task" && i.lesson)
+    ? computeDoNow({ tasksByLesson: (lk) => taskIndex[lk] ?? [], lessonGraph: lessonGraph ?? undefined, maxUnits: 3, path }).filter((i) => i.kind === "task" && i.lesson)
     : [];
   const coveredUnits = new Set(doNowTasks.map((i) => i.unit));
   const taskRows = doNowTasks.map((i) => ({
@@ -233,7 +241,7 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
         {catchUp && (
           <div class="tc-catchup">
             {p?.status === "behind" && <span>{t.behind(p.behindDays)}</span>}
-            <button type="button" class="btn btn-sm" onClick={() => applyFix(catchUp)}>{t.apply}</button>
+            <ShadcnButton type="button" class="btn btn-sm" onClick={() => applyFix(catchUp)}>{t.apply}</ShadcnButton>
           </div>
         )}
         {rf && rf.reached && (

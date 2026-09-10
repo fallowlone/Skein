@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
 // site/src/components/english/OutputModule.tsx
 import { useMemo, useState } from "preact/hooks";
 import { outputTasks } from "~/english/data/output/tasks";
@@ -67,14 +69,14 @@ export default function OutputModule({ lang }: Props) {
   if (task) {
     return (
       <div class="max-w-[620px] mx-auto">
-        <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-[12px] text-muted mb-4" onClick={() => setOpenId(null)}>{L.back}</button>
+        <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-[12px] text-muted mb-4" onClick={() => setOpenId(null)}>{L.back}</ShadcnButton>
         <p class="text-[15px] text-ink mb-1">{task.prompt[lang]}</p>
         <p class="text-[12px] text-muted mb-4">{L.rubric}: {task.rubric.join(" · ")}</p>
-        <textarea value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} rows={6}
+        <ShadcnTextarea value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} rows={6}
           class="w-full bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] text-ink mb-3 focus:border-accent" placeholder={L.write} />
         <div class="flex gap-2">
-          <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy || text.trim().length === 0} onClick={submit}>{busy ? L.grading : L.submit}</button>
-          {task.modelAnswer ? <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={() => setSelfAssess((v) => !v)}>{L.selfAssessBtn}</button> : null}
+          <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy || text.trim().length === 0} onClick={submit}>{busy ? L.grading : L.submit}</ShadcnButton>
+          {task.modelAnswer ? <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" onClick={() => setSelfAssess((v) => !v)}>{L.selfAssessBtn}</ShadcnButton> : null}
         </div>
         {err ? <div class="text-[12px] text-danger mt-3">{err}</div> : null}
 
@@ -93,10 +95,10 @@ export default function OutputModule({ lang }: Props) {
               <div>
                 <div class="meta mb-1 flex items-center gap-2 flex-wrap">
                   <span>{L.better}</span>
-                  <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[11px]" disabled={savedBetter}
+                  <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[11px]" disabled={savedBetter}
                     onClick={() => { addChunk(result.betterVersion, L.myVersion + text.slice(0, 120), now(), "upgrade-cycle"); setSavedBetter(true); }}>
                     {savedBetter ? L.savedSrs : L.toSrs}
-                  </button>
+                  </ShadcnButton>
                 </div>
                 <p class="text-[14px] text-ink m-0">{result.betterVersion}</p>
               </div>
@@ -124,11 +126,11 @@ export default function OutputModule({ lang }: Props) {
       <ul class="flex flex-col gap-2 m-0 p-0 list-none mt-2">
         {tasks.map((t) => (
           <li key={t.id}>
-            <button type="button" onClick={() => openTask(t.id)}
+            <ShadcnButton type="button" onClick={() => openTask(t.id)}
               class="w-full text-left bg-card border border-rule rounded-[2px] px-4 py-3 cursor-pointer hover:border-rule-strong transition-colors">
               <span class="block text-[14px] text-ink font-semibold">{t.prompt[lang]}</span>
               <span class="block text-[12px] text-muted">{t.type} · {t.band}</span>
-            </button>
+            </ShadcnButton>
           </li>
         ))}
       </ul>

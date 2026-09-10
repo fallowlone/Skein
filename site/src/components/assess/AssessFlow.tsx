@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // site/src/components/assess/AssessFlow.tsx
 // The island. Owns exactly three things the pure core deliberately does not: the
 // clock (Date.now() at every dispatch), storage (assess-io.ts + the read-only
@@ -150,9 +151,9 @@ function LoadGate({ lang, onRetry }: { lang: Locale; onRetry: () => void }) {
   return (
     <div class="assess-error">
       <p>{t("assess.error.load", lang)}</p>
-      <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={onRetry}>
+      <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={onRetry}>
         {t("assess.error.retry", lang)}
-      </button>
+      </ShadcnButton>
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import { nextStatus, needsRevisit, loadStore, saveEntry, type DrillStatus, type DrillEntry } from "./drill-state";
@@ -52,14 +53,14 @@ function ProblemCard({
           </span>
         )}
         <span class="flex-1" />
-        <button
+        <ShadcnButton
           class="oa-btn oa-btn-secondary oa-btn-sm text-[11px]"
           style="padding:2px 8px;"
           onClick={() => onCycle(p.id)}
           aria-label={NEXT_LABEL[entry.status][lang]}
         >
           <span aria-hidden="true">{GLYPH[entry.status]} </span>{STATUS_LABEL[entry.status][lang]}
-        </button>
+        </ShadcnButton>
       </div>
       {p.companies.length > 0 && (
         <div class="flex gap-1.5 flex-wrap">
@@ -71,9 +72,9 @@ function ProblemCard({
           <p key={i} class="text-[13px] text-ink-2 pl-3 border-l-2 border-rule">{h[lang]}</p>
         ))}
         {revealed < p.hints.length && (
-          <button class="text-[12px] text-muted hover:text-ink text-left" onClick={() => setRevealed(revealed + 1)}>
+          <ShadcnButton class="text-[12px] text-muted hover:text-ink text-left" onClick={() => setRevealed(revealed + 1)}>
             {lang === "ru" ? `Подсказка ${revealed + 1} из ${p.hints.length}` : `Reveal hint ${revealed + 1} of ${p.hints.length}`}
-          </button>
+          </ShadcnButton>
         )}
       </div>
       {p.followUp && (

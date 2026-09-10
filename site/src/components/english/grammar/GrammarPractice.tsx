@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Input as ShadcnInput } from "~/components/ui/input";
 // GrammarPractice — the exercise loop for one topic. Generates items on the fly
 // from the topic's committed gen spec (pure, seeded engine), one at a time, with
 // calm correct/incorrect feedback. FSRS grades behind the scenes. Cross-topic
@@ -147,9 +149,9 @@ export default function GrammarPractice({
         </span>
         <span class="session-count">{results.length}/{SESSION_LEN}</span>
         {crossSpecs.length > 0 && (
-          <button type="button" class="cross-toggle" aria-pressed={cross} onClick={toggleCross}>
+          <ShadcnButton type="button" class="cross-toggle" aria-pressed={cross} onClick={toggleCross}>
             <span class="tog" />{gt("prac_cross", lang)}
-          </button>
+          </ShadcnButton>
         )}
       </div>
 
@@ -184,16 +186,16 @@ export default function GrammarPractice({
               <>
                 {!isMc && <a class="btn btn-ghost btn-sm" href="#" onClick={(e) => { e.preventDefault(); next(); }}>{gt("prac_skip", lang)}</a>}
                 <span class="ia-spacer" />
-                <button type="button" class="btn btn-primary"
+                <ShadcnButton type="button" class="btn btn-primary"
                   disabled={isMc ? chosen === null : !value.trim()}
-                  onClick={check}>{gt("prac_check", lang)}</button>
+                  onClick={check}>{gt("prac_check", lang)}</ShadcnButton>
               </>
             ) : (
               <>
                 <span class="ia-spacer" />
-                <button type="button" class="btn btn-primary" onClick={next}>
+                <ShadcnButton type="button" class="btn btn-primary" onClick={next}>
                   {gt("prac_next", lang)} <span class="arrow">→</span>
-                </button>
+                </ShadcnButton>
               </>
             )}
           </div>
@@ -240,7 +242,7 @@ function ClozeItem(
       </div>
       {!answered && (
         <div class="cloze-input">
-          <input
+          <ShadcnInput
             value={value}
             onInput={(e) => onInput((e.target as HTMLInputElement).value)}
             onKeyDown={(e) => { if (e.key === "Enter" && value.trim()) onEnter(); }}
@@ -270,7 +272,7 @@ function McItem(
             else if (i === chosen) cls += " incorrect";
           } else if (i === chosen) cls += " selected";
           return (
-            <button type="button" class={cls} key={i} disabled={answered} onClick={() => onPick(i)}>
+            <ShadcnButton type="button" class={cls} key={i} disabled={answered} onClick={() => onPick(i)}>
               <span class="key">{String.fromCharCode(65 + i)}</span>
               <span>{opt}</span>
               {answered && i === answerIdx && (
@@ -283,7 +285,7 @@ function McItem(
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M6 6l12 12M18 6L6 18" /></svg>
                 </span>
               )}
-            </button>
+            </ShadcnButton>
           );
         })}
       </div>
@@ -340,10 +342,10 @@ function SessionDone(
       </div>
       <p class="sd-line">{gt("prac_done_line", lang)}</p>
       <div class="sd-actions">
-        {onExit && <button type="button" class="btn btn-secondary" onClick={onExit}>{gt("prac_back_topic", lang)}</button>}
-        <button type="button" class="btn btn-primary" onClick={onAgain}>
+        {onExit && <ShadcnButton type="button" class="btn btn-secondary" onClick={onExit}>{gt("prac_back_topic", lang)}</ShadcnButton>}
+        <ShadcnButton type="button" class="btn btn-primary" onClick={onAgain}>
           <span>{gt("prac_again", lang)}</span><span class="arrow">→</span>
-        </button>
+        </ShadcnButton>
       </div>
     </div>
   );

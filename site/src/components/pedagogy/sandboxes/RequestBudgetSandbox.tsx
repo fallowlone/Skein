@@ -1,3 +1,5 @@
+import { Input as ShadcnInput } from "~/components/ui/input";
+import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
 import { useState } from "preact/hooks";
 import Sandbox from "../Sandbox";
 
@@ -41,7 +43,7 @@ export default function RequestBudgetSandbox({ lang }: Props) {
         <div class="space-y-4">
           <label class="block">
             <span class="text-xs font-bold uppercase tracking-wider text-muted">RTT (ms)</span>
-            <input
+            <ShadcnInput
               type="range"
               min={5}
               max={300}
@@ -53,7 +55,7 @@ export default function RequestBudgetSandbox({ lang }: Props) {
           </label>
           <label class="block">
             <span class="text-xs font-bold uppercase tracking-wider text-muted">L4</span>
-            <select
+            <ShadcnNativeSelect
               class="block border-hairline-2 rounded-[var(--r-sm)] px-2 py-1"
               value={l4}
               onChange={(e) => setL4((e.target as HTMLSelectElement).value as L4)}
@@ -61,11 +63,11 @@ export default function RequestBudgetSandbox({ lang }: Props) {
               <option value="tcp">TCP + TLS 1.3</option>
               <option value="udp">UDP (no TLS)</option>
               <option value="quic">QUIC (0-RTT)</option>
-            </select>
+            </ShadcnNativeSelect>
           </label>
           <label class="block">
             <span class="text-xs font-bold uppercase tracking-wider text-muted">Auth</span>
-            <select
+            <ShadcnNativeSelect
               class="block border-hairline-2 rounded-[var(--r-sm)] px-2 py-1"
               value={auth}
               onChange={(e) => setAuth((e.target as HTMLSelectElement).value as Auth)}
@@ -73,11 +75,11 @@ export default function RequestBudgetSandbox({ lang }: Props) {
               <option value="none">none</option>
               <option value="jwt">JWT</option>
               <option value="mtls">mTLS</option>
-            </select>
+            </ShadcnNativeSelect>
           </label>
           <label class="block">
             <span class="text-xs font-bold uppercase tracking-wider text-muted">Edge</span>
-            <select
+            <ShadcnNativeSelect
               class="block border-hairline-2 rounded-[var(--r-sm)] px-2 py-1"
               value={edge}
               onChange={(e) => setEdge((e.target as HTMLSelectElement).value as Edge)}
@@ -85,7 +87,7 @@ export default function RequestBudgetSandbox({ lang }: Props) {
               <option value="none">origin only</option>
               <option value="cdn">CDN</option>
               <option value="mesh">full mesh</option>
-            </select>
+            </ShadcnNativeSelect>
           </label>
         </div>
         <div class="font-mono text-sm space-y-2">

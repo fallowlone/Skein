@@ -1,3 +1,5 @@
+import { Input as ShadcnInput } from "~/components/ui/input";
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/path/planning/AdvancedKnobs.tsx
 // Collapsed <details> with the three coarse knobs that re-weight the plan:
 // breadth⇄depth (config.breadthVsDepth), pace (config.pace), depth-tier (config.depthTier).
@@ -62,14 +64,14 @@ export default function AdvancedKnobs({ lang, onGraphEdits }: { lang: Locale; on
         <div class="knobs">
           <div class="knob">
             <span class="k-label"><span>{t.bd}</span><b>{bdLabel(lang, bd)}</b></span>
-            <input
+            <ShadcnInput
               type="range" min={0} max={100} value={Math.round(bd * 100)} aria-label={t.bdAria}
               onInput={(e) => setKnob({ breadthVsDepth: Number((e.target as HTMLInputElement).value) / 100 })}
             />
           </div>
           <div class="knob">
             <span class="k-label"><span>{t.pace}</span><b>{paceLabel(lang, pace)}</b></span>
-            <input
+            <ShadcnInput
               type="range" min={0} max={100} value={Math.round(pace * 100)} aria-label={t.paceAria}
               onInput={(e) => setKnob({ pace: paceToConfig(Number((e.target as HTMLInputElement).value) / 100) })}
             />
@@ -78,12 +80,12 @@ export default function AdvancedKnobs({ lang, onGraphEdits }: { lang: Locale; on
             <span class="k-label">{t.depth}</span>
             <div class="seg depth" role="group" aria-label={t.depth}>
               {TIERS.map((tr) => (
-                <button key={tr} type="button" aria-pressed={tier === tr} onClick={() => setKnob({ depthTier: tr })}>{t[tr]}</button>
+                <ShadcnButton key={tr} type="button" aria-pressed={tier === tr} onClick={() => setKnob({ depthTier: tr })}>{t[tr]}</ShadcnButton>
               ))}
             </div>
           </div>
         </div>
-        <button type="button" class="adv-link" onClick={onGraphEdits}>{t.graph}</button>
+        <ShadcnButton type="button" class="adv-link" onClick={onGraphEdits}>{t.graph}</ShadcnButton>
       </div>
     </details>
   );

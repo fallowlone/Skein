@@ -1,3 +1,4 @@
+import { Input as ShadcnInput } from "~/components/ui/input";
 import { useState } from "preact/hooks";
 import type { JSX } from "preact";
 
@@ -32,7 +33,7 @@ export default function ReactiveDiagram({ id, inputs, compute, render }: Props) 
                 <label class="text-xs font-bold text-muted uppercase tracking-wider">
                   {i.label}
                 </label>
-                <input
+                <ShadcnInput
                   type="range"
                   min={i.min}
                   max={i.max}

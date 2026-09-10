@@ -1,3 +1,6 @@
+import { Input as ShadcnInput } from "~/components/ui/input";
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
 // site/src/components/assess/item-bodies.tsx
 // Per-kind item bodies for the text/self-grade family: recall (fill-the-blanks),
 // predict, explain, review. Code-execution kinds (debug, exec) live in
@@ -59,7 +62,7 @@ export function RecallBody({ lang, task, onSubmit }: BodyProps) {
         return (
           <div key={b.id} class="assess-blank">
             <label class="assess-blank-hint" for={inputId}>{labelText}</label>
-            <input
+            <ShadcnInput
               id={inputId}
               class="assess-input"
               value={answers[i]}
@@ -72,9 +75,9 @@ export function RecallBody({ lang, task, onSubmit }: BodyProps) {
           </div>
         );
       })}
-      <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={submit}>
+      <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={submit}>
         {t("assess.item.submit", lang)}
-      </button>
+      </ShadcnButton>
     </div>
   );
 }
@@ -107,7 +110,7 @@ function CommitRevealBody({
     <div class="assess-body">
       {prefix && <pre class="assess-evidence">{prefix}</pre>}
       <label class="assess-label" for="assess-draft">{label}</label>
-      <textarea
+      <ShadcnTextarea
         id="assess-draft"
         class="assess-textarea"
         value={draft}
@@ -115,7 +118,7 @@ function CommitRevealBody({
         onInput={(e) => setDraft((e.target as HTMLTextAreaElement).value)}
       />
       {!shown && (
-        <button
+        <ShadcnButton
           type="button"
           class="oa-btn oa-btn-primary oa-btn-sm"
           disabled={!committed}
@@ -123,7 +126,7 @@ function CommitRevealBody({
           onClick={() => setShown(true)}
         >
           {t("assess.reveal.cta", lang)}
-        </button>
+        </ShadcnButton>
       )}
       {shown && (
         <div class="assess-reveal">
@@ -132,9 +135,9 @@ function CommitRevealBody({
           <div class="prose assess-prose" dangerouslySetInnerHTML={{ __html: revealHtml }} />
           <p class="assess-selfgrade-prompt">{t("assess.selfgrade.prompt", lang)}</p>
           <div class="assess-selfgrade">
-            <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("hit")}>{t("assess.selfgrade.hit", lang)}</button>
-            <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("partial")}>{t("assess.selfgrade.partial", lang)}</button>
-            <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("miss")}>{t("assess.selfgrade.miss", lang)}</button>
+            <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("hit")}>{t("assess.selfgrade.hit", lang)}</ShadcnButton>
+            <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("partial")}>{t("assess.selfgrade.partial", lang)}</ShadcnButton>
+            <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("miss")}>{t("assess.selfgrade.miss", lang)}</ShadcnButton>
           </div>
         </div>
       )}
@@ -240,7 +243,7 @@ export function ReviewBody({ lang, task, onSubmit }: BodyProps) {
         {candidates.map((c) => (
           <li key={c.id}>
             <label class="assess-review-item">
-              <input type="checkbox" checked={picked.has(c.id)} disabled={shown} onChange={() => toggle(c.id)} />
+              <ShadcnInput type="checkbox" checked={picked.has(c.id)} disabled={shown} onChange={() => toggle(c.id)} />
               <span>{tt(lang, c.label.en, c.label.ru)}</span>
             </label>
             {shown && (
@@ -250,9 +253,9 @@ export function ReviewBody({ lang, task, onSubmit }: BodyProps) {
         ))}
       </ul>
       {!shown && (
-        <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={submit}>
+        <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={submit}>
           {t("assess.review.reveal", lang)}
-        </button>
+        </ShadcnButton>
       )}
     </div>
   );

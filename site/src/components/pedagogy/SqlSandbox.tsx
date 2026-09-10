@@ -1,3 +1,5 @@
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import { applyExecCheck, type ExecCheck, type ExecResult } from "~/scripts/practice-grade";
@@ -52,13 +54,13 @@ export default function SqlSandbox({ lang, setup, initialSql, check, onResult }:
 
   return (
     <div class="rounded-[var(--r-md)] border border-rule bg-card-2 p-3">
-      <textarea class="font-mono w-full text-xs p-2 rounded-[var(--r-sm)] border border-hairline-2 bg-[var(--code-bg)] text-[var(--code-ink)] min-h-[96px]"
+      <ShadcnTextarea class="font-mono w-full text-xs p-2 rounded-[var(--r-sm)] border border-hairline-2 bg-[var(--code-bg)] text-[var(--code-ink)] min-h-[96px]"
         value={sql} onInput={(e) => setSql((e.target as HTMLTextAreaElement).value)} />
-      <button type="button" disabled={busy}
+      <ShadcnButton type="button" disabled={busy}
         class="mt-2 oa-btn oa-btn-primary oa-btn-sm disabled:opacity-50"
         onClick={run}>
         {busy ? tt(lang, "Running…", "Выполняю…") : tt(lang, "Run", "Запустить")}
-      </button>
+      </ShadcnButton>
       {error && <pre class="text-xs text-danger mt-2 whitespace-pre-wrap">{error}</pre>}
       {rows && (
         <pre class="text-xs mt-2 overflow-x-auto bg-card p-2 rounded-[var(--r-sm)] text-[var(--code-ink)]">{JSON.stringify(rows, null, 2)}</pre>

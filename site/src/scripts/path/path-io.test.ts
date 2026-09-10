@@ -19,6 +19,7 @@ import { addCard, recordReview, dueBefore, REVIEW_KEY } from "~/scripts/review-s
 import type { PathStep, Concept, Track } from "./types";
 import conceptsJson from "~/content/path/concepts.json";
 import unitConceptsJson from "~/content/path/unit-concepts.json";
+import unitsJson from "~/content/units.json";
 
 const step = (unit: string, track = "networking" as Track): PathStep =>
   ({ unit, track, unlocks: [], reason: "", kind: "learn", estMin: 10 });
@@ -126,7 +127,7 @@ describe("path-io calibration surface", () => {
 describe("path-io cold-start", () => {
   it("the bundle loads the full graph", () => {
     expect(content.concepts.length).toBeGreaterThan(4000);
-    expect(content.units.length).toBe(343); // 342 + 1 engineering-practice/debugger-mastery (wave 9b)
+    expect(content.units.length).toBe((unitsJson as unknown[]).length);
     expect(content.goals.map((g) => g.id)).toContain("senior-fullstack");
   });
 

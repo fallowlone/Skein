@@ -1,3 +1,5 @@
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 
@@ -64,7 +66,7 @@ export default function LessonQuestion({ lang, lessonKey }: { lang: Locale; less
           "Ask a question about this lesson. Questions are anonymous and go straight to the author to make the lesson better.",
           "Задай вопрос по этому уроку. Вопросы анонимны и попадают напрямую автору — урок станет лучше.")}
       </p>
-      <textarea
+      <ShadcnTextarea
         class="w-full text-sm p-3 rounded-[var(--r-sm)] border border-hairline-2 bg-card-2 text-ink min-h-[80px]"
         maxLength={MAX_CHARS}
         placeholder={tt(lang, "What confused you here?", "Что здесь запутало?")}
@@ -73,10 +75,10 @@ export default function LessonQuestion({ lang, lessonKey }: { lang: Locale; less
         onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
       />
       <div class="flex items-center gap-3 mt-2">
-        <button type="button" class="oa-btn oa-btn-primary oa-btn-sm disabled:opacity-50"
+        <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm disabled:opacity-50"
           disabled={state === "busy" || text.trim().length === 0} onClick={send}>
           {state === "busy" ? tt(lang, "Sending…", "Отправляю…") : tt(lang, "Send question", "Отправить вопрос")}
-        </button>
+        </ShadcnButton>
         {state === "failed" && (
           <span class="text-sm text-danger">
             {tt(lang, "Couldn't send — try again later.", "Не удалось отправить — попробуй позже.")}

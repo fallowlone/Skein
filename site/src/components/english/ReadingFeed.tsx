@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // site/src/components/english/ReadingFeed.tsx
 import { useEffect, useMemo, useState } from "preact/hooks";
 import { readingUnits } from "~/english/data/reading";
@@ -67,7 +68,7 @@ export default function ReadingFeed({ lang }: Props) {
   if (open) {
     return (
       <div class="max-w-[760px] mx-auto">
-        <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-[12px] text-muted mb-4" onClick={() => setOpenId(null)}>{L.back}</button>
+        <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-[12px] text-muted mb-4" onClick={() => setOpenId(null)}>{L.back}</ShadcnButton>
         <h2 class="font-display text-[24px] font-bold text-ink m-0 mb-1">{open.title[lang]}</h2>
         <p class="text-[14px] text-muted m-0 mb-5">{open.blurb[lang]}</p>
         <EnReader unit={open} lang={lang} onComplete={() => markUnitRead(open.id, open.targetWords ?? [], now())} />
@@ -91,7 +92,7 @@ export default function ReadingFeed({ lang }: Props) {
         ) : null}
         <div class="flex gap-1 mb-5 lg:ml-[208px]">
           {(["engineering", "general"] as const).map((s) => (
-            <button
+            <ShadcnButton
               key={s}
               type="button"
               onClick={() => setStream(s)}
@@ -100,7 +101,7 @@ export default function ReadingFeed({ lang }: Props) {
               }`}
             >
               {s === "general" ? L.general : L.engineering}
-            </button>
+            </ShadcnButton>
           ))}
         </div>
 
@@ -112,7 +113,7 @@ export default function ReadingFeed({ lang }: Props) {
               const done = isUnitRead(u.id);
               return (
                 <li key={u.id}>
-                  <button
+                  <ShadcnButton
                     type="button"
                     onClick={() => {
                       setPlanStartId(u.id);
@@ -125,7 +126,7 @@ export default function ReadingFeed({ lang }: Props) {
                       <span class="block mt-0.5 text-[12px] leading-[1.3] text-muted">{u.source[lang]} · {u.level}</span>
                     </span>
                     {done ? <span class="text-[11px] font-mono uppercase text-muted border border-rule rounded-[2px] px-2 py-0.5">{L.read}</span> : null}
-                  </button>
+                  </ShadcnButton>
                 </li>
               );
             })}
@@ -145,7 +146,7 @@ export default function ReadingFeed({ lang }: Props) {
 
         <div class="border border-rule mb-4">
           {preview.map((u, i) => (
-            <button
+            <ShadcnButton
               key={u.id}
               type="button"
               onClick={() => {
@@ -156,12 +157,12 @@ export default function ReadingFeed({ lang }: Props) {
             >
               <span class="font-mono text-[10px] font-bold tracking-[0.08em] text-ink">DAY {i + 1}</span>
               <span class="text-[13px] text-ink">{u.title[lang]}</span>
-            </button>
+            </ShadcnButton>
           ))}
           {[4, 5, 6, 7].map((day) => {
             const unit = plan[day - 1];
             return pro && unit ? (
-              <button
+              <ShadcnButton
                 key={day}
                 type="button"
                 onClick={() => {
@@ -172,7 +173,7 @@ export default function ReadingFeed({ lang }: Props) {
               >
                 <span class="font-mono text-[10px] font-bold tracking-[0.08em] text-ink">DAY {day}</span>
                 <span class="text-[13px] text-ink">{unit.title[lang]}</span>
-              </button>
+              </ShadcnButton>
             ) : (
               <div key={day} class="min-h-[55px] grid grid-cols-[68px_1fr] items-center border-b border-rule last:border-b-0 px-3 text-muted">
                 <span class="font-mono text-[10px] font-bold tracking-[0.08em] opacity-60">DAY {day}</span>
@@ -205,7 +206,7 @@ export default function ReadingFeed({ lang }: Props) {
             </a>
           </>
         ) : null}
-        <button
+        <ShadcnButton
           type="button"
           onClick={() => {
             if (!preview[0]) return;
@@ -215,7 +216,7 @@ export default function ReadingFeed({ lang }: Props) {
           class={`w-full min-h-[46px] ${pro ? "" : "mt-2.5"} bg-transparent text-ink border border-rule-strong rounded-[2px] font-mono text-[13px] cursor-pointer hover:bg-paper/40 transition-colors`}
         >
           {L.freePlan}
-        </button>
+        </ShadcnButton>
 
         <div class="mt-5 flex flex-wrap items-center gap-2 text-[12px] text-ink">
           <span>{L.bilingual}</span>

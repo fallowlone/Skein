@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // Monthly monologue checkpoint: record ~3 minutes ("what I did this month"), store locally in
 // IndexedDB, and replay the recording from ~3 months back next to it — the contrast is the metric.
 // Plain Preact inside HubLanding; styled with the english-hub.css editorial vocabulary.
@@ -65,9 +66,9 @@ export default function MonologueCheckpoint({ lang }: { lang: Locale }) {
         <p class={`mono-sub${due ? " due" : ""}`}>{due ? L.due : L.notDue}</p>
         <div class="mono-actions">
           {!recording
-            ? <button type="button" class="btn btn-rec" onClick={start}>{L.start}</button>
-            : <button type="button" class="btn btn-primary" onClick={stop}>{L.stop}</button>}
-          {cmp ? <button type="button" class="btn btn-ext" onClick={() => play(cmp.id)}>{L.compare}</button> : null}
+            ? <ShadcnButton type="button" class="btn btn-rec" onClick={start}>{L.start}</ShadcnButton>
+            : <ShadcnButton type="button" class="btn btn-primary" onClick={stop}>{L.stop}</ShadcnButton>}
+          {cmp ? <ShadcnButton type="button" class="btn btn-ext" onClick={() => play(cmp.id)}>{L.compare}</ShadcnButton> : null}
         </div>
         {playUrl ? <audio controls src={playUrl} /> : null}
         <ul class="mono-list">
@@ -76,7 +77,7 @@ export default function MonologueCheckpoint({ lang }: { lang: Locale }) {
             <li key={m.id}>
               <span class="ml-date">{new Date(m.at).toISOString().slice(0, 10)}</span>
               <span class="ml-dur">{Math.round(m.durationSec / 60)} {L.min}</span>
-              <button type="button" onClick={() => play(m.id)}>{L.play}</button>
+              <ShadcnButton type="button" onClick={() => play(m.id)}>{L.play}</ShadcnButton>
             </li>
           ))}
         </ul>

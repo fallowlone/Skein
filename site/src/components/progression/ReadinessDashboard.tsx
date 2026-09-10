@@ -1,3 +1,5 @@
+import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
+import { Input as ShadcnInput } from "~/components/ui/input";
 // src/components/progression/ReadinessDashboard.tsx
 // "Am I ready?" — one island that surfaces every measurement the adaptive engine takes of the
 // learner: live rank (high-water), the senior-by-date forecast, weak spots, and interview
@@ -91,6 +93,8 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
           timeline; the full forecast + weekly plan is the Pro unlock. */}
       <ForecastBuilderCard lang={lang} displayRating={r.displayRating} />
 
+      <ReadinessReportPreview lang={lang} rating={r.displayRating} rank={rank.label[lang]} />
+
       <section class="rd-card rd-weak">
         <span class="rd-head">{t("readiness.weak", lang)}</span>
         {weak.length === 0 ? (
@@ -127,6 +131,55 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
       </section>
       </div>
     </>
+  );
+}
+
+function ReadinessReportPreview({ lang, rating, rank }: { lang: Locale; rating: number; rank: string }) {
+  const artifacts = lang === "ru"
+    ? [
+        ["Pull Request", "объяснить изменения"],
+        ["Design Doc", "структурировать решение"],
+        ["Incident Report", "анализировать сбои"],
+      ]
+    : [
+        ["Pull Request", "rewrite changes"],
+        ["Design Doc", "structure decisions"],
+        ["Incident Report", "analyze failures"],
+      ];
+
+  return (
+    <section class="rd-card rd-report">
+      <span class="rd-head">{lang === "ru" ? "Предпросмотр отчёта" : "Report preview"}</span>
+      <div class="rd-report-sheet rd-artifact-sheet">
+        <div class="rd-report-brand">Skein · {lang === "ru" ? "Artifact Goals" : "Artifact Goals"}</div>
+        <div class="rd-report-title">
+          {lang === "ru" ? "Учись писать как инженер" : "Practice with real engineering artifacts"}
+        </div>
+        <div class="rd-report-score">{rating}<small>/1000</small></div>
+        <div class="rd-report-rank">{rank}</div>
+        <div class="rd-artifact-list">
+          {artifacts.map(([item, action]) => (
+            <div class="rd-artifact-row" key={item}>
+              <span>{item}</span>
+              <b>{action}</b>
+            </div>
+          ))}
+        </div>
+        <div class="rd-report-lines">
+          <span />
+          <span />
+          <span />
+        </div>
+      </div>
+      <p>
+        {lang === "ru"
+          ? "Получи план развития вокруг реальных рабочих артефактов: PR, документации и решений."
+          : "Get a growth plan built around real engineering artifacts: PRs, docs, and decisions."}
+      </p>
+      <a class="rd-fb-primary" href={`/${lang}/account`}>
+        {lang === "ru" ? "Открыть полный отчёт" : "Unlock full report"}
+      </a>
+    </section>
   );
 }
 
@@ -180,15 +233,15 @@ function ForecastBuilderCard({ lang, displayRating }: { lang: Locale; displayRat
       <div class="rd-fb-form">
         <label class="rd-fb-field">
           <span class="rd-fb-label">{t("readiness.forecastTarget", lang)}</span>
-          <select value={target} onChange={(e) => setTarget(e.currentTarget.value)}>
+          <ShadcnNativeSelect value={target} onChange={(e) => setTarget(e.currentTarget.value)}>
             {content.goals.map((g) => (
               <option key={g.id} value={g.id}>{g.label[lang]}</option>
             ))}
-          </select>
+          </ShadcnNativeSelect>
         </label>
         <label class="rd-fb-field">
           <span class="rd-fb-label">{t("readiness.forecastDeadline", lang)}</span>
-          <input type="date" value={deadline} min={today} onChange={(e) => setDeadline(e.currentTarget.value)} />
+          <ShadcnInput type="date" value={deadline} min={today} onChange={(e) => setDeadline(e.currentTarget.value)} />
         </label>
       </div>
       <span class="rd-head-row rd-fb-chart-head">
@@ -218,3 +271,4 @@ function ForecastBuilderCard({ lang, displayRating }: { lang: Locale; displayRat
     </section>
   );
 }
+// Readiness Report variant continues to use the dashboard artifact preview.

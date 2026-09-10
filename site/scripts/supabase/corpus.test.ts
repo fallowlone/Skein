@@ -11,6 +11,9 @@ import {
   tracksRows,
   unitsRows,
   labRow,
+  conceptRows,
+  unitConceptRows,
+  lessonGraphRows,
   rowFor,
   diffRows,
   ledgerKeyToPk,
@@ -84,6 +87,19 @@ beforeAll(async () => {
   await w("src/content/projects/toy.json", JSON.stringify({ slug: "toy-http-server", title: { en: "Toy", ru: "Игрушка" }, pitch: { en: "p", ru: "п" }, category: "backend" }));
   await w("src/content/drill/algorithms/02-arrays-strings.json", JSON.stringify({ track: "algorithms", unit: "02-arrays-strings", patterns: ["arrays-hashing"], intro: { en: "i", ru: "и" }, problems: [] }));
   await w("src/content/lab/node.json", JSON.stringify({ track: "node", tier: "build", order: 1, title: { en: "B", ru: "С" }, intro: { en: "i", ru: "и" }, challenges: [] }));
+  await w("src/content/path/concepts.json", JSON.stringify([
+    { id: "array", label: { en: "Array", ru: "Массив" }, track: "algorithms", band: "surface", requires: [] },
+    { id: "index", label: { en: "Index", ru: "Индекс" }, track: "algorithms", band: "surface", requires: ["array"] },
+  ]));
+  await w("src/content/path/unit-concepts.json", JSON.stringify({
+    "algorithms/02-arrays-strings": { teaches: ["array", "index"], requires: [], estMin: 15 },
+  }));
+  await w("src/content/path/lesson-graph.json", JSON.stringify({
+    "algorithms/02-arrays-strings/01-the-array": {
+      concepts: ["array", "index"], prereqConcepts: [], prereqLessons: [],
+      prev: null, next: null, related: [],
+    },
+  }));
   await w("src/content/personas.json", "not-corpus"); // decoy — must be skipped
 });
 
@@ -109,6 +125,9 @@ describe("classify", () => {
     expect(classify("src/content/projects/x.json")).toBe("projects");
     expect(classify("src/content/drill/x/y.json")).toBe("drill");
     expect(classify("src/content/lab/x.json")).toBe("lab");
+    expect(classify("src/content/path/concepts.json")).toBe("concepts");
+    expect(classify("src/content/path/unit-concepts.json")).toBe("unit_concepts");
+    expect(classify("src/content/path/lesson-graph.json")).toBe("lesson_graph");
     expect(classify("src/content/personas.json")).toBeNull();
     expect(classify("src/content/config.test.ts")).toBeNull();
   });
@@ -119,7 +138,10 @@ describe("walkCorpus", () => {
     const files = await walkCorpus(site);
     const counts: Record<string, number> = {};
     for (const f of files) counts[f.kind] = (counts[f.kind] ?? 0) + 1;
-    expect(counts).toEqual({ tracks: 1, units: 1, lessons: 2, practice: 1, projects: 1, drill: 1, lab: 1 });
+    expect(counts).toEqual({
+      tracks: 1, units: 1, lessons: 2, practice: 1, projects: 1, drill: 1, lab: 1,
+      concepts: 1, unit_concepts: 1, lesson_graph: 1,
+    });
         expect(files.every((f) => /^[0-9a-f]{64}$/.test(f.hash))).toBe(true);
   });
 });
@@ -129,8 +151,11 @@ describe("materialize", () => {
     const rows = await materialize(site);
     const counts: Record<string, number> = {};
     for (const r of rows) counts[r.kind] = (counts[r.kind] ?? 0) + 1;
-    expect(counts).toEqual({ tracks: 1, units: 1, lessons: 2, practice: 1, projects: 1, drill: 1, lab: 1 });
-    expect(rows).toHaveLength(8);
+    expect(counts).toEqual({
+      tracks: 1, units: 1, lessons: 2, practice: 1, projects: 1, drill: 1, lab: 1,
+      concepts: 2, unit_concepts: 1, lesson_graph: 1,
+    });
+    expect(rows).toHaveLength(12);
   });
 });
 
@@ -205,6 +230,26 @@ describe("multi-entry rows + ledger keys", () => {
     const [labRowOut] = [labRow(JSON.stringify({ track: "node", tier: "build", order: 1 }), "src/content/lab/node.json", "H2")];
     expect(labRowOut.ledgerKey).toBe("lab#node/build");
     expect(labRowOut.row).toMatchObject({ track: "node", tier: "build", content_hash: "H2" });
+  });
+
+  it("materializes concept, unit-concept, and lesson-graph read models with stable row hashes", () => {
+    const [concept] = conceptRows(JSON.stringify([{ id: "tcp", requires: [] }]), "concepts.json");
+    expect(concept.ledgerKey).toBe("concepts#tcp");
+    expect(concept.row).toMatchObject({ id: "tcp", content_hash: concept.hash });
+
+    const [unit] = unitConceptRows(JSON.stringify({ "networking/01-ip": { teaches: ["tcp"] } }), "unit-concepts.json");
+    expect(unit.ledgerKey).toBe("unit_concepts#networking/01-ip");
+
+    const [graph] = lessonGraphRows(JSON.stringify({
+      "networking/01-ip/01-overview": { concepts: ["tcp"], prereqConcepts: [], prereqLessons: [], prev: null, next: null, related: [] },
+    }), "lesson-graph.json");
+    expect(graph.ledgerKey).toBe("lesson_graph#networking/01-ip/01-overview");
+    expect(graph.row).toMatchObject({ track: "networking", unit: "01-ip", slug: "01-overview" });
+  });
+
+  it("rejects duplicate canonical concept ids instead of silently shadowing one", () => {
+    expect(() => conceptRows(JSON.stringify([{ id: "tcp" }, { id: "tcp" }]), "concepts.json"))
+      .toThrow(/duplicate concept id: tcp/);
   });
 });
 
@@ -284,6 +329,8 @@ describe("ledgerKeyKind", () => {
     expect(ledgerKeyKind("lessons#en/algorithms/02-arrays/01")).toBe("lessons");
     expect(ledgerKeyKind("practice#algorithms/02-arrays/01")).toBe("practice");
     expect(ledgerKeyKind("lab#node/build")).toBe("lab");
+    expect(ledgerKeyKind("concepts#tcp")).toBe("concepts");
+    expect(ledgerKeyKind("lesson_graph#networking/01-ip/01-overview")).toBe("lesson_graph");
   });
 
   it("returns null for keys that name no known table", () => {
