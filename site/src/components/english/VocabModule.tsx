@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // site/src/components/english/VocabModule.tsx
 import { useMemo, useState } from "preact/hooks";
 import { vocabA2 } from "~/english/data/vocab-a2";
@@ -61,10 +62,10 @@ export default function VocabModule({ lang }: Props) {
         <div class="flex items-baseline gap-2 flex-wrap">
           <span class="font-display text-[26px] font-bold text-ink">{e.lemma}</span>
           {canSpeak ? (
-            <button type="button" class="icon-btn shrink-0 self-center" title={L.say}
+            <ShadcnButton type="button" class="icon-btn shrink-0 self-center" title={L.say}
               aria-label={`${L.say}: ${e.lemma}`} onClick={() => speak(e.lemma)}>
               <span aria-hidden="true">🔊</span>
-            </button>
+            </ShadcnButton>
           ) : null}
           {e.ipa ? <span class="text-[12px] font-mono text-muted">/{e.ipa}/</span> : null}
           <span class="text-[11px] font-mono uppercase text-muted">{e.pos}</span>
@@ -77,23 +78,23 @@ export default function VocabModule({ lang }: Props) {
               <div class="text-[13px] text-ink italic mt-1 flex items-start gap-2">
                 <span>“{e.examples[0]}”</span>
                 {canSpeak ? (
-                  <button type="button" class="icon-btn shrink-0 not-italic" title={L.say}
+                  <ShadcnButton type="button" class="icon-btn shrink-0 not-italic" title={L.say}
                     aria-label={L.say} onClick={() => speak(e.examples[0])}>
                     <span aria-hidden="true">🔊</span>
-                  </button>
+                  </ShadcnButton>
                 ) : null}
               </div>
             ) : null}
             {e.collocations?.length ? <div class="text-[12px] text-muted mt-1">{e.collocations.join(" · ")}</div> : null}
           </>
         ) : (
-          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm self-start mt-2" onClick={() => setReveal(true)}>{L.show}</button>
+          <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm self-start mt-2" onClick={() => setReveal(true)}>{L.show}</ShadcnButton>
         )}
       </div>
       {reveal ? (
         <div class="flex gap-2 mt-4 justify-center">
-          <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => grade(true)}>{L.know}</button>
-          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade(false)}>{L.learn}</button>
+          <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => grade(true)}>{L.know}</ShadcnButton>
+          <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade(false)}>{L.learn}</ShadcnButton>
         </div>
       ) : null}
     </div>

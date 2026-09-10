@@ -1,3 +1,6 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
+import { Input as ShadcnInput } from "~/components/ui/input";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { userState, setTier, setMotion, resetAll, setPretest } from "~/scripts/user-state";
@@ -148,7 +151,7 @@ export default function SettingsDrawer({ lang }: Props) {
         <Row label={l.tier} hint={lang === "en" ? ruHints.tier : undefined}>
           <div class={segClass}>
             {(["junior", "middle", "senior"] as Tier[]).map((tt) => (
-              <button
+              <ShadcnButton
                 key={tt}
                 type="button"
                 class={segBtn(s.tier === tt)}
@@ -158,7 +161,7 @@ export default function SettingsDrawer({ lang }: Props) {
                 }}
               >
                 {tt}
-              </button>
+              </ShadcnButton>
             ))}
           </div>
         </Row>
@@ -166,14 +169,14 @@ export default function SettingsDrawer({ lang }: Props) {
         <Row label={l.theme} hint={lang === "en" ? ruHints.theme : undefined}>
           <div class={segClass}>
             {(["light", "dark"] as const).map((t) => (
-              <button
+              <ShadcnButton
                 key={t}
                 type="button"
                 class={segBtn(theme === t)}
                 onClick={() => applyTheme(t)}
               >
                 {t}
-              </button>
+              </ShadcnButton>
             ))}
           </div>
         </Row>
@@ -181,20 +184,20 @@ export default function SettingsDrawer({ lang }: Props) {
         <Row label={l.density} hint={lang === "en" ? ruHints.density : undefined}>
           <div class={segClass}>
             {(["compact", "regular", "spacious"] as const).map((d) => (
-              <button
+              <ShadcnButton
                 key={d}
                 type="button"
                 class={segBtn(density === d)}
                 onClick={() => applyDensity(d)}
               >
                 {d}
-              </button>
+              </ShadcnButton>
             ))}
           </div>
         </Row>
 
         <Row label={l.motion} hint={lang === "en" ? ruHints.motion : undefined}>
-          <select
+          <ShadcnNativeSelect
             class="bg-card border border-rule-strong rounded-[1px] px-2 py-1.5 text-[12px] font-mono text-ink"
             aria-label={l.motion}
             value={s.motion}
@@ -205,7 +208,7 @@ export default function SettingsDrawer({ lang }: Props) {
             <option value="auto">{l.motionAuto}</option>
             <option value="on">{l.motionOn}</option>
             <option value="off">{l.motionOff}</option>
-          </select>
+          </ShadcnNativeSelect>
         </Row>
       </div>
 
@@ -220,19 +223,19 @@ export default function SettingsDrawer({ lang }: Props) {
         </p>
         <div class="flex flex-wrap items-center gap-x-6 gap-y-3">
           <div class="flex items-center gap-2">
-            <button
+            <ShadcnButton
               type="button"
               class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
               onClick={handleExport}
             >
               {l.exportBtn}
-            </button>
+            </ShadcnButton>
             {lang === "en" && <RuHint text={ruHints.exportBtn} flush />}
           </div>
           <div class="flex items-center gap-2">
             <label class="oa-btn oa-btn-secondary oa-btn-sm text-[12px] cursor-pointer">
               {l.importBtn}
-              <input type="file" accept="application/json" class="sr-only" onChange={handleImport} />
+              <ShadcnInput type="file" accept="application/json" class="sr-only !size-px" onChange={handleImport} />
             </label>
             {lang === "en" && <RuHint text={ruHints.importBtn} flush />}
           </div>
@@ -241,7 +244,7 @@ export default function SettingsDrawer({ lang }: Props) {
 
       <div class="mt-5 flex flex-wrap items-center gap-x-7 gap-y-3">
         <div class="flex items-center gap-2">
-          <button
+          <ShadcnButton
             type="button"
             class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
             onClick={() => {
@@ -250,11 +253,11 @@ export default function SettingsDrawer({ lang }: Props) {
             }}
           >
             {l.retake}
-          </button>
+          </ShadcnButton>
           {lang === "en" && <RuHint text={ruHints.retake} flush />}
         </div>
         <div class="flex items-center gap-2">
-          <button
+          <ShadcnButton
             type="button"
             class="oa-btn oa-btn-primary oa-btn-sm text-[12px]"
             style="background: var(--danger); border-color: var(--danger); color: var(--paper);"
@@ -267,7 +270,7 @@ export default function SettingsDrawer({ lang }: Props) {
             }}
           >
             {l.reset}
-          </button>
+          </ShadcnButton>
           {lang === "en" && <RuHint text={ruHints.reset} flush />}
         </div>
       </div>
@@ -343,9 +346,9 @@ function CoachPlanCard({ lang }: { lang: Locale }) {
               <div class="font-display text-[17px] font-semibold text-ink">{tt("Sponsorship status unavailable", "Статус sponsorship недоступен")}</div>
               <p class="mt-2 mb-3 text-[12px] text-muted" role="status">{rechecking ? tt("Checking your sponsorship status…", "Проверяю статус sponsorship…") : tt("We could not verify your sponsorship right now. Your Coach status is unknown.", "Сейчас не удалось проверить sponsorship. Статус Coach неизвестен.")}</p>
               {recheckError && <p class="mt-2 mb-3 text-[12px] text-warn" role="alert">{tt("We could not verify your sponsorship. Try again later.", "Не удалось проверить sponsorship. Попробуйте позже.")}</p>}
-              <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
+              <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
                 {rechecking ? tt("Checking sponsorship…", "Проверяю sponsorship…") : tt("Check sponsorship", "Проверить sponsorship")}
-              </button>
+              </ShadcnButton>
             </>
           ) : coach && verification !== "unavailable" && verification !== "reauth_required" ? (
             <>
@@ -359,9 +362,9 @@ function CoachPlanCard({ lang }: { lang: Locale }) {
               {!status.managedAi.available && (
                 <div class="mt-2 text-[12px] text-warn">{tt("Managed AI is temporarily unavailable; BYOK still works.", "Managed AI временно недоступен; BYOK продолжает работать.")}</div>
               )}
-              <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm mt-3" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
+              <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm mt-3" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
                 {rechecking ? tt("Checking sponsorship…", "Проверяю sponsorship…") : tt("Refresh sponsorship status", "Обновить статус sponsorship")}
-              </button>
+              </ShadcnButton>
             </>
           ) : !status.managedAi.available ? (
             <>
@@ -384,9 +387,9 @@ function CoachPlanCard({ lang }: { lang: Locale }) {
             <>
               <div class="font-display text-[17px] font-semibold text-ink">{tt("Sponsorship status unavailable", "Статус sponsorship недоступен")}</div>
               <p class="mt-2 mb-3 text-[12px] leading-[1.5] text-muted" role="status">{tt("We could not verify your sponsorship right now. Your Coach status was not changed.", "Сейчас не удалось проверить sponsorship. Статус Coach не изменён.")}</p>
-              <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
+              <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
                 {rechecking ? tt("Checking sponsorship…", "Проверяю sponsorship…") : tt("Check sponsorship", "Проверить sponsorship")}
-              </button>
+              </ShadcnButton>
             </>
           ) : status.billing.configured && status.billing.sponsorUrl && status.managedAi.available ? (
             <>
@@ -400,9 +403,9 @@ function CoachPlanCard({ lang }: { lang: Locale }) {
               <p class="mt-2 mb-3 text-[12px] leading-[1.5] text-muted">{tt("After sponsoring, return here and check your sponsorship status.", "После sponsorship вернитесь сюда и проверьте его статус.")}</p>
               {recheckError && <p class="mt-2 mb-3 text-[12px] text-warn" role="alert">{tt("We could not verify your sponsorship. Try again later.", "Не удалось проверить sponsorship. Попробуйте позже.")}</p>}
               <a class="oa-btn oa-btn-primary oa-btn-sm" href={status.billing.sponsorUrl} target="_blank" rel="noreferrer">{tt("Continue on GitHub Sponsors", "Перейти в GitHub Sponsors")}</a>
-              <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm mt-2" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
+              <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm mt-2" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
                 {rechecking ? tt("Checking sponsorship…", "Проверяю sponsorship…") : tt("Check sponsorship", "Проверить sponsorship")}
-              </button>
+              </ShadcnButton>
             </>
           ) : (
             <>

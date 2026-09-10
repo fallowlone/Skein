@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // TitlesEquip — equip one earned pillar title (single-select, shown beside your name).
 // Earned titles render as <button aria-pressed>; clicking equips (toggles off if already
 // equipped) via the local equipped-title signal. Locked titles are non-interactive <span>
@@ -39,7 +40,7 @@ export default function TitlesEquip({ lang }: { lang: Locale }) {
         }
         const on = equipped === tt.id;
         return (
-          <button
+          <ShadcnButton
             key={tt.id}
             type="button"
             class="title-pill"
@@ -48,7 +49,7 @@ export default function TitlesEquip({ lang }: { lang: Locale }) {
           >
             <span class="tp-tag">{on ? t.equipped : t.earned}</span>
             {tt.label[lang]}
-          </button>
+          </ShadcnButton>
         );
       })}
     </div>

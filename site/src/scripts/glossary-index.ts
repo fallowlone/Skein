@@ -14,7 +14,8 @@ export type ScanEntry = {
   unit: string; // unit slug (lessons); "" for book
   slug: string; // piece slug | lesson slug
   altitude: number; // lower = closer to zero knowledge
-  body: string; // raw MDX source
+  body?: string; // raw MDX source
+  keys?: string[]; // precomputed by the content pipeline
 };
 
 export type ContentRef = {
@@ -71,7 +72,7 @@ export function deriveRelations(
       slug: entry.slug,
       altitude: entry.altitude,
     };
-    for (const key of scanKeys(entry.body)) {
+    for (const key of entry.keys ?? scanKeys(entry.body ?? "")) {
       if (!(key in usedIn)) continue; // ignore <Term> keys absent from glossary.json
       usedIn[key].push(ref);
     }

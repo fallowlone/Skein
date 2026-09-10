@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { userState, dismissRevisit } from "~/scripts/user-state";
 import { dueBefore } from "~/scripts/review-state";
 import { t, type Locale } from "~/i18n";
@@ -22,13 +23,13 @@ export default function SpacedRevisitBanner({ lang }: Props) {
         {t("revisit.cta", lang)}
       </a>
       <span class="text-xs text-muted">{label}</span>
-      <button
+      <ShadcnButton
         type="button"
         class="ml-auto text-xs text-muted underline"
         onClick={() => dismissRevisit(slug)}
       >
         {t("revisit.dismiss", lang)}
-      </button>
+      </ShadcnButton>
     </div>
   );
 }

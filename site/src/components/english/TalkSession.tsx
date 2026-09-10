@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/english/TalkSession.tsx
 import { useState } from "preact/hooks";
 import { converse, endReview, MAX_TURNS } from "~/english/byok/converse";
@@ -45,11 +46,11 @@ export default function TalkSession({ lang, recognizer }: { lang: Locale; recogn
         <div class="meta mb-3">{L.pick}</div>
         <div class="flex flex-col gap-2">
           {scenarios.map((s) => (
-            <button class="track-card text-left" style="--d: var(--accent);" onClick={() => begin(s)}>
+            <ShadcnButton class="track-card text-left" style="--d: var(--accent);" onClick={() => begin(s)}>
               <div class="tc-meta"><span class="domain-tag"><span class="sq"></span>{s.level}</span></div>
               <h4>{lang === "ru" ? s.titleRu : s.role}</h4>
               <p class="tc-blurb">{s.goal}</p>
-            </button>
+            </ShadcnButton>
           ))}
         </div>
       </div>
@@ -70,9 +71,9 @@ export default function TalkSession({ lang, recognizer }: { lang: Locale; recogn
       {!review && (
         <div class="flex gap-2">
           {!busy
-            ? <button class="oa-btn oa-btn-primary oa-btn-sm" disabled={thinking || userTurns >= MAX_TURNS} onClick={record}>{L.rec}</button>
-            : <button class="oa-btn oa-btn-primary oa-btn-sm" onClick={stop}>{L.stop}</button>}
-          <button class="oa-btn oa-btn-secondary oa-btn-sm" disabled={thinking || userTurns === 0} onClick={finish}>{L.end}</button>
+            ? <ShadcnButton class="oa-btn oa-btn-primary oa-btn-sm" disabled={thinking || userTurns >= MAX_TURNS} onClick={record}>{L.rec}</ShadcnButton>
+            : <ShadcnButton class="oa-btn oa-btn-primary oa-btn-sm" onClick={stop}>{L.stop}</ShadcnButton>}
+          <ShadcnButton class="oa-btn oa-btn-secondary oa-btn-sm" disabled={thinking || userTurns === 0} onClick={finish}>{L.end}</ShadcnButton>
         </div>
       )}
       {review && (

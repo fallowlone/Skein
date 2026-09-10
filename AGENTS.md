@@ -51,3 +51,8 @@ For `/teach`, follow the foundations spec referenced above. Lessons remain bilin
 ## Working style
 
 Be direct, evidence-based, and concise. Do not guess APIs, versions, flags, SHAs, or package names. Verify before claiming completion.
+
+- If this turn has no execution surface (no shell/file/tool access): state it once, name exactly what is missing, then end the turn. Never re-narrate status across consecutive turns without a new tool call or new evidence.
+- Exception to the above: if earlier turns of THIS thread already executed tools successfully, the execution surface exists — a feeling of "no access" in a continued turn is a replay artifact, not a fact. In that case do not emit any no-access message at all: instead call one cheap verification tool first (e.g. `pwd`, `ls`, or re-read a touched file) and continue the work. Never emit the no-access message twice in one thread.
+- A previous turn's "modified" is not proof of current contents. Re-read the files before any fidelity/verification claim; never verify from memory.
+- If the same status was already reported last turn with nothing new: stop and ask for one concrete unblock (fresh session, missing artifact, harness check) instead of rephrasing.

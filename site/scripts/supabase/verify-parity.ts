@@ -14,7 +14,8 @@ import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { materialize, KINDS, type CorpusKind, pkToLedgerKey } from "./corpus.ts";
+import { KINDS, type CorpusKind, pkToLedgerKey } from "./corpus.ts";
+import { materializePublishedCorpus } from "./publish-corpus.ts";
 import {
   TABLE_COLUMNS,
   loadEnv,
@@ -27,6 +28,8 @@ import {
 
 const SITE_ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
 
+// Externalized-corpus policy: when the lesson corpus lives outside this repo,
+// remote `lessons` extras are allowed (the repo does not own the full set).
 function allowRemoteExtras(kind: CorpusKind, lessonsExternalized: boolean): boolean {
   return kind === "lessons" && lessonsExternalized;
 }
@@ -68,8 +71,12 @@ async function main(): Promise<void> {
   }
   const client = makeClient(url, key);
 
-  const rows = await materialize(SITE_ROOT);
   const lessonsExternalized = !existsSync(resolve(SITE_ROOT, "src/content/lessons"));
+  const { rows, render } = await materializePublishedCorpus(SITE_ROOT);
+  console.log(
+    `[parity] lesson render trees: ${render.lessons} lessons, ` +
+      `${render.cacheHits} cache hits, ${render.cacheMisses} compiled`,
+  );
   const localByKind = new Map<CorpusKind, Map<string, string>>();
   for (const k of KINDS) localByKind.set(k, new Map());
   for (const r of rows) localByKind.get(r.kind)!.set(r.ledgerKey, r.hash);
