@@ -4,8 +4,6 @@ import { glob, file } from "astro/loaders";
 import { TRACKS } from "./types";
 import { PRACTICE_COMPETENCIES } from "./scripts/practice-state";
 
-const Lang = z.enum(["en", "ru"]);
-const Status = z.enum(["stub", "draft", "ready"]);
 const Bi = z.object({ en: z.string().min(1), ru: z.string().min(1) });
 
 const Track = z.enum(TRACKS as [string, ...string[]]);
@@ -31,34 +29,6 @@ const units = defineCollection({
     title: Bi,
     crux: Bi,
     lessons: z.array(z.string().regex(SlugRe)),
-  }),
-});
-
-const lessons = defineCollection({
-  loader: glob({
-    pattern: "**/*.{md,mdx}",
-    base: "./src/content/lessons",
-    generateId: ({ entry }) =>
-      entry.replace(/\/index\.(md|mdx)$/, "").replace(/\.(md|mdx)$/, ""),
-  }),
-  schema: z.object({
-    slug: z.string().regex(SlugRe),
-    lang: Lang,
-    track: Track,
-    unit: z.string().regex(SlugRe),
-    order: z.number().int().positive(),
-    title: z.string().min(1).max(120),
-    summary: z.string().min(1).max(320),
-    estMin: z.number().int().positive(),
-    status: Status.default("stub"),
-    lessonType: z.enum(["concept", "coding", "topic"]).optional(),
-    level: z.enum(["zero", "junior", "middle", "senior"]).optional(),
-    deepensInto: z.array(z.string()).default([]),
-    spiral: z.array(z.string()).default([]),
-    prereqs: z.array(z.string()).default([]),
-    mathPrereqs: z.array(z.string()).default([]),
-    concepts: z.array(z.string()).default([]),
-    sources: z.array(z.string().url()).min(1),
   }),
 });
 
@@ -116,6 +86,7 @@ const SandboxTask = TaskBase.extend({
   // the point (the learner runs and tweaks it). Distinct from `setup`, which runs hidden before it.
   initialCode: z.string().optional(),
   expected: ExecCheck.optional(),
+  model: BiText.optional(),
   parametric: z.object({ component: z.string() }).optional(),
 });
 const IncidentTask = TaskBase.extend({
@@ -288,4 +259,4 @@ const projects = defineCollection({
 
 export type ProjectData = z.infer<typeof ProjectSchema>;
 
-export const collections = { tracks, units, lessons, practice, projects, drill, lab };
+export const collections = { tracks, units, practice, projects, drill, lab };

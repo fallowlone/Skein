@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // A LeetCode-shaped workspace: the lesson stays readable on the left, the editor
 // docks to the right third of the viewport. CodeMirror 6 (syntax highlighting,
 // autocomplete, bracket matching, multi-cursor, search) is loaded on open only —
@@ -120,7 +121,7 @@ export default function CodeDrawer(
     <aside class="code-drawer" role="dialog" aria-modal="false" aria-label={title}>
       <header class="cd-head">
         <p class="cd-title">{title}</p>
-        <button type="button" class="cd-close" onClick={onClose} aria-label={t.close}>✕</button>
+        <ShadcnButton type="button" class="cd-close" onClick={onClose} aria-label={t.close}>✕</ShadcnButton>
       </header>
 
       <div class="cd-editor">
@@ -129,9 +130,9 @@ export default function CodeDrawer(
       </div>
 
       <div class="cd-bar">
-        <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy} onClick={run}>
+        <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy} onClick={run}>
           {busy ? t.running : t.run}
-        </button>
+        </ShadcnButton>
         {verdict !== null && (
           <span class={verdict ? "cd-verdict ok" : "cd-verdict bad"}>{verdict ? t.passed : t.failed}</span>
         )}

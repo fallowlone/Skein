@@ -15,11 +15,11 @@
  *
  * Env: SUPABASE_URL + SUPABASE_SECRET_KEY (real env or site/.env.local).
  */
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  materialize,
   diffRows,
   chunkByBytes,
   ledgerKeyToPk,
@@ -28,6 +28,7 @@ import {
   type CourseRow,
   type Ledger,
 } from "./corpus.ts";
+import { materializePublishedCorpus } from "./publish-corpus.ts";
 import {
   TABLE_COLUMNS,
   loadEnv,
@@ -48,6 +49,7 @@ interface Args {
   limit: number;
   only: string[];
   ledgerFile: string | null;
+  siteSha: string | null;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -59,6 +61,7 @@ function parseArgs(argv: string[]): Args {
     limit: 0,
     only: [],
     ledgerFile: null,
+    siteSha: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -69,6 +72,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--limit") args.limit = Math.max(0, Number(argv[++i]) || 0);
     else if (a === "--only") args.only = (argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "--ledger-file") args.ledgerFile = argv[++i];
+    else if (a === "--site-sha") args.siteSha = argv[++i] || null;
     else {
       console.error(`unknown flag: ${a}`);
       args.help = true;
@@ -141,7 +145,16 @@ async function main(): Promise<void> {
   const { url, key } = loadEnv(process.env, local);
 
   // ── 1. Materialize + diff against a ledger ───────────────────────────────
-  const all = await materialize(SITE_ROOT);
+  const includeLessonRenderTrees = !args.only.length || args.only.includes("lessons");
+  const { rows: all, render } = await materializePublishedCorpus(SITE_ROOT, {
+    includeLessonRenderTrees,
+  });
+  if (includeLessonRenderTrees) {
+    console.log(
+      `[sync] lesson render trees: ${render.lessons} lessons, ` +
+        `${render.cacheHits} cache hits, ${render.cacheMisses} compiled`,
+    );
+  }
   const rows = args.only.length ? all.filter((r) => args.only.includes(r.kind)) : all;
 
   const t0 = Date.now();
@@ -228,14 +241,38 @@ async function main(): Promise<void> {
     }));
     await upsertTable(client, "sync_log", ledgerRows, "ledger_key");
     console.log(`[sync] sync_log: ${ledgerRows.length} ledger entries written`);
+
+    // Site-commit pinning: record WHICH gated site commit produced this mirror
+    // state, so every mirrored row is reproducible from a known site revision.
+    const siteSha = args.siteSha ?? process.env.GITHUB_SHA ?? null;
+    if (siteSha) {
+      await upsertTable(client, "sync_log", [{ ledger_key: "site_sha", kind: "meta", content_hash: siteSha }], "ledger_key");
+      console.log(`[sync] mirror pinned to site commit ${siteSha}`);
+    }
   }
 // ── 4. Prune deleted files (opt-in) ─────────────────────────────────────
-  if (args.prune && removed.length) {
+  // Externalized-corpus policy: never prune lesson rows when the lesson corpus
+  // lives outside this repo (the mirror may legitimately own more rows than the
+  // stripped corpus; --prune must not wipe them).
+  const lessonsExternalized = !existsSync(resolve(SITE_ROOT, "src/content/lessons"));
+  const prunable = lessonsExternalized
+    ? removed.filter((r) => r.kind !== "lessons")
+    : removed;
+  if (args.prune && prunable.length) {
     let pruned = 0;
     let skipped = 0;
-    for (const { ledgerKey, kind } of removed) {
-      if (!kind) {
+    for (const { ledgerKey, kind } of prunable) {
+      if (kind == null) {
         skipped += 1; // ledger entry naming no known table — leave it alone
+        continue;
+      }
+      if (kind === "meta") {
+        // Synthetic ledger entries (site_sha pinning) live only in sync_log.
+        const { error: metaLedgerErr } = await schemaTable(client, CURRICULUM_SCHEMA, "sync_log")
+          .delete()
+          .eq("ledger_key", ledgerKey);
+        if (metaLedgerErr) throw new Error(`delete sync_log ${ledgerKey} failed: ${metaLedgerErr.message}`);
+        pruned += 1;
         continue;
       }
       const where = ledgerKeyToPk(kind, ledgerKey);
@@ -258,7 +295,8 @@ async function main(): Promise<void> {
 
   console.log(
     `[sync] done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${total} rows upserted, ` +
-      `${unchanged} unchanged, ${args.prune ? removed.length : "not pruned (" + removed.length + " removable)"}`,
+      `${unchanged} unchanged, ${args.prune ? removed.length : "not pruned (" + removed.length + " removable)"}` +
+      (args.dryRun ? "" : `, site sha: ${args.siteSha ?? process.env.GITHUB_SHA ?? "unpinned"}`),
   );
 }
 

@@ -1,10 +1,10 @@
-name: Deploy to Cloudflare Pages
+name: Deploy Skein
 
 on:
   push:
     branches: [main]
   schedule:
-    # Nightly forced full rebuild — re-baselines the cache against drift.
+    # Nightly rebuild also re-validates the Git → Supabase curriculum mirror.
     - cron: "0 4 * * *"
   workflow_dispatch:
     inputs:
@@ -12,10 +12,6 @@ on:
         description: "Pages deploy branch — 'main' = production, anything else = preview URL"
         required: false
         default: "main"
-      force_full:
-        description: "Force a full (non-incremental) rebuild"
-        required: false
-        default: "false"
 
 concurrency:
   group: deploy-${{ github.ref }}
@@ -41,6 +37,9 @@ jobs:
       - name: Unit tests
         run: bun run test
         working-directory: site
+      - name: Typecheck Astro/TypeScript
+        run: bun run check
+        working-directory: site
       - name: API (Pages Functions) tests
         run: bun run test
         working-directory: functions
@@ -54,106 +53,10 @@ jobs:
         run: bun run verify:projects
         working-directory: site
 
-  # Standalone plan job: decides full vs incremental, outputs the mode so both
-  # the shard-render matrix and the build-deploy job can branch on it.
-  plan:
+  deploy:
     needs: gates
     runs-on: ubuntu-latest
-    outputs:
-      mode: ${{ steps.plan.outputs.mode }}
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
-      - name: Install site deps
-        run: bun install --frozen-lockfile
-        working-directory: site
-      - name: Restore dist + manifest cache
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            site/dist
-            site/build-cache/manifest.json
-          key: site-dist-${{ github.run_id }}
-          restore-keys: site-dist-
-      - name: Plan build
-        id: plan
-        working-directory: site
-        env:
-          FORCE_FULL_BUILD: ${{ (github.event_name == 'schedule' || inputs.force_full == 'true') && '1' || '0' }}
-        run: bun scripts/incremental-plan.mjs
-      # Upload plan outputs as an artifact so build-deploy can consume them
-      # without writing to the rolling dist cache (which only build-deploy owns).
-      - name: Upload plan artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-plan
-          path: |
-            site/build-cache/plan.json
-            site/build-cache/next-manifest.json
-          retention-days: 1
-
-  # Matrix job: render one shard per runner in parallel (full builds only).
-  # Each runner gets its own 16 GB. SHARD_TOTAL=6 keeps per-shard render memory
-  # under the heap cap as content grows (4 shards OOM'd mid-render once the
-  # code-patterns/react-patterns tracks landed). Incremental builds skip this job.
-  shard-render:
-    needs: plan
-    if: needs.plan.outputs.mode == 'full'
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
-    strategy:
-      fail-fast: true
-      matrix:
-        index: [0, 1, 2, 3, 4, 5]    # SHARD_TOTAL = 6; tune by measuring runner wall-clock
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.0
-      - name: Install site deps
-        run: bun install --frozen-lockfile
-        working-directory: site
-      - name: Restore Astro/Vite build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            site/node_modules/.astro
-            site/node_modules/.vite
-          key: astro-vite-${{ hashFiles('site/bun.lock', 'site/astro.config.mjs') }}-${{ github.run_id }}
-          restore-keys: |
-            astro-vite-${{ hashFiles('site/bun.lock', 'site/astro.config.mjs') }}-
-            astro-vite-
-      - name: Render shard ${{ matrix.index }}
-        working-directory: site
-        env:
-          SHARD_INDEX: ${{ matrix.index }}
-          SHARD_TOTAL: "6"
-        run: NODE_OPTIONS=--max-old-space-size=13312 bunx astro build --outDir dist-shard-${{ matrix.index }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: dist-shard-${{ matrix.index }}
-          path: site/dist-shard-${{ matrix.index }}
-          retention-days: 1
-
-  # Single job: build (full-via-merge or incremental) → lint → deploy, all in
-  # one runner. For full builds: shard-render ran N parallel renders; this job
-  # downloads the slices and merges them into dist. For incremental builds:
-  # shard-render is skipped, and the incremental render/overlay path runs here
-  # exactly as before. No cross-job artifacts for the incremental path — the only
-  # state is the rolling dist+manifest cache (actions/cache, a separate quota
-  # from the artifact storage that the old sharded pipeline exhausted on the
-  # free tier; the repo is now public so artifact storage limits are relaxed).
-  build-deploy:
-    needs: [plan, shard-render]
-    if: always() && needs.plan.result == 'success' && (needs.shard-render.result == 'success' || needs.shard-render.result == 'skipped')
-    runs-on: ubuntu-latest
-    # Full builds are now handled by 4 parallel shard runners (≈18–20 min each)
-    # + this merge+deploy job. Serial full builds no longer run here; 60 min
-    # covers merge + lint + CF Pages upload with headroom for upload spikes.
-    # Incremental builds finish in minutes; this cap only bites on upload degradation.
-    timeout-minutes: 60
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
@@ -165,90 +68,34 @@ jobs:
         run: bun install --frozen-lockfile
         working-directory: site
 
-      - name: Restore Astro/Vite build cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            site/node_modules/.astro
-            site/node_modules/.vite
-          key: astro-vite-${{ hashFiles('site/bun.lock', 'site/astro.config.mjs') }}-${{ github.run_id }}
-          restore-keys: |
-            astro-vite-${{ hashFiles('site/bun.lock', 'site/astro.config.mjs') }}-
-            astro-vite-
-
-      - name: Restore dist + manifest cache
-        uses: actions/cache/restore@v5
-        with:
-          path: |
-            site/dist
-            site/build-cache/manifest.json
-          key: site-dist-${{ github.run_id }}
-          restore-keys: site-dist-
-
-      # Download plan outputs (plan.json + next-manifest.json) produced by the
-      # plan job and uploaded as an artifact — keeps the rolling dist cache
-      # write-once (only build-deploy saves it).
-      - name: Download plan artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: build-plan
-          path: site/build-cache
-
-      # ── FULL: download shard slices + merge into dist ──
-      # The plan job ran incremental-plan.mjs and wrote next-manifest.json which
-      # is now in the restored cache above. After merge-shards passes completeness,
-      # we promote next-manifest.json → manifest.json so the next run has a fresh
-      # baseline. shard-render uploaded the per-shard dist slices as artifacts.
-      - name: Download shard slices (full)
-        if: needs.plan.outputs.mode == 'full'
-        uses: actions/download-artifact@v4
-        with:
-          pattern: dist-shard-*
-          path: site
-      - name: Merge shards (full)
-        if: needs.plan.outputs.mode == 'full'
+      - name: Build and validate curriculum artifacts
+        run: bun run build:content
         working-directory: site
+
+      # Runtime lesson routes read this mirror. Publish and verify it before the
+      # Worker can receive new production traffic. Git remains the source of truth.
+      - name: Publish curriculum to Supabase
+        if: github.ref == 'refs/heads/main'
         env:
-          SHARD_TOTAL: "6"
-        run: bun scripts/merge-shards.mjs
-      - name: Promote manifest (full)
-        if: needs.plan.outputs.mode == 'full'
-        run: mv site/build-cache/next-manifest.json site/build-cache/manifest.json
-
-      # ── INCREMENTAL: render only changed pages, overlay onto cached dist ──
-      - name: Snapshot cached dist
-        if: needs.plan.outputs.mode == 'incremental'
-        run: |
-          if [ ! -d site/dist ]; then
-            echo "Restored cache had no dist/ — cannot run incremental." >&2
-            exit 1
-          fi
-          rm -rf site/build-cache/prev-dist
-          cp -a site/dist site/build-cache/prev-dist
-      - name: Render changed pages
-        if: needs.plan.outputs.mode == 'incremental'
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: bun run sync:supabase -- --prune --site-sha "$GITHUB_SHA"
         working-directory: site
+      - name: Verify curriculum parity
+        if: github.ref == 'refs/heads/main'
         env:
-          SHARD_TOTAL: "1"
-        run: |
-          INCREMENTAL_PLAN="$(cat build-cache/plan.json)" \
-            NODE_OPTIONS=--max-old-space-size=13312 bunx astro build
-      - name: Overlay + guard + promote manifest
-        if: needs.plan.outputs.mode == 'incremental'
-        run: bun scripts/incremental-merge.mjs
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: bun run verify:supabase-parity
         working-directory: site
 
-      # ── common: lint, persist cache, deploy ──
-      - name: Lint dist
-        run: bun scripts/lint-dist.mjs
+      - name: Build Pages app
+        run: bun run build:app
         working-directory: site
-      - name: Save dist + manifest cache
-        uses: actions/cache/save@v5
-        with:
-          path: |
-            site/dist
-            site/build-cache/manifest.json
-          key: site-dist-${{ github.run_id }}
+      - name: Build lesson Worker
+        run: bun run build:lessons-worker
+        working-directory: site
+
       - name: Resolve deploy branch
         id: branch
         env:
@@ -265,34 +112,16 @@ jobs:
             exit 1
           fi
           echo "name=$name" >> "$GITHUB_OUTPUT"
-      # NOTE: wrangler uploads only files whose content hash is missing from the
-      # live deployment. Incremental builds overlay byte-identical unchanged pages,
-      # so the upload is a delta. Do NOT introduce per-build nondeterminism into
-      # rendered HTML (timestamps/build-ids) — it defeats this and re-uploads all pages.
       - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           DEPLOY_BRANCH: ${{ steps.branch.outputs.name }}
         run: bunx wrangler pages deploy site/dist --project-name=skein --branch="$DEPLOY_BRANCH"
-
-      # ── content DB mirror (Phase 1) ──
-      # Deliberately AFTER the deploy. The site renders from files, so a mirror
-      # problem must never stop a content deploy from shipping — that is the
-      # whole point of keeping the database off the render path. Being last,
-      # these can be blocking: drift turns the run red without holding the site.
-      - name: Sync content mirror to Supabase
+      - name: Deploy lesson Worker
         if: github.ref == 'refs/heads/main'
         env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-        run: bun scripts/supabase/sync-content.ts
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: bunx wrangler deploy --config dist-lessons/server/wrangler.json
         working-directory: site
-      - name: Verify content mirror parity
-        if: github.ref == 'refs/heads/main'
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
-        run: bun scripts/supabase/verify-parity.ts
-        working-directory: site
-

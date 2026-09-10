@@ -5,6 +5,7 @@ import mdx from "@astrojs/mdx";
 import preact from "@astrojs/preact";
 import sitemap from "@astrojs/sitemap";
 import remarkRetrievalLessonKey from "./src/lib/remark-retrieval-lessonkey.mjs";
+import lessonIndex from "./src/content/path/lesson-index.json" with { type: "json" };
 // NOTE: the curriculum lint runs as a SEPARATE post-build process
 // (`bun scripts/lint-dist.mjs`, chained in package.json `build`), not as an
 // in-process astro:build:done integration — that inherited the render's ~10GB
@@ -35,9 +36,12 @@ export default defineConfig({
   integrations: [
     tailwind({ applyBaseStyles: false }),
     mdx(),
-    preact({ compat: false }),
+    preact({ compat: true }),
     sitemap({
       filter: (page) => !page.includes("/admin"),
+      customPages: Object.values(lessonIndex).map(
+        (lesson) => `https://fallowlone.com/${lesson.lang}/learn/${lesson.track}/${lesson.unit}/${lesson.slug}/`,
+      ),
     }),
   ],
   markdown: {

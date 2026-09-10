@@ -1,3 +1,6 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Input as ShadcnInput } from "~/components/ui/input";
+import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
 // site/src/components/interview/InterviewQABank.tsx
 // Browsable interview-question bank with progressive, lesson-style answers.
 import { useState, useMemo } from "preact/hooks";
@@ -95,24 +98,24 @@ export default function InterviewQABank({ lang, categories, data }: Props) {
     <div class="iq-bank">
       <div class="iq-filter">
         <div class="iq-cats">
-          <button
+          <ShadcnButton
             type="button"
             class={`iq-cat ${activeCategory === "all" ? "on" : ""}`}
             onClick={() => setActiveCategory("all")}
           >
             {t("interviewQA.all", lang)} ({totalQ})
-          </button>
+          </ShadcnButton>
           {categories.map((cat) => (
-            <button
+            <ShadcnButton
               type="button"
               class={`iq-cat ${activeCategory === cat ? "on" : ""}`}
               onClick={() => setActiveCategory(cat)}
             >
               {cat} ({data[cat].questions.length})
-            </button>
+            </ShadcnButton>
           ))}
         </div>
-        <input
+        <ShadcnInput
           type="search"
           class="iq-search"
           placeholder={t("interviewQA.search", lang)}
@@ -121,19 +124,15 @@ export default function InterviewQABank({ lang, categories, data }: Props) {
         />
       </div>
 
-      <div class="iq-levels" role="tablist" aria-label={t("interviewQA.levels", lang)}>
-        {INTERVIEW_LEVELS.map((answerLevel) => (
-          <button
-            type="button"
-            role="tab"
-            aria-selected={level === answerLevel}
-            class={`iq-level ${level === answerLevel ? "on" : ""}`}
-            onClick={() => setLevel(answerLevel)}
-          >
-            {t(`interviewQA.level.${answerLevel}`, lang)}
-          </button>
-        ))}
-      </div>
+      <Tabs value={level} onValueChange={(value: InterviewLevel) => setLevel(value)}>
+        <TabsList class="iq-levels" aria-label={t("interviewQA.levels", lang)}>
+          {INTERVIEW_LEVELS.map((answerLevel) => (
+            <TabsTrigger value={answerLevel} class={`iq-level ${level === answerLevel ? "on" : ""}`}>
+              {t(`interviewQA.level.${answerLevel}`, lang)}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
 
       <div class="iq-list" aria-label={t("interviewQA.title", lang)}>
         {filtered.length === 0 ? (

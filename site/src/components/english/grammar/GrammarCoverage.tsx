@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // GrammarCoverage — reference/overview of how much of the English Grammar
 // Profile the corpus covers, band by band. Data-as-design: a calm gauge + a
 // stacked bar per CEFR band, drillable into the topics that cover it.
@@ -90,7 +91,7 @@ function CovBand(
   const locked = isLocked(band.cefr);
   return (
     <>
-      <button type="button" class={"cov-band" + (locked ? " locked" : "")} disabled={locked} onClick={onToggle}>
+      <ShadcnButton type="button" class={"cov-band" + (locked ? " locked" : "")} disabled={locked} onClick={onToggle}>
         <span class="cb-label">{band.cefr}</span>
         <div class="cb-meter">
           <div class="cbm-bar">
@@ -112,7 +113,7 @@ function CovBand(
               style={{ transform: expanded ? "rotate(90deg)" : "none", transition: "transform var(--dur-1) var(--ease)" }}><path d="M9 6l6 6-6 6" /></svg>
           </span>
         )}
-      </button>
+      </ShadcnButton>
       {expanded && !locked && (
         <div class="cov-drill">
           <div class="cd-head">

@@ -7,6 +7,7 @@ import type { APIRoute } from "astro";
 import { getCollection } from "astro:content";
 import { isLocale, type Locale } from "~/i18n";
 import { selectOther } from "~/scripts/build-incremental";
+import { indexedLessons } from "~/scripts/lesson-index";
 
 // Gate like every other non-lesson route: full build emits both locales;
 // incremental build emits none and the prior JSON is served from the cached
@@ -23,16 +24,12 @@ export const GET: APIRoute = async ({ params }) => {
   const trackColorBySlug: Record<string, string> = {};
   for (const tr of tracks) trackColorBySlug[tr.data.slug] = tr.data.color;
 
-  const lessons = await getCollection(
-    "lessons",
-    (e) => e.data.lang === lang && e.data.status === "ready",
-  );
-  const index = lessons.map((e) => ({
-    slug: e.data.slug,
-    pillar: e.data.track,
-    pillarColor: trackColorBySlug[e.data.track] ?? "lilac",
-    title: e.data.title,
-    href: `/${lang}/learn/${e.data.track}/${e.data.unit}/${e.data.slug}/`,
+  const index = indexedLessons(lang).filter((lesson) => lesson.status === "ready").map((lesson) => ({
+    slug: lesson.slug,
+    pillar: lesson.track,
+    pillarColor: trackColorBySlug[lesson.track] ?? "lilac",
+    title: lesson.title,
+    href: `/${lang}/learn/${lesson.track}/${lesson.unit}/${lesson.slug}/`,
   }));
 
   return new Response(JSON.stringify(index), {

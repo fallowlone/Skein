@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Input as ShadcnInput } from "~/components/ui/input";
 // src/components/account/DataSection.tsx
 // 03 · YOUR DATA — export / import / reset, wired to the real StateIO + user-state APIs.
 //   export  → exportState(Date.now())   (JSON blob download; the only Date.now() here)
@@ -82,7 +84,7 @@ export default function DataSection({ lang }: { lang: Locale }) {
             <span class="set-desc">{l.exportDesc}</span>
           </div>
           <div class="set-control">
-            <button type="button" class="btn btn-quiet btn-sm" onClick={() => exportState(Date.now())}>{l.exportCta}</button>
+            <ShadcnButton type="button" class="btn btn-quiet btn-sm" onClick={() => exportState(Date.now())}>{l.exportCta}</ShadcnButton>
           </div>
         </div>
 
@@ -94,7 +96,7 @@ export default function DataSection({ lang }: { lang: Locale }) {
           <div class="set-control">
             <label class="btn btn-quiet btn-sm cab-file">
               {l.importCta}
-              <input type="file" accept="application/json,.json" class="sr-file" aria-label={l.importName} onChange={onFile} />
+              <ShadcnInput type="file" accept="application/json,.json" class="sr-file" aria-label={l.importName} onChange={onFile} />
             </label>
           </div>
         </div>
@@ -105,7 +107,7 @@ export default function DataSection({ lang }: { lang: Locale }) {
             <span class="set-desc">{l.resetDesc}</span>
           </div>
           <div class="set-control">
-            <button type="button" class="btn btn-danger btn-sm" onClick={onReset}>{l.resetCta}</button>
+            <ShadcnButton type="button" class="btn btn-danger btn-sm" onClick={onReset}>{l.resetCta}</ShadcnButton>
           </div>
         </div>
       </div>

@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // site/src/components/assess/AssessReport.tsx
 // The four sections of AssessReportModel (Task 11's report.ts): measured rows,
 // top gaps, hidden strengths, and — inside `.ar-untested` — concepts that were
@@ -148,17 +149,17 @@ export default function AssessReport({ lang, model, cells, labelOf, onRestart }:
 
       <div class="assess-item-controls">
         {/* [assess-engine-replan] Save disabled pending evidence model re-plan */}
-        <button type="button" class="oa-btn oa-btn-primary" disabled aria-disabled="true">
+        <ShadcnButton type="button" class="oa-btn oa-btn-primary" disabled aria-disabled="true">
           {t("assess.report.apply", lang)}
-        </button>
+        </ShadcnButton>
         {applied && (
           <p class="ar-applied">
             {t("assess.report.applied", lang).replace("{n}", String(applied.n)).replace("{m}", String(applied.m))}
           </p>
         )}
-        <button type="button" class="oa-btn oa-btn-ghost" onClick={onRestart}>
+        <ShadcnButton type="button" class="oa-btn oa-btn-ghost" onClick={onRestart}>
           {t("assess.report.restart", lang)}
-        </button>
+        </ShadcnButton>
       </div>
     </section>
   );

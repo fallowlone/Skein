@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/account/PreferencesSection.tsx
 // 05 · PREFERENCES — local-only settings, reusing the exact setter behaviour from
 // SettingsDrawer / user-state:
@@ -85,9 +86,9 @@ export default function PreferencesSection({ lang }: { lang: Locale }) {
           <div class="set-control">
             <div class="seg" role="group" aria-label={l.themeName}>
               {(["light", "dark"] as const).map((v) => (
-                <button key={v} type="button" aria-pressed={theme === v} onClick={() => applyTheme(v)}>
+                <ShadcnButton key={v} type="button" aria-pressed={theme === v} onClick={() => applyTheme(v)}>
                   {v === "light" ? l.light : l.dark}
-                </button>
+                </ShadcnButton>
               ))}
             </div>
           </div>
@@ -99,9 +100,9 @@ export default function PreferencesSection({ lang }: { lang: Locale }) {
           <div class="set-control">
             <div class="seg" role="group" aria-label={l.motionName}>
               {(["on", "off", "auto"] as const).map((v: Motion) => (
-                <button key={v} type="button" aria-pressed={s.motion === v} onClick={() => setMotion(v)}>
+                <ShadcnButton key={v} type="button" aria-pressed={s.motion === v} onClick={() => setMotion(v)}>
                   {v === "on" ? l.on : v === "off" ? l.off : l.auto}
-                </button>
+                </ShadcnButton>
               ))}
             </div>
           </div>
@@ -113,9 +114,9 @@ export default function PreferencesSection({ lang }: { lang: Locale }) {
           <div class="set-control">
             <div class="seg depth" role="group" aria-label={l.depthName}>
               {(["junior", "middle", "senior"] as Tier[]).map((v) => (
-                <button key={v} type="button" aria-pressed={s.tier === v} onClick={() => setTier(v, true)}>
+                <ShadcnButton key={v} type="button" aria-pressed={s.tier === v} onClick={() => setTier(v, true)}>
                   {v === "junior" ? l.junior : v === "middle" ? l.middle : l.senior}
-                </button>
+                </ShadcnButton>
               ))}
             </div>
           </div>
@@ -127,9 +128,9 @@ export default function PreferencesSection({ lang }: { lang: Locale }) {
           <div class="set-control">
             <div class="seg" role="group" aria-label={l.densityName}>
               {(["compact", "regular", "spacious"] as const).map((v) => (
-                <button key={v} type="button" aria-pressed={density === v} onClick={() => applyDensity(v)}>
+                <ShadcnButton key={v} type="button" aria-pressed={density === v} onClick={() => applyDensity(v)}>
                   {v === "compact" ? l.compact : v === "regular" ? l.regular : l.spacious}
-                </button>
+                </ShadcnButton>
               ))}
             </div>
           </div>

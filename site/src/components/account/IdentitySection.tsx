@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Input as ShadcnInput } from "~/components/ui/input";
 // src/components/account/IdentitySection.tsx
 // 01 · ACCOUNT — identity panel. Reuses the AccountPanel auth flow VERBATIM
 // (fetchMe → undefined=loading / null=signed-out / Me=signed-in, terms gate,
@@ -126,7 +128,7 @@ export default function IdentitySection({ lang }: { lang: Locale }) {
           <span class={`sync ${me.termsAccepted ? "synced" : "offline"}`}>
             <span class="sdot" />{me.termsAccepted ? l.synced : l.localOnly}
           </span>
-          <button type="button" class="btn btn-quiet btn-sm" onClick={signOut}>{t("account.signOut", lang)}</button>
+          <ShadcnButton type="button" class="btn btn-quiet btn-sm" onClick={signOut}>{t("account.signOut", lang)}</ShadcnButton>
         </div>
       </div>
 
@@ -134,16 +136,16 @@ export default function IdentitySection({ lang }: { lang: Locale }) {
         <div class="terms-gate">
           <p>{t("account.termsGate", lang)}</p>
           <a class="terms-readlink" href={`/${lang}/terms`} target="_blank" rel="noreferrer">{t("account.termsLink", lang)}</a>
-          <button type="button" class="btn btn-primary btn-sm" onClick={acceptTerms}>{t("account.termsAccept", lang)}</button>
+          <ShadcnButton type="button" class="btn btn-primary btn-sm" onClick={acceptTerms}>{t("account.termsAccept", lang)}</ShadcnButton>
         </div>
       ) : (
         <>
           <div class="id-field">
             <label class="id-field-label" for="cab-nick">{t("account.nickname", lang)}</label>
             <div class="id-field-row">
-              <input id="cab-nick" class="cab-input" value={nick} maxLength={32}
+              <ShadcnInput id="cab-nick" class="cab-input" value={nick} maxLength={32}
                 onInput={(e) => setNick((e.target as HTMLInputElement).value)} />
-              <button type="button" class="btn btn-quiet btn-sm" onClick={saveNick}>{t("account.nicknameSave", lang)}</button>
+              <ShadcnButton type="button" class="btn btn-quiet btn-sm" onClick={saveNick}>{t("account.nicknameSave", lang)}</ShadcnButton>
             </div>
             <p class="cab-hint">{t("account.nicknameHint", lang)}</p>
             {msg && <p class="cab-hint">{msg}</p>}
@@ -159,12 +161,12 @@ export default function IdentitySection({ lang }: { lang: Locale }) {
             <div class="inset-body">
               <p class="cab-hint">{t("account.deleteWarn", lang)}</p>
               <div class="id-field-row">
-                <input class="cab-input" placeholder={t("account.deleteConfirm", lang)} value={confirm}
+                <ShadcnInput class="cab-input" placeholder={t("account.deleteConfirm", lang)} value={confirm}
                   onInput={(e) => setConfirm((e.target as HTMLInputElement).value)} />
-                <button type="button" class="btn btn-danger btn-sm" disabled={confirm !== me.nickname}
+                <ShadcnButton type="button" class="btn btn-danger btn-sm" disabled={confirm !== me.nickname}
                   aria-disabled={confirm !== me.nickname} onClick={del}>
                   {t("account.deleteCta", lang)}
-                </button>
+                </ShadcnButton>
               </div>
             </div>
           </details>
