@@ -1,9 +1,45 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Input as ShadcnInput } from "~/components/ui/input";
+import { h, type ComponentChildren } from "preact";
 import { useState } from "preact/hooks";
-import type { ComponentChildren } from "preact";
 import { markFaded } from "~/scripts/user-state";
 import { t, type Locale } from "~/i18n";
 
 export type Blank = { id: string; expected: string | RegExp; placeholder?: string };
+
+type SerializedRichNode =
+  | { type: "text"; value: string }
+  | { type: "raw"; value: string }
+  | {
+      type: "element";
+      name: "code" | "div" | "em" | "li" | "p" | "pre" | "strong" | "ul";
+      props?: Record<string, unknown>;
+      children?: SerializedRichNode[];
+    };
+
+type RichContent = ComponentChildren | SerializedRichNode;
+
+function isSerializedRichNode(value: unknown): value is SerializedRichNode {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const type = (value as { type?: unknown }).type;
+  return type === "text" || type === "raw" || type === "element";
+}
+
+function renderRich(value: RichContent): ComponentChildren {
+  if (!isSerializedRichNode(value)) return value as ComponentChildren;
+  if (value.type === "text") return value.value;
+  if (value.type === "raw") {
+    return h("span", { dangerouslySetInnerHTML: { __html: value.value } });
+  }
+  if (value.type === "element") {
+    return h(
+      value.name,
+      value.props ?? {},
+      ...(value.children ?? []).map((child) => renderRich(child)),
+    );
+  }
+  return value as ComponentChildren;
+}
 
 type Props = {
   id: string;
@@ -11,11 +47,11 @@ type Props = {
   lang: Locale;
   title: string;
   steps: {
-    solved: ComponentChildren;
-    semi: { prompt: ComponentChildren; blanks: Blank[] };
-    blank: { prompt: ComponentChildren; reveal: ComponentChildren };
+    solved: RichContent;
+    semi: { prompt: RichContent; blanks: Blank[] };
+    blank: { prompt: RichContent; reveal: RichContent };
   };
-  misconceptions?: Record<string, ComponentChildren>;
+  misconceptions?: Record<string, RichContent>;
 };
 
 function check(expected: string | RegExp, actual: string): boolean {
@@ -64,26 +100,26 @@ export default function FadedExample({
       </header>
       {step === 0 && (
         <>
-          <div class="prose max-w-none">{steps.solved}</div>
-          <button
+          <div class="prose max-w-none">{renderRich(steps.solved)}</div>
+          <ShadcnButton
             type="button"
             class="mt-4 oa-btn oa-btn-primary oa-btn-sm"
             onClick={() => setStep(1)}
           >
             {t("fade.next", lang)}
-          </button>
+          </ShadcnButton>
         </>
       )}
       {step === 1 && (
         <>
-          <div class="prose max-w-none">{steps.semi.prompt}</div>
+          <div class="prose max-w-none">{renderRich(steps.semi.prompt)}</div>
           <ul class="mt-4 space-y-3">
             {steps.semi.blanks.map((b) => {
               const v = values[b.id] ?? "";
               const miscKey = `${b.id}:${v.trim()}`;
               return (
                 <li key={b.id}>
-                  <input
+                  <ShadcnInput
                     class="font-mono w-full max-w-md px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
                     placeholder={b.placeholder ?? ""}
                     value={v}
@@ -95,35 +131,35 @@ export default function FadedExample({
                     <div class="text-sm text-danger mt-1">{feedback[b.id]}</div>
                   )}
                   {misconceptions?.[miscKey] && (
-                    <div class="text-sm text-danger mt-1">{misconceptions[miscKey]}</div>
+                    <div class="text-sm text-danger mt-1">{renderRich(misconceptions[miscKey])}</div>
                   )}
                 </li>
               );
             })}
           </ul>
           <div class="mt-4 flex gap-2">
-            <button
+            <ShadcnButton
               type="button"
               class="oa-btn oa-btn-primary oa-btn-sm"
               onClick={submitSemi}
             >
               {t("fade.next", lang)}
-            </button>
-            <button
+            </ShadcnButton>
+            <ShadcnButton
               type="button"
               class="oa-btn oa-btn-ghost oa-btn-sm"
               onClick={() => setStep(0)}
             >
               {t("fade.prev", lang)}
-            </button>
+            </ShadcnButton>
           </div>
         </>
       )}
       {step === 2 && (
         <>
-          <div class="prose max-w-none">{steps.blank.prompt}</div>
+          <div class="prose max-w-none">{renderRich(steps.blank.prompt)}</div>
           {!revealed ? (
-            <button
+            <ShadcnButton
               type="button"
               class="mt-4 oa-btn oa-btn-ghost oa-btn-sm"
               onClick={() => {
@@ -132,9 +168,9 @@ export default function FadedExample({
               }}
             >
               {t("fade.reveal", lang)}
-            </button>
+            </ShadcnButton>
           ) : (
-            <div class="mt-4 prose max-w-none">{steps.blank.reveal}</div>
+            <div class="mt-4 prose max-w-none">{renderRich(steps.blank.reveal)}</div>
           )}
         </>
       )}

@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import { askTutor, MAX_TUTOR_MESSAGES, recentMistakes, type TutorMessage, type TutorMode } from "~/scripts/ai-tutor";
@@ -113,14 +115,14 @@ export default function AiTutorModes({
       </div>
       <div class="flex flex-wrap gap-2 mb-3">
         {(Object.keys(modes) as Mode[]).map((key) => (
-          <button
+          <ShadcnButton
             type="button"
             class="oa-btn oa-btn-secondary oa-btn-sm"
             aria-pressed={mode === key}
             onClick={() => chooseMode(key)}
           >
             {tt(lang, modes[key].label)}
-          </button>
+          </ShadcnButton>
         ))}
       </div>
       <p class="m-0 text-sm text-muted">{tt(lang, active.prompt)}</p>
@@ -143,7 +145,7 @@ export default function AiTutorModes({
             </ol>
           )}
           <label class="block mt-3 text-sm text-ink" for="ai-tutor-input">{inputLabel}</label>
-          <textarea
+          <ShadcnTextarea
             id="ai-tutor-input"
             aria-label={inputLabel}
             class="w-full mt-1 bg-card border-[0.5px] border-hairline rounded px-2 py-2 text-sm"
@@ -154,17 +156,17 @@ export default function AiTutorModes({
           />
           <div class="flex flex-wrap gap-2 mt-2">
             {!conversation.length && (
-              <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => setDraft(tt(lang, { en: "I don't know yet.", ru: "Я пока не знаю." }))}>
+              <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => setDraft(tt(lang, { en: "I don't know yet.", ru: "Я пока не знаю." }))}>
                 {tt(lang, { en: "I don't know", ru: "Не знаю" })}
-              </button>
+              </ShadcnButton>
             )}
-            <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy || !draft.trim()} onClick={() => void ask()}>
+            <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy || !draft.trim()} onClick={() => void ask()}>
               {busy ? "…" : conversation.length ? tt(lang, { en: "Send follow-up", ru: "Отправить следующую попытку" }) : tt(lang, { en: "Ask for help", ru: "Попросить помощь" })}
-            </button>
+            </ShadcnButton>
             {hasHelp && (
-              <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => setReconstructing(true)}>
+              <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => setReconstructing(true)}>
                 {tt(lang, { en: "Reconstruct without help", ru: "Воспроизвести без помощи" })}
-              </button>
+              </ShadcnButton>
             )}
           </div>
           {error && <p role="alert" class="mt-3 text-sm text-danger">{error}</p>}
@@ -179,7 +181,7 @@ export default function AiTutorModes({
           <label class="block mt-2 text-sm text-ink" for="ai-tutor-reconstruction">
             {tt(lang, { en: "Independent reconstruction", ru: "Самостоятельное воспроизведение" })}
           </label>
-          <textarea
+          <ShadcnTextarea
             id="ai-tutor-reconstruction"
             aria-label={tt(lang, { en: "Independent reconstruction", ru: "Самостоятельное воспроизведение" })}
             class="w-full mt-1 bg-card border-[0.5px] border-hairline rounded px-2 py-2 text-sm"
@@ -190,21 +192,21 @@ export default function AiTutorModes({
           <fieldset class="mt-3" disabled={!reconstruction.trim()}>
             <legend class="text-sm text-muted">{tt(lang, { en: "Honest self-report", ru: "Честная самооценка" })}</legend>
             <div class="flex flex-wrap gap-2 mt-2">
-              <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => setSelfReport("independent")}>
+              <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => setSelfReport("independent")}>
                 {tt(lang, { en: "I reconstructed it independently", ru: "Я воспроизвёл это самостоятельно" })}
-              </button>
-              <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => setSelfReport("help")}>
+              </ShadcnButton>
+              <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => setSelfReport("help")}>
                 {tt(lang, { en: "I still need help", ru: "Мне всё ещё нужна помощь" })}
-              </button>
+              </ShadcnButton>
             </div>
           </fieldset>
           <p class="mt-3 text-xs text-muted">
             {tt(lang, { en: "This self-report does not change mastery.", ru: "Эта самооценка не изменяет mastery." })}
           </p>
           {selfReport === "help" && (
-            <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm mt-2" onClick={() => setReconstructing(false)}>
+            <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm mt-2" onClick={() => setReconstructing(false)}>
               {tt(lang, { en: "Return to tutor", ru: "Вернуться к наставнику" })}
-            </button>
+            </ShadcnButton>
           )}
           {selfReport === "independent" && (
             <p class="mt-3 text-sm text-muted">

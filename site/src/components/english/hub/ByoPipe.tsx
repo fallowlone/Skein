@@ -1,3 +1,5 @@
+import { Input as ShadcnInput } from "~/components/ui/input";
+import { Button as ShadcnButton } from "~/components/ui/button";
 // BYO content pipe (Signature #2). Paste English text → Extract (tokenize + classify against the
 // vocab bank and your known set) → Build (create real SRS cards for in-bank "new" words, and — only
 // if a BYOK key is present — AI-write exercises) → Reuse (five modes routed to Own/Delegate). v1 is
@@ -216,7 +218,7 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
                 <path d="M9 7H6a3 3 0 000 6h3M15 7h3a3 3 0 010 6h-3M8 10h8" />
               </svg>
             </span>
-            <input
+            <ShadcnInput
               type="text"
               placeholder={L.placeholder}
               aria-label={L.inputAria}
@@ -225,24 +227,27 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
             />
             <div class="seg src-seg" role="group" aria-label={lang === "en" ? "Source type" : "Тип источника"}>
               {(["text", "url"] as SrcType[]).map((s) => (
-                <button key={s} type="button" aria-pressed={srcType === s} onClick={() => setSrcType(s)}>
+                <ShadcnButton key={s} type="button" aria-pressed={srcType === s} onClick={() => setSrcType(s)}>
                   {s === "text" ? L.text : L.url}
-                </button>
+                </ShadcnButton>
               ))}
             </div>
-            <button class="btn btn-primary" type="button" onClick={makeLesson} disabled={!text.trim()}>
+            <ShadcnButton class="btn btn-primary" type="button" onClick={makeLesson} disabled={!text.trim()}>
               <span>{L.make}</span><span class="arrow">→</span>
-            </button>
+            </ShadcnButton>
           </div>
           {srcType === "url" ? <div class="byo-hint" style="color:var(--warn)">{L.urlNote}</div> : null}
           <div class="byo-hint">
             <span>{L.tryLabel}</span>
             {examples.map((ex) => (
-              <span class="ex" key={ex.label} role="button" tabIndex={0}
+              <ShadcnButton
+                class="ex"
+                key={ex.label}
+                type="button"
                 onClick={() => { setSrcType("text"); setText(ex.fill); }}
-                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { setSrcType("text"); setText(ex.fill); } }}>
+              >
                 {ex.label}
-              </span>
+              </ShadcnButton>
             ))}
           </div>
         </div>
@@ -288,10 +293,10 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
               </div>
               {result ? (
                 <div style="margin-top:8px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                  <button class="btn btn-primary btn-sm" type="button" onClick={buildDeck} disabled={building}>
+                  <ShadcnButton class="btn btn-primary btn-sm" type="button" onClick={buildDeck} disabled={building}>
                     <span>{building ? L.generating : L.buildDeck}</span>
                     {building ? null : <span class="arrow">→</span>}
-                  </button>
+                  </ShadcnButton>
                   {!keyOn && cardsMade > 0 ? (
                     <a class="btn btn-ext btn-sm" href={`/${lang}/english/writing`}>
                       <span>{L.addKey}</span>
@@ -329,7 +334,7 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
             <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px">
               {sentences.map((s, i) => (
                 <li key={s.sentence} style="display:flex;align-items:flex-start;gap:8px">
-                  <input type="checkbox" checked={!unchecked.has(i)} style="margin-top:3px"
+                  <ShadcnInput type="checkbox" checked={!unchecked.has(i)} style="margin-top:3px"
                     onChange={() => setUnchecked((u) => { const n = new Set(u); if (n.has(i)) n.delete(i); else n.add(i); return n; })} />
                   <label style="font-size:13px;line-height:1.4;color:var(--ink-2)">
                     <span class="pc" style="margin-right:6px">{s.lemma}</span>{s.sentence}
@@ -338,9 +343,9 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
               ))}
             </ul>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <button class="btn btn-primary btn-sm" type="button" onClick={saveSentenceCards}>
+              <ShadcnButton class="btn btn-primary btn-sm" type="button" onClick={saveSentenceCards}>
                 <span>{L.sentSave}</span><span class="arrow">→</span>
-              </button>
+              </ShadcnButton>
               {chunksMade > 0 ? <span class="pc">{L.sentMade(chunksMade)}</span> : null}
             </div>
           </div>
@@ -349,13 +354,13 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
         <div class="byo-phrase" style="display:flex;flex-direction:column;gap:6px;border-top:0.5px solid var(--hairline);padding-top:var(--s-4)">
           <span class="ps-no">{L.phraseLabel}</span>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <input type="text" value={phrase} placeholder={L.phrasePlaceholder} aria-label={L.phraseLabel}
+            <ShadcnInput type="text" value={phrase} placeholder={L.phrasePlaceholder} aria-label={L.phraseLabel}
               onInput={(e) => setPhrase((e.target as HTMLInputElement).value)}
               onKeyDown={(e) => { if (e.key === "Enter") savePhrase(); }}
               style="flex:1;min-width:200px;border:0.5px solid var(--hairline-strong);border-radius:var(--r-sm);background:var(--paper);padding:8px 10px;font-size:14px;color:var(--ink)" />
-            <button class="btn btn-ext btn-sm" type="button" onClick={savePhrase} disabled={!phrase.trim() && !phraseSaved}>
+            <ShadcnButton class="btn btn-ext btn-sm" type="button" onClick={savePhrase} disabled={!phrase.trim() && !phraseSaved}>
               <span>{phraseSaved ? L.phraseSaved : L.phraseSave}</span>
-            </button>
+            </ShadcnButton>
           </div>
         </div>
       </div>

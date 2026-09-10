@@ -4,6 +4,7 @@
 import { getCollection } from "astro:content";
 import glossaryJson from "../i18n/glossary.json";
 import type { Locale } from "../i18n";
+import { indexedLessons } from "./lesson-index";
 import {
   deriveRelations,
   type ContentRef,
@@ -29,21 +30,21 @@ async function buildRelations(): Promise<Relations> {
   const trackOrder = new Map(tracks.map((t) => [t.data.slug, t.data.order]));
   const unitOrder = new Map(units.map((u) => [u.data.slug, u.data.order]));
 
-  const lessons = await getCollection("lessons", (e) => e.data.lang === "en");
+  const lessons = indexedLessons("en");
 
   const scan: ScanEntry[] = [];
-  for (const e of lessons) {
+  for (const lesson of lessons) {
     scan.push({
       collection: "lessons",
-      group: e.data.track,
-      unit: e.data.unit,
-      slug: e.data.slug,
+      group: lesson.track,
+      unit: lesson.unit,
+      slug: lesson.slug,
       altitude: lessonAltitude(
-        trackOrder.get(e.data.track) ?? 999,
-        unitOrder.get(e.data.unit) ?? 999,
-        e.data.order,
+        trackOrder.get(lesson.track) ?? 999,
+        unitOrder.get(lesson.unit) ?? 999,
+        lesson.order,
       ),
-      body: e.body ?? "",
+      keys: lesson.terms,
     });
   }
 
@@ -57,14 +58,16 @@ export async function loadGlossary(lang: Locale): Promise<{
 }> {
   const relations = await buildRelations();
 
-  const lessons = await getCollection("lessons", (e) => e.data.lang === lang);
+  const lessons = indexedLessons(lang);
   const tracks = await getCollection("tracks");
   const trackTitle = new Map(tracks.map((t) => [t.data.slug, t.data.title[lang]]));
 
   // key: `${collection}:${group}:${unit}:${slug}` → entry title for `lang`
   // unit is part of the key because lesson slugs are unit-scoped (many units reuse "01-overview").
   const titleByKey = new Map<string, string>();
-  for (const e of lessons) titleByKey.set(`lessons:${e.data.track}:${e.data.unit}:${e.data.slug}`, e.data.title);
+  for (const lesson of lessons) {
+    titleByKey.set(`lessons:${lesson.track}:${lesson.unit}:${lesson.slug}`, lesson.title);
+  }
 
   function resolveRef(ref: ContentRef): ResolvedRef {
     const k = `${ref.collection}:${ref.group}:${ref.unit}:${ref.slug}`;

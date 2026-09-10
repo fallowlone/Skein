@@ -1,3 +1,5 @@
+import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/path/AimStage.tsx
 // Stage 1 of probabilistic placement (Skein design): pick a goal + a coarse per-family
 // self-mark. The self-placement seeds Bayesian priors (seedPriors) and prunes "never" families
@@ -68,11 +70,11 @@ export default function AimStage({ lang, onDone }: Props) {
         <div class="aim-field">
           <label for="aim-goal">{t.goal}</label>
           <div class="aim-select">
-            <select id="aim-goal" value={goalId} onChange={(e) => setGoalId((e.target as HTMLSelectElement).value)}>
+            <ShadcnNativeSelect id="aim-goal" value={goalId} onChange={(e) => setGoalId((e.target as HTMLSelectElement).value)}>
               {goals.map((g) => (
                 <option key={g.id} value={g.id}>{g.label[lang]}</option>
               ))}
-            </select>
+            </ShadcnNativeSelect>
             <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <path d="M6 9l6 6 6-6" />
             </svg>
@@ -90,13 +92,13 @@ export default function AimStage({ lang, onDone }: Props) {
               <span class="aim-area-name"><span class="sq" /><span>{f.label[lang]}</span></span>
               <div class="aim-seg" role="group" aria-label={f.label[lang]}>
                 {LEVELS.map((lv) => (
-                  <button
+                  <ShadcnButton
                     key={lv}
                     type="button"
                     data-level={lv}
                     aria-pressed={(picked[f.key] ?? "never") === lv}
                     onClick={() => setPicked((p) => ({ ...p, [f.key]: lv }))}
-                  >{t.levels[lv]}</button>
+                  >{t.levels[lv]}</ShadcnButton>
                 ))}
               </div>
             </div>
@@ -104,9 +106,9 @@ export default function AimStage({ lang, onDone }: Props) {
         </div>
 
         <div class="aim-foot">
-          <button type="button" class="btn btn-primary" onClick={submit}>
+          <ShadcnButton type="button" class="btn btn-primary" onClick={submit}>
             <span>{t.start}</span><span class="arrow">→</span>
-          </button>
+          </ShadcnButton>
           <span class="af-meta"><b>{markedCount}</b> {t.of(fams.length)}</span>
         </div>
       </div>

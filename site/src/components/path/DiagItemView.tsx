@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Input as ShadcnInput } from "~/components/ui/input";
 // Single diagnostic item rendered as the Skein question card (q-card). One MCQ or one
 // free-text blank. Select-then-submit: picking an option / "I don't know" / typing only arms the
 // answer; it is sent on Next (a real third "dont_know" answer, never scored wrong). The parent
@@ -63,7 +65,7 @@ export default function DiagItemView({ lang, item, heading, hue, trailingActions
       {isMcq ? (
         <div class="q-options" role="group" aria-labelledby={qid}>
           {(item.choices ?? []).map((ch, i) => (
-            <button
+            <ShadcnButton
               key={i}
               class="q-opt"
               type="button"
@@ -73,14 +75,14 @@ export default function DiagItemView({ lang, item, heading, hue, trailingActions
               <span class="qo-key">{KEYS[i] ?? i + 1}</span>
               <span class="qo-label">{ch[lang]}</span>
               <span class="qo-tick"><Check /></span>
-            </button>
+            </ShadcnButton>
           ))}
         </div>
       ) : (
         <div class={`q-blank${value.trim() && !dunno ? " is-filled" : ""}`}>
           <label class="qb-field">
             <span class="qb-pre">&gt;</span>
-            <input
+            <ShadcnInput
               type="text"
               aria-labelledby={qid}
               value={value}
@@ -93,15 +95,15 @@ export default function DiagItemView({ lang, item, heading, hue, trailingActions
       )}
 
       <div class="q-actions">
-        <button class="btn btn-primary" type="button" disabled={!armed} aria-disabled={!armed} onClick={submit}>
+        <ShadcnButton class="btn btn-primary" type="button" disabled={!armed} aria-disabled={!armed} onClick={submit}>
           <span>{t.next}</span><span class="arrow">→</span>
-        </button>
-        <button
+        </ShadcnButton>
+        <ShadcnButton
           class="btn btn-secondary q-dunno"
           type="button"
           aria-pressed={dunno}
           onClick={() => { setDunno((d) => !d); setPicked(null); }}
-        >{t.dunno}</button>
+        >{t.dunno}</ShadcnButton>
         {trailingActions}
       </div>
     </div>

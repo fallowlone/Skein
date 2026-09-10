@@ -24,6 +24,9 @@ export const TABLE_COLUMNS: Record<CorpusKind, TableMeta> = {
   projects: { conflict: "slug", select: "slug,content_hash" },
   drill: { conflict: "track,unit", select: "track,unit,content_hash" },
   lab: { conflict: "track,tier", select: "track,tier,content_hash" },
+  concepts: { conflict: "id", select: "id,content_hash" },
+  unit_concepts: { conflict: "unit_key", select: "unit_key,content_hash" },
+  lesson_graph: { conflict: "lesson_key", select: "lesson_key,content_hash" },
 };
 
 export type ContentClient = ReturnType<typeof createClient>;

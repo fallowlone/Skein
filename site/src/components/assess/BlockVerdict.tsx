@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // site/src/components/assess/BlockVerdict.tsx
 // Shown when session.ts's reduce() moves phase to "block-verdict" (BLOCK_MAX_ITEMS
 // or BLOCK_MAX_MIN reached). `state.cells` is cumulative for the whole session —
@@ -53,12 +54,12 @@ export default function BlockVerdict({ lang, state, labelOf, onContinue, onStop 
         })}
       </ul>
       <div class="assess-item-controls">
-        <button type="button" class="oa-btn oa-btn-primary" onClick={onContinue}>
+        <ShadcnButton type="button" class="oa-btn oa-btn-primary" onClick={onContinue}>
           {t("assess.block.continue", lang)}
-        </button>
-        <button type="button" class="oa-btn oa-btn-ghost" onClick={onStop}>
+        </ShadcnButton>
+        <ShadcnButton type="button" class="oa-btn oa-btn-ghost" onClick={onStop}>
           {t("assess.item.finish", lang)}
-        </button>
+        </ShadcnButton>
       </div>
     </section>
   );

@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { useState, useEffect } from "preact/hooks";
 import { t, type Locale } from "~/i18n";
 import GradeWithAi from "~/components/pedagogy/GradeWithAi";
@@ -111,7 +112,7 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
           <div class="meta mb-2">{t("interview.selfAssess", lang)}</div>
           <div class="flex flex-wrap gap-2" role="group" aria-label={t("interview.selfAssess", lang)}>
             {PICKS.map((o) => (
-              <button
+              <ShadcnButton
                 type="button"
                 key={o}
                 class={`oa-btn oa-btn-secondary h-9 px-3 font-mono text-[12px] ${pick === o ? "!border-accent !text-accent" : ""}`}
@@ -119,18 +120,18 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
                 onClick={() => setPick(o)}
               >
                 {t(`interview.${o}`, lang)}
-              </button>
+              </ShadcnButton>
             ))}
           </div>
         </div>
-        <button
+        <ShadcnButton
           type="button"
           class="oa-btn oa-btn-primary h-9 px-4 font-mono text-[12px] disabled:opacity-40 disabled:pointer-events-none"
           disabled={!pick}
           onClick={next}
         >
           {t("interview.next", lang)}
-        </button>
+        </ShadcnButton>
       </div>
     </section>
   );

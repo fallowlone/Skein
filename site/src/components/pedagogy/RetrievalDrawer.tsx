@@ -1,3 +1,5 @@
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { useLayoutEffect, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import { recordRetrieval, recordRetrievalRating, dismissRevisit } from "~/scripts/user-state";
@@ -131,7 +133,7 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
                   <div id={`${key}-prompt`} class="font-display text-[16px] font-semibold leading-snug text-ink">
                     {q.q}
                   </div>
-                  <textarea
+                  <ShadcnTextarea
                     class="mt-3 w-full bg-card border border-rule-strong rounded-[1px] px-3 py-2 text-[13px] font-mono text-ink resize-y min-h-[60px] focus:outline-none focus:border-ink"
                     rows={2}
                     placeholder={l.write}
@@ -143,7 +145,7 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
                   <div class="flex items-center gap-3 mt-2">
                     {!isOpen ? (
                       <>
-                        <button
+                        <ShadcnButton
                           type="button"
                           class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
                           disabled={!isCommitted(drafts[i] ?? "")}
@@ -154,10 +156,10 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
                             <circle cx="12" cy="12" r="3"/>
                           </svg>
                           {l.reveal}
-                        </button>
-                        <button type="button" class="text-xs text-muted underline" onClick={() => revealQuestion(key, i, true)}>
+                        </ShadcnButton>
+                        <ShadcnButton type="button" class="text-xs text-muted underline" onClick={() => revealQuestion(key, i, true)}>
                           {lang === "ru" ? "Пропустить" : "Skip"}
-                        </button>
+                        </ShadcnButton>
                       </>
                     ) : (
                       <>
@@ -165,7 +167,7 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
                           {(["again", "hard", "good", "easy"] as const).map((grade) => {
                             const active = graded[key] === grade;
                             return (
-                              <button
+                              <ShadcnButton
                                 key={grade}
                                 type="button"
                                 disabled={graded[key] !== undefined}
@@ -183,7 +185,7 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
                                 aria-pressed={active}
                               >
                                 {grade}
-                              </button>
+                              </ShadcnButton>
                             );
                           })}
                         </div>
@@ -204,15 +206,15 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
       </ol>
 
       <footer class="mt-6 flex flex-wrap items-center gap-2 pt-4 hr-top">
-        <button
+        <ShadcnButton
           type="button"
           class="oa-btn oa-btn-primary oa-btn-sm text-[12px]"
           onClick={() => setCompleted(true)}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg>
           done
-        </button>
-        <button
+        </ShadcnButton>
+        <ShadcnButton
           type="button"
           class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]"
           aria-label={l.snooze}
@@ -220,7 +222,7 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
           onClick={() => dismissRevisit(slug)}
         >
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
-        </button>
+        </ShadcnButton>
       </footer>
     </section>
   );

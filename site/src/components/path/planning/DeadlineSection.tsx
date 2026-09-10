@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Input as ShadcnInput } from "~/components/ui/input";
 // src/components/path/planning/DeadlineSection.tsx
 // Signature instrument #2 — deadline / exam-prep mode. Config (date, weekday-hours
 // grid, blackout dates, reading-depth) writes a full DeadlineConfig via setDeadline.
@@ -109,11 +111,11 @@ function BlackoutList({ lang, dates, onAdd, onRemove }: { lang: Locale; dates: s
   return (
     <div class="blackouts">
       {dates.map((iso) => (
-        <span key={iso} class="blackout">{iso}<button type="button" class="x" aria-label={`${t.remove} ${iso}`} onClick={() => onRemove(iso)}>{"×"}</button></span>
+        <span key={iso} class="blackout">{iso}<ShadcnButton type="button" class="x" aria-label={`${t.remove} ${iso}`} onClick={() => onRemove(iso)}>{"×"}</ShadcnButton></span>
       ))}
       {adding ? (
         <span class="blackout-input">
-          <input
+          <ShadcnInput
             type="date"
             aria-label={t.addLabel}
             onChange={(e) => {
@@ -125,7 +127,7 @@ function BlackoutList({ lang, dates, onAdd, onRemove }: { lang: Locale; dates: s
           />
         </span>
       ) : (
-        <button type="button" class="blackout add" onClick={() => setAdding(true)}>{t.add}</button>
+        <ShadcnButton type="button" class="blackout add" onClick={() => setAdding(true)}>{t.add}</ShadcnButton>
       )}
     </div>
   );
@@ -183,7 +185,7 @@ export default function DeadlineSection({ lang }: { lang: Locale }) {
             <div class="field-row">
               <label for="dlDate">{t.target}</label>
               <div class="dl-input">
-                <input type="date" id="dlDate" value={dl ? isoOf(dl.targetDateMs) : ""} onInput={(e) => setDate((e.target as HTMLInputElement).value)} />
+                <ShadcnInput type="date" id="dlDate" value={dl ? isoOf(dl.targetDateMs) : ""} onInput={(e) => setDate((e.target as HTMLInputElement).value)} />
               </div>
             </div>
 
@@ -201,7 +203,7 @@ export default function DeadlineSection({ lang }: { lang: Locale }) {
               <label>{t.depth}</label>
               <div class="seg depth" role="group" aria-label={t.depth}>
                 {TIERS.map((tr) => (
-                  <button key={tr} type="button" aria-pressed={tier === tr} onClick={() => setTier(tr)}>{t[tr]}</button>
+                  <ShadcnButton key={tr} type="button" aria-pressed={tier === tr} onClick={() => setTier(tr)}>{t[tr]}</ShadcnButton>
                 ))}
               </div>
             </div>
@@ -305,12 +307,12 @@ function FixList({ lang }: { lang: Locale }) {
         {fixes.map((f, i) => (
           <li key={i} class="fix-item">
             <span class="fix-text">{fixLabel(lang, t, f)}{f.closesGap && <em class="fix-fits"> {t.fixFits}</em>}</span>
-            <button type="button" class="btn btn-sm" onClick={() => applyFix(f)}>{t.fixApply}</button>
+            <ShadcnButton type="button" class="btn btn-sm" onClick={() => applyFix(f)}>{t.fixApply}</ShadcnButton>
           </li>
         ))}
       </ul>
       {deficitMin > 0 && combo.length > 0 && (
-        <button type="button" class="btn btn-primary btn-sm fix-auto" onClick={() => applyCombo(combo)}>{t.fixAuto}</button>
+        <ShadcnButton type="button" class="btn btn-primary btn-sm fix-auto" onClick={() => applyCombo(combo)}>{t.fixAuto}</ShadcnButton>
       )}
     </div>
   );

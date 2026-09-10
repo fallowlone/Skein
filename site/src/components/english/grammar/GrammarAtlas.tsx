@@ -1,3 +1,5 @@
+import { Input as ShadcnInput } from "~/components/ui/input";
+import { Button as ShadcnButton } from "~/components/ui/button";
 // GrammarAtlas — the browse/entry showcase. Families are tinted map regions
 // (Layout A); topics are compact entries with a calm mastery ring. Filters by
 // CEFR band + family + free text. Mounted client:visible on the grammar route.
@@ -87,7 +89,7 @@ export default function GrammarAtlas({ lang, topics }: Props) {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
               <circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" />
             </svg>
-            <input
+            <ShadcnInput
               type="search"
               value={query}
               onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
@@ -98,11 +100,11 @@ export default function GrammarAtlas({ lang, topics }: Props) {
           <div class="ctrl-group">
             <span class="ctrl-label">{gt("filter_band", lang)}</span>
             <div class="band-filter" role="group" aria-label={gt("filter_band", lang)}>
-              <button type="button" class="band-pill" aria-pressed={!filterBand} onClick={() => setFilterBand(null)}>
+              <ShadcnButton type="button" class="band-pill" aria-pressed={!filterBand} onClick={() => setFilterBand(null)}>
                 {gt("all", lang)}
-              </button>
+              </ShadcnButton>
               {BANDS.map((b) => (
-                <button
+                <ShadcnButton
                   key={b.id}
                   type="button"
                   class={"band-pill" + (b.locked ? " locked-band" : "")}
@@ -110,7 +112,7 @@ export default function GrammarAtlas({ lang, topics }: Props) {
                   onClick={() => setFilterBand(filterBand === b.id ? null : b.id)}
                 >
                   {b.id}
-                </button>
+                </ShadcnButton>
               ))}
             </div>
           </div>
@@ -118,7 +120,7 @@ export default function GrammarAtlas({ lang, topics }: Props) {
             <span class="ctrl-label">{gt("filter_family", lang)}</span>
             <div class="fam-filter">
               {FAMILIES.map((f) => (
-                <button
+                <ShadcnButton
                   key={f.id}
                   type="button"
                   class="fam-chip"
@@ -127,7 +129,7 @@ export default function GrammarAtlas({ lang, topics }: Props) {
                   onClick={() => setFilterFam(filterFam === f.id ? null : f.id)}
                 >
                   <span class="sq" />{f.title[lang]}
-                </button>
+                </ShadcnButton>
               ))}
             </div>
           </div>
@@ -141,7 +143,7 @@ export default function GrammarAtlas({ lang, topics }: Props) {
             </svg>
             <h3>{gt("empty_title", lang)}</h3>
             <p>{gt("empty_body", lang)}</p>
-            <button type="button" class="btn btn-secondary btn-sm" onClick={clearFilters}>{gt("clear_filters", lang)}</button>
+            <ShadcnButton type="button" class="btn btn-secondary btn-sm" onClick={clearFilters}>{gt("clear_filters", lang)}</ShadcnButton>
           </div>
         ) : (
           <div class="atlas-spread">

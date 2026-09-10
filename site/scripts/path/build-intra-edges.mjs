@@ -26,7 +26,15 @@ function parseFrontmatter(txt) {
     const kv = ln.match(/^([A-Za-z_][\w]*):\s*(.*)$/);
     if (kv) {
       const k = kv[1], v = kv[2].trim();
-      if (v === "") { cur = k; lists[k] = []; }
+      if (v.startsWith("[") && v.endsWith("]")) {
+        const inner = v.slice(1, -1).trim();
+        lists[k] = inner
+          ? inner.split(",").map((x) => x.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean)
+          : [];
+        scalars[k] = v;
+        cur = null;
+      }
+      else if (v === "") { cur = k; lists[k] = []; }
       else { cur = null; scalars[k] = v.replace(/^['"]|['"]$/g, ""); }
     }
   }

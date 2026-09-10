@@ -54,6 +54,24 @@ describe("review-harvest", () => {
     expect(c.lang).toBe("ru");
   });
 
+  it("harvests a sandbox model as an inline delayed-review answer", () => {
+    const tasks = [{
+      id: "transfer-runtime",
+      type: "sandbox",
+      title: { en: "Port it", ru: "Перенеси" },
+      prompt: { en: "Implement against the documented host API.", ru: "Реализуй через документированный API host." },
+      model: { en: "Call host.queueMicrotask(fn).", ru: "Вызови host.queueMicrotask(fn)." },
+      concepts: ["microtask-queue"],
+    }];
+    const c = cardsFromPractice("browser/01-event-loop/05-node-differences", "en", tasks)[0];
+    expect(c).toMatchObject({
+      answerMode: "inline",
+      taskId: "transfer-runtime",
+      back: "Call host.queueMicrotask(fn).",
+      conceptIds: ["microtask-queue"],
+    });
+  });
+
   it("routes tasks without a sufficient authored answer back to the original task", () => {
     const tasks = [{ id: "run-it", type: "sandbox", title: { en: "Run it", ru: "Запусти" }, prompt: { en: "Make the hidden checks pass.", ru: "Добейся прохождения скрытых проверок." }, concepts: [] }];
     const c = cardsFromPractice("node/05-http/02-pooling", "en", tasks)[0];

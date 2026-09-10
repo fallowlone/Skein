@@ -80,7 +80,13 @@ function parseFrontmatter(txt) {
     const kv = ln.match(/^([A-Za-z_][\w]*):\s*(.*)$/);
     if (kv) {
       const k = kv[1]; const v = kv[2].trim();
-      if (v === "") { cur = k; lists[k] = []; scalars[k] = ""; }
+      if (v.startsWith("[") && v.endsWith("]")) {
+        const inner = v.slice(1, -1).trim();
+        lists[k] = inner ? inner.split(",").map((x) => unquote(x.trim())).filter(Boolean) : [];
+        scalars[k] = v;
+        cur = null;
+      }
+      else if (v === "") { cur = k; lists[k] = []; scalars[k] = ""; }
       else { cur = null; scalars[k] = unquote(v); }
     }
   }
@@ -128,12 +134,27 @@ function harvest(trackFilter) {
     const raw = readFileSync(file, "utf8");
     const { scalars, lists, bodyStart } = parseFrontmatter(raw);
     const slug = scalars.slug || "";
-    if (!isLessonSlug(slug)) continue;
     const track = scalars.track;
     const unitSlug = scalars.unit;
     if (!track || !unitSlug) continue;
     if (trackFilter && !trackFilter.has(track)) continue;
     const unitId = `${track}/${unitSlug}`;
+    const level = scalars.level || "";
+    const cs = lists.concepts || [];
+
+    // The concept registry covers every authored lesson surface (topic, quiz, project, drill),
+    // because the lesson graph and assessment/review surfaces also reference concepts. Planning
+    // units below still use only NN-* teaching lessons, so assessment-only concepts cannot expand
+    // or reorder the learning path merely by existing in a quiz/project/drill.
+    for (const c of cs) {
+      if (!concepts.has(c)) concepts.set(c, { levels: new Set(), tracks: new Map(), units: new Set() });
+      const rec = concepts.get(c);
+      if (level) rec.levels.add(level);
+      rec.tracks.set(track, (rec.tracks.get(track) || 0) + 1);
+      rec.units.add(unitId);
+    }
+
+    if (!isLessonSlug(slug)) continue;
     const meta = metaById.get(unitId);
     if (!units.has(unitId)) {
       units.set(unitId, {
@@ -142,17 +163,8 @@ function harvest(trackFilter) {
         lessons: [],
       });
     }
-    const level = scalars.level || "";
-    const cs = lists.concepts || [];
     const words = wordCount(raw.slice(bodyStart));
     units.get(unitId).lessons.push({ slug, level, concepts: cs, words, prereqs: lists.prereqs || [] });
-    for (const c of cs) {
-      if (!concepts.has(c)) concepts.set(c, { levels: new Set(), tracks: new Map(), units: new Set() });
-      const rec = concepts.get(c);
-      if (level) rec.levels.add(level);
-      rec.tracks.set(track, (rec.tracks.get(track) || 0) + 1);
-      rec.units.add(unitId);
-    }
   }
 
   // units with zero harvested concepts get a synthetic spine concept so they still
@@ -427,7 +439,7 @@ function main() {
     const cached = labelCache[id];
     const en = (cached && cached.en) || humanize(id);
     const ru = (cached && cached.ru) || humanize(id); // ru fallback = humanized en (flagged for morning review)
-    return { id, label: { en, ru }, track: primaryTrack(rec), band: bandOfConcept(rec), requires: kept.get(id) || [] };
+    return { id, label: { en, ru }, track: primaryTrack(rec), band: bandOfConcept(rec), requires: kept.get(id) || [], assessmentOnly: false };
   });
 
   // Build practice map once: unitId → total practice minutes (key absent = no practice dir).
@@ -439,6 +451,12 @@ function main() {
 
   // unit-concepts (sorted by unit id).
   const unitConceptsOut = {};
+  // Planner coverage: units teach only NN-* lessons, so assessment-only concepts
+  // (authored on quiz/project/drill surfaces) are by design in no unit's teaches.
+  // Flag them in the committed registry so the validator can scope the hard
+  // "every concept taught by ≥1 unit" gate to planner concepts.
+  const plannerTaught = new Set();
+  for (const u of units.values()) for (const l of u.lessons) for (const c of l.concepts) plannerTaught.add(c);
   const fellBackUnits = [];
   for (const u of [...units.values()].sort((a, b) => a.id.localeCompare(b.id))) {
     const teaches = [...new Set(u.lessons.flatMap((l) => l.concepts))].sort();
@@ -454,6 +472,7 @@ function main() {
     const { min: estMin, fellBack } = estMinOf(u, practiceMap);
     if (fellBack) fellBackUnits.push(u.id);
     unitConceptsOut[u.id] = { teaches, requires: [...reqs].sort(), estMin };
+    for (const t of teaches) plannerTaught.add(t);
   }
   if (fellBackUnits.length) {
     console.error(`[build-path-data] ${fellBackUnits.length} units used prose estMin (no practice dir): ${fellBackUnits.slice(0, 10).join(", ")}`);
@@ -489,6 +508,20 @@ function main() {
   if (!gate.ok) { console.error(`cross/intra edges introduce a cycle (${gate.unplaced} nodes unplaced); aborting`); process.exit(1); }
   const overrides = { addEdges: mergedAddEdges, removeEdges: [], retag: [] };
   console.log(`overrides: ${mergedAddEdges.length} addEdges (cross ${ctMerge.addEdges.length}, intra ${itMerge.addEdges.length})`);
+
+  // Mark assessment-only concepts (registry covers every authored surface; planner
+  // units teach only NN-* lessons). Written into concepts.json so the validator can
+  // scope the reachability gate to planner concepts.
+  let assessmentOnlyCount = 0;
+  for (const c of conceptsOut) {
+    if (!plannerTaught.has(c.id)) {
+      c.assessmentOnly = true;
+      assessmentOnlyCount++;
+    }
+  }
+  if (assessmentOnlyCount) {
+    console.warn(`[build-path-data] ${assessmentOnlyCount} assessment-only concepts (authored on quiz/project/drill surfaces; outside the planner)`);
+  }
 
   // write
   mkdirSync(OUT, { recursive: true });

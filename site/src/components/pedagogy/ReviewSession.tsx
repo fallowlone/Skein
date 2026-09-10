@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
 // site/src/components/pedagogy/ReviewSession.tsx
 // The "due today" spaced-repetition island: snapshots the due queue at mount,
 // walks one card at a time, reveals the answer, and grades again|hard|good|easy,
@@ -158,9 +160,9 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
           {t("review.done", lang)} — {reviewed}
         </p>
         {remaining > 0 ? (
-          <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px] mt-1" onClick={loadBatch}>
+          <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px] mt-1" onClick={loadBatch}>
             {t("review.continue", lang).replace("{n}", String(remaining))}
-          </button>
+          </ShadcnButton>
         ) : (
           next && <p class="text-muted text-xs">{t("review.nextDue", lang)}: {next}</p>
         )}
@@ -194,7 +196,7 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
           </a>
         ) : !revealed ? (
           <>
-            <textarea
+            <ShadcnTextarea
               class="mb-3 w-full min-h-[72px] rounded-[var(--r-sm)] border border-hairline-2 bg-card px-3 py-2 text-sm text-ink"
               value={draft}
               placeholder={lang === "ru" ? "Ответь по памяти…" : "Answer from memory…"}
@@ -206,12 +208,12 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
               }}
             />
             <div class="flex flex-wrap gap-3">
-              <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" disabled={!isCommitted(draft)} onClick={() => revealAnswer(false)}>
+              <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" disabled={!isCommitted(draft)} onClick={() => revealAnswer(false)}>
                 {t("review.showAnswer", lang)} <span class="opacity-50 font-mono">␣</span>
-              </button>
-              <button type="button" class="text-xs text-muted underline" onClick={() => revealAnswer(true)}>
+              </ShadcnButton>
+              <ShadcnButton type="button" class="text-xs text-muted underline" onClick={() => revealAnswer(true)}>
                 {lang === "ru" ? "Пропустить" : "Skip"}
-              </button>
+              </ShadcnButton>
             </div>
           </>
         ) : (
@@ -222,7 +224,7 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
             </div>
             <div class="flex flex-wrap items-center gap-2">
               {GRADES.map((g, i) => (
-                <button
+                <ShadcnButton
                   key={g}
                   type="button"
                   aria-keyshortcuts={String(i + 1)}
@@ -230,7 +232,7 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
                   class={`px-3 h-8 font-mono text-[11px] border rounded-[var(--r-sm)] bg-transparent transition-colors ${GRADE_CLS[g]}`}
                 >
                   {t(`review.${g}`, lang)}
-                </button>
+                </ShadcnButton>
               ))}
             </div>
           </>

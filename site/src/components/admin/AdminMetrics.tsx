@@ -1,3 +1,5 @@
+import { Input as ShadcnInput } from "~/components/ui/input";
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { useEffect, useState } from "preact/hooks";
 
 const TOKEN_KEY = "skein.admin.token";
@@ -59,12 +61,12 @@ export default function AdminMetrics() {
       <div class="max-w-md">
         <p class="text-sm text-muted mb-3">Enter the admin token to load metrics.</p>
         <div class="flex gap-2">
-          <input type="password" class="font-mono flex-1 px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
+          <ShadcnInput type="password" class="font-mono flex-1 px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
             value={token} onInput={(e) => setToken((e.target as HTMLInputElement).value)} placeholder="ADMIN_TOKEN" />
-          <button type="button" class="oa-btn oa-btn-primary oa-btn-sm disabled:opacity-50" disabled={busy || !token.trim()}
+          <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm disabled:opacity-50" disabled={busy || !token.trim()}
             onClick={() => load(token.trim())}>
             {busy ? "Loading…" : "Load"}
-          </button>
+          </ShadcnButton>
         </div>
         {err && <p class="text-sm text-danger mt-3">{err}</p>}
         <details class="mt-4 text-xs text-muted">
@@ -82,15 +84,15 @@ export default function AdminMetrics() {
   return (
     <div>
       <div class="flex items-center gap-3 mb-6">
-        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" disabled={busy} onClick={() => stored && load(stored)}>
+        <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" disabled={busy} onClick={() => stored && load(stored)}>
           {busy ? "Refreshing…" : "Refresh"}
-        </button>
-        <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-muted" onClick={() => {
+        </ShadcnButton>
+        <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-muted" onClick={() => {
           try { localStorage.removeItem(TOKEN_KEY); } catch { /* no-op */ }
           setStored(null); setData(null); setToken("");
         }}>
           Forget token
-        </button>
+        </ShadcnButton>
       </div>
 
       <h2 class="font-display text-xl mb-2">Lessons ({data.lessons.length})</h2>

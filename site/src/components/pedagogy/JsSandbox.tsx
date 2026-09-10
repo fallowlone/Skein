@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // Launcher for the docked code workspace. The inline textarea this used to be made
 // people write real code in a 96px box with no highlighting; the editor now opens in
 // CodeDrawer (right third of the viewport) while the task text stays readable on the
@@ -32,9 +33,9 @@ export default function JsSandbox({ lang, setup, initialCode, check, onResult, t
     <div class="js-sandbox">
       <pre class="jsb-preview" aria-hidden={open}>{preview}</pre>
       <div class="jsb-bar">
-        <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => setOpen(true)}>
+        <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => setOpen(true)}>
           {tt(lang, "Write code →", "Написать код →")}
-        </button>
+        </ShadcnButton>
         {verdict !== null && (
           <span class={verdict ? "jsb-verdict ok" : "jsb-verdict bad"}>
             {verdict ? tt(lang, "✓ passed", "✓ пройдено") : tt(lang, "✗ not yet", "✗ пока нет")}

@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/path/PlacementResult.tsx
 // Stage 4 of probabilistic placement (Skein design): the result report. Per-area mean-posterior
 // bars as disclosure accordions (drill-down to a sorted concept list, each tagged known/shaky/unknown
@@ -103,7 +104,7 @@ export default function PlacementResult({ lang, priors }: { lang: Locale; priors
             const pct = Math.round(r.mean * 100);
             return (
               <div key={r.key} class="res-area" style={`--d:var(${r.hue})`}>
-                <button
+                <ShadcnButton
                   class="res-summary"
                   type="button"
                   aria-expanded={isOpen}
@@ -114,7 +115,7 @@ export default function PlacementResult({ lang, priors }: { lang: Locale; priors
                   <span class="res-bar"><i style={`width:${pct}%`} /></span>
                   <span class="res-pct"><b>{pct}%</b><span class="rp-lbl">{t.known}</span></span>
                   <svg class="res-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6" /></svg>
-                </button>
+                </ShadcnButton>
                 <div class="res-topics" id={`ra-${r.key}`} hidden={!isOpen}>
                   {r.nodes.slice().sort((a, b) => b.p - a.p).map((n) => {
                     const kind = confOf(n.p);

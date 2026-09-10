@@ -1,3 +1,5 @@
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
+import { Button as ShadcnButton } from "~/components/ui/button";
 // site/src/components/assess/item-bodies-code.tsx
 // Per-kind item bodies for the code-execution family: debug, exec. Split from
 // item-bodies.tsx (the text/self-grade family) to keep both files near ~200 lines.
@@ -66,22 +68,22 @@ export function DebugBody({ lang, task, hintsUsed, onHint, onSubmit }: DebugProp
     <div class="assess-body">
       <div class="assess-label">{t("assess.item.evidence", lang)}</div>
       <pre class="assess-evidence">{tt(lang, task.evidence.en, task.evidence.ru)}</pre>
-      <textarea
+      <ShadcnTextarea
         class="assess-code"
         value={code}
         onInput={(e) => setCode((e.target as HTMLTextAreaElement).value)}
       />
       <div class="assess-run-bar">
-        <button type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy} onClick={run}>
+        <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy} onClick={run}>
           {busy ? t("assess.debug.running", lang) : t("assess.debug.run", lang)}
-        </button>
+        </ShadcnButton>
         {result?.status === "pass" && <span class="assess-verdict ok">{t("assess.debug.pass", lang)}</span>}
         {result && result.status !== "pass" && <span class="assess-verdict bad">{t("assess.debug.fail", lang)}</span>}
       </div>
       {result && result.status !== "pass" && (
-        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={submitCurrent}>
+        <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={submitCurrent}>
           {t("assess.item.submit", lang)}
-        </button>
+        </ShadcnButton>
       )}
       <HintLadder lang={lang} hints={hints} hintsUsed={hintsUsed} onHint={onHint} />
     </div>
@@ -124,9 +126,9 @@ function UngradableExecFallback({ lang, onSubmit }: Omit<ExecProps, "task">) {
     <div class="assess-body">
       <p class="assess-mismatch">{t("assess.exec.ungradable", lang)}</p>
       <div class="assess-selfgrade">
-        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("hit")}>{t("assess.selfgrade.hit", lang)}</button>
-        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("partial")}>{t("assess.selfgrade.partial", lang)}</button>
-        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("miss")}>{t("assess.selfgrade.miss", lang)}</button>
+        <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("hit")}>{t("assess.selfgrade.hit", lang)}</ShadcnButton>
+        <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("partial")}>{t("assess.selfgrade.partial", lang)}</ShadcnButton>
+        <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={() => grade("miss")}>{t("assess.selfgrade.miss", lang)}</ShadcnButton>
       </div>
     </div>
   );
@@ -171,9 +173,9 @@ export function ExecBody({ lang, task, onSubmit }: ExecProps) {
         )}
       </Suspense>
       {lastResult && !lastResult.ok && (
-        <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={submitLast}>
+        <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={submitLast}>
           {t("assess.item.submit", lang)}
-        </button>
+        </ShadcnButton>
       )}
     </div>
   );

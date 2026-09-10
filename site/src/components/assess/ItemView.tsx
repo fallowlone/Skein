@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 // site/src/components/assess/ItemView.tsx
 // Renders one AssessItem by kind and reports the answer back up. The three
 // controls every kind must offer (spec, task-12-brief): a kind-specific submit
@@ -186,12 +187,12 @@ export default function ItemView({ lang, item, hintsUsed, onHint, onAnswer, onSt
       {grading && <p class="assess-loading">{t("assess.item.grading", lang)}</p>}
 
       <div class="assess-item-controls">
-        <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={dontKnow} disabled={!loaded || grading} aria-disabled={!loaded || grading}>
+        <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={dontKnow} disabled={!loaded || grading} aria-disabled={!loaded || grading}>
           {t("assess.item.dontKnow", lang)}
-        </button>
-        <button type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={onStop}>
+        </ShadcnButton>
+        <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={onStop}>
           {t("assess.item.finish", lang)}
-        </button>
+        </ShadcnButton>
       </div>
     </article>
   );

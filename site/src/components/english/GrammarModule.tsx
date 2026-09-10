@@ -1,3 +1,5 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { Input as ShadcnInput } from "~/components/ui/input";
 // site/src/components/english/GrammarModule.tsx
 import { useMemo, useState } from "preact/hooks";
 import { grammarPoints } from "~/english/data/grammar";
@@ -38,8 +40,8 @@ export default function GrammarModule({ lang }: Props) {
   return (
     <div class="max-w-[620px] mx-auto">
       <div class="flex gap-1 mb-6 justify-center">
-        <button type="button" class={`btn ${tab === "grammar" ? "" : "ghost"}`} onClick={() => setTab("grammar")}>{L.grammar}</button>
-        <button type="button" class={`btn ${tab === "phrasing" ? "" : "ghost"}`} onClick={() => setTab("phrasing")}>{L.phrasing}</button>
+        <ShadcnButton type="button" class={`btn ${tab === "grammar" ? "" : "ghost"}`} onClick={() => setTab("grammar")}>{L.grammar}</ShadcnButton>
+        <ShadcnButton type="button" class={`btn ${tab === "phrasing" ? "" : "ghost"}`} onClick={() => setTab("phrasing")}>{L.phrasing}</ShadcnButton>
       </div>
       {tab === "grammar"
         ? (points.length ? <GrammarList lang={lang} points={points} /> : <p class="text-[14px] text-muted">{L.locked}</p>)
@@ -55,7 +57,7 @@ function GrammarList({ lang, points }: { lang: Locale; points: GrammarPoint[] })
   return (
     <div class="flex flex-col gap-2">
       {points.map((p) => (
-        <button key={p.id} type="button" class="text-left bg-card border border-rule rounded-[2px] p-4 hover:border-rule-strong"
+        <ShadcnButton key={p.id} type="button" class="text-left bg-card border border-rule rounded-[2px] p-4 hover:border-rule-strong"
           onClick={() => setOpenId(p.id)}>
           <div class="flex items-baseline gap-2">
             <span class="text-[15px] font-semibold text-ink">{p.title[lang]}</span>
@@ -63,7 +65,7 @@ function GrammarList({ lang, points }: { lang: Locale; points: GrammarPoint[] })
             {isGrammarDone(p.id) ? <span class="text-[12px] text-muted ml-auto">✓</span> : null}
           </div>
           <div class="text-[13px] text-muted mt-1">{p.structure[lang]}</div>
-        </button>
+        </ShadcnButton>
       ))}
     </div>
   );
@@ -97,7 +99,7 @@ function GrammarRun({ lang, point, onClose }: { lang: Locale; point: GrammarPoin
 
   return (
     <div class="flex flex-col gap-4">
-      <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm self-start" onClick={onClose}>{L.back}</button>
+      <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm self-start" onClick={onClose}>{L.back}</ShadcnButton>
       <div>
         <div class="text-[15px] font-semibold text-ink">{point.title[lang]}</div>
         <div class="text-[13px] text-muted mt-1">{point.explain[lang]}</div>
@@ -118,20 +120,20 @@ function GrammarRun({ lang, point, onClose }: { lang: Locale; point: GrammarPoin
             {c.before} <span class="font-mono">[ ___ ]</span> {c.after ?? ""}
           </div>
           <div class="text-[12px] text-muted">{c.hint[lang]}</div>
-          <input class="border border-rule rounded-[2px] px-3 py-2 text-[14px] bg-bg text-ink"
+          <ShadcnInput class="border border-rule rounded-[2px] px-3 py-2 text-[14px] bg-bg text-ink"
             value={val} onInput={(e) => setVal((e.target as HTMLInputElement).value)}
             disabled={checked} placeholder="…" />
           {!checked ? (
-            <button type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={() => setChecked(true)} disabled={!val.trim()}>{L.check}</button>
+            <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={() => setChecked(true)} disabled={!val.trim()}>{L.check}</ShadcnButton>
           ) : (
             <div class="flex flex-col gap-2">
               <div class={`text-[13px] ${ok ? "text-ink" : "text-muted"}`}>
                 {ok ? `✓ ${L.correct}` : `${L.answer}: ${c.answer}`}
               </div>
               {c.explain ? <div class="text-[12px] text-muted">{c.explain[lang]}</div> : null}
-              <button type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={next}>
+              <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={next}>
                 {i + 1 >= point.cloze.length ? L.finish : L.next}
-              </button>
+              </ShadcnButton>
             </div>
           )}
         </div>
@@ -147,14 +149,14 @@ function PhrasingList({ lang, sets }: { lang: Locale; sets: CollocationSet[] }) 
   return (
     <div class="flex flex-col gap-2">
       {sets.map((s) => (
-        <button key={s.id} type="button" class="text-left bg-card border border-rule rounded-[2px] p-4 hover:border-rule-strong"
+        <ShadcnButton key={s.id} type="button" class="text-left bg-card border border-rule rounded-[2px] p-4 hover:border-rule-strong"
           onClick={() => setOpenId(s.id)}>
           <div class="flex items-baseline gap-2">
             <span class="text-[15px] font-semibold text-ink">{s.title[lang]}</span>
             <span class="text-[11px] font-mono uppercase text-muted">{s.domain}</span>
             {isCollocationDone(s.id) ? <span class="text-[12px] text-muted ml-auto">✓</span> : null}
           </div>
-        </button>
+        </ShadcnButton>
       ))}
     </div>
   );
@@ -186,7 +188,7 @@ function PhrasingRun({ lang, set, onClose }: { lang: Locale; set: CollocationSet
 
   return (
     <div class="flex flex-col gap-4">
-      <button type="button" class="oa-btn oa-btn-secondary oa-btn-sm self-start" onClick={onClose}>{L.back}</button>
+      <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm self-start" onClick={onClose}>{L.back}</ShadcnButton>
       <div class="text-[15px] font-semibold text-ink">{set.title[lang]}</div>
       {done ? (
         <div class="text-[14px] text-ink">{L.fin}</div>
@@ -194,11 +196,11 @@ function PhrasingRun({ lang, set, onClose }: { lang: Locale; set: CollocationSet
         <div class="bg-card border border-rule-strong rounded-[2px] p-5 flex flex-col gap-3">
           <div class="text-[14px] text-ink font-mono">{it.gap}</div>
           <div class="text-[12px] text-muted">{it.ru}</div>
-          <input class="border border-rule rounded-[2px] px-3 py-2 text-[14px] bg-bg text-ink"
+          <ShadcnInput class="border border-rule rounded-[2px] px-3 py-2 text-[14px] bg-bg text-ink"
             value={val} onInput={(e) => setVal((e.target as HTMLInputElement).value)}
             disabled={checked} placeholder="…" />
           {!checked ? (
-            <button type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={() => setChecked(true)} disabled={!val.trim()}>{L.check}</button>
+            <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={() => setChecked(true)} disabled={!val.trim()}>{L.check}</ShadcnButton>
           ) : (
             <div class="flex flex-col gap-2">
               <div class={`text-[13px] ${ok ? "text-ink" : "text-muted"}`}>
@@ -206,9 +208,9 @@ function PhrasingRun({ lang, set, onClose }: { lang: Locale; set: CollocationSet
               </div>
               <div class="text-[13px] text-ink italic">“{it.example}”</div>
               {it.note ? <div class="text-[12px] text-muted">{it.note[lang]}</div> : null}
-              <button type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={next}>
+              <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={next}>
                 {i + 1 >= set.items.length ? L.finish : L.next}
-              </button>
+              </ShadcnButton>
             </div>
           )}
         </div>
