@@ -266,7 +266,7 @@ async function main(): Promise<void> {
         skipped += 1; // ledger entry naming no known table — leave it alone
         continue;
       }
-      if (kind === "meta") {
+      if ((kind as string) === "meta") {
         // Synthetic ledger entries (site_sha pinning) live only in sync_log.
         const { error: metaLedgerErr } = await schemaTable(client, CURRICULUM_SCHEMA, "sync_log")
           .delete()
