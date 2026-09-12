@@ -6,19 +6,20 @@
 //                · 04 missions (omitted when empty) · 05 titles + achievements
 // All data is real (engine rating / path-engine knowledge / progression streak). No season,
 // no rank-up banner, no fabricated rewards.
-import { useEffect } from "preact/hooks";
-import { userState } from "~/scripts/user-state";
+import { Button as ShadcnButton } from "~/components/ui/button";
+import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
+import { useEffect, useState } from "preact/hooks";
+import { setPretestResult, userState } from "~/scripts/user-state";
 import { loadStore } from "~/components/algo/drill-state";
 import { getPlacement } from "~/english/state";
 import { knownTotal, readUnitsCount, gradedOutputCount, grammarDoneCount, collocationDoneCount } from "~/english/stats";
 import { evaluateAchievements } from "~/scripts/progression/achievements";
 import { titlesFromState, TITLES } from "~/scripts/progression/titles";
-import { ratingToRank } from "~/scripts/progression/ranks";
+import { RANKS, ratingToRank } from "~/scripts/progression/ranks";
 import { pretestQuestions, advancedQuestions } from "~/scripts/pretest-questions";
 import { type Locale } from "~/i18n";
 import Pretest from "~/components/pedagogy/Pretest";
 import AchievementGrid from "./AchievementGrid";
-import PlacementIntro from "./PlacementIntro";
 import RankNow from "./RankNow";
 import RankLadder from "./RankLadder";
 import DomainRadar from "./DomainRadar";
@@ -108,15 +109,7 @@ export default function ProfilePanel({ lang }: { lang: Locale }) {
   }, []);
 
   if (!pretest) {
-    return (
-      <div>
-        <section class="screen-section">
-          <PlacementIntro lang={lang} />
-          <p class="pl-after">{t.plLead}</p>
-        </section>
-        <Pretest lang={lang} />
-      </div>
-    );
+    return <FirstRunEntry lang={lang} />;
   }
 
   const missions = computeMissions(); // computed once here; passed to the gate + the list
@@ -193,5 +186,100 @@ export default function ProfilePanel({ lang }: { lang: Locale }) {
         <p class="fig-caption" style="margin-top:var(--s-4)"><b>·</b> {t.foot}</p>
       </section>
     </div>
+  );
+}
+
+function FirstRunEntry({ lang }: { lang: Locale }) {
+  const [entry, setEntry] = useState<"adaptive" | "self" | null>(null);
+  const [rankId, setRankId] = useState("");
+
+  if (entry === "adaptive") return <Pretest lang={lang} startImmediately />;
+
+  if (entry === "self") {
+    const rank = RANKS.find((item) => item.id === rankId);
+    return (
+      <section class="self-rank panel" aria-labelledby="self-rank-heading">
+        <div class="panel-head">
+          <span class="meta">{lang === "ru" ? "самостоятельный ранг" : "self-set rank"}</span>
+        </div>
+        <div class="self-rank-body">
+          <h2 id="self-rank-heading">{lang === "ru" ? "Выберите стартовый ранг" : "Choose your starting rank"}</h2>
+          <p>{lang === "ru" ? "Его можно проверить placement-тестом в любой момент." : "You can validate it with placement anytime."}</p>
+          <label for="self-rank-select">{lang === "ru" ? "Стартовый ранг" : "Starting rank"}</label>
+          <ShadcnNativeSelect id="self-rank-select" value={rankId} onChange={(event) => setRankId(event.currentTarget.value)}>
+            <option value="">{lang === "ru" ? "Выберите ранг…" : "Choose a rank…"}</option>
+            {RANKS.map((item) => <option value={item.id}>{item.label[lang]}</option>)}
+          </ShadcnNativeSelect>
+          <div class="self-rank-actions">
+            <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={!rank} onClick={() => {
+              if (!rank) return;
+              const rating = Math.round((rank.min + rank.max) / 2);
+              setPretestResult({
+                takenAt: Date.now(),
+                stage1: { score: 0, answers: [] },
+                rating,
+                rank: rank.id,
+                confidence: "medium",
+              });
+            }}>
+              {lang === "ru" ? "Установить ранг" : "Set rank"}
+            </ShadcnButton>
+            <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm" onClick={() => setEntry(null)}>
+              {lang === "ru" ? "Назад" : "Back"}
+            </ShadcnButton>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section class="entry-first-run" aria-label="Placement options">
+      <div class="entry-modes">
+        <article class="entry-card">
+          <EntryIcon kind="target" />
+          <div class="entry-copy">
+            <h2>Adaptive placement</h2>
+            <p>3 questions · ~5 min · sets per-domain rank.</p>
+            <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => setEntry("adaptive")}>Start placement</ShadcnButton>
+          </div>
+          <div class="entry-copy entry-copy-ru" lang="ru">
+            <h2>Адаптивное размещение</h2>
+            <p>3 вопроса · ~5 мин · устанавливает ранг по доменам.</p>
+            <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => setEntry("adaptive")}>Начать размещение</ShadcnButton>
+          </div>
+        </article>
+
+        <article class="entry-card">
+          <EntryIcon kind="user" />
+          <div class="entry-copy">
+            <h2>Self-set rank</h2>
+            <p>Pick a starting rank now; validate anytime.</p>
+            <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => setEntry("self")}>Choose rank</ShadcnButton>
+          </div>
+          <div class="entry-copy entry-copy-ru" lang="ru">
+            <h2>Самостоятельный ранг</h2>
+            <p>Выберите стартовый ранг сейчас; проверка возможна в любой момент.</p>
+            <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={() => setEntry("self")}>Выбрать ранг</ShadcnButton>
+          </div>
+        </article>
+      </div>
+      <div class="entry-footnote">
+        <p>You can re-take and adjust later.</p>
+        <p lang="ru">Вы можете пересдать и скорректировать позже.</p>
+      </div>
+    </section>
+  );
+}
+
+function EntryIcon({ kind }: { kind: "target" | "user" }) {
+  return (
+    <span class="entry-icon" aria-hidden="true">
+      {kind === "target" ? (
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+      ) : (
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5.5 20c.8-4 3-6 6.5-6s5.7 2 6.5 6"/></svg>
+      )}
+    </span>
   );
 }
