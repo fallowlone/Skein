@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { defineConfig } from "astro/config";
+import { defineConfig, sessionDrivers } from "astro/config";
 import cloudflare from "@astrojs/cloudflare";
 import preact from "@astrojs/preact";
 import tailwind from "@astrojs/tailwind";
@@ -18,8 +18,18 @@ export default defineConfig({
   srcDir: lessonSourceRoot,
   publicDir: publicRoot,
   outDir: outputRoot,
+  // The lesson Worker is a read-only content renderer: it never touches
+  // Astro sessions or image optimization. Without these overrides
+  // `@astrojs/cloudflare` defaults to a Cloudflare KV session binding
+  // (`SESSION`) and the Cloudflare Images binding (`IMAGES`), which `wrangler
+  // deploy` then tries to auto-provision at deploy time — failing on accounts
+  // whose API token lacks `Workers KV Storage` / `Cloudflare Images` perms.
+  session: {
+    driver: sessionDrivers.lruCache({}),
+  },
   adapter: cloudflare({
     configPath: wranglerConfig,
+    imageService: "passthrough",
   }),
   integrations: [
     tailwind({ applyBaseStyles: false }),
