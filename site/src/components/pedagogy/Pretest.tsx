@@ -7,15 +7,15 @@ import { ratingToRank } from "~/scripts/progression/ranks";
 import RankUpReveal from "~/components/progression/RankUpReveal";
 import { t, type Locale } from "~/i18n";
 
-type Props = { lang: Locale };
+type Props = { lang: Locale; startImmediately?: boolean };
 type Phase = "untaken" | "stage1" | "gate" | "stage2" | "done";
 
 const wrapClass = "my-8 max-w-[760px] bg-card border border-rule-strong rounded-[2px] overflow-hidden";
 const headerClass = "flex items-center justify-between px-4 py-2.5 bg-card-2 border-b border-rule";
 
-export default function Pretest({ lang }: Props) {
+export default function Pretest({ lang, startImmediately = false }: Props) {
   const existing = userState.value.pretest;
-  const [phase, setPhase] = useState<Phase>(existing ? "done" : "untaken");
+  const [phase, setPhase] = useState<Phase>(existing ? "done" : startImmediately ? "stage1" : "untaken");
   const [stage, setStage] = useState<1 | 2>(1);
   const [step, setStep] = useState(0);
   const [a1, setA1] = useState<number[]>([]);
