@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import type { Screen } from "./types";
 import type { Labels } from "./labels";
 import { ghostButtonStyle, navStyle } from "./style-helpers";
@@ -15,13 +16,13 @@ export default function Header({ labels, screen, onNavigate, onReset }: Props) {
       </span>
       <nav aria-label={labels.brand} style="display:flex;gap:2px;margin-left:16px;flex:none">
         {SCREENS.map((s) => (
-          <button id={`algorithm-nav-${s}`} key={s} type="button" aria-current={screen === s ? "page" : undefined} onClick={() => onNavigate(s)} style={navStyle(screen === s)}>
+          <ShadcnButton id={`algorithm-nav-${s}`} key={s} type="button" aria-current={screen === s ? "page" : undefined} onClick={() => onNavigate(s)} style={navStyle(screen === s)}>
             {labels.nav[s]}
-          </button>
+          </ShadcnButton>
         ))}
       </nav>
       <span style="flex:1" />
-      <button type="button" onClick={onReset} style={ghostButtonStyle()}>{labels.resetSession}</button>
+      <ShadcnButton type="button" onClick={onReset} style={ghostButtonStyle()}>{labels.resetSession}</ShadcnButton>
     </header>
   );
 }

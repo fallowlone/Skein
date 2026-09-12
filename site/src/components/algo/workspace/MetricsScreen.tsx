@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import type { Locale } from "~/i18n";
 import type { Attempt, BankRow, SolveMode } from "./types";
 import type { Labels } from "./labels";
@@ -71,7 +72,7 @@ export default function MetricsScreen({ lang, labels, view, onView, rows, attemp
 
       <div role="tablist" aria-label={lang === "ru" ? "Представление метрик" : "Metrics view"} style="display:flex;gap:2px;margin-top:28px;border-bottom:0.5px solid var(--rule-strong)">
         {VIEWS.map((v) => (
-          <button
+          <ShadcnButton
             key={v}
             id={`metrics-tab-${v}`}
             type="button"
@@ -93,7 +94,7 @@ export default function MetricsScreen({ lang, labels, view, onView, rows, attemp
               tabs[nextIndex]?.click();
             }}
             style={tabStyle(view === v)}
-          >{l.views[v]}</button>
+          >{l.views[v]}</ShadcnButton>
         ))}
       </div>
 
