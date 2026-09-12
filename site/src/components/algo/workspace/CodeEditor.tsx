@@ -1,3 +1,5 @@
+import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
+import { Button as ShadcnButton } from "~/components/ui/button";
 // Purpose-built inline editor for the workspace: a textarea for real input plus a
 // <pre> overlay for syntax color, sharing one scroll position. Deliberately not
 // CodeMirror (as CodeDrawer.tsx uses for the docked modal editor) — this editor
@@ -104,7 +106,7 @@ export default function CodeEditor({ code, onChange, scheme, completionsHint, co
               ))}
             </code>
           </pre>
-          <textarea
+          <ShadcnTextarea
             ref={taRef}
             spellcheck={false}
             value={code}
@@ -123,14 +125,14 @@ export default function CodeEditor({ code, onChange, scheme, completionsHint, co
         </span>
         <div style="display:flex;gap:4px;flex-wrap:wrap;min-width:0">
           {matches.map((w) => (
-            <button
+            <ShadcnButton
               key={w}
               type="button"
               onClick={() => accept(w)}
               style="appearance:none;cursor:pointer;background:transparent;border:0.5px solid var(--rule-strong);color:var(--ink);font-family:var(--font-mono);font-size:10.5px;padding:2px 6px;border-radius:1px;transition:background 120ms var(--ease)"
             >
               {w}
-            </button>
+            </ShadcnButton>
           ))}
         </div>
         <span style="flex:1" />
