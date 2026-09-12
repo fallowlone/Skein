@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import type { BankRow } from "./types";
 import type { Labels } from "./labels";
 import { chipStyle, monoLabel, monoLabelInk } from "./style-helpers";
@@ -71,14 +72,14 @@ export default function BankScreen({ labels, rows, patterns, companies, filters,
             <span style={monoLabel}>{g.name}</span>
             <div style="display:flex;flex-wrap:wrap;gap:5px">
               {g.options.map((opt) => (
-                <button
+                <ShadcnButton
                   key={opt}
                   type="button"
                   onClick={() => onFilters({ ...filters, [g.key]: opt })}
                   style={chipStyle(filters[g.key] === opt)}
                 >
                   {g.format(opt)}
-                </button>
+                </ShadcnButton>
               ))}
             </div>
           </div>
@@ -97,14 +98,14 @@ export default function BankScreen({ labels, rows, patterns, companies, filters,
           </div>
 
           {shown.map((p) => p.isWorkspaceProblem ? (
-            <button
+            <ShadcnButton
               key={p.id}
               type="button"
               onClick={() => onOpenWorkspace(p.id)}
               style="appearance:none;width:100%;display:grid;grid-template-columns:36px minmax(0,1fr) 150px 92px 108px 76px;gap:16px;align-items:baseline;padding:13px 0;border:0;border-bottom:0.5px solid var(--hairline);background:transparent;text-align:left;color:inherit;cursor:pointer;transition:background 120ms var(--ease)"
             >
               <RowContent p={p} labels={labels} />
-            </button>
+            </ShadcnButton>
           ) : (
             <a
               key={p.id}
