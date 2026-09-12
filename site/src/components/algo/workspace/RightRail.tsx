@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import type { Locale } from "~/i18n";
 import type { Attempt, RailTab, WorkspaceProblem } from "./types";
 import type { Labels } from "./labels";
@@ -46,7 +47,7 @@ export default function RightRail(props: Props) {
       <div style="position:sticky;top:56px;padding:24px 20px;display:flex;flex-direction:column;gap:0">
         <div role="tablist" aria-label={lang === "ru" ? "Панель решения" : "Solve rail"} style="display:flex;gap:2px;border-bottom:0.5px solid var(--rule-strong)">
           {TABS.map((t) => (
-            <button
+            <ShadcnButton
               key={t}
               id={`solve-rail-tab-${t}`}
               type="button"
@@ -68,7 +69,7 @@ export default function RightRail(props: Props) {
                 tabs[nextIndex]?.click();
               }}
               style={tabStyle(railTab === t)}
-            >{l[t]}</button>
+            >{l[t]}</ShadcnButton>
           ))}
         </div>
 
@@ -104,14 +105,14 @@ export default function RightRail(props: Props) {
                       <div style="margin-top:10px;display:flex;flex-direction:column;gap:5px" aria-hidden="true">
                         {skeletonWidths.map((w) => <span key={w} style={`height:7px;background:var(--rule);width:${w}`} />)}
                       </div>
-                      <button
+                      <ShadcnButton
                         type="button"
                         disabled={!next || running}
                         onClick={() => onReveal(i)}
                         style={`appearance:none;margin-top:12px;width:100%;cursor:${running ? "wait" : next ? "pointer" : "not-allowed"};background:transparent;border:0.5px solid ${next ? "var(--rule-strong)" : "var(--rule)"};color:${next ? "var(--ink)" : "var(--muted)"};font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;padding:8px 10px;border-radius:1px;transition:border-color 120ms var(--ease),background 120ms var(--ease);opacity:${running ? ".6" : "1"}`}
                       >
                         {next ? l.reveal(i + 1) : l.lockedReveal(hintsOpen + 1)}
-                      </button>
+                      </ShadcnButton>
                     </>
                   )}
                 </div>
@@ -140,13 +141,13 @@ export default function RightRail(props: Props) {
                   <span style="font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted)">{l.mastery} {a.mastery}</span>
                   {typeof a.hintsOpen === "number" && <span style="font-family:var(--font-mono);font-size:9.5px;color:var(--muted)">· {a.hintsOpen} hints</span>}
                   <span style="flex:1" />
-                  <button
+                  <ShadcnButton
                     type="button"
                     onClick={() => onRestore(a)}
                     style="appearance:none;cursor:pointer;background:transparent;border:0.5px solid var(--rule);color:var(--ink-2);font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;padding:4px 7px;border-radius:1px;transition:border-color 120ms var(--ease)"
                   >
                     {l.restore}
-                  </button>
+                  </ShadcnButton>
                 </div>
                 <div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);font-variant-numeric:tabular-nums">
                   {a.lines} lines · {a.chars} chars

@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import { loadStore, needsRevisit, saveEntry, type DrillEntry } from "../drill-state";
@@ -454,9 +455,9 @@ export default function AlgorithmWorkspace({ lang, problem, bankProblems, trackH
               ? "Разбор строится из твоего зафиксированного прогноза, реальных тестов, подсказок, времени и кода."
               : "The debrief is built from your sealed prediction, real test results, hints, elapsed time, and submitted code."}
           </p>
-          <button type="button" onClick={() => navigate("workspace")} style="appearance:none;cursor:pointer;background:var(--ink);border:0;color:var(--paper);padding:9px 14px;font-size:13px">
+          <ShadcnButton type="button" onClick={() => navigate("workspace")} style="appearance:none;cursor:pointer;background:var(--ink);border:0;color:var(--paper);padding:9px 14px;font-size:13px">
             {lang === "ru" ? "Вернуться в Workspace" : "Return to Workspace"}
-          </button>
+          </ShadcnButton>
         </div>
       )}
 

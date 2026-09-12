@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import type { Locale } from "~/i18n";
 import type { Bi, DebriefTab, SolveMode, TestRunResult, TraceEvent, WorkspaceProblem } from "./types";
 import type { Labels } from "./labels";
@@ -93,7 +94,7 @@ export default function DebriefScreen(props: Props) {
 
       <div role="tablist" aria-label={lang === "ru" ? "Разделы разбора" : "Debrief sections"} style="display:flex;gap:2px;margin-top:28px;border-bottom:0.5px solid var(--rule-strong)">
         {TABS.map((t) => (
-          <button
+          <ShadcnButton
             key={t}
             id={`debrief-tab-${t}`}
             type="button"
@@ -115,7 +116,7 @@ export default function DebriefScreen(props: Props) {
               tabs[nextIndex]?.click();
             }}
             style={tabStyle(tab === t)}
-          >{l.tabs[t]}</button>
+          >{l.tabs[t]}</ShadcnButton>
         ))}
       </div>
 

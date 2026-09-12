@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import { useLayoutEffect, useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
 
@@ -64,7 +65,7 @@ export default function ExpeditionPass({ lang, telegramStarsUrl, routeCounts, on
 
   return (
     <aside class="expedition-pass" aria-label="Patron Map">
-      <button class="ep-close" type="button" aria-label="Close Expedition Pass" onClick={dismiss}>×</button>
+      <ShadcnButton class="ep-close" type="button" aria-label="Close Expedition Pass" onClick={dismiss}>×</ShadcnButton>
 
       <svg class="ep-compass" viewBox="0 0 32 32" aria-hidden="true">
         <circle cx="16" cy="16" r="13" /><circle cx="16" cy="16" r="9.5" stroke-dasharray="1.2 2.1" />
@@ -76,7 +77,7 @@ export default function ExpeditionPass({ lang, telegramStarsUrl, routeCounts, on
 
       <div class="ep-route" aria-label="Patron map tracks">
         {ROUTE.map((item) => (
-          <button
+          <ShadcnButton
             class="ep-route-step"
             key={item.key}
             type="button"
@@ -90,11 +91,11 @@ export default function ExpeditionPass({ lang, telegramStarsUrl, routeCounts, on
             </div>
             <p class="ep-route-en">{item.en}</p>
             <p class="ep-ru ep-route-ru">{item.ru}</p>
-          </button>
+          </ShadcnButton>
         ))}
       </div>
 
-      <button class="ep-week" type="button" onClick={() => openPattern("two-pointers")}>
+      <ShadcnButton class="ep-week" type="button" onClick={() => openPattern("two-pointers")}>
         <span class="ep-flag" aria-hidden="true">
           <svg viewBox="0 0 32 32"><path d="M11 26V7m0 2h12l-3 4 3 4H11" /></svg>
         </span>
@@ -103,7 +104,7 @@ export default function ExpeditionPass({ lang, telegramStarsUrl, routeCounts, on
           <p>{routeCounts["two-pointers"] ?? 0} problems in the live bank</p>
         </div>
         <p class="ep-ru">RU: Неделя 1: Два указателя — {routeCounts["two-pointers"] ?? 0} задач в банке</p>
-      </button>
+      </ShadcnButton>
 
       <div class="ep-benefits">
         <p>Choose a track to help shape Skein’s curriculum. Your support funds deeper lessons, examples, and practice paths.</p>
@@ -117,19 +118,19 @@ export default function ExpeditionPass({ lang, telegramStarsUrl, routeCounts, on
         </a>
       ) : (
         <>
-          <button class="ep-cta ep-cta-primary" type="button" disabled aria-describedby="telegram-stars-unavailable">
+          <ShadcnButton class="ep-cta ep-cta-primary" type="button" disabled aria-describedby="telegram-stars-unavailable">
             <span>Telegram Stars unavailable</span>
             <small>RU: Telegram Stars пока недоступны</small>
-          </button>
+          </ShadcnButton>
           <p id="telegram-stars-unavailable" class="ep-support-note">
             {lang === "ru" ? "Платёжный endpoint не настроен." : "Patron payment endpoint is not configured."}
           </p>
         </>
       )}
-      <button class="ep-cta ep-cta-secondary" type="button" onClick={dismiss}>
+      <ShadcnButton class="ep-cta ep-cta-secondary" type="button" onClick={dismiss}>
         <span>Continue without pass</span>
         <small>RU: Продолжить без поддержки</small>
-      </button>
+      </ShadcnButton>
 
       <style>{`
         body[data-expedition-pass="open"] .rail,
