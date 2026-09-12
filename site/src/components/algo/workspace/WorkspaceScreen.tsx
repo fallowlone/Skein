@@ -1,3 +1,4 @@
+import { Button as ShadcnButton } from "~/components/ui/button";
 import type { Locale } from "~/i18n";
 import type { Attempt, RailTab, Scheme, SolveMode, TestRunResult, WorkspaceProblem } from "./types";
 import type { Labels } from "./labels";
@@ -82,7 +83,7 @@ export default function WorkspaceScreen(props: Props) {
             <span style={monoLabel}>{l.step1}</span>
             <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0;margin-top:16px;border-top:0.5px solid var(--rule-strong);border-bottom:0.5px solid var(--rule)">
               {(["timed", "untimed", "interview"] as SolveMode[]).map((m, i) => (
-                <button
+                <ShadcnButton
                   key={m}
                   type="button"
                   aria-pressed={mode === m}
@@ -94,7 +95,7 @@ export default function WorkspaceScreen(props: Props) {
                     <span style="font-size:14px;font-weight:500;color:var(--ink)">{labels.modes[m].label}</span>
                   </span>
                   <span style="font-family:var(--font-mono);font-size:11px;color:var(--muted);text-align:left;line-height:1.55">{labels.modes[m].note}</span>
-                </button>
+                </ShadcnButton>
               ))}
             </div>
 
@@ -104,7 +105,7 @@ export default function WorkspaceScreen(props: Props) {
 
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:32px;border-top:0.5px solid var(--rule-strong);border-bottom:0.5px solid var(--rule-strong)">
               {labels.complexities.map((c, i) => (
-                <button
+                <ShadcnButton
                   key={c.big}
                   type="button"
                   aria-pressed={choice === c.big}
@@ -113,19 +114,19 @@ export default function WorkspaceScreen(props: Props) {
                 >
                   <span style="font-family:var(--font-mono);font-size:20px;letter-spacing:-0.01em;color:var(--ink)">{c.big}</span>
                   <span style="font-size:12.5px;line-height:1.45;color:var(--muted);text-align:left">{c.note}</span>
-                </button>
+                </ShadcnButton>
               ))}
             </div>
 
             <div style="display:flex;align-items:center;gap:14px;margin-top:24px">
-              <button
+              <ShadcnButton
                 type="button"
                 disabled={!choice}
                 onClick={onSeal}
                 style={`appearance:none;cursor:${choice ? "pointer" : "not-allowed"};background:${choice ? "var(--ink)" : "transparent"};border:0.5px solid ${choice ? "var(--ink)" : "var(--rule)"};color:${choice ? "var(--paper)" : "var(--muted)"};font-size:13.5px;font-weight:500;padding:9px 16px;border-radius:1px;transition:opacity 120ms var(--ease)`}
               >
                 {l.seal}
-              </button>
+              </ShadcnButton>
               <span style="font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.06em;color:var(--muted)">
                 {choice ? l.sealHintLocked : l.sealHintPick}
               </span>
@@ -151,7 +152,7 @@ export default function WorkspaceScreen(props: Props) {
               <span style={`display:inline-flex;align-items:center;padding:0 12px;${monoLabel}`}>{l.langBadge}</span>
               <span style="display:inline-flex;align-items:center;gap:4px;padding:0 12px 0 0">
                 {SCHEMES.map((s) => (
-                  <button
+                  <ShadcnButton
                     key={s}
                     type="button"
                     title={labels.schemes[s].title}
@@ -160,7 +161,7 @@ export default function WorkspaceScreen(props: Props) {
                     style={`appearance:none;cursor:pointer;font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;padding:4px 8px;border-radius:1px;border:0.5px solid ${scheme === s ? "var(--ink)" : "var(--rule)"};background:${scheme === s ? "var(--ink)" : "transparent"};color:${scheme === s ? "var(--paper)" : "var(--muted)"};transition:border-color 120ms var(--ease)`}
                   >
                     {labels.schemes[s].label}
-                  </button>
+                  </ShadcnButton>
                 ))}
               </span>
             </div>
@@ -174,23 +175,23 @@ export default function WorkspaceScreen(props: Props) {
             />
 
             <div style="display:flex;align-items:center;gap:12px;padding:14px 24px;border-bottom:0.5px solid var(--rule);flex-wrap:wrap">
-              <button
+              <ShadcnButton
                 type="button"
                 onClick={onRunTests}
                 disabled={running}
                 style={`appearance:none;cursor:${running ? "wait" : "pointer"};background:transparent;border:0.5px solid var(--rule-strong);color:var(--ink);font-size:13.5px;font-weight:500;padding:9px 16px;border-radius:1px;transition:border-color 120ms var(--ease),background 120ms var(--ease);opacity:${running ? ".65" : "1"}`}
               >
                 {l.runTests}
-              </button>
-              <button
+              </ShadcnButton>
+              <ShadcnButton
                 type="button"
                 onClick={onSubmit}
                 disabled={running}
                 style={`appearance:none;cursor:${running ? "wait" : "pointer"};background:var(--ink);border:0.5px solid var(--ink);color:var(--paper);font-size:13.5px;font-weight:500;padding:9px 16px;border-radius:1px;transition:opacity 120ms var(--ease);opacity:${running ? ".65" : "1"}`}
               >
                 {l.submit}
-              </button>
-              <button
+              </ShadcnButton>
+              <ShadcnButton
                 type="button"
                 onClick={onSaveAttempt}
                 disabled={running}
@@ -198,7 +199,7 @@ export default function WorkspaceScreen(props: Props) {
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px"><path d="M5 4h11l3 3v13H5z" /><path d="M8.5 4v5h7" /><path d="M8.5 20v-6h7v6" /></svg>
                 {l.saveAttempt}
-              </button>
+              </ShadcnButton>
               <span aria-live="polite" style={`font-family:var(--font-mono);font-size:10.5px;color:${runError ? "var(--danger)" : "var(--muted)"};letter-spacing:0.04em`}>
                 {running
                   ? (runningAction === "submit" ? l.submitting : l.runningTests)

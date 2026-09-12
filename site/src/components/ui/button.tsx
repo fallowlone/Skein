@@ -3,8 +3,11 @@ import { Slot } from "radix-ui";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "~/lib/utils";
 
+const buttonChrome =
+  "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-[var(--r-md)] text-sm font-medium transition-colors";
+
 const buttonVariants = cva(
-  "inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-[var(--r-md)] text-sm font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -40,12 +43,15 @@ type ButtonProps = Omit<JSX.ButtonHTMLAttributes<HTMLButtonElement>, "tabindex">
 
 function Button({ className, class: legacyClass, variant, size, asChild = false, ...props }: ButtonProps) {
   const Comp = (asChild ? Slot.Root : "button") as any;
+  const resolvedVariant = variant ?? "inherit";
+  const resolvedSize = size ?? "inherit";
+  const useShadcnChrome = resolvedVariant !== "inherit" || resolvedSize !== "inherit";
   return (
     <Comp
       data-slot="button"
-      data-variant={variant ?? "inherit"}
-      data-size={size ?? "inherit"}
-      className={cn(buttonVariants({ variant, size }), legacyClass, className)}
+      data-variant={resolvedVariant}
+      data-size={resolvedSize}
+      className={cn(useShadcnChrome && buttonChrome, buttonVariants({ variant: resolvedVariant, size: resolvedSize }), legacyClass, className)}
       {...props}
     />
   );
