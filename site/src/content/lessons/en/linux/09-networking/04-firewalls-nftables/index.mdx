@@ -1,0 +1,332 @@
+---
+concepts:
+- nftables
+- netfilter
+- table
+- chain
+- hook
+- input chain
+- output chain
+- forward chain
+- default-deny
+- firewalld
+- nft
+- rule
+- packet filter
+- prerouting
+- postrouting
+estMin: 22
+lang: en
+lessonType: concept
+level: senior
+mathPrereqs: []
+order: 4
+prereqs: []
+slug: 04-firewalls-nftables
+sources:
+- https://man7.org/linux/man-pages/man8/nft.8.html
+status: ready
+summary: 'nftables organises rules into tables and chains hooked into netfilter points (input, forward, output). A default-deny inbound policy drops everything unless explicitly permitted. firewalld is a higher-level manager over the same nftables kernel subsystem.'
+title: Firewalls and nftables
+track: linux
+unit: 09-networking
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Goal from "~/components/lesson/Goal.astro";
+import Step from "~/components/lesson/Step.astro";
+import WorkedExample from "~/components/lesson/WorkedExample.astro";
+import Check from "~/components/lesson/Check.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+A freshly provisioned VM with no firewall rules accepts connections on every open port — including ports that services bind to by default (postgres on 5432, redis on 6379) because the developer assumed "it only listens on localhost." But `ss -tlnp` shows `0.0.0.0:6379` and there are no nftables rules. Anyone on the same network segment can connect. The right mental model is default-deny: drop everything inbound and explicitly permit only what you intend to expose. nftables is the kernel's packet filter that enforces this. firewalld is the higher-level tool that most RHEL-family admins use on top of it. Understanding the nftables object model — tables, chains, hooks, rules — is what lets you read, debug, and write firewall policy without cargo-culting rules you don't understand. Threat-modeling and hardening posture live in the security-defensive track; this lesson covers the mechanics.
+</Hook>
+
+<Goal lang="en">
+After this lesson you can describe the nftables object model (tables → chains → rules, chains hooked into netfilter), write a default-deny inbound ruleset that permits SSH, read an existing ruleset with `nft list ruleset`, understand what firewalld adds over raw nftables, and explain the input/forward/output hook distinction.
+</Goal>
+
+<Step n={1}>
+**The nftables object model: tables, chains, hooks, rules.**
+
+nftables replaces iptables, ip6tables, arptables, and ebtables with a single unified framework. Every piece of policy lives in this hierarchy:
+
+```bash
+# List the entire current ruleset:
+sudo nft list ruleset
+
+# If nothing is configured, output is empty.
+# A populated ruleset looks like:
+# table inet filter {
+#     chain input {
+#         type filter hook input priority filter; policy drop;
+#         iif "lo" accept
+#         ct state established,related accept
+#         tcp dport 22 accept
+#     }
+#     chain forward {
+#         type filter hook forward priority filter; policy drop;
+#     }
+#     chain output {
+#         type filter hook output priority filter; policy accept;
+#     }
+# }
+
+# Object model:
+# table  = namespace; family = inet (IPv4+IPv6), ip, ip6, arp, bridge
+# chain  = ordered list of rules; attached to a netfilter hook
+# hook   = where in the kernel's packet path the chain fires
+#          input    = packets destined for this host
+#          forward  = packets being routed through this host
+#          output   = packets originating from this host
+#          prerouting / postrouting = before/after routing decision (for NAT)
+# rule   = match + verdict (accept / drop / reject / jump / goto)
+# policy = default verdict when no rule matches (accept or drop)
+```
+</Step>
+
+<Step n={2}>
+**Writing a minimal default-deny inbound ruleset.**
+
+```bash
+# Create a table (inet = applies to both IPv4 and IPv6):
+sudo nft add table inet filter
+
+# Add the input chain with default-deny policy:
+sudo nft add chain inet filter input \
+  '{ type filter hook input priority 0; policy drop; }'
+
+# Rule 1: always accept loopback (lo) traffic — breaking this breaks localhost:
+sudo nft add rule inet filter input iif lo accept
+
+# Rule 2: accept established/related connections (return traffic for outbound):
+sudo nft add rule inet filter input ct state established,related accept
+
+# Rule 3: accept new SSH connections:
+sudo nft add rule inet filter input tcp dport 22 accept
+
+# Rule 4 (optional): accept a web server:
+sudo nft add rule inet filter input tcp dport { 80, 443 } accept
+
+# Add output and forward chains (permissive output is typical for a server):
+sudo nft add chain inet filter forward \
+  '{ type filter hook forward priority 0; policy drop; }'
+sudo nft add chain inet filter output \
+  '{ type filter hook output priority 0; policy accept; }'
+
+# Verify the full ruleset:
+sudo nft list ruleset
+```
+
+The `ct state established,related accept` rule is critical — without it, your SSH session's return packets (kernel replies to the client's TCP segments) are dropped by the default-deny policy, and the connection stalls immediately after the rule is installed.
+</Step>
+
+<Step n={3}>
+**Persisting nftables rules across reboots.**
+
+Rules added with `nft add` live only in kernel memory. On reboot they vanish.
+
+```bash
+# Save current ruleset to a file:
+sudo nft list ruleset > /etc/nftables.conf
+
+# The file is a valid nft script. Contents will look like:
+# #!/usr/sbin/nft -f
+# table inet filter {
+#     chain input { ... }
+#     chain forward { ... }
+#     chain output { ... }
+# }
+
+# Load a ruleset from a file (replaces current rules):
+sudo nft -f /etc/nftables.conf
+
+# Enable the systemd service to load rules at boot:
+sudo systemctl enable nftables
+sudo systemctl start nftables
+# systemd's nftables.service runs: nft -f /etc/nftables.conf at startup
+
+# Test a ruleset file without applying it:
+sudo nft -c -f /etc/nftables.conf
+# -c = check only, do not load
+```
+
+The nftables.service on Debian/Ubuntu loads `/etc/nftables.conf` by default. Check the service file if your distro uses a different path: `systemctl cat nftables`.
+</Step>
+
+<Step n={4}>
+**firewalld: a higher-level manager over nftables.**
+
+On RHEL/Fedora and increasingly on Debian, `firewalld` provides a zone-based abstraction over nftables (it used to manage iptables; since firewalld 0.6 it targets nftables by default).
+
+```bash
+# firewalld concepts:
+# zone    = a trust level applied to an interface or source address
+#           (public, internal, trusted, drop, block, work, home, dmz, external)
+# service = a named port/protocol set (ssh = tcp/22, http = tcp/80, etc.)
+
+# Check status:
+sudo firewall-cmd --state
+# running
+
+# List active zones and their interfaces:
+sudo firewall-cmd --get-active-zones
+# public
+#   interfaces: ens3
+
+# See what is allowed in the public zone:
+sudo firewall-cmd --zone=public --list-all
+# public (active)
+#   target: default
+#   interfaces: ens3
+#   services: dhcpv6-client ssh
+
+# Permanently allow HTTP (--permanent writes to XML config):
+sudo firewall-cmd --zone=public --add-service=http --permanent
+sudo firewall-cmd --reload
+
+# Allow a specific port:
+sudo firewall-cmd --zone=public --add-port=8080/tcp --permanent
+sudo firewall-cmd --reload
+
+# Do NOT mix raw nft rules with firewalld — firewalld rebuilds the nftables
+# ruleset on reload and will overwrite any rules you added manually.
+sudo nft list ruleset | head -5
+# table inet firewalld { ... }   ← firewalld owns this table
+```
+</Step>
+
+<Step n={5}>
+**Reading and debugging an existing ruleset.**
+
+```bash
+# Full ruleset dump — the ground truth:
+sudo nft list ruleset
+
+# List just one table:
+sudo nft list table inet filter
+
+# List one chain:
+sudo nft list chain inet filter input
+
+# Add a rule with a counter to see how many packets match:
+sudo nft add rule inet filter input tcp dport 443 counter accept
+sudo nft list chain inet filter input
+# tcp dport 443 counter packets 847 bytes 51234 accept
+
+# Delete a specific rule by its handle (handle shown with --handle flag):
+sudo nft list chain inet filter input --handle
+# tcp dport 22 accept  # handle 3
+sudo nft delete rule inet filter input handle 3
+
+# Flush (delete all rules in) a chain without removing the chain itself:
+sudo nft flush chain inet filter input
+
+# Delete an entire table:
+sudo nft delete table inet filter
+```
+</Step>
+
+<FlowDiagram
+  label="nftables chains hooked into the Linux netfilter packet path"
+  caption="Packets arriving from the network hit prerouting first, then fork: destined for this host go to input, packets being routed through go to forward. Packets generated locally go through output then postrouting. Each chain runs its rules in order; the chain policy fires when no rule matches."
+  nodes={[
+    { id: "net", label: "Network (inbound)", sub: "packet arrives on ens3" },
+    { id: "pre", label: "prerouting hook", sub: "DNAT / connection tracking" },
+    { id: "input", label: "input chain", sub: "destined for this host" },
+    { id: "fwd", label: "forward chain", sub: "being routed through" },
+    { id: "local", label: "Local process", sub: "receives or sends packet" },
+    { id: "output", label: "output chain", sub: "generated by this host" },
+    { id: "post", label: "postrouting hook", sub: "SNAT / masquerade" },
+    { id: "wire", label: "Network (outbound)", sub: "packet leaves on ens3" },
+  ]}
+  edges={[
+    { from: "net", to: "pre", label: "arrives" },
+    { from: "pre", to: "input", label: "dst = local IP" },
+    { from: "pre", to: "fwd", label: "dst = other host" },
+    { from: "input", to: "local", label: "accept" },
+    { from: "local", to: "output", label: "send" },
+    { from: "fwd", to: "post", label: "accepted" },
+    { from: "output", to: "post", label: "accepted" },
+    { from: "post", to: "wire", label: "egress" },
+  ]}
+/>
+
+<WorkedExample lang="en">
+**Locking down a new VM: allow only SSH and HTTP, deny everything else inbound.**
+
+```bash
+# Starting from a clean state (no existing rules):
+sudo nft list ruleset
+# (empty)
+
+# Build the ruleset:
+sudo nft add table inet filter
+sudo nft add chain inet filter input \
+  '{ type filter hook input priority 0; policy drop; }'
+sudo nft add chain inet filter forward \
+  '{ type filter hook forward priority 0; policy drop; }'
+sudo nft add chain inet filter output \
+  '{ type filter hook output priority 0; policy accept; }'
+
+# Essential rules — add in order (evaluated top to bottom):
+sudo nft add rule inet filter input iif lo accept
+sudo nft add rule inet filter input ct state established,related accept
+sudo nft add rule inet filter input ct state invalid drop
+sudo nft add rule inet filter input tcp dport 22 accept
+sudo nft add rule inet filter input tcp dport { 80, 443 } accept
+
+# Verify: does SSH still work?
+# (test from another terminal BEFORE saving — if this shell hangs, you locked yourself out)
+ssh 10.0.0.10 echo ok
+# ok
+
+# Save and enable:
+sudo nft list ruleset > /etc/nftables.conf
+sudo systemctl enable --now nftables
+
+# Confirm: postgres on 5432 is now unreachable from outside,
+# even though it binds 0.0.0.0:5432 — the input chain drops the SYN.
+```
+
+The `ct state invalid drop` rule catches malformed packets and TCP sequence-number attacks before they hit the accept rules — a common hardening addition.
+</WorkedExample>
+
+<Inset kind="why" lang="en">
+**This lesson bridges to the security-defensive track.** The mechanics covered here — default-deny, chain policy, permit by exception — are the packet-filter foundation. The security-defensive track covers what goes on top: threat modeling to decide *which* ports to expose, rate-limiting rules to mitigate brute-force, logging dropped packets for incident response, and hardening posture (fail2ban, intrusion detection). Knowing nftables mechanics makes those higher-level decisions legible; skipping the mechanics means you are copying firewall rules you cannot debug.
+</Inset>
+
+<Inset kind="mistake" lang="en">
+**Applying a default-deny input policy before adding the established/related rule.** If you run `sudo nft add chain inet filter input '{ type filter hook input priority 0; policy drop; }'` before adding `ct state established,related accept`, your existing SSH session stops receiving return packets and hangs within seconds. Always write the full ruleset to a file and load it atomically with `nft -f /etc/nftables.conf`, or add the established/related rule as the very first action before changing the chain policy. On a remote server, test with a second terminal open before saving.
+</Inset>
+
+<Check lang="en">
+  <Quiz
+    id="firewalls-nftables-check"
+    pieceSlug="04-firewalls-nftables"
+    lang="en"
+    question="Your nftables input chain has policy drop and these rules in order: (1) iif lo accept, (2) ct state established,related accept, (3) tcp dport 22 accept. A new inbound TCP SYN arrives on port 5432. What happens?"
+    choices={[
+      {
+        label: "The packet is dropped by the chain policy — no rule matches port 5432, so the default-deny policy fires.",
+        correct: true,
+      },
+      {
+        label: "The packet is accepted because ct state established,related accept covers all TCP connections once the handshake begins.",
+        misconception: "ct state established,related only matches packets that are part of a connection the kernel already knows about. A new SYN on port 5432 has no existing conntrack entry — its state is 'new', which is not matched by the established/related rule.",
+      },
+      {
+        label: "The packet is forwarded to the forward chain because the host is not the final destination.",
+        misconception: "The forward chain handles packets being routed through this host to another destination. A packet destined for this host's own IP hits the input chain, not the forward chain.",
+      },
+    ]}
+  />
+</Check>
+
+<Recap lang="en">
+**nftables** is the Linux kernel's packet filtering framework, replacing iptables. Its object model: **tables** (namespaces, family `inet` covers IPv4+IPv6) contain **chains** that are hooked into **netfilter points** — `input` (destined for this host), `forward` (transiting through), `output` (locally generated). Each chain holds ordered **rules**; when no rule matches, the chain **policy** (`accept` or `drop`) fires. A **default-deny inbound** policy (policy drop) means only explicitly permitted traffic gets through. The critical companion rule is `ct state established,related accept` — without it, return packets for outbound connections are dropped. Persist rules with `nft list ruleset > /etc/nftables.conf` and `systemctl enable nftables`. **firewalld** is a zone-based manager that generates and owns nftables rules — never mix manual `nft` commands with firewalld on the same host. Threat modeling, rate-limiting, and hardening posture are covered in the security-defensive track.
+</Recap>

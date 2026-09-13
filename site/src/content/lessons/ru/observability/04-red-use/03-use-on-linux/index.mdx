@@ -1,0 +1,267 @@
+---
+concepts:
+- use-method
+- psi
+- node-exporter
+- linux-performance
+- saturation
+deepensInto: []
+estMin: 14
+lang: ru
+lessonType: topic
+level: middle
+order: 3
+prereqs:
+- observability/04-red-use/01-red-and-use-overview
+slug: 03-use-on-linux
+sources:
+- https://www.brendangregg.com/usemethod.html
+- https://www.brendangregg.com/USEmethod/use-linux.html
+- https://docs.kernel.org/accounting/psi.html
+spiral:
+- latency
+status: ready
+summary: Как собирать utilization, saturation и error-сигналы для каждого Linux-ресурса
+  — и почему Pressure Stall Information (PSI, ядро 4.20+) это современный saturation-сигнал,
+  заменяющий load average.
+title: 'USE на Linux: CPU, память, диск, сеть и PSI'
+track: observability
+unit: 04-red-use
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DiagramFrame from "~/components/diagram/DiagramFrame.astro";
+import Infographic from "~/components/diagram/Infographic.astro";
+import psiVsLoadAverage from "./infographics/psi-vs-load-average.svg?raw";
+
+<Hook>
+Webhook-воркер Stripe завис на 11 минут в 2024 году. Дашборды free-RAM показывали достаточно свободной памяти. Реальная причина — memory pressure ядра на уровне 90%: ядро трэшило reclaim. PSI поймал следующий инцидент за 30 секунд. Дашборды free-RAM по-прежнему ничего не показывали.
+</Hook>
+
+<Crux>Для каждого Linux-ресурса: U (занятость%), S (PSI или очередь), E (ECC/EIO/дропы). PSI даёт алертируемый saturation без угадывания порогов.</Crux>
+
+<Explanation>
+
+## USE-чек-лист ресурсов для Linux
+
+Что делает USE практичным — это конечный обход: для каждого ресурса проверь ровно три ячейки и двигайся дальше. При отладке инцидента эта структура предотвращает и туннельное зрение (смотришь только на CPU), и паралич (проверяешь всё сразу). Ключевые ячейки из оригинального чек-листа Brendan Gregg (~30 ресурсов) в связке node_exporter + Prometheus:
+
+<div data-lesson-visual class="overflow-x-auto my-6">
+  <table class="w-full text-sm border-collapse">
+    <thead>
+      <tr class="bg-surface-2">
+        <th class="border border-border px-3 py-2 text-left">Ресурс</th>
+        <th class="border border-border px-3 py-2 text-left">Метрика utilization</th>
+        <th class="border border-border px-3 py-2 text-left">Метрика saturation</th>
+        <th class="border border-border px-3 py-2 text-left">Метрика error</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="border border-border px-3 py-2">CPU</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_cpu_seconds_total (вычесть mode=idle)</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_pressure_cpu_waiting_seconds_total (PSI) или столбец r vmstat</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">MCE-ошибки (редко)</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Память</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">1 - node_memory_MemAvailable / node_memory_MemTotal</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_pressure_memory_waiting_seconds_total (PSI) или vmstat si/so</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">ECC-ошибки, node_memory_HardwareCorrupted</td>
+      </tr>
+      <tr>
+        <td class="border border-border px-3 py-2">Диск I/O</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_disk_io_time_seconds_total rate (%util)</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_disk_io_time_weighted_seconds_total (глубина очереди) + PSI io</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_disk_read_errors_total, EIO</td>
+      </tr>
+      <tr class="bg-surface-2">
+        <td class="border border-border px-3 py-2">Сеть</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_network_transmit_bytes_total / скорость линка</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_network_transmit_drop_total, TCP retransmit</td>
+        <td class="border border-border px-3 py-2 font-mono text-xs">node_network_receive_errs_total, CRC-ошибки</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## PSI: Pressure Stall Information
+
+PSI смержен в Linux 4.20 (декабрь 2018) Johannes Weiner из Facebook, устранив давний пробел в наблюдаемости: до PSI saturation приходилось выводить из load average, столбца `r` vmstat и `iowait` — ни один из них не масштабируется корректно на много ядер и не фиксирует кратковременное насыщение.
+
+PSI публикует по `/proc/pressure/{cpu,memory,io}` шестизначный отчёт для каждого ресурса:
+
+```
+some avg10=5.20 avg60=3.11 avg300=1.02 total=1234567
+full avg10=0.00 avg60=0.00 avg300=0.00 total=0
+```
+
+- **some**: хотя бы одна задача была заблокирована ожиданием этого ресурса, усреднено за 10 с / 60 с / 300 с.
+- **full**: _все_ не-idle задачи были заблокированы. Это критический сигнал — если `full > 0` для памяти или I/O более 10 секунд, у тебя почти наверняка кризис, даже если free-RAM выглядит нормально (ядро трэшит reclaim).
+
+Накладные расходы PSI: меньше 1% (счётчики на стороне ядра, без per-task трассировки).
+
+node_exporter публикует PSI как `node_pressure_cpu_waiting_seconds_total`, `node_pressure_memory_waiting_seconds_total` и `node_pressure_io_waiting_seconds_total`.
+
+## Почему PSI лучше load average
+
+Load average смешивает runnable- и uninterruptible-задачи, странно масштабируется при разном числе ядер и является 1-минутным экспоненциальным скользящим средним — кратковременный CPU-кризис на 5 секунд почти не отражается. На 64-ядерном хосте load average 10 — норма; на 2-ядерном — катастрофа. PSI нормализует по wall-clock времени и не зависит от числа ядер.
+
+<Infographic
+  svg={psiVsLoadAverage}
+  label="Сравнение двух saturation-сигналов бок о бок. Слева (load average): смешивает состояния runnable- и uninterruptible-задач, зависит от числа ядер (load 10 — норма на 64 ядрах, но беда на 2), его 1-минутное среднее скрывает кратковременный 5-секундный кризис, а порог алерта приходится угадывать для разных хостов. Справа (PSI, ядро 4.20+): измеряет wall-clock время stall в процентах, не зависит от числа ядер и потому означает одно и то же на 2 и на 64 ядрах, делится на some и full (full — заблокированы все не-idle задачи) и напрямую алертируем при накладных sub-1% — Kubernetes 1.27+ использует его для эвикции."
+  caption="Load average (слева) — чувствительный к числу ядер прокси, скрывающий пики, для которого приходится угадывать порог; PSI (справа) измеряет wall-clock время stall напрямую, поэтому одно правило алерта работает на любом хосте. Поэтому PSI заменяет load average как saturation-сигнал."
+  hue="var(--d-infra)"
+/>
+
+Рекомендуемые production-пороги для алертов:
+
+- `rate(node_pressure_cpu_waiting_seconds_total[5m]) > 0.1` (10% времени заблокировано на CPU) → warning
+- `rate(node_pressure_memory_stalled_seconds_total[5m]) > 0` в течение 10 мин → memory crunch, page немедленно
+- `rate(node_pressure_io_stalled_seconds_total[5m]) > 0` в течение 5 мин → I/O crunch
+
+Kubernetes 1.27+ использует PSI внутри для решений об эвикции по той же причине.
+
+## Как выглядят USE-сигналы при сбоях
+
+**CPU-bound нагрузка:** Utilization приближается к 100%, saturation (длина run-queue) растёт выше числа ядер. Это верный сигнал того, что scale out поможет. CPU на запрос остаётся стабильным — это объём, не регрессия.
+
+**Утечка памяти:** Utilization растёт медленно, `si/so` (swap-in / swap-out) в конечном счёте становятся ненулевыми. PSI memory `full` переходит с 0 в ненулевое — ядро трэшит reclaim для освобождения страниц.
+
+**Disk-bound нагрузка:** `%util` близко к 100% на одном или нескольких дисках, глубина очереди растёт, PSI io `some` увеличивается. Именно это убило воркер Stripe выше — видно в PSI, невидимо в free-RAM.
+
+**Network-bound:** TCP retransmit растут (`node_netstat_Tcp_RetransSegs`), NIC-дропы растут, пропускная способность у максимума линка.
+
+<DiagramFrame
+  label="USE-матрица по четырём Linux-ресурсам. Строки: CPU, память, диск I/O, сеть. Столбцы: Utilization (насколько занят), Saturation (сколько в очереди — run-queue, swap, iowait, backlog), Errors. В каждой ячейке указан Linux-инструмент или метрика для чтения. CPU: utilization — non-idle %CPU из top или mpstat; saturation — столбец run-queue r из vmstat или PSI cpu; errors — редкие MCE. Память: utilization — 1 минус MemAvailable делить на MemTotal; saturation — swap si/so из vmstat или PSI memory full; errors — ECC и HardwareCorrupted. Диск I/O: utilization — %util из iostat; saturation — глубина очереди avgqu-sz из iostat или PSI io; errors — EIO и ошибки чтения диска. Сеть: utilization — пропускная способность делить на скорость линка из sar; saturation — tx-дропы и TCP retransmit; errors — rx-ошибки и CRC из ip -s link."
+  hue="var(--d-systems)"
+  caption="Метод USE — это проход 4×3: для каждого ресурса считай один сигнал Utilization, один Saturation и один Error, затем сопоставь каждую ячейку с конкретным Linux-инструментом. Saturation (run-queue, swap, iowait, backlog) — это сигнал, который дашборды свободных ресурсов пропускают; PSI — его современная, не зависящая от числа ядер форма."
+>
+  <svg viewBox="0 0 720 318" font-family="var(--font-body)">
+    <text x="10" y="16" font-size="12.5" fill="var(--ink)">Метод USE по Linux-ресурсам</text>
+
+
+    <rect x="122" y="26" width="186" height="26" rx="4" fill="var(--card-2)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="215" y="43" font-size="11" text-anchor="middle" fill="var(--ink)">Utilization · занятость</text>
+    <rect x="312" y="26" width="186" height="26" rx="4" fill="var(--card-2)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="405" y="43" font-size="11" text-anchor="middle" fill="var(--ink)">Saturation · в очереди</text>
+    <rect x="502" y="26" width="208" height="26" rx="4" fill="var(--card-2)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="606" y="43" font-size="11" text-anchor="middle" fill="var(--ink)">Errors · что упало</text>
+
+
+    <rect x="10" y="58" width="106" height="56" rx="4" fill="var(--card-2)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="63" y="84" font-size="11.5" text-anchor="middle" fill="var(--ink)">CPU</text>
+    <text x="63" y="100" font-size="9" text-anchor="middle" fill="var(--muted)">вычисления</text>
+    <rect x="122" y="58" width="186" height="56" rx="4" fill="var(--card)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="215" y="80" font-size="9.5" text-anchor="middle" fill="var(--ink)">non-idle %CPU</text>
+    <text x="215" y="98" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">top · mpstat</text>
+    <rect x="312" y="58" width="186" height="56" rx="4" fill="var(--card)" stroke="var(--d-systems)" stroke-width="1.2" />
+    <text x="405" y="80" font-size="9.5" text-anchor="middle" fill="var(--ink)">run-queue r · PSI cpu</text>
+    <text x="405" y="98" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">vmstat r · pressure/cpu</text>
+    <rect x="502" y="58" width="208" height="56" rx="4" fill="var(--card)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="606" y="80" font-size="9.5" text-anchor="middle" fill="var(--ink)">MCE (редко)</text>
+    <text x="606" y="98" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">dmesg · edac</text>
+
+
+    <rect x="10" y="118" width="106" height="56" rx="4" fill="var(--card-2)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="63" y="144" font-size="11.5" text-anchor="middle" fill="var(--ink)">Память</text>
+    <text x="63" y="160" font-size="9" text-anchor="middle" fill="var(--muted)">RAM + swap</text>
+    <rect x="122" y="118" width="186" height="56" rx="4" fill="var(--card)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="215" y="140" font-size="9.5" text-anchor="middle" fill="var(--ink)">1 − MemAvailable/Total</text>
+    <text x="215" y="158" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">free · /proc/meminfo</text>
+    <rect x="312" y="118" width="186" height="56" rx="4" fill="var(--card)" stroke="var(--d-systems)" stroke-width="1.2" />
+    <text x="405" y="140" font-size="9.5" text-anchor="middle" fill="var(--ink)">swap si/so · PSI mem full</text>
+    <text x="405" y="158" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">vmstat si/so · pressure/memory</text>
+    <rect x="502" y="118" width="208" height="56" rx="4" fill="var(--card)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="606" y="140" font-size="9.5" text-anchor="middle" fill="var(--ink)">ECC · HardwareCorrupted</text>
+    <text x="606" y="158" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">edac · /proc/meminfo</text>
+
+
+    <rect x="10" y="178" width="106" height="56" rx="4" fill="var(--card-2)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="63" y="204" font-size="11.5" text-anchor="middle" fill="var(--ink)">Диск I/O</text>
+    <text x="63" y="220" font-size="9" text-anchor="middle" fill="var(--muted)">хранилище</text>
+    <rect x="122" y="178" width="186" height="56" rx="4" fill="var(--card)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="215" y="200" font-size="9.5" text-anchor="middle" fill="var(--ink)">%util время занятости</text>
+    <text x="215" y="218" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">iostat -x</text>
+    <rect x="312" y="178" width="186" height="56" rx="4" fill="var(--card)" stroke="var(--d-systems)" stroke-width="1.2" />
+    <text x="405" y="200" font-size="9.5" text-anchor="middle" fill="var(--ink)">avgqu-sz · PSI io</text>
+    <text x="405" y="218" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">iostat · pressure/io</text>
+    <rect x="502" y="178" width="208" height="56" rx="4" fill="var(--card)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="606" y="200" font-size="9.5" text-anchor="middle" fill="var(--ink)">EIO · ошибки чтения</text>
+    <text x="606" y="218" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">smartctl · dmesg</text>
+
+
+    <rect x="10" y="238" width="106" height="56" rx="4" fill="var(--card-2)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="63" y="264" font-size="11.5" text-anchor="middle" fill="var(--ink)">Сеть</text>
+    <text x="63" y="280" font-size="9" text-anchor="middle" fill="var(--muted)">NIC-линки</text>
+    <rect x="122" y="238" width="186" height="56" rx="4" fill="var(--card)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="215" y="260" font-size="9.5" text-anchor="middle" fill="var(--ink)">throughput / скорость линка</text>
+    <text x="215" y="278" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">sar -n DEV</text>
+    <rect x="312" y="238" width="186" height="56" rx="4" fill="var(--card)" stroke="var(--d-systems)" stroke-width="1.2" />
+    <text x="405" y="260" font-size="9.5" text-anchor="middle" fill="var(--ink)">tx-дропы · TCP retransmit</text>
+    <text x="405" y="278" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">ip -s link · netstat -s</text>
+    <rect x="502" y="238" width="208" height="56" rx="4" fill="var(--card)" stroke="var(--hairline-strong)" stroke-width="0.8" />
+    <text x="606" y="260" font-size="9.5" text-anchor="middle" fill="var(--ink)">rx-ошибки · CRC</text>
+    <text x="606" y="278" font-size="9" text-anchor="middle" fill="var(--muted)" font-family="var(--font-mono)">ip -s link · ethtool -S</text>
+
+    <text x="10" y="310" font-size="9.5" fill="var(--muted)">Столбец Saturation (подсвечен) — это то, что дашборды свободных ресурсов пропускают; PSI — его современная форма.</text>
+  </svg>
+</DiagramFrame>
+
+<Inset kind="why" lang="ru">
+Почему PSI memory `full` срабатывает даже при видимо достаточной RAM? Потому что система reclaim ядра работает в фоне, чтобы поддерживать резерв свободных страниц, и когда reclaim не успевает за аллокациями, он начинает блокировать задачи-аллокаторы. Это проявляется как PSI memory `full` — задачи заблокированы ожиданием освобождения страниц ядром — пока `MemAvailable` ещё показывает сотни мегабайт. Метрика free-RAM измеряет то, что доступно прямо сейчас; PSI измеряет, что ядру пришлось сделать, чтобы это обеспечить.
+</Inset>
+
+<Quiz
+  id="03-use-on-linux-quiz-1"
+  lessonSlug="03-use-on-linux"
+  lang="ru"
+  question="Utilization CPU пода — 40%, но реальные пользовательские запросы испытывают задержки. Какой PSI-сигнал подтверждает, что CPU действительно вызывает stall?"
+  choices={[
+    { label: "node_cpu_seconds_total в mode=iowait", misconception: "iowait — это время CPU в idle при ожидании I/O; он не измеряет CPU saturation." },
+    { label: "rate(node_pressure_cpu_waiting_seconds_total[5m]) > 0 — PSI cpu some > 0 означает, что хотя бы одна задача была заблокирована ожиданием CPU-циклов, независимо от среднего utilization.", correct: true },
+    { label: "node_load1 > число_ядер", misconception: "Load average смешивает runnable и uninterruptible задачи и странно масштабируется с числом ядер — PSI является современной заменой." },
+    { label: "node_memory_MemAvailable < 10%", misconception: "Это метрика памяти. CPU saturation показывает PSI cpu, а не память." },
+  ]}
+/>
+
+<Quiz
+  id="03-use-on-linux-quiz-2"
+  lessonSlug="03-use-on-linux"
+  lang="ru"
+  question="PSI memory 'full' ненулевой в течение 15 секунд. Что это означает, если MemAvailable показывает 500 МБ свободных?"
+  choices={[
+    { label: "Это ложная тревога — 500 МБ свободных означает, что нет memory pressure", misconception: "PSI full означает, что все не-idle задачи были заблокированы ожиданием памяти — ядро трэшит reclaim, даже если MemAvailable ещё показывает число." },
+    { label: "Все не-idle задачи были заблокированы ожиданием памяти. Ядро не успевает освобождать страницы; MemAvailable показывает то, что доступно сейчас, а не давление reclaim.", correct: true },
+    { label: "500 МБ ниже минимального резерва ядра, поэтому OOM неминуем", misconception: "OOM зависит от конкретной аллокации, а не фиксированного порога. PSI full — это сигнал о stall, не прямой предиктор OOM." },
+    { label: "Метрика измеряет swap, а не RAM", misconception: "PSI memory измеряет все stall задач на аллокацию памяти, а не только активность swap." },
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>USE на Linux: собирай CPU/память/диск/сеть каждый как utilization (занятость%), saturation (глубина очереди или PSI) и errors. PSI (ядро 4.20+) заменяет load average как saturation-сигнал, потому что измеряет wall-clock время stall задач независимо от числа ядер — 'full' &gt; 0 для памяти или I/O — это page-grade incident-сигнал.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="03-use-on-linux-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что означает разница PSI 'some' и 'full', и что серьёзнее?", a: "'some' означает, что хотя бы одна задача была заблокирована ожиданием ресурса — система деградировала, но не остановилась. 'full' означает, что все не-idle задачи были заблокированы — полезная работа не выполнялась в этом окне. 'full' серьёзнее: если memory или I/O 'full' ненулевой более 10 секунд — у тебя почти наверняка кризис, даже если free-RAM или disk utilization выглядят нормально." },
+    { q: "Почему PSI cpu some > 20% — лучший алерт, чем CPU utilization > 80%?", a: "Utilization — это время занятости; pressure — это время stall. Pod на 90% CPU utilization может быть совершенно здоров, если нет очереди работы (например, однопоточная нагрузка). Pod на 40% utilization с жёсткой конкуренцией в scheduler, cgroup throttling или шумными соседями может вынуждать пользователей ждать — и utilization-алерт молчит. PSI cpu some > 20% означает, что реальная user-facing работа была заблокирована на циклах 20% времени, независимо от utilization. Kubernetes использует PSI для eviction-решений." },
+    { q: "Назови четыре Linux-ресурса из USE-чек-листа и по одной node_exporter-метрике saturation для каждого.", a: "CPU: node_pressure_cpu_waiting_seconds_total. Память: node_pressure_memory_waiting_seconds_total (или vmstat si/so для swap). Диск I/O: node_disk_io_time_weighted_seconds_total (глубина очереди) + PSI io. Сеть: node_network_transmit_drop_total + node_netstat_Tcp_RetransSegs." },
+  ]}
+/>
+
+<Recap lang="ru">
+Метод USE на Linux охватывает четыре основные группы ресурсов: CPU, память, диск I/O и сеть — каждый с метрикой utilization (средняя занятость%), метрикой saturation (глубина очереди или время stall) и метрикой error (ECC, EIO, NIC-дропы). До ядра 4.20 saturation приходилось выводить из load average и столбцов vmstat, которые плохо масштабируются. Linux Pressure Stall Information (PSI), введённый Johannes Weiner из Facebook и смерженный в декабре 2018, публикует по `/proc/pressure/{cpu,memory,io}` долю wall-clock времени, в течение которой задачи были заблокированы на каждом ресурсе. PSI `some` означает, что хотя бы одна задача была заблокирована; PSI `full` означает, что все не-idle задачи были заблокированы — если `full` ненулевой более 10 секунд для памяти или I/O, у тебя кризис, даже если free-RAM выглядит нормально. node_exporter публикует PSI как метрики `node_pressure_*`; алертинг по их rate — современная замена порогам load average. Теперь, когда ты видишь скачок задержки сервиса при CPU utilization всего 40%, знаешь: сначала смотри на PSI cpu `some` — потому что пользователи чувствуют время stall, а не время занятости.
+</Recap>

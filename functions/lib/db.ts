@@ -63,6 +63,35 @@ export async function getEntitlement(db: D1Database, userId: number, entitlement
   return row?.active === 1;
 }
 
+export interface PaymentRow {
+  id: number;
+  userId: number;
+  provider: string;
+  providerPaymentId: string;
+  product: string;
+  amount: number;
+  currency: string;
+  status: string;
+}
+
+export async function getPaymentByProviderId(db: D1Database, provider: string, id: string): Promise<PaymentRow | null> {
+  const row = await db.prepare(
+    "SELECT id, user_id, provider, provider_payment_id, product, amount, currency, status FROM payments WHERE provider = ? AND provider_payment_id = ?",
+  ).bind(provider, id).first<any>();
+  return row ? { id: row.id, userId: row.user_id, provider: row.provider, providerPaymentId: row.provider_payment_id, product: row.product, amount: row.amount, currency: row.currency, status: row.status } : null;
+}
+
+export async function createPayment(db: D1Database, row: Omit<PaymentRow, "id">, now: number): Promise<void> {
+  await db.prepare(
+    "INSERT INTO payments (user_id, provider, provider_payment_id, product, amount, currency, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+  ).bind(row.userId, row.provider, row.providerPaymentId, row.product, row.amount, row.currency, row.status, now, now).run();
+}
+
+export async function updatePaymentStatus(db: D1Database, provider: string, providerPaymentId: string, status: string, now: number): Promise<void> {
+  await db.prepare("UPDATE payments SET status = ?, updated_at = ? WHERE provider = ? AND provider_payment_id = ?")
+    .bind(status, now, provider, providerPaymentId).run();
+}
+
 export interface EntitlementState { active: boolean; source: string; sourceRef: string | null; verifiedAt: number | null; }
 
 export async function getEntitlementState(db: D1Database, userId: number, entitlement: string): Promise<EntitlementState | null> {

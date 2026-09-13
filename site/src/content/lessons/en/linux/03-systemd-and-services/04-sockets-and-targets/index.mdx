@@ -1,0 +1,293 @@
+---
+concepts:
+- socket activation
+- .socket unit
+- .service unit pairing
+- lazy start
+- zero-downtime restart
+- custom target
+- target as group
+- Accept=
+- ListenStream=
+- PartOf=
+estMin: 24
+lang: en
+lessonType: concept
+level: senior
+mathPrereqs: []
+order: 4
+prereqs: []
+slug: 04-sockets-and-targets
+sources:
+- https://www.freedesktop.org/software/systemd/man/latest/systemd.socket.html
+status: ready
+summary: 'Socket activation lets systemd hold a socket open while the service starts lazily on first connection — enabling zero-downtime restarts and faster boots. Custom targets group related services into a named synchronisation point you can activate, isolate, or depend on.'
+title: Socket activation and custom targets
+track: linux
+unit: 03-systemd-and-services
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Goal from "~/components/lesson/Goal.astro";
+import Step from "~/components/lesson/Step.astro";
+import WorkedExample from "~/components/lesson/WorkedExample.astro";
+import Check from "~/components/lesson/Check.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+You restart your API service to deploy a new binary. For the two seconds while the new process is starting, every incoming connection gets "connection refused". A load balancer might retry, but a mobile client probably shows an error. There is a systemd primitive that eliminates this gap entirely: the socket unit. systemd holds the listening socket open across the restart — the kernel queues the connections in its backlog — and passes the socket to the new process the moment it is ready. The client never sees the gap. This is socket activation, and it is built into systemd with no code changes to your service.
+</Hook>
+
+<Goal lang="en">
+After this lesson you can explain how socket activation works and why it enables zero-downtime restarts, write a paired `.socket` and `.service` unit, describe when to use `Accept=yes` vs `Accept=no`, and create a custom `.target` unit to group and synchronise related services.
+</Goal>
+
+<Step n={1}>
+**Socket activation separates "holding the socket" from "running the service." systemd owns the socket; it starts the service on demand.** The key insight: the kernel's TCP backlog can buffer incoming connections even while the process is not yet listening. systemd creates the socket, the kernel accepts connections into its backlog, and when the first connection arrives, systemd starts the service and hands it the file descriptor. The client's `connect()` succeeds immediately — it just blocks briefly in the kernel backlog.
+
+A socket unit and its paired service unit share a name (everything before the extension):
+
+```
+sshd.socket   → systemd holds the socket
+sshd.service  → systemd starts this when a connection arrives
+```
+
+The socket unit is always enabled; the service unit is started lazily.
+</Step>
+
+<Step n={2}>
+**Writing a socket unit.** The minimal shape for a TCP socket on port 8080:
+
+```ini
+# /etc/systemd/system/myapi.socket
+[Unit]
+Description=My API socket
+
+[Socket]
+ListenStream=8080
+# Accept=no (default): one service instance handles all connections
+# Accept=yes: systemd forks one service instance per connection (inetd style)
+
+[Install]
+WantedBy=sockets.target
+```
+
+`ListenStream=` is for TCP (stream sockets). For UDP use `ListenDatagram=`. For Unix domain sockets use a path: `ListenStream=/run/myapi.sock`.
+
+`Accept=no` (the default) is almost always what you want: systemd starts one instance of the service, passes it the listening socket via file descriptor 3 (the SD_LISTEN_FDS protocol), and the service handles all connections itself. `Accept=yes` spawns a new service instance per connection — useful only for very simple per-connection handlers (like the classic inetd model). Most modern services use `Accept=no`.
+</Step>
+
+<Step n={3}>
+**The paired service receives the socket via `SD_LISTEN_FDS`.** The service does not call `bind()` or `listen()` itself — it receives the already-bound, already-listening socket from systemd via an environment variable and inherited file descriptors:
+
+```ini
+# /etc/systemd/system/myapi.service
+[Unit]
+Description=My API service
+Requires=myapi.socket
+After=myapi.socket
+
+[Service]
+Type=notify
+ExecStart=/opt/myapi/server
+# Do NOT specify a port here — the socket is inherited from myapi.socket
+Restart=on-failure
+User=myapi
+
+[Install]
+# Note: no WantedBy here — the socket unit pulls the service in
+Also=myapi.socket
+```
+
+The `Also=` directive in `[Install]` means "when you enable this service, also enable `myapi.socket`". This keeps the pair in sync.
+
+For zero-downtime restarts: `systemctl restart myapi.service` stops and starts the service while `myapi.socket` keeps listening. The kernel queues incoming connections during the gap. The new service process starts, calls `sd_listen_fds()` to get the socket fd, and connections that were queued are served normally.
+
+```bash
+# Enable both together (Also= handles the socket)
+sudo systemctl enable --now myapi.service
+
+# Restart just the service — socket stays listening throughout
+sudo systemctl restart myapi.service
+
+# Check that the socket is held open
+systemctl status myapi.socket
+```
+</Step>
+
+<Step n={4}>
+**Custom targets group related services and provide a named synchronisation point.** A target is just a unit file with `.target` extension and a `[Unit]` section — no `[Service]` section. Its purpose is to be something other units can declare `After=`, `Requires=`, or `WantedBy=` against.
+
+Example: a "backend stack" target that groups your database, cache, and API:
+
+```ini
+# /etc/systemd/system/backend.target
+[Unit]
+Description=Full backend stack
+Requires=postgresql.service redis.service myapi.service
+After=postgresql.service redis.service myapi.service
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Now you can:
+
+```bash
+# Bring up the entire backend stack
+sudo systemctl start backend.target
+
+# Stop the entire stack
+sudo systemctl stop backend.target
+
+# Isolate to only this target (stops everything else — use with care)
+sudo systemctl isolate backend.target
+```
+
+Other units can declare `After=backend.target` to ensure the full stack is up before they start.
+</Step>
+
+<Step n={5}>
+**`PartOf=` makes a service stop when its owning target stops, without being a hard dependency.** This is the right directive for "member of a group" semantics:
+
+```ini
+# /etc/systemd/system/myworker.service
+[Unit]
+Description=Background worker
+PartOf=backend.target
+After=backend.target
+```
+
+With `PartOf=backend.target`, if you run `systemctl stop backend.target`, the worker also stops. But if the worker crashes on its own, `backend.target` is not affected. This is different from `Requires=` (which would stop the target if the member crashes). Use `PartOf=` when units are logically part of a group but their individual failure should not tear down the group.
+
+```bash
+# Verify the stop propagation
+sudo systemctl start backend.target
+sudo systemctl stop backend.target
+systemctl status myworker.service
+# Active: inactive (dead) — stopped because its target stopped
+```
+</Step>
+
+<FlowDiagram
+  label="Socket activation flow"
+  caption="systemd holds the socket; the service starts lazily on first connection and inherits the fd. During a restart, the kernel queues connections in its backlog so clients see no gap."
+  nodes={[
+    { id: "client",   label: "Client",          sub: "connect() to port 8080" },
+    { id: "kernel",   label: "Kernel backlog",  sub: "TCP SYN queued while service restarts" },
+    { id: "socket",   label: "myapi.socket",    sub: "ListenStream=8080 — always active" },
+    { id: "service",  label: "myapi.service",   sub: "started on demand, inherits fd 3" },
+    { id: "systemd",  label: "systemd",         sub: "owns socket, activates service" },
+  ]}
+  edges={[
+    { from: "client",  to: "kernel",  label: "connect()" },
+    { from: "kernel",  to: "socket",  label: "socket held by systemd" },
+    { from: "socket",  to: "systemd", label: "first connection arrives" },
+    { from: "systemd", to: "service", label: "start + pass fd 3" },
+    { from: "service", to: "client",  label: "accept() + respond" },
+  ]}
+/>
+
+<WorkedExample lang="en">
+**Implement zero-downtime restarts for a Go HTTP server using socket activation.**
+
+The Go standard library supports socket activation via `net.FileListener`:
+
+```go
+// main.go — receives the socket from systemd instead of binding it
+package main
+
+import (
+    "net"
+    "net/http"
+    "os"
+)
+
+func main() {
+    // SD_LISTEN_FDS: systemd passes sockets starting at fd 3
+    f := os.NewFile(3, "socket")
+    ln, err := net.FileListener(f)
+    if err != nil {
+        // Fallback: bind our own socket (for local dev without systemd)
+        ln, err = net.Listen("tcp", ":8080")
+        if err != nil {
+            panic(err)
+        }
+    }
+    http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+        w.Write([]byte("ok"))
+    })
+    http.Serve(ln, nil)
+}
+```
+
+Unit files:
+
+```ini
+# myapp.socket
+[Socket]
+ListenStream=8080
+
+[Install]
+WantedBy=sockets.target
+```
+
+```ini
+# myapp.service
+[Service]
+Type=simple
+ExecStart=/opt/myapp/server
+Restart=on-failure
+```
+
+Deploy a new binary:
+
+```bash
+# Copy new binary
+sudo cp myapp-v2 /opt/myapp/server
+
+# Restart the service — socket stays listening the whole time
+sudo systemctl restart myapp.service
+
+# Confirm: connections during the restart gap were queued, not refused
+curl http://localhost:8080/   # should succeed immediately after restart
+```
+</WorkedExample>
+
+<Inset kind="why" lang="en">
+macOS launchd has had socket activation since OS X 10.4 (2005) — it predates systemd's equivalent by several years. The `Sockets` key in a launchd plist is equivalent to `ListenStream=` in a `.socket` unit. macOS system daemons like `sshd` use launchd socket activation — that is why `ssh` connects instantly to a macOS box even though `sshd` may not have been continuously running. systemd adopted the same model and standardised it via the `SD_LISTEN_FDS` environment variable and the `libsystemd` `sd_listen_fds()` function.
+</Inset>
+
+<Inset kind="mistake" lang="en">
+Do not set `ListenStream=0.0.0.0:8080` — the `0.0.0.0:` prefix is not needed and is ignored in newer systemd versions, which may log a warning. Just use `ListenStream=8080` to listen on all interfaces, or `ListenStream=127.0.0.1:8080` to restrict to localhost. For Unix domain sockets use an absolute path: `ListenStream=/run/myapi/myapi.sock`. Also: do not forget `Also=myapi.socket` in the `[Install]` section of the service, otherwise `systemctl enable myapi.service` will not enable the socket unit and the service will never be triggered.
+</Inset>
+
+<Check lang="en">
+  <Quiz
+    id="sockets-and-targets-check"
+    pieceSlug="04-sockets-and-targets"
+    lang="en"
+    question="You run `systemctl restart myapi.service` while the paired `myapi.socket` is active. What happens to incoming TCP connections during the two seconds the service is restarting?"
+    choices={[
+      {
+        label: "The kernel queues them in the TCP backlog. myapi.socket keeps the listening socket open, so client connect() calls succeed immediately. Connections are served once the new service process inherits the socket fd.",
+        correct: true,
+      },
+      {
+        label: "Connections receive a TCP RST (connection refused) because the service process is not running to accept() them.",
+        misconception: "RST is sent only if nothing holds the listening socket open. With socket activation, systemd holds the socket open via myapi.socket — the listening socket is never closed during a service restart, so the kernel can queue connections rather than refuse them.",
+      },
+      {
+        label: "myapi.socket is also restarted automatically because the service Requires= it, causing a brief gap in both.",
+        misconception: "The service has After=myapi.socket and Requires=myapi.socket, but restarting the service does not restart the socket unit. The socket unit is independent and stays active. Only an explicit systemctl restart myapi.socket would restart it.",
+      },
+    ]}
+  />
+</Check>
+
+<Recap lang="en">
+**Socket activation** splits "holding the socket" (`.socket` unit, always active) from "running the service" (`.service` unit, started on demand). systemd owns the socket; the kernel queues connections in its backlog during service restarts, giving zero-downtime behaviour with no application-level coordination. The service receives the already-bound socket via fd 3 (`SD_LISTEN_FDS`). `Accept=no` (default) is the right choice for services that handle their own connection loop. **Custom targets** are named synchronisation points — you declare `Requires=` and `After=` inside the target, and other units use `WantedBy=` or `PartOf=` to join it. `PartOf=` propagates stop (but not failure) from the target to the member, making it the right directive for group membership without tight failure coupling.
+</Recap>
