@@ -1,0 +1,276 @@
+---
+concepts:
+- DNS resolution
+- resolv.conf
+- nsswitch.conf
+- systemd-resolved
+- stub resolver
+- 127.0.0.53
+- /etc/hosts
+- getent hosts
+- dig
+- hosts order
+- search domain
+- nameserver
+estMin: 20
+lang: en
+lessonType: concept
+level: middle
+mathPrereqs: []
+order: 3
+prereqs: []
+slug: 03-dns-resolution
+sources:
+- https://man7.org/linux/man-pages/man5/resolv.conf.5.html
+status: ready
+summary: 'Name resolution follows the nsswitch hosts: line — files then dns by default. /etc/hosts is checked first; /etc/resolv.conf (or systemd-resolved at 127.0.0.53) provides the DNS server. getent follows nsswitch; dig bypasses it and talks directly to a nameserver.'
+title: DNS resolution
+track: linux
+unit: 09-networking
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Goal from "~/components/lesson/Goal.astro";
+import Step from "~/components/lesson/Step.astro";
+import WorkedExample from "~/components/lesson/WorkedExample.astro";
+import Check from "~/components/lesson/Check.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+`dig google.com` resolves fine, but `curl https://api.internal` fails with "Name or service not known." Or the reverse: your `/etc/hosts` entry is being ignored. These failures are almost always about not knowing the full resolution path: the kernel does not query DNS directly — it asks the C library (glibc), which follows a policy file (`nsswitch.conf`), which may say "check `/etc/hosts` first, then DNS." And "DNS" on a modern Ubuntu system means a local stub at `127.0.0.53` run by `systemd-resolved`, not the nameserver in `/etc/resolv.conf` directly. Knowing where each piece lives and what order they fire in turns a mysterious "name not found" into a two-minute diagnosis.
+</Hook>
+
+<Goal lang="en">
+After this lesson you can trace the full name resolution path on a Linux host, read `/etc/nsswitch.conf` to understand resolution order, check and override `/etc/resolv.conf`, understand systemd-resolved's role as a stub at `127.0.0.53`, use `getent hosts` to test resolution as the application sees it, and use `dig` to test DNS directly.
+</Goal>
+
+<Step n={1}>
+**The resolution path starts at `nsswitch.conf` — not DNS.**
+
+`/etc/nsswitch.conf` is the policy file that tells glibc which sources to consult for name resolution, and in what order.
+
+```bash
+grep ^hosts /etc/nsswitch.conf
+# hosts:    files dns
+
+# Meaning:
+# 1. files  → check /etc/hosts first
+# 2. dns    → then query DNS (via /etc/resolv.conf or systemd-resolved)
+
+# On Ubuntu 22.04+ with systemd-resolved:
+# hosts:    files mdns4_minimal [NOTFOUND=return] dns
+# mdns4_minimal handles .local names (Avahi/mDNS)
+# [NOTFOUND=return] means: if mdns says "not found", stop — do NOT fall through to dns
+# This is why *.local names never reach your DNS server
+```
+
+The application calls `getaddrinfo("api.internal")`. glibc reads `nsswitch.conf` and calls each source in order until one returns a result or an authoritative "not found."
+</Step>
+
+<Step n={2}>
+**`/etc/hosts` — the first source in the chain.**
+
+`/etc/hosts` is a static file checked before any network query (when `files` appears first in `nsswitch.conf`). Each line maps an IP to one or more names.
+
+```bash
+cat /etc/hosts
+# 127.0.0.1   localhost
+# 127.0.1.1   host-a
+# ::1         localhost ip6-localhost ip6-loopback
+# 10.0.0.20   db-primary db-primary.internal
+
+# Add a temporary override (useful for testing before DNS propagates):
+echo '10.0.0.100  staging-api.internal' | sudo tee -a /etc/hosts
+
+# Test it immediately (getent follows nsswitch, so /etc/hosts wins):
+getent hosts staging-api.internal
+# 10.0.0.100  staging-api.internal
+
+# Remove the override when done — /etc/hosts is not DNS, stale entries confuse everyone
+```
+
+`/etc/hosts` is the fastest possible override for a name. The OS reads it on every lookup — no cache to flush. The risk: entries accumulate and conflict with real DNS records months later.
+</Step>
+
+<Step n={3}>
+**`/etc/resolv.conf` — which DNS server to use.**
+
+When the `dns` source fires, glibc reads `/etc/resolv.conf` to find the nameserver address.
+
+```bash
+cat /etc/resolv.conf
+# nameserver 127.0.0.53          ← systemd-resolved stub (Ubuntu default)
+# options edns0 trust-ad
+# search internal.example.com    ← appended to unqualified names
+
+# Or on a Debian system without systemd-resolved:
+# nameserver 10.0.0.1            ← the router/DNS relay
+
+# The search directive:
+# If you query "db-primary" (no dots), the resolver appends the search domain:
+# → tries "db-primary.internal.example.com" first
+# If that fails, falls back to "db-primary" as-is
+
+# Check what resolver is actually in use:
+resolvectl status   # on systemd-resolved systems
+# or
+cat /run/systemd/resolve/resolv.conf  # the real upstream config
+```
+
+A common gotcha: `/etc/resolv.conf` is a symlink (`lrwxrwxrwx /etc/resolv.conf -> ../run/systemd/resolve/stub-resolv.conf`) on Ubuntu. If a tool like `dhclient` or `openvpn` overwrites it with a plain file, you bypass systemd-resolved and lose its caching and split-DNS features without noticing.
+</Step>
+
+<Step n={4}>
+**systemd-resolved: the stub at `127.0.0.53`.**
+
+On Ubuntu 18.04+ and Debian 12+, systemd-resolved runs a local DNS stub that listens on `127.0.0.53:53`. All DNS queries from glibc go there; resolved handles caching, DNSSEC, and split-DNS routing to different upstreams per interface.
+
+```bash
+# Check if systemd-resolved is running:
+systemctl status systemd-resolved
+
+# Query the stub directly:
+dig @127.0.0.53 example.com
+
+# See what upstreams resolved is using per interface:
+resolvectl status
+# Global
+#   DNS Servers: 10.0.0.1
+# Link 2 (ens3)
+#   Current DNS Server: 10.0.0.1
+#   DNS Servers: 10.0.0.1
+#   DNS Domain: internal.example.com
+
+# Flush the resolved cache (useful when a DNS record changed):
+sudo resolvectl flush-caches
+
+# Check if a name resolves and where it came from:
+resolvectl query db-primary.internal
+# db-primary.internal: 10.0.0.20
+#   -- Information acquired via protocol DNS ...
+```
+
+Resolved is not just a proxy — it maintains a per-link DNS routing table. VPN tunnels can inject DNS servers for `.vpn.internal` without overriding the global resolver, which is why `resolvectl status` shows different DNS per interface.
+</Step>
+
+<Step n={5}>
+**`getent hosts` vs `dig`: the critical difference.**
+
+```bash
+# getent hosts follows the full nsswitch chain — same path as your application
+getent hosts db-primary
+# 10.0.0.20  db-primary
+
+# dig talks directly to a nameserver — bypasses /etc/hosts and nsswitch entirely
+dig db-primary
+# ;; ANSWER SECTION:
+# db-primary.    0  IN  A  10.0.0.20
+# (or NXDOMAIN if it is only in /etc/hosts — dig will not find it)
+
+# Practical rule:
+# Use getent hosts to test what the application will see
+# Use dig to test pure DNS (bypassing local overrides)
+
+# dig with explicit server:
+dig @127.0.0.53 db-primary.internal      # test systemd-resolved stub
+dig @10.0.0.1 db-primary.internal        # test upstream nameserver directly
+
+# Query type (default is A/AAAA):
+dig MX example.com
+dig TXT example.com
+dig AAAA example.com
+```
+
+The classic mismatch: `dig api.internal` returns NXDOMAIN, but the app works because the name is in `/etc/hosts`. Or the reverse: `dig api.internal` returns an IP, but the app gets NXDOMAIN because a stale `/etc/hosts` entry shadows the DNS record and points nowhere.
+</Step>
+
+<FlowDiagram
+  label="Name resolution path on a Linux host with systemd-resolved"
+  caption="getaddrinfo() consults nsswitch.conf. /etc/hosts is checked first (files). If not found, glibc sends a UDP query to 127.0.0.53 (the systemd-resolved stub), which forwards to the real upstream nameserver and caches the result."
+  nodes={[
+    { id: "app", label: "Application", sub: "calls getaddrinfo(name)" },
+    { id: "nsswitch", label: "nsswitch.conf", sub: "hosts: files dns" },
+    { id: "hosts", label: "/etc/hosts", sub: "static overrides — checked first" },
+    { id: "stub", label: "127.0.0.53 stub", sub: "systemd-resolved — cache + DNSSEC" },
+    { id: "upstream", label: "Upstream DNS", sub: "e.g. 10.0.0.1 (router/resolver)" },
+  ]}
+  edges={[
+    { from: "app", to: "nsswitch", label: "getaddrinfo()" },
+    { from: "nsswitch", to: "hosts", label: "files source" },
+    { from: "hosts", to: "app", label: "found → return IP" },
+    { from: "nsswitch", to: "stub", label: "dns source (if not in hosts)" },
+    { from: "stub", to: "upstream", label: "forward query" },
+    { from: "upstream", to: "stub", label: "DNS response" },
+    { from: "stub", to: "app", label: "return IP (cached)" },
+  ]}
+/>
+
+<WorkedExample lang="en">
+**Diagnosing "Name or service not known" for an internal host.**
+
+App on host-a (10.0.0.10) cannot reach `db-primary.internal`. Error: `getaddrinfo: Name or service not known`.
+
+```bash
+# Step 1: does getent resolve it? (tests the full nsswitch path)
+getent hosts db-primary.internal
+# (empty — not found via files or dns)
+
+# Step 2: is it in /etc/hosts?
+grep db-primary /etc/hosts
+# (empty)
+
+# Step 3: does dig resolve it? (pure DNS test)
+dig @127.0.0.53 db-primary.internal
+# ;; ANSWER SECTION:
+# db-primary.internal.  60  IN  A  10.0.0.20
+# DNS says yes — the name exists in DNS
+
+# Step 4: but getent failed — why? Check nsswitch
+grep ^hosts /etc/nsswitch.conf
+# hosts:  files mdns4_minimal [NOTFOUND=return] dns
+# mdns4_minimal with [NOTFOUND=return] is blocking .internal before dns fires
+# .internal is not an mDNS domain, mdns4_minimal says NOTFOUND, and the
+# [NOTFOUND=return] action stops the chain — dns is never reached
+
+# Fix: edit nsswitch.conf to remove the blocking action for non-.local names
+# or add db-primary.internal to /etc/hosts as a workaround:
+echo '10.0.0.20  db-primary.internal' | sudo tee -a /etc/hosts
+
+getent hosts db-primary.internal
+# 10.0.0.20  db-primary.internal — now works
+```
+</WorkedExample>
+
+<Inset kind="mistake" lang="en">
+**`/etc/resolv.conf` gets overwritten silently.** Tools like `dhclient`, `openvpn`, `resolvconf`, and `NetworkManager` all want to manage `/etc/resolv.conf`. On a system that expects it to be a symlink to systemd-resolved's stub, any of these tools can replace the symlink with a regular file containing a different nameserver — and you lose caching, DNSSEC, and split-DNS without any error message. Check with `ls -la /etc/resolv.conf`: if it is a regular file instead of a symlink, something replaced it. Restore with `sudo ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf`.
+</Inset>
+
+<Check lang="en">
+  <Quiz
+    id="dns-resolution-check"
+    pieceSlug="03-dns-resolution"
+    lang="en"
+    question="You run dig api.internal and get a valid A record. Then you run getent hosts api.internal and get nothing. What is the most likely explanation?"
+    choices={[
+      {
+        label: "nsswitch.conf has a [NOTFOUND=return] action that stops resolution before the dns source is reached — or /etc/hosts has a conflicting entry that shadows DNS.",
+        correct: true,
+      },
+      {
+        label: "dig and getent use the same code path, so if dig works, getent must also work. The result means the DNS record expired between the two calls.",
+        misconception: "dig bypasses nsswitch.conf and /etc/hosts entirely — it talks directly to a nameserver. getent follows the full nsswitch chain including /etc/hosts and any [NOTFOUND=return] actions. They can produce different results for the same name.",
+      },
+      {
+        label: "getent hosts only works for IPv6 addresses; dig returns the IPv4 A record.",
+        misconception: "getent hosts resolves both IPv4 and IPv6 for any name. The difference between getent and dig is the resolution path, not the address family.",
+      },
+    ]}
+  />
+</Check>
+
+<Recap lang="en">
+Name resolution on Linux is **not just DNS**. `getaddrinfo()` follows the **nsswitch.conf** `hosts:` line, checking `files` (`/etc/hosts`) before `dns`. DNS on modern Ubuntu/Debian means the **systemd-resolved stub at `127.0.0.53`**, which caches, validates DNSSEC, and routes queries to per-interface upstreams. **`/etc/resolv.conf`** tells glibc where the DNS resolver is — on Ubuntu it is a symlink to the stub; overwriting it with a plain file breaks resolved silently. **`getent hosts`** tests the full resolution chain as the application sees it. **`dig`** bypasses nsswitch entirely and talks directly to a nameserver — use it to test pure DNS. The [NOTFOUND=return] trap in nsswitch is the most common reason why DNS works but getent/the application does not.
+</Recap>
