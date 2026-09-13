@@ -1,0 +1,279 @@
+---
+concepts:
+- cron vs systemd timers
+- scheduling debugging
+- minimal PATH
+- timezone DST
+- missing trailing newline
+- timer not enabled
+- unescaped percent
+- wrong user
+- incident investigation
+- systemctl list-timers
+estMin: 24
+lang: en
+lessonType: concept
+level: senior
+mathPrereqs: []
+order: 3
+prereqs: []
+slug: 03-choosing-and-debugging
+sources:
+- https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html
+- https://man7.org/linux/man-pages/man5/crontab.5.html
+status: ready
+summary: 'cron wins on portability and simplicity; systemd timers win on logging, dependency ordering, and catch-up. Debugging a missed job means checking: wrong user, minimal PATH, unescaped % in cron, timezone/DST shift, missing trailing newline, or timer not enabled.'
+title: Choosing between cron and timers, and debugging missed jobs
+track: linux
+unit: 11-scheduling
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Goal from "~/components/lesson/Goal.astro";
+import Step from "~/components/lesson/Step.astro";
+import WorkedExample from "~/components/lesson/WorkedExample.astro";
+import Check from "~/components/lesson/Check.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+It is 09:00 Monday. The nightly backup job that should have run at 02:00 has no output, no log entry, and no error. The crontab line looks correct. The script runs fine from the shell. This situation — a scheduled job that silently did nothing — is one of the most infuriating in ops, because there is no error to chase. The job did not fail; it was never invoked. Working through the six most common causes systematically takes ten minutes. Skipping the checklist and guessing takes hours. This lesson gives you the checklist, the reasoning behind each item, and the framework for choosing between cron and systemd timers so you pick the right tool before the incident.
+</Hook>
+
+<Goal lang="en">
+After this lesson you can choose between cron and systemd timers based on logging, dependency, and portability requirements, and systematically debug a missed job by working through the six most common causes: wrong user, minimal PATH, unescaped `%`, timezone/DST, missing trailing newline in crontab, and timer not enabled.
+</Goal>
+
+<Step n={1}>
+**cron vs. systemd timers: the honest tradeoff.** Neither tool is universally better. The right choice depends on your system and what the job needs.
+
+```
+cron:
+  + Portable — works on any POSIX system, including macOS, BSDs, containers without systemd
+  + One line to configure — no two-file ceremony
+  + Familiar — every sysadmin knows crontab syntax
+  - No logging — output goes to email or /dev/null
+  - No dependency ordering — cannot say "run after network.target is up"
+  - No catch-up for missed runs (without anacron)
+  - Minimal environment is a foot-gun
+
+systemd timers:
+  + Full journald logging — every run captured, queryable, structured
+  + Dependency ordering — After=, Wants=, BindsTo= work normally
+  + Persistent=true for catch-up after downtime
+  + RandomizedDelaySec to spread load
+  + systemctl status and list-timers for visibility
+  - systemd-only — useless on Alpine, BSD, older containers
+  - Two-file boilerplate per job
+  - daemon-reload required after every edit
+```
+
+**Rule of thumb:** use cron for simple, portable, low-stakes jobs where portability matters (shared hosting, containers, scripts that must run on macOS too). Use systemd timers for anything on a full systemd Linux host where you care about logging, catch-up, or dependency — which is most production jobs.
+</Step>
+
+<Step n={2}>
+**Cause 1 — wrong user.** A user crontab runs as that user. A root crontab runs as root. `/etc/cron.d/` entries specify the user explicitly. Mismatch means the command either fails (permission denied) or runs somewhere unexpected.
+
+```bash
+# Check whose crontab contains the job:
+crontab -l                    # your own
+sudo crontab -u alice -l      # alice's
+sudo crontab -l               # root's
+
+# For /etc/cron.d/ entries, the USER field is the 6th column:
+grep backup /etc/cron.d/*
+# /etc/cron.d/myapp:  0 2 * * * www-data /opt/app/backup.sh
+
+# Check if the job actually ran at all (via mail spool or auth log):
+sudo grep CRON /var/log/syslog | grep -i backup
+# Jun 21 02:00:01 host CRON[3821]: (www-data) CMD (/opt/app/backup.sh)
+# This line means cron DID invoke it — the issue is in the script, not scheduling
+```
+
+If the CRON line appears in syslog, the job was invoked — the failure is in the script itself. If the line is absent, cron never ran it.
+</Step>
+
+<Step n={3}>
+**Cause 2 — minimal PATH; Cause 3 — unescaped `%` in cron.** These are the two most common silent failures.
+
+```bash
+# PATH trap: the script uses a binary not in /usr/bin:/bin
+# Debug: add an explicit PATH line to the crontab and log PATH at runtime
+PATH=/usr/local/bin:/usr/bin:/bin
+0 2 * * * env >> /tmp/cron-env.log && /opt/app/backup.sh >> /tmp/backup.log 2>&1
+# Now /tmp/cron-env.log shows exactly what environment cron used
+
+# Percent trap: date format with % in a crontab command
+# WRONG — % becomes newline; the command gets truncated:
+0 2 * * * /usr/bin/backup.sh > /tmp/backup-$(date +%Y%m%d).log
+
+# CORRECT — escape every %:
+0 2 * * * /usr/bin/backup.sh > /tmp/backup-$(date +\%Y\%m\%d).log
+
+# Confirm by testing the exact command cron would run:
+# Run it manually as the cron user with the cron environment:
+sudo -u www-data env -i HOME=/var/www SHELL=/bin/sh PATH=/usr/bin:/bin /bin/sh -c '/opt/app/backup.sh'
+```
+
+The `env -i` trick strips your current environment and runs the command in a bare shell — the closest you can get to reproducing the cron environment without actually waiting for cron.
+</Step>
+
+<Step n={4}>
+**Cause 4 — timezone and DST; Cause 5 — missing trailing newline in crontab.** Two less obvious traps.
+
+```bash
+# Timezone: crond uses the system timezone unless CRON_TZ is set in the crontab
+# Check the system timezone:
+timedatectl status | grep "Time zone"
+# If the system is UTC but you wrote the job expecting local time, it runs at the wrong hour
+
+# Fix: set CRON_TZ explicitly in the crontab:
+CRON_TZ=Europe/Berlin
+0 2 * * * /usr/bin/backup.sh
+
+# DST trap: a job at 02:30 on the night clocks go back runs TWICE (02:30 occurs twice)
+# A job at 02:30 on the night clocks go forward is SKIPPED (02:30 does not exist)
+# Avoid scheduling critical jobs between 01:00 and 03:00 if DST applies
+
+# Missing trailing newline: some cron implementations silently ignore the LAST LINE
+# of a crontab if it does not end with a newline. crontab -e adds one automatically,
+# but if you copy-paste into a file and install with:
+# crontab < /tmp/my-crontab
+# ...the last job may never run. Always verify:
+crontab -l | xxd | tail -3
+# ...should end with 0a (newline byte)
+```
+</Step>
+
+<Step n={5}>
+**Cause 6 — timer not enabled (systemd).** The most common systemd timer failure is the timer existing but not being enabled — it appears in `list-unit-files` as `disabled` and never fires.
+
+```bash
+# Check timer status:
+systemctl status db-backup.timer
+# Loaded: loaded (/etc/systemd/system/db-backup.timer; disabled; ...)
+#                                                        ^^^^^^^^
+# 'disabled' means it will not survive reboot and may not be active now
+
+# The difference:
+# 'enabled' = installed to start at boot (symlink in timers.target.wants/)
+# 'active'  = currently running/waiting
+# A timer can be active (started manually) but disabled (won't restart after boot)
+
+systemctl is-enabled db-backup.timer    # enabled / disabled / static
+systemctl is-active  db-backup.timer    # active / inactive / failed
+
+# Fix: enable AND start in one command:
+systemctl enable --now db-backup.timer
+
+# Also: daemon-reload is required after any unit file change
+systemctl daemon-reload
+systemctl restart db-backup.timer
+
+# Full check sequence after a missed timer:
+systemctl list-timers --all | grep db-backup
+journalctl -u db-backup.service -b --since "yesterday"
+journalctl -u db-backup.timer   -b --since "yesterday"
+```
+</Step>
+
+<FlowDiagram
+  label="Systematic checklist for debugging a missed scheduled job"
+  caption="Work top-to-bottom: confirm the tool, check the user, check invocation in syslog/journal, then inspect environment, percent escaping, timezone, and trailing newline for cron — or enabled state and daemon-reload for systemd timers."
+  nodes={[
+    { id: "start", label: "Job did not run", sub: "no output, no error" },
+    { id: "tool", label: "cron or timer?", sub: "identify the scheduler" },
+    { id: "user", label: "Check user", sub: "crontab -u / /etc/cron.d field" },
+    { id: "invoked", label: "Was it invoked?", sub: "syslog CRON line / journalctl" },
+    { id: "cron-causes", label: "cron: PATH / % / TZ / newline", sub: "env -i to reproduce" },
+    { id: "timer-causes", label: "timer: enabled? daemon-reload?", sub: "systemctl is-enabled" },
+    { id: "fix", label: "Apply fix + test", sub: "run manually, confirm output" },
+  ]}
+  edges={[
+    { from: "start", to: "tool", label: "identify" },
+    { from: "tool", to: "user", label: "check ownership" },
+    { from: "user", to: "invoked", label: "correct user?" },
+    { from: "invoked", to: "cron-causes", label: "cron — not invoked" },
+    { from: "invoked", to: "timer-causes", label: "timer — not invoked" },
+    { from: "cron-causes", to: "fix", label: "" },
+    { from: "timer-causes", to: "fix", label: "" },
+  ]}
+/>
+
+<WorkedExample lang="en">
+**Incident: nightly backup has not run for three days. No alerts fired.**
+
+```bash
+# Step 1: identify the scheduler
+crontab -l | grep backup
+# 0 2 * * * /opt/backup/run.sh > /var/log/backup-$(date +%Y%m%d).log 2>&1
+# Timer-based? Check:
+systemctl list-timers | grep backup
+# (no output — this is a cron job)
+
+# Step 2: did cron invoke it?
+sudo grep CRON /var/log/syslog | grep backup | tail -5
+# (no lines for the last 3 days — cron did not invoke it)
+
+# Step 3: check the crontab was not accidentally cleared
+crontab -l
+# no crontab for deploy
+# The user 'deploy' has no crontab! Someone ran 'crontab -r' or the crontab file was lost.
+
+# Step 4: restore from version control or backup
+# (the team keeps crontabs in /etc/cron.d/ for this reason now)
+
+# But wait — there is a second bug in the original line even if we restore it:
+# date +%Y%m%d contains unescaped % — the log filename would be wrong
+# The command after the first % becomes stdin, so the filename is just
+# /var/log/backup- with everything after cut off.
+
+# Fixed crontab entry:
+0 2 * * * /opt/backup/run.sh >> /var/log/backup-\$(date +\%Y\%m\%d).log 2>&1
+
+# Step 5: going forward, move to /etc/cron.d/ so user account deletion does not lose the job:
+cat > /etc/cron.d/backup << 'EOF'
+0 2 * * * deploy /opt/backup/run.sh >> /var/log/backup-$(date +\%Y\%m\%d).log 2>&1
+EOF
+# Note: in /etc/cron.d/ files, % must still be escaped as \%
+```
+
+Root causes: (1) `crontab -r` removed the user crontab silently, (2) the original command had unescaped `%` which would have produced a corrupt log filename anyway. Fix: move to `/etc/cron.d/` (survives user management) and escape `%`.
+</WorkedExample>
+
+<Inset kind="why" lang="en">
+**Why cron has no logging by default.** cron predates the syslog standard and was designed for a world where every user had a local mail inbox. Output goes to the local mail spool (`/var/mail/<user>`), which nobody reads on modern systems. The practical consequence: every cron job should redirect its own output (`>> /var/log/myjob.log 2>&1`) or use a wrapper script that logs on your behalf. systemd timers sidestep this entirely — the journal captures everything the service process writes to stdout/stderr, no redirection needed.
+</Inset>
+
+<Inset kind="mistake" lang="en">
+**Scheduling critical jobs during the DST transition window (01:00–03:00).** On the night clocks go back (autumn), 02:30 occurs twice — a cron job at that time fires twice. On the night clocks go forward (spring), 02:30 does not exist — the job is skipped. Both behaviours are surprising in production. The fix: schedule nightly jobs outside the DST window (00:00–01:00 or 03:30–23:00) or set `CRON_TZ=UTC` to make the job timezone-independent. systemd timers have the same issue with `OnCalendar` unless you use `UTC` in the expression.
+</Inset>
+
+<Check lang="en">
+  <Quiz
+    id="choosing-and-debugging-check"
+    pieceSlug="03-choosing-and-debugging"
+    lang="en"
+    question="You write a new systemd timer: `db-backup.timer` with `OnCalendar=daily`. You run `systemctl start db-backup.timer` and it appears active. Three days later it has never fired. What is the most likely cause?"
+    choices={[
+      {
+        label: "The timer was started but not enabled — it was active for one boot but did not persist, and after a reboot it was inactive again. No daemon-reload or enable was run.",
+        correct: true,
+      },
+      {
+        label: "OnCalendar=daily is invalid syntax — you must write the full timestamp like *-*-* 00:00:00.",
+        misconception: "OnCalendar=daily is a valid shorthand in systemd and is equivalent to *-*-* 00:00:00. The syntax is correct. The problem is that 'start' does not persist across reboots — 'enable' is required for that.",
+      },
+      {
+        label: "systemd timers require a matching .service unit to exist in /lib/systemd/system/ — a unit in /etc/systemd/system/ is not found by the timer.",
+        misconception: "systemd searches both /etc/systemd/system/ (local overrides) and /lib/systemd/system/ (package defaults). A service in /etc/systemd/system/ is found and activated normally. The issue here is enabled vs. active state.",
+      },
+    ]}
+  />
+</Check>
+
+<Recap lang="en">
+**cron** wins on portability and simplicity (one-line config, works everywhere); **systemd timers** win on observability and reliability (journal logging, `Persistent=true`, dependency ordering). On any full systemd host with jobs that matter, prefer timers. When a job silently does nothing, work the checklist: (1) **wrong user** — confirm ownership with `crontab -u` or the `/etc/cron.d/` user field; (2) **minimal PATH** — use absolute binary paths or set `PATH=` at the top of the crontab; (3) **unescaped `%`** — every `%` in a cron command must be `\%`; (4) **timezone/DST** — set `CRON_TZ=UTC` or avoid the 01:00–03:00 window; (5) **missing trailing newline** — last crontab line needs `\n`; (6) **timer not enabled** — `systemctl is-enabled` must return `enabled`, and `daemon-reload` must be run after every unit file change.
+</Recap>
