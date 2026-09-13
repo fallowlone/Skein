@@ -1,0 +1,337 @@
+---
+concepts:
+- degraded array
+- mdadm --fail
+- mdadm --remove
+- mdadm --add
+- rebuild window
+- URE
+- unrecoverable read error
+- /proc/mdstat
+- mdadm --detail
+- second failure risk
+- RAID recovery
+estMin: 24
+lang: en
+lessonType: concept
+level: senior
+mathPrereqs: []
+order: 4
+prereqs: []
+slug: 04-disk-failure-and-recovery
+sources:
+- https://man7.org/linux/man-pages/man4/md.4.html
+- https://man7.org/linux/man-pages/man8/mdadm.8.html
+status: ready
+summary: 'When a disk fails in RAID 1/5, the array degrades but keeps running. Recovery is: spot the failure in /proc/mdstat, mark the disk failed, remove it, hot-add the replacement, and monitor the rebuild. The rebuild window is when second-failure risk is highest.'
+title: Disk failure and RAID recovery
+track: linux
+unit: 07-storage-and-lvm
+---
+
+import Hook from "~/components/lesson/Hook.astro";
+import Goal from "~/components/lesson/Goal.astro";
+import Step from "~/components/lesson/Step.astro";
+import WorkedExample from "~/components/lesson/WorkedExample.astro";
+import Check from "~/components/lesson/Check.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Inset from "~/components/lesson/Inset.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+
+<Hook>
+3 AM. Your monitoring fires: `md/raid5 array md0 has degraded`. You open `/proc/mdstat` and see `[4/3] [UUU_]`. One disk is gone. The array is still serving data — for now. You have one task: get a replacement disk in and the rebuild started before a second disk fails.
+
+This is not a drill you want to improvise. The steps are well-defined, the order matters, and the window between first failure and second failure is when your data is most at risk. Operators who have done this before know exactly what to type. Operators who have not tend to make the situation worse by removing the wrong disk.
+</Hook>
+
+<Goal lang="en">
+After this lesson you can identify a degraded RAID array from /proc/mdstat, execute the correct fail/remove/add sequence to replace a disk, explain why the rebuild window is the highest-risk period, and know what a URE is and why it matters during rebuild.
+</Goal>
+
+<Step n={1}>
+**Spotting the failure: read /proc/mdstat and mdadm --detail.**
+
+```bash
+# Immediate check when alert fires
+cat /proc/mdstat
+# Personalities : [raid5]
+# md0 : active raid5 sde[3] sdc[1] sdb[0]
+#       3145728 blocks super 1.2 level 5, 512k chunk, algorithm 2 [4/3] [UUU_]
+#
+# Decode:
+# [4/3]   = expected 4 disks, only 3 active
+# [UUU_]  = positions 0,1,3 up; position 2 (sdd) is missing — it is the failed disk
+# Note: sdd is absent from the device list entirely
+
+# More detail
+sudo mdadm --detail /dev/md0
+# State : clean, degraded          <-- still serving data, but no redundancy
+# Active Devices : 3
+# Failed Devices : 1
+#
+# Number   Major   Minor   RaidDevice State
+#    0     8:16      0      active sync   /dev/sdb
+#    1     8:32      1      active sync   /dev/sdc
+#    -     0:0       2      removed       <-- slot 2 is the missing disk
+#    3     8:80      3      active sync   /dev/sde
+
+# Also check kernel logs for the failure event and any I/O errors
+sudo journalctl -b | grep -i 'md0\|raid\|sdd\|I/O error' | tail -30
+# Look for: "md/raid:md0: Disk failure on sdd, disabling device"
+# or: "blk_update_request: I/O error, dev sdd"
+```
+</Step>
+
+<Step n={2}>
+**Mark the failed disk as faulty (if not already done by the kernel).**
+
+The kernel often auto-fails a disk when it gets repeated I/O errors. If the disk shows as `removed` in `mdadm --detail` the kernel already did this. If it shows as `faulty` you must explicitly remove it. If it is neither — e.g. the disk is physically missing after a hot-swap — the slot is already clean.
+
+```bash
+# Check the disk's state in the array
+sudo mdadm --detail /dev/md0 | grep sdd
+# (if it still appears with state 'faulty')
+#    2     8:48      2      faulty   /dev/sdd
+
+# Explicitly mark as failed (required before --remove if kernel did not auto-fail it)
+sudo mdadm /dev/md0 --fail /dev/sdd
+# mdadm: set /dev/sdd faulty in /dev/md0
+
+# Now remove it from the array (the slot stays — just the disk leaves)
+sudo mdadm /dev/md0 --remove /dev/sdd
+# mdadm: hot removed /dev/sdd from /dev/md0
+
+# Confirm it is gone
+sudo mdadm --detail /dev/md0 | grep -E 'State|Devices|RaidDevice'
+# State : clean, degraded
+# Active Devices : 3
+# Failed Devices : 0   <-- cleaned up
+# Removed Devices : 1
+```
+</Step>
+
+<Step n={3}>
+**Hot-add the replacement disk and start the rebuild.**
+
+```bash
+# Physical step: insert the new disk. In a hot-swap bay this is live.
+# In a VM/cloud: attach the new block device.
+# Verify the OS sees it:
+lsblk | grep -v dm
+# sdb    8:16   0  1T  0 disk
+# sdc    8:32   0  1T  0 disk
+# sde    8:80   0  1T  0 disk
+# sdf    8:96   0  1T  0 disk   <-- new disk
+
+# The new disk must be at least as large as the failed disk
+# (mdadm uses the smallest disk's size for the array)
+
+# Add it to the array — rebuild starts automatically
+sudo mdadm /dev/md0 --add /dev/sdf
+# mdadm: added /dev/sdf
+
+# Watch the rebuild
+watch -n5 cat /proc/mdstat
+# md0 : active raid5 sdf[4] sde[3] sdc[1] sdb[0]
+#       3145728 blocks super 1.2 level 5 [4/3] [UUU_]
+#       [=>...................]  recovery = 7.3% (...)
+#       finish=142.3min speed=198400K/sec
+#
+# Progress: the _ position fills as recovery proceeds
+# Once complete:
+# md0 : active raid5 sdf[4] sde[3] sdc[1] sdb[0]
+#       3145728 blocks super 1.2 level 5 [4/4] [UUUU]
+# [4/4] [UUUU] = fully rebuilt, all disks healthy
+```
+</Step>
+
+<Step n={4}>
+**The rebuild window: why this is the highest-risk moment.**
+
+During rebuild, the array must read every block on every surviving disk to reconstruct the missing disk's data. This is maximum sustained I/O on disks that may already be aged. Two risks converge:
+
+```bash
+# Risk 1: Unrecoverable Read Error (URE)
+# Modern enterprise drives: URE rate ~1 in 10^15 bits read
+# Consumer drives: URE rate ~1 in 10^14 bits read
+#
+# RAID 5 with 4 x 4 TB drives: total data = 12 TB = ~10^14 bits
+# On consumer drives: roughly 1 URE expected per rebuild of this size
+# A URE during rebuild = data that cannot be reconstructed = partial corruption
+#
+# This is why large RAID 5 arrays on consumer drives are not recommended.
+# RAID 6 tolerates a URE during rebuild (second parity covers it).
+
+# Risk 2: Second disk failure during rebuild
+# The surviving disks are under maximum read load for hours.
+# Disks from the same batch often fail at similar ages.
+# A second failure during rebuild = total data loss on RAID 5.
+
+# What to do during the rebuild window:
+# 1. Do NOT add more I/O load than necessary — pause non-critical jobs
+# 2. Monitor /proc/mdstat every few minutes
+# 3. Watch kernel logs for any new I/O errors on surviving disks:
+sudo journalctl -f | grep -i 'I/O error\|error.*sd'
+# 4. Have your backup restore procedure ready — just in case
+
+# You can throttle rebuild speed to reduce load on surviving disks:
+# (at the cost of a longer rebuild window)
+echo 50000 | sudo tee /proc/sys/dev/raid/speed_limit_max
+# Default is usually 200000 KB/s; 50000 reduces disk stress at the cost of time
+```
+</Step>
+
+<Step n={5}>
+**After rebuild: verify and update mdadm config.**
+
+```bash
+# Confirm the array is fully healthy
+sudo mdadm --detail /dev/md0
+# State : clean                    <-- no longer 'degraded'
+# Active Devices : 4
+# Failed Devices : 0
+# Spare Devices : 0
+#
+# Number   Major   Minor   RaidDevice State
+#    0     8:16      0      active sync   /dev/sdb
+#    1     8:32      1      active sync   /dev/sdc
+#    4     8:96      2      active sync   /dev/sdf  <-- new disk in slot 2
+#    3     8:80      3      active sync   /dev/sde
+
+# Update mdadm.conf to reflect the new disk
+sudo mdadm --detail --scan | sudo tee /etc/mdadm/mdadm.conf
+sudo update-initramfs -u
+# Without this: a reboot may not reassemble the array correctly
+
+# Run an array check to verify all parity is consistent
+echo check | sudo tee /sys/block/md0/md/sync_action
+# Monitor:
+cat /sys/block/md0/md/sync_completed
+# When done, mismatch_cnt should be 0:
+cat /sys/block/md0/md/mismatch_cnt
+# 0   <-- good; nonzero = parity inconsistencies found (investigate)
+
+# Schedule regular checks (mdadm ships a cron script for this):
+# /etc/cron.d/mdadm — runs a check monthly by default on Debian/Ubuntu
+```
+</Step>
+
+<FlowDiagram
+  label="RAID disk failure and recovery: the incident sequence"
+  caption="A disk failure degrades the array but keeps it running. The recovery sequence — fail, remove, add — starts a rebuild. The rebuild window is when a second failure would cause total data loss."
+  nodes={[
+    { id: "healthy", label: "Array healthy", sub: "[4/4] [UUUU]" },
+    { id: "fail", label: "Disk fails", sub: "kernel detects I/O errors" },
+    { id: "degraded", label: "Array degraded", sub: "[4/3] [UUU_] — still serving data" },
+    { id: "remove", label: "mdadm --fail/--remove", sub: "clean the failed slot" },
+    { id: "add", label: "mdadm --add /dev/sdX", sub: "hot-add replacement disk" },
+    { id: "rebuild", label: "Rebuild in progress", sub: "highest risk window — monitor closely" },
+    { id: "restored", label: "Array restored", sub: "[4/4] [UUUU] — update mdadm.conf" },
+  ]}
+  edges={[
+    { from: "healthy", to: "fail", label: "hardware event" },
+    { from: "fail", to: "degraded", label: "auto-detected" },
+    { from: "degraded", to: "remove", label: "operator action" },
+    { from: "remove", to: "add", label: "insert new disk" },
+    { from: "add", to: "rebuild", label: "automatic" },
+    { from: "rebuild", to: "restored", label: "hours later" },
+  ]}
+/>
+
+<WorkedExample lang="en">
+**Full RAID 1 disk replacement on a production server — the complete procedure.**
+
+```bash
+# Situation: monitoring alert — md1 degraded. RAID 1 across /dev/sdb and /dev/sdc.
+# /dev/sdb has failed. Replacement /dev/sdd is being hot-swapped in.
+
+# Step 1: confirm the failure
+cat /proc/mdstat
+# md1 : active raid1 sdc[1]
+#       488386584 blocks super 1.2 [2/1] [_U]
+# [_U] = first disk (sdb) is down, second (sdc) is up
+
+sudo mdadm --detail /dev/md1 | grep -E 'State|Devices|Number'
+# State : clean, degraded
+# Active Devices : 1
+# Failed Devices : 1
+#    0     0:0      0      removed   <-- sdb slot empty (kernel auto-failed it)
+#    1     8:32     1      active sync   /dev/sdc
+
+# Step 2: if disk still shows as 'faulty' (not 'removed'), explicitly fail it
+# sudo mdadm /dev/md1 --fail /dev/sdb
+# Then:
+# sudo mdadm /dev/md1 --remove /dev/sdb
+
+# Step 3: hot-swap complete — OS sees /dev/sdd
+lsblk /dev/sdd
+# sdd  8:48  0  500G  0 disk   (same size as the failed disk)
+
+# Step 4: wipe any old superblock (prevent mdadm confusion)
+sudo mdadm --zero-superblock /dev/sdd
+
+# Step 5: add to array
+sudo mdadm /dev/md1 --add /dev/sdd
+# mdadm: added /dev/sdd
+
+# Step 6: monitor rebuild
+watch -n10 cat /proc/mdstat
+# md1 : active raid1 sdd[2] sdc[1]
+#       488386584 blocks super 1.2 [2/1] [_U]
+#       [=========>...........]  recovery = 45.2% (220M/488M)
+#       finish=38.4min speed=108800K/sec
+# ... wait ...
+# md1 : active raid1 sdd[2] sdc[1]
+#       488386584 blocks super 1.2 [2/2] [UU]
+# Done!
+
+# Step 7: update config
+sudo mdadm --detail --scan | sudo tee /etc/mdadm/mdadm.conf
+sudo update-initramfs -u
+
+# Step 8: post-rebuild check
+echo check | sudo tee /sys/block/md1/md/sync_action
+# Wait for completion, then:
+cat /sys/block/md1/md/mismatch_cnt
+# 0 — clean
+
+# Total elapsed: ~45 minutes for a 500 GB mirror on spinning disk.
+# During that window: watch sdc for any read errors in journalctl.
+```
+</WorkedExample>
+
+<Inset kind="mistake" lang="en">
+The most common recovery mistake: removing the wrong disk. In a RAID 5 with `[UUU_]`, the `_` is at position 3 — but operators under pressure sometimes look at the device list and remove a disk that is still active. Removing an active disk from a degraded RAID 5 causes immediate data loss (the array drops to `[UU__]`, below minimum for RAID 5). Before running any `--remove` command: cross-reference `mdadm --detail` output (which shows device state explicitly as `active sync` vs `faulty`/`removed`), kernel logs (`journalctl | grep 'Disk failure'`), and physical disk health tools (`smartctl -a /dev/sdd`). When in doubt, the disk whose smart data shows reallocated sectors or logged I/O errors is the failed one.
+</Inset>
+
+<Inset kind="why" lang="en">
+Why does the array stay in degraded mode even after `--remove`, before `--add`? The md layer keeps the array running with the remaining disks — for RAID 1 that is reads from the surviving mirror; for RAID 5 it reconstructs missing data on every read using parity calculation. This is slower than normal (every read now touches all disks) but keeps data available. The slot marked `removed` is just an empty position — the array knows it should have a disk there and will use the first compatible disk added with `--add` to start rebuilding. The filesystem on top sees no interruption throughout.
+</Inset>
+
+<Check lang="en">
+  <Quiz
+    id="disk-failure-and-recovery-check"
+    pieceSlug="04-disk-failure-and-recovery"
+    lang="en"
+    question="After replacing a failed disk and running 'mdadm /dev/md0 --add /dev/sdf', the rebuild finishes and /proc/mdstat shows [4/4] [UUUU]. What two steps remain before this incident is fully closed?"
+    choices={[
+      {
+        label: "Update /etc/mdadm/mdadm.conf (mdadm --detail --scan > /etc/mdadm/mdadm.conf) and run update-initramfs -u so the new config is baked into the initramfs. Without this, the next reboot may fail to reassemble the array.",
+        correct: true,
+      },
+      {
+        label: "Reboot the server to confirm the array reassembles correctly — the only reliable test.",
+        misconception: "A reboot is not required and is not the recommended verification. Instead, update mdadm.conf and initramfs (so reassembly will work on the next reboot), then run 'echo check > /sys/block/md0/md/sync_action' to verify parity consistency. A reboot in production just to test RAID reassembly adds unnecessary downtime risk.",
+      },
+      {
+        label: "Run fsck on the filesystem on /dev/md0 to check for corruption caused by the degraded period.",
+        misconception: "fsck on a mounted ext4/xfs filesystem is not needed after a clean RAID rebuild — the RAID layer guarantees the data was correctly reconstructed from parity. fsck is appropriate if the filesystem was force-unmounted or the system crashed mid-write, not after a clean RAID recovery. Run 'echo check > /sys/block/md0/md/sync_action' instead to verify RAID parity consistency.",
+      },
+    ]}
+  />
+</Check>
+
+<Recap lang="en">
+When a disk fails in a RAID 1/5/6 array, the array degrades but keeps serving data. The recovery sequence: **spot** the failure in `/proc/mdstat` (look for `[N/N-1]` and `_` in the disk map) and `mdadm --detail`; **mark** the disk faulty with `mdadm --fail` if the kernel has not already done so; **remove** it with `mdadm --remove`; **add** the replacement with `mdadm --add` and the rebuild starts automatically. The **rebuild window** is the highest-risk period: all surviving disks are under maximum read load, UREs (unrecoverable read errors) become likely on large consumer drives, and a second failure means total data loss on RAID 5. Monitor `/proc/mdstat` and `journalctl` throughout. After rebuild: update `/etc/mdadm/mdadm.conf`, run `update-initramfs -u`, and run a parity check via `/sys/block/md0/md/sync_action`. Never remove a disk without cross-referencing `mdadm --detail` state, kernel logs, and SMART data — removing the wrong disk from a degraded array destroys it.
+</Recap>

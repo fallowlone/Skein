@@ -1,0 +1,187 @@
+---
+concepts:
+- visibility-timeout
+- ack
+- duplicate-charge
+- failure-leg
+- at-least-once
+deepensInto:
+- queues/01-delivery-guarantees/03-consumer-dedup
+- queues/01-delivery-guarantees/05-sqs-dlq
+estMin: 10
+lang: ru
+lessonType: topic
+level: middle
+order: 2
+prereqs:
+- queues/01-delivery-guarantees/01-three-guarantees
+slug: 02-failure-modes
+sources:
+- https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html
+- https://docs.confluent.io/kafka/design/delivery-semantics.html
+spiral:
+- statefulness
+status: ready
+summary: Как сбои producer-to-broker, durability брокера и broker-to-consumer каждый
+  производят дубликаты или потери, прослеженные через реальный инцидент двойного списания.
+title: Три ножки сбоя — где реально происходят дубликаты и потери
+track: queues
+unit: 01-delivery-guarantees
+---
+
+
+
+import Hook from "~/components/lesson/Hook.astro";
+import Explanation from "~/components/lesson/Explanation.astro";
+import Recap from "~/components/lesson/Recap.astro";
+import Crux from "~/components/prose/Crux.astro";
+import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
+import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
+import Quiz from "~/components/pedagogy/Quiz.astro";
+import DragOrder from "~/components/pedagogy/DragOrder.astro";
+import FlowDiagram from "~/components/diagram/FlowDiagram.astro";
+import Infographic from "~/components/diagram/Infographic.astro";
+import failureLegs from "./infographics/failure-legs.svg?raw";
+
+<Hook>
+On-call инженер смотрит на график с 1200 Stripe-списаниями за 900 заказов. Очередь работала шесть месяцев без проблем. Сегодня ночью она списала с клиентов дважды. В коде ничего не изменилось. Сбой был всегда — ждал нужной комбинации медленной Lambda и SQS visibility timeout.
+</Hook>
+
+<Crux>Три ножки сбоя; at-least-once дублирует на любой; только сторона consumer ловит каждый случай надёжно.</Crux>
+
+<Explanation>
+
+## Три ножки сбоя
+
+Если хочешь понять, где именно проскальзывает дубликат — не в теории, а на какой конкретной границе — вот три места, которые нужно проверить. Зная, какая ножка его породила, сразу понимаешь, какой фикс применять.
+
+Сообщение проходит через три отдельные коммуникационные границы. Каждая граница может упасть так, что производит потерю или дубликат.
+
+**Ножка 1 — Producer к брокеру.** Producer отправляет сообщение и ждёт ack от брокера. Если сеть роняет send — сообщение не дошло. Если сеть роняет *ack* — producer никогда не узнает, что сообщение сохранено, и ретраит. Брокер получает то же логическое сообщение второй раз. At-least-once producers ретраят на timeout — это feature, не баг, но это значит, что брокер может видеть одно и то же сообщение несколько раз.
+
+**Ножка 2 — Durability брокера.** Брокер ack-нул producer, но должен сохранить сообщение до краша. Если существует replication lag при краше брокера, followers могут не иметь сообщения. Правильная конфигурация (Kafka `acks=all`, SQS надёжность по умолчанию) закрывает эту ножку, но misconfiguration тихо роняет сообщения здесь.
+
+**Ножка 3 — Брокер к consumer.** Именно здесь происходит большинство production-дубликатов. Брокер доставляет сообщение consumer. Consumer обрабатывает (вызывает Stripe, апдейтит БД), потом отправляет ack. Если consumer падает *после обработки, но до ack* — у брокера нет записи об успехе. Он передоставляет сообщение следующему consumer. Side effect выполняется дважды.
+
+<div data-lesson-visual class="overflow-x-auto my-6 rounded-lg border border-border bg-surface-1 p-4 text-sm font-mono">
+  <div class="mb-2 text-ink-2 text-xs uppercase tracking-wider">Три ножки сбоя</div>
+  <div class="flex flex-col gap-2 text-xs">
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-36 font-bold text-yellow-700 dark:text-yellow-300">Producer → Broker</span>
+      <span>Ack потерян → producer ретраит → брокер видит сообщение дважды</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-36 font-bold text-orange-700 dark:text-orange-300">Durability брокера</span>
+      <span>Краш до репликации → потеря (config-сбой)</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="shrink-0 w-36 font-bold text-red-700 dark:text-red-300">Broker → Consumer</span>
+      <span>Consumer обрабатывает, потом падает до ack → брокер передоставляет</span>
+    </div>
+  </div>
+</div>
+
+Все три ножки производят дубликаты, но только ножка 3 делает это после того, как side effect уже выполнился — именно поэтому она приводит к двойным списаниям. Ножки 1 и 2 создают дубликаты или потери ещё до выполнения бизнес-логики, и их проще поглотить конфигурацией брокера. Без идемпотентного consumer ножку 3 не поймать со стороны брокера.
+
+<Infographic
+  svg={failureLegs}
+  label="Дерево-таксономия трёх участков отказа at-least-once. Участок 1 (продюсер → брокер): потерянный ack вызывает повтор и дубликат, который брокер ловит идемпотентным продюсером. Участок 2 (долговечность брокера): крах до репликации даёт тихую потерю, ловится acks=all или дефолтом SQS. Участок 3 (брокер → консьюмер): крах после обработки, но до ack приводит к переотправке, и побочный эффект выполняется дважды — ловит только идемпотентный консьюмер."
+  caption="Участки 1 и 2 падают до выполнения бизнес-логики, поэтому их поглощает конфиг брокера; участок 3 падает после того, как side effect уже выполнился, поэтому ловит его только сторона консьюмера."
+  hue="var(--d-infra)"
+/>
+
+Ножку 3 стоит проследить на уровень глубже, потому что *порядок* обработки и ack решает, станет ли сбой дубликатом или потерей. Диаграмма ниже идёт по жизненному циклу consume→process→ack и отмечает, где бьёт каждый сбой.
+
+<FlowDiagram
+  label="Consume → process → ack: где бьют потеря и дубликат"
+  hue="var(--d-network)"
+  nodes={[
+    { id: "deliver", label: "Доставка", sub: "брокер → consumer", col: 0, row: 0 },
+    { id: "process", label: "Обработка", sub: "списание / запись в БД", col: 1, row: 0 },
+    { id: "ack", label: "Ack", sub: "удалить сообщение", col: 2, row: 0 },
+    { id: "done", label: "Готово", sub: "ровно один раз", col: 3, row: 0 },
+    { id: "dup", label: "Дубликат", sub: "side effect 2x", col: 1, row: 1 },
+    { id: "loss", label: "Потеря", sub: "работа не выполнена", col: 2, row: 1 },
+  ]}
+  edges={[
+    { from: "deliver", to: "process" },
+    { from: "process", to: "ack" },
+    { from: "ack", to: "done" },
+    { from: "process", to: "dup", label: "timeout истекает в процессе → передоставка" },
+    { from: "ack", to: "dup", label: "краш после обработки, до ack → передоставка" },
+    { from: "ack", to: "loss", label: "ack до обработки, затем краш" },
+  ]}
+  caption="Счастливый путь идёт слева направо. Краш после обработки, но до ack, или visibility timeout, сработавший в процессе, оба передоставляют → дубликат. Ack до обработки (порядок at-most-once), затем краш — теряет работу полностью."
+/>
+
+## Трасса инцидента двойного списания
+
+Вот точный SQS visibility-timeout сценарий, который ловит инженеров каждые полгода.
+
+1. **T=0с:** Lambda получает `msg-7a3f` («списать $50 за заказ O-123»). SQS прячет сообщение от других consumer-ов на visibility timeout (дефолт 30с).
+2. **T=0.5с:** Lambda вызывает Stripe. Stripe списывает карту. `charge_id=ch_abc123` возвращён.
+3. **T=29с:** Lambda всё ещё работает (медленная downstream DB-запись). `DeleteMessage` ещё не вызван.
+4. **T=30с:** SQS visibility timeout срабатывает. `msg-7a3f` становится visible для *всех* consumer-ов снова — у SQS нет информации, что первая Lambda преуспела.
+5. **T=30.1с:** Вторая Lambda поднимает `msg-7a3f`. Вызывает Stripe. Второе списание: `ch_xyz789`.
+6. **T=31с:** Первая Lambda наконец вызывает `DeleteMessage`. Сообщение удалено. Но ущерб нанесён: клиент списан $100 за заказ $50.
+
+Сбой — не баг. Это определённое поведение at-least-once delivery, когда visibility timeout короче времени обработки.
+
+<Quiz
+  id="02-q1"
+  pieceSlug="02-failure-modes"
+  lang="ru"
+  question="Consumer читает сообщение, успешно обрабатывает, но падает до ack. Что делает at-least-once delivery?"
+  choices={[
+    { label: "Теряет сообщение — оно уже доставлено один раз", misconception: "Это at-most-once. At-least-once ретраит до ack." },
+    { label: "Передоставляет другому consumer-у — side effect выполняется дважды, если consumer не идемпотентен", correct: true },
+    { label: "Держит сообщение в лимбе бесконечно", misconception: "После visibility timeout или ack deadline сообщение передоставляется, не задерживается." },
+    { label: "Просит producer-а переслать", misconception: "У брокера уже есть сообщение; producer не нужен." },
+  ]}
+/>
+
+<Quiz
+  id="02-q2"
+  pieceSlug="02-failure-modes"
+  lang="ru"
+  question="SQS consumer visibility timeout 10с, но среднее processing 30с. Какой режим сбоя?"
+  choices={[
+    { label: "Сообщения тихо дропятся", misconception: "Сообщения не дропятся — они передоставляются, что и есть реальная проблема." },
+    { label: "Каждое сообщение передоставляется, пока исходный consumer ещё обрабатывает — параллельные duplicate side effects", correct: true },
+    { label: "Очередь тротлит consumer", misconception: "SQS не тротлит на visibility-timeout misconfiguration; следует контракту буквально." },
+    { label: "Сообщения уходят в DLQ немедленно", misconception: "DLQ-триггер — maxReceiveCount, не длительность timeout." },
+  ]}
+/>
+
+<DragOrder
+  id="02-drag-1"
+  pieceSlug="02-failure-modes"
+  lang="ru"
+  prompt="Поставь события инцидента двойного списания:"
+  items={[
+    "Lambda получает msg-7a3f; SQS устанавливает visibility timeout 30с",
+    "Lambda успешно вызывает Stripe — создан ch_abc123",
+    "Visibility timeout истекает; msg-7a3f становится visible для всех consumer-ов",
+    "Вторая Lambda получает msg-7a3f; снова вызывает Stripe — создан ch_xyz789",
+    "Первая Lambda наконец вызывает DeleteMessage — сообщение удалено, но два списания существуют",
+  ]}
+/>
+
+</Explanation>
+
+<KeyTakeaway>At-least-once delivery дублирует на ножке 3 всегда, когда время обработки превышает ack-окно. Правило: visibility timeout = 6x среднее processing time. Фикс: идемпотентный consumer — дубликаты безвредны.</KeyTakeaway>
+
+<RetrievalDrawer
+  client:visible
+  id="02-failure-modes-retrieval"
+  lang="ru"
+  questions={[
+    { q: "Что происходит на ножке 3, когда consumer падает после обработки, но до ack?", a: "Брокер никогда не получает ack, поэтому после visibility timeout или ack deadline сообщение снова доступно и передоставляется. Side effect (списание, email, DB-запись) выполняется второй раз." },
+    { q: "Каково rule of thumb для SQS visibility timeout и почему?", a: "visibility timeout = 6x среднее processing time. Это гарантирует, что timeout не сработает, пока первый consumer ещё законно работает. Для переменного processing — расширяй timeout через ChangeMessageVisibility (heartbeat pattern)." },
+    { q: "Почему потеря ack на ножке 1 вызывает дубликаты, а не потери?", a: "Producer ретраит, когда не получает ack. Брокер мог уже сохранить сообщение и теперь получает вторую копию. Без dedup на стороне брокера (Kafka idempotent producer) или consumer сообщение доставляется дважды." },
+  ]}
+/>
+
+<Recap lang="ru">
+У каждой message queue три ножки сбоя: producer-to-broker (потерянный ack вызывает producer retry), broker durability (replication misconfiguration вызывает потерю) и broker-to-consumer (обработка успешна, но ack потерян вызывает redelivery). Самый распространённый production-дубликат на ножке 3: consumer обрабатывает Stripe-charge, падает до SQS ack, visibility timeout (таймер, на время которого SQS прячет сообщение от других consumer-ов) срабатывает, второй consumer поднимает то же сообщение и списывает снова. Структурный фикс — идемпотентный consumer с dedup-стором плюс visibility timeout не менее 6x среднего processing time. Теперь, когда встретишь двойное списание или дублирующее событие в данных, сразу спроси: ack был потерян после успешной обработки — или visibility timeout сработал в процессе? Этот вопрос укажет на нужную ножку и нужный фикс.
+</Recap>
