@@ -15,6 +15,7 @@ import { exportModel, importModel } from "~/scripts/model-backup";
 import { type Locale } from "~/i18n";
 import type { Tier } from "~/types";
 import { fetchCoachStatus, recheckCoachStatus, type CoachStatus } from "~/lib/coach";
+import { createTelegramAuthorSupportInvoice, createTelegramCoachInvoice, fetchBillingPayments, setTelegramCoachRenewal, type BillingPayment, type TelegramInvoiceResult } from "~/lib/telegram-stars";
 
 type Props = { lang: Locale };
 
@@ -366,12 +367,22 @@ function CoachPlanCard({ lang }: { lang: Locale }) {
                   `Осталось ${status.managedAi.remaining} из ${status.managedAi.limit} managed AI-разборов в этом месяце.`,
                 )}
               </div>
+              {status.billing.accessProvider === "telegram-stars" && status.billing.accessExpiresAt && (
+                <div class="mt-2 text-[12px] text-muted">
+                  {tt(
+                    `Telegram Stars paid through ${new Date(status.billing.accessExpiresAt).toLocaleDateString()}.`,
+                    `Telegram Stars оплачены до ${new Date(status.billing.accessExpiresAt).toLocaleDateString()}.`,
+                  )}
+                </div>
+              )}
               {!status.managedAi.available && (
                 <div class="mt-2 text-[12px] text-warn">{tt("Managed AI is temporarily unavailable; BYOK still works.", "Managed AI временно недоступен; BYOK продолжает работать.")}</div>
               )}
-              <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm mt-3" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
-                {rechecking ? tt("Checking sponsorship…", "Проверяю sponsorship…") : tt("Refresh sponsorship status", "Обновить статус sponsorship")}
-              </ShadcnButton>
+              {status.billing.accessProvider !== "telegram-stars" && (
+                <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm mt-3" onClick={recheck} disabled={rechecking} aria-busy={rechecking}>
+                  {rechecking ? tt("Checking sponsorship…", "Проверяю sponsorship…") : tt("Refresh sponsorship status", "Обновить статус sponsorship")}
+                </ShadcnButton>
+              )}
             </>
           ) : !status.managedAi.available ? (
             <>
@@ -420,9 +431,241 @@ function CoachPlanCard({ lang }: { lang: Locale }) {
               <p class="mt-2 mb-0 text-[12px] leading-[1.5] text-muted">{tt("Billing is not configured, so there is no checkout button. BYOK AI remains free.", "Платёжный backend не настроен, поэтому кнопки оплаты нет. BYOK AI остаётся бесплатным.")}</p>
             </>
           )}
+
+          {status?.authenticated && (
+            <TelegramCoachBilling lang={lang} status={status} onStatus={setStatus} />
+          )}
         </div>
       </div>
     </section>
+  );
+}
+
+function TelegramCoachBilling({
+  lang,
+  status,
+  onStatus,
+}: {
+  lang: Locale;
+  status: CoachStatus;
+  onStatus: (status: CoachStatus) => void;
+}) {
+  const [invoice, setInvoice] = useState<TelegramInvoiceResult | null>(null);
+  const [supportInvoice, setSupportInvoice] = useState<TelegramInvoiceResult | null>(null);
+  const [history, setHistory] = useState<BillingPayment[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [creatingSupport, setCreatingSupport] = useState(false);
+  const [updatingRenewal, setUpdatingRenewal] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [supportPendingBaseline, setSupportPendingBaseline] = useState<number | null>(null);
+  const [billingError, setBillingError] = useState<string | null>(null);
+  const [supportError, setSupportError] = useState(false);
+  const configured = status.billing.telegramStars?.configured === true;
+  const product = status.billing.telegramStars?.product ?? null;
+  const supportProduct = status.billing.telegramStars?.supportProduct ?? null;
+  const tt = (en: string, ru: string) => lang === "en" ? en : ru;
+
+  async function refreshBilling() {
+    const [payments, nextStatus] = await Promise.all([fetchBillingPayments(), fetchCoachStatus()]);
+    setHistory(payments);
+    onStatus(nextStatus);
+    if (nextStatus.entitlements.coach) setPending(false);
+  }
+
+  useEffect(() => {
+    if (!configured) return;
+    let live = true;
+    fetchBillingPayments()
+      .then((payments) => { if (live) setHistory(payments); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [configured]);
+
+  useEffect(() => {
+    if (!pending || status.entitlements.coach) return;
+    let live = true;
+    let checks = 0;
+    const check = async () => {
+      checks += 1;
+      try { if (live) await refreshBilling(); }
+      catch { /* keep pending; provider/webhook confirmation may still arrive */ }
+      if (checks >= 20 && live) setPending(false);
+    };
+    void check();
+    const id = window.setInterval(() => { void check(); }, 3_000);
+    return () => { live = false; window.clearInterval(id); };
+  }, [pending, status.entitlements.coach]);
+
+  useEffect(() => {
+    if (supportPendingBaseline == null) return;
+    let live = true;
+    let checks = 0;
+    const check = async () => {
+      checks += 1;
+      try {
+        const payments = await fetchBillingPayments();
+        if (!live) return;
+        setHistory(payments);
+        const supportCount = payments.filter((payment) => (
+          payment.provider === "telegram_stars" && payment.product === "author_support"
+        )).length;
+        if (supportCount > supportPendingBaseline) setSupportPendingBaseline(null);
+      } catch { /* keep pending while the provider/webhook may still confirm */ }
+      if (checks >= 20 && live) setSupportPendingBaseline(null);
+    };
+    void check();
+    const id = window.setInterval(() => { void check(); }, 3_000);
+    return () => { live = false; window.clearInterval(id); };
+  }, [supportPendingBaseline]);
+
+  async function createInvoice() {
+    setCreating(true);
+    setBillingError(null);
+    setInvoice(null);
+    try { setInvoice(await createTelegramCoachInvoice()); }
+    catch (error) { setBillingError(error instanceof Error ? error.message : "telegram_invoice_failed"); }
+    finally { setCreating(false); }
+  }
+
+  async function createSupportInvoice() {
+    setCreatingSupport(true);
+    setSupportError(false);
+    setSupportInvoice(null);
+    try { setSupportInvoice(await createTelegramAuthorSupportInvoice()); }
+    catch { setSupportError(true); }
+    finally { setCreatingSupport(false); }
+  }
+
+  async function updateRenewal() {
+    const cancel = status.billing.accessRenewalStatus !== "pending_cancellation";
+    setUpdatingRenewal(true);
+    setBillingError(null);
+    try {
+      await setTelegramCoachRenewal(cancel ? "cancel" : "resume");
+      onStatus(await fetchCoachStatus());
+    } catch (error) {
+      setBillingError(error instanceof Error ? error.message : "subscription_update_failed");
+    } finally {
+      setUpdatingRenewal(false);
+    }
+  }
+
+  const telegramHistory = history.filter((payment) => payment.provider === "telegram_stars");
+  const coachHistory = telegramHistory.filter((payment) => payment.product === "coach_monthly");
+  const latest = coachHistory[0];
+  const latestSupport = telegramHistory.find((payment) => payment.product === "author_support");
+  const expired = Boolean(
+    latest?.status === "completed" && latest.subscriptionExpiresAt &&
+    new Date(latest.subscriptionExpiresAt).getTime() <= Date.now() && !status.entitlements.coach,
+  );
+
+  return (
+    <div class="mt-4 border-t border-rule pt-4">
+      <div class="font-display text-[14px] font-semibold text-ink">Telegram Stars</div>
+      {!configured ? (
+        <p class="mt-2 mb-0 text-[12px] text-muted">
+          {tt("Telegram Stars billing is unavailable right now.", "Оплата через Telegram Stars сейчас недоступна.")}
+        </p>
+      ) : status.entitlements.coach ? (
+        <>
+          <p class="mt-2 mb-0 text-[12px] text-muted">
+            {status.billing.accessProvider === "telegram-stars"
+              ? status.billing.accessRenewalStatus === "pending_cancellation"
+                ? tt("Renewal is cancelled. Coach stays active through the paid-through date above.", "Продление отменено. Coach остаётся активным до оплаченной даты выше.")
+                : status.billing.accessRenewalStatus === "payment_failed"
+                  ? tt("Telegram reported a renewal payment failure. Coach stays active through the paid-through date above.", "Telegram сообщил об ошибке оплаты продления. Coach остаётся активным до оплаченной даты выше.")
+                : tt("Stars payment recognized by Skein. Coach access is active and recurring.", "Skein подтвердил оплату Stars. Coach активен и продлевается автоматически.")
+              : tt("Coach is already active through another billing provider.", "Coach уже активен через другой платёжный способ.")}
+          </p>
+          {status.billing.accessProvider === "telegram-stars" && status.billing.accessRenewalStatus !== "payment_failed" && (
+            <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm mt-3" onClick={updateRenewal} disabled={updatingRenewal} aria-busy={updatingRenewal}>
+              {updatingRenewal
+                ? tt("Updating renewal…", "Обновляю продление…")
+                : status.billing.accessRenewalStatus === "pending_cancellation"
+                  ? tt("Resume Stars renewal", "Возобновить продление Stars")
+                  : tt("Cancel Stars renewal", "Отменить продление Stars")}
+            </ShadcnButton>
+          )}
+        </>
+      ) : (
+        <>
+          <p class="mt-2 mb-3 text-[12px] leading-[1.5] text-muted">
+            {product
+              ? tt(`${product.amount} Stars every 30 days. Telegram handles recurring renewal; Skein grants only the paid-through period confirmed by the webhook.`, `${product.amount} Stars каждые 30 дней. Telegram выполняет продление, а Skein выдаёт доступ только на оплаченный период, подтверждённый webhook.`)
+              : tt("Telegram Stars checkout is unavailable.", "Checkout Telegram Stars недоступен.")}
+          </p>
+          <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={createInvoice} disabled={creating || !product} aria-busy={creating}>
+            {creating ? tt("Creating checkout…", "Создаю checkout…") : tt("Create Telegram Stars checkout", "Создать checkout Telegram Stars")}
+          </ShadcnButton>
+          {invoice && (
+            <div class="mt-3">
+              <a class="oa-btn oa-btn-primary oa-btn-sm" href={invoice.invoiceUrl} target="_blank" rel="noreferrer" onClick={() => setPending(true)}>
+                {tt("Open Telegram checkout", "Открыть checkout в Telegram")}
+              </a>
+              <p class="mt-2 mb-0 text-[11px] text-muted">
+                {tt("Payment is pending until Skein receives Telegram's signed webhook confirmation.", "Оплата считается ожидающей, пока Skein не получит подтверждение Telegram webhook.")}
+              </p>
+            </div>
+          )}
+          {pending && <p class="mt-2 mb-0 text-[12px] text-muted" role="status">{tt("Waiting for payment confirmation…", "Ожидаю подтверждение оплаты…")}</p>}
+          {billingError && <p class="mt-2 mb-0 text-[12px] text-warn" role="alert">{tt("Telegram checkout could not be created. Try again later.", "Не удалось создать Telegram checkout. Попробуйте позже.")}</p>}
+          {latest?.status === "refunded" && <p class="mt-2 mb-0 text-[12px] text-warn">{tt("Latest Stars payment was refunded.", "Последний платёж Stars возвращён.")}</p>}
+          {expired && <p class="mt-2 mb-0 text-[12px] text-muted">{tt("Telegram Stars access has expired.", "Доступ через Telegram Stars истёк.")}</p>}
+        </>
+      )}
+
+      {configured && supportProduct && (
+        <div class="mt-4 border-t border-rule pt-4">
+          <div class="font-display text-[14px] font-semibold text-ink">{tt("Support the author", "Помощь автору")}</div>
+          <p class="mt-2 mb-3 text-[12px] leading-[1.5] text-muted">
+            {tt(
+              `${supportProduct.amount} Star, one-time. This is a thank-you donation and does not unlock Coach.`,
+              `${supportProduct.amount} Star, одноразово. Это благодарность автору и она не открывает Coach.`,
+            )}
+          </p>
+          <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm" onClick={createSupportInvoice} disabled={creatingSupport} aria-busy={creatingSupport}>
+            {creatingSupport ? tt("Creating checkout…", "Создаю checkout…") : tt("Support with 1 Star", "Помочь 1 Star")}
+          </ShadcnButton>
+          {supportInvoice && (
+            <div class="mt-3">
+              <a
+                class="oa-btn oa-btn-primary oa-btn-sm"
+                href={supportInvoice.invoiceUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => setSupportPendingBaseline(telegramHistory.filter((payment) => payment.product === "author_support").length)}
+              >
+                {tt("Open 1-Star checkout", "Открыть оплату 1 Star")}
+              </a>
+              <p class="mt-2 mb-0 text-[11px] text-muted">
+                {tt("A return from Telegram is not proof of payment; Skein waits for the webhook confirmation.", "Возврат из Telegram не подтверждает оплату; Skein ждёт подтверждение webhook.")}
+              </p>
+            </div>
+          )}
+          {supportPendingBaseline != null && <p class="mt-2 mb-0 text-[12px] text-muted" role="status">{tt("Waiting for 1-Star payment confirmation…", "Ожидаю подтверждение оплаты 1 Star…")}</p>}
+          {supportError && <p class="mt-2 mb-0 text-[12px] text-warn" role="alert">{tt("Support checkout could not be created. Try again later.", "Не удалось создать checkout помощи автору. Попробуйте позже.")}</p>}
+          {latestSupport?.status === "completed" && supportPendingBaseline == null && (
+            <p class="mt-2 mb-0 text-[12px] text-muted">{tt("Thank you — Skein recognized your 1-Star support.", "Спасибо — Skein подтвердил вашу помощь в 1 Star.")}</p>
+          )}
+          {latestSupport?.status === "refunded" && supportPendingBaseline == null && (
+            <p class="mt-2 mb-0 text-[12px] text-muted">{tt("Your latest author-support payment was refunded.", "Последняя помощь автору была возвращена.")}</p>
+          )}
+        </div>
+      )}
+
+      {telegramHistory.length > 0 && (
+        <div class="mt-4">
+          <div class="meta mb-2">{tt("Payment history", "История платежей")}</div>
+          <ul class="m-0 list-none p-0 space-y-1 text-[11px] text-muted">
+            {telegramHistory.slice(0, 5).map((payment, index) => (
+              <li key={`${payment.createdAt}-${index}`}>
+                Telegram Stars · {payment.product === "author_support" ? tt("Support the author", "Помощь автору") : payment.product} · {payment.amount} {payment.currency} · {payment.status} · {new Date(payment.createdAt).toLocaleDateString()}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
   );
 }
 

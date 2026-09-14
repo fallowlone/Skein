@@ -4,7 +4,7 @@
 
 - [x] Build passes.
 - [x] Type checks pass.
-- [ ] Database migrations reviewed before release.
+- [x] Database migrations reviewed before release.
 - [x] No known debug code added.
 
 ## Security
@@ -12,7 +12,20 @@
 - [x] Authentication flow reviewed.
 - [x] Authorization boundaries reviewed.
 - [x] Payment flow reviewed.
-- [ ] Production secrets verified in deployment environment.
+- [x] Production secret/config names verified in the Cloudflare Pages deployment environment without exposing values.
+
+## Billing
+
+- [x] GitHub Sponsors signed webhook and reconciliation tests pass.
+- [x] Telegram webhook requires its secret token and validates server-owned product/amount/currency.
+- [x] Telegram `coach_monthly` uses a real 30-day recurring Stars subscription and paid-through entitlement.
+- [x] Telegram `author_support` is a 1 XTR one-time payment with no entitlement.
+- [x] Duplicate/replayed Telegram payments and old-refund/new-renewal cases have regression coverage.
+- [x] Customer payment history is scoped to the authenticated Skein user.
+- [x] Production D1 contains `payments`, `telegram_orders`, and `telegram_entitlements` after migrations 0005–0008, including the pre-checkout lock column/index.
+- [ ] Telegram `getWebhookInfo` confirms the production webhook URL with no active provider error and no stale `allowed_updates` restriction that omits `subscription` updates.
+- [ ] A real 1-Star `author_support` payment has been completed and observed in production.
+- [ ] A real recurring Coach billing payment has been completed and observed in production.
 
 ## User flows
 
@@ -22,9 +35,10 @@
 
 ## Deployment
 
-- [ ] Production environment variables verified.
+- [x] Billing production secret/config names verified; provider-side webhook registration still requires the checks above.
 - [ ] Rollback procedure tested.
 - [ ] Monitoring enabled.
+- [ ] Billing task branch has passed GitHub Actions and been promoted through the repository's normal `main` production deploy path.
 
 ## Post launch
 
@@ -39,4 +53,3 @@ First 7 days:
 - review product metrics;
 - review support issues;
 - prioritize fixes.
-

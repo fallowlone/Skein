@@ -30,7 +30,7 @@ Repo → **Settings → Secrets and variables → Actions → New repository sec
 
 ## 3. Disconnect Cloudflare's Git integration
 
-Cloudflare dashboard → **Workers & Pages → awesome-everything → Settings →
+Cloudflare dashboard → **Workers & Pages → skein → Settings →
 Builds & deployments → Disconnect** (the Git connection).
 
 This stops Cloudflare from building on push; GitHub Actions becomes the sole deploy path.
@@ -58,7 +58,7 @@ downtime between disconnect and the first GitHub-Actions production deploy.
 Cloudflare retains deployment history: **Workers & Pages → awesome-everything →
 Deployments → … → Rollback**.
 
-## Skein Coach: GitHub Sponsors + managed AI
+## Skein Coach: GitHub Sponsors + Telegram Stars + managed AI
 
 Coach keeps all authored learning, adaptive path/SRS/readiness, and BYOK AI free. A recurring
 GitHub Sponsors entitlement only unlocks server-paid Anthropic practice critique. The UI exposes
@@ -163,7 +163,92 @@ rejections release the reservation. Network errors/timeouts and successful respo
 output keep it because Anthropic may already have accepted/billed the request; this preserves the
 hard monthly cost ceiling.
 
-### 4. Production smoke check
+### 4. Configure Telegram Stars
+
+Telegram Stars uses the same authenticated Skein account model as the rest of billing. The site
+creates invoices only through `POST /api/telegram/invoice`; there is no static public payment URL.
+The invoice payload is an opaque server-created `telegram_orders.id`, and price/currency/product
+semantics come only from `functions/lib/products.ts`.
+
+Apply the Telegram migrations in order after the auth and Coach migrations:
+
+```bash
+bunx wrangler d1 execute DB --remote --file functions/migrations/0005_telegram_payments.sql
+bunx wrangler d1 execute DB --remote --file functions/migrations/0006_telegram_payment_hardening.sql
+bunx wrangler d1 execute DB --remote --file functions/migrations/0007_telegram_orders_subscriptions.sql
+bunx wrangler d1 execute DB --remote --file functions/migrations/0008_telegram_precheckout_lock.sql
+```
+
+Do not rerun an `ALTER TABLE` migration blindly. Before applying a production migration, inspect
+the remote schema and confirm which version is missing:
+
+```bash
+bunx wrangler d1 execute DB --remote --command "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('payments','telegram_orders','telegram_entitlements') ORDER BY name"
+bunx wrangler d1 execute DB --remote --command "PRAGMA table_info(payments)"
+```
+
+Required Pages secrets:
+
+```text
+TELEGRAM_BOT_TOKEN=<secret>
+TELEGRAM_WEBHOOK_SECRET=<secret>
+```
+
+Set them with `wrangler pages secret put`. Never commit either value. Register the Telegram webhook
+at the production endpoint and pass the same secret as Telegram's `secret_token`:
+
+```bash
+printf '{"url":"https://fallowlone.com/api/telegram/webhook","secret_token":"%s","allowed_updates":[]}' "$TELEGRAM_WEBHOOK_SECRET" \
+  | curl --fail-with-body --silent --show-error \
+      -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+      -H 'content-type: application/json' \
+      --data-binary @-
+```
+
+Read registration state without printing either secret:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo"
+```
+
+Check that the URL is exactly `https://fallowlone.com/api/telegram/webhook`, pending updates are
+not accumulating, `last_error_message` is absent, and the webhook is not restricted to an old
+`allowed_updates` list that omits the Bot API `subscription` update. Passing an empty
+`allowed_updates` list above resets Telegram to its default broad update set, which includes
+`message`, `pre_checkout_query`, and `subscription`. The webhook endpoint rejects a missing or
+wrong `X-Telegram-Bot-Api-Secret-Token`.
+
+`0008` is required by the deployed billing code: it locks each order to the first Telegram
+`pre_checkout_query.id`. Redelivery of that same query remains idempotent, while a different
+pre-checkout query for the already-approved invoice link is rejected before another charge can be
+authorized.
+
+Current Stars products:
+
+- `coach_monthly`: 500 XTR recurring every 30 days. Telegram requires a 2,592,000-second
+  subscription period. Skein trusts the provider-confirmed subscription expiration date and keeps
+  Coach active only through that paid-through timestamp. Cancel/resume uses
+  `editUserStarSubscription` with the first subscription payment id; cancelling renewal does not
+  revoke the paid period early. `BotSubscriptionUpdated` provider updates keep renewal state in sync
+  but never grant or revoke the paid-through entitlement by themselves.
+- `author_support`: 1 XTR one-time **Support the author / Помощь автору** payment. It grants no
+  entitlement and never unlocks Coach. This is the preferred low-cost real-payment smoke-test path.
+
+For Stars (`XTR`) invoices the Bot API request omits `provider_token`. `successful_payment` stores
+the Telegram charge id for deduplication and future refund reconciliation. A `refunded_payment`
+update marks the matching payment refunded. For Coach, only the matching order's paid-through
+state is recalculated; an older refund cannot revoke a newer renewal. For `author_support`, refund
+processing never touches entitlements.
+
+Forwarding an invoice does not transfer ownership of Skein access. The Skein user that created the
+order owns the product; the Telegram account that reaches pre-checkout is bound as payer. A payer
+may therefore fund another Skein user's order, but cannot choose which Skein account receives Coach.
+
+Customer history is exposed by authenticated `GET /api/billing/payments` and is always filtered by
+the middleware-owned Skein user id. Provider charge ids and Telegram payer ids are not exposed.
+
+### 5. Production smoke check
 
 After deploy, verify these states before publishing the Sponsors tier broadly:
 
@@ -177,6 +262,33 @@ After deploy, verify these states before publishing the Sponsors tier broadly:
    it, while `pending_cancellation` remains active until GitHub sends `cancelled`.
 5. An entitled user can run one managed practice critique and sees the monthly remaining count
    decrease.
+6. `POST /api/telegram/invoice` without an authenticated session returns `401`, and the Telegram
+   webhook without the secret header returns `401`.
+7. An authenticated Settings → **Support the author / Помощь автору** checkout creates a 1 XTR
+   one-time invoice. Paying it with a real Telegram account creates a completed `author_support`
+   history row and does not grant Coach.
+8. An authenticated `coach_monthly` invoice contains a 30-day subscription period; the first real
+   payment grants Coach only through Telegram's confirmed expiration date. Cancelling renewal keeps
+   access through that date.
+
+The real Stars checks in steps 7–8 spend real Stars. Do all non-financial endpoint, schema, webhook
+registration, and test checks automatically, but perform the actual payment only with explicit
+operator approval. A synthetic signed webhook is useful for tests but is not a real end-to-end
+payment smoke test.
+
+### 6. Billing monitoring and recovery
+
+- Check `payments`, `telegram_orders`, `telegram_entitlements`, `github_sponsorships`, and
+  `billing_deliveries` when reconciling a billing incident. Do not modify rows to manufacture paid
+  state.
+- A Telegram webhook `503` indicates a retryable durable-state failure. Fix the D1/provider issue
+  and allow Telegram to redeliver; charge-id and order guards make retries idempotent.
+- If `getWebhookInfo` shows pending updates or a last error, fix the production URL/secret/config
+  before enabling the Stars CTA broadly.
+- If GitHub OAuth reconciliation reports reauthentication required, have the user sign in again;
+  do not preserve access from stale frontend state.
+- Cloudflare deployment rollback restores code, but D1 migrations are forward history. Take schema
+  state into account before rollback and do not edit already-applied migration files.
 
 ## Notes
 
