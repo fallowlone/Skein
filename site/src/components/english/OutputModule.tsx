@@ -73,6 +73,7 @@ export default function OutputModule({ lang }: Props) {
         <p class="text-[15px] text-ink mb-1">{task.prompt[lang]}</p>
         <p class="text-[12px] text-muted mb-4">{L.rubric}: {task.rubric.join(" · ")}</p>
         <ShadcnTextarea value={text} onInput={(e) => setText((e.target as HTMLTextAreaElement).value)} rows={6}
+          state={err ? "error" : result ? "success" : "default"}
           class="w-full bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] text-ink mb-3 focus:border-accent" placeholder={L.write} />
         <div class="flex gap-2">
           <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy || text.trim().length === 0} onClick={submit}>{busy ? L.grading : L.submit}</ShadcnButton>

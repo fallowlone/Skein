@@ -1,5 +1,11 @@
 import { Button as ShadcnButton } from "~/components/ui/button";
-import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "~/components/ui/select";
 import { Input as ShadcnInput } from "~/components/ui/input";
 import { useEffect, useRef, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
@@ -197,18 +203,19 @@ export default function SettingsDrawer({ lang }: Props) {
         </Row>
 
         <Row label={l.motion} hint={lang === "en" ? ruHints.motion : undefined}>
-          <ShadcnNativeSelect
-            class="bg-card border border-rule-strong rounded-[1px] px-2 py-1.5 text-[12px] font-mono text-ink"
-            aria-label={l.motion}
-            value={s.motion}
-            onChange={(e) =>
-              setMotion((e.target as HTMLSelectElement).value as "on" | "off" | "auto")
-            }
-          >
-            <option value="auto">{l.motionAuto}</option>
-            <option value="on">{l.motionOn}</option>
-            <option value="off">{l.motionOff}</option>
-          </ShadcnNativeSelect>
+          <Select value={s.motion} onValueChange={(v: string) => setMotion(v as "on" | "off" | "auto")}>
+            <SelectTrigger
+              class="bg-card border border-rule-strong rounded-[1px] px-2 py-1.5 text-[12px] font-mono text-ink"
+              aria-label={l.motion}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">{l.motionAuto}</SelectItem>
+              <SelectItem value="on">{l.motionOn}</SelectItem>
+              <SelectItem value="off">{l.motionOff}</SelectItem>
+            </SelectContent>
+          </Select>
         </Row>
       </div>
 

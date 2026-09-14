@@ -1,5 +1,6 @@
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { Input as ShadcnInput } from "~/components/ui/input";
+import { Field } from "~/components/ui/field";
 // src/components/path/StateIOPanel.tsx
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
@@ -26,14 +27,15 @@ export default function StateIOPanel({ lang }: { lang: Locale }) {
 
   return (
     <section class="mt-4 border-t border-stone-200 pt-3">
-      <h3 class="font-semibold text-sm mb-2">{t.title}</h3>
-      <div class="flex flex-wrap items-center gap-2">
-        <ShadcnButton class="rounded border border-stone-300 px-3 py-1.5 text-xs hover:bg-stone-100" onClick={() => exportState(Date.now())}>{t.export}</ShadcnButton>
-        <label class="rounded border border-stone-300 px-3 py-1.5 text-xs hover:bg-stone-100 cursor-pointer">
-          {t.import}
-          <ShadcnInput type="file" accept="application/json,.json" class="hidden" onChange={onFile} />
-        </label>
-      </div>
+      <Field label={t.title} htmlFor="path-state-import">
+        <div class="flex flex-wrap items-center gap-2">
+          <ShadcnButton class="rounded border border-stone-300 px-3 py-1.5 text-xs hover:bg-stone-100" onClick={() => exportState(Date.now())}>{t.export}</ShadcnButton>
+          <label class="rounded border border-stone-300 px-3 py-1.5 text-xs hover:bg-stone-100 cursor-pointer" for="path-state-import">
+            {t.import}
+            <ShadcnInput id="path-state-import" type="file" accept="application/json,.json" class="hidden" onChange={onFile} />
+          </label>
+        </div>
+      </Field>
       {msg && <p class={`mt-1 text-xs ${msg.ok ? "text-emerald-600" : "text-rose-600"}`}>{msg.text}</p>}
     </section>
   );

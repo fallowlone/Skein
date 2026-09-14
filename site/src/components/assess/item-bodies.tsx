@@ -1,6 +1,7 @@
 import { Input as ShadcnInput } from "~/components/ui/input";
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
+import { Checkbox } from "~/components/ui/checkbox";
 // site/src/components/assess/item-bodies.tsx
 // Per-kind item bodies for the text/self-grade family: recall (fill-the-blanks),
 // predict, explain, review. Code-execution kinds (debug, exec) live in
@@ -66,6 +67,8 @@ export function RecallBody({ lang, task, onSubmit }: BodyProps) {
               id={inputId}
               class="assess-input"
               value={answers[i]}
+              clearable
+              state={answers[i] && answers[i].trim().length > 0 ? "success" : "default"}
               placeholder={t("assess.item.blankPlaceholder", lang)}
               onInput={(e) => {
                 const v = (e.target as HTMLInputElement).value;
@@ -240,17 +243,20 @@ export function ReviewBody({ lang, task, onSubmit }: BodyProps) {
       <pre class="assess-evidence assess-diff">{task.diff.code}</pre>
       <p class="assess-label">{t("assess.review.whatFound", lang)}</p>
       <ul class="assess-review-list">
-        {candidates.map((c) => (
-          <li key={c.id}>
-            <label class="assess-review-item">
-              <ShadcnInput type="checkbox" checked={picked.has(c.id)} disabled={shown} onChange={() => toggle(c.id)} />
-              <span>{tt(lang, c.label.en, c.label.ru)}</span>
-            </label>
-            {shown && (
-              <div class="prose assess-prose assess-finding-explain" dangerouslySetInnerHTML={{ __html: tt(lang, c.explanation.en, c.explanation.ru) }} />
-            )}
-          </li>
-        ))}
+        {candidates.map((c) => {
+          const reviewId = `assess-review-${c.id}`;
+          return (
+            <li key={c.id}>
+              <div class="assess-review-item">
+                <Checkbox id={reviewId} checked={picked.has(c.id)} disabled={shown} onCheckedChange={() => toggle(c.id)} />
+                <label for={reviewId}><span>{tt(lang, c.label.en, c.label.ru)}</span></label>
+              </div>
+              {shown && (
+                <div class="prose assess-prose assess-finding-explain" dangerouslySetInnerHTML={{ __html: tt(lang, c.explanation.en, c.explanation.ru) }} />
+              )}
+            </li>
+          );
+        })}
       </ul>
       {!shown && (
         <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" onClick={submit}>

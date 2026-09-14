@@ -1,5 +1,7 @@
 import { Input as ShadcnInput } from "~/components/ui/input";
 import { Button as ShadcnButton } from "~/components/ui/button";
+import { Field } from "~/components/ui/field";
+import { Icon } from "~/components/ui/icon";
 // src/components/path/OverridesEditor.tsx
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
@@ -28,21 +30,33 @@ export default function OverridesEditor({ lang }: { lang: Locale }) {
 
   return (
     <section class="mt-4 border-t border-stone-200 pt-3">
-      <h3 class="font-semibold text-sm mb-2">{t.title}</h3>
-      <div class="flex flex-wrap items-center gap-2">
-        <ShadcnInput class="w-32 rounded border border-stone-300 px-2 py-1 text-xs" placeholder={t.concept} value={c} onInput={(e) => setC((e.target as HTMLInputElement).value)} />
-        <ShadcnInput class="w-32 rounded border border-stone-300 px-2 py-1 text-xs" placeholder={t.requires} value={r} onInput={(e) => setR((e.target as HTMLInputElement).value)} />
-        <ShadcnButton class="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100" onClick={() => submit("add")}>{t.add}</ShadcnButton>
-        <ShadcnButton class="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100" onClick={() => submit("remove")}>{t.remove}</ShadcnButton>
-      </div>
-      {err && <p class="mt-1 text-xs text-rose-600">{err}</p>}
+      <Field label={t.title} htmlFor="ov-concept" error={err || undefined}>
+        <div class="flex flex-wrap items-center gap-2">
+          <ShadcnInput id="ov-concept" class="w-32 rounded border border-stone-300 px-2 py-1 text-xs" placeholder={t.concept} value={c}
+            aria-label={t.concept} aria-invalid={Boolean(err)} aria-describedby={err ? "ov-concept-error" : undefined}
+            clearable state={err ? "error" : "default"} onInput={(e) => setC((e.target as HTMLInputElement).value)} />
+          <ShadcnInput id="ov-requires" class="w-32 rounded border border-stone-300 px-2 py-1 text-xs" placeholder={t.requires} value={r}
+            aria-label={t.requires} aria-invalid={Boolean(err)} aria-describedby={err ? "ov-concept-error" : undefined}
+            clearable state={err ? "error" : "default"} onInput={(e) => setR((e.target as HTMLInputElement).value)} />
+          <ShadcnButton class="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100 mk-press" onClick={() => submit("add")}>
+            <Icon name="plus" size={12} />
+            {t.add}
+          </ShadcnButton>
+          <ShadcnButton class="rounded border border-stone-300 px-2 py-1 text-xs hover:bg-stone-100 mk-press" onClick={() => submit("remove")}>
+            <Icon name="minus" size={12} />
+            {t.remove}
+          </ShadcnButton>
+        </div>
+      </Field>
       <ul class="mt-2 flex flex-col gap-1 text-xs">
         {entries.length === 0 && <li class="text-stone-400">{t.none}</li>}
         {entries.map((e) => (
           <li key={`${e.kind}-${e.concept}-${e.requires}`} class="flex items-center gap-2">
             <span class="text-stone-500">{e.kind === "add" ? t.addE : t.removeE}</span>
             <code>{e.concept} → {e.requires}</code>
-            <ShadcnButton class="ml-auto text-rose-500" onClick={() => removeOverrideEntry(e.kind, e.concept, e.requires)} aria-label={t.del}>✕</ShadcnButton>
+            <ShadcnButton class="ml-auto text-rose-500 mk-press" onClick={() => removeOverrideEntry(e.kind, e.concept, e.requires)} aria-label={t.del}>
+              <Icon name="x" size={12} />
+            </ShadcnButton>
           </li>
         ))}
       </ul>
