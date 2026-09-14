@@ -35,13 +35,12 @@ function RouteIcon({ kind }: { kind: (typeof ROUTE)[number]["key"] }) {
 
 type Props = {
   lang: Locale;
-  telegramStarsUrl: string | null;
   routeCounts: Record<string, number>;
   onOpenPattern: (pattern: string) => void;
   onDismiss: () => void;
 };
 
-export default function ExpeditionPass({ lang, telegramStarsUrl, routeCounts, onOpenPattern, onDismiss }: Props) {
+export default function ExpeditionPass({ lang, routeCounts, onOpenPattern, onDismiss }: Props) {
   const [open, setOpen] = useState(true);
 
   function dismiss() {
@@ -111,22 +110,10 @@ export default function ExpeditionPass({ lang, telegramStarsUrl, routeCounts, on
         <p class="ep-ru">RU: Выберите направление, чтобы поддержать развитие Skein. Поддержка помогает создавать новые уроки, примеры и практику.</p>
       </div>
 
-      {telegramStarsUrl ? (
-        <a class="ep-cta ep-cta-primary" href={telegramStarsUrl} rel="noopener noreferrer">
-          <span>Support with Telegram Stars</span>
-          <small>RU: Поддержать направление через Telegram Stars</small>
-        </a>
-      ) : (
-        <>
-          <ShadcnButton class="ep-cta ep-cta-primary" type="button" disabled aria-describedby="telegram-stars-unavailable">
-            <span>Telegram Stars unavailable</span>
-            <small>RU: Telegram Stars пока недоступны</small>
-          </ShadcnButton>
-          <p id="telegram-stars-unavailable" class="ep-support-note">
-            {lang === "ru" ? "Платёжный endpoint не настроен." : "Patron payment endpoint is not configured."}
-          </p>
-        </>
-      )}
+      <a class="ep-cta ep-cta-primary" href={`/${lang}/settings#coach-plan`}>
+        <span>See Skein support options</span>
+        <small>RU: Варианты поддержки Skein</small>
+      </a>
       <ShadcnButton class="ep-cta ep-cta-secondary" type="button" onClick={dismiss}>
         <span>Continue without pass</span>
         <small>RU: Продолжить без поддержки</small>

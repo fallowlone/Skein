@@ -72,13 +72,38 @@ export interface PaymentRow {
   amount: number;
   currency: string;
   status: string;
+  orderId: string | null;
+  telegramUserId: string | null;
+  subscriptionExpiresAt: number | null;
+  isRecurring: boolean;
+  isFirstRecurring: boolean;
+  refundedAt: number | null;
+  createdAt: number;
 }
 
 export async function getPaymentByProviderId(db: D1Database, provider: string, id: string): Promise<PaymentRow | null> {
   const row = await db.prepare(
-    "SELECT id, user_id, provider, provider_payment_id, product, amount, currency, status FROM payments WHERE provider = ? AND provider_payment_id = ?",
+    "SELECT id, user_id, provider, provider_payment_id, product, amount, currency, status, order_id, telegram_user_id, " +
+    "subscription_expires_at, is_recurring, is_first_recurring, refunded_at, created_at " +
+    "FROM payments WHERE provider = ? AND provider_payment_id = ?",
   ).bind(provider, id).first<any>();
-  return row ? { id: row.id, userId: row.user_id, provider: row.provider, providerPaymentId: row.provider_payment_id, product: row.product, amount: row.amount, currency: row.currency, status: row.status } : null;
+  return row ? {
+    id: row.id,
+    userId: row.user_id,
+    provider: row.provider,
+    providerPaymentId: row.provider_payment_id,
+    product: row.product,
+    amount: row.amount,
+    currency: row.currency,
+    status: row.status,
+    orderId: row.order_id ?? null,
+    telegramUserId: row.telegram_user_id ?? null,
+    subscriptionExpiresAt: row.subscription_expires_at ?? null,
+    isRecurring: row.is_recurring === 1,
+    isFirstRecurring: row.is_first_recurring === 1,
+    refundedAt: row.refunded_at ?? null,
+    createdAt: row.created_at,
+  } : null;
 }
 
 export async function createPayment(db: D1Database, row: Omit<PaymentRow, "id">, now: number): Promise<void> {
@@ -90,6 +115,368 @@ export async function createPayment(db: D1Database, row: Omit<PaymentRow, "id">,
 export async function updatePaymentStatus(db: D1Database, provider: string, providerPaymentId: string, status: string, now: number): Promise<void> {
   await db.prepare("UPDATE payments SET status = ?, updated_at = ? WHERE provider = ? AND provider_payment_id = ?")
     .bind(status, now, provider, providerPaymentId).run();
+}
+
+export interface TelegramOrderRow {
+  id: string;
+  userId: number;
+  product: string;
+  amount: number;
+  currency: string;
+  billingKind: string;
+  subscriptionPeriodSeconds: number | null;
+  status: string;
+  telegramUserId: string | null;
+  checkoutExpiresAt: number;
+  currentPeriodEnd: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+function telegramOrderRow(row: any): TelegramOrderRow {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    product: row.product,
+    amount: row.amount,
+    currency: row.currency,
+    billingKind: row.billing_kind,
+    subscriptionPeriodSeconds: row.subscription_period_seconds ?? null,
+    status: row.status,
+    telegramUserId: row.telegram_user_id ?? null,
+    checkoutExpiresAt: row.checkout_expires_at,
+    currentPeriodEnd: row.current_period_end ?? null,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function telegramSchemaReady(db: D1Database): Promise<boolean> {
+  const row = await db.prepare(
+    "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('payments', 'telegram_orders', 'telegram_entitlements')",
+  ).bind().first<{ count: number }>();
+  if (row?.count !== 3) return false;
+  const preCheckout = await db.prepare(
+    "SELECT COUNT(*) AS count FROM pragma_table_info('telegram_orders') WHERE name = 'pre_checkout_query_id'",
+  ).bind().first<{ count: number }>();
+  if (preCheckout?.count !== 1) return false;
+  const preCheckoutIndex = await db.prepare(
+    "SELECT COUNT(*) AS count FROM pragma_index_list('telegram_orders') " +
+    "WHERE name = 'idx_telegram_orders_pre_checkout_query' AND \"unique\" = 1 AND partial = 1",
+  ).bind().first<{ count: number }>();
+  return preCheckoutIndex?.count === 1;
+}
+
+export async function createTelegramOrder(
+  db: D1Database,
+  row: {
+    id: string;
+    userId: number;
+    product: string;
+    amount: number;
+    currency: string;
+    billingKind: string;
+    subscriptionPeriodSeconds: number | null;
+    checkoutExpiresAt: number;
+  },
+  now: number,
+): Promise<void> {
+  await db.prepare(
+    "INSERT INTO telegram_orders " +
+    "(id, user_id, product, amount, currency, billing_kind, subscription_period_seconds, status, checkout_expires_at, created_at, updated_at) " +
+    "VALUES (?, ?, ?, ?, ?, ?, ?, 'created', ?, ?, ?)",
+  ).bind(
+    row.id, row.userId, row.product, row.amount, row.currency, row.billingKind,
+    row.subscriptionPeriodSeconds, row.checkoutExpiresAt, now, now,
+  ).run();
+}
+
+export async function getTelegramOrder(db: D1Database, id: string): Promise<TelegramOrderRow | null> {
+  const row = await db.prepare(
+    "SELECT id, user_id, product, amount, currency, billing_kind, subscription_period_seconds, status, telegram_user_id, " +
+    "checkout_expires_at, current_period_end, created_at, updated_at FROM telegram_orders WHERE id = ?",
+  ).bind(id).first<any>();
+  return row ? telegramOrderRow(row) : null;
+}
+
+export async function markTelegramOrderInvoiceReady(db: D1Database, id: string, now: number): Promise<void> {
+  await db.prepare("UPDATE telegram_orders SET status = 'invoice_ready', updated_at = ? WHERE id = ? AND status = 'created'")
+    .bind(now, id).run();
+}
+
+export async function markTelegramOrderFailed(db: D1Database, id: string, now: number): Promise<void> {
+  await db.prepare("UPDATE telegram_orders SET status = 'failed', updated_at = ? WHERE id = ? AND status IN ('created', 'invoice_ready')")
+    .bind(now, id).run();
+}
+
+export async function approveTelegramPreCheckout(
+  db: D1Database,
+  input: {
+    orderId: string;
+    product: string;
+    amount: number;
+    currency: string;
+    telegramUserId: string;
+    preCheckoutQueryId: string;
+  },
+  now: number,
+): Promise<boolean> {
+  const result = await db.prepare(
+    "UPDATE telegram_orders SET telegram_user_id = COALESCE(telegram_user_id, ?), " +
+    "pre_checkout_query_id = COALESCE(pre_checkout_query_id, ?), status = 'approved', updated_at = ? " +
+    "WHERE id = ? AND product = ? AND amount = ? AND currency = ? AND checkout_expires_at >= ? " +
+    "AND status IN ('created', 'invoice_ready', 'approved') AND (telegram_user_id IS NULL OR telegram_user_id = ?) " +
+    "AND (pre_checkout_query_id IS NULL OR pre_checkout_query_id = ?)",
+  ).bind(
+    input.telegramUserId, input.preCheckoutQueryId, now,
+    input.orderId, input.product, input.amount, input.currency, now,
+    input.telegramUserId, input.preCheckoutQueryId,
+  ).run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export async function getTelegramPaymentCountForOrder(db: D1Database, orderId: string): Promise<number> {
+  const row = await db.prepare(
+    "SELECT COUNT(*) AS count FROM payments WHERE provider = 'telegram_stars' AND order_id = ?",
+  ).bind(orderId).first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
+export async function recordTelegramSubscriptionPayment(
+  db: D1Database,
+  input: {
+    order: TelegramOrderRow;
+    providerPaymentId: string;
+    telegramUserId: string;
+    product: string;
+    amount: number;
+    currency: string;
+    subscriptionExpiresAt: number;
+    isFirstRecurring: boolean;
+    entitlements: string[];
+  },
+  now: number,
+): Promise<void> {
+  const statements = [
+    db.prepare(
+      "INSERT INTO payments " +
+      "(user_id, provider, provider_payment_id, product, amount, currency, status, created_at, updated_at, processed_at, order_id, " +
+      "telegram_user_id, subscription_expires_at, is_recurring, is_first_recurring) " +
+      "VALUES (?, 'telegram_stars', ?, ?, ?, ?, 'completed', ?, ?, ?, ?, ?, ?, 1, ?)",
+    ).bind(
+      input.order.userId, input.providerPaymentId, input.product, input.amount, input.currency,
+      now, now, now, input.order.id, input.telegramUserId, input.subscriptionExpiresAt, input.isFirstRecurring ? 1 : 0,
+    ),
+    db.prepare(
+      "UPDATE telegram_orders SET status = CASE WHEN status = 'pending_cancellation' THEN 'pending_cancellation' ELSE 'active' END, " +
+      "current_period_end = MAX(COALESCE(current_period_end, 0), ?), updated_at = ? " +
+      "WHERE id = ? AND telegram_user_id = ? AND status IN ('approved', 'active', 'pending_cancellation', 'refunded', 'expired')",
+    ).bind(input.subscriptionExpiresAt, now, input.order.id, input.telegramUserId),
+    ...input.entitlements.map((entitlement) => db.prepare(
+      "INSERT INTO telegram_entitlements (order_id, user_id, entitlement, active, expires_at, granted_at, updated_at) " +
+      "VALUES (?, ?, ?, 1, ?, ?, ?) ON CONFLICT(user_id, entitlement, order_id) DO UPDATE SET " +
+      "active = 1, expires_at = MAX(telegram_entitlements.expires_at, excluded.expires_at), updated_at = excluded.updated_at",
+    ).bind(input.order.id, input.order.userId, entitlement, input.subscriptionExpiresAt, now, now)),
+  ];
+  await db.batch(statements);
+}
+
+export async function recordTelegramOneTimePayment(
+  db: D1Database,
+  input: {
+    order: TelegramOrderRow;
+    providerPaymentId: string;
+    telegramUserId: string;
+    product: string;
+    amount: number;
+    currency: string;
+  },
+  now: number,
+): Promise<void> {
+  const results = await db.batch([
+    db.prepare(
+      "INSERT INTO payments " +
+      "(user_id, provider, provider_payment_id, product, amount, currency, status, created_at, updated_at, processed_at, order_id, " +
+      "telegram_user_id, subscription_expires_at, is_recurring, is_first_recurring) " +
+      "SELECT user_id, 'telegram_stars', ?, product, amount, currency, 'completed', ?, ?, ?, id, telegram_user_id, NULL, 0, 0 " +
+      "FROM telegram_orders WHERE id = ? AND user_id = ? AND product = ? AND amount = ? AND currency = ? " +
+      "AND billing_kind = 'one_time' AND subscription_period_seconds IS NULL AND telegram_user_id = ? AND status = 'approved'",
+    ).bind(
+      input.providerPaymentId, now, now, now, input.order.id, input.order.userId,
+      input.product, input.amount, input.currency, input.telegramUserId,
+    ),
+    db.prepare(
+      "UPDATE telegram_orders SET status = 'completed', updated_at = ? " +
+      "WHERE id = ? AND telegram_user_id = ? AND status = 'approved' " +
+      "AND EXISTS (SELECT 1 FROM payments WHERE provider = 'telegram_stars' AND provider_payment_id = ? AND order_id = ?)",
+    ).bind(now, input.order.id, input.telegramUserId, input.providerPaymentId, input.order.id),
+  ]);
+  if ((results[0]?.meta?.changes ?? 0) !== 1 || (results[1]?.meta?.changes ?? 0) !== 1) {
+    throw new Error("telegram_one_time_payment_not_recorded");
+  }
+}
+
+export async function refundTelegramPayment(
+  db: D1Database,
+  payment: PaymentRow,
+  now: number,
+): Promise<void> {
+  if (!payment.orderId) throw new Error("telegram_payment_missing_order");
+  const maxPaidThrough = "COALESCE((SELECT MAX(subscription_expires_at) FROM payments " +
+    "WHERE provider = 'telegram_stars' AND order_id = ? AND status = 'completed' AND refunded_at IS NULL), 0)";
+  await db.batch([
+    db.prepare(
+      "UPDATE payments SET status = 'refunded', refunded_at = ?, updated_at = ? " +
+      "WHERE provider = 'telegram_stars' AND provider_payment_id = ? AND status <> 'refunded'",
+    ).bind(now, now, payment.providerPaymentId),
+    db.prepare(
+      `UPDATE telegram_orders SET current_period_end = ${maxPaidThrough}, ` +
+      `status = CASE WHEN ${maxPaidThrough} > ? THEN CASE WHEN status = 'pending_cancellation' THEN 'pending_cancellation' ELSE 'active' END ELSE 'refunded' END, ` +
+      "updated_at = ? WHERE id = ?",
+    ).bind(payment.orderId, payment.orderId, now, now, payment.orderId),
+    db.prepare(
+      `UPDATE telegram_entitlements SET expires_at = CASE WHEN ${maxPaidThrough} > 0 THEN ${maxPaidThrough} ELSE expires_at END, ` +
+      `active = CASE WHEN ${maxPaidThrough} > ? THEN 1 ELSE 0 END, updated_at = ? WHERE order_id = ?`,
+    ).bind(payment.orderId, payment.orderId, payment.orderId, now, now, payment.orderId),
+  ]);
+}
+
+export async function refundTelegramOneTimePayment(
+  db: D1Database,
+  payment: PaymentRow,
+  now: number,
+): Promise<void> {
+  if (!payment.orderId) throw new Error("telegram_payment_missing_order");
+  const results = await db.batch([
+    db.prepare(
+      "UPDATE payments SET status = 'refunded', refunded_at = ?, updated_at = ? " +
+      "WHERE provider = 'telegram_stars' AND provider_payment_id = ? AND order_id = ? AND status = 'completed' " +
+      "AND is_recurring = 0 AND subscription_expires_at IS NULL",
+    ).bind(now, now, payment.providerPaymentId, payment.orderId),
+    db.prepare(
+      "UPDATE telegram_orders SET status = 'refunded', updated_at = ? " +
+      "WHERE id = ? AND billing_kind = 'one_time' AND status = 'completed' " +
+      "AND EXISTS (SELECT 1 FROM payments WHERE provider = 'telegram_stars' AND provider_payment_id = ? " +
+      "AND order_id = ? AND status = 'refunded')",
+    ).bind(now, payment.orderId, payment.providerPaymentId, payment.orderId),
+  ]);
+  if ((results[0]?.meta?.changes ?? 0) !== 1 || (results[1]?.meta?.changes ?? 0) !== 1) {
+    throw new Error("telegram_one_time_refund_not_recorded");
+  }
+}
+
+export interface TelegramEntitlementState {
+  orderId: string;
+  expiresAt: number;
+  renewalStatus: string;
+}
+
+export async function getActiveTelegramEntitlement(
+  db: D1Database,
+  userId: number,
+  entitlement: string,
+  now: number,
+): Promise<TelegramEntitlementState | null> {
+  if (!(await telegramSchemaReady(db))) return null;
+  await db.batch([
+    db.prepare(
+      "UPDATE telegram_entitlements SET active = 0, updated_at = ? WHERE user_id = ? AND active = 1 AND expires_at <= ?",
+    ).bind(now, userId, now),
+    db.prepare(
+      "UPDATE telegram_orders SET status = 'expired', updated_at = ? WHERE user_id = ? AND status IN ('active', 'pending_cancellation') " +
+      "AND current_period_end IS NOT NULL AND current_period_end <= ?",
+    ).bind(now, userId, now),
+  ]);
+  const row = await db.prepare(
+    "SELECT te.order_id, te.expires_at, o.status FROM telegram_entitlements te " +
+    "JOIN telegram_orders o ON o.id = te.order_id " +
+    "WHERE te.user_id = ? AND te.entitlement = ? AND te.active = 1 AND te.expires_at > ? " +
+    "ORDER BY te.expires_at DESC LIMIT 1",
+  ).bind(userId, entitlement, now).first<{ order_id: string; expires_at: number; status: string }>();
+  return row ? { orderId: row.order_id, expiresAt: row.expires_at, renewalStatus: row.status } : null;
+}
+
+export interface TelegramSubscriptionControl {
+  orderId: string;
+  telegramUserId: string;
+  providerPaymentId: string;
+  expiresAt: number;
+  status: string;
+}
+
+export async function getTelegramSubscriptionControl(
+  db: D1Database,
+  userId: number,
+  now: number,
+): Promise<TelegramSubscriptionControl | null> {
+  const row = await db.prepare(
+    "SELECT o.id AS order_id, o.telegram_user_id, o.status, te.expires_at, p.provider_payment_id " +
+    "FROM telegram_orders o " +
+    "JOIN telegram_entitlements te ON te.order_id = o.id AND te.user_id = o.user_id AND te.entitlement = 'coach' " +
+    "JOIN payments p ON p.order_id = o.id AND p.provider = 'telegram_stars' AND p.is_first_recurring = 1 " +
+    "WHERE o.user_id = ? AND te.active = 1 AND te.expires_at > ? AND o.telegram_user_id IS NOT NULL " +
+    "ORDER BY te.expires_at DESC, p.created_at ASC LIMIT 1",
+  ).bind(userId, now).first<any>();
+  return row ? {
+    orderId: row.order_id,
+    telegramUserId: row.telegram_user_id,
+    providerPaymentId: row.provider_payment_id,
+    expiresAt: row.expires_at,
+    status: row.status,
+  } : null;
+}
+
+export async function setTelegramSubscriptionRenewalState(
+  db: D1Database,
+  orderId: string,
+  canceled: boolean,
+  now: number,
+): Promise<void> {
+  await db.prepare(
+    "UPDATE telegram_orders SET status = ?, updated_at = ? WHERE id = ? AND status IN ('active', 'pending_cancellation')",
+  ).bind(canceled ? "pending_cancellation" : "active", now, orderId).run();
+}
+
+export async function applyTelegramSubscriptionProviderState(
+  db: D1Database,
+  orderId: string,
+  telegramUserId: string,
+  state: "canceled" | "active" | "failed",
+  now: number,
+): Promise<boolean> {
+  const status = state === "canceled" ? "pending_cancellation" : state === "active" ? "active" : "payment_failed";
+  const result = await db.prepare(
+    "UPDATE telegram_orders SET status = ?, updated_at = ? " +
+    "WHERE id = ? AND billing_kind = 'subscription' AND telegram_user_id = ? " +
+    "AND status IN ('active', 'pending_cancellation', 'payment_failed')",
+  ).bind(status, now, orderId, telegramUserId).run();
+  return (result.meta.changes ?? 0) > 0;
+}
+
+export interface PaymentHistoryRow {
+  provider: string;
+  product: string;
+  amount: number;
+  currency: string;
+  status: string;
+  createdAt: number;
+  subscriptionExpiresAt: number | null;
+}
+
+export async function listPaymentsForUser(db: D1Database, userId: number, limit = 25): Promise<PaymentHistoryRow[]> {
+  const result = await db.prepare(
+    "SELECT provider, product, amount, currency, status, created_at, subscription_expires_at FROM payments " +
+    "WHERE user_id = ? ORDER BY created_at DESC LIMIT ?",
+  ).bind(userId, limit).all<any>();
+  return (result.results ?? []).map((row: any) => ({
+    provider: row.provider,
+    product: row.product,
+    amount: row.amount,
+    currency: row.currency,
+    status: row.status,
+    createdAt: row.created_at,
+    subscriptionExpiresAt: row.subscription_expires_at ?? null,
+  }));
 }
 
 export interface EntitlementState { active: boolean; source: string; sourceRef: string | null; verifiedAt: number | null; }
