@@ -1,4 +1,10 @@
-import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "~/components/ui/select";
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
@@ -65,22 +71,42 @@ export default function ProjectsFilter({ lang, projects }: Props) {
       {/* Each select needs a programmatic name: the "All …" option reads as a
           value, not as what the control does. */}
       <div class="proj-filters">
-        <ShadcnNativeSelect class="proj-select" aria-label={tt(lang, "Category", "Категория")} value={category} onChange={(e) => setCategory((e.target as HTMLSelectElement).value)}>
-          <option value="all">{tt(lang, "All categories", "Все категории")}</option>
-          {[["frontend","Frontend"],["backend","Backend"],["fullstack","Fullstack"],["infra","Infra"],["data","Data"],["systems","Systems"],["security","Security"],["algorithms","Algorithms"]].map(([v,l]) => <option value={v} key={v}>{l}</option>)}
-        </ShadcnNativeSelect>
-        <ShadcnNativeSelect class="proj-select" aria-label={tt(lang, "Track", "Трек")} value={track} onChange={(e) => setTrack((e.target as HTMLSelectElement).value)}>
-          <option value="all">{tt(lang, "All tracks", "Все треки")}</option>
-          {tracks.map((tr) => <option value={tr} key={tr}>{tr}</option>)}
-        </ShadcnNativeSelect>
-        <ShadcnNativeSelect class="proj-select" aria-label={tt(lang, "Level", "Уровень")} value={difficulty} onChange={(e) => setDifficulty((e.target as HTMLSelectElement).value)}>
-          <option value="all">{tt(lang, "All levels", "Все уровни")}</option>
-          {["starter", "intermediate", "advanced"].map((d) => <option value={d} key={d}>{d}</option>)}
-        </ShadcnNativeSelect>
-        <ShadcnNativeSelect class="proj-select" aria-label={tt(lang, "Kind", "Вид")} value={runnable} onChange={(e) => setRunnable((e.target as HTMLSelectElement).value)}>
-          <option value="all">{tt(lang, "All projects", "Все проекты")}</option>
-          <option value="runnable">{tt(lang, "Runnable only", "Только запускаемые")}</option>
-        </ShadcnNativeSelect>
+        <Select value={category} onValueChange={(v: string) => setCategory(v)}>
+          <SelectTrigger class="proj-select" aria-label={tt(lang, "Category", "Категория")}>
+            <SelectValue placeholder={tt(lang, "All categories", "Все категории")} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{tt(lang, "All categories", "Все категории")}</SelectItem>
+            {[["frontend","Frontend"],["backend","Backend"],["fullstack","Fullstack"],["infra","Infra"],["data","Data"],["systems","Systems"],["security","Security"],["algorithms","Algorithms"]].map(([v,l]) => <SelectItem value={v} key={v}>{l}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={track} onValueChange={(v: string) => setTrack(v)}>
+          <SelectTrigger class="proj-select" aria-label={tt(lang, "Track", "Трек")}>
+            <SelectValue placeholder={tt(lang, "All tracks", "Все треки")} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{tt(lang, "All tracks", "Все треки")}</SelectItem>
+            {tracks.map((tr) => <SelectItem value={tr} key={tr}>{tr}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={difficulty} onValueChange={(v: string) => setDifficulty(v)}>
+          <SelectTrigger class="proj-select" aria-label={tt(lang, "Level", "Уровень")}>
+            <SelectValue placeholder={tt(lang, "All levels", "Все уровни")} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{tt(lang, "All levels", "Все уровни")}</SelectItem>
+            {["starter", "intermediate", "advanced"].map((d) => <SelectItem value={d} key={d}>{d}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <Select value={runnable} onValueChange={(v: string) => setRunnable(v)}>
+          <SelectTrigger class="proj-select" aria-label={tt(lang, "Kind", "Вид")}>
+            <SelectValue placeholder={tt(lang, "All projects", "Все проекты")} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{tt(lang, "All projects", "Все проекты")}</SelectItem>
+            <SelectItem value="runnable">{tt(lang, "Runnable only", "Только запускаемые")}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <p class="proj-count">
         {tt(lang, `${shown.length} shown · ${runnableTotal} runnable starters`, `Показано: ${shown.length} · запускаемых стартеров: ${runnableTotal}`)}
@@ -113,11 +139,11 @@ export default function ProjectsFilter({ lang, projects }: Props) {
       </ul>
 
       {buildList.length > 0 && (
-        <aside class="project-cart" aria-label={tt(lang, "Build list", "Список проектов")}>
+        <aside class="project-cart mk-reveal" aria-label={tt(lang, "Build list", "Список проектов")} role="status">
           <strong class="project-cart-title">{tt(lang, `Build list (${buildList.length})`, `Список (${buildList.length})`)}</strong>
           <div class="project-cart-items">
             {selected.map((p) => (
-              <span class="project-cart-chip" key={p.slug}>
+              <span class="project-cart-chip mk-pop" key={p.slug}>
                 <span>{p.title}</span>
                 <ShadcnButton type="button" aria-label={tt(lang, `Remove ${p.title}`, `Убрать ${p.title}`)} onClick={() => toggleProject(p.slug)}>×</ShadcnButton>
               </span>

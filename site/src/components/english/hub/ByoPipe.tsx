@@ -1,5 +1,6 @@
 import { Input as ShadcnInput } from "~/components/ui/input";
 import { Button as ShadcnButton } from "~/components/ui/button";
+import { Checkbox } from "~/components/ui/checkbox";
 // BYO content pipe (Signature #2). Paste English text → Extract (tokenize + classify against the
 // vocab bank and your known set) → Build (create real SRS cards for in-bank "new" words, and — only
 // if a BYOK key is present — AI-write exercises) → Reuse (five modes routed to Own/Delegate). v1 is
@@ -223,6 +224,8 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
               placeholder={L.placeholder}
               aria-label={L.inputAria}
               value={text}
+              clearable
+              leadingIcon="search"
               onInput={(e) => setText((e.target as HTMLInputElement).value)}
             />
             <div class="seg src-seg" role="group" aria-label={lang === "en" ? "Source type" : "Тип источника"}>
@@ -334,8 +337,8 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
             <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px">
               {sentences.map((s, i) => (
                 <li key={s.sentence} style="display:flex;align-items:flex-start;gap:8px">
-                  <ShadcnInput type="checkbox" checked={!unchecked.has(i)} style="margin-top:3px"
-                    onChange={() => setUnchecked((u) => { const n = new Set(u); if (n.has(i)) n.delete(i); else n.add(i); return n; })} />
+                  <Checkbox checked={!unchecked.has(i)} style="margin-top:3px" aria-label={s.sentence}
+                    onCheckedChange={() => setUnchecked((u) => { const n = new Set(u); if (n.has(i)) n.delete(i); else n.add(i); return n; })} />
                   <label style="font-size:13px;line-height:1.4;color:var(--ink-2)">
                     <span class="pc" style="margin-right:6px">{s.lemma}</span>{s.sentence}
                   </label>
@@ -355,6 +358,7 @@ export default function ByoPipe({ lang }: { lang: Locale }) {
           <span class="ps-no">{L.phraseLabel}</span>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <ShadcnInput type="text" value={phrase} placeholder={L.phrasePlaceholder} aria-label={L.phraseLabel}
+              clearable
               onInput={(e) => setPhrase((e.target as HTMLInputElement).value)}
               onKeyDown={(e) => { if (e.key === "Enter") savePhrase(); }}
               style="flex:1;min-width:200px;border:0.5px solid var(--hairline-strong);border-radius:var(--r-sm);background:var(--paper);padding:8px 10px;font-size:14px;color:var(--ink)" />

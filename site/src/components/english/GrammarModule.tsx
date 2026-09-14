@@ -122,7 +122,7 @@ function GrammarRun({ lang, point, onClose }: { lang: Locale; point: GrammarPoin
           <div class="text-[12px] text-muted">{c.hint[lang]}</div>
           <ShadcnInput class="border border-rule rounded-[2px] px-3 py-2 text-[14px] bg-bg text-ink"
             value={val} onInput={(e) => setVal((e.target as HTMLInputElement).value)}
-            disabled={checked} placeholder="…" />
+            disabled={checked} state={checked ? (ok ? "success" : "error") : "default"} placeholder="…" />
           {!checked ? (
             <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={() => setChecked(true)} disabled={!val.trim()}>{L.check}</ShadcnButton>
           ) : (
@@ -198,7 +198,7 @@ function PhrasingRun({ lang, set, onClose }: { lang: Locale; set: CollocationSet
           <div class="text-[12px] text-muted">{it.ru}</div>
           <ShadcnInput class="border border-rule rounded-[2px] px-3 py-2 text-[14px] bg-bg text-ink"
             value={val} onInput={(e) => setVal((e.target as HTMLInputElement).value)}
-            disabled={checked} placeholder="…" />
+            disabled={checked} state={checked ? (ok ? "success" : "error") : "default"} placeholder="…" />
           {!checked ? (
             <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" onClick={() => setChecked(true)} disabled={!val.trim()}>{L.check}</ShadcnButton>
           ) : (

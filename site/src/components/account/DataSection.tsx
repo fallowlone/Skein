@@ -1,5 +1,6 @@
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { Input as ShadcnInput } from "~/components/ui/input";
+import { Icon } from "~/components/ui/icon";
 // src/components/account/DataSection.tsx
 // 03 · YOUR DATA — export / import / reset, wired to the real StateIO + user-state APIs.
 //   export  → exportState(Date.now())   (JSON blob download; the only Date.now() here)
@@ -84,7 +85,10 @@ export default function DataSection({ lang }: { lang: Locale }) {
             <span class="set-desc">{l.exportDesc}</span>
           </div>
           <div class="set-control">
-            <ShadcnButton type="button" class="btn btn-quiet btn-sm" onClick={() => exportState(Date.now())}>{l.exportCta}</ShadcnButton>
+            <ShadcnButton type="button" class="btn btn-quiet btn-sm" onClick={() => exportState(Date.now())}>
+              <Icon name="upload" size={14} />
+              {l.exportCta}
+            </ShadcnButton>
           </div>
         </div>
 
@@ -95,6 +99,7 @@ export default function DataSection({ lang }: { lang: Locale }) {
           </div>
           <div class="set-control">
             <label class="btn btn-quiet btn-sm cab-file">
+              <Icon name="upload" size={14} />
               {l.importCta}
               <ShadcnInput type="file" accept="application/json,.json" class="sr-file" aria-label={l.importName} onChange={onFile} />
             </label>

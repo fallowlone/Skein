@@ -85,12 +85,11 @@ export default function GrammarAtlas({ lang, topics }: Props) {
 
         {/* controls */}
         <div class="atlas-controls">
-          <label class="atlas-search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true">
-              <circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" />
-            </svg>
+          <label className="atlas-search">
             <ShadcnInput
               type="search"
+              leadingIcon="search"
+              clearable
               value={query}
               onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
               placeholder={gt("search_ph", lang)}

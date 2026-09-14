@@ -1,6 +1,14 @@
 import { Button as ShadcnButton } from "~/components/ui/button";
-import { Input as ShadcnInput } from "~/components/ui/input";
-import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "~/components/ui/select";
+import { Field } from "~/components/ui/field";
+import { Slider } from "~/components/ui/slider";
+import { Icon } from "~/components/ui/icon";
 import { Sheet, SheetContent, SheetTitle } from "~/components/ui/sheet";
 // src/components/path/PathConfigDrawer.tsx
 import { useState } from "preact/hooks";
@@ -20,48 +28,57 @@ export default function PathConfigDrawer({ lang, onClose }: { lang: Locale; onCl
   const t = L[lang];
   const cfg = config.value;
   const [adv, setAdv] = useState(false);
-  const num = (e: Event) => Number((e.target as HTMLInputElement).value);
 
   return (
     <Sheet open onOpenChange={(open: boolean) => { if (!open) onClose(); }}>
-      <SheetContent class="bg-white p-5 shadow-xl" aria-describedby={undefined}>
+      <SheetContent class="bg-paper p-5 shadow-soft-md animate-reveal-up" aria-describedby={undefined} side="right">
         <div class="flex items-center justify-between mb-4">
-          <SheetTitle asChild><h2 class="text-xl font-bold">{t.title}</h2></SheetTitle>
-          <ShadcnButton class="rounded border border-stone-300 px-3 py-1 text-sm" onClick={onClose}>{t.close}</ShadcnButton>
+          <SheetTitle asChild><h2 class="font-display text-xl font-semibold text-ink">{t.title}</h2></SheetTitle>
+          <ShadcnButton class="rounded border border-stone-300 px-3 py-1 text-sm mk-press" onClick={onClose}>
+            <Icon name="x" size={14} />
+            {t.close}
+          </ShadcnButton>
         </div>
 
-        <label class="block text-sm mb-4">{t.focus}: {t.depthFirst} ↔ {t.breadthFirst}
-          <ShadcnInput type="range" min={0} max={1} step={0.1} value={cfg.breadthVsDepth} class="mt-1 block w-full"
-            onInput={(e) => setKnob({ breadthVsDepth: num(e) })} />
-        </label>
+        <Field label={`${t.focus}: ${t.depthFirst} ↔ ${t.breadthFirst}`} htmlFor="path-focus">
+          <Slider id="path-focus" min={0} max={1} step={0.1} value={[cfg.breadthVsDepth]}
+            onValueChange={(v: number[]) => setKnob({ breadthVsDepth: v[0] ?? cfg.breadthVsDepth })} />
+        </Field>
 
-        <label class="block text-sm mb-2">{t.steps}: {cfg.pace.stepsAhead}
-          <ShadcnInput type="range" min={1} max={20} step={1} value={cfg.pace.stepsAhead} class="mt-1 block w-full"
-            onInput={(e) => setKnob({ pace: { ...cfg.pace, stepsAhead: num(e) } })} />
-        </label>
-        <label class="block text-sm mb-4">{t.srs}: {cfg.pace.srsAggressiveness}
-          <ShadcnInput type="range" min={0} max={1} step={0.1} value={cfg.pace.srsAggressiveness} class="mt-1 block w-full"
-            onInput={(e) => setKnob({ pace: { ...cfg.pace, srsAggressiveness: num(e) } })} />
-        </label>
+        <Field label={`${t.steps}: ${cfg.pace.stepsAhead}`} htmlFor="path-steps">
+          <Slider id="path-steps" min={1} max={20} step={1} value={[cfg.pace.stepsAhead]}
+            onValueChange={(v: number[]) => setKnob({ pace: { ...cfg.pace, stepsAhead: Math.round(v[0] ?? cfg.pace.stepsAhead) } })} />
+        </Field>
+        <Field label={`${t.srs}: ${cfg.pace.srsAggressiveness}`} htmlFor="path-srs">
+          <Slider id="path-srs" min={0} max={1} step={0.1} value={[cfg.pace.srsAggressiveness]}
+            onValueChange={(v: number[]) => setKnob({ pace: { ...cfg.pace, srsAggressiveness: v[0] ?? cfg.pace.srsAggressiveness } })} />
+        </Field>
 
-        <label class="block text-sm mb-4">{t.depth}
-          <ShadcnNativeSelect class="mt-1 block rounded border border-stone-300 px-2 py-1" value={typeof cfg.depthTier === "string" ? cfg.depthTier : "middle"}
-            onChange={(e) => setKnob({ depthTier: (e.target as HTMLSelectElement).value as Tier })}>
-            {TIERS.map((tier) => <option key={tier} value={tier}>{tier}</option>)}
-          </ShadcnNativeSelect>
-        </label>
+        <Field label={t.depth} htmlFor="path-depth">
+          <Select value={typeof cfg.depthTier === "string" ? cfg.depthTier : "middle"} onValueChange={(v: string) => setKnob({ depthTier: v as Tier })}>
+            <SelectTrigger id="path-depth" class="mt-1 rounded border border-stone-300 px-2 py-1">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TIERS.map((tier) => <SelectItem key={tier} value={tier}>{tier}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </Field>
 
-        <ShadcnButton class="text-sm text-stone-500 underline" onClick={() => setAdv((v) => !v)}>{t.advanced}</ShadcnButton>
+        <ShadcnButton class="text-sm text-stone-500 underline mk-press" onClick={() => setAdv((v) => !v)} aria-expanded={adv}>
+          <Icon name="chevron-down" size={14} className={adv ? "rotate-180 transition-transform duration-[var(--dur-2)]" : "transition-transform duration-[var(--dur-2)]"} />
+          {t.advanced}
+        </ShadcnButton>
         {adv && (
           <div class="mt-3 flex flex-col gap-2">
-            <label class="block text-sm">{t.threshold}: {cfg.weights.masteryThreshold}
-              <ShadcnInput type="range" min={0.1} max={0.95} step={0.05} value={cfg.weights.masteryThreshold} class="mt-1 block w-full"
-                onInput={(e) => setKnob({ weights: { ...cfg.weights, masteryThreshold: num(e) } })} />
-            </label>
-            <label class="block text-sm">{t.decay}: {cfg.weights.decayFloor}
-              <ShadcnInput type="range" min={0} max={0.5} step={0.05} value={cfg.weights.decayFloor} class="mt-1 block w-full"
-                onInput={(e) => setKnob({ weights: { ...cfg.weights, decayFloor: num(e) } })} />
-            </label>
+            <Field label={`${t.threshold}: ${cfg.weights.masteryThreshold}`} htmlFor="path-threshold">
+              <Slider id="path-threshold" min={0.1} max={0.95} step={0.05} value={[cfg.weights.masteryThreshold]}
+                onValueChange={(v: number[]) => setKnob({ weights: { ...cfg.weights, masteryThreshold: v[0] ?? cfg.weights.masteryThreshold } })} />
+            </Field>
+            <Field label={`${t.decay}: ${cfg.weights.decayFloor}`} htmlFor="path-decay">
+              <Slider id="path-decay" min={0} max={0.5} step={0.05} value={[cfg.weights.decayFloor]}
+                onValueChange={(v: number[]) => setKnob({ weights: { ...cfg.weights, decayFloor: v[0] ?? cfg.weights.decayFloor } })} />
+            </Field>
           </div>
         )}
         <OverridesEditor lang={lang} />

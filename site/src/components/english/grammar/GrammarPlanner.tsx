@@ -1,6 +1,8 @@
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
 import { Input as ShadcnInput } from "~/components/ui/input";
+import { Field } from "~/components/ui/field";
+import { Icon } from "~/components/ui/icon";
 // src/components/english/grammar/GrammarPlanner.tsx
 import { useMemo, useState } from "preact/hooks";
 import type { Locale } from "~/i18n";
@@ -107,20 +109,25 @@ function GoalSetter({ lang }: { lang: Locale }) {
   return (
     <div class="gplan-goalset">
       <h2>{gt("goal_title", lang)}</h2>
-      <label>{gt("goal_target", lang)}
-        <ShadcnNativeSelect value={target} onChange={(e) => setTarget((e.target as HTMLSelectElement).value as Cefr)}>
+      <Field label={gt("goal_target", lang)} htmlFor="gplan-target">
+        <ShadcnNativeSelect id="gplan-target" value={target} onChange={(e) => setTarget((e.target as HTMLSelectElement).value as Cefr)}>
           {TARGETS.map((c) => <option key={c} value={c}>{c}</option>)}
         </ShadcnNativeSelect>
-      </label>
-      <label>{gt("goal_deadline", lang)}
-        <ShadcnInput type="number" min={1} max={104} value={weeks}
+      </Field>
+      <Field label={gt("goal_deadline", lang)} htmlFor="gplan-weeks">
+        <ShadcnInput id="gplan-weeks" type="number" min={1} max={104} value={weeks}
+          trailingIcon="calendar"
           onInput={(e) => setWeeks(Math.max(1, Number((e.target as HTMLInputElement).value) || 1))} />
-      </label>
-      <label>{gt("goal_hours", lang)}
-        <ShadcnInput type="number" min={0} max={12} step={0.5} value={hours}
+      </Field>
+      <Field label={gt("goal_hours", lang)} htmlFor="gplan-hours">
+        <ShadcnInput id="gplan-hours" type="number" min={0} max={12} step={0.5} value={hours}
+          trailingIcon="plus"
           onInput={(e) => setHours(Math.max(0, Number((e.target as HTMLInputElement).value) || 0))} />
-      </label>
-      <ShadcnButton type="button" class="btn" onClick={save}>{gt("goal_save", lang)}</ShadcnButton>
+      </Field>
+      <ShadcnButton type="button" class="btn" onClick={save}>
+        <Icon name="check" size={14} />
+        {gt("goal_save", lang)}
+      </ShadcnButton>
     </div>
   );
 }

@@ -185,7 +185,7 @@ export default function DeadlineSection({ lang }: { lang: Locale }) {
             <div class="field-row">
               <label for="dlDate">{t.target}</label>
               <div class="dl-input">
-                <ShadcnInput type="date" id="dlDate" value={dl ? isoOf(dl.targetDateMs) : ""} onInput={(e) => setDate((e.target as HTMLInputElement).value)} />
+                <ShadcnInput type="date" id="dlDate" leadingIcon="calendar" value={dl ? isoOf(dl.targetDateMs) : ""} onInput={(e) => setDate((e.target as HTMLInputElement).value)} />
               </div>
             </div>
 

@@ -34,3 +34,19 @@ Object.defineProperty(globalThis, "localStorage", {
   configurable: true,
   writable: true,
 });
+
+// Radix primitives (Select/Slider/Popover) observe trigger/content size via
+// ResizeObserver, which jsdom does not implement. A no-op stub is enough for
+// unit tests: layout never changes under test, observers just never fire.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  class NoopResizeObserver {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  }
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    value: NoopResizeObserver,
+    configurable: true,
+    writable: true,
+  });
+}

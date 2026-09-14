@@ -1,5 +1,6 @@
 import { Button as ShadcnButton } from "~/components/ui/button";
 import { Input as ShadcnInput } from "~/components/ui/input";
+import { Field } from "~/components/ui/field";
 // src/components/account/IdentitySection.tsx
 // 01 · ACCOUNT — identity panel. Reuses the AccountPanel auth flow VERBATIM
 // (fetchMe → undefined=loading / null=signed-out / Me=signed-in, terms gate,
@@ -141,13 +142,14 @@ export default function IdentitySection({ lang }: { lang: Locale }) {
       ) : (
         <>
           <div class="id-field">
-            <label class="id-field-label" for="cab-nick">{t("account.nickname", lang)}</label>
-            <div class="id-field-row">
-              <ShadcnInput id="cab-nick" class="cab-input" value={nick} maxLength={32}
-                onInput={(e) => setNick((e.target as HTMLInputElement).value)} />
-              <ShadcnButton type="button" class="btn btn-quiet btn-sm" onClick={saveNick}>{t("account.nicknameSave", lang)}</ShadcnButton>
-            </div>
-            <p class="cab-hint">{t("account.nicknameHint", lang)}</p>
+            <Field label={t("account.nickname", lang)} hint={t("account.nicknameHint", lang)} htmlFor="cab-nick">
+              <div class="id-field-row">
+                <ShadcnInput id="cab-nick" class="cab-input" value={nick} maxLength={32} clearable
+                  aria-describedby="cab-nick-hint"
+                  onInput={(e) => setNick((e.target as HTMLInputElement).value)} />
+                <ShadcnButton type="button" class="btn btn-quiet btn-sm" onClick={saveNick}>{t("account.nicknameSave", lang)}</ShadcnButton>
+              </div>
+            </Field>
             {msg && <p class="cab-hint">{msg}</p>}
           </div>
 
@@ -161,7 +163,8 @@ export default function IdentitySection({ lang }: { lang: Locale }) {
             <div class="inset-body">
               <p class="cab-hint">{t("account.deleteWarn", lang)}</p>
               <div class="id-field-row">
-                <ShadcnInput class="cab-input" placeholder={t("account.deleteConfirm", lang)} value={confirm}
+                <ShadcnInput id="cab-delete" class="cab-input" placeholder={t("account.deleteConfirm", lang)} value={confirm}
+                  state={confirm.length > 0 && confirm !== me.nickname ? "error" : "default"}
                   onInput={(e) => setConfirm((e.target as HTMLInputElement).value)} />
                 <ShadcnButton type="button" class="btn btn-danger btn-sm" disabled={confirm !== me.nickname}
                   aria-disabled={confirm !== me.nickname} onClick={del}>

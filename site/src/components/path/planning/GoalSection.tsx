@@ -215,9 +215,9 @@ export default function GoalSection({ lang }: { lang: Locale }) {
               <div class="rc-head"><h3>{t.targets}</h3><p class="rc-hint">{t.targetsHint}</p></div>
               <div class="cg-field">
                 <div class="cmdk cg-search">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4-4" /></svg>
                   <ShadcnInput
                     type="text" autocomplete="off" aria-label={t.search} placeholder={t.search}
+                    leadingIcon="search" clearable
                     value={q}
                     onInput={(e) => { setQ((e.target as HTMLInputElement).value); setCursor(-1); }}
                     onKeyDown={onSearchKey}

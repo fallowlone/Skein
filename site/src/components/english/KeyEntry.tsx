@@ -60,14 +60,20 @@ export default function KeyEntry({ lang, onChange }: Props) {
         <div class="flex flex-col gap-2 mb-4">
           <div class="text-[13px] text-ink">{L.locked}</div>
           <div class="flex gap-2">
-            <ShadcnInput type="password" value={unlockPass} placeholder={L.passPh} onInput={(e) => setUnlockPass((e.target as HTMLInputElement).value)}
+            <ShadcnInput type="password" value={unlockPass} placeholder={L.passPh} leadingIcon="lock" passwordToggle
+              showPasswordLabel={lang === "en" ? "Show passphrase" : "Показать фразу"}
+              hidePasswordLabel={lang === "en" ? "Hide passphrase" : "Скрыть фразу"}
+              onInput={(e) => setUnlockPass((e.target as HTMLInputElement).value)}
               class="flex-1 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] text-ink focus:border-accent" />
             <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm" disabled={busy} onClick={doUnlock}>{L.unlock}</ShadcnButton>
           </div>
         </div>
       ) : status === "none" ? (
         <div class="flex flex-col gap-3 mb-4">
-          <ShadcnInput type="password" autocomplete="off" value={apiKey} placeholder={L.keyPh} onInput={(e) => setApiKey((e.target as HTMLInputElement).value)}
+          <ShadcnInput type="password" autocomplete="off" value={apiKey} placeholder={L.keyPh} leadingIcon="lock" passwordToggle
+            showPasswordLabel={lang === "en" ? "Show key" : "Показать ключ"}
+            hidePasswordLabel={lang === "en" ? "Hide key" : "Скрыть ключ"}
+            onInput={(e) => setApiKey((e.target as HTMLInputElement).value)}
             class="bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] text-ink font-mono focus:border-accent" />
           <div class="flex gap-2">
             {(["device", "passphrase"] as const).map((m) => (
@@ -78,7 +84,10 @@ export default function KeyEntry({ lang, onChange }: Props) {
             ))}
           </div>
           {mode === "passphrase" ? (
-            <ShadcnInput type="password" value={pass} placeholder={L.passPh} onInput={(e) => setPass((e.target as HTMLInputElement).value)}
+            <ShadcnInput type="password" value={pass} placeholder={L.passPh} leadingIcon="lock" passwordToggle
+              showPasswordLabel={lang === "en" ? "Show passphrase" : "Показать фразу"}
+              hidePasswordLabel={lang === "en" ? "Hide passphrase" : "Скрыть фразу"}
+              onInput={(e) => setPass((e.target as HTMLInputElement).value)}
               class="bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] px-3 py-2 text-[14px] text-ink focus:border-accent" />
           ) : null}
           <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm self-start" disabled={busy || apiKey.trim().length === 0 || (mode === "passphrase" && pass.length === 0)} onClick={save}>{L.save}</ShadcnButton>

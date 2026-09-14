@@ -1,5 +1,6 @@
 import { Input as ShadcnInput } from "~/components/ui/input";
 import { Button as ShadcnButton } from "~/components/ui/button";
+import { Icon } from "~/components/ui/icon";
 import { useEffect, useState } from "preact/hooks";
 
 const TOKEN_KEY = "skein.admin.token";
@@ -61,10 +62,14 @@ export default function AdminMetrics() {
       <div class="max-w-md">
         <p class="text-sm text-muted mb-3">Enter the admin token to load metrics.</p>
         <div class="flex gap-2">
-          <ShadcnInput type="password" class="font-mono flex-1 px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
-            value={token} onInput={(e) => setToken((e.target as HTMLInputElement).value)} placeholder="ADMIN_TOKEN" />
+          <ShadcnInput type="password" leadingIcon="lock" passwordToggle
+            showPasswordLabel="Show token" hidePasswordLabel="Hide token"
+            class="font-mono flex-1 px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
+            value={token} onInput={(e) => setToken((e.target as HTMLInputElement).value)} placeholder="ADMIN_TOKEN"
+            state={err ? "error" : "default"} />
           <ShadcnButton type="button" class="oa-btn oa-btn-primary oa-btn-sm disabled:opacity-50" disabled={busy || !token.trim()}
             onClick={() => load(token.trim())}>
+            <Icon name="check" size={14} />
             {busy ? "Loading…" : "Load"}
           </ShadcnButton>
         </div>
