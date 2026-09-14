@@ -55,6 +55,7 @@ function env(overrides: Record<string, unknown> = {}) {
     DB: {} as D1Database,
     TELEGRAM_BOT_TOKEN: "test-bot-token",
     TELEGRAM_WEBHOOK_SECRET: "test-webhook-secret",
+    ANTHROPIC_API_KEY: "test-anthropic-key",
     ...overrides,
   } as any;
 }
@@ -158,6 +159,31 @@ describe("Telegram invoice creation", () => {
     expect(unknown.status).toBe(400);
     const unavailable = await createInvoice({ request: invoiceRequest(), env: env({ TELEGRAM_BOT_TOKEN: "" }), data: { userId: 42 } } as any);
     expect(unavailable.status).toBe(503);
+  });
+
+  it("does not sell Coach when managed AI is unavailable", async () => {
+    const provider = vi.spyOn(globalThis, "fetch");
+    const unavailable = await createInvoice({
+      request: invoiceRequest(),
+      env: env({ ANTHROPIC_API_KEY: "" }),
+      data: { userId: 42 },
+    } as any);
+    expect(unavailable.status).toBe(503);
+    expect(db.createTelegramOrder).not.toHaveBeenCalled();
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it("keeps one-time author support available when managed AI is unavailable", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ok: true, result: "https://t.me/$support_slug" }), { status: 200 }));
+    const response = await createInvoice({
+      request: invoiceRequest({ product: "author_support" }),
+      env: env({ ANTHROPIC_API_KEY: "" }),
+      data: { userId: 42 },
+    } as any);
+    expect(response.status).toBe(200);
+    expect(db.createTelegramOrder).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      product: "author_support", amount: 1, billingKind: "one_time",
+    }), NOW);
   });
 
   it("creates an opaque server-owned recurring Stars invoice", async () => {

@@ -20,6 +20,7 @@ async function buildResponse(ctx: Parameters<PagesFunction<Env, any, RequestData
     ctx.env.TELEGRAM_WEBHOOK_SECRET?.trim() &&
     await telegramSchemaReady(ctx.env.DB),
   );
+  const telegramCoachConfigured = telegramConfigured && cfg.managedAiAvailable;
   return json({
     authenticated: Boolean(userId),
     entitlements: { coach: access?.coach ?? false },
@@ -34,7 +35,7 @@ async function buildResponse(ctx: Parameters<PagesFunction<Env, any, RequestData
       accessRenewalStatus: access?.renewalStatus ?? null,
       telegramStars: {
         configured: telegramConfigured,
-        product: telegramConfigured ? {
+        product: telegramCoachConfigured ? {
           id: telegramProduct.id,
           amount: telegramProduct.amount,
           currency: telegramProduct.currency,
