@@ -58,6 +58,9 @@ class FakeStmt {
   bind(...args: unknown[]): FakeStmt { this.args = args; return this; }
 
   async first<T = any>(): Promise<T | null> {
+    if (this.sql.startsWith("SELECT COUNT(*) AS count FROM sqlite_master")) {
+      return { count: 0 } as T;
+    }
     if (this.sql.startsWith("SELECT * FROM users WHERE github_id")) {
       return (this.db.users.find(u => u.github_id === this.args[0]) ?? null) as T | null;
     }
