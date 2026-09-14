@@ -369,6 +369,7 @@ function ReviewTab({
           placeholder={l.typePlaceholder}
           onInput={(e) => setVal((e.target as HTMLInputElement).value)}
           onKeyDown={(e) => { if (e.key === "Enter" && graded === null) submit(); }}
+          state={graded === true ? "success" : graded === false ? "error" : "default"}
           class="bg-paper border border-rule-strong rounded-[2px] px-3 py-2 text-[15px] text-ink font-mono outline-none focus:border-ink"
         />
 

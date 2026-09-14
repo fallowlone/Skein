@@ -1,7 +1,15 @@
 import { Button as ShadcnButton } from "~/components/ui/button";
-import { NativeSelect as ShadcnNativeSelect } from "~/components/ui/native-select";
 import { Textarea as ShadcnTextarea } from "~/components/ui/textarea";
 import { Input as ShadcnInput } from "~/components/ui/input";
+import { Checkbox } from "~/components/ui/checkbox";
+import { Field } from "~/components/ui/field";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from "~/components/ui/select";
 import { useLayoutEffect, useState } from "preact/hooks";
 import { lazy, Suspense } from "preact/compat";
 import type { FunctionComponent } from "preact";
@@ -251,23 +259,18 @@ function TaskCard({ lang, lessonKey, task, achievement, recommended, adaptive, o
         <div class="mt-4">
           {hint && <p class="text-xs text-muted italic mb-3">{tt(lang, hint.en, hint.ru)}</p>}
           <div class="prose max-w-none text-sm mb-4" dangerouslySetInnerHTML={{ __html: tt(lang, task.prompt.en, task.prompt.ru) }} />
-          <label class="block text-[10px] font-mono uppercase tracking-wide text-muted mb-1" for={`${task.id}-mode`}>
-            {tt(lang, "Working mode", "Режим выполнения")}
-          </label>
-          <ShadcnNativeSelect
-            id={`${task.id}-mode`}
-            class="text-sm px-2 py-1.5 mb-1 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 bg-card text-ink"
-            value={mode}
-            onChange={(e) => {
-              const next = (e.target as HTMLSelectElement).value as PracticeMode;
-              setMode(next);
-              writeResponse(lessonKey, modeKey, next);
-            }}
-          >
-            <option value="closed-book">{tt(lang, "Closed book", "Без справочных материалов")}</option>
-            <option value="docs">{tt(lang, "Documentation allowed", "С документацией")}</option>
-            <option value="ai">{tt(lang, "AI assisted", "С AI")}</option>
-          </ShadcnNativeSelect>
+          <Field label={tt(lang, "Working mode", "Режим выполнения")} htmlFor={`${task.id}-mode`}>
+            <Select value={mode} onValueChange={(v: string) => { setMode(v as PracticeMode); writeResponse(lessonKey, modeKey, v); }}>
+              <SelectTrigger id={`${task.id}-mode`} class="text-sm px-2 py-1.5 mb-1 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 bg-card text-ink">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="closed-book">{tt(lang, "Closed book", "Без справочных материалов")}</SelectItem>
+                <SelectItem value="docs">{tt(lang, "Documentation allowed", "С документацией")}</SelectItem>
+                <SelectItem value="ai">{tt(lang, "AI assisted", "С AI")}</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
           <p class="text-xs text-muted mb-4">{tt(lang, "Choose honestly; the browser does not monitor your tools.", "Выбери честно; браузер не отслеживает твои инструменты.")}</p>
           <TaskBody lang={lang} lessonKey={lessonKey} task={task} mode={mode} onChange={onChange} />
         </div>
@@ -508,7 +511,7 @@ function ReviewBody({ lang, lessonKey, task, onChange }: {
       <ul class="space-y-1 mb-4">
         {dims.map((d) => (
           <li key={d.key} class="flex items-start gap-2 text-sm">
-            <ShadcnInput type="checkbox" class="mt-1" /> <span>{tt(lang, d.en, d.ru)}</span>
+            <Checkbox class="mt-1" id={`review-${taskId}-${d.key}`} aria-label={tt(lang, d.en, d.ru)} /> <span>{tt(lang, d.en, d.ru)}</span>
           </li>
         ))}
       </ul>
@@ -611,6 +614,7 @@ function CommitReveal({ lang, lessonKey, task, mode, body, pre, taskType, onChan
         class="w-full text-sm p-3 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2 bg-card text-ink min-h-[84px] resize-y"
         value={draft}
         readOnly={shown}
+        state={shown ? "success" : "default"}
         placeholder={tt(lang, "State your prediction and the reason for it…", "Сформулируй прогноз и его причину…")}
         onInput={(e) => persistDraft((e.target as HTMLTextAreaElement).value)}
       />
@@ -724,12 +728,11 @@ function Rubric({ lang, lessonKey, taskId, items }: { lang: Locale; lessonKey: s
       <ul class="space-y-1">
         {items.map((it, i) => (
           <li key={i} class="flex items-start gap-2 text-sm">
-            <ShadcnInput
-              type="checkbox"
+            <Checkbox
               class="mt-1"
               id={`${taskId}-rubric-${i}`}
               checked={checked[i]}
-              onChange={() => toggle(i)}
+              onCheckedChange={() => toggle(i)}
             />
             <label for={`${taskId}-rubric-${i}`} dangerouslySetInnerHTML={{ __html: it }} />
           </li>
@@ -771,6 +774,8 @@ function Blanks({ lang, lessonKey, taskId, evidence, blanks, onChange }: {
               <ShadcnInput class="font-mono w-full max-w-md px-3 py-1.5 bg-card border-[0.5px] border-hairline-2 rounded-[var(--r-sm)] text-ink"
                 placeholder={tt(lang, "one word or number", "одно слово или число")}
                 value={values[b.id] ?? ""}
+                clearable
+                state={result ? (result[b.id] ? "success" : "error") : "default"}
                 onInput={(e) => setValues({ ...values, [b.id]: (e.target as HTMLInputElement).value })} />
               {result && (
                 <span class={`ml-2 text-sm shrink-0 ${result[b.id] ? "text-ok" : "text-danger"}`}>
