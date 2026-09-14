@@ -140,6 +140,7 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
                     aria-labelledby={`${key}-prompt`}
                     value={drafts[i] ?? ""}
                     readOnly={isOpen}
+                    state={graded[key] === "again" ? "error" : graded[key] ? "success" : "default"}
                     onInput={(e) => persistDraft(i, (e.target as HTMLTextAreaElement).value)}
                   />
                   <div class="flex items-center gap-3 mt-2">
