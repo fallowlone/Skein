@@ -158,6 +158,26 @@ describe("Settings Coach billing states", () => {
     expect(host.textContent).not.toContain("Coach active");
   });
 
+  it("keeps author support available while Coach checkout is unavailable without managed AI", async () => {
+    mount({
+      ...base,
+      managedAi: { ...base.managedAi, available: false },
+      billing: {
+        ...base.billing,
+        telegramStars: {
+          configured: true,
+          product: null,
+          supportProduct: { id: "author_support", amount: 1, currency: "XTR", billingKind: "one_time", subscriptionPeriodSeconds: null },
+        },
+      },
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Support the author"));
+    expect(host.textContent).toContain("Telegram Stars checkout is unavailable");
+    expect(host.textContent).toContain("Support with 1 Star");
+    const coachCheckout = Array.from(host.querySelectorAll("button")).find((node) => node.textContent?.includes("Create Telegram Stars checkout")) as HTMLButtonElement;
+    expect(coachCheckout.disabled).toBe(true);
+  });
+
   it("uses the fixed coach return target for signed-out users", async () => {
     mount({ ...base, authenticated: false, billing: { ...base.billing, verification: "not_checked" } });
     await vi.waitFor(() => expect(host.querySelector('a[href="/api/auth/login?lang=en&returnTo=coach"]')).not.toBeNull());
