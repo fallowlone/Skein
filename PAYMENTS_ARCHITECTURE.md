@@ -46,6 +46,7 @@ Forwarded invoice links do not transfer a Skein entitlement. The Skein account t
 - 500 XTR.
 - Recurring Telegram Stars subscription.
 - `subscription_period = 2592000` seconds (30 days).
+- Invoice creation fails closed when managed AI is unavailable, so Skein cannot charge for Coach while the paid server-side feature is unavailable.
 - Grants the `coach` entitlement only through the provider-confirmed `subscription_expiration_date`.
 - Renewals extend paid-through access only after a trusted `successful_payment`.
 - Cancel/resume uses `editUserStarSubscription` with the first subscription payment identifier, as required by Telegram; cancellation stops renewal and preserves the already-paid period.
@@ -57,6 +58,7 @@ Forwarded invoice links do not transfer a Skein entitlement. The Skein account t
 
 - 1 XTR.
 - One-time payment labelled **Support the author / Помощь автору**.
+- Remains available independently of managed AI availability because it is a support payment, not a Coach purchase.
 - Has no entitlement and never unlocks Coach.
 - Does not send `subscription_period` and rejects recurring/subscription metadata in `successful_payment`.
 - A one-time order can be completed only once.

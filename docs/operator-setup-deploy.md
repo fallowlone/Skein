@@ -256,8 +256,9 @@ After deploy, verify these states before publishing the Sponsors tier broadly:
    BYOK AI without Coach.
 2. `/api/entitlements` reports `billing.configured=true` only when the Sponsors URL, webhook
    secret, and qualifying tier IDs are all present.
-3. With `ANTHROPIC_API_KEY` absent, the UI shows Coach signup as paused and does not link to a
-   checkout.
+3. With `ANTHROPIC_API_KEY` absent, the UI shows Coach signup as paused and the server rejects
+   `coach_monthly` invoice creation. The independent 1 XTR `author_support` checkout remains
+   available when Telegram billing itself is configured.
 4. A public recurring sponsorship from the same GitHub user grants `coach`; cancellation revokes
    it, while `pending_cancellation` remains active until GitHub sends `cancelled`.
 5. An entitled user can run one managed practice critique and sees the monthly remaining count

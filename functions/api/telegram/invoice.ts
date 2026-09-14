@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env, RequestData } from "../../lib/types";
 import { createTelegramOrder, markTelegramOrderFailed, markTelegramOrderInvoiceReady, telegramSchemaReady } from "../../lib/db";
-import { readBodyBounded } from "../../lib/coach";
+import { coachConfig, readBodyBounded } from "../../lib/coach";
 import { PRODUCTS } from "../../lib/products";
 import { error, isSameOriginMutation, json } from "../../lib/response";
 import { callTelegramApi, newTelegramOrderId, normalizeTelegramInvoiceUrl, TELEGRAM_ORDER_TTL_MS } from "../../lib/telegram";
@@ -25,6 +25,9 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
     : null;
   const product = typeof requestedProduct === "string" ? PRODUCTS[requestedProduct] : null;
   if (!product) return error(400, "invalid_product");
+  if (product.entitlements.includes("coach") && !coachConfig(ctx.env).managedAiAvailable) {
+    return error(503, "billing_unavailable");
+  }
 
   const now = Date.now();
   const orderId = newTelegramOrderId();

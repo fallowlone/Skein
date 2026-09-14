@@ -19,6 +19,7 @@
 - [x] GitHub Sponsors signed webhook and reconciliation tests pass.
 - [x] Telegram webhook requires its secret token and validates server-owned product/amount/currency.
 - [x] Telegram `coach_monthly` uses a real 30-day recurring Stars subscription and paid-through entitlement.
+- [x] Coach invoice creation fails closed when managed AI is unavailable; `author_support` remains independent.
 - [x] Telegram `author_support` is a 1 XTR one-time payment with no entitlement.
 - [x] Duplicate/replayed Telegram payments and old-refund/new-renewal cases have regression coverage.
 - [x] Customer payment history is scoped to the authenticated Skein user.
