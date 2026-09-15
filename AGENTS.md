@@ -1,6 +1,22 @@
 # AGENTS.md
 
-Skein is an Astro 5 + Preact + Tailwind bilingual curriculum site. Work in `site/`; generated output lives in `site/dist/` and must not be edited.
+Skein is an Astro 6 + Preact + Tailwind bilingual curriculum and adaptive-learning product. Work in `site/`; generated output lives in `site/dist/` and must not be edited.
+
+## Codex project context
+
+Before substantive work, read these two files:
+
+- `.codex/PROJECT_CONTEXT.md` — durable product, architecture, source-of-truth, and workflow context.
+- `.codex/CURRENT_STATE.md` — current revision, completed milestones, verification state, known gaps, and next priorities.
+
+Treat `.codex/CURRENT_STATE.md` as the current-state authority when older handoff,
+audit, migration, or production-readiness documents disagree with it. Verify claims
+against code/configuration when the task depends on them.
+
+After a material milestone (architecture change, release, migration, major product
+capability, or a resolved/introduced release blocker), update
+`.codex/CURRENT_STATE.md`. Update `.codex/PROJECT_CONTEXT.md` only when durable
+architecture or project invariants change.
 
 ## Scope
 
@@ -19,7 +35,7 @@ Useful locations:
 - `site/src/pages/[lang]/learn/` — learning routes.
 - `site/src/content/` — curriculum content and supporting collections.
 - `site/src/lint/rules/` — build-time content rules.
-- `.Codex/commands/infographic.md` — canonical `/infographic` workflow.
+- `.claude/commands/infographic.md` — canonical `/infographic` workflow.
 - `docs/superpowers/specs/2026-05-16-foundations-algorithms-track-design.md` — foundations `/teach` spec.
 
 ## Required checks
@@ -38,7 +54,7 @@ Useful locations:
 
 ## Authoring invariants
 
-For `/infographic`, follow `.Codex/commands/infographic.md`; it defines research, bilingual authoring, text budgets, hydration cap, status flow, visual verification, and commit convention. Do not duplicate that workflow here.
+For `/infographic`, follow `.claude/commands/infographic.md`; it defines research, bilingual authoring, text budgets, hydration cap, status flow, visual verification, and commit convention. Do not duplicate that workflow here.
 
 For `/teach`, follow the foundations spec referenced above. Lessons remain bilingual and use the same lesson content tree.
 
