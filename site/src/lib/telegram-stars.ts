@@ -1,29 +1,66 @@
-/**
- * Central configuration gate for optional Telegram Stars support.
- * Telegram's documented invoice deep links are t.me/invoice/<slug> and t.me/$<slug>.
- * No production endpoint is invented: anything else stays unavailable in the UI.
- */
-export function normalizeTelegramStarsUrl(raw: string | null | undefined): string | null {
-  const value = raw?.trim();
-  if (!value) return null;
-
-  try {
-    const url = new URL(value);
-    const invoicePath = /^\/(?:invoice\/[^/]+|\$[^/]+)$/;
-    if (
-      url.protocol !== "https:" ||
-      url.hostname.toLowerCase() !== "t.me" ||
-      url.port !== "" ||
-      url.username !== "" ||
-      url.password !== "" ||
-      url.search !== "" ||
-      url.hash !== "" ||
-      !invoicePath.test(url.pathname)
-    ) return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
+export interface TelegramInvoiceResult {
+  invoiceUrl: string;
+  orderId: string;
+  product: {
+    id: string;
+    amount: number;
+    currency: "XTR";
+    billingKind: "subscription" | "one_time";
+    subscriptionPeriodSeconds: number | null;
+  };
 }
 
-export const TELEGRAM_STARS_URL = normalizeTelegramStarsUrl(import.meta.env.PUBLIC_TELEGRAM_STARS_URL);
+export interface BillingPayment {
+  provider: string;
+  product: string;
+  amount: number;
+  currency: string;
+  status: string;
+  createdAt: string;
+  subscriptionExpiresAt: string | null;
+}
+
+async function responseError(response: Response, fallback: string): Promise<Error> {
+  const body = await response.json().catch(() => ({})) as { error?: unknown };
+  return new Error(typeof body.error === "string" ? body.error : fallback);
+}
+
+export async function createTelegramCoachInvoice(fetcher: typeof fetch = fetch): Promise<TelegramInvoiceResult> {
+  return createTelegramInvoice("coach_monthly", fetcher);
+}
+
+export async function createTelegramAuthorSupportInvoice(fetcher: typeof fetch = fetch): Promise<TelegramInvoiceResult> {
+  return createTelegramInvoice("author_support", fetcher);
+}
+
+async function createTelegramInvoice(product: "coach_monthly" | "author_support", fetcher: typeof fetch): Promise<TelegramInvoiceResult> {
+  const response = await fetcher("/api/telegram/invoice", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ product }),
+  });
+  if (!response.ok) throw await responseError(response, "telegram_invoice_failed");
+  return await response.json() as TelegramInvoiceResult;
+}
+
+export async function fetchBillingPayments(fetcher: typeof fetch = fetch): Promise<BillingPayment[]> {
+  const response = await fetcher("/api/billing/payments", { credentials: "same-origin" });
+  if (!response.ok) throw await responseError(response, "payment_history_failed");
+  const body = await response.json() as { payments?: BillingPayment[] };
+  return Array.isArray(body.payments) ? body.payments : [];
+}
+
+export async function setTelegramCoachRenewal(
+  action: "cancel" | "resume",
+  fetcher: typeof fetch = fetch,
+): Promise<{ renewal: "cancelled" | "active"; accessExpiresAt: string }> {
+  const response = await fetcher("/api/telegram/subscription", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action }),
+  });
+  if (!response.ok) throw await responseError(response, "subscription_update_failed");
+  return await response.json() as { renewal: "cancelled" | "active"; accessExpiresAt: string };
+}
