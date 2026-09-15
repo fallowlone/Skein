@@ -9,15 +9,20 @@ milestones or when a release blocker changes. Durable architecture belongs in
 ## Revision
 
 - Branch: `main`
-- HEAD: `29fe541b427017ec9d304a18a5d66f08dd0c6046`
-- `origin/main`: same revision at verification time
-- Working tree at verification time: clean
-- Nearest release tag: `v1.0.0-production-ready` (current HEAD is 6 commits after it)
+- Code baseline inspected: `29fe541b427017ec9d304a18a5d66f08dd0c6046`
+- `origin/main` matched that baseline when the project-state evidence below was collected.
+- Working tree was clean before these context documents were added.
+- At that code baseline, `v1.0.0-production-ready` was 6 commits behind.
+
+The documentation commit that updates this file can advance `HEAD` without changing
+the product state described below. Always resolve the live `HEAD`, branch, and working
+tree at the start of a new task instead of treating the baseline SHA as the current
+checkout forever.
 
 ## Current stage
 
-Skein has a production-ready v1 baseline and the current `main` revision is deployed
-through the normal GitHub Actions pipeline. The active stage is **post-release
+Skein has a production-ready v1 baseline and the inspected production code revision
+was deployed through the normal GitHub Actions pipeline. The active stage is **post-release
 operational verification plus continued learning/product quality work**.
 
 The application is not waiting on a code build/deploy gate at this revision. The
@@ -47,7 +52,7 @@ Since `v1.0.0-production-ready`:
 
 ## Current production evidence
 
-GitHub Actions workflow `Deploy Skein` for the current HEAD succeeded twice on
+GitHub Actions workflow `Deploy Skein` for the inspected production code baseline succeeded twice on
 2026-09-15:
 
 - Push run `34933840178`: success.
@@ -104,9 +109,9 @@ the repository/CI inspection used to update this file:
 - test the rollback procedure;
 - enable/verify production monitoring.
 
-The checklist item saying the billing branch still needs CI/promotion is stale at
-this revision: the branch passed workflow runs and the merged `main` HEAD has passed
-the full production deploy workflow.
+The checklist item saying the billing branch still needs CI/promotion is stale for
+this product state: the branch passed workflow runs and the merged production code
+baseline passed the full production deploy workflow.
 
 ## Next priorities
 
@@ -133,4 +138,3 @@ Update this document when any of these change materially:
 
 Record evidence, commit/run identifiers when useful, and the verification date. Do
 not copy transient debug logs into this file.
-

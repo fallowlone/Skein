@@ -39,7 +39,7 @@
 - [x] Billing production secret/config names verified; provider-side webhook registration still requires the checks above.
 - [ ] Rollback procedure tested.
 - [ ] Monitoring enabled.
-- [x] Billing task branch passed GitHub Actions and was promoted through the repository's normal `main` production deploy path; current `main` (`29fe541b`) also passed the full deploy workflow on 2026-09-15.
+- [x] Billing task branch passed GitHub Actions and was promoted through the repository's normal `main` production deploy path; production code revision `29fe541b` also passed the full deploy workflow on 2026-09-15.
 
 ## Post launch
 
