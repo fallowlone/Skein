@@ -24,7 +24,6 @@ function mount(overrides: Partial<Parameters<typeof ExpeditionPass>[0]> = {}) {
   render(
     <ExpeditionPass
       lang="en"
-      telegramStarsUrl={null}
       routeCounts={counts}
       onOpenPattern={onOpenPattern}
       onDismiss={onDismiss}
@@ -87,19 +86,12 @@ describe("ExpeditionPass", () => {
     expect(host.textContent).toContain("3 problems in the live bank");
   });
 
-  it("does not expose a fake checkout when Telegram Stars is not configured", async () => {
+  it("routes support to the real Skein billing surface instead of an external payment URL", async () => {
     mount();
     await flush();
-    const support = button("Telegram Stars unavailable");
-    expect(support.disabled).toBe(true);
+    const support = host.querySelector('a.ep-cta-primary') as HTMLAnchorElement;
+    expect(support.textContent).toContain("See Skein support options");
+    expect(support.getAttribute("href")).toBe("/en/settings#coach-plan");
     expect(host.querySelector('a[href*="stripe"],a[href*="paypal"],a[href*="patreon"],a[href*="ko-fi"]')).toBeNull();
-  });
-
-  it("uses the configured Telegram Stars destination as the only financial link", async () => {
-    mount({ telegramStarsUrl: "https://t.me/$invoice_slug" });
-    await flush();
-    const link = host.querySelector("a.ep-cta-primary") as HTMLAnchorElement;
-    expect(link.textContent).toContain("Support with Telegram Stars");
-    expect(link.href).toBe("https://t.me/$invoice_slug");
   });
 });
