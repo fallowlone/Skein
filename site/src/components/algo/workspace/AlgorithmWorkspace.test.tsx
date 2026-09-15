@@ -60,7 +60,6 @@ function mount() {
       problem={problem}
       bankProblems={bankProblems}
       trackHref="/en/learn/algorithms"
-      telegramStarsUrl={null}
     />,
     host,
   );

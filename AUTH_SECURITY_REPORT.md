@@ -46,6 +46,5 @@ Premium
 ## Remaining work
 
 - Add product specific entitlement gates when premium features are introduced.
-- Implement Telegram Stars subscription lifecycle in the payments stage.
+- Keep new billing products behind the existing server-side entitlement and source-ownership checks.
 - Add dedicated account UI flows for registration providers if required.
-

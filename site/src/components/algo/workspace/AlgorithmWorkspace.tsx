@@ -40,7 +40,6 @@ type Props = {
   problem: WorkspaceProblem;
   bankProblems: BankProblem[];
   trackHref: string;
-  telegramStarsUrl: string | null;
 };
 
 const REVISIT_DAYS = 5; // mirrors ../drill-state.ts's own fixed revisit window
@@ -70,7 +69,7 @@ function bankRowStatus(entry: DrillEntry | undefined, now: number): BankRow["sta
   return needsRevisit(entry, now) ? "due" : "solved";
 }
 
-export default function AlgorithmWorkspace({ lang, problem, bankProblems, trackHref, telegramStarsUrl }: Props) {
+export default function AlgorithmWorkspace({ lang, problem, bankProblems, trackHref }: Props) {
   const labels = useMemo(() => labelsFor(lang), [lang]);
   const initialSession = useMemo(() => loadSession(problem.id), [problem.id]);
   const initialCode = initialSession?.code || problem.seedCode;
@@ -416,7 +415,6 @@ export default function AlgorithmWorkspace({ lang, problem, bankProblems, trackH
     <div class="algorithm-workspace-root" style="background:var(--paper);color:var(--ink);min-height:100vh">
       <ExpeditionPass
         lang={lang}
-        telegramStarsUrl={telegramStarsUrl}
         routeCounts={expeditionCounts}
         onOpenPattern={openBankPattern}
         onDismiss={() => focusScreenTab(screen)}

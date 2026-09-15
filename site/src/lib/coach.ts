@@ -10,6 +10,26 @@ export interface CoachStatus {
     sponsorUrl: string | null;
     provider: "github-sponsors" | null;
     verification?: "verified" | "unavailable" | "reauth_required" | "not_checked";
+    accessProvider?: "github-sponsors" | "telegram-stars" | null;
+    accessExpiresAt?: string | null;
+    accessRenewalStatus?: string | null;
+    telegramStars?: {
+      configured: boolean;
+      product: {
+        id: string;
+        amount: number;
+        currency: "XTR";
+        billingKind: "subscription";
+        subscriptionPeriodSeconds: number;
+      } | null;
+      supportProduct?: {
+        id: string;
+        amount: number;
+        currency: "XTR";
+        billingKind: "one_time";
+        subscriptionPeriodSeconds: null;
+      } | null;
+    };
   };
   managedAi: { available: boolean; limit: number; used: number; remaining: number; period: string; resetsAt: string };
 }

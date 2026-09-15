@@ -4,11 +4,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   fetchCoachStatus: vi.fn(),
   recheckCoachStatus: vi.fn(),
+  createTelegramAuthorSupportInvoice: vi.fn(),
+  createTelegramCoachInvoice: vi.fn(),
+  fetchBillingPayments: vi.fn(),
+  setTelegramCoachRenewal: vi.fn(),
 }));
 
 vi.mock("~/lib/coach", () => ({
   fetchCoachStatus: mocks.fetchCoachStatus,
   recheckCoachStatus: mocks.recheckCoachStatus,
+}));
+vi.mock("~/lib/telegram-stars", () => ({
+  createTelegramAuthorSupportInvoice: mocks.createTelegramAuthorSupportInvoice,
+  createTelegramCoachInvoice: mocks.createTelegramCoachInvoice,
+  fetchBillingPayments: mocks.fetchBillingPayments,
+  setTelegramCoachRenewal: mocks.setTelegramCoachRenewal,
 }));
 
 import SettingsDrawer from "./SettingsDrawer";
@@ -29,7 +39,13 @@ beforeEach(() => {
   document.body.appendChild(host);
   mocks.fetchCoachStatus.mockReset();
   mocks.recheckCoachStatus.mockReset();
+  mocks.createTelegramAuthorSupportInvoice.mockReset();
+  mocks.createTelegramCoachInvoice.mockReset();
+  mocks.fetchBillingPayments.mockReset();
+  mocks.setTelegramCoachRenewal.mockReset();
   mocks.fetchCoachStatus.mockResolvedValue(base);
+  mocks.fetchBillingPayments.mockResolvedValue([]);
+  mocks.setTelegramCoachRenewal.mockResolvedValue({ renewal: "cancelled", accessExpiresAt: "2026-10-14T20:00:00.000Z" });
 });
 
 afterEach(() => {
@@ -44,6 +60,124 @@ function mount(status = base, lang: "en" | "ru" = "en") {
 }
 
 describe("Settings Coach billing states", () => {
+  it("creates Telegram checkout through the backend and does not treat invoice creation as payment", async () => {
+    const stars: CoachStatus = {
+      ...base,
+      billing: {
+        ...base.billing,
+        telegramStars: {
+          configured: true,
+          product: { id: "coach_monthly", amount: 500, currency: "XTR", billingKind: "subscription", subscriptionPeriodSeconds: 2_592_000 },
+          supportProduct: { id: "author_support", amount: 1, currency: "XTR", billingKind: "one_time", subscriptionPeriodSeconds: null },
+        },
+      },
+    };
+    mocks.createTelegramCoachInvoice.mockResolvedValue({
+      invoiceUrl: "https://t.me/$invoice_slug",
+      orderId: "ord_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      product: stars.billing.telegramStars!.product,
+    });
+    mount(stars);
+    await vi.waitFor(() => expect(host.textContent).toContain("Create Telegram Stars checkout"));
+    (Array.from(host.querySelectorAll("button")).find((node) => node.textContent?.includes("Create Telegram")) as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(host.querySelector('a[href="https://t.me/$invoice_slug"]')).not.toBeNull());
+    expect(host.textContent).toContain("Payment is pending until Skein receives Telegram's signed webhook confirmation");
+    expect(host.textContent).not.toContain("Stars payment recognized by Skein");
+  });
+
+  it("renders server-confirmed Telegram entitlement and paid-through date", async () => {
+    mount({
+      ...base,
+      entitlements: { coach: true },
+      billing: {
+        ...base.billing,
+        accessProvider: "telegram-stars",
+        accessExpiresAt: "2026-10-14T20:00:00.000Z",
+        accessRenewalStatus: "active",
+        telegramStars: { configured: true, product: { id: "coach_monthly", amount: 500, currency: "XTR", billingKind: "subscription", subscriptionPeriodSeconds: 2_592_000 }, supportProduct: { id: "author_support", amount: 1, currency: "XTR", billingKind: "one_time", subscriptionPeriodSeconds: null } },
+      },
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Stars payment recognized by Skein"));
+    expect(host.textContent).toContain("Coach active");
+    expect(host.textContent).toContain("Cancel Stars renewal");
+    expect(host.textContent).not.toContain("Refresh sponsorship status");
+  });
+
+  it("keeps paid-through Coach visible after Telegram reports a renewal payment failure", async () => {
+    mount({
+      ...base,
+      entitlements: { coach: true },
+      billing: {
+        ...base.billing,
+        accessProvider: "telegram-stars",
+        accessExpiresAt: "2026-10-14T20:00:00.000Z",
+        accessRenewalStatus: "payment_failed",
+        telegramStars: { configured: true, product: { id: "coach_monthly", amount: 500, currency: "XTR", billingKind: "subscription", subscriptionPeriodSeconds: 2_592_000 }, supportProduct: { id: "author_support", amount: 1, currency: "XTR", billingKind: "one_time", subscriptionPeriodSeconds: null } },
+      },
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("renewal payment failure"));
+    expect(host.textContent).toContain("Coach active");
+    expect(host.textContent).not.toContain("Cancel Stars renewal");
+    expect(host.textContent).not.toContain("Resume Stars renewal");
+  });
+
+  it("shows refunded Stars history without restoring entitlement", async () => {
+    mocks.fetchBillingPayments.mockResolvedValue([{ provider: "telegram_stars", product: "coach_monthly", amount: 500, currency: "XTR", status: "refunded", createdAt: "2026-09-14T20:00:00.000Z", subscriptionExpiresAt: "2026-10-14T20:00:00.000Z" }]);
+    mount({
+      ...base,
+      billing: { ...base.billing, telegramStars: { configured: true, product: { id: "coach_monthly", amount: 500, currency: "XTR", billingKind: "subscription", subscriptionPeriodSeconds: 2_592_000 }, supportProduct: { id: "author_support", amount: 1, currency: "XTR", billingKind: "one_time", subscriptionPeriodSeconds: null } } },
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Latest Stars payment was refunded"));
+    expect(host.textContent).not.toContain("Stars payment recognized by Skein");
+  });
+
+  it("offers a one-time 1-Star author-support checkout that never claims Coach access", async () => {
+    const stars: CoachStatus = {
+      ...base,
+      billing: {
+        ...base.billing,
+        telegramStars: {
+          configured: true,
+          product: { id: "coach_monthly", amount: 500, currency: "XTR", billingKind: "subscription", subscriptionPeriodSeconds: 2_592_000 },
+          supportProduct: { id: "author_support", amount: 1, currency: "XTR", billingKind: "one_time", subscriptionPeriodSeconds: null },
+        },
+      },
+    };
+    mocks.createTelegramAuthorSupportInvoice.mockResolvedValue({
+      invoiceUrl: "https://t.me/$support_slug",
+      orderId: "ord_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      product: stars.billing.telegramStars!.supportProduct,
+    });
+    mount(stars);
+    await vi.waitFor(() => expect(host.textContent).toContain("Support the author"));
+    expect(host.textContent).toContain("1 Star, one-time");
+    expect(host.textContent).toContain("does not unlock Coach");
+    (Array.from(host.querySelectorAll("button")).find((node) => node.textContent?.includes("Support with 1 Star")) as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(host.querySelector('a[href="https://t.me/$support_slug"]')).not.toBeNull());
+    expect(mocks.createTelegramAuthorSupportInvoice).toHaveBeenCalledOnce();
+    expect(host.textContent).not.toContain("Coach active");
+  });
+
+  it("keeps author support available while Coach checkout is unavailable without managed AI", async () => {
+    mount({
+      ...base,
+      managedAi: { ...base.managedAi, available: false },
+      billing: {
+        ...base.billing,
+        telegramStars: {
+          configured: true,
+          product: null,
+          supportProduct: { id: "author_support", amount: 1, currency: "XTR", billingKind: "one_time", subscriptionPeriodSeconds: null },
+        },
+      },
+    });
+    await vi.waitFor(() => expect(host.textContent).toContain("Support the author"));
+    expect(host.textContent).toContain("Telegram Stars checkout is unavailable");
+    expect(host.textContent).toContain("Support with 1 Star");
+    const coachCheckout = Array.from(host.querySelectorAll("button")).find((node) => node.textContent?.includes("Create Telegram Stars checkout")) as HTMLButtonElement;
+    expect(coachCheckout.disabled).toBe(true);
+  });
+
   it("uses the fixed coach return target for signed-out users", async () => {
     mount({ ...base, authenticated: false, billing: { ...base.billing, verification: "not_checked" } });
     await vi.waitFor(() => expect(host.querySelector('a[href="/api/auth/login?lang=en&returnTo=coach"]')).not.toBeNull());

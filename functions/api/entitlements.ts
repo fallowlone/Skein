@@ -1,8 +1,9 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env, RequestData } from "../lib/types";
-import { getAiUsage } from "../lib/db";
+import { getAiUsage, telegramSchemaReady } from "../lib/db";
 import { COACH_AI_FEATURE, coachConfig, nextUtcMonthIso, resolveCoachAccess, utcMonthPeriod } from "../lib/coach";
-import { json } from "../lib/response";
+import { PRODUCTS } from "../lib/products";
+import { isSameOriginMutation, json } from "../lib/response";
 
 async function buildResponse(ctx: Parameters<PagesFunction<Env, any, RequestData>>[0], forceRefresh: boolean) {
   const cfg = coachConfig(ctx.env);
@@ -12,6 +13,14 @@ async function buildResponse(ctx: Parameters<PagesFunction<Env, any, RequestData
   const access = userId
     ? await resolveCoachAccess(ctx.env.DB, cfg, userId, ctx.data.githubAccessToken, forceRefresh)
     : null;
+  const telegramProduct = PRODUCTS.coach_monthly;
+  const telegramSupportProduct = PRODUCTS.author_support;
+  const telegramConfigured = Boolean(
+    ctx.env.TELEGRAM_BOT_TOKEN?.trim() &&
+    ctx.env.TELEGRAM_WEBHOOK_SECRET?.trim() &&
+    await telegramSchemaReady(ctx.env.DB),
+  );
+  const telegramCoachConfigured = telegramConfigured && cfg.managedAiAvailable;
   return json({
     authenticated: Boolean(userId),
     entitlements: { coach: access?.coach ?? false },
@@ -21,6 +30,26 @@ async function buildResponse(ctx: Parameters<PagesFunction<Env, any, RequestData
       provider: cfg.billingConfigured ? "github-sponsors" : null,
       verification: cfg.billingConfigured ? (access?.state ?? "not_checked") : "not_checked",
       verifiedAt: access?.verifiedAt ? new Date(access.verifiedAt).toISOString() : null,
+      accessProvider: access?.provider ?? null,
+      accessExpiresAt: access?.expiresAt ? new Date(access.expiresAt).toISOString() : null,
+      accessRenewalStatus: access?.renewalStatus ?? null,
+      telegramStars: {
+        configured: telegramConfigured,
+        product: telegramCoachConfigured ? {
+          id: telegramProduct.id,
+          amount: telegramProduct.amount,
+          currency: telegramProduct.currency,
+          billingKind: telegramProduct.billingKind,
+          subscriptionPeriodSeconds: telegramProduct.subscriptionPeriodSeconds,
+        } : null,
+        supportProduct: telegramConfigured ? {
+          id: telegramSupportProduct.id,
+          amount: telegramSupportProduct.amount,
+          currency: telegramSupportProduct.currency,
+          billingKind: telegramSupportProduct.billingKind,
+          subscriptionPeriodSeconds: telegramSupportProduct.subscriptionPeriodSeconds,
+        } : null,
+      },
     },
     managedAi: {
       available: cfg.managedAiAvailable,
@@ -36,14 +65,7 @@ async function buildResponse(ctx: Parameters<PagesFunction<Env, any, RequestData
 export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) => buildResponse(ctx, false);
 
 export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) => {
-  const origin = ctx.request.headers.get("Origin");
-  const referer = ctx.request.headers.get("Referer");
-  const requestOrigin = new URL(ctx.request.url).origin;
-  let sameOrigin = origin === requestOrigin;
-  if (!sameOrigin && referer) {
-    try { sameOrigin = new URL(referer).origin === requestOrigin; } catch { sameOrigin = false; }
-  }
-  if (!sameOrigin) return new Response(JSON.stringify({ error: "csrf" }), {
+  if (!isSameOriginMutation(ctx.request)) return new Response(JSON.stringify({ error: "csrf" }), {
     status: 403,
     headers: { "content-type": "application/json", "Cache-Control": "no-store" },
   });

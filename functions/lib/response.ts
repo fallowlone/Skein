@@ -9,6 +9,16 @@ export function error(status: number, code: string, headers: HeadersInit = {}): 
   return json({ error: code }, status, headers);
 }
 
+export function isSameOriginMutation(request: Request): boolean {
+  const requestOrigin = new URL(request.url).origin;
+  const origin = request.headers.get("Origin");
+  if (origin === requestOrigin) return true;
+  const referer = request.headers.get("Referer");
+  if (!referer) return false;
+  try { return new URL(referer).origin === requestOrigin; }
+  catch { return false; }
+}
+
 // Content-Security-Policy delivered as a response HEADER. The site ALREADY enforces an identical
 // policy via a <meta http-equiv> tag (site/src/lib/csp.ts buildCsp), proven in production — so
 // mirroring it here is safe: it changes nothing the meta already binds and only ADDS the two

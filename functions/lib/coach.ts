@@ -1,6 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env } from "./types";
 import {
+  getActiveTelegramEntitlement,
   getEntitlementState,
   getGithubSponsorship,
   getGithubSponsorshipBySponsorId,
@@ -19,7 +20,14 @@ const DEFAULT_MONTHLY_REQUESTS = 30;
 const MAX_MONTHLY_REQUESTS = 1000;
 export const COACH_VERIFICATION_MAX_AGE_MS = 5 * 60 * 1000;
 export type CoachVerification = "verified" | "unavailable" | "reauth_required";
-export interface CoachAccess { state: CoachVerification; coach: boolean; verifiedAt: number | null; }
+export interface CoachAccess {
+  state: CoachVerification;
+  coach: boolean;
+  verifiedAt: number | null;
+  provider: "github-sponsors" | "telegram-stars" | null;
+  expiresAt: number | null;
+  renewalStatus: string | null;
+}
 
 export interface CoachConfig {
   billingConfigured: boolean;
@@ -92,14 +100,25 @@ export async function resolveCoachAccess(
   forceRefresh = false,
   now = Date.now(),
 ): Promise<CoachAccess> {
+  const telegram = await getActiveTelegramEntitlement(db, userId, COACH_ENTITLEMENT, now);
+  if (telegram) {
+    return {
+      state: "verified",
+      coach: true,
+      verifiedAt: now,
+      provider: "telegram-stars",
+      expiresAt: telegram.expiresAt,
+      renewalStatus: telegram.renewalStatus,
+    };
+  }
   const stored = await getEntitlementState(db, userId, COACH_ENTITLEMENT);
   if (!forceRefresh && stored?.verifiedAt != null && now - stored.verifiedAt <= COACH_VERIFICATION_MAX_AGE_MS) {
-    return { state: "verified", coach: stored.active, verifiedAt: stored.verifiedAt };
+    return { state: "verified", coach: stored.active, verifiedAt: stored.verifiedAt, provider: stored.active ? "github-sponsors" : null, expiresAt: null, renewalStatus: null };
   }
   if (!cfg.billingConfigured || !cfg.sponsorableLogin) {
-    return { state: "unavailable", coach: false, verifiedAt: stored?.verifiedAt ?? null };
+    return { state: "unavailable", coach: false, verifiedAt: stored?.verifiedAt ?? null, provider: null, expiresAt: null, renewalStatus: null };
   }
-  if (!githubAccessToken) return { state: "reauth_required", coach: false, verifiedAt: stored?.verifiedAt ?? null };
+  if (!githubAccessToken) return { state: "reauth_required", coach: false, verifiedAt: stored?.verifiedAt ?? null, provider: null, expiresAt: null, renewalStatus: null };
   let live: GithubViewerSponsorship | null;
   try {
     live = await fetchViewerSponsorship(githubAccessToken, cfg.sponsorableLogin);
@@ -108,15 +127,26 @@ export async function resolveCoachAccess(
       state: err instanceof Error && err.message === "github_reauth_required" ? "reauth_required" : "unavailable",
       coach: false,
       verifiedAt: stored?.verifiedAt ?? null,
+      provider: null,
+      expiresAt: null,
+      renewalStatus: null,
     };
   }
   const user = await db.prepare("SELECT github_id FROM users WHERE id = ?").bind(userId).first<{ github_id: number }>();
-  if (!user) return { state: "unavailable", coach: false, verifiedAt: null };
+  if (!user) return { state: "unavailable", coach: false, verifiedAt: null, provider: null, expiresAt: null, renewalStatus: null };
   await reconcileVerifiedGithubSponsorOnLogin(db, user.github_id, userId, cfg, live, now);
   const reconciled = await getEntitlementState(db, userId, COACH_ENTITLEMENT);
   const ownsVerifiedState = reconciled?.source === "github-sponsors" &&
     reconciled.sourceRef === live?.sponsorshipId && reconciled.verifiedAt === now;
-  return { state: "verified", coach: Boolean(reconciled?.active && ownsVerifiedState), verifiedAt: reconciled?.verifiedAt ?? null };
+  const coach = Boolean(reconciled?.active && ownsVerifiedState);
+  return {
+    state: "verified",
+    coach,
+    verifiedAt: reconciled?.verifiedAt ?? null,
+    provider: coach ? "github-sponsors" : null,
+    expiresAt: null,
+    renewalStatus: null,
+  };
 }
 
 export async function readBodyBounded(
