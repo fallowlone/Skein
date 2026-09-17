@@ -146,6 +146,30 @@ premium delivery exists yet.
 - Not implemented (deliberately): WebP conversion, R2 upload, entitlement
   gating, and any site/delivery integration for premium assets.
 
+### Experimental semantic engine v2 (2026-09-17)
+
+- Implemented under `scripts/premium-infographics/v2/`: strict bilingual JSON,
+  four bounded diagram families, exact local Inter Tight font measurement, offline
+  SVG/PNG rendering and atomic content-addressed private generations.
+- All 11 units × EN/RU now generate 44 SVGs plus 44 PNGs. Rollout includes rolling,
+  blue-green, canary and Recreate, with an explicit downtime state. Traffic bars
+  are illustrative traffic shares, not replica schedules.
+- Local verification: 29 v2 structural/file tests, 6 unchanged v1 tests and one
+  real-browser regression test pass. Two complete generations were byte-identical;
+  all 88 file hashes and 44 PNG dimensions were checked. Local toolchain:
+  Playwright 1.60.0, Chromium 148.0.7778.96, Node v26.8.2 on macOS arm64.
+- Dedicated `premium-infographics.yml` performs structural checks and browser
+  export/determinism without deployment or artifact uploads. Remote result must
+  be checked for the corresponding feature-branch commit.
+- **Visual acceptance is blocked:** judge PNG input was rejected because the
+  selected model does not support images; no image received a visual pass.
+  V1 remains unchanged/default; v2 manifests stay experimental with acceptance
+  pending. No production readiness claim or compatibility-entry-point switch.
+- Remaining acceptance work: full/reduced-size visual and editorial review,
+  especially connector meaning, layer invalidation and build/runtime boundaries.
+  Geometry checks cover text boxes, not arbitrary path crossings. No premium
+  delivery integration or generated images have been committed/published.
+
 ## Updating this file
 
 Update this document when any of these change materially:

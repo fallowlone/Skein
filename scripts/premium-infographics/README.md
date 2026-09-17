@@ -9,7 +9,56 @@ writes SVG files to a gitignored directory. It does not convert to WebP, upload
 to R2, gate content by entitlement, or deliver anything through the site. Those
 steps are intentionally out of scope until premium delivery is designed.
 
-## Run
+## Experimental v2
+
+V1 below remains the default; v2 must not be called production-ready until its
+visual acceptance gate passes. See [engine-v2.md](../../docs/infographics/engine-v2.md)
+for the semantic contract, visual profile, migration and acceptance requirements.
+
+```bash
+# Data-only validation (Python 3.10+, no browser):
+python3 scripts/premium-infographics/v2/generate.py --check
+python3 -m unittest discover -s scripts/premium-infographics/v2/tests -v
+
+# Install existing locked dependencies and matching browser, if absent:
+(cd site && bun install --frozen-lockfile)
+(cd site && bunx --no-install playwright install chromium)
+
+# Browser regression check (fonts, geometry rejection, SVG policy, PNG dimensions):
+python3 scripts/premium-infographics/v2/tests/check_renderer.py
+
+# Canonical local generation: actual font measurement and SVG geometry checks.
+python3 scripts/premium-infographics/v2/generate.py --export-png
+
+# Four prototype units, both languages; repeated selections are supported:
+python3 scripts/premium-infographics/v2/generate.py --export-png \
+  --unit 01-image-layers --unit 03-k8s-objects \
+  --unit 04-rollout-strategies --unit 08-putting-it-together
+
+# One locale/unit (manifest explicitly records a partial course):
+python3 scripts/premium-infographics/v2/generate.py --unit 04-rollout-strategies --locale ru
+```
+
+Node and the site's existing Playwright / Inter Tight packages are required for
+canonical generation. Missing fonts or Chromium are fatal; `--check` checks only
+schema/content, not layout or final image quality. No new packages are introduced.
+
+Edit `v2/content/deployment.json`, not Python drawing code, to revise course copy.
+The CLI writes a new private generation under `.premium-infographics/deployment-v2/`.
+Read `active.json` and then `generations/<generation>/<file>`; don't enumerate old
+generations as if they were current. A full PNG release has 44 SVGs and 44 PNGs.
+`--output` may choose another trusted private folder, but in-repository output is
+restricted to `.premium-infographics/`. Symlink paths are rejected. Previous
+outputs are preserved; generation requires a trusted, non-shared writable folder.
+
+The renderer batches text measurements, embeds licensed local Latin/Cyrillic fonts,
+checks actual SVG text bounds and can export PNG. Each manifest records file hashes,
+selection scope and renderer/font provenance. Byte identity is checked within the
+same toolchain; differing Chromium/platform/font versions are different environments.
+The dedicated `premium-infographics.yml` workflow validates and renders without
+publishing generated assets or touching production deployment.
+
+## Run v1
 
 ```bash
 python3 scripts/premium-infographics/generate_deployment.py
