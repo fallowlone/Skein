@@ -1,6 +1,6 @@
 # Skein — current state
 
-Last verified: **2026-09-15 (Europe/Berlin)**.
+Last verified: **2026-09-17 (Europe/Berlin)**.
 
 This is the mutable handoff for future Codex sessions. Update it after material
 milestones or when a release blocker changes. Durable architecture belongs in
@@ -124,6 +124,27 @@ verified gaps:
    remediation quality.
 4. Reduce thin-practice coverage while preserving the curriculum depth bar.
 5. Keep EN/RU parity and the lesson publish/parity pipeline green as content grows.
+
+## Premium infographics workstream (2026-09-17)
+
+Branch `feat/deployment-premium-infographics` added local authoring tooling for a
+private "Deployment & Infra" premium infographic set; nothing is published and no
+premium delivery exists yet.
+
+- `scripts/premium-infographics/generate_deployment.py` deterministically renders
+  11 deployment units × EN/RU full SVGs plus synthetic blurred preview SVGs into
+  gitignored `.premium-infographics/deployment/`. Unit slugs are validated against
+  `site/src/content/units.json` by `test_generate_deployment.py` (stdlib
+  `unittest`, all 6 checks pass). See `scripts/premium-infographics/README.md`.
+- `docs/infographics/skein-infographic-rules.md` holds shared infographic rules;
+  `docs/infographics/algorithms/01-thinking-complexity/` holds AI image-generation
+  prompt outlines for the first algorithms unit (prompts only, no artwork yet).
+- Verified so far: structural tests, XML validity, copy preservation, preview
+  non-leakage, byte-identical regeneration, and qlmanage PNG rendering. Visual
+  image review could not run in that session (image input unavailable), so
+  rendered quality still needs a human/visual pass before any publication.
+- Not implemented (deliberately): WebP conversion, R2 upload, entitlement
+  gating, and any site/delivery integration for premium assets.
 
 ## Updating this file
 
