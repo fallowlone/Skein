@@ -36,6 +36,8 @@ class RendererTests(unittest.TestCase):
                     invalid = renderer.request(dict(op='verify',svg=source,png=True))
                     self.assertTrue(invalid['errors'])
                     self.assertIsNone(invalid['png'])
+            with self.assertRaisesRegex(RuntimeError,'renderer-request-failed'):
+                renderer.request(dict(op='measure',items=[dict(text='→',size=30,weight=500)]))
             with self.assertRaisesRegex(RuntimeError,'unsupported-operation'):
                 renderer.request(dict(op='unknown'))
 

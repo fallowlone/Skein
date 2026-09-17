@@ -154,13 +154,17 @@ premium delivery exists yet.
 - All 11 units × EN/RU now generate 44 SVGs plus 44 PNGs. Rollout includes rolling,
   blue-green, canary and Recreate, with an explicit downtime state. Traffic bars
   are illustrative traffic shares, not replica schedules.
-- Local verification: 29 v2 structural/file tests, 6 unchanged v1 tests and one
+- Local verification: 30 v2 structural/file/timeout tests, 6 unchanged v1 tests and one
   real-browser regression test pass. Two complete generations were byte-identical;
   all 88 file hashes and 44 PNG dimensions were checked. Local toolchain:
   Playwright 1.60.0, Chromium 148.0.7778.96, Node v26.8.2 on macOS arm64.
 - Dedicated `premium-infographics.yml` performs structural checks and browser
-  export/determinism without deployment or artifact uploads. Remote result must
-  be checked for the corresponding feature-branch commit.
+  export/determinism without deployment or artifact uploads. Ubuntu/Node 22 run
+  [35255267080](https://github.com/fallowlone/Skein/actions/runs/35255267080)
+  passed for the initial v2 commit `20533e5d`.
+- Review follow-up adds a 90-second renderer request deadline (process-group
+  termination on macOS/Linux), tests blocked reads/writes, rejects characters
+  outside embedded font CSS ranges, and removes an unsupported arrow glyph.
 - **Visual acceptance is blocked:** judge PNG input was rejected because the
   selected model does not support images; no image received a visual pass.
   V1 remains unchanged/default; v2 manifests stay experimental with acceptance
