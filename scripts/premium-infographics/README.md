@@ -12,7 +12,7 @@ steps are intentionally out of scope until premium delivery is designed.
 ## Experimental v2
 
 V1 below remains the default; v2 must not be called production-ready until its
-visual acceptance gate passes. See [engine-v2.md](../../docs/infographics/engine-v2.md)
+visual acceptance gate passes. See [engine-v2.md](../../../docs/infographics/engine-v2.md)
 for the semantic contract, visual profile, migration and acceptance requirements.
 
 ```bash

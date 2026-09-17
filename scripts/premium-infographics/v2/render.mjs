@@ -16,12 +16,17 @@ assert.ok(license.includes('SIL OPEN FONT LICENSE Version 1.1'));
 const subsets = ['latin', 'latin-ext', 'cyrillic', 'cyrillic-ext'];
 const fonts = {};
 const rules = [];
+const coverage = [];
 for (const subset of subsets) {
   const file = `inter-tight-${subset}-wght-normal.woff2`;
   const bytes = await readFile(path.join(fontRoot, 'files', file));
   const rule = installedCss.split('@font-face').find(rule => rule.includes(`./files/${file}`));
   assert.ok(rule, 'installed font rule missing');
   const range = rule.match(/unicode-range:\s*([^;]+);/)[1];
+  for (const token of range.split(',')) {
+    const [lo, hi = lo] = token.trim().replace(/^U\+/i, '').split('-');
+    coverage.push([parseInt(lo.replaceAll('?', '0'), 16), parseInt(hi.replaceAll('?', 'F'), 16)]);
+  }
   fonts[file] = createHash('sha256').update(bytes).digest('hex');
   rules.push(`@font-face{font-family:'Inter Tight Variable';font-style:normal;font-weight:100 900;src:url(data:font/woff2;base64,${bytes.toString('base64')}) format('woff2');unicode-range:${range};}`);
 }
@@ -54,6 +59,10 @@ try {
         assert.ok(Array.isArray(request.items));
         for (const item of request.items) {
           assert.equal(typeof item.text, 'string');
+          assert.ok([...item.text].every(char => {
+            const code = char.codePointAt(0);
+            return coverage.some(([lo, hi]) => code >= lo && code <= hi);
+          }), 'unsupported-font-range');
           assert.ok(Number.isFinite(item.size) && item.size >= 20 && item.size <= 60);
           assert.ok([500, 600, 700].includes(item.weight));
         }

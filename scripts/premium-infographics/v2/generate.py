@@ -4,6 +4,9 @@ import argparse
 import base64
 import hashlib
 import json
+import os
+import signal
+import threading
 from pathlib import Path
 import subprocess
 import sys
@@ -20,16 +23,40 @@ CONTENT = HERE / 'content/deployment.json'
 
 
 class Renderer:
+    request_timeout = 90
+
+    def _terminate(self):
+        try:
+            if os.name == 'posix':
+                os.killpg(self.process.pid, signal.SIGKILL)
+            else:
+                self.process.kill()
+        except ProcessLookupError:
+            pass
+
     def __enter__(self):
         self.process = subprocess.Popen(['node', str(HERE / 'render.mjs')],
                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                        text=True, encoding='utf-8')
+                                        text=True, encoding='utf-8', start_new_session=os.name == 'posix')
         return self
 
     def request(self, data):
-        self.process.stdin.write(json.dumps(data, ensure_ascii=False)+'\n')
-        self.process.stdin.flush()
-        line = self.process.stdout.readline()
+        expired = threading.Event()
+        def timeout():
+            expired.set()
+            self._terminate()
+        watchdog = threading.Timer(self.request_timeout, timeout)
+        watchdog.daemon = True
+        watchdog.start()
+        try:
+            self.process.stdin.write(json.dumps(data, ensure_ascii=False)+'\n')
+            self.process.stdin.flush()
+            line = self.process.stdout.readline()
+        finally:
+            watchdog.cancel()
+            watchdog.join()
+            if expired.is_set():
+                raise RuntimeError('renderer request timed out')
         if not line:
             raise RuntimeError('renderer stopped without a response; verify Node, Playwright and Chromium installation')
         result = json.loads(line)
@@ -38,11 +65,14 @@ class Renderer:
         return result
 
     def __exit__(self, *_):
-        self.process.stdin.close()
+        try:
+            self.process.stdin.close()
+        except BrokenPipeError:
+            pass
         try:
             self.process.wait(timeout=15)
         except subprocess.TimeoutExpired:
-            self.process.kill()
+            self._terminate()
             self.process.wait()
         self.process.stdout.close()
 
