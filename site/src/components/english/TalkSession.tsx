@@ -10,8 +10,8 @@ import type { ConversationTurn, Scenario, SpeechReview } from "~/english/types";
 import type { Locale } from "~/i18n";
 
 const COPY = {
-  en: { pick: "Pick a scenario", start: "Start", rec: "Speak", stop: "Stop", end: "End & review", thinking: "…", needKey: "Add an API key (Output tab) to use Talk.", you: "You", partner: "Partner", review: "Review", well: "Went well", errs: "Fix these", nextp: "Practice next" },
-  ru: { pick: "Выбери сценарий", start: "Начать", rec: "Говорить", stop: "Стоп", end: "Завершить и разбор", thinking: "…", needKey: "Добавь API-ключ (вкладка Письмо) для диалога.", you: "Ты", partner: "Собеседник", review: "Разбор", well: "Хорошо", errs: "Исправить", nextp: "Потренируй" },
+  en: { pick: "Pick a scenario", start: "Start", rec: "Speak", stop: "Stop", end: "End & review", thinking: "…", needKey: "Add an API key (Output tab) to use Talk.", you: "You", partner: "Partner", review: "Review", well: "Went well", errs: "Fix these", nextp: "Practice next", caveat: "AI review — a practice aid, not ground truth." },
+  ru: { pick: "Выбери сценарий", start: "Начать", rec: "Говорить", stop: "Стоп", end: "Завершить и разбор", thinking: "…", needKey: "Добавь API-ключ (вкладка Письмо) для диалога.", you: "Ты", partner: "Собеседник", review: "Разбор", well: "Хорошо", errs: "Исправить", nextp: "Потренируй", caveat: "Разбор ИИ — помощь для практики, не истина." },
 };
 
 export default function TalkSession({ lang, recognizer }: { lang: Locale; recognizer: SpeechRecognizer }) {
@@ -82,6 +82,7 @@ export default function TalkSession({ lang, recognizer }: { lang: Locale; recogn
           {review.errors.map((e) => (
             <p class="text-[13px] m-0"><s class="text-danger">{e.said}</s> → <b>{e.better}</b> <span class="text-muted">({e.why})</span></p>
           ))}
+          <p class="meta-lc mt-2">{L.caveat}</p>
         </div>
       )}
     </div>
