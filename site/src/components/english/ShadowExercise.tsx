@@ -11,8 +11,10 @@ import type { SpeechRecognizer } from "~/english/speech/recognizer";
 import type { Locale } from "~/i18n";
 
 const COPY = {
-  en: { play: "Hear it", rec: "Record", stop: "Stop", next: "Next", score: "Intelligibility" },
-  ru: { play: "Послушать", rec: "Запись", stop: "Стоп", next: "Дальше", score: "Понятность" },
+  en: { play: "Hear it", rec: "Record", stop: "Stop", next: "Next", score: "Intelligibility",
+    note: "Transcript match — a practice aid, not a pronunciation grade." },
+  ru: { play: "Послушать", rec: "Запись", stop: "Стоп", next: "Дальше", score: "Понятность",
+    note: "Совпадение транскрипта — подсказка для практики, не оценка произношения." },
 };
 
 export default function ShadowExercise({ lang, recognizer }: { lang: Locale; recognizer: SpeechRecognizer }) {
@@ -53,6 +55,7 @@ export default function ShadowExercise({ lang, recognizer }: { lang: Locale; rec
       {result && (
         <div>
           <div class="meta mb-1">{L.score}: {Math.round(result.score * 100)}%</div>
+          <p class="meta-lc">{L.note}</p>
           <p class="leading-relaxed">
             {result.tokens.map((t) => (
               <span style={`color: var(${t.status === "ok" ? "--ok" : t.status === "sub" ? "--warn" : "--danger"}); margin-right:4px;`}>{t.target}</span>

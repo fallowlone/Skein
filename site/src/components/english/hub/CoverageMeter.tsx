@@ -50,17 +50,16 @@ export default function CoverageMeter({ lang }: { lang: Locale }) {
           h: "Coverage",
           note: "How much of this corpus you can already read",
           known: "words known",
-          functional: "functional",
-          fluent: "fluent reading",
+          landmark: "landmark — not a gate",
           corpus: "Corpus",
           families: (n: number) => `${n.toLocaleString("en-US")} word families`,
           ge90: "≥ 90%",
           mid: "75–90%",
           lt75: "< 75%",
-          cite: "frequency coverage, after Nation — 98% needed for unaided reading",
+          cite: "frequency coverage, after Nation — higher coverage eases reading; there is no universal pass mark",
           caption1: "Signature.",
           caption2:
-            " Your known-word profile measured against a frequency corpus — dashed lines mark the 75% and 90% thresholds. An instrument, not a score.",
+            " Your known-word profile measured against a frequency corpus — dashed lines mark the 75% and 90% landmarks, not ability gates. An instrument, not a score.",
           gaugeAria: `Coverage gauge: ${pct} percent`,
         }
       : {
@@ -68,17 +67,16 @@ export default function CoverageMeter({ lang }: { lang: Locale }) {
           h: "Охват",
           note: "Сколько из этого корпуса ты уже можешь читать",
           known: "слов знакомо",
-          functional: "функционально",
-          fluent: "беглое чтение",
+          landmark: "ориентир — не порог",
           corpus: "Корпус",
           families: (n: number) => `${n.toLocaleString("ru-RU")} семейств слов`,
           ge90: "≥ 90%",
           mid: "75–90%",
           lt75: "< 75%",
-          cite: "частотный охват, по Нейшну — для чтения без словаря нужно 98%",
+          cite: "частотный охват, по Нейшну — чем выше охват, тем легче чтение; универсального порога нет",
           caption1: "Сигнатура.",
           caption2:
-            " Твой профиль знакомых слов на фоне частотного корпуса — пунктир отмечает пороги 75% и 90%. Это инструмент, а не оценка.",
+            " Твой профиль знакомых слов на фоне частотного корпуса — пунктир отмечает ориентиры 75% и 90%, а не пороги способностей. Это инструмент, а не оценка.",
           gaugeAria: `Шкала охвата: ${pct} процентов`,
         };
 
@@ -132,10 +130,10 @@ export default function CoverageMeter({ lang }: { lang: Locale }) {
           </div>
           <div class="gauge-thresholds">
             <span>
-              <b>75%</b> {L.functional}
+              <b>75%</b> {L.landmark}
             </span>
             <span>
-              <b>90%</b> {L.fluent}
+              <b>90%</b> {L.landmark}
             </span>
           </div>
         </div>

@@ -49,6 +49,14 @@ Since `v1.0.0-production-ready`:
    - billing regression/integration coverage passed before merge.
 4. **Lesson DB migration recorded as integrated** (`29fe541b`)
    - `main` now represents the merged production lesson-runtime state.
+5. **English module SLA copy alignment** (branch `cline/ced60`, pending CI)
+   - evidence-governed audit against the 2026-09-23 SLA core
+     (`/Users/artemmac/dev/english/reports/2026-09-23-sla-alignment-audit.md`);
+   - removed the contradicted "98% needed for unaided reading" claim and the
+     75%/90% "functional/fluent" ability labels from `hub/CoverageMeter.tsx`
+     (now neutral corpus landmarks); added "practice aid, not a grade" caveats
+     to `ShadowExercise.tsx` and `TalkSession.tsx` (EN/RU parity kept);
+   - logged gap for future work: no HVPT perceptual-training module.
 
 ## Current production evidence
 
