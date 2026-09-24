@@ -67,6 +67,28 @@ The latest scheduled run completed both jobs successfully:
 
 At verification time `https://fallowlone.com/en/` returned HTTP 200.
 
+## Recently completed milestones (appended 2026-09-24)
+
+5. **Animated lesson diagrams for the algorithms track** (12 commits
+   `b9b323f8`..`0c33639e`, one per unit `content(algorithms): <unit> animated
+   diagrams EN+RU`)
+   - Every teaching lesson of `algorithms` (69 lessons x EN+RU = 138 files)
+     now embeds exactly one `AlgoPoster` animated diagram
+     (`site/src/components/algo/AlgoPoster.tsx`, Preact `client:visible`
+     island) replacing the static hero visual after `</Idea>`.
+   - Per-pattern SVG scenes (`poster-patterns.tsx`, 13 patterns: lane, bars,
+     halving, stack, tree, heap, graph, grid, buckets, choice, curves, bits,
+     pipeline) share one rAF engine: ~9s autoplay loop, pause/step/replay/
+     0.5x controls, sine-eased step glides, CSS cross-fades, reduced-motion
+     starts paused, aria-live caption + text-equivalent label.
+   - `LessonRenderTree.astro` registry maps `AlgoPoster` to the hydrated
+     island (lesson pages render in the `skein-lessons` worker, not `dist/`).
+   - Verified: `mdx-check algorithms` 256 ok; all 138 files compile via
+     `compileLessonRenderTree` with exactly 1 poster, 3-5 steps, 2 minis;
+     `bun run build` + `lint:src` clean (0 errors, 58 pre-existing warnings
+     in other tracks); pose sweep over all patterns shows no NaN/undefined
+     attributes; no `console.log`; `~/` imports only.
+
 ## Current corpus snapshot
 
 Measured directly from the repository at the revision above:
