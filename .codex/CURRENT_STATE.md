@@ -113,6 +113,21 @@ At verification time `https://fallowlone.com/en/` returned HTTP 200.
      полусумматор, …) were deliberately NOT added to `glossary.json` —
      needs careful bilingual definitions in a separate pass.
 
+7. **Per-diagram factual audit of all 121 posters** (`57cc89fc`)
+   - EN↔RU invariant parity scripted (numbers, indices, structures,
+     STATE/log identical; locale prose free to differ): fixed 8 RU files
+     where STATE lines had been translated.
+   - 8 parallel auditors recomputed every number against lesson bodies;
+     fixed real errors in both locales: sliding-window minimum len 2 via
+     [4,3] (poster + added trace frames + practice answer 3→2), true
+     ship-capacity probe sequence 32→21→15→12→14, dp[3]=2, LIS index i=6,
+     hashing `placed` counts, DFS dive-then-back-edge narrative, quicksort
+     O(log n) average qualifier, n(n−1)/2, 4-cell shift, bit-addressed
+     total 64, 6-instruction HL example, add.c 143 bytes, typeof
+     null/object, coercion narrative, label corrections.
+   - `qa-poster.mts` green on all touched files, `lint:src` + full build
+     clean (0 errors).
+
 ## Current corpus snapshot
 
 Measured directly from the repository at the revision above:
