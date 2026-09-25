@@ -89,6 +89,30 @@ At verification time `https://fallowlone.com/en/` returned HTTP 200.
      in other tracks); pose sweep over all patterns shows no NaN/undefined
      attributes; no `console.log`; `~/` imports only.
 
+6. **Animated lesson diagrams for the base-cs track** (12 commits, one per
+   unit `content(base-cs): <unit> animated diagrams EN+RU`, plus reference
+   unit 03-the-processor)
+   - Every teaching lesson of `base-cs` (52 lessons x EN+RU = 104 files)
+     embeds exactly one `AlgoPoster` hero visual (replacing the `MachineFigure`
+     hero or inserted before `WorkedExample`/`Trace`/`Code` for coding lessons
+     without one).
+   - New `site/scripts/qa-poster.mts` quality gate runs per diagram: compile,
+     exactly-1-poster, props audit (3-5 steps, 2 minis, titleHi subset,
+     step-sized data arrays), SSR render without NaN/undefined, and a
+     transform-aware 41-point pose sweep with coordinate bounds.
+   - The gate caught and fixed two real issues: 5-frame stacks overflowing
+     the viewBox top (adaptive stack layout + parked hidden frames in
+     `poster-patterns.tsx`) and a `titleHi` substring miss in
+     `11-greedy/04-classic-greedy` (also disproved a false bars-pattern
+     alarm by making bounds transform-aware).
+   - Verified: gate green on all 242 teaching files (algorithms 138 +
+     base-cs 104); `bun run build` + `lint:src` clean (0 errors, same 58
+     pre-existing warnings); per-unit commits.
+   - Follow-up (not blocking): ~20 candidate RU glossary terms collected
+     from poster copy (регистр, счётчик команд, дно стека, разматывание,
+     полусумматор, …) were deliberately NOT added to `glossary.json` —
+     needs careful bilingual definitions in a separate pass.
+
 ## Current corpus snapshot
 
 Measured directly from the repository at the revision above:
