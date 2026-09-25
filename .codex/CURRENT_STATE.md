@@ -128,6 +128,15 @@ At verification time `https://fallowlone.com/en/` returned HTTP 200.
    - `qa-poster.mts` green on all touched files, `lint:src` + full build
      clean (0 errors).
 
+8. **Second audit pass — all deferred findings cleared** (`52d9d776`)
+   - Fixed: call-stack final-pop state, combinations caption (4 of 6
+     shown), collisions highlight → April, top-k settles [6,8,7]
+     (verified by execution), Dijkstra split into 5 truthful steps,
+     Day-2 contradiction, selection-sort n(n−1)/2, mystery-Q hint,
+     tree-height hint numbers, exchange-Quiz wording, stack-trace frame
+     line 11→14. Monotonic-stack depths confirmed correct, untouched.
+   - QA gate green on all touched files, `lint:src` + full build clean.
+
 ## Current corpus snapshot
 
 Measured directly from the repository at the revision above:
