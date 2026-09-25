@@ -324,9 +324,21 @@ const halving = {
 
 /* ---------------- stack: growing / shrinking frames ----------------
    data: { frames: string[], depths: number[] per step, side?: string[] per step } */
+function stackLayout(n: number) {
+  const bottom = 302;
+  const top = 84;
+  const avail = bottom - top;
+  const frameH = Math.min(52, Math.floor((avail - (n - 1) * 8) / n));
+  const gap = n > 1 ? Math.min(8, Math.floor((avail - n * frameH) / (n - 1))) : 0;
+  const spacing = frameH + gap;
+  return { frameH, spacing, y: (i: number) => bottom - frameH - i * spacing };
+}
+
 const stack = {
   render(data: D) {
     const frames: string[] = data.frames;
+    const { frameH, y } = stackLayout(frames.length);
+    void y;
     return (
       <g>
         <text x="490" y="52" text-anchor="middle" font-size="12" font-weight="700">
@@ -338,11 +350,11 @@ const stack = {
         </text>
         {frames.map((fr, i) => (
           <g key={i} data-e={`fr${i}`}>
-            <rect x="266" y="0" width="448" height="52" rx="8" fill={PAPER} stroke={INK} stroke-width="2.5" class="ap-xfade" data-e={`frb${i}`} />
-            <text x="286" y="32" font-size="13" font-weight="700" data-e={`frt${i}`}>
+            <rect x="266" y="0" width="448" height={frameH} rx="8" fill={PAPER} stroke={INK} stroke-width="2.5" class="ap-xfade" data-e={`frb${i}`} />
+            <text x="286" y={frameH / 2 + 5} font-size="13" font-weight="700" data-e={`frt${i}`}>
               {fr}
             </text>
-            <text x="694" y="32" text-anchor="end" font-size="11" fill="#555" data-e={`frs${i}`} />
+            <text x="694" y={frameH / 2 + 5} text-anchor="end" font-size="11" fill="#555" data-e={`frs${i}`} />
           </g>
         ))}
         <g data-e="stop">
@@ -357,24 +369,26 @@ const stack = {
   pose(t: number, n: number, data: D, root: Root) {
     const frames: string[] = data.frames;
     const depths: number[] = data.depths;
+    const { frameH, spacing, y } = stackLayout(frames.length);
+    void frameH;
     const s = stepOf(t, n);
     const f = easeInOut(segf(t, s));
     const cur = depths[Math.min(s, depths.length - 1)];
     const nxt = depths[Math.min(s + 1, depths.length - 1)];
     const depth = lerp(cur, nxt, f);
-    const baseY = 310 - 60;
+    const park = 70 - frameH - 8; // hidden frames wait above the box, invisible
     frames.forEach((_, i) => {
       const shown = depth - i;
-      const y = baseY - i * 58 + (shown < 0 ? -70 * (0 - shown) : 0) + (shown > 1 ? 0 : 0);
+      const yy = shown <= 0 ? park : shown < 1 ? lerp(park, y(i), shown) : y(i);
       const g = q(root, `fr${i}`);
       if (g) {
-        g.setAttribute("transform", `translate(0,${y})`);
+        g.setAttribute("transform", `translate(0,${yy})`);
         g.setAttribute("opacity", shown <= 0 ? "0" : shown < 1 ? String(shown) : "1");
       }
       const isTop = i === Math.ceil(depth) - 1;
       setFill(root, `frb${i}`, isTop && shown >= 1 ? YELLOW : i === 0 ? "#e9fbe7" : PAPER);
     });
-    move(root, "stop", 0, baseY - (Math.max(depth, 1) - 1) * 58 + 8);
+    move(root, "stop", 0, y(Math.max(Math.ceil(depth) - 1, 0)) + 8);
     const side: string[][] = data.side ?? [];
     const cur2 = side[Math.min(s, side.length - 1)] ?? [];
     frames.forEach((_, i) => setText(root, `frs${i}`, cur2[i] ?? ""));

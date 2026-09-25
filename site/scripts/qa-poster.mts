@@ -105,7 +105,8 @@ async function qaFile(f: string): Promise<string[]> {
   if (/NaN/.test(html)) errs.push("ssr contains NaN");
   if (/="undefined"|>undefined</.test(html)) errs.push("ssr contains undefined attr");
 
-  // Pose sweep
+  // Pose sweep with transform-aware bounds: walk the DOM accumulating
+  // translate() offsets so coordinates are checked where they render.
   try {
     const svgInner = html.match(/<svg[^>]*>([\s\S]*)<\/svg>/)?.[1] ?? "";
     const { document } = parseHTML(`<svg xmlns="http://www.w3.org/2000/svg">${svgInner}</svg>`);
@@ -113,20 +114,38 @@ async function qaFile(f: string): Promise<string[]> {
     if (!root) { errs.push("pose: no svg root"); return errs; }
     const pose = (PATTERNS as any)[p.pattern].pose;
     for (let k = 0; k <= 40; k++) pose((k / 40) * n, n, p.data, root);
-    const out = root.innerHTML;
-    if (/NaN/.test(out)) errs.push("pose produced NaN");
-    if (/="undefined"/.test(out)) errs.push("pose produced undefined attr");
-    for (const m of out.matchAll(/ y="(-?[\d.]+)"/g)) {
-      const y = Number(m[1]);
-      if (y < -40 || y > 400) { errs.push(`y=${y} out of bounds`); break; }
-    }
-    for (const m of out.matchAll(/ x="(-?[\d.]+)"/g)) {
-      const x = Number(m[1]);
-      if (x < -60 || x > 1040) { errs.push(`x=${x} out of bounds`); break; }
-    }
-    for (const m of out.matchAll(/width="(-[\d.]+)"/g)) { errs.push(`negative width ${m[1]}`); break; }
+    const badAttr: string[] = [];
+    const walk = (el: any, tx: number, ty: number): void => {
+      const tr = String(el.getAttribute?.("transform") ?? "");
+      const m = tr.match(/translate\(\s*(-?[\d.]+)(?:[ ,]+(-?[\d.]+))?\s*\)/);
+      const nx = tx + (m ? Number(m[1]) : 0);
+      const ny = ty + (m && m[2] !== undefined ? Number(m[2]) : 0);
+      const num = (a: string): number | null => {
+        const v = el.getAttribute?.(a);
+        if (v === null || v === undefined) return null;
+        const x = Number(v);
+        return Number.isFinite(x) ? x : null;
+      };
+      for (const a of ["x", "y", "cx", "cy", "x1", "y1", "x2", "y2", "width", "height", "r", "d"]) {
+        const v = el.getAttribute?.(a);
+        if (typeof v === "string" && (/NaN/.test(v) || v === "undefined")) badAttr.push(`${a}=${v.slice(0, 24)}`);
+      }
+      for (const a of ["x", "cx", "x1", "x2"]) {
+        const v = num(a);
+        if (v !== null && (v + nx < -60 || v + nx > 1040)) { errs.push(`${a}=${v} (+${nx}) out of bounds`); break; }
+      }
+      for (const a of ["y", "cy", "y1", "y2"]) {
+        const v = num(a);
+        if (v !== null && (v + ny < -40 || v + ny > 400)) { errs.push(`${a}=${v} (+${ny}) out of bounds`); break; }
+      }
+      const w = num("width");
+      if (w !== null && w < 0) errs.push(`negative width ${w}`);
+      for (const ch of el.children ?? []) walk(ch, nx, ny);
+    };
+    walk(root, 0, 0);
+    if (badAttr.length) errs.push(`pose bad attrs: ${badAttr.slice(0, 3).join("; ")}`);
   } catch (e: any) {
-    errs.push(`pose: ${e.message.slice(0, 200)}`);
+    errs.push(`pose: ${String(e.message).slice(0, 200)}`);
   }
   return errs;
 }
