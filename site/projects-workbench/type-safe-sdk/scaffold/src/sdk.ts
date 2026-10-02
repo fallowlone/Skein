@@ -16,7 +16,7 @@ export type Schema<T> = (data: unknown) => { ok: true; value: T } | { ok: false;
 
 // --- parse ---
 // TODO: if schema(data).ok is true return value; otherwise throw new ValidationError(issues).
-export function parse<T>(schema: Schema<T>, data: unknown): T {
+export function parse<T>(_schema: Schema<T>, data: unknown): T {
   // stub: always returns data as-is regardless of schema
   return data as T;
 }
@@ -25,7 +25,7 @@ export function parse<T>(schema: Schema<T>, data: unknown): T {
 export type Policy = { max: number; baseMs: number };
 
 // TODO: return [baseMs, baseMs*2, baseMs*4, ...] with length === max (pure, no timers).
-export function backoffDelays(policy: Policy): number[] {
+export function backoffDelays(_policy: Policy): number[] {
   // stub: always empty
   return [];
 }
