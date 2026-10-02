@@ -5,7 +5,7 @@ track: "js-engine"
 unit: "01-how-js-runs"
 order: 4
 title: "Inside the interpreter loop"
-summary: "Ignition runs bytecode with a dispatch loop: fetch the opcode, jump to its handler, do the work, advance the bytecode pointer, dispatch the next. The accumulator threads values between handlers, feedback slots fill in as types are observed"
+summary: "Ignition uses a dispatch table to pass execution from one bytecode handler to the next. Registers and the accumulator carry values; feedback and a budget help V8 decide when to tier up."
 estMin: 14
 status: ready
 lessonType: topic
@@ -25,9 +25,9 @@ spiral:
 prereqs:
   - "03-ignition-bytecode"
 sources:
-  - https://v8.dev/blog/ignition-interpreter
+  - https://chromium.googlesource.com/v8/v8/+/refs/heads/main/docs/interpreter/interpreter-ignition.md
+  - https://chromium.googlesource.com/v8/v8/+/refs/heads/main/docs/runtime/tiering.md
   - https://v8.dev/blog/sparkplug
-  - https://v8.dev/blog/maglev
 ---
 
 import Hook from "~/components/lesson/Hook.astro";
@@ -39,111 +39,57 @@ import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 import DragOrder from "~/components/pedagogy/DragOrder.astro";
-import NumbersCard from "~/components/layout/NumbersCard.astro";
 import Misconception from "~/components/layout/Misconception.astro";
-import AlgoPoster from "~/components/algo/AlgoPoster.tsx";
+import InterpreterDispatchFig from "~/components/schematic/InterpreterDispatchFig.astro";
 
 <Hook>
-You have the bytecode. Now something has to *run* it — one instruction after another, millions of times a second, while quietly keeping a tally of how hot each function is getting. There is no magic here: it is a loop. Fetch the next opcode, jump to the code that handles it, do the work, advance, repeat. Understanding that loop explains both why interpreted JavaScript is predictable-but-not-fast and how the engine knows the exact moment to hand a function to the JIT.
+The previous lesson produced bytecode. To run it, Ignition must find the handler for each instruction and pass the updated state to the next one. That handoff also creates two opportunities: record the types the program actually used, and check whether repeated work justifies another execution tier.
 </Hook>
 
-<Crux>Ignition runs a dispatch loop: fetch the opcode, jump to its handler, do the work, advance the pointer, dispatch the next.</Crux>
+<Crux>Ignition dispatches from one bytecode handler to the next; the accumulator and registers carry the program's state across that handoff.</Crux>
 
 <Explanation>
 
-## The dispatch loop
+## Follow one instruction, not an abstract loop
 
-The previous lesson left us with a function's bytecode and a set of shared handlers (one per opcode, written in Torque). Execution is the act of running those handlers in sequence. Conceptually:
+Ignition is a **register-based interpreter**. Its virtual registers live in the function's interpreter frame; many bytecodes use a dedicated **accumulator** as an implicit input or output. That keeps common instructions compact: a bytecode can name one register and leave the other operand implicit.
 
-```text
-loop:
-  opcode  = bytecode[pc]        // fetch the current opcode
-  handler = handlerTable[opcode] // look up its handler
-  jump handler                   // do the work; handler advances pc, then dispatches the next
-```
+Consider a conceptual `Add r0, [slot]` instruction with `r0 = 7` and accumulator `5`. The bytecode pointer identifies `Add`; the dispatch table supplies the address of its handler. The handler reads the operands, performs JavaScript addition, places the result in the accumulator, and transfers control to the next handler. For these numeric inputs, the result is `12`. The feedback slot can record what operand kinds this operation observed.
 
-Each iteration **fetches** the opcode at the current **bytecode pointer (pc)**, looks up the **handler** for that opcode in a table, and **jumps** to it. The handler reads its operands (from the register file and the accumulator), does the operation, writes the result (usually back to the accumulator), **advances the pc** past this instruction's operands, and then dispatches the *next* instruction. Run that loop until `Return`, and you have executed the function.
+<InterpreterDispatchFig lang="en" />
 
-<AlgoPoster client:visible
-  id="ap-dispatch-loop"
-  lang="en"
-  kicker="fetch · jump · execute · advance"
-  lessonTag="lesson: js-engine / 01 / 04"
-  cost="one indirect branch per opcode"
-  title="FETCH, JUMP, EXECUTE, ADVANCE — FOREVER"
-  titleHi={["FETCH", "JUMP", "EXECUTE", "ADVANCE"]}
-  sub="Each iteration fetches the opcode at the bytecode pointer, jumps to its handler through the table, the handler computes into the accumulator, and the pointer advances past the operands — then the next bytecode dispatches. Run until Return."
-  badges={["threaded dispatch, no switch", "each opcode owns its branch", "acc carries values"]}
-  panelTitle="ONE DISPATCH AS A CLOSED LOOP · ~9s / cycle"
-  label="Animated four-stage pipeline of one Ignition dispatch iteration: fetch the opcode at pc, jump to the handler, execute into the accumulator, advance pc and dispatch the next bytecode."
-  pattern="pipeline"
-  data={{ title: "one bytecode through the loop", stages: ["fetch|opcode at pc", "handler|table jump", "execute|ops → acc", "advance|pc += n, dispatch"], at: [0, 1, 2, 3], dones: [[1, 0, 0, 0], [1, 1, 0, 0], [1, 1, 1, 0], [1, 1, 1, 1]], note: "then the next bytecode" }}
-  steps={[
-    { caption: "① fetch: read the opcode at the bytecode pointer…", state: "STATE: opcode fetched", log: "fetch · opcode at pc" },
-    { caption: "② jump: the table sends control to this opcode's handler…", state: "STATE: in handler", log: "table → handler jump" },
-    { caption: "③ execute: read operands, compute, write the accumulator…", state: "STATE: acc updated", log: "handler · ops → acc" },
-    { caption: "④ advance: step pc past the operands, dispatch next…", state: "STATE: pc += n ✓", log: "pc += n · dispatch next ✓" }
-  ]}
-  minis={[
-    { title: "THREADED, NOT SWITCH — prediction wins", body: "A shared switch is one indirect branch for all opcodes — the predictor stalls. Threaded dispatch gives each opcode its own branch site.", tone: 1, at: 1 },
-    { title: "ACC = HANDOFF — values ride along", body: "Handlers read and write one shared accumulator, so each result sits exactly where the next bytecode expects it.", tone: 0, at: 2 }
-  ]}
-  takeaway="takeaway: the interpreter loop is fetch, jump, execute, advance — threaded dispatch keeps it predictable, the accumulator keeps it clean."
-  src="src: lesson js-engine/01 · interpreter loop"
-/>
+The figure separates three things that are easy to conflate: **the bytecode stream** says what to do, **the dispatch table** locates the code that does it, and **the frame** holds the values being changed. `Return` ends this function's bytecode execution; most other handlers eventually dispatch again. Real instruction sizes and specializations vary, so the row labels in the figure show order rather than byte offsets.
 
-## How the jump is made fast: threaded dispatch
+## Why the handlers dispatch directly
 
-A naive interpreter would write this as a giant `switch (opcode)` inside a `while` loop. That works, but it has a hidden cost: after every handler the control flow returns to the top of the loop and re-enters the `switch`, and the CPU's **branch predictor** sees one single indirect branch shared by *all* opcodes — so it predicts poorly and stalls.
-
-Ignition uses **threaded dispatch** instead: each handler ends by directly **dispatching to the next handler** — historically via a computed `goto` (one indirect jump per handler), and in Ignition specifically via a **tail call** from one handler's machine code straight into the next handler's. The win is for branch prediction: each opcode's dispatch site is its *own* indirect branch, so the predictor can learn the common successor of each opcode (e.g. a comparison is usually followed by a branch), instead of muddling one shared branch. Fewer mispredicts means a tighter, faster interpreter loop.
-
-The **accumulator** is what makes the handoff between handlers clean: rather than passing operands explicitly, most handlers read and write the one shared accumulator register, so a value produced by one bytecode is sitting right where the next bytecode expects it. The dispatch loop and the accumulator are two halves of the same design.
+A simple interpreter could return to one central `switch` after every instruction. Ignition instead uses **threaded dispatch**: each handler fetches the next bytecode, indexes the dispatch table, and jumps to that handler. This gives different bytecodes distinct dispatch sites, which can improve CPU branch prediction compared with one shared indirect branch. It is a performance choice, not a change in JavaScript semantics. Some bytecode pairs can also be handled through specialized shortcuts, so the figure describes the usual mechanism rather than a mandatory branch for every bytecode.
 
 <Misconception id="mc-switch">
-  <p><strong>"An interpreter is just a big switch, so they're all the same speed."</strong> Dispatch matters. A shared <code>switch</code> gives the CPU one indirect branch per opcode, which the predictor handles badly. Ignition uses threaded (tail-call) dispatch, so each opcode has its own branch site, cutting mispredicts.</p>
+  <p><strong>“An interpreter is just a large switch.”</strong> A switch is one valid design. Ignition's handlers dispatch to the next handler through a table, avoiding a return to one central switch on the general path.</p>
 </Misconception>
 
-## Profiling while interpreting: feedback fills in
+## Execution produces feedback
 
-The loop is not just executing — it is *learning*. Recall that every type-sensitive bytecode carries a feedback-vector slot. As those handlers run, they **fill in the slots** with the maps (hidden classes) and types they actually observe: this `LdaNamedProperty` saw an object with map M; this `Add` saw two Smis; this `Call` always targeted function F. By the time a function has run a while, its feedback vector is a compact profile of how it is *really* used — exactly the information the optimiser needs. The interpreter is priming the JIT as a side effect of running the program.
+Selected operations carry an index into the function's **feedback vector**. As property accesses, calls, and arithmetic run, handlers and their support code can record the observed object Maps or operand kinds. Later tiers use that evidence to specialize machine code. Feedback records observations at particular sites; it does not prove that future inputs will always have the same type or shape.
 
-## The interrupt budget: how the loop decides to tier up
+The accumulator is separate from this feedback. It is a live value register that lets adjacent bytecodes pass results cheaply. The feedback vector is a record of past behavior used by tiering and optimization.
 
-How does V8 know a function is hot enough to compile? It does not literally count every instruction. Each function carries an **interrupt budget** (a "feedback cell budget" / invocation-and-loop counter). The loop **decrements that budget** on the events that correlate with heat:
+## The budget is checked at meaningful points
 
-- **Back-edges** — every time control jumps *backward* to the top of a loop (one iteration of a `for`/`while`). A tight loop chews through the budget fast.
-- **Function calls / invocations** — entering the function again.
+V8 does not decrement a tier-up counter for every bytecode. A function has an **interrupt budget** in its feedback cell. Ignition reduces it at **loop back-edges** and **function returns**, weighted to reflect work done. A long loop can therefore exhaust the budget before the function returns; repeated calls can contribute through repeated returns.
 
-When the budget **hits zero**, the loop raises a **tier-up** request: compile this function with the next tier (Sparkplug, then Maglev, then TurboFan — unit 04). For a loop that is still running when it goes hot, V8 can even swap the running code mid-loop via **on-stack replacement (OSR)**, jumping from the interpreter into freshly compiled code without waiting for the loop to finish. Back-edges are the key signal: a long-running loop is the canonical "this is hot, optimise it now" trigger.
-
-<NumbersCard
-  title="The interpreter loop's moving parts"
-  data-lesson-visual
-  stats={[
-    { label: "Dispatch style in Ignition", value: "tail-call / threaded" },
-    { label: "Value handed between handlers via", value: "the accumulator" },
-    { label: "Budget decremented on", value: "back-edges + calls" },
-    { label: "Budget hits zero ⇒", value: "tier-up request" },
-    { label: "Hot loop swapped mid-flight by", value: "OSR" },
-    { label: "Interpreting vs optimised: speed", value: "slower but predictable" },
-  ]}
-/>
-
-## Why interpreting first is the safe default
-
-When you profile a function and see it spending time in the interpreter, that is not a bug — it is the engine doing exactly what it is supposed to do before it has enough data to speculate. Interpretation is **slower per instruction** than optimised machine code — there is a fetch-and-dispatch overhead on every bytecode. But it is **predictable**: there is no compile pause (the bytecode is ready immediately), and there is no **deopt** — the interpreter makes no speculative type assumptions, so it cannot be wrong about types and forced to bail out. Optimised code is faster but can deopt back to *this loop* when an assumption breaks (a deopt always lands you back in the interpreter). So Ignition is both the cheap starting point and the safety net the JIT falls back to. That is why every function begins its life right here, in the dispatch loop, and why this lesson sits at the seam between "how JS runs" and the JIT machinery of unit 04.
+When the budget is exhausted, V8 enters runtime code and the tiering manager checks whether and how to compile the function. Exhausting the budget is a **decision point**, not a promise that the very next instruction runs optimized code. Compilation may happen in the background, and a future call may enter the new tier. For a hot loop still executing, **on-stack replacement (OSR)** can enter optimized code at a loop header without waiting for the function to return.
 
 <Quiz
   id="q-dispatch"
   lessonSlug="04-interpreter-loop"
   lang="en"
-  question="Why does Ignition use threaded (tail-call) dispatch instead of one big switch statement over the opcode?"
+  question="What does Ignition's threaded dispatch change compared with a central switch loop?"
   choices={[
-    { label: "A switch cannot express all the opcodes", misconception: "A switch can handle every opcode; the issue is performance of the dispatch, not expressiveness." },
-    { label: "Threaded dispatch gives each opcode its own indirect-branch site, so the CPU branch predictor learns each opcode's likely successor and mispredicts less", correct: true },
-    { label: "It avoids using the accumulator", misconception: "The accumulator is used either way; dispatch style is orthogonal to how values are threaded." },
-    { label: "It lets the interpreter skip the feedback vector", misconception: "Feedback is collected regardless of dispatch style; threaded dispatch is purely about branch-prediction efficiency." },
+    { label: "Each handler locates and transfers control to the next handler through the dispatch table", correct: true },
+    { label: "It removes the need for bytecode operands", misconception: "Handlers still read operands from the bytecode stream and the interpreter frame." },
+    { label: "It guarantees every bytecode runs in one CPU instruction", misconception: "A handler can perform substantial work and call runtime helpers." },
+    { label: "It prevents feedback from being collected", misconception: "Feedback collection is compatible with threaded dispatch." },
   ]}
 />
 
@@ -151,12 +97,12 @@ When you profile a function and see it spending time in the interpreter, that is
   id="q-budget"
   lessonSlug="04-interpreter-loop"
   lang="en"
-  question="A function contains a tight loop that runs millions of iterations. What in the interpreter triggers V8 to compile it, and via which event?"
+  question="A long loop exhausts its function's interrupt budget. What follows?"
   choices={[
-    { label: "A timer fires after N milliseconds of running", misconception: "Tier-up is not time-based; it is driven by the interrupt budget being spent, not a wall-clock timer." },
-    { label: "The interrupt budget, decremented on each back-edge of the loop, hits zero and raises a tier-up request", correct: true },
-    { label: "The garbage collector notices the loop and recompiles it", misconception: "The GC reclaims memory; it does not drive tiering. Back-edge budget accounting does." },
-    { label: "The parser re-parses the loop into faster bytecode", misconception: "There is no re-parse; the JIT compiles existing bytecode to machine code when the budget is exhausted." },
+    { label: "Runtime checks with the tiering manager; compilation or OSR may follow if appropriate", correct: true },
+    { label: "Every bytecode immediately becomes optimized machine code", misconception: "A budget interrupt starts a decision; compilation and entry into new code are separate steps." },
+    { label: "The parser must rebuild the source AST", misconception: "Tiering compilers work from existing bytecode and feedback." },
+    { label: "The garbage collector chooses the next execution tier", misconception: "The tiering manager makes that decision using execution and feedback information." },
   ]}
 />
 
@@ -164,34 +110,34 @@ When you profile a function and see it spending time in the interpreter, that is
   id="do-loop-iteration"
   pieceSlug="04-interpreter-loop"
   lang="en"
-  prompt="Order one iteration of the Ignition dispatch loop for a single bytecode."
+  prompt="Order the conceptual dispatch of one Add bytecode."
   items={[
-    "Fetch the opcode at the current bytecode pointer (pc)",
-    "Look up that opcode's handler in the handler table",
-    "Jump to the handler; it reads operands and updates the accumulator",
-    "The handler advances the pc and dispatches the next bytecode",
+    "The bytecode pointer selects Add in the bytecode stream",
+    "The dispatch table yields the Add handler's address",
+    "The handler reads r0 and the accumulator, then writes the result",
+    "The handler advances the pointer and dispatches the next bytecode",
   ]}
 />
 
 <Inset kind="why" lang="en">
-Why does a deopt always land back in the interpreter rather than a lower JIT tier? Because the interpreter is the one tier that makes *no* speculative assumptions — it handles every type, every shape, every edge case the spec defines, just slowly. When optimised code discovers its bet was wrong (the value it assumed was a Smi turned out to be a HeapNumber), the only place guaranteed to run correctly from that exact bytecode offset is Ignition. So the dispatch loop is the universal fallback: slow, but always right. The JIT can re-optimise later once the feedback stabilises.
+Why is a back-edge a useful budget checkpoint? A function can spend a long time inside one loop without returning. Counting only completed calls would miss that work. A backward jump gives V8 a recurring checkpoint at which it can both account for execution and consider OSR.
 </Inset>
 
 </Explanation>
 
-<KeyTakeaway>Ignition executes bytecode with a dispatch loop — fetch opcode, look up handler, run it, advance the pc, dispatch the next — using threaded (tail-call) dispatch so each opcode has its own branch site and predicts well. The accumulator threads values between handlers, feedback slots fill in as types are seen, and a per-function interrupt budget decremented on back-edges and calls triggers tier-up (and OSR) when it hits zero. Interpreting is slower but predictable: no compile pause, no deopt, and it is where deopts land.</KeyTakeaway>
+<KeyTakeaway>Ignition executes bytecode through per-opcode handlers and a dispatch table. Registers and the accumulator hold current values; feedback slots record selected observed behavior. Loop back-edges and returns spend an interrupt budget, whose exhaustion asks V8's tiering manager to consider compilation. OSR can move a still-running loop into optimized code.</KeyTakeaway>
 
 <RetrievalDrawer
   client:visible
   id="interpreter-loop-retrieval"
   lang="en"
   questions={[
-    { q: "Walk one iteration of the Ignition dispatch loop and name the role of the accumulator.", a: "Fetch the opcode at the current bytecode pointer (pc); look up that opcode's handler in the handler table; jump to the handler, which reads its operands from the register file and the accumulator, performs the operation, and writes the result (usually back to the accumulator); the handler then advances the pc past this instruction's operands and dispatches the next bytecode. The accumulator is the single shared register that threads intermediate values from one handler to the next, so a value produced by one bytecode is already where the next one expects it." },
-    { q: "What is threaded dispatch and why is it faster than a switch-based interpreter?", a: "A switch-based interpreter returns to one shared indirect branch at the top of the loop for every opcode, which the CPU branch predictor handles poorly (one branch, many targets). Threaded dispatch instead ends each handler by directly dispatching to the next — via computed goto historically, and a tail call in Ignition — so each opcode has its own indirect-branch site. The predictor can then learn each opcode's common successor (e.g. compare is usually followed by branch), cutting mispredicts and measurably tightening the loop." },
-    { q: "How does the interpreter loop decide a function is hot, and what happens then?", a: "Each function has an interrupt budget (an invocation-and-loop counter / feedback-cell budget) that the loop decrements on back-edges (each backward jump to the top of a loop) and on calls/invocations. A tight loop spends it fast. When the budget hits zero, the loop raises a tier-up request to compile the function with the next JIT tier (Sparkplug → Maglev → TurboFan). For a loop still running when it goes hot, V8 can use on-stack replacement (OSR) to jump from the interpreter into freshly compiled code mid-loop. Meanwhile the feedback vector has been filling in with observed types so the optimiser has data to specialise on." },
+    { q: "For Add r0 with r0 = 7 and accumulator = 5, what does the handler receive and produce?", a: "The bytecode pointer selects Add and the dispatch table locates its handler. The handler reads r0 and the accumulator, performs JavaScript addition, and puts 12 in the accumulator for these numeric operands. It then advances the pointer and dispatches the next bytecode; a feedback slot may record the operand kinds." },
+    { q: "What is threaded dispatch, and what is its performance reason?", a: "Each bytecode handler fetches the next opcode, looks up its handler address in the dispatch table, and transfers control there. Different handlers provide different branch sites, which can predict common successor bytecodes better than one central switch branch." },
+    { q: "Which Ignition events spend the interrupt budget, and what does underflow mean?", a: "Loop back-edges and function returns reduce the per-function budget. Underflow enters runtime and lets the tiering manager decide whether and how to compile. It is not an automatic immediate jump to optimized code; a running hot loop may use OSR at a loop header." },
   ]}
 />
 
 <Recap lang="en">
-Running bytecode is a dispatch loop: fetch the opcode at the bytecode pointer, look up its handler in the shared handler table, jump to the handler (which reads operands from the register file and the accumulator, computes, and writes the result back to the accumulator), advance the pc, and dispatch the next — repeating until Return. Ignition does not use a naive switch; it uses threaded, tail-call dispatch so each opcode has its own indirect-branch site, which the CPU branch predictor learns far better than one shared branch, cutting mispredicts. The accumulator is the clean handoff between handlers, the other half of the dispatch design. While interpreting, the loop also fills in the feedback-vector slots with the hidden classes and types it actually observes, profiling the program for free so the JIT can later specialise. To decide when to optimise, each function carries an interrupt budget decremented on back-edges and calls; when it hits zero the loop raises a tier-up request (and a still-running hot loop can be swapped via on-stack replacement). Interpreting is slower per instruction but predictable — no compile pause and no deopt — and it is the universal fallback a deopt always returns to, because the interpreter makes no speculative type assumptions. Now when you see a function stuck in interpreted mode longer than expected, you know exactly why: not enough back-edges have fired to exhaust the interrupt budget and trigger the JIT.
+An Ignition instruction is a handoff. The bytecode pointer selects an opcode, the dispatch table locates its handler, and the handler operates on the interpreter frame's virtual registers and accumulator before dispatching the next instruction. This threaded path avoids funneling all opcodes through one central switch. Selected operations also update feedback slots, giving later compilers evidence about observed values without promising that future values match. Separately, loop back-edges and function returns spend a budget stored with the function's feedback cell. When the budget runs out, the tiering manager decides whether compilation is warranted; a future call may use new code, or a long-running loop may enter it through OSR. The next unit follows the values and object layouts that these handlers manipulate.
 </Recap>

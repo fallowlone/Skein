@@ -183,7 +183,7 @@ export default function PracticeSection({ lang, lessonKey, tasks }: Props) {
       <p class="text-sm text-muted mb-3">
         {tt(lang, "Start at the top. Tasks go easiest → hardest: recall a fact, apply it to a case, then a senior-level stretch. Write your answer first — the model answer unlocks after you commit to one, and your own honest grade is what marks a task done.", "Начни сверху. Задачи идут от простого к сложному: вспомнить факт, применить к случаю, затем senior-уровень. Сначала запиши свой ответ — эталон открывается после этого, а задача считается выполненной по твоей честной оценке.")}
       </p>
-      <div class="flex items-center gap-3 mb-6 text-xs font-mono text-muted">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2 mb-6 text-xs font-mono text-muted">
         <span class="px-2 py-0.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2">{tt(lang, "recall", "вспомнить")}</span>
         <span aria-hidden="true">→</span>
         <span class="px-2 py-0.5 rounded-[var(--r-sm)] border-[0.5px] border-hairline-2">{tt(lang, "apply", "применить")}</span>
