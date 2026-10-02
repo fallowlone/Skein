@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { migrateGrammarMastery, gradeGrammar, isTopicDue, type GrammarMastery } from "./grammar-mastery";
+import { migrateGrammarMastery, gradeGrammar, isTopicDue } from "./grammar-mastery";
 
 describe("migrateGrammarMastery", () => {
   it("turns a legacy grammarDone:true into a seeded mature card", () => {
