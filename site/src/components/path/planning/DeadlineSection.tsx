@@ -285,7 +285,7 @@ function DeadlineOutput({ lang, schedule }: { lang: Locale; schedule: Schedule }
 /* ── Pace row + Fix list ─────────────────────────────────────────────────────── */
 type LStrings = typeof L["en"] | typeof L["ru"];
 
-function fixLabel(lang: Locale, t: LStrings, f: Fix): string {
+function fixLabel(t: LStrings, f: Fix): string {
   const save = f.deltaMin;
   switch (f.kind) {
     case "raise-hours":   return t.fixRaise(f.patch.hours as number, save);
@@ -306,7 +306,7 @@ function FixList({ lang }: { lang: Locale }) {
       <ul class="fix-items">
         {fixes.map((f, i) => (
           <li key={i} class="fix-item">
-            <span class="fix-text">{fixLabel(lang, t, f)}{f.closesGap && <em class="fix-fits"> {t.fixFits}</em>}</span>
+            <span class="fix-text">{fixLabel(t, f)}{f.closesGap && <em class="fix-fits"> {t.fixFits}</em>}</span>
             <ShadcnButton type="button" class="btn btn-sm" onClick={() => applyFix(f)}>{t.fixApply}</ShadcnButton>
           </li>
         ))}
