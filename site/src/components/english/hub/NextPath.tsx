@@ -28,6 +28,7 @@ const now = () => Date.now();
 export default function NextPath({ lang }: { lang: Locale }) {
   englishState.value; // subscribe
   const reg = register.value; // subscribe
+  void reg;
   const band = (getPlacement()?.band ?? "A2") as Band;
 
   const due = dueWordIds(ALL_IDS, now());

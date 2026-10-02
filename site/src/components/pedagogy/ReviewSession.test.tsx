@@ -1,7 +1,7 @@
 import { render } from "preact";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ReviewSession from "./ReviewSession";
-import { addCard, allCards, recordReview, REVIEW_KEY, type CardSeed, type ReviewEvidence } from "~/scripts/review-state";
+import { addCard, allCards, recordReview, type CardSeed, type ReviewEvidence } from "~/scripts/review-state";
 import { readResponses } from "~/scripts/practice-state";
 
 const NOW = Date.parse("2026-09-08T12:00:00Z");

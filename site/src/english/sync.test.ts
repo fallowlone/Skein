@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { resetEnglish, setPlacement, markUnitRead } from "./state";
+import { resetEnglish, markUnitRead } from "./state";
 import { userState } from "~/scripts/user-state";
 import { summaryChanged, startEnglishSync } from "./sync";
 import { englishSummary } from "./stats";

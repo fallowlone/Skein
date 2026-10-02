@@ -94,6 +94,7 @@ export default function TodayFocus({ lang }: { lang: Locale }) {
   }, []);
 
   const cfg = config.value; // subscribe
+  void cfg;
   const { path, schedule } = computePath();
 
   // Today's units (deadline mode) or the next step.

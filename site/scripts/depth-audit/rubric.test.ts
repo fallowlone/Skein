@@ -1,7 +1,7 @@
 // scripts/depth-audit/rubric.test.ts
 import { describe, it, expect } from "vitest";
 import { DIMENSIONS } from "./types";
-import { WEIGHTS, weightedOverall, GRADE_TOOL_SCHEMA, buildUnitPrompt } from "./rubric";
+import { weightedOverall, GRADE_TOOL_SCHEMA, buildUnitPrompt } from "./rubric";
 
 describe("weightedOverall", () => {
   it("returns 0 for all-zero and 5 for all-five", () => {

@@ -217,7 +217,7 @@ function checkBaseCsLesson(html: string, file: string, slug: string): string[] {
   return errs;
 }
 
-function checkTopicLesson(html: string, file: string, slug: string): string[] {
+function checkTopicLesson(html: string, file: string): string[] {
   const errs: string[] = [];
 
   // Required sections present and in order
@@ -260,7 +260,7 @@ export function checkLessonRules(html: string, file: string): string[] {
   const info = lessonInfoFromPath(file);
   if (!info) return [];
   const lessonType = html.match(/data-lesson-type="([a-z]+)"/)?.[1];
-  if (lessonType === "topic") return checkTopicLesson(html, file, info.slug);
+  if (lessonType === "topic") return checkTopicLesson(html, file);
   if (info.track === "algorithms") return checkAlgoLesson(html, file, info.slug);
   if (info.track === "base-cs") return checkBaseCsLesson(html, file, info.slug);
   return checkMathLesson(html, file, info.slug);
