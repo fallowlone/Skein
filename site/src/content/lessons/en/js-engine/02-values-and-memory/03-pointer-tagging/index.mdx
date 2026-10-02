@@ -4,8 +4,8 @@ lang: en
 track: "js-engine"
 unit: "02-values-and-memory"
 order: 3
-title: "Pointer tagging and pointer compression"
-summary: "The low tag bit distinguishes a Smi from a HeapObject pointer; the engine masks it to dereference. Pointer compression (V8 8.0, 2020) then stores those pointers as 32-bit offsets inside a 4GB cage, cutting heap size by roughly 40%"
+title: "Pointer tags, compressed addresses, and the cage"
+summary: "A tagged slot stores only the low 32 bits of a heap reference. Follow the tag, the cage base, and the offset to the real object address—and learn what the 4 GB range actually limits."
 estMin: 13
 status: ready
 lessonType: topic
@@ -26,8 +26,8 @@ prereqs:
   - "02-smis-and-doubles"
 sources:
   - https://v8.dev/blog/pointer-compression
-  - https://v8.dev/docs
-  - https://mathiasbynens.be/notes/shapes-ics
+  - https://chromium.googlesource.com/v8/v8/+/refs/heads/main/docs/heap/pointer-compression.md
+  - https://chromium.googlesource.com/v8/v8/+/refs/heads/main/docs/heap/pointer-tagging.md
 ---
 
 import Hook from "~/components/lesson/Hook.astro";
@@ -39,137 +39,61 @@ import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 import DragOrder from "~/components/pedagogy/DragOrder.astro";
-import NumbersCard from "~/components/layout/NumbersCard.astro";
-import Misconception from "~/components/layout/Misconception.astro";
-import AlgoPoster from "~/components/algo/AlgoPoster.tsx";
+import CageAddressFig from "~/components/schematic/CageAddressFig.astro";
 
 <Hook>
-You measure a Node 12 process and a Node 14 process running the identical object-heavy workload. Node 14 uses roughly 40% less heap for the same data — same objects, same code. No one changed the program. V8 changed how it stores a pointer: from a full 8 bytes to a 4-byte offset into a fixed region. That single representation change is one of the largest memory wins in V8's history, and it has a sharp edge.
+An object graph is full of references: an object's Map, its object-valued properties, and the elements of an object array. On a 64-bit machine, full addresses take eight bytes each. V8 can store many of those references in four-byte tagged slots because the objects they name share the same high address bits.
 </Hook>
 
-<Crux>The low bit tags Smi vs pointer; pointer compression stores each as a 32-bit offset inside a 4GB cage, halving pointer width.</Crux>
+<Crux>What must the engine reconstruct before a four-byte slot can identify a heap object?</Crux>
 
 <Explanation>
 
-## The tagging scheme, precisely
+## First, read the tag
 
-We have seen that a value word's low bit is the tag. Now the exact convention, which is the inverse of what beginners guess:
+In a common pointer-compressed V8 heap slot, the **lowest bit** distinguishes a small integer (**Smi**, `0`) from a heap reference (`1`). Heap objects are aligned, leaving low address bits available for tags. A second low bit can distinguish strong from weak references. The tag is representation metadata; it is not a JavaScript type code.
 
-- **Smi:** low bit **0**. The integer occupies the upper bits. No masking needed to *use* the integer in tagged arithmetic.
-- **HeapObject pointer:** low bit **1**. The real address is the word with that bit cleared.
+A tagged reference is not yet the aligned address of an object. The engine must recover the full pointer and remove the tag to access object fields. A Smi follows a different path: its integer payload lives in the tagged value itself.
 
-This works because heap allocations are aligned (to at least a word boundary), so a real address always ends in `…000`. V8 *adds* 1 to mark it as a pointer. To dereference, the engine clears the low bit — a single `AND` / subtract:
+## Then, restore the shared high bits
 
-```js
-// Conceptual untag (a real V8 dereference is one machine instruction):
-const TAG = 1;
-function isPointer(word) { return (word & TAG) === 1; }
-function untag(word)     { return word & ~TAG; }   // clear the tag bit -> real address
-// then load from the resulting address
-```
+With pointer compression enabled, V8 reserves a **typically 4 GB** cage of virtual address space for compressed objects. A 4 GB aligned cage base supplies the high address bits. Each compressed tagged slot keeps only 32 low bits. Conceptually, a heap reference is reconstructed by adding those stored bits to the cage base; the low tag bit is then removed to get the aligned object address.
 
-So the cost of dynamic typing is: one bit test to classify, and one mask before any object access. Everything in V8 is built so these two operations are essentially free on the hot path.
+<CageAddressFig lang="en" />
 
-## Why pointers were the heap's biggest cost
+The addresses in the figure are illustrative. The stored `0x0000_1001` combines offset `0x1000` and tag bit `1`. Adding the aligned base gives a *tagged* full-width pointer ending in `1001`; clearing the tag reaches the object ending in `1000`. The cage base is shared, rather than repeated in every tagged heap slot. V8 can keep it available in a register, and its compiler can eliminate or combine some decompression work.
 
-Object-oriented JavaScript is *pointer-heavy*. Think about what a typical object graph holds: every HeapObject's first word is a pointer (its Map). Every property that is itself an object is a pointer. Arrays of objects are arrays of pointers. A linked list, a tree, a React fibre graph — overwhelmingly pointers.
-
-On a 64-bit machine, each of those pointers is **8 bytes**. But almost no real program needs a 64-bit address space for its JS heap — a few gigabytes is plenty. So 4 of those 8 bytes are, in practice, always zero. Across a graph with millions of pointers, that is a lot of wasted memory *and* wasted cache: every cache line holds half as many useful pointers as it could.
-
-## Pointer compression: 32-bit offsets in a cage
-
-V8 8.0 (shipped 2020, on by default in Chrome and Node from then on) fixed this with **pointer compression**. The idea:
-
-1. Allocate the entire JS heap inside a single **4GB-aligned region** — the **cage**. Its start address is the **base**, held in a dedicated register.
-2. Store every HeapObject pointer not as a full 64-bit address, but as a **32-bit offset** from the base.
-3. To dereference, reconstruct the real address as **base + offset** — one `add` against the base register.
-
-Together these three steps mean that only the 32-bit offset travels through memory — the shared base never leaves its register. Without step 1 (the aligned cage) there would be no base to share; without step 3 there would be no way to recover the full address without storing it. Remove any one step and you lose either the 4-byte saving or the ability to dereference at all.
-
-A compressed pointer is 4 bytes instead of 8. The Smi/pointer tag still lives in the low bit of the 32-bit value, so the scheme composes cleanly with tagging.
-
-<AlgoPoster client:visible
-  id="ap-cage-stack"
-  lang="en"
-  kicker="tag the word · shrink the pointer"
-  lessonTag="lesson: js-engine / 02 / 03"
-  cost="stored: 4 bytes · heap: about -40%"
-  title="TAG ONE BIT, SHARE THE BASE"
-  titleHi={["TAG ONE BIT", "THE BASE"]}
-  sub="The low bit still routes Smi versus pointer, but each pointer is stored as a 32-bit offset into the 4GB cage. Dereference reconstructs base plus offset with one add."
-  badges={["tag: still 1 low bit", "stored: 32-bit offset", "cage: 4GB per isolate"]}
-  panelTitle="COMPRESSED DEREF AS LAYERS · ~9s / cycle"
-  label="Animated layer stack: read the 32-bit slot, test the tag bit, clear it to an offset, and add the shared cage base to reach the object."
-  pattern="stack"
-  data={{ title: "one compressed pointer, inside out", frames: ["32-bit slot|offset + tag", "tag test|low bit = 1", "clear tag|AND mask", "real address|base + offset"], depths: [1, 2, 3, 4], side: [["slot"], ["slot", "tag 1"], ["slot", "tag 1", "offset"], ["slot", "tag 1", "offset", "base"]] }}
-  steps={[
-    { caption: "① load the 32-bit slot value…", state: "STATE: slot loaded", log: "load · 32-bit slot" },
-    { caption: "② low bit 1: it is a pointer…", state: "STATE: pointer tagged", log: "tag 1 → pointer" },
-    { caption: "③ clear the tag: raw cage offset…", state: "STATE: offset ready", log: "mask → 32-bit offset" },
-    { caption: "④ add the cage base: real address…", state: "STATE: dereferenced ✓", log: "base + offset · deref ✓" }
-  ]}
-  minis={[
-    { title: "BASE LIVES IN A REGISTER — never stored", body: "The cage base is shared across the isolate, so per-pointer storage drops from 8 bytes to 4.", tone: 0, at: 1 },
-    { title: "THE PRICE — 4GB cap plus one add", body: "A 32-bit offset addresses 4GB per isolate; every load pays base plus offset. Need more: split isolates.", tone: 3, at: 3 }
-  ]}
-  takeaway="takeaway: store 32-bit offsets, share one base in a register, rebuild with one add — about 40% less heap for a 4GB cap."
-  src="src: lesson js-engine/02 · pointer tagging"
-/>
-
-The payoff is large and was measured across real workloads:
-
-- **Heap size dropped ~40%** on typical web and Node workloads — because so much of the heap *is* pointers.
-- **Cache locality improved**, since twice as many pointers fit per cache line, which often *speeds up* pointer-chasing code despite the extra add.
-
-## The cost: a 4GB cap and an add
-
-Nothing is free. Pointer compression's price:
-
-- **A hard 4GB heap cap per isolate.** A 32-bit offset can only address 4GB. If you genuinely need a larger JS heap in one isolate, you must build V8 with compression disabled (or use multiple isolates / worker threads, each with its own cage). For almost all apps, 4GB is far more than enough; for a few data-processing giants, it is a real wall.
-- **A decompression step.** Every pointer load now does `base + offset` instead of using the stored value directly. This is a single cheap `add`, and the locality win usually more than pays for it — but it is non-zero, and it is why compression is a *tradeoff*, not a pure win.
-
-Contrast with the **old full-64-bit scheme** (pre-8.0): pointers were stored as complete addresses, so no decompression add and no 4GB cap — but every pointer cost 8 bytes and cache lines were half-utilised. V8 judged the memory and locality win worth the cap for the overwhelming majority of users.
-
-<NumbersCard
-  title="Pointer compression by the numbers"
-  data-lesson-visual
-  stats={[
-    { label: "Stored pointer size, pre-8.0", value: "8 bytes (full 64-bit)" },
-    { label: "Stored pointer size, with compression", value: "4 bytes (32-bit offset)" },
-    { label: "Typical heap reduction", value: "about 40%" },
-    { label: "The cage size", value: "4 GB, aligned" },
-    { label: "Heap cap per isolate (compressed)", value: "4 GB" },
-    { label: "Decompression cost per load", value: "one add (base + offset)" },
-  ]}
-/>
-
-<Misconception id="mc-ptr-8-bytes">
-  <p><strong>"Pointers in V8 are 8 bytes because it's a 64-bit engine."</strong> Since V8 8.0 (2020), a stored HeapObject pointer is normally <strong>4 bytes</strong> — a 32-bit offset into the 4GB cage, rebuilt as base + offset at load. The full 64-bit address lives only in a register; object-heavy heaps shrank ~40%.</p>
-</Misconception>
+This describes **compressed tagged heap storage**, not every pointer in a V8 process. Current V8 also has configurations with shared or separate cages and special handling for trusted objects, code, and external references. Nor does reserving a 4 GB virtual range allocate 4 GB of physical memory.
 
 <Quiz
   id="q-tag-convention"
   lessonSlug="03-pointer-tagging"
   lang="en"
-  question="In V8's tagging scheme, what does the low bit of a value word being 1 indicate, and what must the engine do before dereferencing?"
+  question="A compressed tagged slot ends in binary 1. Which interpretation follows from that bit alone?"
   choices={[
-    { label: "It's a Smi; the engine shifts right to read the integer", misconception: "Low bit 0 is the Smi. Low bit 1 marks a pointer; the integer interpretation is the other case." },
-    { label: "It's a HeapObject pointer; the engine clears the tag bit (masks it off) to recover the real aligned address", correct: true },
-    { label: "It's a HeapObject pointer; the engine adds 8 to skip the header", misconception: "The header is reached *at* the address (offset 0 is the Map). The engine clears the tag bit; it does not add 8 to find the object." },
-    { label: "It's always undefined", misconception: "The tag bit encodes Smi-vs-pointer for any value; it has nothing specifically to do with undefined (which is itself a HeapObject Oddball)." },
+    { label: "It contains a Smi whose payload is in the remaining bits", misconception: "A Smi has low tag bit 0." },
+    { label: "It contains a tagged heap reference; the engine still needs a cage base and must remove the tag before object access", correct: true },
+    { label: "It holds the complete 64-bit aligned address", misconception: "The slot is only 32 bits and still contains the tag." },
+    { label: "It is specifically a weak reference", misconception: "The lowest bit separates Smi from heap reference; another bit distinguishes strong and weak forms." },
   ]}
 />
+
+## What actually gets smaller
+
+V8's 2020 study found that tagged values occupied about **70%** of the V8 heap on its sampled websites. Halving those stored values therefore mattered far more than shrinking a rare structure. In those browsing tests, pointer compression reduced V8 heap size **by up to 43%**. That is a measured upper result for those workloads, not a promise that every Node process or page loses 40% of its heap. Some code also benefits from denser cache lines; decompression still has a cost, which V8 worked to reduce in generated code.
+
+The 32-bit offset limits how far one compressed reference can reach **within its cage**. It does not say that a process can use only 4 GB of memory: backing stores, code, other regions, and possibly other isolates or cages can live elsewhere. Whether isolates share a cage is a build and embedding choice. Treat a runtime's maximum heap size as something to inspect in that runtime, not infer from this diagram alone.
 
 <Quiz
   id="q-compression-tradeoff"
   lessonSlug="03-pointer-tagging"
   lang="en"
-  question="What is the principal cost V8 accepts in exchange for pointer compression's ~40% heap reduction?"
+  question="What does V8's reported 'up to 43% smaller heap' establish?"
   choices={[
-    { label: "Smi arithmetic becomes slower", misconception: "Smis are unaffected — they still store the integer in the word. Compression only changes how pointers are stored." },
-    { label: "A hard 4GB heap cap per isolate, plus a small base+offset add on every pointer dereference", correct: true },
-    { label: "Garbage collection stops working", misconception: "GC works fine with compressed pointers; the GC simply operates within the cage. There's no correctness loss." },
-    { label: "Strings can no longer be stored on the heap", misconception: "Strings are still heap objects; compression changes pointer width, not what can live on the heap." },
+    { label: "Every Node process uses 43% less resident memory", misconception: "The measurement was of V8 heap size in selected browser workloads; process memory and other workloads differ." },
+    { label: "Some sampled browser workloads stored enough tagged values that compressing them cut V8 heap size by as much as 43%", correct: true },
+    { label: "Every compressed reference saves exactly 43%", misconception: "A tagged slot shrinks from eight to four bytes in this configuration; 43% described a whole-heap result for sampled workloads." },
+    { label: "The 4 GB cage is fully committed physical memory", misconception: "A reserved virtual address range is not the same as committed physical memory." },
   ]}
 />
 
@@ -177,35 +101,35 @@ Contrast with the **old full-64-bit scheme** (pre-8.0): pointers were stored as 
   id="do-deref-compressed"
   pieceSlug="03-pointer-tagging"
   lang="en"
-  prompt="Order the steps to dereference a compressed, tagged HeapObject pointer and read its Map."
+  prompt="Order the conceptual steps for following a compressed tagged heap reference."
   items={[
-    "Read the 32-bit value from the pointer slot",
-    "Test the low bit — it's 1, so this is a pointer (not a Smi)",
-    "Clear the tag bit to get the raw 32-bit offset",
-    "Reconstruct the real address as cage base + offset",
-    "Load the word at offset 0 of that address — the Map pointer",
+    "Load the 32-bit tagged value from its heap slot",
+    "Test the low bit: 1 selects the heap-reference path",
+    "Combine the stored bits with the matching cage base",
+    "Remove the tag to obtain the aligned object address",
+    "Read the object's field at the required offset",
   ]}
 />
 
-<Inset kind="why" lang="en">
-Why a single 4GB *aligned* cage rather than an arbitrary base? Alignment lets V8 compute the base by simply masking the low 32 bits off any in-cage address, and lets compression/decompression be plain bit operations rather than general arithmetic. It also means the base register rarely changes, so the CPU's prediction and the compiler's code-motion can treat it as a near-constant. The cage is per-isolate, which is why spawning multiple worker threads (each its own isolate, each its own 4GB cage) is the standard way to exceed the single-isolate heap cap.
+<Inset kind="edgecase" lang="en">
+The common 4 GB cage diagram explains the compressed reference's address range. It is not a universal per-process memory ceiling or an exact prediction of Node's `max-old-space-size`. Current V8 can use a shared cage or different cages across isolate groups; consult the build and runtime when investigating a limit.
 </Inset>
 
 </Explanation>
 
-<KeyTakeaway>The low tag bit classifies Smi (0) vs HeapObject pointer (1); the engine masks the bit to dereference. Pointer compression (V8 8.0) then stores each pointer as a 32-bit offset inside a 4GB cage, reconstructed as base + offset — cutting object-heavy heaps ~40% and improving cache locality, at the price of a 4GB-per-isolate cap and one add per load.</KeyTakeaway>
+<KeyTakeaway>A low tag bit selects Smi or heap reference. For a compressed heap reference, V8 combines 32 stored bits with the matching cage base, then removes the tag before object access. This saves space where tagged values dominate; the measurable benefit and the practical memory limit depend on the workload and V8 configuration.</KeyTakeaway>
 
 <RetrievalDrawer
   client:visible
   id="pointer-tagging-retrieval"
   lang="en"
   questions={[
-    { q: "State V8's exact tag convention and what the engine does to dereference a pointer.", a: "The low bit of a value word is the tag: 0 means a Smi (the integer is in the upper bits, usable directly in tagged arithmetic), and 1 means a HeapObject pointer. This works because heap allocations are aligned, so a real address naturally ends in zero bits; V8 adds 1 to mark it as a pointer. To dereference, the engine clears the low bit (a single AND/mask) to recover the real aligned address, then loads from it. So dynamic typing costs one bit test to classify plus one mask before access — both essentially free on the hot path." },
-    { q: "What is pointer compression and how does it cut heap size by ~40%?", a: "Introduced in V8 8.0 (2020), pointer compression places the entire JS heap inside a single 4GB-aligned region called the cage, whose start is the base (held in a register). Instead of storing a full 64-bit address, each HeapObject pointer is stored as a 32-bit offset from the base, and dereferenced by reconstructing base + offset. Because object-oriented JS heaps are overwhelmingly made of pointers (every Map pointer, every object-valued property, arrays of objects), halving pointer width from 8 to 4 bytes cuts typical heaps by about 40% and improves cache locality by fitting twice as many pointers per cache line." },
-    { q: "What does pointer compression cost, and how do you work around the cap?", a: "Two costs. First, a hard 4GB heap cap per isolate, because a 32-bit offset can only address 4GB; to exceed it you either build V8 with compression disabled or split work across multiple isolates / worker threads, each with its own 4GB cage. Second, a decompression step: every pointer load becomes base + offset, one extra add. The add is cheap and the locality win usually more than pays for it, so net it is a large win — but it is genuinely a tradeoff, not free, which is why it is called pointer compression rather than a pure optimisation." },
+    { q: "What does the low tag bit distinguish?", a: "In a common V8 tagged slot, low bit 0 identifies a Smi stored inline and low bit 1 identifies a heap reference. Another bit can distinguish strong and weak references. The tag describes internal representation, not an ECMAScript type." },
+    { q: "Reconstruct the example address in the figure.", a: "The 32-bit slot contains tagged value 0x00001001: offset 0x1000 and tag 1. Add the aligned base 0x0000000100000000 to obtain tagged pointer 0x0000000100001001. Remove the low tag to reach aligned object address 0x0000000100001000." },
+    { q: "What did V8 actually measure, and what does the 4 GB range limit?", a: "In V8's sampled browser workloads, tagged values were about 70% of V8 heap storage and pointer compression reduced heap size by up to 43%. A compressed reference addresses objects inside its matching, typically 4 GB cage. That is not a universal 43% saving, a physical allocation of 4 GB, or a 4 GB total process-memory ceiling." },
   ]}
 />
 
 <Recap lang="en">
-V8's tag convention is precise: the low bit of a value word is 0 for a Smi (integer in the upper bits) and 1 for a HeapObject pointer, which works because aligned allocations make a real address end in zero bits, so V8 adds 1 to mark a pointer and clears it with a single mask to dereference. Object-oriented heaps are dominated by pointers — every Map pointer, every object-valued property, every array of objects — and on a 64-bit machine each pointer was a full 8 bytes whose top 4 bytes were almost always zero. Pointer compression, shipped in V8 8.0 in 2020, places the whole JS heap in one 4GB-aligned cage with its base in a register and stores each pointer as a 32-bit offset, reconstructing the real address as base + offset on every load. This halves pointer width, cutting typical object-heavy heaps by about 40% and improving cache locality enough that pointer-chasing code often gets faster despite the extra add. The costs are a hard 4GB heap cap per isolate (worked around by disabling compression or using multiple isolates/workers) and one add per dereference — making compression a deliberate memory-for-cap tradeoff that V8 judged worthwhile for nearly every user. Now when you see a Node process hitting a 4GB heap cap that nothing in user code explains, or you wonder why upgrading from Node 12 to Node 14 dropped memory usage without any code change, you know exactly which commit to blame — and why it was the right call.
+Pointer tagging and pointer compression answer different questions. The low bit says whether a tagged slot carries a Smi or a heap reference. Compression says how a heap reference can be stored in 32 bits: its cage supplies the shared high address bits, while the slot keeps a tagged offset. A full-width tagged pointer is reconstructed before the tag is removed and the object is accessed. V8 measured substantial savings on pointer-heavy browser workloads, but those measurements and the cage's address range need their context. When a Node service approaches a memory limit, inspect the live V8 configuration and allocation profile before blaming the cage.
 </Recap>
