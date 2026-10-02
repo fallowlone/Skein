@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { transform, transformAll, FULLSTACK, FOUNDATIONS, ORIENTATION } from "./zero-band-renumber.mjs";
+import { transform, FULLSTACK, FOUNDATIONS, ORIENTATION } from "./zero-band-renumber.mjs";
 
 type Unit = {
   slug: string;
