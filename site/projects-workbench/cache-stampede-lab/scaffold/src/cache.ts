@@ -27,8 +27,6 @@ export interface CacheEntry<V> {
 }
 
 export class Cache<V> {
-  private store = new Map<string, CacheEntry<V>>();
-  private inflight = new Map<string, Promise<V>>();
 
   set(_key: string, _value: V, _ttl: number, _now: number, _delta: number): void {
     // TODO: store { value, expiry: now + ttl, delta }

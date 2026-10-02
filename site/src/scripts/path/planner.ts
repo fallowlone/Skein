@@ -4,7 +4,7 @@ import type { ConceptGraph } from "./graph";
 import { topoSort, ancestors, descendants, buildConceptGraph, induceUnitGraph, validateAcyclic } from "./graph";
 import { canSkipConcept } from "./knowledge";
 import { normalizeRanks, goalWeightFactor } from "./goal-rank";
-import { resolveGoalTargets, targetFrontier } from "./goal-resolve";
+import { targetFrontier } from "./goal-resolve";
 import { marketFactorForUnit, type MarketDemandSnapshot } from "./market-demand";
 
 export { resolveGoalTargets, targetFrontier } from "./goal-resolve";

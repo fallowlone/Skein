@@ -1,7 +1,7 @@
-import type { JSX } from "preact";
+import type { SelectHTMLAttributes } from "preact";
 import { cn } from "~/lib/utils";
 
-type NativeSelectProps = JSX.SelectHTMLAttributes<HTMLSelectElement> & { class?: string };
+type NativeSelectProps = SelectHTMLAttributes<HTMLSelectElement> & { class?: string };
 
 function NativeSelect({ className, class: legacyClass, children, ...props }: NativeSelectProps) {
   return (

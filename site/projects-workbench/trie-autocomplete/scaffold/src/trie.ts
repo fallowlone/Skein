@@ -33,7 +33,8 @@ export class Trie {
   insert(_word: string, _weight = 1): void {
     // TODO: walk from root, create nodes as needed, mark terminal, set weight.
     // Calling insert twice on the same word must OVERWRITE the weight, not add.
-    void _word; void _weight;
+    let node: TrieNode = this.root;
+    void node; void _word; void _weight;
   }
 
   has(_word: string): boolean {

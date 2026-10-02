@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { typesByLesson, type LessonCoverage } from "./inventory";
+import { typesByLesson } from "./inventory";
 
 describe("typesByLesson", () => {
   it("maps each practice file's lessonKey to its set of task types", () => {
