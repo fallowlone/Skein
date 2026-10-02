@@ -4,8 +4,8 @@ lang: en
 track: "js-engine"
 unit: "03-hidden-classes"
 order: 4
-title: "Inline caches, deeply: feedback slots and handlers"
-summary: "An IC lives in a feedback-vector slot on the function; a load IC caches {map → handler}. A handler is a Smi-encoded field index for a simple in-object load, or a richer handler object for accessors, prototype, or dictionary loads."
+title: "Inline caches: learning a shape"
+summary: "A property access records receiver Maps and handlers in feedback. Repeated shapes can take a guarded fast path; a new shape causes a miss."
 estMin: 15
 status: ready
 lessonType: topic
@@ -29,6 +29,8 @@ prereqs:
 sources:
   - https://mathiasbynens.be/notes/shapes-ics
   - https://v8.dev/blog/feedback-vectors
+  - https://v8.dev/blog/v8-lite
+  - https://v8.dev/blog/improved-code-caching
   - https://ponyfoo.com/articles/an-introduction-to-speculative-optimization-in-v8
 ---
 
@@ -41,9 +43,9 @@ import KeyTakeaway from "~/components/prose/KeyTakeaway.astro";
 import RetrievalDrawer from "~/components/pedagogy/RetrievalDrawer.tsx";
 import Quiz from "~/components/pedagogy/Quiz.astro";
 import DragOrder from "~/components/pedagogy/DragOrder.astro";
-import NumbersCard from "~/components/layout/NumbersCard.astro";
 import Misconception from "~/components/layout/Misconception.astro";
-import AlgoPoster from "~/components/algo/AlgoPoster.tsx";
+import InlineCacheFig from "~/components/schematic/InlineCacheFig.astro";
+import ICStateStepper from "~/components/schematic/ICStateStepper.astro";
 
 <Hook>
 The overview in `browser/03-v8-internals/04-inline-caches` told you an inline cache "records the hidden class and the offset." True — but where does it record it, and what is the thing it stores next to the map? It is not literally patched into the instruction stream the way the 1990s "inline cache" name suggests. In modern V8 the cache lives in a side table attached to the function, and the value beside the map is a *handler* — sometimes a single integer, sometimes a small program. This lesson opens that table.
@@ -55,39 +57,12 @@ The overview in `browser/03-v8-internals/04-inline-caches` told you an inline ca
 
 ## The feedback vector: where ICs actually live
 
-When you see `--trace-ic` output or a deopt log referencing a "wrong map" or "feedback changed", you are reading a record of what lives here. Understanding the FeedbackVector is what turns opaque JIT output into a diagnosis.
+When an IC log or a deopt report mentions a "wrong map" or changed feedback, the feedback vector is one place to investigate. Understanding the FeedbackVector is what turns opaque JIT output into a diagnosis.
 
-Each function, once it has run, gets a **FeedbackVector** — a heap object attached to the function's closure that holds one or more **slots**, allocated at compile time, one per IC-bearing operation in the bytecode (each property load, each store, each call, each binary op). The "inline cache" for `p.x` is not bytes rewritten inside the machine code; it is the contents of that operation's slot in the FeedbackVector.
+For functions that collect feedback, V8 allocates a **FeedbackVector** lazily. It holds **slots** associated with feedback-bearing bytecode operations such as property loads, stores, calls, and binary operations. The "inline cache" for `p.x` is not bytes rewritten inside the machine code; it is the contents of that operation's slot in the FeedbackVector.
 
-This separation matters: the same bytecode can be shared across closures, while the *feedback* (the observed types and shapes) lives per-FeedbackVector. It is also why the feedback survives tier changes — when Ignition collects feedback and TurboFan later compiles, TurboFan reads exactly these slots. The FeedbackVector is the channel between the interpreter and the optimizing compiler. (We follow that channel forward in `04-the-jit/02-type-feedback`.)
+This separation matters: bytecode and the observations used to optimize it are stored separately. Closures created for the same function may share a feedback vector; it is inaccurate to assume independent feedback per closure. It is also why the feedback survives tier changes — when Ignition collects feedback and TurboFan later compiles, TurboFan reads exactly these slots. The FeedbackVector is the channel between the interpreter and the optimizing compiler. (We follow that channel forward in `04-the-jit/02-type-feedback`.)
 
-<AlgoPoster client:visible
-  id="ap-ic-slot"
-  lang="en"
-  kicker="map + handler · per closure"
-  lessonTag="lesson: js-engine / 03 / 04"
-  cost="hit: 1 compare + 1 load"
-  title="THE CACHE IS DATA, NOT PATCHED CODE"
-  titleHi={["DATA", "NOT PATCHED CODE"]}
-  sub="Each function owns a FeedbackVector with one slot per IC operation. A load slot pairs the expected map with a handler: a Smi field index for plain reads, a recipe object for the rest."
-  badges={["IC = FeedbackVector slot", "Smi handler: 1 load", "object handler: recipe"]}
-  panelTitle="WHERE AN IC LIVES · ~9s / cycle"
-  label="Animated stack: a function points at its FeedbackVector, the vector holds one slot per operation, and a load slot pairs a map with a handler."
-  pattern="stack"
-  data={{ frames: ["function|shared bytecode", "FeedbackVector|one slot per op", "load slot|map + handler", "handler|Smi or object"], depths: [1, 2, 3, 4], side: [[], ["loads · stores · calls", "feedback survives tiers", "", ""], ["Smi: field index", "object: accessor/proto", "", ""], ["hit: compare + load", "miss: runtime updates slot", "", ""]] }}
-  steps={[
-    { caption: "① a function owns its FeedbackVector…", state: "STATE: vector attached", log: "fn → FeedbackVector" },
-    { caption: "② each operation gets one slot…", state: "STATE: slot per op", log: "load · store · call · binop" },
-    { caption: "③ a load slot stores map + handler…", state: "STATE: map + handler", log: "map → handler" },
-    { caption: "④ Smi means one load, object means a recipe…", state: "STATE: handler ready ✓", log: "hit: 1 load ✓" }
-  ]}
-  minis={[
-    { title: "SMI — the 1 MOV case", body: "A plain in-object field is a tagged integer encoding the slot index. No allocation, no recipe — one load at the encoded offset.", tone: 0, at: 3 },
-    { title: "OBJECT — the recipe case", body: "Getters, prototype walks, and dictionary loads need a LoadHandler object. Still cheaper than generic lookup — the map check already narrowed it.", tone: 2, at: 3 }
-  ]}
-  takeaway="takeaway: compare the map, apply the handler — the slot remembers both so the JIT can trust them."
-  src="src: lesson js-engine/03 · inline caches"
-/>
 
 ## A load IC caches `{map → handler}`
 
@@ -112,6 +87,16 @@ The handler is the interesting part. It comes in two broad forms:
 //   slot = { map: M_point, handler: LoadHandler{ kind: accessor, getter: fn } }
 ```
 
+<InlineCacheFig lang="en" />
+
+## A site evolves through three states
+
+The slot above shows the monomorphic case — but a slot's state is not a property of the code. It is the history of what this site has observed. A load site that has only ever seen one Map is **monomorphic**; the moment a second Map arrives, the slot learns a second guarded entry and becomes **polymorphic**; past a threshold of receiver diversity, shape guards stop paying for themselves and the site goes **megamorphic**, taking the generic lookup path on every access.
+
+<ICStateStepper lang="en" />
+
+The three states form a ladder of diminishing returns: each rung widens the set of shapes the site can serve, and each rung makes the fast path less special. That is why megamorphic sites surface in profiles as generic-path hotspots — and why the fix is usually to stabilize construction order upstream (lesson 01) rather than to tune the cache itself.
+
 ## Stores have their own ICs — and they cause transitions
 
 The overview focused on loads. Stores (`p.x = v`) get their own **StoreIC** slots, and they are more involved because a store can *change the shape*. A store IC records not just a map and an offset but, when the store adds a property, the **transition** to take: "from map M1, adding `x` with these attributes, go to map M2 and write the value at the new field." So the store IC is where shape transitions from lesson 02 are actually triggered on the hot path, and where representation generalization (Smi → Double) is detected when the stored value does not fit the field's current representation.
@@ -124,42 +109,12 @@ Not all ICs are about object shape. Arithmetic and comparison operations have **
 
 This feedback is what lets TurboFan emit unboxed integer arithmetic for a loop counter, or a single floating-point instruction for a `Number` reduction, instead of a general "add anything to anything" runtime call. A loop that has only ever added Smis builds Smi feedback; the day a value overflows to a HeapNumber, the feedback widens and any code specialized on Smi must deopt (the classic overflow deopt from `02-values-and-memory`). So the BinaryOp IC is simultaneously *accelerating* the interpreter and *recording* the type profile the JIT will trust.
 
-<FlowDiagram
-  label="A load inline cache as a feedback-vector slot: the slot pairs the expected map with a handler; on a map match the handler is applied to produce the value, and on a miss the IC-miss runtime updates the slot."
-  hue="var(--accent)"
-  perRow={3}
-  caption="The load IC, deeply. The slot stores {map, handler}. A Smi handler is a field index applied in one load; a handler object encodes accessor, prototype, or dictionary recipes. A map miss goes to the runtime, which fills or extends the slot — the data TurboFan later reads."
-  nodes={[
-    { id: "slot", label: "FeedbackVector slot", sub: "for p.x", col: 0, row: 0 },
-    { id: "map", label: "cached map", sub: "expected shape", col: 1, row: 0 },
-    { id: "handler", label: "handler", sub: "how to fetch", col: 2, row: 0 },
-    { id: "smi", label: "Smi index", sub: "1 load", col: 1, row: 1 },
-    { id: "obj", label: "handler object", sub: "accessor/proto", col: 2, row: 1 },
-  ]}
-  edges={[
-    { from: "slot", to: "map", label: "compare" },
-    { from: "map", to: "handler", label: "on hit" },
-    { from: "handler", to: "smi", label: "simple" },
-    { from: "handler", to: "obj", label: "complex" },
-  ]}
-/>
 
-<NumbersCard
-  title="IC and feedback internals (V8)"
-  data-lesson-visual
-  stats={[
-    { label: "Where the IC lives", value: "a slot in the function's FeedbackVector" },
-    { label: "Monomorphic load slot", value: "map + handler" },
-    { label: "Simple handler", value: "Smi-encoded field index (1 load)" },
-    { label: "Complex handler", value: "LoadHandler object (accessor/proto/dictionary)" },
-    { label: "Store IC extra", value: "records the map transition to take" },
-    { label: "BinaryOp feedback", value: "None/Smi/Number/BigInt/String/Any" },
-    { label: "Inspect", value: "%DebugPrintFeedbackVector(fn), --trace-ic" },
-  ]}
-/>
+V8 exposes `--log-ic` to record IC state transitions for log-processing tools. Check available flags with `node --v8-options`; flag availability varies by runtime.
+
 
 <Misconception id="mc-ic-patched">
-  <p><strong>"An inline cache is machine code patched in place at the call site."</strong> The name is historical. In modern V8 the cache is data in the FeedbackVector — a map and handler — not rewritten instructions. So feedback is per-closure, survives Ignition/Sparkplug/TurboFan tiers, and is a heap object.</p>
+  <p><strong>"An inline cache is machine code patched in place at the call site."</strong> The name is historical. V8 records IC observations in feedback-vector slots rather than relying on patched bytecode. Optimized code may use those observations to emit direct guarded loads; feedback should not be assumed to be private to each closure.</p>
 </Misconception>
 
 <Quiz
@@ -215,12 +170,12 @@ Why store the handler separately instead of just an offset? Because "how to fetc
   id="inline-caches-deep-retrieval"
   lang="en"
   questions={[
-    { q: "Where does an inline cache physically live in modern V8, and why does that location matter?", a: "It lives in the function's FeedbackVector — a heap object attached to the closure, with one slot per IC-bearing bytecode operation (load, store, call, binary op), allocated at compile time. It is not machine code patched into the instruction stream (the 'inline' name is historical). This matters because: feedback is per-closure while bytecode is shared; the feedback survives tier transitions (Ignition collects it, TurboFan reads it), making the FeedbackVector the channel between interpreter and optimizer; and it can be inspected as a heap object via %DebugPrintFeedbackVector or --trace-ic." },
-    { q: "What is a handler in a load IC, and what are the two main forms?", a: "A handler encodes how to fetch the value once the cached map has matched. The common, fast form is a Smi-encoded field index: a tagged small integer meaning 'load the in-object (or PropertyArray) field at index N', applied as a single load with no allocation — this is the '1 MOV' fast path. The complex form is a LoadHandler heap object describing a recipe for non-plain reads: invoke an accessor (getter), walk the prototype chain and load there (guarded by a validity cell), do a dictionary-mode lookup, or return a constant folded into the map. Handler objects cost more than a Smi handler but far less than a fully generic lookup, because the map check already selected the case." },
-    { q: "How do store ICs and BinaryOp ICs differ from a plain load IC?", a: "A StoreIC records more than a map and offset: when a store adds a property it encodes the map transition to take (from M1, adding key with attributes, go to M2) — so the hot-path store is where shape transitions and representation generalization (Smi -> Double) are actually triggered; it also distinguishes writing an existing field from creating a new one. A BinaryOpIC / CompareIC records numeric-type history of operands (None, Smi, Number, BigInt, String, or Any) rather than shapes; this profile lets TurboFan emit unboxed integer or single floating-point instructions, and widening it (e.g. a Smi loop counter overflowing to HeapNumber) forces a deopt of code specialized on the narrower type." },
+    { q: "What does a V8 load IC record for a stable property access?", a: "A feedback-vector slot can pair an observed receiver Map with a handler. After the Map check matches, a simple handler describes a field load; a richer handler can describe an accessor or prototype path. A different Map cannot reuse the same handler without checking or updating feedback." },
+    { q: "Why separate feedback from bytecode, and when is a FeedbackVector allocated?", a: "The bytecode describes the operation while the vector holds observations used by ICs and optimizing compilers. V8 may allocate vectors lazily for functions that collect enough feedback. Closures for the same function can share a vector, so feedback is not necessarily independent per closure." },
+    { q: "How do store and arithmetic feedback differ from a load IC?", a: "A store can add a property and take a Map transition, while a plain load only reads through a checked shape. Binary and comparison operations collect operand feedback rather than receiver shapes. An optimizer can use these observations, but a new input may require a more general path or deoptimization." },
   ]}
 />
 
 <Recap lang="en">
-In modern V8 an inline cache is not patched machine code; it is data in the function's FeedbackVector, a heap object with one slot per IC-bearing operation, allocated at compile time. A monomorphic load slot pairs the expected map (the hidden class) with a handler. The handler is either a Smi-encoded field index — a tagged integer applied as a single load, the fast '1 MOV' path — or a LoadHandler object encoding a recipe for accessor, prototype-chain, dictionary, or constant loads, each still gated by the cheap map check. Store ICs go further: they record the map transition a write takes when it adds a property, so the hot-path store is where transitions and Smi -> Double generalization fire. BinaryOp and Compare ICs record numeric-type feedback (None/Smi/Number/BigInt/String/Any) of their operands. Because all of this lives per-closure in the FeedbackVector and survives tier changes, it is precisely the channel Ignition fills and TurboFan reads — the subject of the JIT unit's type-feedback lesson. Inspect it with %DebugPrintFeedbackVector and --trace-ic. Now when you see a deopt report mentioning "wrong map" or a `--trace-ic` line showing a site flip from MONO to POLY, you know exactly what changed in the FeedbackVector slot — and what that means for the JIT tier above it.
+V8's feedback-vector slots record observations for operations such as property loads, stores, and arithmetic. A stable load site can associate a receiver Map with a handler, so a matching Map selects a known access path; a mismatch returns to the miss path and may broaden feedback. Store feedback also accounts for writes that change a shape. Vectors can be allocated lazily, and feedback is not necessarily private to each closure. Optimizing compilers consume these observations to choose guarded fast paths. Use `--log-ic` where available to inspect transitions in a runtime log.
 </Recap>
