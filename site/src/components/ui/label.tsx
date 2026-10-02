@@ -1,7 +1,7 @@
-import type { JSX } from "preact";
+import type { LabelHTMLAttributes } from "preact";
 import { cn } from "~/lib/utils";
 
-type LabelProps = JSX.LabelHTMLAttributes<HTMLLabelElement> & {
+type LabelProps = LabelHTMLAttributes<HTMLLabelElement> & {
   class?: string;
 };
 

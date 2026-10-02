@@ -1,9 +1,9 @@
-import type { JSX } from "preact";
+import type { InputHTMLAttributes, TargetedEvent } from "preact";
 import { useState } from "preact/hooks";
 import { cn } from "~/lib/utils";
 import { Icon, type IconName } from "./icon";
 
-type InputProps = Omit<JSX.InputHTMLAttributes<HTMLInputElement>, "spellcheck" | "prefix"> & {
+type InputProps = Omit<InputHTMLAttributes<HTMLInputElement>, "spellcheck" | "prefix"> & {
   class?: string;
   spellcheck?: boolean | string;
   /** Leading decoration icon (e.g. "search", "lock", "calendar"). */
@@ -73,10 +73,10 @@ function Input({
   // Split the consumer's onInput out of the spread so our tracking wrapper
   // is the single handler (duplicate JSX props only warn, but keep it clean).
   const { onInput: consumerOnInput, ...restProps } = props as {
-    onInput?: (e: JSX.TargetedEvent<HTMLInputElement, Event>) => void;
+    onInput?: (e: TargetedEvent<HTMLInputElement, Event>) => void;
     [k: string]: unknown;
   };
-  const handleInput = (e: JSX.TargetedEvent<HTMLInputElement, Event>) => {
+  const handleInput = (e: TargetedEvent<HTMLInputElement, Event>) => {
     if (!isControlled) setHasText(Boolean((e.target as HTMLInputElement).value));
     consumerOnInput?.(e);
   };

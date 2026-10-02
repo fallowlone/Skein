@@ -2,7 +2,6 @@
 import { describe, it, expect } from "vitest";
 import { fsrsScheduler } from "./fsrs";
 
-const DAY = 86_400_000;
 const T0 = 1_700_000_000_000; // fixed epoch ms
 
 describe("fsrsScheduler", () => {

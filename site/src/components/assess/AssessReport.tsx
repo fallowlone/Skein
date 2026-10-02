@@ -79,6 +79,7 @@ function ConceptList({ lang, rows, labelOf, emptyKey }: {
 
 export default function AssessReport({ lang, model, cells, labelOf, onRestart }: Props) {
   const [applied, setApplied] = useState<{ n: number; m: number } | null>(null);
+  void setApplied;
 
   // Exactly the concept set this report was built over (rows ∪ untested — every
   // scope concept lands in precisely one of the two, per buildReport's loop).
@@ -86,6 +87,7 @@ export default function AssessReport({ lang, model, cells, labelOf, onRestart }:
   // results can never be silently rewritten behind the Save button (C1/C2
   // rule 1, task-12-report.md).
   const scopeConcepts = [...model.rows.map((r) => r.conceptId), ...model.untested];
+  void scopeConcepts;
 
   // "Apply" writes the assess result into the durable stores the rest of the app
   // reads (KnowledgeState, retest cards) — see assess-apply-knowledge.ts for why
@@ -102,6 +104,7 @@ export default function AssessReport({ lang, model, cells, labelOf, onRestart }:
     void addCard;
     void toRetestCards;
   };
+  void apply;
 
   return (
     <section class="assess-report">

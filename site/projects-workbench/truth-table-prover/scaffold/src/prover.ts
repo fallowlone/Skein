@@ -8,7 +8,7 @@
 export type Ast = unknown; // define your own node shape internally
 
 // Parse an expression string into an AST. Throws on malformed input.
-export function parse(expr: string): Ast {
+export function parse(_expr: string): Ast {
   throw new Error("not implemented");
 }
 

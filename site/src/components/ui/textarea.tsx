@@ -1,7 +1,7 @@
-import type { JSX } from "preact";
+import type { TextareaHTMLAttributes } from "preact";
 import { cn } from "~/lib/utils";
 
-type TextareaProps = Omit<JSX.TextareaHTMLAttributes<HTMLTextAreaElement>, "rows" | "spellcheck"> & {
+type TextareaProps = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, "rows" | "spellcheck"> & {
   class?: string;
   rows?: number | string;
   spellcheck?: boolean | string;

@@ -25,7 +25,7 @@ const LEVEL_FALLBACK: Record<Level, { en: string; ru: string }> = {
 export function toRetestCards(
   cells: ReadonlyMap<CellKey, Cell>,
   lang: "en" | "ru",
-  atMs: number,
+  _atMs: number,
   promptFor: (conceptId: string, cell: Cell) => string,
 ): CardSeed[] {
   const out: CardSeed[] = [];

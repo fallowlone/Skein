@@ -19,7 +19,7 @@ const ProjectSchema = z.object({
   estDays: z.number().int().positive(),
   skills: z.array(z.string()).min(1),
   stack: z.array(z.string()).min(1).optional(),
-  resources: z.array(z.object({ label: z.string(), url: z.string().url() })).min(1).optional(),
+  resources: z.array(z.object({ label: z.string(), url: z.url() })).min(1).optional(),
   milestones: z.array(BiText).min(2),
   seniorStretch: z.array(BiText).min(1),
   brief: BiText.optional(),
