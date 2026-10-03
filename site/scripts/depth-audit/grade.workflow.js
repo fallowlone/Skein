@@ -16,7 +16,7 @@ const model = input.model || 'sonnet'
 const SCHEMA = input.schema
 
 phase('Grade')
-const results = await pipeline(
+await pipeline(
   units,
   (u) => agent(
     `${input.guide}\n\nUnit: ${u.unitKey}\nGrade every lesson below. Read each file with the Read tool before grading it.\n` +
