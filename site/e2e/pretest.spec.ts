@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 // The old test clicked three buttons on the HOME page and asserted
-// `localStorage.awesome.user-state.v1.tier === "senior"`. None of that exists any
+// `localStorage.skein.user-state.v1.tier === "senior"`. None of that exists any
 // more: placement lives on /profile, it is a two-stage adaptive run, and the result
 // is a rating + rank rather than a coarse tier. It failed against a working feature.
 test("placement runs from the profile screen and records a rating and rank", async ({ page }) => {
@@ -9,10 +9,9 @@ test("placement runs from the profile screen and records a rating and rank", asy
   await page.evaluate(() => localStorage.clear());
   await page.reload();
 
-  // Placement is offered before any rating exists.
-  const begin = page.getByRole("button", { name: /^Begin$/ });
-  await expect(begin).toBeVisible();
-  await begin.click();
+  // First run shows the entry chooser; "Start placement" mounts <Pretest startImmediately />,
+  // which opens straight on the first standard-round question — no separate Begin button.
+  await page.getByRole("button", { name: "Start placement", exact: true }).click();
 
   // Answer whatever is on screen until the run finishes. The question count is
   // adaptive, and a gate sits between the stages ("Advanced round" / "Skip"), so the
@@ -34,7 +33,7 @@ test("placement runs from the profile screen and records a rating and rank", asy
   }
 
   const state = await page.evaluate(() => {
-    const raw = localStorage.getItem("awesome.user-state.v1");
+    const raw = localStorage.getItem("skein.user-state.v1");
     return raw ? JSON.parse(raw) : null;
   });
 

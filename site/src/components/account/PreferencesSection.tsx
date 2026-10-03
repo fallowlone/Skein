@@ -20,7 +20,7 @@ type Motion = "on" | "off" | "auto";
 const L = {
   en: {
     secNote: "Saved locally",
-    themeName: "Theme", themeDesc: "Paper (light) or ink-cool (dark).",
+    themeName: "Theme", themeDesc: "White (light) or charcoal (dark).",
     motionName: "Motion", motionDesc: "Reveal animations and counters. Auto follows your system setting.",
     depthName: "Reading depth", depthDesc: "Default depth for lesson readers and the path engine.",
     densityName: "Density", densityDesc: "Spacing of the interface. Affects readers and dashboards.",
@@ -32,7 +32,7 @@ const L = {
   },
   ru: {
     secNote: "Сохраняется локально",
-    themeName: "Тема", themeDesc: "Бумага (светлая) или ink-cool (тёмная).",
+    themeName: "Тема", themeDesc: "Белая (светлая) или угольная (тёмная).",
     motionName: "Анимация", motionDesc: "Анимации появления и счётчики. Авто следует системной настройке.",
     depthName: "Глубина чтения", depthDesc: "Глубина по умолчанию для уроков и движка пути.",
     densityName: "Плотность", densityDesc: "Отступы интерфейса. Влияет на читалки и дашборды.",

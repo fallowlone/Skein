@@ -76,9 +76,20 @@ Relevant sources:
 - `site/lesson-worker/src/pages/[lang]/learn/[track]/[unit]/[lesson].astro`
 - `site/astro.lessons.config.mjs`
 
-Lesson payloads are cacheable at the edge and versioned with an ETag. The Worker
-fails explicitly when the lesson backend is unavailable or produces an invalid
-payload.
+Lesson payload responses are private and uncached because access depends on the signed
+account session. The Pages Function checks the server-owned lesson completion and
+course-grant tables before returning later lessons; the Worker forwards the session
+cookie and fails explicitly when access or the lesson backend is unavailable. The
+first lesson in each track remains readable to guests with question controls omitted.
+GitHub sign-in begins from an explicit Terms of Use checkbox on the account page;
+the signed OAuth state carries the accepted terms version, which the callback
+records on the account after GitHub verification.
+
+`Quiz` and `DragOrder` submissions are graded by `/api/lessons/attempt` against the
+published lesson render tree. Client progress JSON is not authorization state. A
+verified one-time Telegram or GitHub Sponsors payment grants permanent access to
+one selected track; the D1 schema and operator setup live in
+`functions/migrations/0009_course_access.sql` and `docs/operator-setup-deploy.md`.
 
 ## Content and data authority
 

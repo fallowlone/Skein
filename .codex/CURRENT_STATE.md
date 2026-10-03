@@ -1,6 +1,18 @@
 # Skein — current state
 
-Last verified: **2026-09-15 (Europe/Berlin)**.
+Last verified: **2026-10-03 (Europe/Berlin)** for the production deploy evidence; the active local work below was verified 2026-09-27.
+
+## Active design work (verified locally 2026-09-27)
+
+- The working tree contains an ongoing, uncommitted editorial redesign of the `js-engine` course. Eleven of 41 EN/RU lesson pairs have been redesigned; the newest is `02-values-and-memory/03-pointer-tagging` with a static 2.5D cage-address figure. The remaining pairs still need authoring and visual QA.
+- Site colors now use a white/near-black light palette and a charcoal/near-white dark palette through `site/src/styles/tokens.css`. Domain and semantic colors remain small purposeful accents. `style-guide.md` and `docs/design/js-engine-visual-reference.md` record the direction, including the user-supplied diagram reference and the instruction not to use blue as the base color.
+- Local evidence: `bun run build`, `bun run check`, `bun run build:lessons-worker`, and `mdx-check js-engine` passed after the Ignition pair. `dist/lint-report.json` has 0 errors and 58 existing warnings. Browser checks covered representative home, learn, and lesson pages at 1440/390 px in both themes; the approved Ignition figure was checked in EN/RU at widths 320–1440 px with no page or figure overflow or text-element overlap.
+- The user approved the first reference-inspired Ignition diagram after reviewing desktop and mobile screenshots in `docs/design/prototypes/`. They clarified that a static 2.5D perspective or exploded view is welcome, and animation is optional. They emphasized checking that UI elements never overlap.
+- This work is not committed or pushed. Other uncommitted content and generated assets in the working tree were preserved.
+- The active local changes also add server-owned sequential lesson access per track. Guests can read the first lesson without its question controls. Authenticated learners unlock the next lesson after all authored `Quiz` and `DragOrder` components pass server grading; lessons without either component complete on authenticated read. `RetrievalDrawer` is excluded from the unlock rule. A verified one-time payment unlocks one chosen track permanently: 300 Telegram Stars or a 9.99 USD GitHub Sponsors course tier. Telegram refunds revoke the matching grant. GitHub course checkout uses a pending selected-track intent and a signed Sponsors webhook. Guest question routes outside lessons redirect to account sign-in.
+- GitHub registration now requires an explicit Terms of Use checkbox before OAuth; the signed OAuth state carries the consent version, and the callback records it after GitHub verification. Editorial lesson diagrams, retrieval, practice, AI support, and the footer were aligned to their intended reading widths after user screenshot review.
+- Local verification after this milestone: `functions` 144 Vitest tests and SQLite integrations pass, including wrong/correct lesson answers, stale question IDs, and both payment grants; functions typecheck passes; `site` check has 0 errors, full build emitted 1855 pages, `dist/lint-report.json` has 0 errors and the same 58 warnings; lesson Worker build passes. Browser checks of the course unlock panel at EN 1440 and RU 390 px found no horizontal overflow or overlap. The readiness dashboard and home atlas label fixes were also checked at desktop/mobile widths. The pointer-tagging figure was checked in EN/RU at 1440/390/320 px and at 390 px in dark theme; no browser errors, overflow, or visible label overlap. The lesson corrects the old unsourced 40% heap reduction and universal 4 GB limit claims using V8 primary docs.
+- **Release gate:** apply `functions/migrations/0009_course_access.sql` to production D1 before deploying the access code. GitHub Sponsors additionally needs a published one-time 9.99 USD `Skein course` tier and `GITHUB_SPONSORS_COURSE_TIER_ID`. No real provider payment or live Worker access flow has been exercised yet. This work remains uncommitted and undeployed per the user's instruction.
 
 This is the mutable handoff for future Codex sessions. Update it after material
 milestones or when a release blocker changes. Durable architecture belongs in
@@ -66,6 +78,11 @@ The latest scheduled run completed both jobs successfully:
   lesson Worker build, Cloudflare Pages deploy, and lesson Worker deploy.
 
 At verification time `https://fallowlone.com/en/` returned HTTP 200.
+
+On 2026-10-03 the pipeline went red on `main` (PR #25 merge run
+`37065141821` and scheduled run `37113967752`, both gates failure) and was
+restored by PR #26: post-merge `main` run `37118330412` completed `gates`
+and `deploy` successfully.
 
 ## Recently completed milestones (appended 2026-09-24)
 
@@ -136,6 +153,22 @@ At verification time `https://fallowlone.com/en/` returned HTTP 200.
      tree-height hint numbers, exchange-Quiz wording, stack-trace frame
      line 11→14. Monotonic-stack depths confirmed correct, untouched.
    - QA gate green on all touched files, `lint:src` + full build clean.
+
+9. **Deploy gates back to green on `main`** (PR #26 `fix/deploy-check`,
+    merged 2026-10-03)
+    - `main` was red after PR #25 merged with 21 `astro-check` errors
+      (duplicate keys in 9 schematic figures, TS annotation in an `is:inline`
+      script, two invalid `MachineValue` tones, missing `RightRail`/`Topbar`
+      editorial props) plus 64 check hints.
+    - Fix was built on an isolated worktree at `origin/main` (main working
+      tree untouched): cherry-picked the three unmerged fix commits, ported
+      the `Topbar` editorial variant, cleared the last hint in `Atlas.astro`.
+    - Evidence: `bun run check` 0 errors / 0 warnings / 0 hints; site tests
+      1790 pass; functions tests + typecheck pass; `verify:samples`,
+      `verify:scenario`, `verify:projects` pass; full build 1855 pages,
+      0 lint errors, same 58 pre-existing content warnings. Preview dispatch
+      run `37117614361` green, post-merge `main` run `37118330412`
+      (`gates` + `deploy`) success.
 
 ## Current corpus snapshot
 

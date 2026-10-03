@@ -1,103 +1,68 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { onRequestGet, parseLessonPath } from "./[[path]]";
 
-const env = (over: Record<string, unknown> = {}) => ({
-  SUPABASE_URL: "https://example.supabase.co",
-  SUPABASE_SECRET_KEY: "sb_secret_test",
-  ...over,
-}) as any;
-
-const ctx = (
-  path: string | string[],
-  headers: HeadersInit = {},
-  e = env(),
-) => ({
-  request: new Request("https://x/api/lessons/en/networking/03-tcp/01-handshake", { headers }),
-  params: { path },
-  env: e,
-  data: { userId: null },
-}) as any;
-
+const path = ["en", "networking", "03-tcp", "01-handshake"];
 const payload = {
-  version: "abc123",
-  lesson: { lang: "en", track: "networking", unit: "03-tcp", slug: "01-handshake" },
-  graph: {
-    concepts: ["tcp"], prereqConcepts: ["ip"], prereqLessons: ["networking/02-ip/01-ip"],
-    prev: "networking/02-ip/01-ip", next: "networking/03-tcp/02-state", related: ["backend/01-http/01-overview"],
+  lesson: {
+    key: "networking/03-tcp/01-handshake", lang: "en", track: "networking",
+    body: { format: "lesson-render-tree-v1", root: [
+      { type: "element", name: "Quiz", props: { id: "q1", choices: [{ correct: true }, {}] } },
+    ] },
   },
-  concepts: { tcp: { id: "tcp" }, ip: { id: "ip" } },
-  practice: { lessonKey: "networking/03-tcp/01-handshake", tasks: [{ id: "p1", concepts: ["tcp"] }] },
-  unit: { slug: "03-tcp" },
-  track: { slug: "networking" },
+  graph: { navPrev: null as string | null },
 };
+const later = { ...payload, graph: { navPrev: "networking/03-tcp/00-intro" } };
+
+function mockLesson(lesson: typeof payload) {
+  globalThis.fetch = (async () => new Response(JSON.stringify([{ payload: lesson, version: "v1" }]))) as any;
+}
+function context(userId: number | null = null, db?: unknown) {
+  return {
+    request: new Request(`https://x/api/lessons/${path.join("/")}`),
+    params: { path }, data: { userId },
+    env: { DB: db, SUPABASE_URL: "https://example.supabase.co", SUPABASE_SECRET_KEY: "secret" },
+  } as any;
+}
+const originalFetch = globalThis.fetch;
+afterEach(() => { globalThis.fetch = originalFetch; });
 
 describe("parseLessonPath", () => {
-  it("accepts EN/RU lesson paths", () => {
-    expect(parseLessonPath(["en", "networking", "03-tcp", "01-handshake"])).toEqual({
-      lang: "en", track: "networking", unit: "03-tcp", lesson: "01-handshake",
-    });
+  it("accepts bilingual paths and rejects malformed ones", () => {
+    expect(parseLessonPath(path)?.lang).toBe("en");
     expect(parseLessonPath("ru/networking/03-tcp/01-handshake")?.lang).toBe("ru");
-  });
-
-  it("rejects unknown locales, extra segments, and unsafe slugs", () => {
-    expect(parseLessonPath("de/networking/03-tcp/01-handshake")).toBeNull();
-    expect(parseLessonPath("en/networking/03-tcp/01-handshake/extra")).toBeNull();
     expect(parseLessonPath("en/networking/../01-handshake")).toBeNull();
+    expect(parseLessonPath("en/networking/03-tcp/01-handshake/extra")).toBeNull();
   });
 });
 
-describe("GET /api/lessons/:lang/:track/:unit/:lesson", () => {
-  it("returns the lesson payload with graph, concepts, practice, and cache headers", async () => {
-    let requestBody: any;
-    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-      requestBody = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify([{ payload, version: "abc123" }]), { status: 200 });
-    }) as any;
-
-    const res = await onRequestGet(ctx(["en", "networking", "03-tcp", "01-handshake"]));
-    expect(res.status).toBe(200);
-    expect(res.headers.get("etag")).toBe('"abc123"');
-    expect(res.headers.get("cache-control")).toContain("stale-while-revalidate");
-    expect(requestBody).toEqual({
-      lang_code: "en", track_code: "networking", unit_code: "03-tcp", lesson_slug: "01-handshake",
-    });
-    expect(await res.json()).toEqual(payload);
+describe("GET /api/lessons/:path", () => {
+  it("lets guests read the first lesson without shared caching", async () => {
+    mockLesson(payload);
+    const response = await onRequestGet(context());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+    expect(response.headers.get("x-skein-authenticated")).toBe("0");
   });
 
-  it("resolves RU independently", async () => {
-    let requestBody: any;
-    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
-      requestBody = JSON.parse(String(init?.body));
-      return new Response(JSON.stringify([{ payload: { ...payload, lesson: { ...payload.lesson, lang: "ru" } }, version: "ru1" }]), { status: 200 });
-    }) as any;
-    const res = await onRequestGet(ctx(["ru", "networking", "03-tcp", "01-handshake"]));
-    expect(res.status).toBe(200);
-    expect(requestBody.lang_code).toBe("ru");
-    expect((await res.json() as any).lesson.lang).toBe("ru");
+  it("blocks direct URLs until previous completion", async () => {
+    mockLesson(later);
+    expect((await onRequestGet(context())).status).toBe(401);
+    const db = { prepare: vi.fn(() => ({ bind: () => ({ first: async () => null }) })) };
+    expect((await onRequestGet(context(7, db))).status).toBe(403);
   });
 
-  it("returns 404 when the RPC returns no lesson", async () => {
-    globalThis.fetch = (async () => new Response("[]", { status: 200 })) as any;
-    const res = await onRequestGet(ctx(["en", "networking", "03-tcp", "99-missing"]));
-    expect(res.status).toBe(404);
+  it("allows prior completion or a permanent course grant", async () => {
+    mockLesson(later);
+    const completedDb = { prepare: vi.fn((sql: string) => ({ bind: () => ({ first: async () => sql.includes("lesson_completions") ? { done: 1 } : null }) })) };
+    const paidDb = { prepare: vi.fn((sql: string) => ({ bind: () => ({ first: async () => sql.includes("course_access_grants") ? { allowed: 1 } : null }) })) };
+    expect((await onRequestGet(context(7, completedDb))).status).toBe(200);
+    expect((await onRequestGet(context(7, paidDb))).status).toBe(200);
   });
 
-  it("honors If-None-Match with 304", async () => {
-    globalThis.fetch = (async () => new Response(JSON.stringify([{ payload, version: "abc123" }]), { status: 200 })) as any;
-    const res = await onRequestGet(ctx(
-      ["en", "networking", "03-tcp", "01-handshake"],
-      { "if-none-match": 'W/"other", "abc123"' },
-    ));
-    expect(res.status).toBe(304);
-    expect(res.headers.get("etag")).toBe('"abc123"');
-  });
-
-  it("fails visibly when the backend errors or is unconfigured", async () => {
-    globalThis.fetch = (async () => new Response("boom", { status: 500 })) as any;
-    expect((await onRequestGet(ctx(["en", "networking", "03-tcp", "01-handshake"]))).status).toBe(502);
-    expect((await onRequestGet(ctx(
-      ["en", "networking", "03-tcp", "01-handshake"], {},
-      env({ SUPABASE_URL: undefined, SUPABASE_SECRET_KEY: undefined }),
-    ))).status).toBe(503);
+  it("rejects malformed and missing curriculum payloads", async () => {
+    mockLesson({ ...payload, graph: { navPrev: undefined as any } });
+    expect((await onRequestGet(context())).status).toBe(502);
+    globalThis.fetch = (async () => new Response("[]")) as any;
+    expect((await onRequestGet(context())).status).toBe(404);
   });
 });

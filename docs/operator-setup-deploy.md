@@ -177,7 +177,24 @@ bunx wrangler d1 execute DB --remote --file functions/migrations/0005_telegram_p
 bunx wrangler d1 execute DB --remote --file functions/migrations/0006_telegram_payment_hardening.sql
 bunx wrangler d1 execute DB --remote --file functions/migrations/0007_telegram_orders_subscriptions.sql
 bunx wrangler d1 execute DB --remote --file functions/migrations/0008_telegram_precheckout_lock.sql
+bunx wrangler d1 execute DB --remote --file functions/migrations/0009_course_access.sql
 ```
+
+Apply `0009_course_access.sql` **before** deploying code that enforces lesson access. It adds
+server-owned exercise passes, lesson completions, permanent course grants, and pending GitHub
+course selections. The lesson API fails closed when these tables are unavailable.
+
+Each track remains free when lessons are completed in order. A one-time payment unlocks one
+selected track permanently: **300 Telegram Stars** or **9.99 USD through GitHub Sponsors**.
+The Telegram product ID is `course:<track-slug>`; the webhook grants access only after a
+verified successful payment and revokes that grant on refund.
+
+For GitHub, publish one **one-time** 9.99 USD Sponsors tier named `Skein course` and set its immutable `node_id` as
+`GITHUB_SPONSORS_COURSE_TIER_ID` in Pages. The learner first selects a track on its Skein page;
+the signed `created` webhook consumes that one-hour selection and grants only that track.
+The buyer must use the GitHub account linked to Skein and remain identifiable to the webhook.
+GitHub permits at most 10 published one-time tiers, so one generic course tier covers all tracks.
+Do not advertise the GitHub checkout until the tier, webhook, and Pages variable are configured.
 
 Do not rerun an `ALTER TABLE` migration blindly. Before applying a production migration, inspect
 the remote schema and confirm which version is missing:
