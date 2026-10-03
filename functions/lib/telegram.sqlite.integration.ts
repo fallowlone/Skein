@@ -2,6 +2,9 @@
 // @ts-nocheck
 import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
+import { onRequestPost as githubCourseWebhook } from "../api/billing/github-sponsors";
+import { onRequestPost as lessonAttempt } from "../api/lessons/attempt";
+import { lessonAccessible } from "./lesson-access";
 import {
   applyTelegramSubscriptionProviderState,
   approveTelegramPreCheckout,
@@ -66,6 +69,7 @@ for (const name of [
   "0006_telegram_payment_hardening.sql",
   "0007_telegram_orders_subscriptions.sql",
   "0008_telegram_precheckout_lock.sql",
+  "0009_course_access.sql",
 ]) sqlite.exec(migration(name));
 sqlite.exec("INSERT INTO users (id, github_id, login, nickname, created_at) VALUES (42, 4200, 'buyer', 'buyer', 1)");
 sqlite.exec("INSERT INTO users (id, github_id, login, nickname, created_at) VALUES (43, 4300, 'other', 'other', 1)");
@@ -283,3 +287,96 @@ assert.equal((await getPaymentByProviderId(db, "telegram_stars", "support-charge
 assert.deepEqual(sqlite.prepare("SELECT status FROM telegram_orders WHERE id = ?").get(supportOrderId), { status: "refunded" });
 assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM telegram_entitlements WHERE order_id = ?").get(supportOrderId).count, 0);
 console.log("telegram.sqlite.integration: PASS one-time support refund never touches entitlements");
+
+const courseOrderId = "ord_EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE";
+await createTelegramOrder(db, {
+  id: courseOrderId, userId: 42, product: "course:algorithms", amount: 300, currency: "XTR",
+  billingKind: "one_time", subscriptionPeriodSeconds: null, checkoutExpiresAt: 99_999,
+}, 90);
+assert.equal(await approveTelegramPreCheckout(db, {
+  orderId: courseOrderId, product: "course:algorithms", amount: 300, currency: "XTR", telegramUserId: "888",
+  preCheckoutQueryId: "pcq-course",
+}, 91), true);
+await recordTelegramOneTimePayment(db, {
+  order: {
+    id: courseOrderId, userId: 42, product: "course:algorithms", amount: 300, currency: "XTR",
+    billingKind: "one_time", subscriptionPeriodSeconds: null, status: "approved", telegramUserId: "888",
+    checkoutExpiresAt: 99_999, currentPeriodEnd: null, createdAt: 90, updatedAt: 91,
+  },
+  providerPaymentId: "course-charge-1", telegramUserId: "888", product: "course:algorithms",
+  amount: 300, currency: "XTR",
+}, 92);
+assert.deepEqual(sqlite.prepare(
+  "SELECT user_id, track, expires_at, revoked_at FROM course_access_grants WHERE provider_ref = ?",
+).get("course-charge-1"), { user_id: 42, track: "algorithms", expires_at: null, revoked_at: null });
+const coursePayment = await getPaymentByProviderId(db, "telegram_stars", "course-charge-1");
+assert.ok(coursePayment);
+await refundTelegramOneTimePayment(db, coursePayment!, 93);
+assert.deepEqual(sqlite.prepare(
+  "SELECT revoked_at FROM course_access_grants WHERE provider_ref = ?",
+).get("course-charge-1"), { revoked_at: 93 });
+console.log("telegram.sqlite.integration: PASS 300-Star course grant is permanent until its payment is refunded");
+
+sqlite.prepare(
+  "INSERT INTO course_purchase_intents (user_id, track, expires_at) VALUES (?, ?, ?)",
+).run(42, "js-engine", Date.now() + 60_000);
+const sponsorship = {
+  action: "created",
+  sponsorship: {
+    node_id: "S_COURSE_1", sponsor: { id: 4200, type: "User", login: "buyer" },
+    sponsorable: { login: "skein-owner" }, privacy_level: "PUBLIC",
+    tier: { node_id: "TIER_COURSE", name: "Skein course", monthly_price_in_cents: 999, is_one_time: true },
+  },
+};
+const signedCourseRequest = async (body: unknown, delivery: string) => {
+  const raw = JSON.stringify(body);
+  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode("secret"), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const signature = Array.from(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(raw))), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return new Request("https://skein.test/api/billing/github-sponsors", {
+    method: "POST", headers: {
+      "X-GitHub-Event": "sponsorship", "X-GitHub-Delivery": delivery,
+      "X-Hub-Signature-256": `sha256=${signature}`,
+    }, body: raw,
+  });
+};
+const ghEnv = {
+  DB: db, GITHUB_SPONSORS_URL: "https://github.com/sponsors/skein-owner",
+  GITHUB_SPONSORS_WEBHOOK_SECRET: "secret", GITHUB_SPONSORS_COURSE_TIER_ID: "TIER_COURSE",
+};
+assert.equal((await githubCourseWebhook({ request: await signedCourseRequest(sponsorship, "course-delivery-1"), env: ghEnv, data: {} } as any)).status, 200);
+assert.deepEqual(sqlite.prepare(
+  "SELECT user_id, track, expires_at FROM course_access_grants WHERE provider_ref = 'S_COURSE_1'",
+).get(), { user_id: 42, track: "js-engine", expires_at: null });
+assert.equal((await githubCourseWebhook({ request: await signedCourseRequest(sponsorship, "course-delivery-1"), env: ghEnv, data: {} } as any)).status, 200);
+assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM course_access_grants WHERE provider_ref = 'S_COURSE_1'").get().count, 1);
+console.log("telegram.sqlite.integration: PASS signed 9.99 USD GitHub sponsorship consumes one track intent exactly once");
+
+sqlite.prepare("UPDATE users SET terms_version = 'v1', terms_accepted_at = 1 WHERE id = 42").run();
+const originalFetch = globalThis.fetch;
+const firstKey = "algorithms/01-foundations/01-start";
+const firstPayload = {
+  lesson: { key: firstKey, lang: "en", track: "algorithms", body: { format: "lesson-render-tree-v1", root: [
+    { type: "element", name: "Quiz", props: { id: "q1", choices: [{ label: "wrong" }, { label: "right", correct: true }] } },
+    { type: "element", name: "DragOrder", props: { id: "d1", items: ["first", "second"] } },
+  ] } }, graph: { navPrev: null },
+};
+globalThis.fetch = async () => new Response(JSON.stringify([{ payload: firstPayload, version: "v1" }]));
+const submit = async (userId: number | null, exerciseId: string, answer: unknown) => lessonAttempt({
+  request: new Request("https://skein.test/api/lessons/attempt", {
+    method: "POST", headers: { Origin: "https://skein.test", "content-type": "application/json" },
+    body: JSON.stringify({ path: ["en", "algorithms", "01-foundations", "01-start"], exerciseId, answer }),
+  }),
+  env: { DB: db, TERMS_VERSION: "v1", SUPABASE_URL: "https://example.supabase.co", SUPABASE_SECRET_KEY: "secret" },
+  data: { userId },
+} as any);
+assert.equal((await submit(null, "q1", 1)).status, 401);
+assert.equal((await submit(42, "q1", 0)).status, 200);
+assert.equal(sqlite.prepare("SELECT COUNT(*) AS count FROM lesson_exercise_passes WHERE user_id = 42").get().count, 0);
+sqlite.prepare("INSERT INTO lesson_exercise_passes (user_id, lesson_key, exercise_id, passed_at) VALUES (?, ?, ?, ?)")
+  .run(42, firstKey, "retired-question", Date.now());
+assert.deepEqual(await (await submit(42, "q1", 1)).json(), { passed: true, lessonCompleted: false });
+assert.deepEqual(await (await submit(42, "d1", [0, 1])).json(), { passed: true, lessonCompleted: true });
+assert.equal(await lessonAccessible(db, 42, { ...firstPayload, graph: { navPrev: firstKey }, lesson: { ...firstPayload.lesson, key: "algorithms/01-foundations/02-next" } } as any), true);
+assert.equal(await lessonAccessible(db, 43, { ...firstPayload, graph: { navPrev: firstKey }, lesson: { ...firstPayload.lesson, key: "algorithms/01-foundations/02-next" } } as any), false);
+globalThis.fetch = originalFetch;
+console.log("telegram.sqlite.integration: PASS signed-in Quiz and DragOrder unlock the next lesson only after both pass");

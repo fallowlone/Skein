@@ -2,7 +2,7 @@
 import type { Env, RequestData } from "../../lib/types";
 import { createTelegramOrder, markTelegramOrderFailed, markTelegramOrderInvoiceReady, telegramSchemaReady } from "../../lib/db";
 import { coachConfig, readBodyBounded } from "../../lib/coach";
-import { PRODUCTS } from "../../lib/products";
+import { getProduct } from "../../lib/products";
 import { error, isSameOriginMutation, json } from "../../lib/response";
 import { callTelegramApi, newTelegramOrderId, normalizeTelegramInvoiceUrl, TELEGRAM_ORDER_TTL_MS } from "../../lib/telegram";
 
@@ -23,8 +23,17 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
   const requestedProduct = body && typeof body === "object" && !Array.isArray(body)
     ? (body as Record<string, unknown>).product
     : null;
-  const product = typeof requestedProduct === "string" ? PRODUCTS[requestedProduct] : null;
+  const product = typeof requestedProduct === "string" ? getProduct(requestedProduct) : null;
   if (!product) return error(400, "invalid_product");
+  if (product.id.startsWith("course:")) {
+    let owned;
+    try {
+      owned = await ctx.env.DB.prepare(
+        "SELECT 1 AS owned FROM course_access_grants WHERE user_id = ? AND track = ? AND revoked_at IS NULL LIMIT 1",
+      ).bind(userId, product.id.slice(7)).first<{ owned: number }>();
+    } catch { return error(503, "billing_unavailable"); }
+    if (owned) return error(409, "course_already_unlocked");
+  }
   if (product.entitlements.includes("coach") && !coachConfig(ctx.env).managedAiAvailable) {
     return error(503, "billing_unavailable");
   }
