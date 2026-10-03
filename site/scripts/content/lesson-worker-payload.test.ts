@@ -49,7 +49,7 @@ describe("lesson Worker payload client", () => {
       { lang: "en", track: "backend", unit: "01-request", lesson: "01-overview" },
       fetchImpl,
     );
-    expect(result).toEqual({ ok: true, payload });
+    expect(result).toEqual({ ok: true, payload, authenticated: false });
     expect(requested).toBe(
       "https://fallowlone.com/api/lessons/en/backend/01-request/01-overview",
     );

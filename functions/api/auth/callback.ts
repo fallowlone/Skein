@@ -1,7 +1,7 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env } from "../../lib/types";
 import { exchangeCodeForUserWithToken, fetchViewerSponsorship } from "../../lib/github";
-import { upsertUserFromGithub } from "../../lib/db";
+import { acceptTerms, upsertUserFromGithub } from "../../lib/db";
 import { coachConfig, reconcileGithubSponsorOnLogin, reconcileVerifiedGithubSponsorOnLogin } from "../../lib/coach";
 import { createSession } from "../../lib/session";
 import { parseCookies, verifyValue, signValue, serializeCookie, authHintCookie, isSecureRequest } from "../../lib/cookies";
@@ -18,8 +18,8 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
   const signedState = cookies["oauth_state"];
   const verified = signedState ? await verifyValue(signedState, env.SESSION_SECRET) : null;
   if (!code || !state || !verified) return new Response("Bad request", { status: 400 });
-  const [expectedState, lang, returnTo] = verified.split("|");
-  if (state !== expectedState) return new Response("State mismatch", { status: 400 });
+  const [expectedState, lang, returnTo, termsVersion] = verified.split("|");
+  if (state !== expectedState || !termsVersion || termsVersion !== env.TERMS_VERSION) return new Response("State mismatch", { status: 400 });
 
   let user;
   let accessToken = "";
@@ -30,6 +30,7 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
     const { user: gh } = exchanged;
     accessToken = exchanged.accessToken;
     user = await upsertUserFromGithub(env.DB, gh);
+    await acceptTerms(env.DB, user.id, termsVersion, Date.now());
     const cfg = coachConfig(env);
     try {
       if (cfg.billingConfigured && cfg.sponsorableLogin) {

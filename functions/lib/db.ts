@@ -293,6 +293,7 @@ export async function recordTelegramOneTimePayment(
   },
   now: number,
 ): Promise<void> {
+  const courseTrack = input.product.startsWith("course:") ? input.product.slice(7) : null;
   const results = await db.batch([
     db.prepare(
       "INSERT INTO payments " +
@@ -310,8 +311,14 @@ export async function recordTelegramOneTimePayment(
       "WHERE id = ? AND telegram_user_id = ? AND status = 'approved' " +
       "AND EXISTS (SELECT 1 FROM payments WHERE provider = 'telegram_stars' AND provider_payment_id = ? AND order_id = ?)",
     ).bind(now, input.order.id, input.telegramUserId, input.providerPaymentId, input.order.id),
+    ...(courseTrack ? [db.prepare(
+      "INSERT INTO course_access_grants (user_id, track, provider, provider_ref, expires_at, revoked_at) " +
+      "SELECT user_id, ?, 'telegram_stars', ?, NULL, NULL FROM payments " +
+      "WHERE provider = 'telegram_stars' AND provider_payment_id = ? AND order_id = ? AND status = 'completed'",
+    ).bind(courseTrack, input.providerPaymentId, input.providerPaymentId, input.order.id)] : []),
   ]);
-  if ((results[0]?.meta?.changes ?? 0) !== 1 || (results[1]?.meta?.changes ?? 0) !== 1) {
+  if ((results[0]?.meta?.changes ?? 0) !== 1 || (results[1]?.meta?.changes ?? 0) !== 1 ||
+    (courseTrack && (results[2]?.meta?.changes ?? 0) !== 1)) {
     throw new Error("telegram_one_time_payment_not_recorded");
   }
 }
@@ -359,8 +366,13 @@ export async function refundTelegramOneTimePayment(
       "AND EXISTS (SELECT 1 FROM payments WHERE provider = 'telegram_stars' AND provider_payment_id = ? " +
       "AND order_id = ? AND status = 'refunded')",
     ).bind(now, payment.orderId, payment.providerPaymentId, payment.orderId),
+    ...(payment.product.startsWith("course:") ? [db.prepare(
+      "UPDATE course_access_grants SET revoked_at = ? WHERE provider = 'telegram_stars' " +
+      "AND provider_ref = ? AND track = ? AND revoked_at IS NULL",
+    ).bind(now, payment.providerPaymentId, payment.product.slice(7))] : []),
   ]);
-  if ((results[0]?.meta?.changes ?? 0) !== 1 || (results[1]?.meta?.changes ?? 0) !== 1) {
+  if ((results[0]?.meta?.changes ?? 0) !== 1 || (results[1]?.meta?.changes ?? 0) !== 1 ||
+    (payment.product.startsWith("course:") && (results[2]?.meta?.changes ?? 0) !== 1)) {
     throw new Error("telegram_one_time_refund_not_recorded");
   }
 }

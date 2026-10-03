@@ -4,8 +4,8 @@ import { test, expect } from "@playwright/test";
 // Guards two things that broke silently before: the editor chunk (CodeMirror) loading at
 // all, and QuickJS resolving its wasm — a 404 there turns every "Run" into an
 // "Aborted(...)" message that still looks like output.
-const LESSON = "/ru/learn/databases/07-sharding/01-why-sharding-exists";
-const SANDBOX_TASK = /Посчитай, когда один primary/;
+const LESSON = "/ru/learn/js-engine/02-values-and-memory/01-value-representation";
+const SANDBOX_TASK = /Смоделируй роутер по тег-биту над массивом слотов/;
 
 test("the code drawer opens on a sandbox task and runs the learner's code", async ({ page }) => {
   test.slow(); // hydration + lazy editor + wasm boot
@@ -31,10 +31,11 @@ test("the code drawer opens on a sandbox task and runs the learner's code", asyn
   await expect(drawer.locator(".cm-editor")).toBeVisible();
 
   await drawer.locator(".cm-content").click();
-  await page.keyboard.type('console.log("shards", Math.ceil(41000 / 30000));');
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type('console.log("smis", 3, "pointers", 3);');
   await drawer.getByRole("button", { name: /^Запустить$/ }).click();
 
-  await expect(drawer.locator(".cd-std")).toHaveText(/shards 2/, { timeout: 60_000 });
+  await expect(drawer.locator(".cd-std")).toHaveText(/smis 3 pointers 3/, { timeout: 60_000 });
 
   await page.keyboard.press("Escape");
   await expect(drawer).toHaveCount(0);

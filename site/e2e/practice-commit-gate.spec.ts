@@ -3,8 +3,13 @@ import { test, expect, type Page } from "@playwright/test";
 // The model answer must stay locked until the learner writes their own. Before
 // this gate existed, "Reveal model answer" was one click and also marked the task
 // done, so predict/design tasks — 39% of all practice — produced no signal at all.
-const LESSON = "/en/learn/networking/01-physical-link/01-bits-on-the-wire/";
-const PREDICT_TASK = '[data-practice-task="recall-bandwidth-vs-latency"]';
+// The commit gate is a property of PracticeSection, not of one lesson's content.
+// Under `astro dev` the lesson corpus is not served (it renders via the lesson
+// Worker); the main site only serves the `js-engine` preview lessons hardcoded
+// in [lesson].astro's getStaticPaths. The old networking lesson 404'd, so the
+// practice island never hydrated and the scroll below waited out the timeout.
+const LESSON = "/en/learn/js-engine/02-values-and-memory/01-value-representation/";
+const PREDICT_TASK = '[data-practice-task="predict-smi-or-heap"]';
 
 /**
  * The practice section is a `client:visible` island, and Astro server-renders its
@@ -15,7 +20,10 @@ const PREDICT_TASK = '[data-practice-task="recall-bandwidth-vs-latency"]';
 async function openPracticeTask(page: Page, selector: string) {
   await page.locator("[data-practice-layer]").scrollIntoViewIfNeeded();
   const island = page.locator('astro-island[component-url*="PracticeSection"]');
-  await expect(island).toHaveAttribute("client-render-time", /.+/);
+  // A cold `astro dev` boot re-optimizes deps and this lesson carries several
+  // islands; hydration lands around ~6s, so the 5s expect default expires first
+  // and the card stays collapsed. Wait generously rather than flaking.
+  await expect(island).toHaveAttribute("client-render-time", /.+/, { timeout: 30_000 });
   const card = page.locator(selector);
   await expect(card).toBeVisible();
   await card.locator("button").first().click();
