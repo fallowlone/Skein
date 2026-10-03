@@ -7,6 +7,14 @@ import { withSecurityHeaders, error } from "./lib/response";
 
 function cookieName(env: Env): string { return env.COOKIE_NAME ?? "session"; }
 
+export function requiresAccount(pathname: string): boolean {
+  const path = pathname.replace(/^\/(en|ru)(?=\/)/, "");
+  return /^\/(?:calibrate|assess|assess-items\.json|assess-concepts\.json|interview|interview-qa|review|algorithm-workspace)(?:\/|$)/.test(path) ||
+    /^\/english\/(?:grammar|writing|speaking|review|reading)(?:\/|$)/.test(path) ||
+    /^\/learn\/[^/]+\/lab(?:\/|$)/.test(path) ||
+    /^\/projects\/[^/]+(?:\/|$)/.test(path);
+}
+
 export const onRequest: PagesFunction<Env, any, RequestData> = async (ctx) => {
   const { request, env, next, data } = ctx;
 
@@ -26,6 +34,12 @@ export const onRequest: PagesFunction<Env, any, RequestData> = async (ctx) => {
         data.userId = session?.userId ?? null;
         data.githubAccessToken = session?.githubAccessToken;
       }
+    }
+
+    if (!data.userId && requiresAccount(url.pathname)) {
+      const lang = url.pathname.startsWith("/ru/") ? "ru" : "en";
+      if (url.pathname.endsWith(".json")) return withSecurityHeaders(error(401, "auth_required"));
+      return withSecurityHeaders(Response.redirect(`${url.origin}/${lang}/account/`, 302));
     }
 
     // Rate-limit mutating API calls per IP

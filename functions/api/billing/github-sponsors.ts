@@ -68,7 +68,8 @@ function parseTier(tier: SponsorTier | null | undefined) {
 export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) => {
   const cfg = coachConfig(ctx.env);
   const secret = ctx.env.GITHUB_SPONSORS_WEBHOOK_SECRET?.trim() ?? "";
-  if (!cfg.billingConfigured || !secret || !cfg.sponsorableLogin) return error(503, "billing_unavailable");
+  if (!cfg.sponsorUrl || !secret || !cfg.sponsorableLogin ||
+    (cfg.coachTierIds.size === 0 && !ctx.env.GITHUB_SPONSORS_COURSE_TIER_ID)) return error(503, "billing_unavailable");
 
   if (ctx.request.headers.get("X-GitHub-Event") !== "sponsorship") return error(400, "wrong_event");
   const deliveryId = ctx.request.headers.get("X-GitHub-Delivery")?.trim();
@@ -106,6 +107,49 @@ export const onRequestPost: PagesFunction<Env, any, RequestData> = async (ctx) =
     !sponsorshipId || !currentTier || !privacyLevel || !sponsorableLogin ||
     sponsorableLogin.toLowerCase() !== cfg.sponsorableLogin.toLowerCase()
   ) return error(400, "bad_sponsorship");
+
+  if (currentTier.tierId === ctx.env.GITHUB_SPONSORS_COURSE_TIER_ID) {
+    if (!currentTier.isOneTime || currentTier.monthlyPriceCents !== 999) return error(400, "invalid_course_tier");
+    if (action !== "created") {
+      if (action === "cancelled") await ctx.env.DB.prepare(
+        "UPDATE course_access_grants SET revoked_at = ? WHERE provider = 'github-sponsors' AND provider_ref = ? AND revoked_at IS NULL",
+      ).bind(Date.now(), sponsorshipId).run();
+      await recordBillingDelivery(ctx.env.DB, deliveryId, payloadHash, "sponsorship", action, Date.now());
+      return json({ ok: true });
+    }
+    const sponsorId = asNonNegativeInt(sponsorship.sponsor?.id);
+    const sponsorUser = sponsorId != null && sponsorship.sponsor?.type === "User"
+      ? await getUserByGithubId(ctx.env.DB, sponsorId) : null;
+    if (!sponsorUser) return error(409, "course_buyer_not_found");
+    const prior = await ctx.env.DB.prepare(
+      "SELECT 1 AS owned FROM course_access_grants WHERE provider = 'github-sponsors' AND provider_ref = ? LIMIT 1",
+    ).bind(sponsorshipId).first<{ owned: number }>();
+    if (prior) {
+      await recordBillingDelivery(ctx.env.DB, deliveryId, payloadHash, "sponsorship", action, Date.now());
+      return json({ ok: true, duplicate: true });
+    }
+    const now = Date.now();
+    const intent = await ctx.env.DB.prepare(
+      "SELECT track FROM course_purchase_intents WHERE user_id = ? AND consumed_at IS NULL AND expires_at > ?",
+    ).bind(sponsorUser.id, now).first<{ track: string }>();
+    if (!intent) return error(409, "course_checkout_not_found");
+    const results = await ctx.env.DB.batch([
+      ctx.env.DB.prepare(
+        "UPDATE course_purchase_intents SET consumed_at = ? WHERE user_id = ? AND track = ? " +
+        "AND consumed_at IS NULL AND expires_at > ?",
+      ).bind(now, sponsorUser.id, intent.track, now),
+      ctx.env.DB.prepare(
+        "INSERT INTO course_access_grants (user_id, track, provider, provider_ref, expires_at, revoked_at) " +
+        "SELECT user_id, track, 'github-sponsors', ?, NULL, NULL FROM course_purchase_intents " +
+        "WHERE user_id = ? AND track = ? AND consumed_at = ?",
+      ).bind(sponsorshipId, sponsorUser.id, intent.track, now),
+    ]);
+    if ((results[0]?.meta?.changes ?? 0) !== 1 || (results[1]?.meta?.changes ?? 0) !== 1) {
+      return error(503, "course_grant_failed");
+    }
+    await recordBillingDelivery(ctx.env.DB, deliveryId, payloadHash, "sponsorship", action, now);
+    return json({ ok: true });
+  }
 
   const existing = await getGithubSponsorship(ctx.env.DB, sponsorshipId);
   // Cancellation is terminal for one GitHub sponsorship node. Late deliveries
