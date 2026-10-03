@@ -12,7 +12,6 @@ import {
   recordReveal,
   logMinutes,
 } from "~/english/state";
-import type { Grade } from "~/english/scheduler/types";
 import type { Locale } from "~/i18n";
 
 /** Monotonic clock for scheduling; injected so logic stays testable elsewhere. */
@@ -257,7 +256,6 @@ function chipClass(status: string, active: boolean): string {
 
 function WordCard({
   word,
-  lang,
   l,
   onDone,
 }: {
@@ -308,7 +306,6 @@ function norm(s: string): string {
  */
 function ReviewTab({
   words,
-  lang,
   l,
 }: {
   words: VocabWord[];

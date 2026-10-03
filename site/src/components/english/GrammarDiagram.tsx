@@ -1,4 +1,5 @@
 import "./grammar-diagram.css";
+import type { CSSProperties } from "preact";
 import type { Scene, Prim, Pt } from "~/english/animations/editorial/scene-types";
 
 type Props = { scene: Scene; reducedMotion?: boolean; label?: string };
@@ -54,7 +55,7 @@ function midLift(from: Pt, to: Pt, lift: number): Pt {
 
 function renderPrim(p: Prim & { order?: number }, idx: number) {
   const o = p.order ?? idx;
-  const stagger: preact.JSX.CSSProperties = { "--o": o } as preact.JSX.CSSProperties;
+  const stagger: CSSProperties = { "--o": o } as CSSProperties;
 
   switch (p.k) {
     case "genre": {

@@ -371,6 +371,7 @@ const stack = {
     const depths: number[] = data.depths;
     const { frameH, spacing, y } = stackLayout(frames.length);
     void frameH;
+    void spacing;
     const s = stepOf(t, n);
     const f = easeInOut(segf(t, s));
     const cur = depths[Math.min(s, depths.length - 1)];
@@ -404,7 +405,6 @@ export function treeLayout(n: number) {
   for (let i = 0; i < n; i++) {
     const level = Math.floor(Math.log2(i + 1));
     const idxIn = i - (2 ** level - 1);
-    const slots = 2 ** level;
     const spread = 880 / 2 ** level;
     pos.push({ x: 50 + spread * (idxIn + 0.5), y: 96 + level * 62 });
   }

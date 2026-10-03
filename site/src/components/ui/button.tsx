@@ -1,4 +1,4 @@
-import type { JSX } from "preact";
+import type { ButtonHTMLAttributes } from "preact";
 import { Slot } from "radix-ui";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "~/lib/utils";
@@ -34,7 +34,7 @@ const buttonVariants = cva(
   },
 );
 
-type ButtonProps = Omit<JSX.ButtonHTMLAttributes<HTMLButtonElement>, "tabindex"> &
+type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, "tabindex"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
     class?: string;
