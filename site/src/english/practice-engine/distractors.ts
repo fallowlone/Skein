@@ -1,7 +1,6 @@
 // Ported from steep/grammar/algorithm/distractors-v2.ts + mc-adapter.ts
 // Adapted to signatures: makeDistractors(answer, {lemma, kind}, n) and toMultipleChoice(answer, distractors, rng)
 import { verbForm, nounPlural, adjForm } from "./morphology";
-import { shuffleInPlace } from "./rng";
 
 export type DistractorKind = "verb" | "noun" | "adjective";
 

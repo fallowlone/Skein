@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { BatchDedup } from "./dedup";
-import { DERIVE, getStrategy } from "./derive";
+import { getStrategy } from "./derive";
 
 describe("BatchDedup", () => {
   it("rejects exact and whitespace-variant duplicates", () => {

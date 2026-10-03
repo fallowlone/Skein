@@ -20,7 +20,6 @@ const scheduler = fsrsScheduler();
 
 /** A card whose next interval is at least this many days counts as "known". */
 const MATURE_DAYS = 21;
-const DAY = 86_400_000;
 
 export type WordStatus = "new" | "learning" | "known";
 
