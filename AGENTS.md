@@ -50,7 +50,7 @@ Useful locations:
 
 - Use local builds only when they are a fast and relevant signal for the touched area.
 - The GitHub Actions CI/CD pipeline is the final verification authority for full builds and deployment checks.
-- After completing a change, push the branch so CI/CD can validate the complete workflow.
+- After completing a change, push the branch when CI/CD validation or a remote review workflow is requested. Local verification is sufficient for local-only changes.
 
 ## Authoring invariants
 
