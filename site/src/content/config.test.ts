@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { z } from "astro/zod";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { TRACKS } from "../types";
+import { buildLessonIndex } from "../../scripts/content/build-lesson-index";
 
 // Mirror the actual schemas from config.ts
 const Track = z.enum(TRACKS as [string, ...string[]]);
@@ -66,5 +69,19 @@ describe("content collections", () => {
       lessons: ["01-overview"],
     });
     expect(result.success).toBe(true);
+  });
+
+  test("unit links match authored EN/RU lessons", async () => {
+    const content = resolve(process.cwd(), "src/content");
+    const units = JSON.parse(await readFile(resolve(content, "units.json"), "utf8")) as
+      { track: string; slug: string; lessons: string[] }[];
+    const links = units.flatMap((unit) => unit.lessons.map((lesson) =>
+      `${unit.track}/${unit.slug}/${lesson}`));
+    const published = Object.keys(await buildLessonIndex(process.cwd()));
+    for (const lang of ["en", "ru"]) {
+      expect(links.map((key) => `${lang}/${key}`).sort()).toEqual(
+        published.filter((key) => key.startsWith(`${lang}/`)).sort(),
+      );
+    }
   });
 });

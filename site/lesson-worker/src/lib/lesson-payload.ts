@@ -48,8 +48,8 @@ export interface LessonPayload {
 }
 
 export type LessonPayloadResult =
-  | { ok: true; payload: LessonPayload }
-  | { ok: false; status: 404 | 502 | 503; code: string };
+  | { ok: true; payload: LessonPayload; authenticated: boolean }
+  | { ok: false; status: 401 | 403 | 404 | 502 | 503; code: string };
 
 type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
@@ -71,6 +71,7 @@ export async function fetchLessonPayload(
   apiOrigin: string,
   path: { lang: "en" | "ru"; track: string; unit: string; lesson: string },
   fetchImpl: FetchLike = fetch,
+  cookie?: string | null,
 ): Promise<LessonPayloadResult> {
   const url = new URL(
     `/api/lessons/${path.lang}/${path.track}/${path.unit}/${path.lesson}`,
@@ -80,13 +81,15 @@ export async function fetchLessonPayload(
   let response: Response;
   try {
     response = await fetchImpl(url, {
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json", ...(cookie ? { cookie } : {}) },
       signal: AbortSignal.timeout(4000),
     });
   } catch {
     return { ok: false, status: 502, code: "lesson_backend_unavailable" };
   }
 
+  if (response.status === 401) return { ok: false, status: 401, code: "auth_required" };
+  if (response.status === 403) return { ok: false, status: 403, code: "lesson_locked" };
   if (response.status === 404) return { ok: false, status: 404, code: "lesson_not_found" };
   if (response.status === 503) return { ok: false, status: 503, code: "lesson_backend_unconfigured" };
   if (!response.ok) return { ok: false, status: 502, code: "lesson_backend_error" };
@@ -106,5 +109,5 @@ export async function fetchLessonPayload(
     return { ok: false, status: 502, code: "invalid_lesson_payload" };
   }
 
-  return { ok: true, payload };
+  return { ok: true, payload, authenticated: response.headers.get("x-skein-authenticated") === "1" };
 }

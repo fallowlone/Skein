@@ -65,6 +65,7 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
         </aside>
       )}
       <div class="rd-grid">
+      <div class="rd-summary">
       <section class="rd-card rd-rank" style={`--rk:${rank.color}`}>
         <span class="rd-head">{t("readiness.rank", lang)}</span>
         <strong class="rd-rank-label">
@@ -87,13 +88,6 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
           </span>
         )}
       </section>
-
-      {/* Forecast Builder — the forecast placeholder becomes an interactive
-          mini-builder (target + deadline) that previews a locked projection
-          timeline; the full forecast + weekly plan is the Pro unlock. */}
-      <ForecastBuilderCard lang={lang} displayRating={r.displayRating} />
-
-      <ReadinessReportPreview lang={lang} rating={r.displayRating} rank={rank.label[lang]} />
 
       <section class="rd-card rd-weak">
         <span class="rd-head">{t("readiness.weak", lang)}</span>
@@ -129,6 +123,11 @@ export default function ReadinessDashboard({ lang }: { lang: Locale }) {
           </div>
         )}
       </section>
+      </div>
+      <div class="rd-main">
+        <ForecastBuilderCard lang={lang} displayRating={r.displayRating} />
+        <ReadinessReportPreview lang={lang} rating={r.displayRating} rank={rank.label[lang]} />
+      </div>
       </div>
     </>
   );
