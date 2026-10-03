@@ -17,6 +17,20 @@ function ctx(over: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("middleware error boundary", () => {
+  it("redirects guests away from educational question pages", async () => {
+    const next = vi.fn(async () => new Response("question UI"));
+    const guest = await onRequest(ctx({
+      request: new Request("https://example.com/ru/algorithm-workspace/"),
+      next,
+    }));
+    expect(guest.status).toBe(302);
+    expect(guest.headers.get("location")).toBe("https://example.com/ru/account/");
+    expect(next).not.toHaveBeenCalled();
+    const publicPage = await onRequest(ctx({
+      request: new Request("https://example.com/ru/learn/algorithms/"), next,
+    }));
+    expect(publicPage.status).toBe(200);
+  });
   it("passes through a healthy request with security headers", async () => {
     const res = await onRequest(ctx());
     expect(res.status).toBe(200);

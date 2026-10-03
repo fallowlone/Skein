@@ -12,7 +12,7 @@ import {
   refundTelegramPayment,
 } from "../../lib/db";
 import { readBodyBounded } from "../../lib/coach";
-import { PRODUCTS } from "../../lib/products";
+import { getProduct } from "../../lib/products";
 import { error, json } from "../../lib/response";
 import {
   answerTelegramPreCheckout,
@@ -49,7 +49,7 @@ async function handlePreCheckout(db: D1Database, token: string, value: unknown):
   }
 
   const order = await getTelegramOrder(db, orderId);
-  const product = order ? PRODUCTS[order.product] : null;
+  const product = order ? getProduct(order.product) : null;
   const valid = Boolean(
     order && product &&
     order.product === product.id && order.amount === product.amount && order.currency === product.currency &&
@@ -89,7 +89,7 @@ async function handleSuccessfulPayment(db: D1Database, message: Record<string, a
   }
 
   const order = await getTelegramOrder(db, orderId);
-  const product = order ? PRODUCTS[order.product] : null;
+  const product = order ? getProduct(order.product) : null;
   if (
     !order || !product || order.telegramUserId !== payerId ||
     order.product !== product.id || order.amount !== product.amount || order.currency !== product.currency ||
@@ -168,7 +168,7 @@ async function handleRefund(db: D1Database, value: unknown): Promise<Response> {
   if (payment.orderId !== orderId || payment.amount !== amount || payment.currency !== currency) return error(409, "refund_mismatch");
   if (payment.status === "refunded") return json({ ok: true, duplicate: true });
   const order = await getTelegramOrder(db, orderId);
-  const product = order ? PRODUCTS[order.product] : null;
+  const product = order ? getProduct(order.product) : null;
   if (!order || !product || payment.product !== product.id || order.billingKind !== product.billingKind) {
     return error(409, "refund_mismatch");
   }
@@ -190,7 +190,7 @@ async function handleSubscriptionUpdate(db: D1Database, value: unknown): Promise
   }
 
   const order = await getTelegramOrder(db, orderId);
-  const product = order ? PRODUCTS[order.product] : null;
+  const product = order ? getProduct(order.product) : null;
   if (
     !order || !product || product.billingKind !== "subscription" ||
     order.billingKind !== "subscription" || order.telegramUserId !== payerId
