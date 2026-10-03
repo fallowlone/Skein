@@ -179,38 +179,114 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 Two problems: the transition logic ("token refreshed" should keep the user but swap the token) has nowhere to live except more ad-hoc setters, and `value` is unstable so a `<LoginButton>` that never reads `user` still re-renders whenever `user` changes. Now the reducer + split-context version:
 
 ```tsx
-type AuthState = { user: User | null; token: string | null };
+type AuthState = { user: User | null; token: string | null; isRefreshing: boolean };
 type AuthAction =
   | { type: "login"; user: User; token: string }
   | { type: "logout" }
-  | { type: "refreshed"; token: string };
+  | { type: "refreshStarted" }
+  | { type: "refreshed"; token: string }
+  | { type: "refreshFailed" };
 
 function authReducer(s: AuthState, a: AuthAction): AuthState {
   switch (a.type) {
-    case "login":     return { user: a.user, token: a.token };
-    case "logout":    return { user: null, token: null };
-    case "refreshed": return { ...s, token: a.token }; // keep user, swap token
+    case "login":         return { user: a.user, token: a.token, isRefreshing: false };
+    case "logout":        return { user: null, token: null, isRefreshing: false };
+    case "refreshStarted": return { ...s, isRefreshing: true };
+    case "refreshed":     return { ...s, token: a.token, isRefreshing: false }; // keep user, swap token
+    case "refreshFailed": return { ...s, isRefreshing: false };
   }
 }
 
 const AuthStateContext = createContext<AuthState | null>(null);
 const AuthDispatchContext = createContext<React.Dispatch<AuthAction> | null>(null);
+const AuthRefreshContext = createContext<(() => Promise<string>) | null>(null);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(authReducer, { user: null, token: null });
+export function AuthProvider({ children, refreshToken }: {
+  children: React.ReactNode;
+  refreshToken: () => Promise<string>;
+}) {
+  const [state, dispatch] = useReducer(authReducer, { user: null, token: null, isRefreshing: false });
+  const refreshPromise = useRef<Promise<string> | null>(null);
+  const refresh = useCallback(() => {
+    if (refreshPromise.current) return refreshPromise.current;
+    dispatch({ type: "refreshStarted" });
+    refreshPromise.current = refreshToken()
+      .then((token) => { dispatch({ type: "refreshed", token }); return token; })
+      .catch((error) => { dispatch({ type: "refreshFailed" }); throw error; })
+      .finally(() => { refreshPromise.current = null; });
+    return refreshPromise.current;
+  }, [refreshToken]);
   return (
     <AuthStateContext.Provider value={state}>
-      <AuthDispatchContext.Provider value={dispatch}>{children}</AuthDispatchContext.Provider>
+      <AuthDispatchContext.Provider value={dispatch}>
+        <AuthRefreshContext.Provider value={refresh}>{children}</AuthRefreshContext.Provider>
+      </AuthDispatchContext.Provider>
     </AuthStateContext.Provider>
   );
 }
 
 // <LoginButton> calls useAuthDispatch() only → does NOT re-render when user changes
 // <Avatar> calls useAuth() (state) → re-renders only when state actually changes
+// Consumers call refresh(), not await dispatch({ type: "refreshStarted" }): dispatch returns void.
 ```
 
-The "refreshed" transition now lives in one tested place, and the button that only dispatches is structurally insulated from state changes. Note what we did *not* do: the user's *profile data* and *orders* are server state — those stay in a query library, not this reducer. This context holds only the session identity and the transitions over it.
+The refresh status is renderable state, but it is not the concurrency lock: a reducer update may not be visible to another caller until React renders. The provider owns the in-flight promise instead, so concurrent `refresh()` calls share one API request and the same result or rejection. A `finally` clears it after either outcome, allowing a later refresh. The "refreshed" transition now lives in one tested place, and the button that only dispatches is structurally insulated from state changes. Note what we did *not* do: the user's *profile data* and *orders* are server state — those stay in a query library, not this reducer. This context holds only the session identity and the transitions over it.
 </WorkedExample>
+
+```ts run
+type AuthState = { user: string | null; token: string | null; isRefreshing: boolean };
+type AuthAction =
+  | { type: "refreshStarted" }
+  | { type: "refreshed"; token: string }
+  | { type: "refreshFailed" };
+
+function authReducer(s: AuthState, a: AuthAction): AuthState {
+  switch (a.type) {
+    case "refreshStarted": return { ...s, isRefreshing: true };
+    case "refreshed": return { ...s, token: a.token, isRefreshing: false };
+    case "refreshFailed": return { ...s, isRefreshing: false };
+  }
+}
+
+function useRef<T>(current: T) { return { current }; }
+
+function createRefresh(api: () => Promise<string>, dispatch: (a: AuthAction) => void) {
+  const refreshPromise = useRef<Promise<string> | null>(null);
+  return () => {
+    if (refreshPromise.current) return refreshPromise.current;
+    dispatch({ type: "refreshStarted" });
+    refreshPromise.current = api()
+      .then((token) => { dispatch({ type: "refreshed", token }); return token; })
+      .catch((error) => { dispatch({ type: "refreshFailed" }); throw error; })
+      .finally(() => { refreshPromise.current = null; });
+    return refreshPromise.current;
+  };
+}
+
+let state: AuthState = { user: "Ada", token: "old", isRefreshing: false };
+const dispatch = (action: AuthAction) => { state = authReducer(state, action); };
+let apiCalls = 0;
+const api = () => new Promise<string>((resolve, reject) => {
+  apiCalls++;
+  setTimeout(() => state.isRefreshing && apiCalls === 3 ? reject(new Error("expired")) : resolve("new-token"), 0);
+});
+const refresh = createRefresh(api, dispatch);
+const first = refresh();
+const second = refresh();
+if (first !== second || apiCalls !== 1 || !state.isRefreshing) throw new Error("concurrent refreshes were not deduplicated");
+const tokens = await Promise.all([first, second]);
+if (tokens[0] !== "new-token" || tokens[1] !== "new-token" || state.token !== "new-token" || state.isRefreshing) throw new Error("refresh success state is wrong");
+await refresh();
+if (apiCalls !== 2) throw new Error("a later refresh did not call the API again");
+const failedFirst = refresh();
+const failedSecond = refresh();
+if (failedFirst !== failedSecond || apiCalls !== 3 || !state.isRefreshing) throw new Error("failed refreshes were not shared");
+try { await Promise.all([failedFirst, failedSecond]); throw new Error("refresh unexpectedly succeeded"); } catch (error) { if ((error as Error).message === "refresh unexpectedly succeeded") throw error; }
+if (state.isRefreshing) throw new Error("refresh failure did not reset status");
+await refresh();
+if (apiCalls !== 4) throw new Error("refresh did not retry after failure");
+console.log("single-flight refresh: PASS");
+```
 
 <Inset kind="why" lang="en">
 Why split into two contexts instead of one context plus `useMemo` on the value and `React.memo` on every consumer? Both can work, but they pay for the same outcome differently. The single-context route requires you to remember to memoize the value object *and* wrap consumers in `memo`, and one forgotten `useMemo` silently reintroduces the every-render churn. The split is structural: a component physically cannot subscribe to dispatch-and-also-state unless it reads both contexts, so the cheap case (write-only components) is cheap by construction, not by vigilance. Less to get wrong is the senior reason.
