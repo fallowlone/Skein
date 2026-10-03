@@ -12,8 +12,8 @@ export type Scheme = "ink" | "paper" | "slate";
 
 const SCHEME_COLORS: Record<Scheme, { bg: string; plain: string; kw: string; str: string; num: string; com: string; fn: string }> = {
   ink: { bg: "var(--code-bg)", plain: "var(--code-ink)", kw: "var(--accent)", str: "var(--ok)", num: "var(--warn)", com: "var(--muted)", fn: "var(--code-ink)" },
-  paper: { bg: "#fbf7eb", plain: "#1a1916", kw: "oklch(48% 0.13 250)", str: "oklch(45% 0.10 150)", num: "oklch(50% 0.13 60)", com: "#8a8474", fn: "#2d2b25" },
-  slate: { bg: "#0f1014", plain: "#ece8dc", kw: "oklch(75% 0.12 230)", str: "oklch(75% 0.14 150)", num: "oklch(82% 0.13 75)", com: "#6f6a5e", fn: "#d7d2c2" },
+  paper: { bg: "#ffffff", plain: "#111111", kw: "oklch(44% 0.13 305)", str: "oklch(43% 0.11 150)", num: "oklch(50% 0.13 60)", com: "#606060", fn: "#292929" },
+  slate: { bg: "#101010", plain: "#f5f5f5", kw: "oklch(75% 0.12 305)", str: "oklch(75% 0.14 150)", num: "oklch(82% 0.13 75)", com: "#a3a3a3", fn: "#dedede" },
 };
 
 const VOCAB = [

@@ -1,3 +1,5 @@
+import tracks from "../../site/src/content/tracks.json";
+
 type ProductBase = {
   id: string;
   amount: number;
@@ -34,3 +36,21 @@ export const PRODUCTS: Record<string, Product> = {
     subscriptionPeriodSeconds: null,
   },
 };
+
+const trackTitles = new Map(tracks.map((track) => [track.slug, track.title.en]));
+
+export function getProduct(id: string): Product | null {
+  if (Object.hasOwn(PRODUCTS, id)) return PRODUCTS[id];
+  if (!id.startsWith("course:")) return null;
+  const title = trackTitles.get(id.slice(7));
+  return title ? {
+    id,
+    amount: 300,
+    currency: "XTR",
+    title: `Skein: ${title}`.slice(0, 32),
+    description: `Permanent access to ${title}`.slice(0, 255),
+    entitlements: [],
+    billingKind: "one_time",
+    subscriptionPeriodSeconds: null,
+  } : null;
+}
