@@ -2,7 +2,7 @@ import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/path/CalibrationFlow.tsx
 // Probabilistic placement orchestrator (4 stages: Aim → Mode → Deep run → Result).
 //
-// Aim   — pick a goal + coarse per-family self-placement (AimStage).
+// Aim   — pick a goal + per-technology self-marks: depth and how well it's remembered (AimStage).
 // Mode   — express (cap per family) vs full coverage (run until every concept settles-or-exhausts).
 // Run    — adaptive Bayesian probing: each STEP asks one item of the unsettled concept with the
 //          highest expected info-gain, updates its posterior, and propagates PASS/FAIL to
@@ -16,12 +16,12 @@ import { Button as ShadcnButton } from "~/components/ui/button";
 import { useState, useRef } from "preact/hooks";
 import type { Locale } from "~/i18n";
 import {
-  content, seedPriors, itemIrt, conceptIrt, familyConcepts, families,
+  content, seedPriors, declareFromMarks, itemIrt, conceptIrt, families,
   writePlacementPosteriors,
 } from "~/scripts/path/path-io";
 import {
   posterior, propagatePriors, PASS, FAIL,
-  type SelfPlace, type Response,
+  type SelfMark, type Response,
 } from "~/scripts/path/bayes";
 import {
   initState, nextConcept, applyAsked, MAX_PLACEMENT_ITEMS,
@@ -74,7 +74,7 @@ function PlacementMachine({ lang }: { lang: Locale }) {
   const t = L[lang];
   const roadmap = `/${lang}/roadmap`;
   const [phase, setPhase] = useState<Phase>("aim");
-  const self = useRef<Record<string, SelfPlace> | null>(null);
+  const self = useRef<Record<string, SelfMark> | null>(null);
   const deps = useRef<RunnerDeps | null>(null);
   const st = useRef<RunnerState | null>(null);
   const observed = useRef<Set<string>>(new Set());
@@ -105,11 +105,10 @@ function PlacementMachine({ lang }: { lang: Locale }) {
 
   const startDeep = (express: boolean) => {
     const sel = self.current!;
-    const cand: string[] = [];
-    for (const f of families()) {
-      if ((sel[f.key] ?? "never") === "never") continue; // skip untouched families entirely
-      cand.push(...familyConcepts(f.key));
-    }
+    // Probe only concepts of tracks the learner has touched; "never" tracks are skipped entirely.
+    const cand = [...content.diagnosedConcepts].filter(
+      (id) => (sel[content.conceptById.get(id)?.track as string]?.level ?? "never") !== "never",
+    );
     const d = buildDeps(cand, express);
     deps.current = d;
     st.current = initState(d, seedPriors(cand, sel));
@@ -136,7 +135,7 @@ function PlacementMachine({ lang }: { lang: Locale }) {
   };
 
   if (phase === "aim") {
-    return <AimStage lang={lang} onDone={(s) => { self.current = s; setPhase("mode"); }} />;
+    return <AimStage lang={lang} onDone={(s) => { self.current = s; declareFromMarks(s); setPhase("mode"); }} />;
   }
 
   if (phase === "mode") {

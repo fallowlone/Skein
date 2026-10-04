@@ -12,13 +12,6 @@ import type { Grade } from "~/scripts/progression/srs";
 import { isCommitted, readResponses, writeResponse } from "~/scripts/practice-state";
 
 const GRADES: Grade[] = ["again", "hard", "good", "easy"];
-const GRADE_CLS: Record<Grade, string> = {
-  again: "border-rule-strong text-danger hover:border-danger",
-  hard: "border-rule-strong text-muted hover:border-ink",
-  good: "border-rule-strong text-ink hover:border-ink",
-  easy: "border-rule-strong text-ok hover:border-ok",
-};
-
 function nextDueLabel(lang: Locale): string {
   const now = Date.now();
   const future = allCards()
@@ -142,10 +135,11 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
   }, [revealed, idx, queue, draft, reviewEvent]);
 
   if (queue.length === 0) {
+    const next = nextDueLabel(lang);
     return (
-      <section class="my-10">
-        <div class="meta mb-2">{t("review.title", lang)}</div>
-        <p class="text-muted text-sm">{t("review.empty", lang)}</p>
+      <section class="ss-empty">
+        <p>{t("review.empty", lang)}</p>
+        {next && <span>{t("review.nextDue", lang)}: {next}</span>}
       </section>
     );
   }
@@ -154,17 +148,15 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
     const remaining = freshDue().length; // untouched due cards beyond this batch (excludes this sitting's)
     const next = nextDueLabel(lang);
     return (
-      <section class="my-10">
-        <div class="meta mb-2">{t("review.title", lang)}</div>
-        <p class="text-ink text-sm mb-1">
-          {t("review.done", lang)} — {reviewed}
-        </p>
+      <section class="ss-card">
+        <p class="ss-sub">{t("review.done", lang)}</p>
+        <p class="ss-big">{reviewed}</p>
         {remaining > 0 ? (
-          <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px] mt-1" onClick={loadBatch}>
+          <ShadcnButton type="button" class="oa-btn oa-btn-primary h-9 px-4 font-mono text-[12px]" onClick={loadBatch}>
             {t("review.continue", lang).replace("{n}", String(remaining))}
           </ShadcnButton>
         ) : (
-          next && <p class="text-muted text-xs">{t("review.nextDue", lang)}: {next}</p>
+          next && <p class="ss-cap">{t("review.nextDue", lang)}: {next}</p>
         )}
       </section>
     );
@@ -174,74 +166,59 @@ export default function ReviewSession({ lang }: { lang: Locale }) {
   const originalTask = card.answerMode === "original-task";
 
   return (
-    <section class="my-10">
-      <div class="rounded-[var(--r-lg)] border-[0.5px] border-hairline-2 bg-card shadow-soft p-6 sm:p-7">
-        <header class="flex items-center justify-between mb-4">
-          <span class="meta">{t("review.title", lang)}</span>
-          <span class="font-mono text-[11px] text-muted tabular-nums">
-            {idx + 1} {t("review.cardOf", lang)} {queue.length}
-            {totalDue > queue.length && <span class="opacity-70"> · {totalDue} {t("review.dueCount", lang)}</span>}
-          </span>
-        </header>
-
-        <div class="h-[3px] w-full overflow-hidden rounded-full bg-hairline-2 mb-6">
-          <div class="h-full rounded-full bg-accent transition-[width] duration-300 ease-out" style={`width:${progress}%`} />
+    <section class="ss-card">
+      <header class="ss-head">
+        <span class="ss-count">
+          <em>{idx + 1}</em> {t("review.cardOf", lang)} {queue.length}
+          {totalDue > queue.length && <span> · {totalDue} {t("review.dueCount", lang)}</span>}
+        </span>
+        <div class="ss-bar" role="progressbar" aria-valuemin={0} aria-valuemax={queue.length} aria-valuenow={idx}>
+          <i style={`--p:${progress}%`} />
         </div>
+      </header>
 
-        <div class="font-display text-[19px] sm:text-[21px] font-semibold leading-snug text-ink mb-6">{card.front}</div>
+      <h2 class="ss-q">{card.front}</h2>
 
-        {originalTask ? (
-          <a class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" href={`/${lang}/learn/${card.lessonKey}/`}>
-            {lang === "ru" ? "Открыть исходное задание" : "Open original task"}
-          </a>
-        ) : !revealed ? (
-          <>
-            <ShadcnTextarea
-              class="mb-3 w-full min-h-[72px] rounded-[var(--r-sm)] border border-hairline-2 bg-card px-3 py-2 text-sm text-ink"
-              value={draft}
-              placeholder={lang === "ru" ? "Ответь по памяти…" : "Answer from memory…"}
-              onInput={(e) => {
-                const value = (e.target as HTMLTextAreaElement).value;
-                if (attemptedAt == null && value.trim()) setAttemptedAt(Date.now());
-                setDraft(value);
-                writeResponse(card.lessonKey, `review::${card.cardKey}`, value);
-              }}
-            />
-            <div class="flex flex-wrap gap-3">
-              <ShadcnButton type="button" class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" disabled={!isCommitted(draft)} onClick={() => revealAnswer(false)}>
-                {t("review.showAnswer", lang)} <span class="opacity-50 font-mono">␣</span>
-              </ShadcnButton>
-              <ShadcnButton type="button" class="text-xs text-muted underline" onClick={() => revealAnswer(true)}>
-                {lang === "ru" ? "Пропустить" : "Skip"}
-              </ShadcnButton>
-            </div>
-          </>
-        ) : (
-          <>
-            <div class="rounded-[var(--r-md)] border-l-2 border-accent bg-paper-2 pl-4 pr-3 py-3 text-[14px] leading-relaxed text-ink-2 mb-6 animate-reveal-up">
-              <div class="meta mb-1.5" style="color: var(--accent);">{t("review.title", lang)}</div>
-              {card.back}
-            </div>
-            <div class="flex flex-wrap items-center gap-2">
-              {GRADES.map((g, i) => (
-                <ShadcnButton
-                  key={g}
-                  type="button"
-                  aria-keyshortcuts={String(i + 1)}
-                  onClick={() => grade(g)}
-                  class={`px-3 h-8 font-mono text-[11px] border rounded-[var(--r-sm)] bg-transparent transition-colors ${GRADE_CLS[g]}`}
-                >
-                  {t(`review.${g}`, lang)}
-                </ShadcnButton>
-              ))}
-            </div>
-          </>
-        )}
+      {originalTask ? (
+        <a class="oa-btn oa-btn-secondary oa-btn-sm text-[12px]" href={`/${lang}/learn/${card.lessonKey}/`}>
+          {lang === "ru" ? "Открыть исходное задание" : "Open original task"}
+        </a>
+      ) : !revealed ? (
+        <>
+          <ShadcnTextarea
+            class="ss-answer-field"
+            value={draft}
+            placeholder={lang === "ru" ? "Ответь по памяти…" : "Answer from memory…"}
+            onInput={(e) => {
+              const value = (e.target as HTMLTextAreaElement).value;
+              if (attemptedAt == null && value.trim()) setAttemptedAt(Date.now());
+              setDraft(value);
+              writeResponse(card.lessonKey, `review::${card.cardKey}`, value);
+            }}
+          />
+          <div class="ss-actions">
+            <ShadcnButton type="button" class="oa-btn oa-btn-primary h-9 px-4 text-[12px]" disabled={!isCommitted(draft)} onClick={() => revealAnswer(false)}>
+              {t("review.showAnswer", lang)} <span class="opacity-60 font-mono">␣</span>
+            </ShadcnButton>
+            <button type="button" class="ss-link" onClick={() => revealAnswer(true)}>
+              {lang === "ru" ? "Пропустить" : "Skip"}
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div class="ss-reveal animate-reveal-up">{card.back}</div>
+          <div class="ss-grades" role="group">
+            {GRADES.map((g, i) => (
+              <button key={g} type="button" class={`ss-grade is-${g}`} data-key={i + 1} aria-keyshortcuts={String(i + 1)} onClick={() => grade(g)}>
+                {t(`review.${g}`, lang)}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
-        <footer class="mt-7 pt-4 border-t border-hairline">
-          <span class="font-mono text-[10px] text-muted uppercase tracking-wide">{card.lessonKey}</span>
-        </footer>
-      </div>
+      <footer class="ss-foot">{card.lessonKey}</footer>
     </section>
   );
 }
