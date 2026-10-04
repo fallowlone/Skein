@@ -1,6 +1,6 @@
 import { Button as ShadcnButton } from "~/components/ui/button";
 // src/components/english/TalkSession.tsx
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import { converse, endReview, MAX_TURNS } from "~/english/byok/converse";
 import { hasKey } from "~/english/byok";
 import { speak } from "~/english/speech/tts";
@@ -10,8 +10,8 @@ import type { ConversationTurn, Scenario, SpeechReview } from "~/english/types";
 import type { Locale } from "~/i18n";
 
 const COPY = {
-  en: { pick: "Pick a scenario", start: "Start", rec: "Speak", stop: "Stop", end: "End & review", thinking: "…", needKey: "Add an API key (Output tab) to use Talk.", you: "You", partner: "Partner", review: "Review", well: "Went well", errs: "Fix these", nextp: "Practice next" },
-  ru: { pick: "Выбери сценарий", start: "Начать", rec: "Говорить", stop: "Стоп", end: "Завершить и разбор", thinking: "…", needKey: "Добавь API-ключ (вкладка Письмо) для диалога.", you: "Ты", partner: "Собеседник", review: "Разбор", well: "Хорошо", errs: "Исправить", nextp: "Потренируй" },
+  en: { pick: "Pick a scenario", start: "Start", rec: "Speak", stop: "Stop", end: "End & review", thinking: "…", needKey: "Add an API key (Output tab) to use Talk.", checkingKey: "Checking API key…", failed: "Request failed. Try again.", you: "You", partner: "Partner", review: "Review", well: "Went well", errs: "Fix these", nextp: "Practice next" },
+  ru: { pick: "Выбери сценарий", start: "Начать", rec: "Говорить", stop: "Стоп", end: "Завершить и разбор", thinking: "…", needKey: "Добавь API-ключ (вкладка Письмо) для диалога.", checkingKey: "Проверяю API-ключ…", failed: "Запрос не удался. Попробуй ещё раз.", you: "Ты", partner: "Собеседник", review: "Разбор", well: "Хорошо", errs: "Исправить", nextp: "Потренируй" },
 };
 
 export default function TalkSession({ lang, recognizer }: { lang: Locale; recognizer: SpeechRecognizer }) {
@@ -21,8 +21,20 @@ export default function TalkSession({ lang, recognizer }: { lang: Locale; recogn
   const [busy, setBusy] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [review, setReview] = useState<SpeechReview | null>(null);
+  const [keyOn, setKeyOn] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  if (!hasKey()) return <p class="ex-note">{L.needKey}</p>;
+  // hasKey() is async (keystore lookup); a bare `!hasKey()` tests the Promise, which is always truthy.
+  useEffect(() => {
+    let alive = true;
+    hasKey()
+      .then((v) => { if (alive) setKeyOn(v); })
+      .catch(() => { if (alive) setKeyOn(false); });
+    return () => { alive = false; };
+  }, []);
+
+  if (keyOn === null) return <p class="ex-note">{L.checkingKey}</p>;
+  if (!keyOn) return <p class="ex-note">{L.needKey}</p>;
 
   const begin = (s: Scenario) => { setScenario(s); setReview(null); setTurns([{ role: "assistant", text: s.opening }]); speak(s.opening, { rate: 0.95 }); };
   const record = async () => { setBusy(true); try { await recognizer.start(); } catch { setBusy(false); } };
@@ -30,13 +42,14 @@ export default function TalkSession({ lang, recognizer }: { lang: Locale; recogn
     const r = await recognizer.stop(); setBusy(false);
     if (!r.transcript || !scenario) return;
     const next = [...turns, { role: "user" as const, text: r.transcript }];
-    setTurns(next); setThinking(true);
+    setTurns(next); setThinking(true); setError(null);
     try {
       const reply = await converse(next, scenario, "claude-haiku-4-5");
       setTurns([...next, { role: "assistant", text: reply }]); speak(reply, { rate: 0.95 });
-    } finally { setThinking(false); }
+    } catch { setError(L.failed); }
+    finally { setThinking(false); }
   };
-  const finish = async () => { setThinking(true); try { setReview(await endReview(turns, "claude-sonnet-4-6")); } finally { setThinking(false); } };
+  const finish = async () => { setThinking(true); setError(null); try { setReview(await endReview(turns, "claude-sonnet-4-6")); } catch { setError(L.failed); } finally { setThinking(false); } };
 
   const userTurns = turns.filter((t) => t.role === "user").length;
 
@@ -68,6 +81,7 @@ export default function TalkSession({ lang, recognizer }: { lang: Locale; recogn
         ))}
         {thinking && <p class="meta self-start">{L.thinking}</p>}
       </div>
+      {error && <p class="ex-note" role="alert">{error}</p>}
       {!review && (
         <div class="flex gap-2">
           {!busy
