@@ -4,6 +4,10 @@ import type { ConceptGraph } from "./graph";
 import { ancestors, descendants } from "./graph";
 
 export type SelfPlace = "never" | "basics" | "prod";
+// How solid the self-placed knowledge is today: "fresh" = remembered, "rusty" = used long ago,
+// "patchy" = can do the work but never learned the fundamentals.
+export type Recall = "fresh" | "rusty" | "patchy";
+export interface SelfMark { level: SelfPlace; recall: Recall }
 export type Response = "correct" | "wrong" | "dont_know";
 export interface Irt {
   /** Difficulty (logit scale). Higher = harder. */
@@ -23,7 +27,17 @@ const PRIOR: Record<SelfPlace, Record<Band, number>> = {
   basics: { foundations: 0.75, surface: 0.45, middle: 0.20, advanced: 0.08 },
   prod:   { foundations: 0.92, surface: 0.80, middle: 0.55, advanced: 0.30 },
 };
-export const priorFor = (self: SelfPlace, band: Band): number => PRIOR[self][band];
+// Recall shrinks the prior toward the "never" prior by (1 − k) per band: rusty doubts everything
+// evenly; patchy keeps more of the practical bands (middle/advanced) than the fundamentals.
+const RECALL_K: Record<Recall, Record<Band, number>> = {
+  fresh: { foundations: 1, surface: 1, middle: 1, advanced: 1 },
+  rusty: { foundations: 0.6, surface: 0.6, middle: 0.6, advanced: 0.6 },
+  patchy: { foundations: 0.3, surface: 0.4, middle: 0.5, advanced: 0.5 },
+};
+export const priorFor = (self: SelfPlace, band: Band, recall: Recall = "fresh"): number => {
+  const floor = PRIOR.never[band];
+  return floor + (PRIOR[self][band] - floor) * RECALL_K[recall][band];
+};
 
 // Deterministic fallback params when an item carries no authored irt.
 const BAND_DIFFICULTY: Record<Band, number> = { foundations: -1.0, surface: 0, middle: 0.8, advanced: 1.6 };

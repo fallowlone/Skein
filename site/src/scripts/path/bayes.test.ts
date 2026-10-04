@@ -5,6 +5,28 @@ import type { Concept } from "./types";
 
 const sharp: Irt = { b: 0, a: 1.4, c: 0.1 }; // discriminating, low guess
 
+describe("priorFor recall", () => {
+  it("fresh is the default and changes nothing", () => {
+    expect(priorFor("prod", "middle", "fresh")).toBe(priorFor("prod", "middle"));
+  });
+  it("rusty and patchy lower a prod prior but never below the never prior", () => {
+    for (const band of ["foundations", "surface", "middle", "advanced"] as const) {
+      const fresh = priorFor("prod", band);
+      for (const r of ["rusty", "patchy"] as const) {
+        const p = priorFor("prod", band, r);
+        expect(p).toBeLessThan(fresh);
+        expect(p).toBeGreaterThanOrEqual(priorFor("never", band));
+      }
+    }
+  });
+  it("patchy distrusts fundamentals more than rusty does", () => {
+    expect(priorFor("prod", "foundations", "patchy")).toBeLessThan(priorFor("prod", "foundations", "rusty"));
+  });
+  it("never is unaffected by recall", () => {
+    expect(priorFor("never", "surface", "patchy")).toBe(priorFor("never", "surface"));
+  });
+});
+
 describe("priorFor", () => {
   it("is monotone: higher self-placement and lower band give higher prior", () => {
     expect(priorFor("prod", "foundations")).toBeGreaterThan(priorFor("basics", "foundations"));
