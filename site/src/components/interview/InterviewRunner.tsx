@@ -56,24 +56,31 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
   }, [idx]);
 
   if (!view.length) {
-    return <p class="my-10 text-muted text-sm">{t("interview.empty", lang)}</p>;
+    return <div class="ss-empty"><p>{t("interview.empty", lang)}</p></div>;
   }
 
   if (idx >= view.length) {
     const score = Math.round(readinessScore(outcomes));
+    const count = (o: Outcome) => outcomes.filter((x) => x === o).length;
     return (
-      <section class="my-10">
-        <div class="rounded-[var(--r-lg)] border-[0.5px] border-hairline-2 bg-card shadow-soft p-6 sm:p-7">
-          <div class="meta mb-2">{t("interview.title", lang)}</div>
-          <p class="font-mono text-[28px] font-bold text-ink mb-1">{t("interview.readiness", lang)}: {score}%</p>
-          <p class="text-muted text-xs mb-4">{t("interview.doneHint", lang)}</p>
-          <a
-            class="inline-block font-mono text-[12px] tracking-[0.03em] text-accent no-underline border-b-[0.5px] border-accent hover:opacity-80"
-            href={`/${lang}/roadmap/`}
-          >
-            {t("interview.reviewCta", lang)}
-          </a>
+      <section class="ss-card">
+        <p class="ss-sub">{t("interview.readiness", lang)}</p>
+        <p class="ss-big">{score}<small>%</small></p>
+        <div class="ss-result-ticks" aria-hidden="true">
+          {outcomes.map((o, i) => <span key={i} class={`ss-tick is-${o}`} />)}
         </div>
+        <ul class="ss-legend">
+          {PICKS.map((o) => (
+            <li key={o}>
+              <span class={`ss-dot is-${o}`} aria-hidden="true" />
+              <b>{count(o)}</b> {t(`interview.${o === "pass" ? "solid" : o}Count`, lang)}
+            </li>
+          ))}
+        </ul>
+        <p class="ss-hint">{t("interview.doneHint", lang)}</p>
+        <a class="oa-btn oa-btn-primary h-9 px-4 inline-flex items-center font-mono text-[12px] no-underline" href={`/${lang}/roadmap/`}>
+          {t("interview.reviewCta", lang)}
+        </a>
       </section>
     );
   }
@@ -93,37 +100,34 @@ export default function InterviewRunner({ lang, items }: { lang: Locale; items: 
   const counter = t("interview.task", lang).replace("{n}", String(idx + 1)).replace("{total}", String(view.length));
 
   return (
-    <section class="my-10">
-      <div class="rounded-[var(--r-lg)] border-[0.5px] border-hairline-2 bg-card shadow-soft p-6 sm:p-7">
-        <header class="flex items-center justify-between mb-4">
-          <span class="meta">{counter}</span>
-        </header>
-        <h2 class="font-display text-[19px] sm:text-[21px] font-semibold leading-snug text-ink mb-2">{task.title[lang]}</h2>
-        <p class="text-[15px] leading-relaxed text-ink-2 mb-3">{task.prompt[lang]}</p>
-        {task.type === "design" && (
-          <p class="rounded-[var(--r-md)] border-l-2 border-accent bg-paper-2 pl-4 pr-3 py-3 text-[14px] leading-relaxed text-ink-2 mb-4">
-            {task.constraints[lang]}
-          </p>
-        )}
-        <div class="mb-5">
-          <GradeWithAi lang={lang} task={task} />
+    <section class="ss-card">
+      <header class="ss-head">
+        <span class="ss-count">{counter}</span>
+        <div class="ss-ticks" aria-hidden="true">
+          {view.map((_, i) => (
+            <span key={i} class={`ss-tick${i < outcomes.length ? ` is-${outcomes[i]}` : i === idx ? " is-now" : ""}`} />
+          ))}
         </div>
-        <div class="mb-6">
-          <div class="meta mb-2">{t("interview.selfAssess", lang)}</div>
-          <div class="flex flex-wrap gap-2" role="group" aria-label={t("interview.selfAssess", lang)}>
-            {PICKS.map((o) => (
-              <ShadcnButton
-                type="button"
-                key={o}
-                class={`oa-btn oa-btn-secondary h-9 px-3 font-mono text-[12px] ${pick === o ? "!border-accent !text-accent" : ""}`}
-                aria-pressed={pick === o}
-                onClick={() => setPick(o)}
-              >
-                {t(`interview.${o}`, lang)}
-              </ShadcnButton>
-            ))}
-          </div>
+      </header>
+      <h2 class="ss-q">{task.title[lang]}</h2>
+      <p class="ss-prompt">{task.prompt[lang]}</p>
+      {task.type === "design" && <p class="ss-constraints">{task.constraints[lang]}</p>}
+      <div class="ss-block">
+        <GradeWithAi lang={lang} task={task} />
+      </div>
+      <div class="ss-block">
+        <p class="ss-sub">{t("interview.selfAssess", lang)}</p>
+        <div class="ss-opts" role="group" aria-label={t("interview.selfAssess", lang)}>
+          {PICKS.map((o) => (
+            <button type="button" key={o} class={`ss-opt is-${o}`} aria-pressed={pick === o} onClick={() => setPick(o)}>
+              <span class="ss-dot" aria-hidden="true" />
+              <span class="ss-opt-label">{t(`interview.${o}`, lang)}</span>
+              <span class="ss-opt-hint">{t(`interview.${o}Hint`, lang)}</span>
+            </button>
+          ))}
         </div>
+      </div>
+      <div class="ss-actions">
         <ShadcnButton
           type="button"
           class="oa-btn oa-btn-primary h-9 px-4 font-mono text-[12px] disabled:opacity-40 disabled:pointer-events-none"

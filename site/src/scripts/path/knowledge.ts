@@ -205,10 +205,11 @@ export function applyReviewEvidence(
   return next;
 }
 
-export function applySelfDeclare(state: KnowledgeState, concept: string, known: boolean, now: number): KnowledgeState {
+export function applySelfDeclare(state: KnowledgeState, concept: string, known: boolean | number, now: number): KnowledgeState {
   const current = state.get(concept);
   if (current && MEASURED_SOURCES.includes(current.source)) return state;
-  return setMastery(state, concept, { confidence: known ? 1 : 0, source: "declared", lastAt: now });
+  const confidence = typeof known === "number" ? clamp01(known) : known ? 1 : 0;
+  return setMastery(state, concept, { confidence, source: "declared", lastAt: now });
 }
 
 // Time decay, applied uniformly to ALL sources (including `declared`): confidence lerps from

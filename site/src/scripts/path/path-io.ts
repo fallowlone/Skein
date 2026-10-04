@@ -46,7 +46,7 @@ import type { Overrides } from "./graph";
 import { applyOverridesFull, mergeOverrides, loosenUnitEdges } from "./overrides";
 import { parseStateBundle } from "./state-io";
 import { exportModel } from "~/scripts/model-backup";
-import { resolveIrt, priorFor, collapse, type SelfPlace, type Irt } from "./bayes";
+import { resolveIrt, priorFor, collapse, type SelfMark, type Irt } from "./bayes";
 import type { Band } from "./types";
 import type { MarketDemandSnapshot } from "./market-demand";
 import { rankWeakSpots, remediationScope, type WeakSpot } from "./weak-spots";
@@ -872,17 +872,41 @@ export function familyConcepts(familyKey: string): string[] {
 export const families = () =>
   DOMAIN_FAMILIES.map((f) => ({ key: f.key, label: f.label, hue: f.hue, tracks: f.tracks as string[] }));
 
-// Initial prior map for a set of concepts from per-family self-placement.
-export function seedPriors(conceptIds: string[], selfByFamily: Record<string, SelfPlace>): Map<string, number> {
-  const famOf = new Map<string, string>();
-  for (const f of DOMAIN_FAMILIES) for (const tr of f.tracks as string[]) famOf.set(tr, f.key);
+// Self-marks are per track (technology); an unmarked track counts as "never touched".
+const NEVER_MARK: SelfMark = { level: "never", recall: "fresh" };
+const markOf = (marks: Record<string, SelfMark>, id: string): SelfMark =>
+  marks[conceptById.get(id)?.track as string] ?? NEVER_MARK;
+
+// Initial prior map for a set of concepts from per-track self-placement.
+export function seedPriors(conceptIds: string[], marks: Record<string, SelfMark>): Map<string, number> {
   const priors = new Map<string, number>();
   for (const id of conceptIds) {
-    const track = conceptById.get(id)?.track as string;
-    const self = selfByFamily[famOf.get(track) ?? ""] ?? "never";
-    priors.set(id, priorFor(self, conceptBand(id)));
+    const m = markOf(marks, id);
+    priors.set(id, priorFor(m.level, conceptBand(id), m.recall));
   }
   return priors;
+}
+
+// Priors below this are "no real claim": they stay unrecorded so a vague mark never inflates the map.
+const DECLARE_FLOOR = 0.3;
+
+// Persist the self-marks as declared knowledge, so tracks the test cannot probe (no question bank)
+// still shape the path. Confidence = the mark's prior: confident marks skip ahead, rusty/patchy ones
+// are capped below the mastery threshold and get refreshed. Only the tracks in `marks` are touched, and
+// measured evidence always wins (applySelfDeclare). Marking a track "never" clears its old declarations.
+export function declareFromMarks(marks: Record<string, SelfMark>): void {
+  const now = Date.now();
+  let next = new Map(knowledge.value);
+  for (const c of concepts) {
+    const m = marks[c.track];
+    if (!m) continue;
+    const raw = m.level === "never" ? 0 : priorFor(m.level, conceptBand(c.id), m.recall);
+    // A rusty/patchy mark must never be skippable: keep it just under the mastery threshold.
+    const p = m.recall === "fresh" ? raw : Math.min(raw, config.value.weights.masteryThreshold - 0.05);
+    if (p >= DECLARE_FLOOR) next = applySelfDeclare(next, c.id, p, now);
+    else if (next.get(c.id)?.source === "declared") next.delete(c.id);
+  }
+  knowledge.value = next;
 }
 
 // Collapse a final posterior map into KnowledgeState (source "diagnostic"), reusing applyDiagnostic

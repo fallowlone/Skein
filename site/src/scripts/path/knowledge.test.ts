@@ -55,6 +55,13 @@ describe("knowledge", () => {
     expect(canSkipConcept(s2, "mvcc", 0.6)).toBe(false);
   });
 
+  it("declares a partial confidence: below the threshold it is not skippable (rusty / patchy marks)", () => {
+    const s = applySelfDeclare(emptyState(), "mvcc", 0.4, NOW);
+    expect(masteryOf(s, "mvcc")).toBeCloseTo(0.4, 5);
+    expect(canSkipConcept(s, "mvcc", 0.6)).toBe(false);
+    expect(masteryOf(applySelfDeclare(emptyState(), "mvcc", 7, NOW), "mvcc")).toBe(1); // clamped
+  });
+
   it("does not let a self-declaration hide a measured gap", () => {
     const measured = applyDiagnostic(emptyState(), g, "mvcc", 0.2, NOW);
     const declared = applySelfDeclare(measured, "mvcc", true, NOW + 1);
