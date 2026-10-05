@@ -96,7 +96,7 @@ Together these three steps mean a single packet loss on QUIC carries a bounded, 
 
 ## HPACK vs QPACK: the ordering dependency
 
-HPACK (RFC 7541) maintains a dynamic table indexed by sequence of insertion. Entry at index 62 was the 62nd (name, value) pair inserted since connection start. A HEADERS frame referencing index 62 *must* be processed after the frame that inserted index 62.
+HPACK (RFC 7541) maintains a dynamic table addressed by a relative index: 1-61 are the static table, and 62 always points at the most recently inserted dynamic entry, so every new insertion shifts the indices of older entries. A reference to index 62 is only decodable if the decoder has applied exactly the same insertions the encoder had when it chose that index.
 
 On TCP: frames arrive in order — the HEADERS frame adding index 62 always arrives before HEADERS frames referencing it. The ordering constraint is invisible.
 
@@ -105,9 +105,9 @@ On QUIC: streams deliver frames independently. HEADERS frame on stream #3 might 
 QPACK (RFC 9204) solution:
 - **Encoder stream** — a dedicated unidirectional QUIC stream carries dynamic table insertions. This stream delivers table updates in order.
 - **Decoder stream** — carries acknowledgement of which table entries have been processed.
-- **HEADERS frames** — reference only entries the encoder knows have been acknowledged on the decoder stream. A HEADERS frame on stream #3 never references an entry that might not yet be in the decoder's table.
+- **HEADERS frames** — the encoder chooses the trade-off. It may reference only entries the decoder has acknowledged (a stream never blocks, but compression is worse), or risk referencing unacknowledged entries, up to the decoder's `SETTINGS_QPACK_BLOCKED_STREAMS` limit (better compression, but a stream can block until the insertion arrives on the encoder stream).
 
-Result: HEADERS frames on one stream can never be blocked by HEADERS frames on another stream — QUIC's stream independence is preserved at the header-compression layer.
+Result: table updates travel in order on their own stream and the encoder bounds how much head-of-line blocking header compression can add — QUIC's stream independence is largely preserved at the header-compression layer.
 
 <NumbersCard
   id="card-h3-ops"
@@ -118,7 +118,7 @@ Result: HEADERS frames on one stream can never be blocked by HEADERS frames on a
     { label: "Websites advertising HTTP/3", value: "38.8% (W3Techs)" },
     { label: "Google, Meta, Cloudflare, Akamai h3 share", value: ">50% of their traffic" },
     { label: "Typical enterprise firewall UDP/443 block rate", value: "5–15% of corporate paths" },
-    { label: "HTTP/3 → HTTP/2 fallback RTT cost", value: "1 extra RTT on first visit" },
+    { label: "HTTP/3 → HTTP/2 fallback RTT cost", value: "A timeout or TCP-race delay on later visits" },
     { label: "0-RTT data replay risk window", value: "Duration of session ticket validity" },
   ]}
 />
@@ -175,7 +175,7 @@ Without all three requirements in place, enabling 0-RTT on a POST endpoint is eq
     { prompt: "Step 1: what is the first metric to check?", reveal: "ALPN distribution: tls_alpn_protocol counter by label. If h3 share collapsed and h2 absorbed everything, clients tried QUIC but failed and fell back. If h3 share is stable but throughput regressed, the connections work but something else caused latency." },
     { prompt: "Step 2: ALPN shows h3 went from 40% → 0% and h2 absorbed everything. What likely happened?", reveal: "UDP/443 is being dropped somewhere on the path. A network operator pushed a firewall rule, an ISP changed routing, or a transit provider's middlebox started dropping QUIC packets. HTTP/3 → /2 fallback is transparent to users but the ALPN metric catches it." },
     { prompt: "Step 3: tcpdump on an edge node shows incoming UDP/443 packets at near-zero. Confirm the hypothesis. How do you locate the block?", reveal: "Run mtr or paris-traceroute with UDP probe packets from a known-affected client AS. Look for the AS hop where UDP/443 stops being forwarded. Common culprits: a misconfigured DDoS-protection scrubber that added UDP/443 to its drop list, or an ISP anti-amplification rule over-broad enough to catch QUIC Initial packets." },
-    { prompt: "Step 4: while the network team coordinates the fix, what do you do customer-side?", reveal: "Users are already on h2 fallback — no action needed for them. Optionally lower Alt-Svc max-age temporarily so clients stop burning an RTT on the failed h3 attempt. Alert on the ALPN metric for future incidents. Document the ISP AS number and ticket the peering team." },
+    { prompt: "Step 4: while the network team coordinates the fix, what do you do customer-side?", reveal: "Users are already on h2 fallback — no action needed for them. Optionally lower Alt-Svc max-age temporarily so clients stop waiting out a failed h3 attempt. Alert on the ALPN metric for future incidents. Document the ISP AS number and ticket the peering team." },
   ]}
 />
 
@@ -191,7 +191,8 @@ tls_alpn_protocol{protocol="h3"} 21.1%     # Normal baseline
 tls_alpn_protocol{protocol="h2"} 51.3%
 tls_alpn_protocol{protocol="http/1.1"} 27.6%
 
-## Fallback rate (h3 attempted but fell back to h2)
+## Fallback rate (from client-side RUM: origin advertised h3, session negotiated h2;
+## the edge itself only sees the h3 share shrink, never the dropped attempts)
 http3_to_http2_fallback_rate 0.8%          # Baseline: normal ISP loss/blocking
 
 ## At 2026-04-15 14:35 UTC, alert fires: fallback rate spikes
@@ -204,7 +205,7 @@ fallback_rate{region="US-Midwest"} 2.1%
 fallback_rate{region="Europe"} 1.9%
 
 ## Network diagnostic from edge
-$ mtr -P UDP/443 route-to-AS7922-customer
+$ mtr -u -P 443 -r -c 20 AS7922-customer-ip
 hop 5: (AS7922 transit edge) UDP packets: 0% loss [OK]
 hop 6: (AS7922 DDoS scrubber, new rule: 2026-04-15 14:00 UTC)
        UDP packets: 100% loss [BLOCKED]
@@ -298,14 +299,14 @@ $ curl -v https://api.example.com/health
   caption="The fallback is invisible to users — the ALPN distribution and h3→h2 fallback-rate metrics are the only signal that UDP/443 is being dropped on a network path."
 />
 
-<KeyTakeaway>HTTP/3 production operations centre on three signals: ALPN distribution (is h3 being selected?), h3-to-h2 fallback rate by ASN (is UDP being blocked?), and QUIC retransmit rate (are loss isolation gains real?). QPACK preserves stream independence at the header-compression layer; QUIC congestion control runs in userspace (flexible but costlier CPU); 0-RTT is safe only for idempotent methods.</KeyTakeaway>
+<KeyTakeaway>HTTP/3 production operations centre on three signals: ALPN distribution (is h3 being selected?), h3-to-h2 fallback rate by ASN (is UDP being blocked?), and QUIC retransmit rate (are loss isolation gains real?). QPACK lets the encoder trade compression against header blocking; QUIC congestion control runs in userspace (flexible but costlier CPU); 0-RTT is safe only for idempotent methods.</KeyTakeaway>
 
 <RetrievalDrawer
   client:visible
   id="06-http3-production-retrieval"
   lang="en"
   questions={[
-    { q: "Explain why QPACK exists separately from HPACK.", a: "HPACK uses an ordered dynamic table: entries are added in insertion order, and references are by sequential index. If a HEADERS frame adding entry index 60 is lost or arrives late (possible on QUIC where streams are independent), every subsequent HEADERS frame referencing index 60 cannot decode until the missing frame arrives. On TCP this is invisible because TCP delivers in order anyway. On QUIC with independent streams, out-of-order HEADERS frames for stream A would block decoding for stream B's HEADERS — defeating QUIC's stream isolation. QPACK (RFC 9204) fixes this by placing dynamic table updates on a dedicated encoder control stream (delivered in order) and only referencing entries that the encoder knows the decoder has acknowledged. Regular HEADERS frames never block on each other's table updates." },
+    { q: "Explain why QPACK exists separately from HPACK.", a: "HPACK uses an ordered dynamic table: entries are added in insertion order, and references are by sequential index. If a HEADERS frame adding entry index 60 is lost or arrives late (possible on QUIC where streams are independent), every subsequent HEADERS frame referencing index 60 cannot decode until the missing frame arrives. On TCP this is invisible because TCP delivers in order anyway. On QUIC with independent streams, out-of-order HEADERS frames for stream A would block decoding for stream B's HEADERS — defeating QUIC's stream isolation. QPACK (RFC 9204) fixes this by placing dynamic table updates on a dedicated encoder control stream (delivered in order) and letting the encoder choose: reference only acknowledged entries (never blocks) or risk unacknowledged ones up to the decoder's SETTINGS_QPACK_BLOCKED_STREAMS limit (better compression, a stream may block). Blocking is bounded by that budget, not eliminated." },
     { q: "An engineer says HTTP/3 always beats HTTP/2 because of QUIC streams. Where is the flaw?", a: "HTTP/3's core win — stream-level loss isolation — only matters on lossy networks. On wired links with <0.1% packet loss, TCP rarely retransmits and HOL blocking is invisible. HTTP/3 has real costs: QUIC encryption runs in userspace (more CPU than kernel-offloaded TCP+TLS), the stack is more complex, and middleboxes that drop UDP/443 force fallback. For datacentre east-west traffic on reliable 10 GbE links, HTTP/2 over TCP is often faster and simpler. HTTP/3 wins on mobile, lossy, long-RTT paths. The correct answer: run HTTP/3 at the user-facing edge; HTTP/2 for internal east-west." },
     { q: "What is connection coalescing and what breaks it?", a: "Connection coalescing: when multiple origins share the same server IP and the TLS certificate covers both names (via SAN list), HTTP/2 and HTTP/3 clients can reuse one connection for requests to both origins instead of opening separate connections per hostname. This saves handshake cost on pages loading from multiple CDN origins. What breaks it: a TLS certificate whose SAN list does not include one of the hostnames being coalesced. The browser opens a separate connection for the uncovered hostname — a silent latency regression visible only as a rise in per-origin connection count metrics." },
   ]}

@@ -62,7 +62,7 @@ Adding or removing nodes from a running Raft cluster is the most error-prone ope
 
 **Joint consensus** fixes this: the cluster transitions through an intermediate configuration `C_old_new` that requires a majority from **both** the old and the new configuration. Commits during this phase need a majority of C_old AND a majority of C_new. No two valid quorums in this window can be disjoint. Once `C_old_new` is committed cluster-wide, the cluster transitions to C_new alone.
 
-Hashicorp Raft and etcd implement joint consensus with an additional simplification: **single-server changes only** (add or remove one node at a time). This limits the joint phase to a simple two-majority requirement and makes the operational story tractable. Never bypass joint consensus for membership changes in production — the Alibaba Cloud Raft engineering post documents a real 30-minute split brain caused by exactly this shortcut.
+Hashicorp Raft uses the dissertation's **single-server changes** (add or remove one node at a time), which are safe without a joint phase; etcd's raft library supports joint consensus, while etcd server issues one change at a time. Either way the operational story is tractable. Never bypass the membership-change protocol in production — the Alibaba Cloud Raft engineering post documents a real 30-minute split brain caused by exactly this shortcut.
 
 <div data-lesson-visual class="overflow-x-auto my-6">
 
@@ -82,11 +82,11 @@ Without explicit leadership transfer, draining a leader node before maintenance 
 
 ## Multi-Raft and sharding
 
-A single Raft group's throughput is bounded by the slowest replica's fsync plus the network round-trip. For high-throughput systems, the architecture is **Multi-Raft**: many independent Raft groups in parallel, each owning a shard of the keyspace.
+A single Raft group's commit latency is bounded by the leader's fsync plus the round-trip and fsync of the quorum-th fastest follower, and its throughput by the leader's serial log append/apply path. For high-throughput systems, the architecture is **Multi-Raft**: many independent Raft groups in parallel, each owning a shard of the keyspace.
 
 - **CockroachDB:** partitions the keyspace into ~512 MB "ranges," one Raft group per range.
-- **TiKV:** same with ~100 MB "regions."
-- **Kafka KRaft:** one Raft group per metadata topic partition.
+- **TiKV:** same with "regions" of ~96 MiB (default through 8.3; ~256 MiB from 8.4.0).
+- **Kafka KRaft:** the contrast case — a single Raft quorum replicates the one `__cluster_metadata` partition; it does not shard into many groups.
 
 **Heartbeat coalescing** makes Multi-Raft viable at scale: instead of 50,000 groups × 1 heartbeat/50 ms = 1M heartbeats/s, a 5-node cluster with 50,000 groups sends 10 physical packets per 50 ms (one per node pair), each containing all group heartbeats in a compact bitmap. That is 200 packets/s instead of 1M.
 
@@ -113,7 +113,7 @@ Etcd ships `etcd_server_leader_changes_seen_total`, `etcd_disk_wal_fsync_duratio
 
 These are not hypothetical — all three cost real engineers real outages. Read them not as cautionary tales but as a checklist: if your cluster could reproduce any of these conditions, fix it before you get paged.
 
-**GitHub October 2018.** A network blip between datacenters caused etcd to trigger a failover. A misconfigured external sync wrote to both regions during a brief window — Raft was correct, the orchestrator above it was not. Lesson: Raft guarantees consensus within the cluster; it cannot protect against a misconfigured operator layer writing around the cluster.
+**GitHub October 2018.** A 43-second network partition made Orchestrator (itself Raft-based) fail MySQL primaries over to the West Coast while East Coast primaries held unreplicated writes, so the two sides diverged and took 24+ hours to reconcile. Lesson: consensus in the orchestrator does not prevent data loss from asynchronous replication across a failover.
 
 **Datadog 2023.** A TiKV cluster experienced repeated leader elections under high write load. Root cause: pre-vote was disabled in an older version. Under write pressure, network jitter caused spurious elections, each one causing hundreds of milliseconds of unavailability. Enabling pre-vote resolved the issue. Lesson: pre-vote is a correctness feature, not a nicety.
 
@@ -183,19 +183,19 @@ These are not hypothetical — all three cost real engineers real outages. Read 
   caption="During the C_old_new phase a commit needs a majority of the old AND the new configuration at once, so no two valid quorums can be disjoint — closing the window where two leaders could be elected. Only after C_old_new commits cluster-wide does the cluster move to C_new alone."
 />
 
-<KeyTakeaway>Membership change requires joint consensus (double-quorum transition) to prevent split brain. Multi-Raft scales throughput via parallel Raft groups with heartbeat coalescing. The minimum viable dashboard is five metrics: leader changes, WAL fsync p99, commit p99, follower lag, and term growth rate. Every production Raft incident traces to one of: bypassed membership protocol, disabled pre-vote, or wrong disk type.</KeyTakeaway>
+<KeyTakeaway>Membership change requires joint consensus (double-quorum transition) to prevent split brain. Multi-Raft scales throughput via parallel Raft groups with heartbeat coalescing. The minimum viable dashboard is five metrics: leader changes, WAL fsync p99, commit p99, follower lag, and term growth rate. Common, preventable causes of Raft incidents: bypassed membership protocol, disabled pre-vote, wrong disk type.</KeyTakeaway>
 
 <RetrievalDrawer
   client:visible
   id="raft-sr-retrieval2"
   lang="en"
   questions={[
-    { q: "Explain why joint consensus prevents the split-brain risk in membership change.", a: "Joint consensus requires commits during the transition phase to reach a majority of BOTH the old configuration and the new configuration simultaneously. Any two valid quorums in this phase — one from C_old, one from C_new — must overlap (because each is a majority of a set that includes the other). No two leaders can both commit during the transition: they would each need overlapping majorities that agree on a leader. Once C_old_new is committed cluster-wide, the cluster moves to C_new alone, and the overlap property is again provided by C_new's single majority rule." },
+    { q: "Explain why joint consensus prevents the split-brain risk in membership change.", a: "Joint consensus requires commits during the transition phase to reach a majority of BOTH the old configuration and the new configuration simultaneously. Any two joint quorums in this phase intersect, because each contains a majority of C_old (and two majorities of the same set overlap) and a majority of C_new; neither configuration can decide alone. No two leaders can both commit during the transition: they would each need overlapping majorities that agree on a leader. Once C_old_new is committed cluster-wide, the cluster moves to C_new alone, and the overlap property is again provided by C_new's single majority rule." },
     { q: "A CockroachDB cluster runs 50,000 Raft groups. Why does this not collapse under 1M heartbeats per second?", a: "Heartbeat coalescing: per node-pair, the system sends one physical UDP/TCP packet every 50 ms that contains the heartbeat status for ALL Raft groups sharing that pair. A 5-node cluster (10 unique node pairs) with 50,000 groups sends 10 packets per 50 ms = 200 packets per second total. Each packet's body is a compact bitmap of group leader/follower status. Additionally, idle groups (no recent writes) can suppress heartbeats entirely until activity resumes, further reducing baseline traffic." },
     { q: "What is the minimum set of Raft metrics you would alert on, and what does each one diagnose?", a: "Five metrics: (1) leader_changes_total/min > 1 diagnoses flapping leadership — check disk fsync and heartbeat RTT; (2) wal_fsync_duration p99 > 50 ms diagnoses disk too slow — move to NVMe; (3) commit_latency p99 > 100 ms diagnoses disk, network, or follower lag; (4) follower_lag_entries > 1000 diagnoses a follower falling behind, likely needing a snapshot soon; (5) raft_term growth > 2/min diagnoses repeated elections — check network jitter and whether pre-vote is enabled." },
   ]}
 />
 
 <Recap lang="en">
-Safe membership change requires joint consensus — a two-quorum transition phase that prevents any window where two non-overlapping majorities could elect concurrent leaders. Leadership transfer via TimeoutNow reduces unavailability during rolling deploys from hundreds of milliseconds to under 10 ms. Multi-Raft scales a single cluster's throughput via parallel groups with coalesced heartbeats. The minimum viable Raft dashboard tracks five metrics: leader changes, WAL fsync latency, commit latency, follower lag, and term growth rate. Every real production incident with Raft traces to one of three root causes: a membership change that bypassed joint consensus, a pre-vote that was disabled, or a WAL on a slow cloud volume. Fix all three preventively and you cover 90% of production Raft failures. Now when you are handed a Raft cluster to run, the first thing to verify is not the Raft version — it is whether membership changes use the API, pre-vote is on, and the WAL lands on dedicated NVMe. Everything else is tuning.
+Safe membership change requires joint consensus — a two-quorum transition phase that prevents any window where two non-overlapping majorities could elect concurrent leaders. Leadership transfer via TimeoutNow reduces unavailability during rolling deploys from hundreds of milliseconds to under 10 ms. Multi-Raft scales a single cluster's throughput via parallel groups with coalesced heartbeats. The minimum viable Raft dashboard tracks five metrics: leader changes, WAL fsync latency, commit latency, follower lag, and term growth rate. Three common, preventable root causes of Raft incidents: a membership change that bypassed the protocol, a pre-vote that was disabled, or a WAL on a slow cloud volume. Fix all three preventively and you remove a large class of failures (monitor disk space, snapshots and network health too). Now when you are handed a Raft cluster to run, the first thing to verify is not the Raft version — it is whether membership changes use the API, pre-vote is on, and the WAL lands on dedicated NVMe. Everything else is tuning.
 </Recap>
