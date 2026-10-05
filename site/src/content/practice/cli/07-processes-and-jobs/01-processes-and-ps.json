@@ -75,6 +75,78 @@
         "en": "<code>pgrep nginx</code> → gets PID (e.g. 512). Then <code>ps -o ppid= -p 512</code> prints just the PPID. If it prints <code>1</code>, nginx is a direct child of init. Alternatively: <code>ps -ef | awk -v pid=512 '$2==pid {print $3}'</code> prints the PPID column for that specific PID.",
         "ru": "<code>pgrep nginx</code> → получает PID (например, 512). Затем <code>ps -o ppid= -p 512</code> выводит только PPID. Если выводит <code>1</code> — nginx прямой потомок init. Альтернативно: <code>ps -ef | awk -v pid=512 '$2==pid {print $3}'</code> выводит столбец PPID для конкретного PID."
       }
+    },
+    {
+      "id": "incident-zombie-pid-exhaustion",
+      "type": "incident",
+      "difficulty": "stretch",
+      "estMin": 14,
+      "title": {
+        "en": "fork: Resource temporarily unavailable",
+        "ru": "fork: ресурс временно недоступен"
+      },
+      "prompt": {
+        "en": "A job-runner service starts failing to spawn workers with <code>fork: Resource temporarily unavailable</code>. CPU and RAM look nearly idle and nothing was deployed today. Work the incident.",
+        "ru": "Сервис-раннер задач перестал порождать воркеров: <code>fork: Resource temporarily unavailable</code>. CPU и RAM почти свободны, сегодня ничего не выкатывали. Разбери инцидент."
+      },
+      "steps": [
+        {
+          "label": {
+            "en": "Triage",
+            "ru": "Первичная диагностика"
+          },
+          "prompt": {
+            "en": "<code>top</code> shows low load, plenty of free memory, but the header reads <code>Tasks: 31842 total, 1 running, 4 sleeping, 0 stopped, 31837 zombie</code>. Which commands confirm who owns the zombies?",
+            "ru": "<code>top</code> показывает низкую нагрузку и много свободной памяти, но в шапке: <code>Tasks: 31842 total, 1 running, 4 sleeping, 0 stopped, 31837 zombie</code>. Какие команды покажут, кому принадлежат зомби?"
+          },
+          "reveal": {
+            "en": "Count and group the zombies by parent: <code>ps -eo ppid=,stat= | awk '$2 ~ /^Z/ {n[$1]++} END {for (p in n) print n[p], p}' | sort -rn | head</code>. One PPID owns almost all of them. Then <code>ps -o pid,ppid,stat,cmd -p &lt;PPID&gt;</code> identifies the parent, and <code>ps -eo pid,ppid,stat,comm | awk '$3 ~ /^Z/' | head</code> shows entries with STAT <code>Z</code> and a <code>&lt;defunct&gt;</code> name. Zombies hold no RAM or CPU, which is why the box looks idle.",
+            "ru": "Посчитай и сгруппируй зомби по родителю: <code>ps -eo ppid=,stat= | awk '$2 ~ /^Z/ {n[$1]++} END {for (p in n) print n[p], p}' | sort -rn | head</code>. Почти все принадлежат одному PPID. Затем <code>ps -o pid,ppid,stat,cmd -p &lt;PPID&gt;</code> опознаёт родителя, а <code>ps -eo pid,ppid,stat,comm | awk '$3 ~ /^Z/' | head</code> покажет записи со STAT <code>Z</code> и именем <code>&lt;defunct&gt;</code>. Зомби не держат ни RAM, ни CPU, поэтому машина выглядит простаивающей."
+          }
+        },
+        {
+          "label": {
+            "en": "Root cause",
+            "ru": "Корневая причина"
+          },
+          "prompt": {
+            "en": "Why does a pile of processes that use no memory and no CPU make <code>fork</code> fail?",
+            "ru": "Почему куча процессов, не использующих ни память, ни CPU, ломает <code>fork</code>?"
+          },
+          "reveal": {
+            "en": "Each worker exited, but the parent never called <code>wait()</code>/<code>waitpid()</code> to collect its exit status, so every child keeps a row in the process table. Those rows still occupy a PID, and the limit that bites is the PID/task count (<code>kernel.pid_max</code>, per-user <code>ulimit -u</code>, or a container's pids limit), not memory. Once it is exhausted, <code>fork</code> returns EAGAIN. The bug is in the parent, a leak of unreaped children.",
+            "ru": "Каждый воркер завершился, но родитель ни разу не вызвал <code>wait()</code>/<code>waitpid()</code>, чтобы забрать код возврата, поэтому у каждого потомка остаётся строка в таблице процессов. Эти строки занимают PID, а упирается система в лимит числа PID/задач (<code>kernel.pid_max</code>, <code>ulimit -u</code> пользователя или pids-лимит контейнера), а не в память. Когда он исчерпан, <code>fork</code> возвращает EAGAIN. Баг в родителе: утечка потомков, не собранных через wait."
+          }
+        },
+        {
+          "label": {
+            "en": "Fix",
+            "ru": "Исправление"
+          },
+          "prompt": {
+            "en": "The on-call tries <code>kill -9</code> on a few zombie PIDs and nothing changes. Why, and what actually clears them?",
+            "ru": "Дежурный делает <code>kill -9</code> по нескольким PID зомби, и ничего не меняется. Почему, и что их реально убирает?"
+          },
+          "reveal": {
+            "en": "A zombie is already dead, so there is nothing for a signal to terminate, and not even SIGKILL removes the row. Only the parent's <code>wait()</code> does. Short term: gracefully restart the parent (<code>kill &lt;PPID&gt;</code>, SIGTERM). When it exits, the orphaned zombies are re-parented to PID 1, which reaps them immediately. Long term: fix the parent to reap children (<code>waitpid</code> in a SIGCHLD handler, or use a runner API that waits, such as <code>subprocess.run</code> or <code>.wait()</code>).",
+            "ru": "Зомби уже мёртв, завершать нечего, поэтому сигнал не действует и даже SIGKILL не убирает строку. Её убирает только <code>wait()</code> родителя. Быстро: плавно перезапустить родителя (<code>kill &lt;PPID&gt;</code>, SIGTERM). Когда он выйдет, осиротевшие зомби переходят к PID 1, который сразу их собирает. Надолго: починить родителя, чтобы он собирал потомков (<code>waitpid</code> в обработчике SIGCHLD или API, который ждёт, например <code>subprocess.run</code> либо <code>.wait()</code>)."
+          }
+        },
+        {
+          "label": {
+            "en": "Prevent",
+            "ru": "Профилактика"
+          },
+          "prompt": {
+            "en": "What guardrails stop this from becoming a 3 AM outage next time?",
+            "ru": "Какие ограждения не дадут этому снова превратиться в ночной аварийный вызов?"
+          },
+          "reveal": {
+            "en": "Alert on the zombie count (the <code>top</code> header or <code>ps -eo stat= | grep -c '^Z'</code>) and on PID usage against <code>pid_max</code> or the cgroup pids limit, instead of CPU or RAM. Add a test that spawns N workers and asserts no <code>Z</code> processes remain. In containers, run an init as PID 1 (<code>docker run --init</code>, tini) so orphans are reaped. A per-service pids limit keeps one leaking runner from starving the whole host.",
+            "ru": "Заведи алерты на число зомби (шапка <code>top</code> или <code>ps -eo stat= | grep -c '^Z'</code>) и на использование PID относительно <code>pid_max</code> или pids-лимита cgroup, а не на CPU или RAM. Добавь тест, который порождает N воркеров и проверяет, что процессов <code>Z</code> не осталось. В контейнерах запускай init как PID 1 (<code>docker run --init</code>, tini), чтобы сирот собирали. Pids-лимит на сервис не даст одному протекающему раннеру задушить весь хост."
+          }
+        }
+      ]
     }
   ]
 }
