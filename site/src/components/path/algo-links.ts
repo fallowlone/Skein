@@ -1,5 +1,9 @@
 import type { Locale } from "../../i18n";
-import { CAP_PER_ALGO, CAP_PER_LESSON } from "../../../scripts/path/algo-links-core.mjs";
+import {
+  ALGO_TRACK,
+  CAP_PER_ALGO,
+  CAP_PER_LESSON,
+} from "../../../scripts/path/algo-links-core.mjs";
 import indexJson from "../../content/path/algo-links.json";
 import titlesJson from "../../content/path/algo-link-titles.json";
 
@@ -45,6 +49,23 @@ function unitSlug(unit: string): string {
 const byRank = <T extends { canonical: boolean; shared: number }>(a: T, b: T) =>
   Number(b.canonical) - Number(a.canonical) || b.shared - a.shared;
 
+export type RowKind = "lesson" | "algoUnit";
+
+/** Mono meta cell for a row: shared count, or the domain track label off-track. */
+export function rowMeta(
+  row: { track?: string; trackLabel?: string; shared: number; canonical: boolean },
+  kind: RowKind,
+  canonicalLabel: string,
+): string {
+  const canon = row.canonical ? `◆ ${canonicalLabel}` : "";
+  if (kind === "algoUnit") {
+    // Same-track rows would repeat the page title — show the shared count instead.
+    const tag = row.track === ALGO_TRACK ? `${row.shared}∩` : (row.trackLabel ?? row.track ?? "");
+    return [tag, canon].filter(Boolean).join(" · ");
+  }
+  return [`${row.shared}∩`, canon].filter(Boolean).join(" · ");
+}
+
 /** Algo units linked to a lesson (lesson-side block rows). */
 export function linksForLesson(index: LinkIndex, lessonKey: string, lang: Locale): UnitLink[] {
   const hits = [...(index.lessons[lessonKey] ?? [])].sort(byRank);
@@ -54,7 +75,7 @@ export function linksForLesson(index: LinkIndex, lessonKey: string, lang: Locale
       unit: h.unit,
       title: pickTitle(titles.units[h.unit], lang, slug),
       // Units have no route of their own — land on the unit's anchor on the track page.
-      href: `/${lang}/learn/algorithms/#unit-${slug}`,
+      href: `/${lang}/learn/${ALGO_TRACK}/#unit-${slug}`,
       canonical: h.canonical,
       shared: h.shared,
     };

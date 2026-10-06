@@ -7,7 +7,7 @@ import {
   applyCurated,
   buildIndex,
 } from "./algo-links-core.mjs";
-import { loadCorpus, INDEX_RELPATH, TITLES_RELPATH } from "./build-algo-links.mjs";
+import { loadCorpus, assertCuratedRefs, INDEX_RELPATH, TITLES_RELPATH } from "./build-algo-links.mjs";
 
 // 2 algo units; 4 lessons sharing 3 / 1 / 0 / 2 concepts with u-sort.
 const unitConcepts = {
@@ -115,6 +115,39 @@ test("buildIndex returns bidirectional capped index plus coverage", () => {
 
 // vitest serves modules under a /@fs prefix, so import.meta.url cannot be
 // used for filesystem paths here; the suite always runs with cwd = site/.
+test("assertCuratedRefs fails fast on dangling refs so the builder never writes them", () => {
+  const units = { "algorithms/u-a": { teaches: ["c1"] } };
+  const lessons = { "t1/u1/l1": ["c1"] };
+  expect(() =>
+    assertCuratedRefs({
+      curated: [{ algo: "algorithms/u-a", lesson: "t1/u1/l1", kind: "always" }],
+      unitConcepts: units,
+      lessonConcepts: lessons,
+    }),
+  ).not.toThrow();
+  expect(() =>
+    assertCuratedRefs({
+      curated: [{ algo: "algorithms/u-nope", lesson: "t1/u1/l1", kind: "never" }],
+      unitConcepts: units,
+      lessonConcepts: lessons,
+    }),
+  ).toThrow(/unknown algo unit/);
+  expect(() =>
+    assertCuratedRefs({
+      curated: [{ algo: "algorithms/u-a", lesson: "t1/u1/nope", kind: "never" }],
+      unitConcepts: units,
+      lessonConcepts: lessons,
+    }),
+  ).toThrow(/unknown lesson/);
+  expect(() =>
+    assertCuratedRefs({
+      curated: [{ algo: "algorithms/u-a", lesson: "t1/u1/l1", kind: "sometimes" }],
+      unitConcepts: units,
+      lessonConcepts: lessons,
+    }),
+  ).toThrow(/kind/);
+});
+
 const SITE_ROOT = `${process.cwd()}/`;
 
 test("corpus: derived keys are well-formed, capped, and match the committed index", () => {
