@@ -225,12 +225,29 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
     shared: 2,
     canonical: false,
   });
-  // Hashing backlog pin renders canonical on the join lesson.
-  expect(index.lessons["databases/03-execution-plans/03-join-algorithms"]).toContainEqual({
-    unit: "algorithms/05-hashing",
-    shared: 0,
-    canonical: true,
+  // Hashing pin converted to derived: the join lesson teaches hash tables,
+  // hash functions, and buckets, so 05-hashing links with shared 2+ and no
+  // canonical row remains anywhere in unit 05.
+  expect(index.lessons["databases/03-execution-plans/03-join-algorithms"]).toEqual([
+    {
+      unit: "algorithms/03-sorting-search",
+      shared: 3,
+      canonical: false,
+    },
+    {
+      unit: "algorithms/05-hashing",
+      shared: 3,
+      canonical: false,
+    },
+  ]);
+  const u05 = index.units["algorithms/05-hashing"];
+  expect(u05.length).toBe(7);
+  expect(u05).toContainEqual({
+    lesson: "databases/03-execution-plans/03-join-algorithms",
+    shared: 3,
+    canonical: false,
   });
+  expect(u05.some((h) => h.canonical)).toBe(false);
   // No other databases lesson leaks into the index.
   expect(
     Object.keys(index.lessons).filter((k) => k.startsWith("databases/")).sort(),
