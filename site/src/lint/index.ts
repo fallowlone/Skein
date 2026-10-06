@@ -21,6 +21,7 @@ import { checkPath } from "./rules/path";
 import { checkRetrievalDrawer } from "./rules/retrieval-drawer";
 import { checkInfographicWidth } from "./rules/infographic-width";
 import { checkTermKeys } from "./rules/term-keys";
+import { checkAlgoLinks } from "./rules/algo-links";
 
 async function walk(dir: string): Promise<string[]> {
   const items = await readdir(dir, { withFileTypes: true });
@@ -71,6 +72,9 @@ export async function runSourceLint(siteSrc: string): Promise<{ errors: string[]
   const termRes = await checkTermKeys(siteSrc);
   errors.push(...termRes.errors);
   warnings.push(...termRes.warnings);
+  const linksRes = await checkAlgoLinks(siteSrc);
+  errors.push(...linksRes.errors);
+  warnings.push(...linksRes.warnings);
   return { errors, warnings };
 }
 
