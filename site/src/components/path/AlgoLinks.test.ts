@@ -1,5 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
-import { linksForLesson, linksForUnit, pickTitle } from "./algo-links";
+import { linksForLesson, linksForUnit, pickTitle, rowMeta } from "./algo-links";
 import { applyCurated } from "../../../scripts/path/algo-links-core.mjs";
 
 const index = {
@@ -88,6 +89,30 @@ describe("linksForUnit", () => {
 
   it("returns [] for an unknown unit", () => {
     expect(linksForUnit(big, "algorithms/u-nope", "en")).toEqual([]);
+  });
+});
+
+describe("rowMeta", () => {
+  it("shows shared count for same-track rows instead of the track label", () => {
+    expect(rowMeta({ track: "algorithms", shared: 5, canonical: false }, "algoUnit", "core")).toBe("5∩");
+  });
+
+  it("shows the track label for cross-track rows plus the canonical flag", () => {
+    expect(
+      rowMeta({ track: "backend", trackLabel: "Backend", shared: 3, canonical: true }, "algoUnit", "core"),
+    ).toBe("Backend · ◆ core");
+  });
+
+  it("shows shared count on the lesson side", () => {
+    expect(rowMeta({ shared: 7, canonical: true }, "lesson", "ядро")).toBe("7∩ · ◆ ядро");
+  });
+});
+
+describe("overflow-safe title declaration", () => {
+  it("pins the break-word wrap on row titles (15+-char words must not overflow)", () => {
+    const source = readFileSync("src/components/path/AlgoLinks.astro", "utf8");
+    expect(source).toContain("overflow-wrap:break-word");
+    expect(source).toContain("min-width:0");
   });
 });
 
