@@ -42,14 +42,19 @@ function unitSlug(unit: string): string {
   return titles.units[unit]?.slug || unit.split("/")[1] || unit;
 }
 
+const byRank = <T extends { canonical: boolean; shared: number }>(a: T, b: T) =>
+  Number(b.canonical) - Number(a.canonical) || b.shared - a.shared;
+
 /** Algo units linked to a lesson (lesson-side block rows). */
 export function linksForLesson(index: LinkIndex, lessonKey: string, lang: Locale): UnitLink[] {
-  return (index.lessons[lessonKey] ?? []).slice(0, CAP_PER_LESSON).map((h) => {
+  const hits = [...(index.lessons[lessonKey] ?? [])].sort(byRank);
+  return hits.slice(0, CAP_PER_LESSON).map((h) => {
     const slug = unitSlug(h.unit);
     return {
       unit: h.unit,
       title: pickTitle(titles.units[h.unit], lang, slug),
-      href: `/${lang}/learn/algorithms/${slug}/`,
+      // Units have no route of their own — land on the unit's anchor on the track page.
+      href: `/${lang}/learn/algorithms/#unit-${slug}`,
       canonical: h.canonical,
       shared: h.shared,
     };
@@ -58,7 +63,8 @@ export function linksForLesson(index: LinkIndex, lessonKey: string, lang: Locale
 
 /** Lessons where an algo unit gets used (algo-side block rows). */
 export function linksForUnit(index: LinkIndex, unitId: string, lang: Locale): LessonLink[] {
-  return (index.units[unitId] ?? []).slice(0, CAP_PER_ALGO).map((h) => {
+  const hits = [...(index.units[unitId] ?? [])].sort(byRank);
+  return hits.slice(0, CAP_PER_ALGO).map((h) => {
     const track = h.lesson.split("/")[0] || "";
     const slug = h.lesson.split("/")[2] || h.lesson;
     return {
