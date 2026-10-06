@@ -219,7 +219,7 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
     canonical: false,
   });
   const u01 = index.units["algorithms/01-thinking-complexity"];
-  expect(u01.length).toBe(8);
+  expect(u01.length).toBe(9);
   expect(u01).toContainEqual({
     lesson: "databases/02-indexes/01-index-anatomy",
     shared: 2,
@@ -241,20 +241,22 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
     },
   ]);
   const u05 = index.units["algorithms/05-hashing"];
-  expect(u05.length).toBe(7);
+  expect(u05.length).toBe(9);
   expect(u05).toContainEqual({
     lesson: "databases/03-execution-plans/03-join-algorithms",
     shared: 3,
     canonical: false,
   });
-  expect(u05.some((h) => h.canonical)).toBe(false);
   // No other databases lesson leaks into the index.
   expect(
     Object.keys(index.lessons).filter((k) => k.startsWith("databases/")).sort(),
   ).toEqual([
     "databases/02-indexes/01-index-anatomy",
+    "databases/02-indexes/04-index-types",
+    "databases/03-execution-plans/02-scan-types",
     "databases/03-execution-plans/03-join-algorithms",
     "databases/06-migrations/03-lock-queue-incident",
+    "databases/07-sharding/02-shard-key-selection",
   ]);
   // P4: FIFO lock queue is derived; unit 06 stays capped at 12 by evicting
   // its weakest in-track row (own quiz-short, shared 2) per cross-track-first.
@@ -269,12 +271,40 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
     u06.some((h) => h.lesson === "algorithms/06-lists-stacks-queues/quiz-short"),
   ).toBe(false);
   // Bonus derived row: level-order traversal runs on a FIFO queue.
+  // P8 pin (B-tree bridge) lands on top as canonical; unit count 10 -> 11.
   const u07 = index.units["algorithms/07-trees"];
-  expect(u07.length).toBe(10);
+  expect(u07.length).toBe(11);
   expect(u07).toContainEqual({
     lesson: "databases/06-migrations/03-lock-queue-incident",
     shared: 2,
     canonical: false,
+  });
+  expect(u07).toContainEqual({
+    lesson: "databases/02-indexes/01-index-anatomy",
+    shared: 0,
+    canonical: true,
+  });
+  // P6 + P7 pins: both canonical on top of unit 05.
+  expect(index.lessons["databases/02-indexes/04-index-types"]).toContainEqual({
+    unit: "algorithms/05-hashing",
+    shared: 0,
+    canonical: true,
+  });
+  expect(index.lessons["databases/07-sharding/02-shard-key-selection"]).toContainEqual({
+    unit: "algorithms/05-hashing",
+    shared: 0,
+    canonical: true,
+  });
+  // P8 pin on the anatomy lesson; P9 pin on scan-types (unit 01 grows 8 -> 9).
+  expect(index.lessons["databases/02-indexes/01-index-anatomy"]).toContainEqual({
+    unit: "algorithms/07-trees",
+    shared: 0,
+    canonical: true,
+  });
+  expect(index.lessons["databases/03-execution-plans/02-scan-types"]).toContainEqual({
+    unit: "algorithms/01-thinking-complexity",
+    shared: 0,
+    canonical: true,
   });
   expect(index.lessons["databases/06-migrations/03-lock-queue-incident"]).toContainEqual({
     unit: "algorithms/06-lists-stacks-queues",
