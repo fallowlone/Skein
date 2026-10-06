@@ -56,8 +56,14 @@ export function computeDerived({ unitConcepts, lessonConcepts, lessonOrder = [],
       const shared = concepts.filter((c) => teaches.includes(c));
       if (shared.length >= MIN_SHARED) hits.push({ lesson, shared: shared.length, concepts: shared });
     }
+    // Cross-track links are scarce and carry the spec goal, so they win ties
+    // at equal shared counts, ahead of lesson order.
+    const cross = (lesson) => (lesson.startsWith(`${ALGO_TRACK}/`) ? 1 : 0);
     hits.sort(
-      (a, b) => b.shared - a.shared || (rank.get(a.lesson) ?? Infinity) - (rank.get(b.lesson) ?? Infinity),
+      (a, b) =>
+        b.shared - a.shared ||
+        cross(a.lesson) - cross(b.lesson) ||
+        (rank.get(a.lesson) ?? Infinity) - (rank.get(b.lesson) ?? Infinity),
     );
     derived[unit] = hits;
   }
