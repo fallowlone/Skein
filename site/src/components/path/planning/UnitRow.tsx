@@ -9,6 +9,8 @@ import type { Locale } from "~/i18n";
 import type { PathStep } from "~/scripts/path/types";
 import { content } from "~/scripts/path/path-io";
 import { hueForTrack } from "./domain-hue";
+import Icon from "~/components/icons/Icon";
+import type { IconName } from "~/components/icons/paths";
 import unitsJson from "~/content/units.json";
 
 // Unit id → lesson count, so a step is legibly "a unit of N lessons", not "a lesson".
@@ -80,7 +82,7 @@ export default function UnitRow(p: UnitRowProps) {
       <span class="u-no" aria-hidden="true" />
       <div class="u-body">
         <div class="u-head">
-          <span class="domain-tag" style={`--d:var(${hue})`}><span class="sq" />{step.track}</span>
+          <span class="domain-tag" style={`--d:var(${hue})`}><Icon name={`track-${step.track}` as IconName} size={14} strokeWidth={1.8} />{step.track}</span>
           <span class="u-title">{title}</span>
         </div>
         {concepts.length > 0 && (
