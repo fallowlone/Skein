@@ -84,6 +84,17 @@ test("misspelled kind throws naming the entry", () => {
   ).toThrow(/kind/);
 });
 
+test("buildIndex emits deterministically sorted keys even with curated-only units", () => {
+  const { index } = buildIndex({
+    unitConcepts,
+    lessonConcepts,
+    lessonOrder,
+    curated: [{ algo: "algorithms/u-zzz", lesson: "backend/db/keys", kind: "always" }],
+  });
+  expect(Object.keys(index.units)).toEqual([...Object.keys(index.units)].sort());
+  expect(Object.keys(index.lessons)).toEqual([...Object.keys(index.lessons)].sort());
+});
+
 test("buildIndex returns bidirectional capped index plus coverage", () => {
   const { index, coverage } = buildIndex({
     unitConcepts,
@@ -130,4 +141,16 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
   for (const key of Object.keys(index.lessons)) {
     expect(titles.lessons[key]?.en ?? titles.lessons[key]?.ru).toBeTruthy();
   }
+  // Rename-proof: the committed titles file equals a fresh load (minus _note),
+  // so a retitled lesson can't go stale silently.
+  const { _note: _t, ...freshTitles } = {
+    _note: "",
+    lessons: Object.fromEntries(
+      Object.keys(index.lessons).map((k) => [k, corpus.titles.lessons[k] ?? {}]),
+    ),
+    units: corpus.titles.units,
+    tracks: corpus.titles.tracks,
+  };
+  const { _note: _c, ...committedTitles } = titles;
+  expect(committedTitles).toEqual(freshTitles);
 });

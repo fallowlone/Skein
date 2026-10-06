@@ -34,7 +34,7 @@ function walk(dir) {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) out.push(...walk(p));
-    else if (name === "index.mdx") out.push(p);
+    else if (name === "index.mdx" || name === "index.md") out.push(p);
   }
   return out.sort();
 }

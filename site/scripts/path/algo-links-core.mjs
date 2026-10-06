@@ -128,8 +128,10 @@ export function buildIndex({ unitConcepts, lessonConcepts, lessonOrder = [], kno
 
   const algoUnits = Object.keys(derived).sort();
   const zeroLink = algoUnits.filter((u) => (units[u] ?? []).length === 0);
+  const sortKeys = (obj) =>
+    Object.fromEntries(Object.entries(obj).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
   return {
-    index: { units, lessons },
+    index: { units: sortKeys(units), lessons: sortKeys(lessons) },
     coverage: { units: algoUnits.length, withLinks: algoUnits.length - zeroLink.length, zeroLink },
     warnings: [...dw, ...cw],
   };
