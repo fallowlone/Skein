@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { linksForLesson, pickTitle } from "./algo-links";
+import { linksForLesson, linksForUnit, pickTitle } from "./algo-links";
+import { applyCurated } from "../../../scripts/path/algo-links-core.mjs";
 
 const index = {
   units: {
@@ -29,6 +30,43 @@ describe("linksForLesson", () => {
     const links = linksForLesson(index, "backend/db/keys", "en");
     expect(links[0].href).toMatch(/^\/en\/learn\/algorithms\//);
     expect(typeof links[0].title).toBe("string");
+  });
+});
+
+describe("linksForUnit", () => {
+  const big = {
+    units: {
+      "algorithms/u-big": Array.from({ length: 13 }, (_, i) => ({
+        lesson: `t1/u1/l${String(i + 1).padStart(2, "0")}`,
+        shared: 13 - i,
+        canonical: false,
+      })),
+    },
+    lessons: {},
+  };
+
+  it("caps rows at 12", () => {
+    const links = linksForUnit(big, "algorithms/u-big", "en");
+    expect(links).toHaveLength(12);
+    expect(links[0].lesson).toBe("t1/u1/l01");
+  });
+
+  it("omits never-suppressed lessons end to end via the core", () => {
+    const derived = {
+      "algorithms/u-s": [
+        { lesson: "t1/u1/keep", shared: 3, concepts: ["c1"] },
+        { lesson: "t1/u1/drop", shared: 2, concepts: ["c1"] },
+      ],
+    };
+    const { index: curated } = applyCurated(derived, [
+      { algo: "algorithms/u-s", lesson: "t1/u1/drop", kind: "never" },
+    ]);
+    const links = linksForUnit({ units: curated, lessons: {} }, "algorithms/u-s", "ru");
+    expect(links.map((l) => l.lesson)).toEqual(["t1/u1/keep"]);
+  });
+
+  it("returns [] for an unknown unit", () => {
+    expect(linksForUnit(big, "algorithms/u-nope", "en")).toEqual([]);
   });
 });
 
