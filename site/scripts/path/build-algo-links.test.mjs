@@ -204,4 +204,42 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
   };
   const { _note: _c, ...committedTitles } = titles;
   expect(committedTitles).toEqual(freshTitles);
+
+  // Pilot databases×algorithms (P1-P3): exact derived rows.
+  const u03 = index.units["algorithms/03-sorting-search"];
+  expect(u03.length).toBe(9);
+  expect(u03).toContainEqual({
+    lesson: "databases/03-execution-plans/03-join-algorithms",
+    shared: 3,
+    canonical: false,
+  });
+  expect(u03).toContainEqual({
+    lesson: "databases/02-indexes/01-index-anatomy",
+    shared: 2,
+    canonical: false,
+  });
+  const u01 = index.units["algorithms/01-thinking-complexity"];
+  expect(u01.length).toBe(8);
+  expect(u01).toContainEqual({
+    lesson: "databases/02-indexes/01-index-anatomy",
+    shared: 2,
+    canonical: false,
+  });
+  // Hashing backlog pin renders canonical on the join lesson.
+  expect(index.lessons["databases/03-execution-plans/03-join-algorithms"]).toContainEqual({
+    unit: "algorithms/05-hashing",
+    shared: 0,
+    canonical: true,
+  });
+  // No other databases lesson leaks into the index; P4-deferral guard.
+  expect(
+    Object.keys(index.lessons).filter((k) => k.startsWith("databases/")).sort(),
+  ).toEqual([
+    "databases/02-indexes/01-index-anatomy",
+    "databases/03-execution-plans/03-join-algorithms",
+  ]);
+  expect(index.units["algorithms/06-lists-stacks-queues"].length).toBe(12);
+  expect(
+    index.units["algorithms/06-lists-stacks-queues"].some((h) => h.lesson.startsWith("databases/")),
+  ).toBe(false);
 });
