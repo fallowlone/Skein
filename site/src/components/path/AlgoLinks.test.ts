@@ -49,6 +49,7 @@ describe("linksForUnit", () => {
     const links = linksForUnit(big, "algorithms/u-big", "en");
     expect(links).toHaveLength(12);
     expect(links[0].lesson).toBe("t1/u1/l01");
+    expect(links[0].track).toBe("t1");
   });
 
   it("omits never-suppressed lessons end to end via the core", () => {
