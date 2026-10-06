@@ -171,6 +171,37 @@ and `deploy` successfully.
       run `37117614361` green, post-merge `main` run `37118330412`
       (`gates` + `deploy`) success.
 
+10. **Algorithm↔lesson link index + databases×algorithms vocab pilot**
+    (pushed `origin/main` 2026-10-06, `bad83f7c..c81fb347`)
+    - Hybrid index: pure-core derived builder (`MIN_SHARED = 2`, caps
+      12/6, cross-track-first tie-break) + curated `always`/`never` pins
+      → committed `algo-links.json` + `algo-link-titles.json`, lint rule,
+      two server-rendered UI blocks, EN/RU parity, no new islands.
+    - Vocabularies were track-siloed (4 cross-track lesson pairs at
+      threshold), so the pilot reused 8 existing algo-track concept ids
+      as shared vocabulary: retagged 3 databases lessons EN+RU
+      (index-anatomy, join-algorithms, lock-queue-incident) and expanded
+      the join lesson with 2 sentences teaching hash functions/buckets.
+    - Result: 5 derived databases×algorithms pairs (sorting×join,
+      sorting×anatomy, complexity×anatomy, FIFO×lock-queue + trees bonus,
+      hashing×join after the first pin removal); 4 editorial backlog pins
+      cover the dishonest-for-derived bridges (index-types, sharding,
+      B-tree, scan-types) — 10 curated pins total. 6 databases lessons
+      now linked.
+    - Accepted trade-off: unit 06 stays capped at 12 by evicting its own
+      quiz-short (weakest in-track row, shared 2) per the spec ranking
+      policy. Lesson-graph diffs purely additive; no contract changes
+      (`concepts.json`, `unit-concepts.json` untouched).
+    - Verified: corpus test 10/10 (RED watched each step), `lint:src`
+      0 errors, full vitest 260 files 1827/1827, `check` 0/0/0, full
+      build 2027 pages + `dist/lint-report.json` 0 errors; two
+      independent fresh-reviewer passes with no Critical/Important
+      findings. One transient `Errors 1` line in a mid-round vitest run
+      never reproduced (2 subsequent full runs green, 0 failed files).
+    - Follow-up (not blocking): rejected-as-dishonest derived pairs stay
+      pin-covered; quiz-short eviction stands unless the cap policy is
+      revisited; CI pipeline is the final authority for the pushed range.
+
 ## Current corpus snapshot
 
 Measured directly from the repository at the revision above:
