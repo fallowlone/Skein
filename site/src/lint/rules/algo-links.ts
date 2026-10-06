@@ -9,6 +9,11 @@ const ALGO_PREFIX = "algorithms/";
  * (unit-concepts.json) and real lessons (EN frontmatter track/unit/slug),
  * and use a known kind. A silently dangling pin would either never render
  * or, worse, make the committed index look editorially reviewed when it is not.
+ *
+ * Note: the frontmatter parsing here intentionally mirrors the builder
+ * (`scripts/path/build-algo-links.mjs`, which reuses `parseFrontmatter`
+ * from `build-lesson-graph.mjs`). If lesson file conventions change, update
+ * both walks together.
  */
 async function walkMdx(dir: string): Promise<string[]> {
   let items;
