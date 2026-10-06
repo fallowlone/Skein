@@ -100,7 +100,7 @@ WHERE xmin IS NOT NULL;
 
 - Маршрутизировать аналитику на реплику с `hot_standby_feedback = off` — primary autovacuum не удерживается
 - Использовать logical-реплику с собственной независимой политикой autovacuum
-- Ставить `statement_timeout` 30 минут под `REPEATABLE READ` — заставляет долгие запросы громко падать вместо тихого пинения
+- Запускать аналитику в явной транзакции, начинающейся с `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`, и `statement_timeout` 30 минут — заставляет долгие запросы громко падать вместо тихого пинения
 
 Все три подхода преследуют одну цель: ни один долгий запрос никогда не должен касаться глобального oldest-xmin primary. Без хотя бы одного из них один ночной аналитический job способен превратить таблицу в 80 ГБ в 180 ГБ к утру.
 
@@ -124,7 +124,7 @@ WHERE xmin IS NOT NULL;
 **pg_repack** переписывает раздутую таблицу онлайн без долгого `ACCESS EXCLUSIVE`:
 
 1. Создаёт теневую копию таблицы
-2. Применяет WAL-изменения инкрементально по мере создания копии
+2. Применяет изменения, захваченные триггерами в лог-таблицу, по мере создания копии
 3. Атомарно меняет теневую копию на оригинал (короткий ACCESS EXCLUSIVE только на финальный swap)
 
 Ловушка: временно 2x disk usage во время переписывания. Production-дисциплина: `pg_repack` ночью на топ-10 самых раздутых таблиц.
@@ -133,10 +133,10 @@ WHERE xmin IS NOT NULL;
 
 ```sql
 -- Утекает в transaction mode — неправильно:
-SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SET default_transaction_isolation = 'repeatable read';
 
 -- Использовать SET LOCAL — скоупится до текущей транзакции:
-SET LOCAL TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SET LOCAL default_transaction_isolation = 'repeatable read';
 ```
 
 `SET LOCAL` автоматически откатывается в конце транзакции, поэтому следующий клиент получает чистое соединение.
@@ -207,9 +207,9 @@ ALTER ROLE app_user SET idle_in_transaction_session_timeout = '5min';
 
 **Logical replication** использует MVCC под капотом. WAL-декодер читает изменения tuple из WAL и продуцирует поток, который subscriber применяет. Subscriber запускает собственный независимый autovacuum. Logical slot закрепляет `xmin` publisher — idle subscriber это медленная bloat-бомба. Монитори `pg_replication_slots.xmin` и алертируй на orphan slot.
 
-**BDR (BiDirectional Replication, EDB)** реализует eventual consistency поверх logical replication с резолвером конфликтов, понимающим MVCC: last-update-wins по timestamp `xmin` tuple.
+**BDR (BiDirectional Replication, EDB)** реализует eventual consistency поверх logical replication с резолвером конфликтов, понимающим MVCC: last-update-wins по commit timestamp (резолвер `update_if_newer`).
 
-**Citus** шардирует таблицу по worker-нодам. Каждый шард — настоящая Postgres-таблица с собственным MVCC. Snapshot координатора прокатывается в воркеры как «глобальный snapshot» в worker-соединении. Distributed serializable транзакции на Citus требуют, чтобы все worker-ноды согласились на SSI-зависимости — реализовано через предикатно-блокировочную таблицу координатора.
+**Citus** шардирует таблицу по worker-нодам. Каждый шард — настоящая Postgres-таблица с собственным MVCC. Глобального снимка у Citus нет: координатор открывает транзакцию на каждом воркере, и каждый воркер строит собственный локальный снимок. Распределённого SERIALIZABLE Citus не предлагает — семантика repeatable-read прокатывается, но корректна в основном для одношардовых (например, мультитенантных) нагрузок.
 
 ## Распределённые снимки и глобальная сериализуемость
 
@@ -221,7 +221,7 @@ Single-node Postgres имеет глобальный snapshot per backend в sha
 - Централизованной таблицы предикатных блокировок (корректно, но медленно)
 - Детерминированного протокола concurrency-control (стиль Calvin; FaunaDB; гибрид CockroachDB), который сериализует на старте, а не на коммите
 
-Citus выбирает прагматику: distributed transactions по умолчанию — read-committed-with-prepared-commit, а приложения, нуждающиеся в более сильной изоляции, ко-локируют зависимые строки на одном шарде.
+Citus выбирает прагматику: distributed transactions по умолчанию — read committed с двухфазным коммитом, а приложения, нуждающиеся в более сильной изоляции, ко-локируют зависимые строки на одном шарде.
 
 </Explanation>
 
@@ -284,7 +284,7 @@ Citus выбирает прагматику: distributed transactions по ум�
     { label: "pg_repack требует долгого ACCESS EXCLUSIVE на таблицу", misconception: "Наоборот — pg_repack избегает долгой блокировки. Только финальный swap это короткий ACCESS EXCLUSIVE." },
     { label: "pg_repack создаёт временно 2x disk usage пока строится теневая копия", correct: true },
     { label: "pg_repack не может работать на таблицах с foreign keys", misconception: "pg_repack поддерживает таблицы с foreign keys; он их правильно перестраивает." },
-    { label: "pg_repack блокирует все чтения во время фазы переписывания", misconception: "Чтения и записи продолжаются во время pg_repack; он применяет WAL изменения инкрементально к теневой копии." },
+    { label: "pg_repack блокирует все чтения во время фазы переписывания", misconception: "Чтения и записи продолжаются во время pg_repack; он переигрывает изменения, захваченные триггерами, в теневую копию." },
   ]}
 />
 
@@ -303,12 +303,12 @@ Citus выбирает прагматику: distributed transactions по ум�
     {
       id: "q2",
       q: "Почему hot_standby_feedback = on опасен для primary bloat, и когда он приемлем?",
-      a: "С hot_standby_feedback = on реплика отсылает primary свой xmin, не давая ему убирать строки, нужные реплике. 6-часовой аналитический запрос на реплике с feedback=on неотличим от того же запроса на primary — оба пинят bloat. Он приемлем когда реплика-нагрузка короткая и ограниченная (например, p99 query time &lt;5 min), или когда отставание реплики мониторится и ограничено через streaming replication slot с ограничением lag confirmed_flush_lsn.",
+      a: "С hot_standby_feedback = on реплика отсылает primary свой xmin, не давая ему убирать строки, нужные реплике. 6-часовой аналитический запрос на реплике с feedback=on неотличим от того же запроса на primary — оба пинят bloat. Он приемлем когда реплика-нагрузка короткая и ограниченная (например, p99 query time &lt;5 min), или когда удерживаемый WAL ограничен через max_slot_wal_keep_size, а lag slot под алертом.",
     },
     {
       id: "q3",
-      q: "Объясни почему Citus по умолчанию использует read-committed-with-prepared-commit для distributed transactions, а не distributed SSI.",
-      a: "Distributed SSI требует, чтобы все worker-ноды согласились на rw-антизависимости, что требует либо централизованной таблицы предикатных блокировок (узкое место координации, плохо масштабируется), либо детерминированного протокола concurrency-control, сериализующего на старте транзакции (высокая latency, как Calvin/FaunaDB). Citus прагматично выбирает RC+2PC, который корректен для большинства OLTP-нагрузок, и полагается на ко-локацию (зависимые строки на одном шарде) для per-shard SERIALIZABLE когда нужно.",
+      q: "Объясни почему Citus по умолчанию использует read committed с двухфазным коммитом для distributed transactions, а не distributed SSI.",
+      a: "Distributed SSI потребовал бы согласия всех worker-нод на rw-антизависимости, что требует либо централизованной координации (узкое место, плохо масштабируется), либо детерминированного протокола concurrency-control, сериализующего на старте транзакции (высокая latency, как Calvin/FaunaDB). Citus прагматично выбирает RC+2PC, который корректен для большинства OLTP-нагрузок, и полагается на ко-локацию (зависимые строки на одном шарде) для per-shard SERIALIZABLE когда нужно.",
     },
   ]}
 />

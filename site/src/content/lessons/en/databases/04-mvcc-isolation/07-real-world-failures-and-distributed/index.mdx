@@ -100,7 +100,7 @@ The smallest `backend_xmin` or slot `xmin` matches what autovacuum logs as "olde
 
 - Route analytics to a replica with `hot_standby_feedback = off` so the primary's autovacuum is never held back
 - Use a logical replica with its own independent autovacuum policy
-- Set `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` with a `statement_timeout` of 30 minutes — forces long queries to fail loud instead of pinning silently
+- Run analytics inside an explicit transaction starting with `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ` and a `statement_timeout` of 30 minutes — forces long queries to fail loud instead of pinning silently
 
 Together these three approaches share one goal: ensure no long-running query ever touches the primary's global oldest-xmin. Without at least one of them, a single overnight analytics job can turn an 80 GB table into 180 GB by morning.
 
@@ -111,7 +111,7 @@ Together these three approaches share one goal: ensure no long-running query eve
   hue="var(--d-infra)"
 />
 
-The `hot_standby_feedback = off` setting deserves emphasis: when it is on (the default), the replica sends its `xmin` back to the primary, which prevents the primary from vacuuming rows the replica still needs. A 6-hour analytics query on the replica with `hot_standby_feedback = on` is indistinguishable from a 6-hour query on the primary — both pin bloat. Turn it off on analytics replicas and let the replica accept its own bloat.
+The `hot_standby_feedback = off` setting deserves emphasis: when feedback is on (it defaults to off, so a standby must opt in), the replica sends its `xmin` back to the primary, which prevents the primary from vacuuming rows the replica still needs. A 6-hour analytics query on the replica with `hot_standby_feedback = on` is indistinguishable from a 6-hour query on the primary — both pin bloat. Turn it off on analytics replicas and accept replica-side query cancels instead of primary bloat.
 
 ## Misconception: "Postgres has snapshot-too-old like Oracle"
 
@@ -124,7 +124,7 @@ The `hot_standby_feedback = off` setting deserves emphasis: when it is on (the d
 **pg_repack** rewrites a bloated table online without a long `ACCESS EXCLUSIVE` lock:
 
 1. Creates a shadow copy of the table
-2. Applies WAL changes incrementally as the copy is built
+2. Replays changes captured via triggers into a log table as the copy is built
 3. Atomically swaps the shadow copy for the original (brief lock for the swap only)
 
 The catch: transient 2x disk usage during the rewrite. Production discipline: run `pg_repack` nightly on the top-10 most-bloated tables.
@@ -133,10 +133,10 @@ The catch: transient 2x disk usage during the rewrite. Production discipline: ru
 
 ```sql
 -- This leaks in transaction mode — wrong:
-SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SET default_transaction_isolation = 'repeatable read';
 
 -- Use SET LOCAL — scoped to the current transaction:
-SET LOCAL TRANSACTION ISOLATION LEVEL REPEATABLE READ;
+SET LOCAL default_transaction_isolation = 'repeatable read';
 ```
 
 `SET LOCAL` is automatically rolled back at transaction end, so the next client picks up a clean connection.
@@ -207,9 +207,9 @@ ALTER ROLE app_user SET idle_in_transaction_session_timeout = '5min';
 
 **Logical replication** uses MVCC under the hood. The WAL decoder reads tuple changes from WAL and produces a stream the subscriber applies. The subscriber runs its own independent autovacuum. Logical slots pin the publisher's `xmin` so the subscriber can catch up — an idle subscriber is a slow-motion bloat bomb. Monitor `pg_replication_slots.xmin` and alert on orphaned slots.
 
-**BDR (BiDirectional Replication, EDB)** implements eventual consistency on top of logical replication with conflict resolution that explicitly understands MVCC: last-update-wins by tuple `xmin` timestamp.
+**BDR (BiDirectional Replication, EDB)** implements eventual consistency on top of logical replication with conflict resolution that explicitly understands MVCC: last-update-wins by commit timestamp (the `update_if_newer` resolver).
 
-**Citus** shards a table across worker nodes. Each shard is a real Postgres table with its own MVCC. The coordinator's snapshot is propagated to workers as a "global snapshot" passed in the worker connection. Distributed serializable transactions on Citus require all worker nodes to agree on SSI dependencies — implemented via a coordinator-managed predicate-lock table.
+**Citus** shards a table across worker nodes. Each shard is a real Postgres table with its own MVCC. Citus does not provide a global snapshot: the coordinator opens a transaction on each worker and every worker builds its own local snapshot. Citus does not offer distributed SERIALIZABLE — repeatable-read semantics are propagated but only mostly correct for single-shard (e.g. multi-tenant) workloads.
 
 ## Distributed snapshots and global serializability
 
@@ -221,7 +221,7 @@ The standard approach is **hybrid logical clocks (HLC)**: each instance maintain
 - A centralized predicate-lock table (correct but slow)
 - A deterministic concurrency-control protocol (Calvin-style; FaunaDB; CockroachDB's hybrid) that linearizes at start instead of commit
 
-Citus chooses pragmatism: distributed transactions default to read-committed-with-prepared-commit, and applications that need stronger isolation co-locate dependent rows on the same shard to keep them on the same backend.
+Citus chooses pragmatism: distributed transactions default to read committed with two-phase commit, and applications that need stronger isolation co-locate dependent rows on the same shard to keep them on the same backend.
 
 </Explanation>
 
@@ -284,7 +284,7 @@ Citus chooses pragmatism: distributed transactions default to read-committed-wit
     { label: "pg_repack requires a long ACCESS EXCLUSIVE lock on the table", misconception: "The opposite — pg_repack avoids the long lock. Only the final swap is brief ACCESS EXCLUSIVE." },
     { label: "pg_repack produces transient 2x disk usage while the shadow copy is built", correct: true },
     { label: "pg_repack cannot run on tables with foreign keys", misconception: "pg_repack supports tables with foreign keys; it rebuilds them correctly." },
-    { label: "pg_repack blocks all reads during the rewrite phase", misconception: "Reads and writes continue during pg_repack; it applies WAL changes incrementally to the shadow copy." },
+    { label: "pg_repack blocks all reads during the rewrite phase", misconception: "Reads and writes continue during pg_repack; it replays trigger-captured changes into the shadow copy." },
   ]}
 />
 
@@ -303,12 +303,12 @@ Citus chooses pragmatism: distributed transactions default to read-committed-wit
     {
       id: "q2",
       q: "Why is hot_standby_feedback=on dangerous for the primary's bloat, and when is it acceptable?",
-      a: "With hot_standby_feedback=on, the replica sends its xmin back to the primary, preventing the primary from vacuuming rows the replica still needs. A 6-hour analytics query on the replica is indistinguishable from the same query on the primary — both pin bloat. It is acceptable when the replica workload is short-lived and bounded (e.g., p99 query time <5 min), or when the replica's lag is monitored and bounded by a streaming replication slot with a confirmed_flush_lsn lag limit.",
+      a: "With hot_standby_feedback=on, the replica sends its xmin back to the primary, preventing the primary from vacuuming rows the replica still needs. A 6-hour analytics query on the replica is indistinguishable from the same query on the primary — both pin bloat. It is acceptable when the replica workload is short-lived and bounded (e.g., p99 query time <5 min), or when retained WAL is bounded by max_slot_wal_keep_size and slot lag is alerted on.",
     },
     {
       id: "q3",
-      q: "Explain why Citus defaults to read-committed-with-prepared-commit for distributed transactions rather than distributed SSI.",
-      a: "Distributed SSI requires all worker nodes to agree on rw-antidependencies, which requires either a centralized predicate-lock table (a coordination bottleneck that scales poorly) or a deterministic concurrency-control protocol that linearizes at transaction start (high latency, like Calvin/FaunaDB). Citus pragmatically defaults to RC+2PC, which is correct for most OLTP workloads, and relies on application-level co-location (keeping dependent rows on the same shard) to provide per-shard SERIALIZABLE when needed.",
+      q: "Explain why Citus defaults to read committed with two-phase commit for distributed transactions rather than distributed SSI.",
+      a: "Distributed SSI would require all worker nodes to agree on rw-antidependencies, which needs either centralized coordination (a bottleneck that scales poorly) or a deterministic concurrency-control protocol that linearizes at transaction start (high latency, like Calvin/FaunaDB). Citus pragmatically defaults to RC+2PC, which is correct for most OLTP workloads, and relies on application-level co-location (keeping dependent rows on the same shard) to provide per-shard SERIALIZABLE when needed.",
     },
   ]}
 />
