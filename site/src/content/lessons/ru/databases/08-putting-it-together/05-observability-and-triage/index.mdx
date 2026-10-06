@@ -65,8 +65,8 @@ import signalToAct from "./infographics/signal-to-act.svg?raw";
 Без системного маппинга сигнал → акт инженеры под давлением тянут не тот рычаг — запускают `VACUUM FULL` на раздутой таблице, пока настоящий виновник — idle-соединение, фиксирующее xmin-горизонт. USE + RED (Rate, Errors, Duration — скорость, ошибки, длительность) даёт этот маппинг.
 
 **Метод USE** (Utilization, Saturation, Errors — утилизация, насыщение, ошибки) маппится на сигналы Postgres:
-- **Utilization**: число backends vs `max_connections` (`pg_stat_activity`), CPU из отношения `pg_stat_bgwriter.checkpoints_req`, hit rate буферного кеша (`pg_buffercache`).
-- **Saturation**: отставание autovacuum (`pg_stat_user_tables.last_autovacuum`), задержка репликации (`pg_stat_replication.replay_lag`), глубина очереди соединений (PgBouncer `SHOW STATS`).
+- **Utilization**: число backends vs `max_connections` (`pg_stat_activity`), насыщение CPU из метрик ОС, hit rate буферного кеша из `pg_stat_database` (`blks_hit` vs `blks_read`).
+- **Saturation**: отставание autovacuum (`pg_stat_user_tables.last_autovacuum`), задержка репликации (`pg_stat_replication.replay_lag`), глубина очереди соединений (PgBouncer `SHOW POOLS`).
 - **Errors**: число deadlock (`pg_stat_database.deadlocks`), ошибки checksum, ошибки репликации из серверных логов.
 
 **Метод RED** (Rate, Errors, Duration) поверх `pg_stat_statements`:
@@ -95,8 +95,8 @@ import signalToAct from "./infographics/signal-to-act.svg?raw";
 - **Акт 1 (схема)**: нет хорошего инструментария — читай определение таблицы и трассируй миграции. `\d+ tablename` в psql.
 - **Акт 2 (индексы)**: `pg_indexes` для проверки наличия; `pg_stat_user_indexes` (колонка `idx_scan`) для поиска неиспользуемых индексов — индекс с 0 сканов за неделю трафика это налог на write throughput.
 - **Акт 3 (планирование)**: `pg_stat_statements` для топ-N запросов по total time; `EXPLAIN (ANALYZE, BUFFERS)` для реального плана; `auto_explain.log_min_duration = '500ms'` для триажа хвостовой латентности.
-- **Акт 4 (bloat)**: `pg_stat_user_tables.n_dead_tup` vs `n_live_tup`; `pg_table_size(relname)` для реального диска; `pgstattuple` для точного процента bloat без полного скана.
-- **Акт 5 (пулинг)**: `pg_stat_activity` для числа backends, распределения `state`, сессий `idle in transaction`; PgBouncer `SHOW STATS` для глубины очереди и среднего времени запроса.
+- **Акт 4 (bloat)**: `pg_stat_user_tables.n_dead_tup` vs `n_live_tup`; `pg_table_size(relname)` для реального диска; `pgstattuple_approx` для оценки bloat без полного скана (сам `pgstattuple` всегда сканирует).
+- **Акт 5 (пулинг)**: `pg_stat_activity` для числа backends, распределения `state`, сессий `idle in transaction`; PgBouncer `SHOW POOLS` (`cl_waiting`) для глубины очереди и `SHOW STATS` для среднего времени запроса.
 - **Акт 6 (миграции)**: `pg_locks` join с `pg_stat_activity` для обнаружения lock contention и блокировщиков перед запуском ALTER.
 - **Акт 7 (шардинг)**: метрики уровня приложения — хвостовая латентность на шард, дисперсия записей по шардам, частота cross-shard join-ов. Отсутствующий или неверно интерпретированный инструментарий — причина пропуска актов: «Мы не видим bloat» означает, что видимость autovacuum отключена, а не что bloat не существует.
 
@@ -108,12 +108,12 @@ import signalToAct from "./infographics/signal-to-act.svg?raw";
 1. Убить long transactions: `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE state = 'idle in transaction' AND query_start &lt; now() - interval '5 minutes'`.
 2. Установить `idle_in_transaction_session_timeout = 60s`, чтобы проблема не повторилась за ночь.
 3. Развернуть PgBouncer в transaction-mode перед Postgres. Размер пула на основе active concurrent transactions, не числа workers (шаг 1 раскрывает реальный конкурентный уровень).
-4. Запустить `pg_repack` на раздутых таблицах онлайн — AccessExclusiveLock не требуется.
+4. Запустить `pg_repack` на раздутых таблицах онлайн — лишь краткий AccessExclusiveLock во время финального свопа.
 
 **Неделя 2 — восстановить качество планов:**
 1. `ANALYZE` на наиболее запрашиваемых таблицах.
 2. `CREATE STATISTICS` для топ коррелированных пар колонок из медленных запросов `pg_stat_statements`.
-3. Проверить топ-N в `pg_stat_statements` по total_time; удалить неиспользуемые индексы (`idx_scan = 0`); добавить очевидно отсутствующие.
+3. Проверить топ-N в `pg_stat_statements` по total_exec_time; удалить неиспользуемые индексы (`idx_scan = 0`); добавить очевидно отсутствующие.
 
 **Неделя 3 — оценка мощности:**
 1. Измерить реальный single-node ceiling с пулом на месте. Построить кривую p95 vs QPS.
@@ -124,7 +124,7 @@ import signalToAct from "./infographics/signal-to-act.svg?raw";
 
 Каждая строка несёт 32-битный transaction ID (`xmin`). Когда кластер достигает 2^31 транзакций (~2.1 миллиарда), ID оборачиваются и строки могут казаться «из будущего». Postgres защищает от этого, замораживая старые строки (перезаписывая `xmin` специальным «замороженным» значением) до wraparound. `autovacuum_freeze_max_age` контролирует триггер.
 
-На write-heavy кластере при 10K TPS это ~864M транзакций в день — freeze запускается каждые ~2.5 дня. Неверная конфигурация (очень высокий `autovacuum_freeze_max_age`) может привести к аварийным anti-wraparound vacuum, удерживающим эксклюзивную блокировку на таблице.
+На write-heavy кластере при 10K TPS это ~864M транзакций в день — без замораживания точка wraparound 2^31 наступила бы через ~2.5 дня; на практике принудительное замораживание включается гораздо раньше (дефолтный `autovacuum_freeze_max_age` — 200M транзакций). Неверная конфигурация (очень высокий `autovacuum_freeze_max_age`) может привести к непрерываемым аварийным anti-wraparound autovacuum, монополизирующим воркеры и насыщающим I/O.
 
 Мониторинг: `SELECT datname, age(datfrozenxid) FROM pg_database;` — алерт при 80% от `autovacuum_freeze_max_age`.
 
@@ -146,7 +146,7 @@ import signalToAct from "./infographics/signal-to-act.svg?raw";
     { label: "n_dead_tup / n_live_tup — алерт на bloat", value: "выше 20%" },
     { label: "age(datfrozenxid) — алерт на wraparound", value: "80% от autovacuum_freeze_max_age" },
     { label: "PgBouncer SHOW STATS: avg_wait_time алерт", value: "выше 5 мс sustained" },
-    { label: "pg_stat_statements total_time алерт", value: "запросы &gt; 1с потребляющие &gt; 5% от total" },
+    { label: "pg_stat_statements total_exec_time алерт", value: "запросы &gt; 1с потребляющие &gt; 5% от total_exec_time" },
     { label: "Алерт на задержку репликации", value: "выше 30 секунд на async replica" },
   ]}
   data-lesson-visual
@@ -218,9 +218,9 @@ import signalToAct from "./infographics/signal-to-act.svg?raw";
   id="05-observability-and-triage-retrieval"
   lang="ru"
   questions={[
-    { q: "Сопоставь метод USE с сигналами Postgres, указывающими на каждый из семи актов.", a: "Акт 1 (схема): нет рантаймового сигнала — виден только в медленных планах join-ов и длительности миграций. Акт 2 (индексы): pg_stat_user_indexes.idx_scan = 0 для неиспользуемых индексов; EXPLAIN показывает seq-scan на индексированной колонке для отсутствующих индексов. Акт 3 (статистика): pg_stat_statements показывает queryid с растущим plan_change event или нестабильной duration — запусти EXPLAIN чтобы подтвердить неверный план. Акт 4 (bloat): pg_stat_user_tables n_dead_tup / n_live_tup выше 20%; pg_stat_activity показывает backend_xmin далеко позади текущего transaction ID. Акт 5 (пулинг): число соединений pg_stat_activity близко к max_connections; PgBouncer SHOW STATS показывает avg_wait_time выше 5 мс. Акт 6 (миграции): pg_locks показывает получение AccessExclusiveLock с долгим wait_start; таймауты приложения в окна деплоя. Акт 7 (шардинг): хвостовая латентность уровня приложения на шард расходится — один шард на высоком CPU, остальные idle." },
+    { q: "Сопоставь метод USE с сигналами Postgres, указывающими на каждый из семи актов.", a: "Акт 1 (схема): нет рантаймового сигнала — виден только в медленных планах join-ов и длительности миграций. Акт 2 (индексы): pg_stat_user_indexes.idx_scan = 0 для неиспользуемых индексов; EXPLAIN показывает seq-scan на индексированной колонке для отсутствующих индексов. Акт 3 (статистика): pg_stat_statements показывает queryid с растущим mean_exec_time или нестабильной duration — запусти EXPLAIN чтобы подтвердить неверный план. Акт 4 (bloat): pg_stat_user_tables n_dead_tup / n_live_tup выше 20%; pg_stat_activity показывает backend_xmin далеко позади текущего transaction ID. Акт 5 (пулинг): число соединений pg_stat_activity близко к max_connections; PgBouncer SHOW STATS показывает avg_wait_time выше 5 мс. Акт 6 (миграции): pg_locks показывает получение AccessExclusiveLock с долгим wait_start; таймауты приложения в окна деплоя. Акт 7 (шардинг): хвостовая латентность уровня приложения на шард расходится — один шард на высоком CPU, остальные idle." },
     { q: "Ты наследуешь production Postgres на 200M строк, p95 1500 мс, 600 backends, 40 GB bloat, без pooler. Дай порядок триажа для первых трёх недель и обоснуй каждый шаг.", a: "Неделя 1, остановить кровотечение: (1) Убить сессии idle-in-transaction — они фиксируют xmin и не дают vacuum возвращать 40 GB bloat. (2) Установить idle_in_transaction_session_timeout = 60s, чтобы проблема не повторилась за ночь. (3) Развернуть PgBouncer в transaction-mode — размер пула на основе active_concurrent_transactions, не 600 workers; это само по себе может значительно снизить p95. (4) Запустить pg_repack онлайн для возврата 40 GB без блокировки чтений. Неделя 2, качество планов: запустить ANALYZE; проверить топ-N pg_stat_statements; добавить отсутствующие индексы; удалить неиспользуемые. Неделя 3, оценка мощности: измерить реальный single-node ceiling с пулом на месте; только потом оценивать шардинг — и только если одиночный узел не справляется с ожидаемой нагрузкой. Порядок: остановить кровотечение (Акт 4) → стабилизировать соединения (Акт 5) → восстановить качество запросов (Акты 3, 2) → структурные решения (Акты 1, 7)." },
-    { q: "Что такое XID wraparound, почему это порог корректности (а не производительности) и как его мониторить?", a: "Postgres использует 32-битные transaction IDs (XIDs). Когда кластер достигает 2^31 транзакций, ID оборачиваются. Без защиты старые строки казались бы 'из будущего' относительно текущего XID, нарушая консистентность снапшота — запросы возвращали бы неверные результаты, а не просто медленные. Это порог корректности: он не деградирует плавно, он портит видимость. Postgres предотвращает это замораживанием строк до wraparound — перезаписью xmin специальным 'замороженным' значением, всегда видимым. autovacuum_freeze_max_age контролирует превентивное замораживание. Мониторинг: SELECT datname, age(datfrozenxid) FROM pg_database; — алерт при 80% от autovacuum_freeze_max_age. На write-heavy кластере при 10K TPS (864M транзакций/день) это может происходить каждые 2.5 дня; неверно настроенный высокий freeze_max_age ведёт к аварийному anti-wraparound vacuum, удерживающему эксклюзивную блокировку таблицы." },
+    { q: "Что такое XID wraparound, почему это порог корректности (а не производительности) и как его мониторить?", a: "Postgres использует 32-битные transaction IDs (XIDs). Когда кластер достигает 2^31 транзакций, ID оборачиваются. Без защиты старые строки казались бы 'из будущего' относительно текущего XID, нарушая консистентность снапшота — запросы возвращали бы неверные результаты, а не просто медленные. Это порог корректности: он не деградирует плавно, он портит видимость. Postgres предотвращает это замораживанием строк до wraparound — перезаписью xmin специальным 'замороженным' значением, всегда видимым. autovacuum_freeze_max_age контролирует превентивное замораживание. Мониторинг: SELECT datname, age(datfrozenxid) FROM pg_database; — алерт при 80% от autovacuum_freeze_max_age. На write-heavy кластере при 10K TPS (864M транзакций/день) точка wraparound 2^31 без замораживания наступила бы через ~2.5 дня, хотя принудительное замораживание обычно срабатывает гораздо раньше; неверно настроенный высокий freeze_max_age ведёт к непрерываемым аварийным anti-wraparound autovacuum, монополизирующим воркеры." },
   ]}
 />
 
