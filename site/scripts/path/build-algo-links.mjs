@@ -103,8 +103,33 @@ export function loadCorpus(rootDir = siteRoot) {
   };
 }
 
+/**
+ * Fail fast on dangling curated refs so the builder never writes phantom
+ * units/lessons into the committed index. Lint (`checkAlgoLinks`) enforces
+ * the same rules on every run; this keeps a bare `build:algo-links` safe to
+ * commit from.
+ */
+export function assertCuratedRefs({ curated, unitConcepts, lessonConcepts }) {
+  const algos = new Set(
+    Object.keys(unitConcepts ?? {}).filter((k) => k.startsWith("algorithms/")),
+  );
+  (curated ?? []).forEach((entry, i) => {
+    const where = `curated[${i}]`;
+    if (!entry || typeof entry !== "object" || (entry.kind !== "always" && entry.kind !== "never")) {
+      throw new Error(`${where}: unknown kind ${JSON.stringify(entry?.kind)} (want "always" | "never")`);
+    }
+    if (typeof entry.algo !== "string" || !algos.has(entry.algo)) {
+      throw new Error(`${where}: unknown algo unit ${JSON.stringify(entry.algo)}`);
+    }
+    if (typeof entry.lesson !== "string" || !(entry.lesson in (lessonConcepts ?? {}))) {
+      throw new Error(`${where}: unknown lesson ${JSON.stringify(entry.lesson)}`);
+    }
+  });
+}
+
 if (import.meta.main) {
   const corpus = loadCorpus();
+  assertCuratedRefs(corpus);
   const { index, coverage, warnings } = buildIndex(corpus);
   writeFileSync(join(siteRoot, INDEX_RELPATH), `${JSON.stringify({ _note: NOTE, ...index }, null, 2)}\n`);
   // Titles file stays small: only linked lessons plus the algo units.
