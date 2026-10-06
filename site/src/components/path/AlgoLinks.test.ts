@@ -22,6 +22,20 @@ describe("linksForLesson", () => {
     expect(links[0]).toMatchObject({ unit: "algorithms/u-sort", canonical: false });
   });
 
+  it("orders a pinned entry ahead of derived ones", () => {
+    const mixed = {
+      units: {},
+      lessons: {
+        "t1/u1/l1": [
+          { unit: "algorithms/u-a", shared: 5, canonical: false },
+          { unit: "algorithms/u-b", shared: 1, canonical: true },
+        ],
+      },
+    };
+    const links = linksForLesson(mixed, "t1/u1/l1", "en");
+    expect(links.map((l) => l.unit)).toEqual(["algorithms/u-b", "algorithms/u-a"]);
+  });
+
   it("returns [] for an unknown lesson", () => {
     expect(linksForLesson(index, "nope/nope/nope", "en")).toEqual([]);
   });
@@ -30,6 +44,12 @@ describe("linksForLesson", () => {
     const links = linksForLesson(index, "backend/db/keys", "en");
     expect(links[0].href).toMatch(/^\/en\/learn\/algorithms\//);
     expect(typeof links[0].title).toBe("string");
+  });
+
+  it("points unit hrefs at the track page unit anchor (a unit has no route of its own)", () => {
+    const links = linksForLesson(index, "backend/db/keys", "en");
+    // Two segments after learn/ (…/algorithms/<slug>/) match no route — 404.
+    expect(links[0].href).toBe("/en/learn/algorithms/#unit-u-sort");
   });
 });
 
