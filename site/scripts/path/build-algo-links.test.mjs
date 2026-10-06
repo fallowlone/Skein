@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { test, expect } from "vitest";
 import {
   MIN_SHARED,
@@ -6,6 +7,7 @@ import {
   applyCurated,
   buildIndex,
 } from "./algo-links-core.mjs";
+import { loadCorpus, INDEX_RELPATH, TITLES_RELPATH } from "./build-algo-links.mjs";
 
 // 2 algo units; 4 lessons sharing 3 / 1 / 0 / 2 concepts with u-sort.
 const unitConcepts = {
@@ -98,4 +100,34 @@ test("buildIndex returns bidirectional capped index plus coverage", () => {
   expect(index.lessons["backend/api/paging"] ?? []).toEqual([]);
   expect(coverage.zeroLink).toContain("algorithms/u-hash");
   expect(coverage.withLinks).toBe(1);
+});
+
+// vitest serves modules under a /@fs prefix, so import.meta.url cannot be
+// used for filesystem paths here; the suite always runs with cwd = site/.
+const SITE_ROOT = `${process.cwd()}/`;
+
+test("corpus: derived keys are well-formed, capped, and match the committed index", () => {
+  const corpus = loadCorpus(SITE_ROOT);
+  const { index } = buildIndex(corpus);
+  for (const hits of Object.values(index.units)) {
+    expect(hits.length).toBeLessThanOrEqual(12);
+    for (const h of hits) {
+      expect(h.lesson).toMatch(/^[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9-]+$/);
+    }
+  }
+  // Stale index fails here: changing concepts or curated data requires
+  // re-running `bun run build:algo-links` and committing the result.
+  const committed = JSON.parse(readFileSync(SITE_ROOT + INDEX_RELPATH, "utf8"));
+  const { _note, ...rest } = committed;
+  expect(_note).toMatch(/do not hand-edit/);
+  expect(index).toEqual(rest);
+  // Titles file covers every linked node (units + lessons), so UI blocks
+  // never need the 2.7MB lesson-index.json.
+  const titles = JSON.parse(readFileSync(SITE_ROOT + TITLES_RELPATH, "utf8"));
+  for (const unit of Object.keys(index.units)) {
+    expect(titles.units[unit]?.slug).toMatch(/^[a-z0-9-]+$/);
+  }
+  for (const key of Object.keys(index.lessons)) {
+    expect(titles.lessons[key]?.en ?? titles.lessons[key]?.ru).toBeTruthy();
+  }
 });
