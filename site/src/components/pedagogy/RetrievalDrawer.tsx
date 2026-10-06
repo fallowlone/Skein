@@ -101,7 +101,7 @@ export default function RetrievalDrawer({ pieceSlug, id, lessonKey, lang, questi
   };
 
   return (
-    <section data-retrieval class="my-10 hr-top hr-bot py-6">
+    <section data-retrieval class="rdraw my-10 hr-top hr-bot py-6">
       <header class="flex items-center justify-between mb-5">
         <div class="flex items-center gap-2.5">
           <span class="pill-dot" style="background: var(--accent);"></span>
