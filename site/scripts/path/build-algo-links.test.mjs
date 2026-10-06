@@ -45,6 +45,21 @@ test("ranking is by shared count desc, then lesson order", () => {
   ]);
 });
 
+test("tie on shared count prefers the cross-track lesson (scarce, goal-relevant)", () => {
+  const { derived } = computeDerived({
+    unitConcepts: { "algorithms/u-x": { teaches: ["c1", "c2"] } },
+    lessonConcepts: {
+      "algorithms/u-x/l-in": ["c1", "c2"],
+      "t1/u1/l-out": ["c1", "c2"],
+    },
+    lessonOrder: ["algorithms/u-x/l-in", "t1/u1/l-out"],
+  });
+  expect(derived["algorithms/u-x"].map((e) => e.lesson)).toEqual([
+    "t1/u1/l-out", // cross-track wins the tie even when ordered last
+    "algorithms/u-x/l-in",
+  ]);
+});
+
 test("tie on shared count breaks by lesson order", () => {
   const order = ["backend/api/caching", "backend/db/indexes"];
   const { derived } = computeDerived({ unitConcepts, lessonConcepts, lessonOrder: order });
@@ -159,6 +174,9 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
       expect(h.lesson).toMatch(/^[a-z0-9-]+\/[a-z0-9-]+\/[a-z0-9-]+$/);
     }
   }
+  // Goal pin: the spec promises links between the algorithms track and ALL
+  // lessons — the lessons map must contain non-algorithms keys.
+  expect(Object.keys(index.lessons).some((k) => !k.startsWith("algorithms/"))).toBe(true);
   // Stale index fails here: changing concepts or curated data requires
   // re-running `bun run build:algo-links` and committing the result.
   const committed = JSON.parse(readFileSync(SITE_ROOT + INDEX_RELPATH, "utf8"));

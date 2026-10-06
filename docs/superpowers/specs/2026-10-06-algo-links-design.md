@@ -36,7 +36,8 @@ Generated committed index `site/src/content/path/algo-links.json`:
 
 Tunable constants (documented in the builder, defaults): minimum shared
 concepts = 2; cap per algo unit = 12 lessons; cap per lesson = 6 algo units.
-Ranked by shared-concept count, ties broken by lesson order.
+Ranked by shared-concept count; ties broken by cross-track first (scarce
+links carry the spec goal), then lesson order.
 
 ## 2. Build
 
