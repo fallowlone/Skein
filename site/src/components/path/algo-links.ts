@@ -27,7 +27,7 @@ export type UnitLink = {
   shared: number;
 };
 
-export type LessonLink = UnitLink & { lesson: string; trackLabel: string };
+export type LessonLink = UnitLink & { lesson: string; track: string; trackLabel: string };
 
 /** Locale title with EN fallback, then the raw id/slug — never blank. */
 export function pickTitle(
@@ -64,6 +64,7 @@ export function linksForUnit(index: LinkIndex, unitId: string, lang: Locale): Le
     return {
       unit: unitId,
       lesson: h.lesson,
+      track,
       title: pickTitle(titles.lessons[h.lesson], lang, slug),
       href: `/${lang}/learn/${h.lesson}/`,
       trackLabel: pickTitle(titles.tracks[track], lang, track),
