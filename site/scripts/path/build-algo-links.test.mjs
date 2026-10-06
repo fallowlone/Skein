@@ -231,15 +231,37 @@ test("corpus: derived keys are well-formed, capped, and match the committed inde
     shared: 0,
     canonical: true,
   });
-  // No other databases lesson leaks into the index; P4-deferral guard.
+  // No other databases lesson leaks into the index.
   expect(
     Object.keys(index.lessons).filter((k) => k.startsWith("databases/")).sort(),
   ).toEqual([
     "databases/02-indexes/01-index-anatomy",
     "databases/03-execution-plans/03-join-algorithms",
+    "databases/06-migrations/03-lock-queue-incident",
   ]);
-  expect(index.units["algorithms/06-lists-stacks-queues"].length).toBe(12);
+  // P4: FIFO lock queue is derived; unit 06 stays capped at 12 by evicting
+  // its weakest in-track row (own quiz-short, shared 2) per cross-track-first.
+  const u06 = index.units["algorithms/06-lists-stacks-queues"];
+  expect(u06.length).toBe(12);
+  expect(u06).toContainEqual({
+    lesson: "databases/06-migrations/03-lock-queue-incident",
+    shared: 2,
+    canonical: false,
+  });
   expect(
-    index.units["algorithms/06-lists-stacks-queues"].some((h) => h.lesson.startsWith("databases/")),
+    u06.some((h) => h.lesson === "algorithms/06-lists-stacks-queues/quiz-short"),
   ).toBe(false);
+  // Bonus derived row: level-order traversal runs on a FIFO queue.
+  const u07 = index.units["algorithms/07-trees"];
+  expect(u07.length).toBe(10);
+  expect(u07).toContainEqual({
+    lesson: "databases/06-migrations/03-lock-queue-incident",
+    shared: 2,
+    canonical: false,
+  });
+  expect(index.lessons["databases/06-migrations/03-lock-queue-incident"]).toContainEqual({
+    unit: "algorithms/06-lists-stacks-queues",
+    shared: 2,
+    canonical: false,
+  });
 });
