@@ -234,6 +234,36 @@ and `deploy` successfully.
       (`hourWord()` + test) + home hero widening, 44 track-glyph icon
       registry (`paths.ts`) with badges on track/lab/UnitRow.
 
+12. **Static heaps figures replace AlgoPoster in 08-heaps** (local commits
+    `90732118` + `927dd564`, unpushed; `origin/main` = `47bdf5aa`)
+    - 15 static `.astro` figure components
+      (`site/src/components/figures/heaps/`, 3 per lesson × 5 lessons),
+      same spec as the hashing pilot: `lang` prop, full EN+RU
+      dictionaries, site tokens only, zero hydration. 10 lesson files
+      (EN+RU) drop the `client:visible` AlgoPoster island and embed the 3
+      figures at the same position; poster `takeaway`/`minis` beats are
+      preserved in figure captions. `05-k-way-merge` keeps its
+      pre-existing inline `DiagramFrame` SVG — only the poster block was
+      replaced.
+    - Produced by 5 parallel lesson subagents, then independently
+      verified: line-level fact checks of depicted values against EN
+      lesson bodies plus RU vocabulary checks (Push/Pop/out/L0/job names
+      kept per RU lessons; `M`→`млн`, `1,000,000`/`6.6` formats aligned
+      to RU lesson lines in 04-3/05-3), plus pixel review of all 30
+      renders (EN+RU × light+dark) via a temporary preview page (built,
+      screenshotted, deleted before commit). Review caught real defects
+      fixed pre-approve: 03-3 RU serve-line/node-circle collision
+      (`обслуживает`→`выдача`), 03-3 RU headline `MIN vs MAX`→`МИН vs
+      МАКС`, 05-1 RU `rootMin` truncation at the canvas edge (→`корень =
+      мин`), 02-3 RU svgTitle `floor`→`⌊⌋`. User approved all 5 batches.
+    - Verified: `lint:src` 0 errors (57 warnings), full vitest 1831/1831,
+      `check` 0/0/0, full build clean (2028 pages, 0 lint errors),
+      lessons-worker build green (wired MDX compiles).
+    - Sheet-only note (not figure defects): the qlmanage/Menlo preview
+      chain renders letter O like zero and lacks true `⌊⌋`/`≪` glyphs;
+      the site's JetBrains Mono renders all of them (lesson bodies
+      already use these characters).
+
 ## Current corpus snapshot
 
 Measured directly from the repository at the revision above:
