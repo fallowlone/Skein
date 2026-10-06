@@ -202,6 +202,38 @@ and `deploy` successfully.
       pin-covered; quiz-short eviction stands unless the cap policy is
       revisited; CI pipeline is the final authority for the pushed range.
 
+11. **Static hashing figures replace AlgoPoster in 05-hashing** (local
+    commits `67af8142` + `5fe30864`, unpushed; `origin/main` = `2bfd7793`)
+    - 15 static `.astro` figure components
+      (`site/src/components/figures/hashing/`, 3 per lesson × 5 lessons),
+      each with a `lang` prop and full EN+RU dictionaries, site tokens only
+      (`var(--ink/--muted/--accent/--card)`), zero hydration. 10 lesson
+      files (EN+RU) drop the `client:visible` AlgoPoster island and embed
+      the 3 figures at the same position. Poster `takeaway`/`minis` beats
+      are preserved in figure captions.
+    - Produced by 5 parallel lesson subagents (one resumed after an
+      infra `agent_definition_not_found` failure), then independently
+      verified: honesty spot-checks of depicted values against lesson
+      bodies, plus pixel review of all 30 renders (EN+RU × light+dark) via
+      a temporary preview page (built, screenshotted, deleted before
+      commit). Review caught real defects that were fixed pre-approve:
+      02-2 left-column overlap with box borders, untranslated `scan` /
+      `comp` / `new → 1` / bucket-count strings in RU figures, 03-2 ask-box
+      overflow in RU, a stray zero-length line + floating lookup path in
+      05-1, RU resize-label collision in 05-3. User approved all 5 batches
+      and additionally requested the 02-2 map box span the full row height
+      (done, re-verified).
+    - Verified: `lint:src` 0 errors (57 warnings), full vitest 1831/1831,
+      `check` 0/0/0, full build clean (0 lint errors), lessons-worker
+      build green (wired MDX compiles). Standing rule adopted: every
+      lesson-diagram batch gets pixel-checked by the author before it is
+      shown for approve.
+    - Also since item 10 (all pushed): brand logo productionization
+      (`logo-skein.svg` + `favicon.svg`, `SkeinMark.astro` in TopNav rail /
+      topbar / footer / TitleBar), learn UI hour pluralization
+      (`hourWord()` + test) + home hero widening, 44 track-glyph icon
+      registry (`paths.ts`) with badges on track/lab/UnitRow.
+
 ## Current corpus snapshot
 
 Measured directly from the repository at the revision above:
