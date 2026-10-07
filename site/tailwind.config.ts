@@ -94,7 +94,7 @@ export default {
 
       fontFamily: {
         /* new editorial stack */
-        display: ['"Fraunces"', '"Source Serif Pro"', "Georgia", "serif"],
+        display: ['"Oswald Variable"', '"Oswald"', '"Arial Narrow"', '"Inter Tight"', "sans-serif"],
         body:    ['"Inter Tight"', '"Inter"', "ui-sans-serif", "system-ui", "sans-serif"],
         mono:    ['"JetBrains Mono"', '"SF Mono"', '"Berkeley Mono"', "ui-monospace", "Menlo", "monospace"],
         meta:    ['"Inter Tight"', "ui-sans-serif", "system-ui", "sans-serif"],
