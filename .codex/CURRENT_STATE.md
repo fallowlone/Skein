@@ -264,6 +264,31 @@ and `deploy` successfully.
       the site's JetBrains Mono renders all of them (lesson bodies
       already use these characters).
 
+13. **Static-figure conversion complete for algorithms + base-cs**
+    (2026-10-06/07; local commits, unpushed)
+    - All 121 numbered lessons (69 algorithms in 12 units + 52
+      base-cs in 12 units) converted from animated `AlgoPoster`
+      `client:visible` islands to 2–3 static bilingual SVG figures per
+      lesson: 363 `.astro` components under
+      `site/src/components/figures/` (`dp/`, `greedy/`, `toolbox/`,
+      `heaps/`, `base01/`–`base12/`, + earlier algorithm units).
+      Zero `AlgoPoster` references remain in any lesson file (EN+RU);
+      only quiz/drill/project files have no figures (never had
+      posters). Final units: base-cs/11 (`0250473d` + `b0b6f8f8`,
+      12 figs, 0 sheet defects) and base-cs/12 (`1bf50e39` +
+      `9787ff40`, 12 figs, 2 RU defects fixed pre-wire: 02-2 box
+      overflow → `строка идёт сейчас`, 03-3 arrow-label overlap →
+      `берёт 1-й` + widened gap).
+    - Same pipeline per unit throughout: parallel lesson subagents →
+      fact + pixel verification → temp preview page → `bun run
+      build` → PNG sheets (EN|RU × light|dark) eye-checked →
+      wire script (collision assert, single poster-block replace) →
+      preview deleted → gates → small named commits. Push only on
+      user command.
+    - Verified at completion: `lint:src` 0 errors (57 warnings),
+      full vitest 1831/1831 (262 files), `check` 0/0/0, full build
+      clean, lessons-worker build green.
+
 ## Current corpus snapshot
 
 Measured directly from the repository at the revision above:
