@@ -30,6 +30,7 @@ export interface LessonPayload {
     body: {
       format: string;
       root?: LessonRenderNode[];
+      components?: Record<string, { source: string; export: string }>;
     };
   };
   graph: Record<string, unknown>;
