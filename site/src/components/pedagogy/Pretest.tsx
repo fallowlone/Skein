@@ -10,7 +10,7 @@ import { t, type Locale } from "~/i18n";
 type Props = { lang: Locale; startImmediately?: boolean };
 type Phase = "untaken" | "stage1" | "gate" | "stage2" | "done";
 
-const wrapClass = "my-8 max-w-[760px] bg-card border border-rule-strong rounded-[2px] overflow-hidden";
+const wrapClass = "my-8 max-w-[768px] bg-card border border-rule-strong rounded-[2px] overflow-hidden";
 const headerClass = "flex items-center justify-between px-4 py-2.5 bg-card-2 border-b border-rule";
 
 export default function Pretest({ lang, startImmediately = false }: Props) {
@@ -69,7 +69,7 @@ export default function Pretest({ lang, startImmediately = false }: Props) {
 
   if (phase === "untaken") {
     return (
-      <aside class={wrapClass}>
+      <aside data-pretest class={wrapClass}>
         <div class={headerClass}><span class="meta">{t("pretest.title", lang)}</span>
           <span class="badge muted">{lang === "en" ? `2 rounds · ~5 min` : `2 раунда · ~5 мин`}</span></div>
         <div class="px-6 pt-5 pb-6">
@@ -88,7 +88,7 @@ export default function Pretest({ lang, startImmediately = false }: Props) {
 
   if (phase === "gate") {
     return (
-      <aside class={wrapClass}>
+      <aside data-pretest class={wrapClass}>
         <div class={headerClass}><span class="meta">{lang === "en" ? "top band unlocked" : "топ-уровень открыт"}</span></div>
         <div class="px-6 pt-5 pb-6 flex flex-col gap-3">
           <h3 class="font-display text-[20px] font-bold m-0 text-ink">{lang === "en" ? "You're in the top band." : "Ты в топе."}</h3>
@@ -110,7 +110,7 @@ export default function Pretest({ lang, startImmediately = false }: Props) {
   if (phase === "stage1" || phase === "stage2") {
     const q = bank[step];
     return (
-      <aside class={wrapClass}>
+      <aside data-pretest class={wrapClass}>
         <div class={headerClass}>
           <span class="meta">{stage === 1 ? (lang === "en" ? "standard" : "стандарт") : (lang === "en" ? "advanced" : "углублённый")} · {step + 1}/{bank.length}</span>
           <ShadcnButton type="button" class="oa-btn oa-btn-ghost oa-btn-sm text-muted text-[11px]" onClick={restart}>{lang === "en" ? "restart" : "заново"}</ShadcnButton>
@@ -134,7 +134,7 @@ export default function Pretest({ lang, startImmediately = false }: Props) {
   // done
   const result = userState.value.pretest!;
   return (
-    <aside class={wrapClass}>
+    <aside data-pretest class={wrapClass}>
       <div class={headerClass}><span class="meta">{lang === "en" ? "placement · complete" : "placement · готово"}</span></div>
       <div class="px-6 pt-5 pb-6">
         <RankUpReveal rating={result.rating} rankId={result.rank} confidence={result.confidence} lang={lang} />

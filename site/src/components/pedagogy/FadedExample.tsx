@@ -93,7 +93,7 @@ export default function FadedExample({
   };
 
   return (
-    <section id={id} class="my-8 rounded-[var(--r-lg)] border-[0.5px] border-ok bg-card p-6">
+    <section id={id} data-faded-example class="my-8 rounded-[var(--r-lg)] border-[0.5px] border-ok bg-card p-6">
       <header class="flex items-center justify-between mb-3">
         <h3 class="font-bold text-ink">{title}</h3>
         <span class="text-xs font-mono text-muted">{step + 1}/3</span>
