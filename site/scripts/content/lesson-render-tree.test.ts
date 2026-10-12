@@ -168,5 +168,11 @@ title: Mapped SVG
       join(siteRoot, "src/components/lesson/LessonRenderTree.astro"), "utf8",
     );
     expect(renderer).toContain('import.meta.glob("../figures/**/*.astro"');
+    // The Astro compiler mangles a frontmatter type literal that names a
+    // property `export` (reads it as an ESM export and drops the line tail),
+    // which broke the lesson Worker build with esbuild "Unexpected ':'".
+    // The shape must stay imported from a .ts module — never inlined here.
+    const frontmatter = renderer.slice(0, renderer.indexOf("---", 3));
+    expect(frontmatter).not.toMatch(/export\s*:/);
   });
 });
