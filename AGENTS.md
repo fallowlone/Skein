@@ -2,22 +2,6 @@
 
 Skein is an Astro 6 + Preact + Tailwind bilingual curriculum and adaptive-learning product. Work in `site/`; generated output lives in `site/dist/` and must not be edited.
 
-## Codex project context
-
-Before substantive work, read these two files:
-
-- `.codex/PROJECT_CONTEXT.md` — durable product, architecture, source-of-truth, and workflow context.
-- `.codex/CURRENT_STATE.md` — current revision, completed milestones, verification state, known gaps, and next priorities.
-
-Treat `.codex/CURRENT_STATE.md` as the current-state authority when older handoff,
-audit, migration, or production-readiness documents disagree with it. Verify claims
-against code/configuration when the task depends on them.
-
-After a material milestone (architecture change, release, migration, major product
-capability, or a resolved/introduced release blocker), update
-`.codex/CURRENT_STATE.md`. Update `.codex/PROJECT_CONTEXT.md` only when durable
-architecture or project invariants change.
-
 ## Scope
 
 - Canonical curriculum data: `site/src/content/tracks.json`, `site/src/content/units.json`, and lessons under `site/src/content/lessons/{en,ru}/...`.
