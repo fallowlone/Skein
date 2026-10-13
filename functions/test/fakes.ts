@@ -46,9 +46,15 @@ export class FakeD1 {
   billingDeliveries = new Set<string>();
   billingPayloadHashes = new Set<string>();
   aiUsage = new Map<string, { used: number; updated_at: number }>();
+  logs: { ts: number; level: string; route: string; rid: string; flow: string | null; user_id: number | null; tag: string; msg: string; ctx_json: string }[] = [];
+  statements: string[] = [];
   private seq = 1;
 
-  prepare(sql: string): FakeStmt { return new FakeStmt(this, sql.trim().replace(/\s+/g, " ")); }
+  prepare(sql: string): FakeStmt {
+    const norm = sql.trim().replace(/\s+/g, " ");
+    this.statements.push(norm);
+    return new FakeStmt(this, norm);
+  }
   // D1 batch not used; single statements only.
 }
 
@@ -123,6 +129,17 @@ class FakeStmt {
   }
 
   async run(): Promise<{ success: true; meta: { last_row_id: number; changes: number } }> {
+    if (this.sql.startsWith("INSERT INTO app_logs")) {
+      const [ts, level, route, rid, flow, user_id, tag, msg, ctx_json] = this.args as any[];
+      this.db.logs.push({ ts, level, route, rid, flow, user_id, tag, msg, ctx_json });
+      return { success: true, meta: { last_row_id: this.db.logs.length, changes: 1 } };
+    }
+    if (this.sql.startsWith("DELETE FROM app_logs")) {
+      const cutoff = this.args[0] as number;
+      const before = this.db.logs.length;
+      this.db.logs = this.db.logs.filter((r) => r.ts >= cutoff).slice(-100000);
+      return { success: true, meta: { last_row_id: 0, changes: before - this.db.logs.length } };
+    }
     if (this.sql.startsWith("INSERT INTO users")) {
       const [github_id, login, nickname, avatar_url, created_at] = this.args as any[];
       const row: FakeUser = {
