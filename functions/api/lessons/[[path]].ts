@@ -1,6 +1,6 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env, RequestData } from "../../lib/types";
-import { lessonAccessible, loadLesson, parseLessonPath, requiredExercises } from "../../lib/lesson-access";
+import { loadLesson, parseLessonPath, requiredExercises } from "../../lib/lesson-access";
 import { error, json } from "../../lib/response";
 
 export { parseLessonPath } from "../../lib/lesson-access";
@@ -12,9 +12,7 @@ export const onRequestGet: PagesFunction<Env, any, RequestData> = async (ctx) =>
   const result = await loadLesson(ctx.env, path);
   if (!result.ok) return error(result.status, result.code);
 
-  if (!(await lessonAccessible(ctx.env.DB, ctx.data.userId, result.payload))) {
-    return error(ctx.data.userId ? 403 : 401, ctx.data.userId ? "lesson_locked" : "auth_required");
-  }
+  // Reading is open: every lesson is served to guests and signed-in users alike.
   if (ctx.data.userId) {
     let required;
     try { required = requiredExercises(result.payload.lesson.body.root); }

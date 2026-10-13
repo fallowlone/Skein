@@ -44,19 +44,13 @@ describe("GET /api/lessons/:path", () => {
     expect(response.headers.get("x-skein-authenticated")).toBe("0");
   });
 
-  it("blocks direct URLs until previous completion", async () => {
+  it("serves any lesson to guests and signed-in users without sequencing", async () => {
     mockLesson(later);
-    expect((await onRequestGet(context())).status).toBe(401);
-    const db = { prepare: vi.fn(() => ({ bind: () => ({ first: async () => null }) })) };
-    expect((await onRequestGet(context(7, db))).status).toBe(403);
-  });
-
-  it("allows prior completion or a permanent course grant", async () => {
-    mockLesson(later);
-    const completedDb = { prepare: vi.fn((sql: string) => ({ bind: () => ({ first: async () => sql.includes("lesson_completions") ? { done: 1 } : null }) })) };
-    const paidDb = { prepare: vi.fn((sql: string) => ({ bind: () => ({ first: async () => sql.includes("course_access_grants") ? { allowed: 1 } : null }) })) };
-    expect((await onRequestGet(context(7, completedDb))).status).toBe(200);
-    expect((await onRequestGet(context(7, paidDb))).status).toBe(200);
+    expect((await onRequestGet(context())).status).toBe(200);
+    const db = { prepare: vi.fn(() => { throw new Error("must not query gating state"); }) };
+    const response = await onRequestGet(context(7, db));
+    expect(response.status).toBe(200);
+    expect(response.headers.get("x-skein-authenticated")).toBe("1");
   });
 
   it("rejects malformed and missing curriculum payloads", async () => {

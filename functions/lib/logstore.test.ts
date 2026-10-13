@@ -1,8 +1,15 @@
 // functions/lib/logstore.test.ts
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { flushLogs } from "./logstore";
 import { FakeD1 } from "../test/fakes";
 import type { LogEntry } from "./logger";
+
+beforeEach(() => {
+  for (const m of ["debug", "info", "warn", "error", "log"] as const) {
+    vi.spyOn(console, m).mockImplementation(() => {});
+  }
+});
+afterEach(() => vi.restoreAllMocks());
 
 function entry(over: Partial<LogEntry> = {}): LogEntry {
   return {

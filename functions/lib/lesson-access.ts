@@ -86,16 +86,3 @@ export function answerMatches(exercise: Exercise, answer: unknown): boolean {
     answer.every((value, index) => Number.isInteger(value) && value === expected[index]);
 }
 
-export async function lessonAccessible(db: D1Database, userId: number | null, payload: LessonPayload, now = Date.now()): Promise<boolean> {
-  const prev = payload.graph.navPrev;
-  if (prev === null) return true;
-  if (!userId || typeof prev !== "string" || !prev.startsWith(`${payload.lesson.track}/`) || prev === payload.lesson.key) return false;
-  const grant = await db.prepare(
-    "SELECT 1 AS allowed FROM course_access_grants WHERE user_id = ? AND track = ? AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) LIMIT 1",
-  ).bind(userId, payload.lesson.track, now).first<{ allowed: number }>();
-  if (grant?.allowed === 1) return true;
-  const completed = await db.prepare(
-    "SELECT 1 AS done FROM lesson_completions WHERE user_id = ? AND lesson_key = ?",
-  ).bind(userId, prev).first<{ done: number }>();
-  return completed?.done === 1;
-}
