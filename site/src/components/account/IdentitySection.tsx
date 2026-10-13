@@ -50,8 +50,15 @@ export default function IdentitySection({ lang }: { lang: Locale }) {
   const [nick, setNick] = useState("");
   const [msg, setMsg] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
+    // The auth callback redirects back here with ?auth=<reason> on failure.
+    const q = new URLSearchParams(window.location.search).get("auth");
+    if (q) {
+      setAuthError(q === "terms_required" ? t("account.termsGate", lang) : t("auth.failed", lang));
+      window.history.replaceState(null, "", window.location.pathname);
+    }
     void fetchMe().then((m) => {
       setMe(m);
       if (m) { setNick(m.nickname); if (m.termsAccepted) void activateSyncIfSignedIn(); }
@@ -97,6 +104,7 @@ export default function IdentitySection({ lang }: { lang: Locale }) {
   if (!me) {
     return (
       <div class="panel identity">
+        {authError && <p class="meta" role="alert">{authError}</p>}
         <div class="signin">
           <p class="si-prop">
             {l.siProp1}<b>{l.siPropLocal}</b>{l.siProp2}<b>{l.siPropSync}</b>{l.siProp3}
