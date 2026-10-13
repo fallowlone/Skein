@@ -15,6 +15,7 @@ export interface Env {
   GITHUB_SPONSORS_URL?: string;
   GITHUB_SPONSORS_WEBHOOK_SECRET?: string;
   GITHUB_SPONSORS_COACH_TIER_IDS?: string;
+  GITHUB_SPONSORS_COURSE_TIER_ID?: string;
   ANTHROPIC_API_KEY?: string;
   ANTHROPIC_MODEL?: string;
   COACH_AI_MONTHLY_REQUESTS?: string;
@@ -37,4 +38,5 @@ export interface UserRow {
 export interface RequestData extends Record<string, unknown> {
   userId: number | null;
   githubAccessToken?: string;
+  requestId: string;
 }

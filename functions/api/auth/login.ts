@@ -1,17 +1,44 @@
 /// <reference types="@cloudflare/workers-types" />
 import type { Env } from "../../lib/types";
+import type { BoundLogger } from "../../lib/logger";
 import { authorizeUrl } from "../../lib/github";
+import { readBodyBounded } from "../../lib/coach";
 import { signValue, serializeCookie, isSecureRequest } from "../../lib/cookies";
+import { error, isSameOriginMutation } from "../../lib/response";
 
 export const onRequestGet: PagesFunction<Env> = async (ctx) => {
+  const url = new URL(ctx.request.url);
+  const lang = url.searchParams.get("lang") === "ru" ? "ru" : "en";
+  const returnTo = url.searchParams.get("returnTo") === "coach" ? "?returnTo=coach" : "";
+  return Response.redirect(`${url.origin}/${lang}/account/${returnTo}`, 302);
+};
+
+export const onRequestPost: PagesFunction<Env> = async (ctx) => {
   const { request, env } = ctx;
   const url = new URL(request.url);
-  const lang = url.searchParams.get("lang") === "ru" ? "ru" : "en";
-  const returnTo = url.searchParams.get("returnTo") === "coach" ? "coach" : "account";
+  if (!isSameOriginMutation(request)) return error(403, "csrf");
+  // Full-page form POST: answer failures with a redirect back to the consent
+  // form, not a JSON body — the browser would render raw JSON as a dead page.
+  const back = (lang: string, reason: string) =>
+    new Response(null, { status: 302, headers: { Location: `/${lang}/account?auth=${reason}` } });
+  if (!request.headers.get("content-type")?.startsWith("application/x-www-form-urlencoded")) {
+    return back("en", "failed");
+  }
+  const raw = await readBodyBounded(request, 1024);
+  if (!raw) return back("en", "failed");
+  const form = new URLSearchParams(new TextDecoder().decode(raw));
+  const lang = form.get("lang") === "ru" ? "ru" : "en";
+  if (form.get("terms") !== "accept" || !env.TERMS_VERSION) return back(lang, "terms_required");
+  const returnTo = form.get("returnTo") === "coach" ? "coach" : "account";
 
-  // random state, stored signed in a short-lived cookie for CSRF protection
+  // random state, stored signed in a short-lived cookie for CSRF protection.
+  // The 5th segment carries this request's rid so the callback can log the
+  // same flow id — login and callback are different requests with different
+  // rids, and the funnel joins them on this value.
+  const data = (ctx as any).data as { requestId?: string; logger?: BoundLogger } | undefined;
+  const loginRid = data?.requestId ?? crypto.randomUUID();
   const state = crypto.randomUUID();
-  const stateCookie = await signValue(`${state}|${lang}|${returnTo}`, env.SESSION_SECRET);
+  const stateCookie = await signValue(`${state}|${lang}|${returnTo}|${env.TERMS_VERSION}|${loginRid}`, env.SESSION_SECRET);
   const redirectUri = `${url.origin}/api/auth/callback`;
 
   const headers = new Headers();
@@ -19,5 +46,6 @@ export const onRequestGet: PagesFunction<Env> = async (ctx) => {
     httpOnly: true, secure: isSecureRequest(url, env), maxAge: 600, sameSite: "Lax",
   }));
   headers.set("Location", authorizeUrl(env.GITHUB_CLIENT_ID, redirectUri, state));
+  data?.logger?.log("info", "auth.started", "oauth state issued", { flow: loginRid });
   return new Response(null, { status: 302, headers });
 };

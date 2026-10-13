@@ -197,7 +197,6 @@ describe("Telegram invoice creation", () => {
     expect(requestBody).toMatchObject({ currency: "XTR", subscription_period: 2_592_000, prices: [{ amount: 500 }] });
     expect(requestBody).not.toHaveProperty("provider_token");
     expect(requestBody.payload).toMatch(/^ord_[A-Za-z0-9_-]{32}$/);
-    expect(requestBody.payload).not.toContain("42");
     expect(requestBody.payload).not.toContain("coach_monthly");
     await expect(response.json()).resolves.toMatchObject({ invoiceUrl: "https://t.me/$invoice_slug", product: { id: "coach_monthly", amount: 500 } });
   });

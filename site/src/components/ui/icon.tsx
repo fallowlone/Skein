@@ -1,4 +1,4 @@
-import type { JSX } from "preact";
+import type { JSX, SVGAttributes } from "preact";
 import { cn } from "~/lib/utils";
 
 /**
@@ -94,7 +94,7 @@ const PATHS: Record<IconName, JSX.Element> = {
   ),
 };
 
-type IconProps = JSX.SVGAttributes<SVGSVGElement> & {
+type IconProps = SVGAttributes<SVGSVGElement> & {
   name: IconName;
   size?: number | string;
   class?: string;

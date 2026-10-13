@@ -64,10 +64,10 @@ A product page needs a globally-cached page body (10-minute TTL), real-time pers
 
 Every major CDN now runs user code at the edge — not just static files:
 
-- **Cloudflare Workers**: V8 isolates. Cold start **2–5 ms p99**. 128 MiB memory limit. **50 ms CPU wall-time** per request (extendable with Workers Unbound). Thousands of customer functions share one V8 process via isolate isolation — negligible per-function startup overhead.
+- **Cloudflare Workers**: V8 isolates. Cold start **2–5 ms p99**. 128 MiB memory limit. **10 ms CPU on Free, 30 s default on Paid (up to 5 min)** per request — I/O wait excluded. Thousands of customer functions share one V8 process via isolate isolation — negligible per-function startup overhead.
 - **Fastly Compute@Edge**: WebAssembly. Cold start similar to Workers.
 - **AWS Lambda@Edge**: full Node.js/Python runtime. Cold start **400–600 ms** at some regional POPs — a 100× penalty over Workers for latency-sensitive paths.
-- **Vercel Fluid Compute (2026)**: V8-based, persistent warm instances, concurrent request handling within a single isolate. **99.37% zero-cold-start ratio**. 1.2×–5× faster than Workers for heavy SSR (template rendering, large page assembly). 50 ms wall-time budget.
+- **Vercel Fluid Compute (2026)**: persistent warm instances shared across concurrent requests. **99.37% zero-cold-start ratio** on sustained production traffic (Vercel's figure). No millisecond CPU cap — function timeouts are seconds-to-minutes, so heavy SSR (template rendering, large page assembly) fits where Workers' CPU budget does not.
 
 <NumbersCard
   id="card-edge-workers"
@@ -77,7 +77,7 @@ Every major CDN now runs user code at the edge — not just static files:
     { label: "Cloudflare Workers cold start (p99)", value: "2–5 ms" },
     { label: "Lambda@Edge cold start (some PoPs)", value: "400–600 ms" },
     { label: "Vercel Fluid Compute zero-cold-start ratio", value: "99.37% of requests" },
-    { label: "Workers CPU wall-time budget", value: "50 ms per request" },
+    { label: "Workers CPU budget (Free / Paid default)", value: "10 ms / 30 s per request" },
     { label: "Workers memory limit", value: "128 MiB" },
     { label: "Workers isolate model", value: "Thousands of customers per V8 process" },
   ]}
@@ -95,9 +95,9 @@ Workers sit in the request path and can do anything a proxy can do with code:
 
 Together these use-cases shift logic from a centralised origin to a distributed edge layer. Without auth at edge, every bot probe still burns an origin thread; without mutation at edge, every response header fix requires an origin deploy.
 
-## The 50 ms wall-time budget
+## The CPU-time budget
 
-Workers cap CPU time at 50 ms per request. This eliminates: large-model ML inference, image resizing on large images, heavy database queries. It enables: JWT validation (~1 ms), URL rewriting (~0.1 ms), KV lookup (~3 ms), simple HTML mutation (~5 ms). Design workers to be thin routing/auth/mutation layers, not compute-heavy backends.
+On Free, Workers cap CPU time at 10 ms per request (Paid: 30 s default, raisable to 5 min; the old 50 ms Bundled tier is retired). This eliminates: large-model ML inference, image resizing on large images, heavy database queries. It enables: JWT validation (~1 ms), URL rewriting (~0.1 ms), KV lookup (~3 ms), simple HTML mutation (~5 ms). Design workers to be thin routing/auth/mutation layers, not compute-heavy backends.
 
 <Inset kind="why" lang="en">
 **Why V8 isolates instead of containers.** A traditional serverless function (Lambda) requires a separate process or container per function — spinning up takes 400–600 ms. V8 isolates are memory-efficient sandboxes within one V8 process: each isolate has its own heap, no shared mutable state, but they share the process's startup cost. Cloudflare's model: thousands of customer functions share one running V8 process. Cold-starting a new isolate costs 2–5 ms, not 400 ms. The isolation guarantee is cryptographic (V8 sandbox) not OS-process-level, which is acceptable for CDN workloads running untrusted customer code.
@@ -136,7 +136,7 @@ Result: the full page is assembled at the edge in ~35 ms, no origin round-trip f
   steps={[
     { prompt: "Step 1: what is the critical path from user request to response?", reveal: "Browser → TLS to edge (warm) ~2 ms → edge worker cold-start 2–5 ms → regional service fetch ~50 ms → response assembly ~1 ms → total p50: ~60 ms. The regional service fetch is the long pole." },
     { prompt: "Step 2: tax/shipping rates cannot be cached (vary by postcode). But you can parallelise. How?", reveal: "Start the regional service fetch immediately in the worker handler, before any other work. Use Promise.race or a timeout: if the result arrives within 30 ms, use it; otherwise serve cached fallback rates from edge KV (stale-while-revalidate). User sees ~30 ms response; fresh rates are refreshed in background." },
-    { prompt: "Step 3: edge worker memory is 128 MiB. You're storing all regional rate tables in KV to avoid the fetch. Why might this cause trouble?", reveal: "KV reads are ~3–10 ms per access (regional, not local memory). Fetching multiple regions' tables sequentially is slower than a single regional service call. Better approach: keep one region's rate table in a Durable Object or warm-cache binding (true in-memory, ~0.1 ms), fall back to KV for cold data." },
+    { prompt: "Step 3: edge worker memory is 128 MiB. You're storing all regional rate tables in KV to avoid the fetch. Why might this cause trouble?", reveal: "KV reads are ~3–10 ms per access (regional, not local memory). Fetching multiple regions' tables sequentially is slower than a single regional service call. Better approach: keep one region's hot rate table in the isolate's in-memory global state (~0.1 ms), fall back to KV for cold data." },
     { prompt: "Step 4: you've optimised the worker to 15 ms wall-time. How do you confirm users benefited?", reveal: "Add Server-Timing headers from the worker: Server-Timing: edge-worker=15ms; regional-fetch=45ms. Aggregate per region in your observability stack. If SEA edges consistently hit regional-fetch timeouts, add a regional cache server there. If p99 edge latency is 300 ms, the bottleneck is probably DNS or TLS, not the worker." },
   ]}
 />
@@ -161,11 +161,11 @@ Worker logs (2026-05-15):
   regional_service_start=5ms
   regional_service_timeout=185ms
   handler_end=188ms
-  total_wall_time=188ms (budget: 50ms × 4 extensions used)`}
+  total_wall_time=188ms (cpu_time=188ms; budget: 10 ms Free-plan CPU, Paid default 30 s)`}
   outputLang="log"
-  question="Edge worker is using 4× the wall-time budget and users see 450 ms responses. What is the bottleneck?"
+  question="Edge worker burns 188 ms of CPU against a 10 ms Free-plan budget and users see 450 ms responses. What is the bottleneck?"
   hint="Server-Timing shows regional-service=240 ms but worker logs show 185 ms for the same call. What explains the 55 ms gap?"
-  answer="The regional service call spent 55 ms before the worker's timer started — TCP connect + TLS handshake to the regional service. The worker is not reusing HTTP/2 connections to the service (each invocation opens a new TCP+TLS). Fix: use a connection-pooling binding or Service Binding (Cloudflare) that reuses existing connections. Also implement a bulkhead: if regional service p99 > 100 ms, serve cached fallback rates immediately. The 4× wall-time extension indicates the worker is hitting CPU limits; either reduce per-request logic or route heavy compute to regional Functions (Lambda or Cloud Run) and have the edge worker call them asynchronously."
+  answer="The regional service call spent 55 ms before the worker's timer started — TCP connect + TLS handshake to the regional service. The worker is not reusing HTTP/2 connections to the service (each invocation opens a new TCP+TLS). Fix: use a connection-pooling binding or Service Binding (Cloudflare) that reuses existing connections. Also implement a bulkhead: if regional service p99 > 100 ms, serve cached fallback rates immediately. The CPU overage means the worker is doing compute inline — slim the per-request logic (or raise the limit on Paid) or route heavy compute to regional Functions (Lambda or Cloud Run) and have the edge worker call them asynchronously."
 />
 
 <TradeoffMatrix
@@ -204,7 +204,7 @@ Worker logs (2026-05-15):
   caption="Edge-side composition: the worker pulls each fragment from the tier that fits its freshness — chrome from the long-lived edge cache, the price fresh from origin per request, recommendations from KV by user-id — and stitches them into one response without a full origin round-trip for most bytes."
 />
 
-<KeyTakeaway>Edge workers (V8 isolates, 2–5 ms cold start, 50 ms wall-time) run auth, routing, mutation, and fragment-fetching logic at the CDN POP — saving origin round-trips. ESI and HTMLRewriter compose responses from independently-cached fragments: heavy chrome caches for hours, personalised or real-time fragments fetch fresh. Lambda@Edge's 400–600 ms cold start makes it unsuitable for latency-sensitive paths.</KeyTakeaway>
+<KeyTakeaway>Edge workers (V8 isolates, 2–5 ms cold start, 10 ms–30 s CPU) run auth, routing, mutation, and fragment-fetching logic at the CDN POP — saving origin round-trips. ESI and HTMLRewriter compose responses from independently-cached fragments: heavy chrome caches for hours, personalised or real-time fragments fetch fresh. Lambda@Edge's 400–600 ms cold start makes it unsuitable for latency-sensitive paths.</KeyTakeaway>
 
 <RetrievalDrawer
   client:visible
@@ -213,10 +213,10 @@ Worker logs (2026-05-15):
   questions={[
     { q: "Why does Cloudflare Workers achieve 2–5 ms cold start while Lambda@Edge takes 400–600 ms?", a: "Cloudflare Workers uses V8 isolates: thousands of customer functions share one running V8 process. A new isolate (worker function) is created within that process in 2–5 ms — it is a lightweight sandbox, not a process spawn. Lambda@Edge uses a full Node.js runtime in a container; starting a cold container involves OS setup, Node.js initialisation, and function loading — 400–600 ms. The trade-off: Workers isolate model provides weaker isolation guarantees (V8 sandbox vs. OS-level process boundary) but is acceptable for CDN workloads." },
     { q: "Describe edge-side composition for a news page that has shared chrome, a breaking-news banner (must be fresh within 30 s), and article body (5 min staleness OK).", a: "Serve the page HTML via a Cloudflare Worker or ESI-enabled proxy. Three cache entries: (1) Chrome (header, nav, footer): max-age=21600 (6 hours) — served from edge cache. (2) Article body: max-age=300, stale-while-revalidate=3600 — served from edge cache, background revalidation. (3) Breaking-news banner: fetched by the edge worker from a globally-replicated KV store with a 30-second TTL — one fresh fetch per edge per 30 s, not one per user. The worker assembles the three pieces into a single HTML response before sending to the browser. Users see ~20 ms page load; breaking news updates propagate globally within 30 seconds." },
-    { q: "What is the 50 ms wall-time budget in Cloudflare Workers, and what does it exclude?", a: "The 50 ms limit is cumulative CPU time per request invocation (extendable to 30 s with Workers Unbound at higher cost). It excludes I/O wait time — while the worker is waiting for a fetch() response from a remote service, the 50 ms clock is paused. It does exclude: large-model ML inference, image resizing on megapixel images, heavy cryptographic operations, loops over large datasets. It includes: JWT parsing and verification (~1 ms), URL rewriting (~0.1 ms), KV reads (~3 ms), streaming HTML mutations (~5 ms). Design workers as thin routing and mutation layers, not compute backends." },
+    { q: "What is the CPU-time budget in Cloudflare Workers, and what does it exclude?", a: "The CPU limit is 10 ms per request on Free (30 s default on Paid, raisable to 5 min). It excludes I/O wait time — while the worker is waiting for a fetch() response from a remote service, the CPU clock is paused. It does exclude: large-model ML inference, image resizing on megapixel images, heavy cryptographic operations, loops over large datasets. It includes: JWT parsing and verification (~1 ms), URL rewriting (~0.1 ms), KV reads (~3 ms), streaming HTML mutations (~5 ms). Design workers as thin routing and mutation layers, not compute backends." },
   ]}
 />
 
 <Recap lang="en">
-Edge workers run custom code at CDN POPs using V8 isolates (Cloudflare Workers: 2–5 ms p99 cold start) or WebAssembly. They enable auth validation, A/B routing, geo-redirect, request/response mutation, and real-time fragment fetching without origin round-trips. The 50 ms wall-time budget restricts compute-heavy tasks; those belong in regional Functions. Edge-side composition (ESI or Workers + HTMLRewriter) assembles responses from independently-cached fragments — page chrome cached for hours, personalised or real-time data fetched fresh per request — combining the cache efficiency of static assets with the freshness of dynamic data. Lambda@Edge's 400–600 ms cold start disqualifies it for latency-sensitive paths; Vercel Fluid Compute achieves 99.37% zero-cold-start by keeping warm isolates. TLS session ticket replication across POPs amortises reconnection costs on mobile. Now when you design a product page that needs both shared content and per-user data, ask whether edge composition can serve the shared parts from cache and fetch only the delta from origin — most of the bytes can be cached even when the user context cannot.
+Edge workers run custom code at CDN POPs using V8 isolates (Cloudflare Workers: 2–5 ms p99 cold start) or WebAssembly. They enable auth validation, A/B routing, geo-redirect, request/response mutation, and real-time fragment fetching without origin round-trips. The small CPU budget (10 ms on Free, 30 s default on Paid) restricts compute-heavy tasks; those belong in regional Functions. Edge-side composition (ESI or Workers + HTMLRewriter) assembles responses from independently-cached fragments — page chrome cached for hours, personalised or real-time data fetched fresh per request — combining the cache efficiency of static assets with the freshness of dynamic data. Lambda@Edge's 400–600 ms cold start disqualifies it for latency-sensitive paths; Vercel Fluid Compute achieves 99.37% zero-cold-start by keeping warm isolates. TLS session ticket replication across POPs amortises reconnection costs on mobile. Now when you design a product page that needs both shared content and per-user data, ask whether edge composition can serve the shared parts from cache and fetch only the delta from origin — most of the bytes can be cached even when the user context cannot.
 </Recap>

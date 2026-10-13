@@ -11,7 +11,7 @@ async function openWorkspace(page: import("@playwright/test").Page) {
 }
 
 async function dismissExpedition(page: import("@playwright/test").Page) {
-  const pass = page.getByRole("complementary", { name: "Expedition Pass" });
+  const pass = page.getByRole("complementary", { name: "Patron Map" });
   if (await pass.isVisible()) await page.getByRole("button", { name: /Continue without pass/ }).click();
 }
 
@@ -19,8 +19,9 @@ test("Algorithm Workspace happy path is functional end to end", async ({ page })
   await page.setViewportSize({ width: 1512, height: 982 });
   await openWorkspace(page);
 
-  await expect(page.getByRole("complementary", { name: "Expedition Pass" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Telegram Stars unavailable/ })).toBeDisabled();
+  await expect(page.getByRole("complementary", { name: "Patron Map" })).toBeVisible();
+  // The Stars CTA was replaced by a link to the support options in settings.
+  await expect(page.getByRole("link", { name: /See Skein support options/ })).toBeVisible();
   await dismissExpedition(page);
 
   const untimed = page.getByRole("button", { name: /No timer/ });

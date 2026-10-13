@@ -1,6 +1,7 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { compileLessonRenderTree, evaluateStaticExpression } from "./lesson-render-tree";
 
@@ -138,5 +139,40 @@ title: Mapped SVG
 
     expect(texts.map((node: any) => node.props.x)).toEqual([10, 21]);
     expect(texts.map((node: any) => node.children[0].value)).toEqual(["a", "b"]);
+  });
+
+  it("keeps static-figure refs resolvable by the lesson renderer", async () => {
+    // Regression guard for the node-lesson prod outage: converted lessons embed
+    // bilingual static figures (e.g. NodeStartWhatIs1) that are NOT in the
+    // hardcoded LessonRenderTree registry. The renderer resolves them through
+    // the artifact components map + a figures/schematic glob, so every such
+    // ref must point at an existing file under those dirs.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const siteRoot = resolve(here, "../..");
+    const sourcePath = join(
+      siteRoot, "src/content/lessons/en/node/00-start-here/01-what-node-is/index.mdx",
+    );
+    const raw = await readFile(sourcePath, "utf8");
+    const artifact = await compileLessonRenderTree(raw, sourcePath);
+    const figureRefs = Object.entries(artifact.components).filter(([, ref]) =>
+      ref.source.endsWith(".astro") &&
+      (ref.source.includes("/components/figures/") || ref.source.includes("/components/schematic/")),
+    );
+    expect(figureRefs.length).toBeGreaterThan(0);
+    for (const [, ref] of figureRefs) {
+      await expect(
+        readFile(resolve(siteRoot, "src", ref.source.replace(/^~\//, "")), "utf8"),
+      ).resolves.toContain("<svg");
+    }
+    const renderer = await readFile(
+      join(siteRoot, "src/components/lesson/LessonRenderTree.astro"), "utf8",
+    );
+    expect(renderer).toContain('import.meta.glob("../figures/**/*.astro"');
+    // The Astro compiler mangles a frontmatter type literal that names a
+    // property `export` (reads it as an ESM export and drops the line tail),
+    // which broke the lesson Worker build with esbuild "Unexpected ':'".
+    // The shape must stay imported from a .ts module — never inlined here.
+    const frontmatter = renderer.slice(0, renderer.indexOf("---", 3));
+    expect(frontmatter).not.toMatch(/export\s*:/);
   });
 });

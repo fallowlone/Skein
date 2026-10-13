@@ -179,38 +179,114 @@ function AuthProvider({ children }: { children: React.ReactNode }) {
 Две проблемы: логике переходов («токен обновлён» должно сохранить пользователя, но поменять токен) негде жить, кроме как в ещё более стихийных сеттерах, а `value` нестабилен, так что `<LoginButton>`, который никогда не читает `user`, всё равно перерисовывается всякий раз, когда `user` меняется. Теперь версия с редьюсером + разделённым контекстом:
 
 ```tsx
-type AuthState = { user: User | null; token: string | null };
+type AuthState = { user: User | null; token: string | null; isRefreshing: boolean };
 type AuthAction =
   | { type: "login"; user: User; token: string }
   | { type: "logout" }
-  | { type: "refreshed"; token: string };
+  | { type: "refreshStarted" }
+  | { type: "refreshed"; token: string }
+  | { type: "refreshFailed" };
 
 function authReducer(s: AuthState, a: AuthAction): AuthState {
   switch (a.type) {
-    case "login":     return { user: a.user, token: a.token };
-    case "logout":    return { user: null, token: null };
-    case "refreshed": return { ...s, token: a.token }; // keep user, swap token
+    case "login":         return { user: a.user, token: a.token, isRefreshing: false };
+    case "logout":        return { user: null, token: null, isRefreshing: false };
+    case "refreshStarted": return { ...s, isRefreshing: true };
+    case "refreshed":     return { ...s, token: a.token, isRefreshing: false }; // keep user, swap token
+    case "refreshFailed": return { ...s, isRefreshing: false };
   }
 }
 
 const AuthStateContext = createContext<AuthState | null>(null);
 const AuthDispatchContext = createContext<React.Dispatch<AuthAction> | null>(null);
+const AuthRefreshContext = createContext<(() => Promise<string>) | null>(null);
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [state, dispatch] = useReducer(authReducer, { user: null, token: null });
+export function AuthProvider({ children, refreshToken }: {
+  children: React.ReactNode;
+  refreshToken: () => Promise<string>;
+}) {
+  const [state, dispatch] = useReducer(authReducer, { user: null, token: null, isRefreshing: false });
+  const refreshPromise = useRef<Promise<string> | null>(null);
+  const refresh = useCallback(() => {
+    if (refreshPromise.current) return refreshPromise.current;
+    dispatch({ type: "refreshStarted" });
+    refreshPromise.current = refreshToken()
+      .then((token) => { dispatch({ type: "refreshed", token }); return token; })
+      .catch((error) => { dispatch({ type: "refreshFailed" }); throw error; })
+      .finally(() => { refreshPromise.current = null; });
+    return refreshPromise.current;
+  }, [refreshToken]);
   return (
     <AuthStateContext.Provider value={state}>
-      <AuthDispatchContext.Provider value={dispatch}>{children}</AuthDispatchContext.Provider>
+      <AuthDispatchContext.Provider value={dispatch}>
+        <AuthRefreshContext.Provider value={refresh}>{children}</AuthRefreshContext.Provider>
+      </AuthDispatchContext.Provider>
     </AuthStateContext.Provider>
   );
 }
 
 // <LoginButton> calls useAuthDispatch() only → does NOT re-render when user changes
 // <Avatar> calls useAuth() (state) → re-renders only when state actually changes
+// Consumers call refresh(), not await dispatch({ type: "refreshStarted" }): dispatch returns void.
 ```
 
-Переход «refreshed» теперь живёт в одном протестированном месте, а кнопка, которая только диспатчит, структурно изолирована от изменений состояния. Заметь, чего мы *не* делали: *профильные данные* пользователя и *заказы* — это серверное состояние, они остаются в query-библиотеке, а не в этом редьюсере. Этот контекст держит только идентичность сессии и переходы над ней.
+Статус обновления — это состояние, которое можно показывать в интерфейсе, но не блок конкурентного доступа: обновление редьюсера может стать видимым другому вызову только после рендера React. Поэтому провайдер владеет текущим promise: конкурентные вызовы `refresh()` разделяют один запрос к API и тот же результат или ошибку. `finally` очищает его после любого исхода, и следующий refresh снова сможет выполниться. Переход «refreshed» теперь живёт в одном протестированном месте, а кнопка, которая только диспатчит, структурно изолирована от изменений состояния. Заметь, чего мы *не* делали: *профильные данные* пользователя и *заказы* — это серверное состояние, они остаются в query-библиотеке, а не в этом редьюсере. Этот контекст держит только идентичность сессии и переходы над ней.
 </WorkedExample>
+
+```ts run
+type AuthState = { user: string | null; token: string | null; isRefreshing: boolean };
+type AuthAction =
+  | { type: "refreshStarted" }
+  | { type: "refreshed"; token: string }
+  | { type: "refreshFailed" };
+
+function authReducer(s: AuthState, a: AuthAction): AuthState {
+  switch (a.type) {
+    case "refreshStarted": return { ...s, isRefreshing: true };
+    case "refreshed": return { ...s, token: a.token, isRefreshing: false };
+    case "refreshFailed": return { ...s, isRefreshing: false };
+  }
+}
+
+function useRef<T>(current: T) { return { current }; }
+
+function createRefresh(api: () => Promise<string>, dispatch: (a: AuthAction) => void) {
+  const refreshPromise = useRef<Promise<string> | null>(null);
+  return () => {
+    if (refreshPromise.current) return refreshPromise.current;
+    dispatch({ type: "refreshStarted" });
+    refreshPromise.current = api()
+      .then((token) => { dispatch({ type: "refreshed", token }); return token; })
+      .catch((error) => { dispatch({ type: "refreshFailed" }); throw error; })
+      .finally(() => { refreshPromise.current = null; });
+    return refreshPromise.current;
+  };
+}
+
+let state: AuthState = { user: "Ada", token: "old", isRefreshing: false };
+const dispatch = (action: AuthAction) => { state = authReducer(state, action); };
+let apiCalls = 0;
+const api = () => new Promise<string>((resolve, reject) => {
+  apiCalls++;
+  setTimeout(() => state.isRefreshing && apiCalls === 3 ? reject(new Error("expired")) : resolve("new-token"), 0);
+});
+const refresh = createRefresh(api, dispatch);
+const first = refresh();
+const second = refresh();
+if (first !== second || apiCalls !== 1 || !state.isRefreshing) throw new Error("concurrent refreshes were not deduplicated");
+const tokens = await Promise.all([first, second]);
+if (tokens[0] !== "new-token" || tokens[1] !== "new-token" || state.token !== "new-token" || state.isRefreshing) throw new Error("refresh success state is wrong");
+await refresh();
+if (apiCalls !== 2) throw new Error("a later refresh did not call the API again");
+const failedFirst = refresh();
+const failedSecond = refresh();
+if (failedFirst !== failedSecond || apiCalls !== 3 || !state.isRefreshing) throw new Error("failed refreshes were not shared");
+try { await Promise.all([failedFirst, failedSecond]); throw new Error("refresh unexpectedly succeeded"); } catch (error) { if ((error as Error).message === "refresh unexpectedly succeeded") throw error; }
+if (state.isRefreshing) throw new Error("refresh failure did not reset status");
+await refresh();
+if (apiCalls !== 4) throw new Error("refresh did not retry after failure");
+console.log("single-flight refresh: PASS");
+```
 
 <Inset kind="why" lang="ru">
 Почему разделять на два контекста, а не один контекст плюс `useMemo` на значении и `React.memo` на каждом потребителе? Оба варианта могут работать, но платят за один и тот же результат по-разному. Маршрут с одним контекстом требует помнить про мемоизацию объекта-значения *и* оборачивать потребителей в `memo`, и один забытый `useMemo` молча возвращает перерисовки-на-каждом-рендере. Разделение структурно: компонент физически не может подписаться на dispatch-и-заодно-state, пока не прочитает оба контекста, так что дешёвый случай (компоненты только на запись) дёшев по построению, а не по бдительности. Меньше шансов ошибиться — вот senior-причина.

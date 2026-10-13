@@ -17,6 +17,20 @@ function ctx(over: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("middleware error boundary", () => {
+  it("redirects guests away from educational question pages", async () => {
+    const next = vi.fn(async () => new Response("question UI"));
+    const guest = await onRequest(ctx({
+      request: new Request("https://example.com/ru/algorithm-workspace/"),
+      next,
+    }));
+    expect(guest.status).toBe(302);
+    expect(guest.headers.get("location")).toBe("https://example.com/ru/account/");
+    expect(next).not.toHaveBeenCalled();
+    const publicPage = await onRequest(ctx({
+      request: new Request("https://example.com/ru/learn/algorithms/"), next,
+    }));
+    expect(publicPage.status).toBe(200);
+  });
   it("passes through a healthy request with security headers", async () => {
     const res = await onRequest(ctx());
     expect(res.status).toBe(200);
@@ -70,5 +84,51 @@ describe("middleware error boundary", () => {
     }
     expect(provider).not.toHaveBeenCalled();
     provider.mockRestore();
+  });
+
+  it("carries X-Request-Id matching data.requestId and exposes a bound logger", async () => {
+    const c: any = ctx({
+      next: async () => {
+        c.data.logger.log("info", "t.probe", "hello");
+        return new Response("ok");
+      },
+    });
+    const res = await onRequest(c);
+    expect(res.headers.get("X-Request-Id")).toBe(c.data.requestId);
+    expect(typeof c.data.requestId).toBe("string");
+    expect(c.data.log.length).toBe(1);
+    expect(c.data.log[0].rid).toBe(c.data.requestId);
+  });
+
+  it("logs the 401 JSON early return into the buffer", async () => {
+    const c: any = ctx({
+      request: new Request("https://example.com/en/assess-items.json"),
+    });
+    const res = await onRequest(c);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("X-Request-Id")).toBe(c.data.requestId);
+    expect(c.data.log.length).toBe(1);
+    expect(c.data.log[0].tag).toBe("api.auth_required");
+  });
+
+  it("logs the 302 account early return into the buffer", async () => {
+    const c: any = ctx({
+      request: new Request("https://example.com/ru/algorithm-workspace/"),
+    });
+    const res = await onRequest(c);
+    expect(res.status).toBe(302);
+    expect(c.data.log.map((e: any) => e.tag)).toEqual(["api.account_redirect"]);
+  });
+
+  it("logs the 429 early return into the buffer", async () => {
+    const env = { SESSIONS: new FakeKV(), SESSION_SECRET: "s" };
+    let last: any = null;
+    for (let i = 0; i < 61; i++) {
+      last = ctx({ env, request: new Request("https://example.com/api/events", { method: "POST" }) });
+      await onRequest(last);
+    }
+    const res = await onRequest(last);
+    expect(res.status).toBe(429);
+    expect(last.data.log.map((e: any) => e.tag)).toEqual(["api.rate_limited"]);
   });
 });
